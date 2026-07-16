@@ -231,25 +231,25 @@
   [key : i64]) : i64
   (let
     [keys : (& map (Array i64)) (& (struct-get map keys))]
+    [values : (& map (Array i64)) (& (struct-get map values))]
     [capacity : i64 (array-length keys)]
     (if (<= capacity 0)
       (compiler-symbol-map-missing-handle)
       (let
         [encoded : i64 (+ key 1)]
         [slot : i64 (compiler-symbol-map-first-slot key capacity)]
-        [walked : i64 0]
+        [mask : i64 (- capacity 1)]
         (begin
-          (while (< walked capacity)
+          ;; Put grows before occupied+tombstone slots reach 75%, so every
+          ;; table always contains an empty slot. Probing therefore terminates
+          ;; on zero without a redundant full-capacity counter in this hot loop.
+          (while true
             (let
               [present : i64 (array-ref keys slot)]
               (cond
                 [(= present 0) (return (compiler-symbol-map-missing-handle))]
-                [(= present encoded)
-                  (return (array-ref (struct-get map values) slot))]
-                [else
-                  (begin
-                    (set! slot (bit-and (+ slot 1) (- capacity 1)))
-                    (set! walked (+ walked 1)))])))
+                [(= present encoded) (return (array-ref values slot))]
+                [else (set! slot (bit-and (+ slot 1) mask))])))
           (compiler-symbol-map-missing-handle))))))
 
 (define (compiler-symbol-map-store-new!
@@ -1416,6 +1416,7 @@
         [(ResultCompilerSymbols.Err message)
           (ResultCompilerSymbols.Err message)])]
     [(AstDecl.IncludeStr _ _) (ResultCompilerSymbols.Ok symbols)]
+    [(AstDecl.IncludeStrComptime _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.IncludeBin _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Import _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Module _) (ResultCompilerSymbols.Ok symbols)]
@@ -1669,6 +1670,7 @@
               [(AstDecl.Module next-module) (set! cur-module next-module)]
               [(AstDecl.Import _) unit]
               [(AstDecl.IncludeStr _ _) unit]
+              [(AstDecl.IncludeStrComptime _ _) unit]
               [(AstDecl.IncludeBin _ _) unit]
               [(AstDecl.Test _ _ _) unit]
               [_
@@ -1757,6 +1759,7 @@
           (match (array-ref slots (+ decl-offset position))
             [(AstDecl.Import _) unit]
             [(AstDecl.IncludeStr _ _) unit]
+            [(AstDecl.IncludeStrComptime _ _) unit]
             [(AstDecl.IncludeBin _ _) unit]
             [(AstDecl.Module next-module) (set! cur-module next-module)]
             [(AstDecl.Test _ _ _) unit]
@@ -1944,6 +1947,7 @@
   (match decl
     [(AstDecl.Import _) false]
     [(AstDecl.IncludeStr _ _) false]
+    [(AstDecl.IncludeStrComptime _ _) false]
     [(AstDecl.IncludeBin _ _) false]
     [(AstDecl.Module _) false]
     [(AstDecl.ModuleBody _ _) false]
@@ -2222,6 +2226,14 @@
               index
               module
               module-id)]
+          [(AstDecl.IncludeStrComptime _ _)
+            (build-compiler-symbol-list-in-module
+              all-decls
+              rest
+              symbols
+              index
+              module
+              module-id)]
           [(AstDecl.IncludeBin _ _)
             (build-compiler-symbol-list-in-module
               all-decls
@@ -2334,6 +2346,10 @@
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths))]
                 [(AstDecl.IncludeStr _ _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [(AstDecl.IncludeStrComptime _ _)
                   (begin
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths))]
@@ -2973,6 +2989,7 @@
             (match decl
               [(AstDecl.Import _) (set! position (+ position 1))]
               [(AstDecl.IncludeStr _ _) (set! position (+ position 1))]
+              [(AstDecl.IncludeStrComptime _ _) (set! position (+ position 1))]
               [(AstDecl.IncludeBin _ _) (set! position (+ position 1))]
               [(AstDecl.Module next-module)
                 (begin
@@ -3320,6 +3337,7 @@
             (match decl
               [(AstDecl.Import _) unit]
               [(AstDecl.IncludeStr _ _) unit]
+              [(AstDecl.IncludeStrComptime _ _) unit]
               [(AstDecl.IncludeBin _ _) unit]
               [(AstDecl.Module _) unit]
               [(AstDecl.Test _ _ _) unit]

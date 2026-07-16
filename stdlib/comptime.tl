@@ -140,6 +140,13 @@
 (define (expr-string [value : String]) : Expr
   (expr-string value))
 
+;: Build an opaque binary-data expression from compile-time bytes.
+;:
+;: The expanded expression has type `(Array u8)` and lowers directly to static
+;: binary data, without constructing or parsing an array literal.
+(define (expr-binary-data [value : String]) : Expr
+  (expr-binary-data value))
+
 ;: Return true when a captured expression is a string literal.
 ;:
 ;: This compile-time-only syntax inspector distinguishes caller literals from

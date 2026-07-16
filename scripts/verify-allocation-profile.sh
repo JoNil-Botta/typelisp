@@ -94,8 +94,15 @@ validate_profile() {
     awk -F'|' -v expected_entries="$expected_entries" '
     BEGIN {
         required["start/active"] = 0
+        required["start/compiler-entry"] = 0
         required["load/active"] = 0
         required["load/source-pools"] = 0
+        required["typecheck.macro.peak/macro-enclosing"] = 0
+        required["typecheck.macro.peak/macro-scratch"] = 0
+        required["typecheck.macro.peak/macro-symbols-reclaiming"] = 0
+        required["typecheck.macro.peak/typecheck-function-scratch"] = 0
+        required["typecheck.macro.peak/compiler-entry"] = 0
+        required["typecheck.macro.peak/source-pools"] = 0
         required["lower/lower-scratch"] = 0
         required["optimize/optimizer-scratch"] = 0
         required["backend/active"] = 0

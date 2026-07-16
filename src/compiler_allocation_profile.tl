@@ -9,6 +9,11 @@
 
 (define compiler-allocation-profile-output-arena : i64
   0)
+(define compiler-allocation-profile-entry-arena : i64
+  0)
+
+(define (compiler-allocation-profile-entry-arena-handle) : i64
+  compiler-allocation-profile-entry-arena)
 
 (define (compiler-allocation-profile-control!
   [action : i64]
@@ -24,6 +29,9 @@
       (begin
         (if (= compiler-allocation-profile-output-arena 0)
           (begin
+            (set!
+              compiler-allocation-profile-entry-arena
+              (arena.tl_arena_current))
             (set!
               compiler-allocation-profile-output-arena
               (arena.tl_arena_make))
@@ -176,6 +184,7 @@
             [scratch : i64 compiler-allocation-profile-output-arena]
             (begin
               (set! compiler-allocation-profile-output-arena 0)
+              (set! compiler-allocation-profile-entry-arena 0)
               (unsafe
                 (arena.tl_arena_destroy scratch)))))
         0)]))

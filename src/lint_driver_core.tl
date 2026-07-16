@@ -2016,6 +2016,7 @@
         (selfhost-lint-dead-expr-refs (ast-node-get call-expr) (lint_svec.new)))]
     [(AstDecl.Import _) scan]
     [(AstDecl.IncludeStr _ _) scan]
+    [(AstDecl.IncludeStrComptime _ _) scan]
     [(AstDecl.IncludeBin _ _) scan]
     [(AstDecl.DefDispatch name variants)
       (selfhost-lint-dead-add-visible-node

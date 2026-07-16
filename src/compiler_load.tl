@@ -134,6 +134,7 @@
   (CompilerLoadSurfaceDispatch)
   (CompilerLoadSurfaceTest)
   (CompilerLoadSurfaceIncludeStr)
+  (CompilerLoadSurfaceIncludeStrComptime)
   (CompilerLoadSurfaceIncludeBin))
 
 (defenum CompilerLoadSurfaceSignature
@@ -1859,6 +1860,33 @@
       pools
       (AstExpr.Literal (AstLiteral.String contents)))))
 
+;; A comptime include becomes a zero-argument macro whose expansion is a string
+;; literal. The file bytes therefore exist only while the transformer runs;
+;; unlike `include-str`, no runtime definition or static string is emitted.
+(define (compiler-load-include-str-comptime-def-with-pools
+  [pools : AstNodePoolContext]
+  [name : String]
+  [contents : String]) : AstDecl
+  (let
+    [args : AstExprList (ast-expr-list-with-capacity 1)]
+    [literal : i64
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Literal (AstLiteral.String contents)))]
+    (begin
+      (ast-expr-list-push (&mut args) literal)
+      (ast-decl-def-macro
+        name
+        (ast-macro-param-list-new)
+        (AstType.String)
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Call
+            (ast-node-pool-context-expr-push
+              pools
+              (AstExpr.Var (intern "expr-string")))
+            args))))))
+
 (define (compiler-load-include-bin-def [name : String] [contents : String]) : AstDecl
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
@@ -1931,6 +1959,31 @@
           source)
         (ResultCompilerLoadInclude.Ok
           (compiler-load-include-str-def-with-pools pools name source))]
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+        (ResultCompilerLoadInclude.Err
+          (box
+            (compiler-load-include-str-read-error
+              importer-path
+              include-path
+              resolved)))])))
+
+(define (compiler-load-include-str-comptime-from-resolved-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]
+  [name : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (if (io.file-exists? resolved)
+    (ResultCompilerLoadInclude.Ok
+      (compiler-load-include-str-comptime-def-with-pools
+        pools
+        name
+        (io.read-file resolved)))
+    (match (compiler-load-embedded-stdlib-source-for-path resolved)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+          source)
+        (ResultCompilerLoadInclude.Ok
+          (compiler-load-include-str-comptime-def-with-pools pools name source))]
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         (ResultCompilerLoadInclude.Err
           (box
@@ -2040,6 +2093,27 @@
       (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
+(define (compiler-load-expand-include-str-comptime-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : svec.Vec]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (match (compiler-load-resolve-import-result-with-roots
+    importer-path
+    include-path
+    stdlib-roots)
+    [(ResultPkgResolve.Ok resolved)
+      (compiler-load-include-str-comptime-from-resolved-with-pools
+        importer-path
+        include-path
+        resolved
+        name
+        pools)]
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
+        (box (compiler-diagnostic-at-start importer-path message)))]))
+
 (define (compiler-load-expand-include-bin
   [importer-path : String]
   [include-path : String]
@@ -2096,13 +2170,39 @@
   [left : AstDeclList]
   [right : AstDeclList]) : AstDeclList
   (let
-    [out : AstDeclList
-      (ast-decl-list-with-capacity
-        (+ (ast-decl-list-len (& left)) (ast-decl-list-len (& right))))]
-    (begin
-      (ast-decl-list-append-from (&mut out) (& left) 0)
-      (ast-decl-list-append-from (&mut out) (& right) 0)
-      out)))
+    [left-len : i64 (ast-decl-list-len (& left))]
+    [right-len : i64 (ast-decl-list-len (& right))]
+    (if (and
+      (<= left-len (struct-get right offset))
+      (struct-get right prependable)
+      (not
+        (unsafe
+          (=
+            (ptr->int
+              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
+            (ptr->int
+              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+      (let
+        [new-offset : i64 (- (struct-get right offset) left-len)]
+        (begin
+          (ast-decl-list-copy-to
+            (&mut (struct-get right slots))
+            (& (struct-get left slots))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
+          (AstDeclList
+            (struct-get right slots)
+            new-offset
+            (+ left-len right-len)
+            true)))
+      (let
+        [out : AstDeclList (ast-decl-list-with-capacity (+ left-len right-len))]
+        (begin
+          (ast-decl-list-append-from (&mut out) (& left) 0)
+          (ast-decl-list-append-from (&mut out) (& right) 0)
+          out)))))
 
 (define (compiler-load-decl-path-list-append
   [left : AstDeclPathList]
@@ -2120,13 +2220,40 @@
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
   (let
-    [out : AstDeclPathList
-      (ast-decl-path-list-with-capacity
-        (+ (ast-decl-path-list-len (& left)) (ast-decl-path-list-len (& right))))]
-    (begin
-      (ast-decl-path-list-append-from (&mut out) (& left) 0)
-      (ast-decl-path-list-append-from (&mut out) (& right) 0)
-      out)))
+    [left-len : i64 (ast-decl-path-list-len (& left))]
+    [right-len : i64 (ast-decl-path-list-len (& right))]
+    (if (and
+      (<= left-len (struct-get right offset))
+      (struct-get right prependable)
+      (not
+        (unsafe
+          (=
+            (ptr->int
+              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
+            (ptr->int
+              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+      (let
+        [new-offset : i64 (- (struct-get right offset) left-len)]
+        (begin
+          (ast-decl-path-list-copy-to
+            (&mut (struct-get right slots))
+            (& (struct-get left slots))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
+          (AstDeclPathList
+            (struct-get right slots)
+            new-offset
+            (+ left-len right-len)
+            true)))
+      (let
+        [out : AstDeclPathList
+          (ast-decl-path-list-with-capacity (+ left-len right-len))]
+        (begin
+          (ast-decl-path-list-append-from (&mut out) (& left) 0)
+          (ast-decl-path-list-append-from (&mut out) (& right) 0)
+          out)))))
 
 (define (compiler-load-decl-module-list-append
   [left : AstDeclModuleList]
@@ -2146,15 +2273,40 @@
   [left : AstDeclModuleList]
   [right : AstDeclModuleList]) : AstDeclModuleList
   (let
-    [out : AstDeclModuleList
-      (ast-decl-module-list-with-capacity
-        (+
-          (ast-decl-module-list-len (& left))
-          (ast-decl-module-list-len (& right))))]
-    (begin
-      (ast-decl-module-list-append-from (&mut out) (& left) 0)
-      (ast-decl-module-list-append-from (&mut out) (& right) 0)
-      out)))
+    [left-len : i64 (ast-decl-module-list-len (& left))]
+    [right-len : i64 (ast-decl-module-list-len (& right))]
+    (if (and
+      (<= left-len (struct-get right offset))
+      (struct-get right prependable)
+      (not
+        (unsafe
+          (=
+            (ptr->int
+              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
+            (ptr->int
+              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+      (let
+        [new-offset : i64 (- (struct-get right offset) left-len)]
+        (begin
+          (ast-decl-module-list-copy-to
+            (&mut (struct-get right slots))
+            (& (struct-get left slots))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
+          (AstDeclModuleList
+            (struct-get right slots)
+            new-offset
+            (+ left-len right-len)
+            true)))
+      (let
+        [out : AstDeclModuleList
+          (ast-decl-module-list-with-capacity (+ left-len right-len))]
+        (begin
+          (ast-decl-module-list-append-from (&mut out) (& left) 0)
+          (ast-decl-module-list-append-from (&mut out) (& right) 0)
+          out)))))
 
 (define compiler-load-core-macro-prelude-path : String
   "stdlib/core_macros.tl")
@@ -4541,6 +4693,7 @@
         (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.DefDispatch _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
+    [(AstDecl.IncludeStrComptime _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
     ;; A future declaration shape might hide references. Keep it conservative.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
@@ -5178,6 +5331,24 @@
         false
         generated
         false)]
+    [(AstDecl.IncludeStrComptime name _)
+      (compiler-load-surface-build-add-decl
+        build
+        (CompilerLoadSurfaceDecl
+          (CompilerLoadSurfaceIncludeStrComptime)
+          name
+          module-id
+          (CompilerLoadSurfaceNoSignature)
+          (CompilerLoadSurfaceMacroExpr)
+          false
+          false
+          generated
+          was-unsafe
+          (compiler-load-surface-zero-span))
+        false
+        false
+        generated
+        false)]
     [(AstDecl.IncludeBin name _)
       (compiler-load-surface-build-add-decl
         build
@@ -5787,6 +5958,42 @@
                     (ResultCompilerLoadWithPaths.Err diag)])]
               [(ResultCompilerLoadInclude.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]
+          [(AstDecl.IncludeStrComptime name include-path)
+            (match (compiler-load-expand-include-str-comptime-with-pools
+              importer-path
+              include-path
+              name
+              stdlib-roots
+              pools)
+              [(ResultCompilerLoadInclude.Ok expanded)
+                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  rest
+                  importer-path
+                  importer-module
+                  importer-source-module
+                  seen
+                  stdlib-roots
+                  import-root
+                  cfgs
+                  pools)
+                  [(ResultCompilerLoadWithPaths.Ok
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (ResultCompilerLoadWithPaths.Ok
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder
+                        importer-path
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder
+                        importer-module
+                        rest-modules)
+                      rest-seen)]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
           [(AstDecl.IncludeBin name include-path)
             (match (compiler-load-expand-include-bin-with-pools
               importer-path
@@ -6253,6 +6460,90 @@
       cfgs
       pools)))
 
+;; Parse one uncached file in disposable storage, then copy only its reachable
+;; AST into the caller's program-lifetime pools. Lexer tokens, reader forms,
+;; source text, parser scratch, and superseded temporary pool arrays are all
+;; released before import traversal continues to the next file.
+(define (compiler-load-parse-file-diagnostic-detached-with-pools
+  [path : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (let
+    [caller-arena : i64 (arena.tl_arena_current)]
+    [scratch-root : i64 (arena.tl_arena_make)]
+    [_use-scratch : unit
+      (unsafe
+        (arena.tl_arena_set scratch-root))]
+    [source : String (io.read-file path)]
+    [source-len : i64 (string.string-length source)]
+    ;; Source bytes are a useful low-cost predictor for parser node count. A
+    ;; modest estimate avoids both a multi-million-node reserve per file and a
+    ;; long geometric growth chain for compiler-sized modules.
+    [expr-capacity : i64
+      (let
+        [estimate : i64 (/ source-len 8)]
+        (if (< estimate 1024)
+          1024
+          estimate))]
+    [type-capacity : i64
+      (let
+        [estimate : i64 (/ source-len 128)]
+        (if (< estimate 256)
+          256
+          estimate))]
+    [scratch-base : i64 (arena.tl_arena_current)]
+    [scratch-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        expr-capacity
+        type-capacity
+        scratch-base)]
+    [persistent-before : bool (intern-persistent-storage-on?)]
+    [_persist-new-interns : unit
+      (if persistent-before
+        unit
+        (intern-persistent-storage-enable!))]
+    [parsed : ResultAstProgramDiagnostic
+      (compiler-load-parse-source-diagnostic-escaping-with-pools
+        path
+        source
+        cfgs
+        scratch-pools)]
+    (match parsed
+      [(ResultAstProgramDiagnostic.Ok program)
+        (match (ast-program-copy-append-with-pools scratch-pools pools program)
+          [(AstProgramCompaction out-program _)
+            (let
+              [scratch-head : i64 (arena.tl_arena_current)]
+              [_restore-caller : unit
+                (unsafe
+                  (arena.tl_arena_set caller-arena))]
+              [out : ResultAstProgramDiagnostic
+                (ResultAstProgramDiagnostic.Ok out-program)]
+              (begin
+                (if persistent-before
+                  unit
+                  (intern-persistent-storage-disable!))
+                (unsafe
+                  (arena.tl_arena_destroy scratch-head))
+                out))])]
+      [(ResultAstProgramDiagnostic.Err diag)
+        (let
+          [scratch-head : i64 (arena.tl_arena_current)]
+          [_restore-caller : unit
+            (unsafe
+              (arena.tl_arena_set caller-arena))]
+          [stable-diag : (Box CompilerDiagnostic)
+            (box (compiler-diagnostic-copy (box-get diag)))]
+          [out : ResultAstProgramDiagnostic
+            (ResultAstProgramDiagnostic.Err stable-diag)]
+          (begin
+            (if persistent-before
+              unit
+              (intern-persistent-storage-disable!))
+            (unsafe
+              (arena.tl_arena_destroy scratch-head))
+            out))])))
+
 (define (compiler-load-cache-program-result
   [key : String]
   [result : ResultAstProgramDiagnostic]) : ResultAstProgramDiagnostic
@@ -6484,7 +6775,7 @@
                 path
                 cfgs
                 pools)))]))
-    (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)))
+    (compiler-load-parse-file-diagnostic-detached-with-pools path cfgs pools)))
 
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss
   [key : String]
@@ -6957,7 +7248,7 @@
               stdlib-roots
               parse-cfgs
               pools)
-            (compiler-load-parse-file-diagnostic-escaping-with-pools
+            (compiler-load-parse-file-diagnostic-detached-with-pools
               path
               parse-cfgs
               pools))
@@ -7728,6 +8019,30 @@
       (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
+(define (compiler-load-package-expand-include-str-comptime
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
+  (match (if (compiler-load-pkg-import? include-path)
+    (compiler-load-resolve-pkg-import include-path manifest-dir deps)
+    (compiler-load-resolve-import-result-with-roots
+      importer-path
+      include-path
+      stdlib-roots))
+    [(ResultPkgResolve.Ok resolved)
+      (compiler-load-include-str-comptime-from-resolved-with-pools
+        importer-path
+        include-path
+        resolved
+        name
+        (ast-node-pool-context-capture-active))]
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
+        (box (compiler-diagnostic-at-start importer-path message)))]))
+
 (define (compiler-load-package-expand-include-bin
   [importer-path : String]
   [include-path : String]
@@ -7994,6 +8309,43 @@
                     (box (compiler-diagnostic-at-start importer-path message)))]))]
           [(AstDecl.IncludeStr name include-path)
             (match (compiler-load-package-expand-include-str
+              importer-path
+              include-path
+              name
+              stdlib-roots
+              manifest-dir
+              deps)
+              [(ResultCompilerLoadInclude.Ok expanded)
+                (match (compiler-load-package-decls-with-module-and-roots
+                  rest
+                  importer-path
+                  importer-module
+                  importer-source-module
+                  seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)
+                  [(ResultCompilerLoadWithPaths.Ok
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (ResultCompilerLoadWithPaths.Ok
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder
+                        importer-path
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder
+                        importer-module
+                        rest-modules)
+                      rest-seen)]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(AstDecl.IncludeStrComptime name include-path)
+            (match (compiler-load-package-expand-include-str-comptime
               importer-path
               include-path
               name
@@ -8486,6 +8838,30 @@
           [_ false]))]
     [_ false]))
 
+(define (compiler-load-first-string-macro?
+  [decls : AstDeclList]
+  [name : String]
+  [want : String]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons
+        (AstDecl.DefMacro got params (AstType.String) body-box)
+        _)
+      (match (ast-node-get body-box)
+        [(AstExpr.Call callee-box args)
+          (and
+            (string.eq (intern-str got) name)
+            (= (ast-macro-param-list-len (& params)) 0)
+            (match (ast-node-get callee-box)
+              [(AstExpr.Var callee)
+                (string.eq (intern-str callee) "expr-string")]
+              [_ false])
+            (= (ast-expr-list-len (& args)) 1)
+            (match (ast-node-get (ast-expr-list-get (& args) 0 0))
+              [(AstExpr.Literal (AstLiteral.String text)) (string.eq text want)]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-load-binary-payload-ok? [text : String]) : bool
   (and
     (= (string.string-length text) 6)
@@ -8662,7 +9038,8 @@
     [(CompilerLoadSurfaceDispatch) 7]
     [(CompilerLoadSurfaceTest) 8]
     [(CompilerLoadSurfaceIncludeStr) 9]
-    [(CompilerLoadSurfaceIncludeBin) 10]))
+    [(CompilerLoadSurfaceIncludeBin) 10]
+    [(CompilerLoadSurfaceIncludeStrComptime) 11]))
 
 (define (compiler-load-surface-macro-result-kind-code
   [kind : CompilerLoadSurfaceMacroResultKind]) : i64
@@ -10011,6 +10388,22 @@
         (and
           (= (compiler-load-decl-list-count decls) 2)
           (compiler-load-first-string-def? decls "embedded" "hello from root"))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (compiler-load-include-str-comptime-relative-ok?) : bool
+  (begin
+    (io.write-file "target/cl_include_comptime_payload.txt" "only at comptime")
+    (io.write-file
+      "target/cl_include_comptime_entry.tl"
+      "(include-str-comptime payload \"cl_include_comptime_payload.txt\")
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/cl_include_comptime_entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
+        (and
+          (= (compiler-load-decl-list-count decls) 2)
+          (compiler-load-first-string-macro? decls "payload" "only at comptime"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-missing-include-str-ok?) : bool
@@ -12279,8 +12672,62 @@
           "_tl_dep_src_lib_helper")]
       [_ false])))
 
+(define (compiler-load-module-list-slots-address [items : AstDeclModuleList]) : i64
+  (unsafe
+    (cast
+      (ptr->int (ptr-cast (array-data (struct-get items slots)) : (Ptr u8)))
+      : i64)))
+
+(define (compiler-load-append-onto-reuse-ok?) : bool
+  (let
+    [left : AstDeclModuleList (ast-decl-module-list-with-capacity 2)]
+    [_left : unit
+      (begin
+        (ast-decl-module-list-push (&mut left) "left-a")
+        (ast-decl-module-list-push (&mut left) "left-b"))]
+    [right-base : AstDeclModuleList (ast-decl-module-list-new)]
+    [right-tail : AstDeclModuleList
+      (ast-decl-module-list-prepend-builder "right-b" right-base)]
+    [right : AstDeclModuleList
+      (ast-decl-module-list-prepend-builder "right-a" right-tail)]
+    [right-address : i64 (compiler-load-module-list-slots-address right)]
+    [reused : AstDeclModuleList
+      (compiler-load-decl-module-list-append-onto left right)]
+    [shared : (Array String) (array.make-array String 8)]
+    [_shared : unit
+      (begin
+        (array-set! shared 1 "alias-a")
+        (array-set! shared 2 "alias-b")
+        (array-set! shared 4 "tail-a")
+        (array-set! shared 5 "tail-b"))]
+    [alias-left : AstDeclModuleList (AstDeclModuleList shared 1 2 true)]
+    [alias-right : AstDeclModuleList (AstDeclModuleList shared 4 2 true)]
+    [alias-address : i64 (compiler-load-module-list-slots-address alias-right)]
+    [copied : AstDeclModuleList
+      (compiler-load-decl-module-list-append-onto alias-left alias-right)]
+    (and
+      (= (compiler-load-module-list-slots-address reused) right-address)
+      (= (ast-decl-module-list-len (& reused)) 4)
+      (string.eq (ast-decl-module-list-get (& reused) 0 "") "left-a")
+      (string.eq (ast-decl-module-list-get (& reused) 1 "") "left-b")
+      (string.eq (ast-decl-module-list-get (& reused) 2 "") "right-a")
+      (string.eq (ast-decl-module-list-get (& reused) 3 "") "right-b")
+      (not (= (compiler-load-module-list-slots-address copied) alias-address))
+      (= (ast-decl-module-list-len (& copied)) 4)
+      (string.eq (ast-decl-module-list-get (& copied) 0 "") "alias-a")
+      (string.eq (ast-decl-module-list-get (& copied) 1 "") "alias-b")
+      (string.eq (ast-decl-module-list-get (& copied) 2 "") "tail-a")
+      (string.eq (ast-decl-module-list-get (& copied) 3 "") "tail-b")
+      (string.eq (array-ref shared 1) "alias-a")
+      (string.eq (array-ref shared 2) "alias-b")
+      (string.eq (array-ref shared 4) "tail-a")
+      (string.eq (array-ref shared 5) "tail-b"))))
+
 (define (compiler-load-self-test) : i64
   (begin
+    (unless
+      (compiler-load-append-onto-reuse-ok?)
+      (return (io.panic "compiler-load: append-onto reuse smoke mismatch")))
     (unless
       (compiler-load-normalize-ok?)
       (return (io.panic "compiler-load: normalize smoke mismatch")))
@@ -12458,6 +12905,10 @@
       (compiler-load-include-str-stdlib-root-ok?)
       (return
         (io.panic "compiler-load: include-str stdlib root smoke mismatch")))
+    (unless
+      (compiler-load-include-str-comptime-relative-ok?)
+      (return
+        (io.panic "compiler-load: include-str-comptime relative smoke mismatch")))
     (unless
       (compiler-load-missing-include-str-ok?)
       (return (io.panic "compiler-load: missing include-str smoke mismatch")))

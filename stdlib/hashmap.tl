@@ -5304,41 +5304,31 @@
 ;: Lookup through an immutable generated i64 -> i64 map reference.
 (define (i64-i64-map-get-ref [map : (& map I64I64Map)] [key : i64]) : I64I64MapLookup
   (let
-    [capacity : i64 (array-length (struct-get map slots))]
+    [slots : (& map (Array I64I64MapSlot)) (& (struct-get map slots))]
+    [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       (I64I64MapMissing)
       (let
         [hash : i64 (i64-i64-map-hash-key key)]
         [cursor : i64 (i64-i64-map-normalized-bucket-index hash capacity)]
+        [mask : i64 (- capacity 1)]
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array-ref (struct-get map slots) cursor)
+            (match (array-ref slots cursor)
               [(I64I64MapEmpty) (return (I64I64MapMissing))]
               [(I64I64MapTombstone)
-                (let
-                  [next : i64 (+ cursor 1)]
-                  (begin
-                    (set!
-                      cursor
-                      (if (>= next capacity)
-                        0
-                        next))
-                    (set! walked (+ walked 1))))]
-              [(I64I64MapOccupied slot-key value slot-hash)
-                (if (if (= slot-hash hash)
-                  (= slot-key key)
-                  false)
+                (begin
+                  (set! cursor (bit-and (+ cursor 1) mask))
+                  (set! walked (+ walked 1)))]
+              ;; Scalar equality is no more expensive than comparing the
+              ;; cached scalar hash, so avoid loading/testing both payloads.
+              [(I64I64MapOccupied slot-key value _)
+                (if (= slot-key key)
                   (return (I64I64MapFound value))
-                  (let
-                    [next : i64 (+ cursor 1)]
-                    (begin
-                      (set!
-                        cursor
-                        (if (>= next capacity)
-                          0
-                          next))
-                      (set! walked (+ walked 1)))))]))
+                  (begin
+                    (set! cursor (bit-and (+ cursor 1) mask))
+                    (set! walked (+ walked 1))))]))
           (I64I64MapMissing))))))
 
 ;: Rehash a borrowed i64 -> i64 slot array into a fresh destination.

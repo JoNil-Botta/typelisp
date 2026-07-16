@@ -6531,14 +6531,16 @@
         [(reader.Sexpr.Nil)
           (match (box-get head)
             [(reader.Sexpr.Sym name)
-              (if (string.eq name "unit")
-                (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Unit)
-                (if (string.eq name "uniform")
-                  (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Uniform)
-                  (if (string.eq name "varying")
-                    (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Varying)
-                    (ResultAstSpmdResultClass.Err
-                      "parse: :spmd-callable result expects unit, uniform, or varying"))))]
+              (cond
+                [(string.eq name "unit")
+                  (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Unit)]
+                [(string.eq name "uniform")
+                  (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Uniform)]
+                [(string.eq name "varying")
+                  (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Varying)]
+                [else
+                  (ResultAstSpmdResultClass.Err
+                    "parse: :spmd-callable result expects unit, uniform, or varying")])]
             [_
               (ResultAstSpmdResultClass.Err
                 "parse: :spmd-callable result expects unit, uniform, or varying")])]
@@ -6958,26 +6960,27 @@
             [(reader.Sexpr.Cons key-node after-key)
               (match (box-get key-node)
                 [(reader.Sexpr.Sym key)
-                  (if (string.eq key ":export-symbol")
-                    (if seen-export
-                      (ResultAstDecl.Err
-                        "parse: duplicate define :export-symbol metadata")
-                      (match (parse-ast-define-fn-export-tail
-                        (box-get after-key))
-                        [(ResultAstFnExport.Ok parsed-export)
-                          (parse-ast-define-fn-rest
-                            dispatch
-                            pools
-                            name
-                            params
-                            parsed-export
-                            true
-                            spmd-callable
-                            seen-spmd-callable
-                            (reader.sp-node-get tail))]
-                        [(ResultAstFnExport.Err message)
-                          (ResultAstDecl.Err message)]))
-                    (if (string.eq key ":spmd-callable")
+                  (cond
+                    [(string.eq key ":export-symbol")
+                      (if seen-export
+                        (ResultAstDecl.Err
+                          "parse: duplicate define :export-symbol metadata")
+                        (match (parse-ast-define-fn-export-tail
+                          (box-get after-key))
+                          [(ResultAstFnExport.Ok parsed-export)
+                            (parse-ast-define-fn-rest
+                              dispatch
+                              pools
+                              name
+                              params
+                              parsed-export
+                              true
+                              spmd-callable
+                              seen-spmd-callable
+                              (reader.sp-node-get tail))]
+                          [(ResultAstFnExport.Err message)
+                            (ResultAstDecl.Err message)]))]
+                    [(string.eq key ":spmd-callable")
                       (if seen-spmd-callable
                         (ResultAstDecl.Err
                           "parse: duplicate define :spmd-callable metadata")
@@ -6996,11 +6999,12 @@
                               true
                               (reader.sp-node-get tail))]
                           [(ResultAstSpmdCallable.Err message)
-                            (ResultAstDecl.Err message)]))
-                      (if (compiler-parse-metadata-key? key)
-                        (ResultAstDecl.Err
-                          (string.append "parse: unknown define metadata " key))
-                        (ResultAstDecl.Err "parse: malformed function metadata"))))]
+                            (ResultAstDecl.Err message)]))]
+                    [(compiler-parse-metadata-key? key)
+                      (ResultAstDecl.Err
+                        (string.append "parse: unknown define metadata " key))]
+                    [else
+                      (ResultAstDecl.Err "parse: malformed function metadata")])]
                 [_ (ResultAstDecl.Err "parse: malformed function definition")])]
             [_ (ResultAstDecl.Err "parse: malformed function definition")])
           (match (parse-ast-body-tail

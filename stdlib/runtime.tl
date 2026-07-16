@@ -518,33 +518,42 @@
           (set! i (+ i 1))))
       unit)))
 
-;: Zero `byte-count` bytes starting at `buf`. Zero eight bytes per iteration
-;: over the 64-bit-aligned prefix, then a byte tail for the remainder. The
-;: previous byte-at-a-time loop was the single largest zeroing cost in the
-;: self-compile (every `array.make-array` zero-fills its backing storage); writing
-;: whole words cuts the loop trip count ~8x.
-(define (array-zero [buf : (MutPtr u8)] [byte-count : i64])
-  (:export-symbol "tl_array_zero") : unit
-  (let
-    [word-count : i64 (/ byte-count 8)]
-    [tail-start : i64 (* word-count 8)]
-    [slots : (MutPtr u64)
-      (unsafe
-        (ptr-cast buf : (MutPtr u64)))]
-    [w : i64 0]
-    [i : i64 tail-start]
-    (begin
-      (while (< w word-count)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset slots w) (cast 0 : u64)))
-          (set! w (+ w 1))))
-      (while (< i byte-count)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset buf i) (cast 0 : u8)))
-          (set! i (+ i 1))))
-      unit)))
+;: Zero `byte-count` bytes starting at `buf`. With `feature-tl-array-zero` the
+;; backend provides the body as a qword `rep stosq` plus a byte `rep stosb`
+;; tail (see compiler-backend-runtime-array-zero-functions), which costs one
+;; instruction per eight bytes under the deterministic instruction-count gate.
+;; The fallback keeps the compiled word-at-a-time loop for seed compilers
+;; without the feature; the byte-at-a-time loop before it was the single
+;; largest zeroing cost in the self-compile (every `array.make-array`
+;; zero-fills its backing storage).
+(cfg
+  feature-tl-array-zero
+  (extern (array-zero [buf : (MutPtr u8)] [byte-count : i64]) : unit (:symbol "tl_array_zero")))
+
+(cfg
+  (not feature-tl-array-zero)
+  (define (array-zero [buf : (MutPtr u8)] [byte-count : i64])
+    (:export-symbol "tl_array_zero") : unit
+    (let
+      [word-count : i64 (/ byte-count 8)]
+      [tail-start : i64 (* word-count 8)]
+      [slots : (MutPtr u64)
+        (unsafe
+          (ptr-cast buf : (MutPtr u64)))]
+      [w : i64 0]
+      [i : i64 tail-start]
+      (begin
+        (while (< w word-count)
+          (begin
+            (unsafe
+              (ptr-write! (ptr-offset slots w) (cast 0 : u64)))
+            (set! w (+ w 1))))
+        (while (< i byte-count)
+          (begin
+            (unsafe
+              (ptr-write! (ptr-offset buf i) (cast 0 : u8)))
+            (set! i (+ i 1))))
+        unit))))
 
 ;: Abort handler for an invalid arena/region mark, exported as `tl_region_abort`.
 ;: Reached from the allocator's region-reset validation (not the out-of-memory

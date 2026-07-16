@@ -1,6 +1,8 @@
 ;; tlci_loader_smoke.tl - Executable smoke for tlci loader helpers.
-(import tlci_loader)
-(import tlci_core as tlci)
+;; Keep the loader/core pair on one flat identity until canonical load-once
+;; aliasing can replace this compatibility edge (#5130).
+(import "../tlci_loader.tl")
+(import "../tlci_core.tl")
 (import compiler_comptime_image_core as comptime_image)
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import stdlib.string)
@@ -8,11 +10,11 @@
 (define tlci-loader-smoke-macro-name : String
   "native-probe")
 
-(define (tlci-loader-smoke-host-table) : tlci.TlciHostCallbackTable
-  (tlci.TlciHostCallbackTable
-    tlci.tlci-host-callback-table-magic
-    tlci.tlci-host-abi-version
-    tlci.tlci-host-callback-table-size
+(define (tlci-loader-smoke-host-table) : TlciHostCallbackTable
+  (TlciHostCallbackTable
+    tlci-host-callback-table-magic
+    tlci-host-abi-version
+    tlci-host-callback-table-size
     0
     0
     0
@@ -20,63 +22,63 @@
     1))
 
 (define (tlci-loader-smoke-dispatch-result?
-  [result : tlci_loader.ResultTlciMacroDispatch]
+  [result : ResultTlciMacroDispatch]
   [status : i64]
   [handle : i64]) : bool
   (match result
-    [(tlci_loader.ResultTlciMacroDispatch.Err _) false]
-    [(tlci_loader.ResultTlciMacroDispatch.Ok dispatch)
+    [(ResultTlciMacroDispatch.Err _) false]
+    [(ResultTlciMacroDispatch.Ok dispatch)
       (and
         (= (struct-get dispatch status) status)
         (= (struct-get dispatch result-handle) handle))]))
 
 (define (tlci-loader-smoke-native-loaded? [bytes : (Array u8)]) : bool
-  (match (tlci_loader.tlci-loader-load-from-bytes-with-host
+  (match (tlci-loader-load-from-bytes-with-host
     bytes
     (tlci-loader-smoke-host-table))
-    [(tlci_loader.ResultTlciLoadedImage.Err _) false]
-    [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+    [(ResultTlciLoadedImage.Err _) false]
+    [(ResultTlciLoadedImage.Ok loaded)
       (let
         [installed : bool
-          (match (tlci_loader.tlci-loader-probe-install-self-callback!
+          (match (tlci-loader-probe-install-self-callback!
             (& loaded)
             tlci-loader-smoke-macro-name)
-            [(tlci_loader.ResultTlciLoaderUnit.Err _) false]
-            [(tlci_loader.ResultTlciLoaderUnit.Ok) true])]
+            [(ResultTlciLoaderUnit.Err _) false]
+            [(ResultTlciLoaderUnit.Ok) true])]
         [missing : bool
-          (match (tlci_loader.tlci-loader-find-macro-entry
+          (match (tlci-loader-find-macro-entry
             (& loaded)
             "missing-native-probe")
-            [(tlci_loader.ResultTlciMacroEntry.Err message)
+            [(ResultTlciMacroEntry.Err message)
               (string.eq message "tlci loader: macro entry not found")]
-            [(tlci_loader.ResultTlciMacroEntry.Ok _) false])]
+            [(ResultTlciMacroEntry.Ok _) false])]
         [success : bool
           (and
             installed
             (tlci-loader-smoke-dispatch-result?
-              (tlci_loader.tlci-loader-dispatch-macro
+              (tlci-loader-dispatch-macro
                 (& loaded)
                 tlci-loader-smoke-macro-name
                 0x5151
                 (make-array i64 0)
                 -9)
-              tlci.tlci-host-callback-status-ok
+              tlci-host-callback-status-ok
               4242))]
         [_fuel-status : unit
-          (tlci_loader.tlci-loader-probe-set-host-status!
+          (tlci-loader-probe-set-host-status!
             (& loaded)
-            tlci.tlci-host-callback-status-fuel-exhausted)]
+            tlci-host-callback-status-fuel-exhausted)]
         [scratch : (Array i64) (make-array 31337)]
         [fuel : bool
           (and
             (tlci-loader-smoke-dispatch-result?
-              (tlci_loader.tlci-loader-dispatch-macro
+              (tlci-loader-dispatch-macro
                 (& loaded)
                 tlci-loader-smoke-macro-name
                 0x5151
                 scratch
                 -9)
-              tlci.tlci-host-callback-status-fuel-exhausted
+              tlci-host-callback-status-fuel-exhausted
               -9)
             ;; The failed native expansion neither commits its result slot nor
             ;; mutates caller-owned scratch/operand state. Compiler AST and
@@ -85,9 +87,9 @@
         [fuel-diagnostic : bool
           (let
             [message : String
-              (tlci_loader.tlci-loader-macro-status-diagnostic
+              (tlci-loader-macro-status-diagnostic
                 tlci-loader-smoke-macro-name
-                tlci.tlci-host-callback-status-fuel-exhausted)]
+                tlci-host-callback-status-fuel-exhausted)]
             [interpreted-prefix : String
               (comptime_diagnostics.compiler-comptime-fuel-diagnostic-message)]
             (and
@@ -97,82 +99,82 @@
                 "compile-time evaluation limit exceeded in macro native-probe")))]
         [wrong-session : bool
           (tlci-loader-smoke-dispatch-result?
-            (tlci_loader.tlci-loader-dispatch-macro
+            (tlci-loader-dispatch-macro
               (& loaded)
               tlci-loader-smoke-macro-name
               0
               (make-array i64 0)
               -9)
-            tlci.tlci-host-callback-status-bad-request
+            tlci-host-callback-status-bad-request
             -9)]
         [released : bool
-          (match (tlci_loader.tlci-loader-release loaded)
-            [(tlci_loader.ResultTlciLoaderUnit.Ok) true]
-            [(tlci_loader.ResultTlciLoaderUnit.Err _) false])]
+          (match (tlci-loader-release loaded)
+            [(ResultTlciLoaderUnit.Ok) true]
+            [(ResultTlciLoaderUnit.Err _) false])]
         (and missing success fuel fuel-diagnostic wrong-session released))]))
 
 (define (tlci-loader-smoke-package-loaded? [bytes : (Array u8)]) : bool
-  (match (tlci_loader.tlci-loader-load-from-bytes-with-host
+  (match (tlci-loader-load-from-bytes-with-host
     bytes
     (tlci-loader-smoke-host-table))
-    [(tlci_loader.ResultTlciLoadedImage.Err _) false]
-    [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+    [(ResultTlciLoadedImage.Err _) false]
+    [(ResultTlciLoadedImage.Ok loaded)
       (let
         [installed : bool
-          (match (tlci_loader.tlci-loader-probe-install-self-callback!
+          (match (tlci-loader-probe-install-self-callback!
             (& loaded)
             "pkg/alpha")
-            [(tlci_loader.ResultTlciLoaderUnit.Err _) false]
-            [(tlci_loader.ResultTlciLoaderUnit.Ok) true])]
+            [(ResultTlciLoaderUnit.Err _) false]
+            [(ResultTlciLoaderUnit.Ok) true])]
         [alpha : bool
           (tlci-loader-smoke-dispatch-result?
-            (tlci_loader.tlci-loader-dispatch-macro
+            (tlci-loader-dispatch-macro
               (& loaded)
               "pkg/alpha"
               0
               (make-array i64 0)
               -1)
-            tlci.tlci-host-callback-status-ok
+            tlci-host-callback-status-ok
             0)]
         [beta : bool
           (tlci-loader-smoke-dispatch-result?
-            (tlci_loader.tlci-loader-dispatch-macro
+            (tlci-loader-dispatch-macro
               (& loaded)
               "pkg/beta"
               0
               (make-array i64 0)
               -1)
-            tlci.tlci-host-callback-status-ok
+            tlci-host-callback-status-ok
             0)]
         [released : bool
-          (match (tlci_loader.tlci-loader-release loaded)
-            [(tlci_loader.ResultTlciLoaderUnit.Ok) true]
-            [(tlci_loader.ResultTlciLoaderUnit.Err _) false])]
+          (match (tlci-loader-release loaded)
+            [(ResultTlciLoaderUnit.Ok) true]
+            [(ResultTlciLoaderUnit.Err _) false])]
         (and installed alpha beta released))]))
 
 (define (tlci-loader-smoke-package-repeat?
-  [metadata : tlci.TlciMetadata]
+  [metadata : TlciMetadata]
   [names : (Array String)]
   [first : (Array u8)]) : bool
-  (match (tlci.tlci-emit-code-bearing-package-image
+  (match (tlci-emit-code-bearing-package-image
     metadata
     "package-smoke-v1"
     names
     (cfg windows true false))
-    [(tlci.ResultTlciBytes.Err _) false]
-    [(tlci.ResultTlciBytes.Ok second) (tlci.tlci-bytes-eq? first second)]))
+    [(ResultTlciBytes.Err _) false]
+    [(ResultTlciBytes.Ok second) (tlci-bytes-eq? first second)]))
 
 (define (tlci-loader-smoke-package-ok?) : bool
   (let
-    [metadata : tlci.TlciMetadata (tlci.tlci-make-metadata "v1" "pkg" "0.1.0")]
+    [metadata : TlciMetadata (tlci-make-metadata "v1" "pkg" "0.1.0")]
     [names : (Array String) (make-array "pkg/alpha" "pkg/beta")]
-    (match (tlci.tlci-emit-code-bearing-package-image
+    (match (tlci-emit-code-bearing-package-image
       metadata
       "package-smoke-v1"
       names
       (cfg windows true false))
-      [(tlci.ResultTlciBytes.Err _) false]
-      [(tlci.ResultTlciBytes.Ok first)
+      [(ResultTlciBytes.Err _) false]
+      [(ResultTlciBytes.Ok first)
         (and
           (tlci-loader-smoke-package-repeat? metadata names first)
           (tlci-loader-smoke-package-loaded? first))])))
@@ -181,28 +183,26 @@
   [bytes : (Array u8)]
   [macro-table-offset : i64]) : bool
   (let
-    [malformed : (Array u8) (tlci.tlci-copy-bytes bytes)]
-    [code-offset : i64 (tlci.tlci-read-u64 malformed 88)]
+    [malformed : (Array u8) (tlci-copy-bytes bytes)]
+    [code-offset : i64 (tlci-read-u64 malformed 88)]
     [reserved-offset : i64
-      (+
-        (+ code-offset macro-table-offset)
-        tlci.tlci-macro-entry-reserved0-offset)]
+      (+ (+ code-offset macro-table-offset) tlci-macro-entry-reserved0-offset)]
     (begin
-      (tlci.tlci-set-u64! malformed reserved-offset 1)
-      (tlci.tlci-set-u64!
+      (tlci-set-u64! malformed reserved-offset 1)
+      (tlci-set-u64!
         malformed
-        tlci.tlci-hash-field-offset
-        (tlci.tlci-content-hash malformed))
-      (match (tlci_loader.tlci-loader-load-from-bytes-with-host
+        tlci-hash-field-offset
+        (tlci-content-hash malformed))
+      (match (tlci-loader-load-from-bytes-with-host
         malformed
         (tlci-loader-smoke-host-table))
-        [(tlci_loader.ResultTlciLoadedImage.Err message)
+        [(ResultTlciLoadedImage.Err message)
           (string.eq
             message
             "tlci loader: macro entry reserved field must be zero")]
-        [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+        [(ResultTlciLoadedImage.Ok loaded)
           (begin
-            (tlci_loader.tlci-loader-release loaded)
+            (tlci-loader-release loaded)
             false)]))))
 
 (define (tlci-loader-smoke-native-ok?) : bool
@@ -211,23 +211,22 @@
     (cfg windows true false))
     [(comptime_image.ResultCompilerComptimeImagePayload.Err _) false]
     [(comptime_image.ResultCompilerComptimeImagePayload.Ok payload)
-      (match (tlci.tlci-emit-native-comptime-probe-image
-        (cfg windows true false))
-        [(tlci.ResultTlciBytes.Err _) false]
-        [(tlci.ResultTlciBytes.Ok first)
-          (match (tlci.tlci-emit-native-comptime-probe-image
+      (match (tlci-emit-native-comptime-probe-image (cfg windows true false))
+        [(ResultTlciBytes.Err _) false]
+        [(ResultTlciBytes.Ok first)
+          (match (tlci-emit-native-comptime-probe-image
             (cfg windows true false))
-            [(tlci.ResultTlciBytes.Err _) false]
-            [(tlci.ResultTlciBytes.Ok second)
+            [(ResultTlciBytes.Err _) false]
+            [(ResultTlciBytes.Ok second)
               (and
-                (tlci.tlci-bytes-eq? first second)
+                (tlci-bytes-eq? first second)
                 (tlci-loader-smoke-malformed-rejected?
                   first
                   (struct-get payload macro-table-offset))
                 (tlci-loader-smoke-native-loaded? first))])])]))
 
 (define (main) : i64
-  (if (= (tlci_loader.tlci-loader-self-test) 42)
+  (if (= (tlci-loader-self-test) 42)
     (if (and (tlci-loader-smoke-native-ok?) (tlci-loader-smoke-package-ok?))
       42
       5)

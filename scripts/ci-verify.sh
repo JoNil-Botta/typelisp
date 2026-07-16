@@ -157,6 +157,11 @@ required_gate_unavailable() {
 # fetch-stage0.sh is unrelated — it rides out a genuinely transient mutable-asset
 # race, not a compiler crash.)
 
+# Validate the complete CLI gate inventory before the bootstrap and all of its
+# expensive owners. --self-test exercises fail-closed diagnostics, then checks
+# production annotations, counts, duplicates, and delegated fixture counts.
+run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh --self-test
+
 # Generated payload freshness must fail before the expensive bootstrap. The
 # exact-source verifier uses only stage0-supported language/runtime surfaces.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
@@ -341,7 +346,8 @@ run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_
 # The deterministic assembly gate reuses the manifest's emitted .s as its first
 # compile for overlapping sources, so it must run after the manifest gate.
 run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
-run_with_compiler "$STAGE2_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
+run_gate "TypeLisp format compiler selection control" scripts/check-tl-format.sh --self-test-current-compiler-mode
+run_with_compiler "$STAGE2_BIN" "TypeLisp source formatting" env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
 run_with_compiler "$STAGE2_BIN" "TypeLisp source lint" scripts/check-tl-lint.sh
 # The freshly bootstrapped compiler (and the programs it builds) must depend on
 # no C runtime: kernel32 only on Windows, nothing dynamic on Linux.

@@ -233,6 +233,10 @@ verify_gather_opcodes() {
             echo "tests/integration/spmd_gather_read.tl $_mode (missing $opcode)" >> "$FAILURES"
         fi
     done
+    if ! grep -F -- "vpaddq" "$_asm" > /dev/null; then
+        echo "[spmd-simd] computed gather $_mode assembly missing lane-offset vpaddq" >&2
+        echo "tests/integration/spmd_gather_read.tl $_mode (missing lane-offset vpaddq)" >> "$FAILURES"
+    fi
 }
 
 verify_avx2_varying_while_shape() {
@@ -324,22 +328,23 @@ verify_avx2_varying_while_shape
 # gang with multiple invalid active lanes in every runnable mode. The lowering
 # emits logical-lane checks before the hardware gather, so every mode must take
 # the ordinary bounds abort path.
-gather_oob=tests/integration/spmd_gather_oob.tl
-for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
-    mode=${pair%% *}
-    isa=${pair##* }
-    if [ "$mode" != scalar ] && ! isa_available "$isa"; then
-        echo "[spmd-simd]   skip gather-oob $mode ($isa not runnable on this $HOST_OS host)"
-        continue
-    fi
-    run_spmd_mode "$gather_oob" "$mode"
-    if [ "$mode_code" != 134 ] || ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
-        echo "[spmd-simd] gather-oob $mode did not take the bounds abort path:" >&2
-        sed 's/^/    /' "$mode_err" >&2
-        echo "$gather_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
-    else
-        echo "[spmd-simd] gather-oob $mode -> bounds abort OK"
-    fi
+for gather_oob in tests/integration/spmd_gather_oob.tl tests/integration/spmd_gather_lane_offset_oob.tl; do
+    for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
+        mode=${pair%% *}
+        isa=${pair##* }
+        if [ "$mode" != scalar ] && ! isa_available "$isa"; then
+            echo "[spmd-simd]   skip gather-oob $gather_oob $mode ($isa not runnable on this $HOST_OS host)"
+            continue
+        fi
+        run_spmd_mode "$gather_oob" "$mode"
+        if [ "$mode_code" != 134 ] || ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
+            echo "[spmd-simd] gather-oob $gather_oob $mode did not take the bounds abort path:" >&2
+            sed 's/^/    /' "$mode_err" >&2
+            echo "$gather_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
+        else
+            echo "[spmd-simd] gather-oob $gather_oob $mode -> bounds abort OK"
+        fi
+    done
 done
 
 # Every source and destination participates in the fused safety proof. A short

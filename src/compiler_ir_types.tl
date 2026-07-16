@@ -191,11 +191,13 @@
   (Payload i64 CompilerIrValue CompilerIrValue CompilerIrValue i64 AstType))
 
 ;; A checked SPMD gather. The lowering has already validated every logical
-;; index, in lane order, before this instruction is emitted. `index-base` is a
-;; contiguous i64 vector starting at `index`; `base` is the gathered element
-;; data pointer.
+;; index, in lane order, before this instruction is emitted. Direct indexes
+;; load a contiguous i64 vector from `index-base` starting at `index`. When
+;; `lane-offset` is true, the loaded values are offsets and the backend adds
+;; the logical foreach lanes starting at `index`. `base` is the gathered
+;; element data pointer.
 (defenum CompilerIrInstrGatherLoadPayload
-  (Payload i64 CompilerIrValue CompilerIrValue CompilerIrValue i64 AstType))
+  (Payload i64 CompilerIrValue CompilerIrValue CompilerIrValue bool i64 AstType))
 
 (defenum CompilerIrInstrCallCAbiStoreResultPayload
   (Payload CompilerIrValue i64 CompilerIrCallArgs CompilerIrCAbiReturnSlotList))
@@ -409,6 +411,7 @@
   [base : CompilerIrValue]
   [index-base : CompilerIrValue]
   [index : CompilerIrValue]
+  [lane-offset : bool]
   [lanes : i64]
   [ty : AstType]) : CompilerIrInstr
   (CompilerIrInstr.GatherLoad
@@ -418,6 +421,7 @@
         base
         index-base
         index
+        lane-offset
         lanes
         ty))))
 
@@ -2347,6 +2351,7 @@
             base
             index-base
             index
+            lane-offset
             lanes
             ty)
           (ir-instr-gather-load
@@ -2354,6 +2359,7 @@
             (compiler-ir-clone-value base)
             (compiler-ir-clone-value index-base)
             (compiler-ir-clone-value index)
+            lane-offset
             lanes
             (compiler-ir-clone-type ty))])]
     [(CompilerIrInstr.TailMask dst index len lanes)
@@ -3800,7 +3806,7 @@
             span)])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
           (compiler-source-spans-insert-instr-entry
             spans
             (compiler-source-spans-value-key function dst)
@@ -3995,7 +4001,7 @@
                 (compiler-source-spans-value-key function dst))])]
         [(CompilerIrInstr.GatherLoad payload-box)
           (match (box-get payload-box)
-            [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
+            [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
               (compiler-source-spans-entry-list-lookup
                 instr-entries
                 (compiler-source-spans-value-key function dst))])]
@@ -5079,6 +5085,7 @@
             base
             index-base
             index
+            lane-offset
             lanes
             elem-ty)
           (str_cat.str-cat
@@ -5090,6 +5097,9 @@
             (compiler-ir-value-describe index-base)
             ", "
             (compiler-ir-value-describe index)
+            (if lane-offset
+              " lane-offset"
+              "")
             (compiler-ir-vector-suffix lanes elem-ty))])]
     [(CompilerIrInstr.TailMask dst index len lanes)
       (str_cat.str-cat

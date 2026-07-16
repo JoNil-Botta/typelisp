@@ -513,9 +513,9 @@ and invoke the subcommand directly (e.g. `cli build --direct …`,
 
 [`../scripts/cli-gate-coverage.tsv`](../scripts/cli-gate-coverage.tsv) defines
 the version-1 machine-readable schema used to inventory compiler invocations in
-large shell gates. The schema and checker are intentionally independent of the
-production-gate migration: a later inventory registers each owning script with
-a `# source<TAB>path` metadata line and adds one row per expanded case.
+the three large shell CLI gates. Each owning script is registered with a
+`# source<TAB>path` metadata line, and every executing or expanded case has one
+inventory row.
 
 The 19 TSV fields are:
 
@@ -575,6 +575,66 @@ through `effects`. Exact repeated identities are accepted only when every row
 names the same owner from that duplicate group and supplies a non-`-` checked
 reason. Successful output contains sorted counts per gate and source site,
 one count for every expanded case, and a sorted duplicate report.
+
+The inventory begins with a versioned authoritative count block. A directive
+has the form `# count<TAB>scope<TAB>key<TAB>metric<TAB>value`. The checker
+recomputes the complete set of total, gate, host, effective-platform,
+invocation-kind, process, and duplicate counts and compares it byte-for-byte
+with that block. Missing categories, unexpected categories, and stale values
+all fail. Effective-platform counts include `host=all` rows. Delegated fixture
+sets use:
+
+```text
+# child-corpus<TAB>case_id<TAB>host<TAB>directory<TAB>include-glob<TAB>exclude-glob-or--<TAB>count
+```
+
+Those counts are rediscovered from regular files in the named directory. This
+keeps the LSP and REPL aggregate invocations honest when fixtures are added or
+removed without adding more parent shell invocations.
+
+The authoritative inventory at schema version 1 is:
+
+| Gate | Owning source | CI host | Rows | Source sites | Expanded cases |
+| --- | --- | --- | ---: | ---: | ---: |
+| `public-tools` | `scripts/verify-public-tools.sh` | Linux and Windows | 291 | 182 | 125 |
+| `selfhost-cli` | `scripts/verify-selfhost-cli-build-run.sh` | Linux and Windows | 77 | 76 | 16 |
+| `stage1-wrapper` | `scripts/check-stage1-wrapper.sh` | Linux | 101 | 85 | 18 |
+| Total | three registered sources | mixed | 469 | 343 | 159 |
+
+There are 348 host-neutral rows, 118 Linux-only rows, and 3 Windows-only rows,
+so the effective platform totals are 466 on Linux and 351 on Windows. The
+invocation split is 410 wrapper, 51 direct, and 8 delegated rows. Every distinct
+`process` value and its count is also checked in the count block rather than
+being maintained as a second prose table.
+
+Delegated fixture ownership is 63 LSP sessions on both hosts and 13 base REPL
+sessions on Windows. Linux owns those 13 base REPL sessions plus 6 Linux REPL
+sessions and 17 selfhost REPL sessions, for 36. The focused LSP transcript-batch
+contract is a delegated verifier with two generated valid entries; it is not a
+fixture-directory corpus.
+
+The exact-duplicate report currently contains nine two-row groups: each
+formatter execution is deliberately replayed once to assert idempotence, with
+the first execution as canonical owner and
+`intentional-idempotence-replay` as the checked reason. There are no
+cross-gate duplicates. Issue #4923 removed the former selfhost/public-tools LSP
+corpus replay and is closed.
+
+When changing a covered gate:
+
+1. add or update the source annotation and its inventory row together;
+2. run the checker and inspect its stale-count diff;
+3. update the complete count block and any affected child-corpus expectation;
+4. inspect `target/cli-gate-coverage/duplicates.tsv`; if a new exact duplicate
+   is not an intentional replay with a clear owner, file a focused removal issue;
+5. run `scripts/check-cli-gate-coverage.sh --self-test` and the owning full gate.
+
+CI owns one fast `CLI gate inventory and ownership` entry on both platforms.
+It runs the checker self-tests and then the production inventory before the
+expensive selfhost, public-tools, and Linux stage1-wrapper gates. A count diff,
+missing annotation/row, bad owner, unexplained duplicate, or child fixture
+count mismatch fails CI without removing or skipping any underlying invocation
+or assertion.
 
 Use `scripts/fetch-stage0.sh <stage0-tag>` to pin an immutable artifact. The
 script downloads the host platform asset, verifies the file is non-empty,

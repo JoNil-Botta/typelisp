@@ -838,7 +838,14 @@
           (compiler-live-values3-vars base index mask)])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base index _ _)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            _
+            base
+            index-base
+            index
+            _
+            _
+            _)
           (compiler-live-values3-vars base index-base index)])]
     [(CompilerIrInstr.TailMask _ index len _)
       (compiler-live-values2-vars index len)]
@@ -926,7 +933,7 @@
           (compiler-live-set1 dst)])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
           (compiler-live-set1 dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.EntryArgc dst) (compiler-live-set1 dst)]

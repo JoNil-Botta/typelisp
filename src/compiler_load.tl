@@ -2769,11 +2769,10 @@
 
 (define (compiler-load-session-state-lazy-import-record-skip!
   [state : CompilerLoadSessionState]) : unit
-  (begin
-    (array-set!
-      (struct-get state lazy-import-skip-record-count)
-      0
-      (+ (compiler-load-session-state-lazy-import-skip-count state) 1))))
+  (array-set!
+    (struct-get state lazy-import-skip-record-count)
+    0
+    (+ (compiler-load-session-state-lazy-import-skip-count state) 1)))
 
 (define (compiler-load-lazy-import-record-skip!) : unit
   (compiler-load-session-state-lazy-import-record-skip!

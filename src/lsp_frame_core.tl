@@ -653,21 +653,26 @@
             "documentSymbolProvider"
             (json.JsonBool true)
             (lsp-json-member
-              "completionProvider"
-              (lsp-json-object1 "resolveProvider" (json.JsonBool false))
+              "documentHighlightProvider"
+              (json.JsonBool true)
               (lsp-json-member
-                "inlayHintProvider"
-                (json.JsonBool true)
+                "completionProvider"
+                (lsp-json-object1 "resolveProvider" (json.JsonBool false))
                 (lsp-json-member
-                  "documentFormattingProvider"
+                  "inlayHintProvider"
                   (json.JsonBool true)
                   (lsp-json-member
-                    "hoverProvider"
+                    "documentFormattingProvider"
                     (json.JsonBool true)
                     (lsp-json-member
-                      "documentLinkProvider"
-                      (lsp-json-object1 "resolveProvider" (json.JsonBool false))
-                      json.JsonMemberListNil)))))))))
+                      "hoverProvider"
+                      (json.JsonBool true)
+                      (lsp-json-member
+                        "documentLinkProvider"
+                        (lsp-json-object1
+                          "resolveProvider"
+                          (json.JsonBool false))
+                        json.JsonMemberListNil))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -5718,6 +5723,129 @@
               acc)))
         (lsp-find-references-in-text text name (+ i 1) n acc)))))
 
+;; Maximal identifier token covering `off`, limited to source code. Comments,
+;; strings, and character literals deliberately produce no symbol.
+(define (lsp-code-symbol-at-offset [text : String] [off : i64]) : String
+  (let
+    [n : i64 (string.string-length text)]
+    [i : i64 0]
+    (if (or (< off 0) (>= off n))
+      ""
+      (begin
+        (while (and (< i n) (<= i off))
+          (let
+            [c : char (string.string-ref text i)]
+            (cond
+              [(= c ';') (set! i (lsp-skip-line text i n))]
+              [(= c '"') (set! i (lsp-skip-string text i n))]
+              [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+              [(lsp-ident-char? c)
+                (let
+                  [end : i64 (lsp-scan-ident text i n)]
+                  (begin
+                    (when
+                      (< off end)
+                      (return (string.substring text i (- end i))))
+                    (set! i end)))]
+              [else (set! i (+ i 1))])))
+        ""))))
+
+(define (lsp-document-highlight-range [line : i64] [col : i64] [len : i64]) : json.Json
+  (lsp-json-object2
+    "start"
+    (lsp-position line col)
+    "end"
+    (lsp-position line (+ col len))))
+
+(define (lsp-document-highlight [line : i64] [col : i64] [len : i64]) : json.Json
+  (lsp-json-object2
+    "range"
+    (lsp-document-highlight-range line col len)
+    "kind"
+    (lsp-json-number 1)))
+
+;; Source-ordered exact-token highlights. The scanner shares the lexical skip
+;; rules used by definition/document-symbol discovery.
+(define (lsp-document-highlights-in-text [text : String] [name : String]) : json.JsonList
+  (let
+    [n : i64 (string.string-length text)]
+    [name-len : i64 (string.string-length name)]
+    [i : i64 0]
+    [lc-cache : LspLineColCache (LspLineColCache -1 1 1)]
+    [acc : json.JsonList json.JsonListNil]
+    (begin
+      (while (< i n)
+        (let
+          [c : char (string.string-ref text i)]
+          (cond
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(lsp-ident-char? c)
+              (let
+                [end : i64 (lsp-scan-ident text i n)]
+                (begin
+                  (if (and
+                    (> name-len 0)
+                    (= (- end i) name-len)
+                    (string.is-string-prefix-at (& text) (& name) i))
+                    (set!
+                      acc
+                      (let
+                        [lc : LspLineCol
+                          (lsp-line-col-cache-at-offset! lc-cache text i)]
+                        (lsp-json-list-cons
+                          (lsp-document-highlight
+                            (struct-get lc line)
+                            (struct-get lc col)
+                            name-len)
+                          acc)))
+                    unit)
+                  (set! i end)))]
+            [else (set! i (+ i 1))])))
+      (json.list-reverse acc))))
+
+(define (lsp-json-int-field-usable? [value : json.Json] [key : String]) : bool
+  (match (json.object-get value (& key))
+    [(json.JsonFound field)
+      (match field
+        [(json.JsonNumber text)
+          (match (json.number->i64 (& text))
+            [(json.OkJsonNumberI64 number) (>= number 0)]
+            [(json.ErrJsonNumberI64 _) false])]
+        [_ false])]
+    [(json.JsonMissing) false]))
+
+(define (lsp-handle-document-highlight
+  [id : json.Json]
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]) : unit
+  (match (lsp-get-document params docs)
+    [(LspDocumentLookup.Found _ text _)
+      (let
+        [position-key : String "position"]
+        (match (json.object-get params (& position-key))
+          [(json.JsonFound position)
+            (if (and
+              (lsp-json-int-field-usable? position "line")
+              (lsp-json-int-field-usable? position "character"))
+              (let
+                [line : i64 (lsp-json-int-field-default position "line" 0)]
+                [col : i64 (lsp-json-int-field-default position "character" 0)]
+                [off : i64 (lsp-offset-at-position text line col)]
+                [name : String (lsp-code-symbol-at-offset text off)]
+                (lsp-write-response
+                  id
+                  (lsp-json-array
+                    (if (string.eq name "")
+                      json.JsonListNil
+                      (lsp-document-highlights-in-text text name)))))
+              (lsp-write-response id (lsp-json-array json.JsonListNil)))]
+          [(json.JsonMissing)
+            (lsp-write-response id (lsp-json-array json.JsonListNil))]))]
+    [(LspDocumentLookup.Missing)
+      (lsp-write-response id (lsp-json-array json.JsonListNil))]))
+
 ;; tl/findReferences - All uses of a name
 (define (lsp-handle-tl-find-references
   [id : json.Json]
@@ -6109,6 +6237,27 @@
                       (match (json.object-get message (& params-key))
                         [(json.JsonFound params)
                           (lsp-handle-document-symbol id params docs)]
+                        [(json.JsonMissing)
+                          (lsp-write-response
+                            id
+                            (lsp-json-array json.JsonListNil))]))]
+                  [(json.JsonMissing) unit]))
+              (set! result (LspHandleResult.Continue docs)))
+            unit)
+          (if (and
+            (not handled)
+            (string.eq method "textDocument/documentHighlight"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json.object-get message (& id-key))
+                  [(json.JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json.object-get message (& params-key))
+                        [(json.JsonFound params)
+                          (lsp-handle-document-highlight id params docs)]
                         [(json.JsonMissing)
                           (lsp-write-response
                             id

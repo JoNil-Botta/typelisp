@@ -49503,6 +49503,7 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [fallback-module : String]
+  [macro-name : String]
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]
@@ -49512,6 +49513,7 @@
     ctx
     decls
     fallback-module
+    macro-name
     (& params)
     (& args)
     0
@@ -49523,7 +49525,10 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [fallback-module : String]
+  [macro-name : String]
+  [param-name : i64]
   [ty : AstType]
+  [type-kinds : AstMacroTypeKindList]
   [head-expr : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]
@@ -49532,9 +49537,18 @@
     [(tc-macro-type-param-kind? ty)
       (match (macro-type-arg-with-fallback ctx decls fallback-module head-expr)
         [(ResultMacroTypeArg.Ok resolved-ty)
-          (ResultGenKey.Ok
-            (str_cat.str-cat "type_" (ctfe-type-key resolved-ty))
-            fuel)]
+          (match (macro-validate-type-kind-constraint
+            ctx
+            macro-name
+            param-name
+            resolved-ty
+            type-kinds
+            head-expr)
+            [(ResultMacroCheck.Ok)
+              (ResultGenKey.Ok
+                (str_cat.str-cat "type_" (ctfe-type-key resolved-ty))
+                fuel)]
+            [(ResultMacroCheck.Err diag) (ResultGenKey.Err diag)])]
         [(ResultMacroTypeArg.Err diag) (ResultGenKey.Err diag)])]
     [(tc-macro-module-param-kind? ty)
       (match (macro-module-strategy-arg-with-fallback
@@ -49560,6 +49574,7 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [fallback-module : String]
+  [macro-name : String]
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
   [index : i64]
@@ -49577,7 +49592,7 @@
               "macro call has too many arguments"))))]
     [else
       (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-        [(AstMacroParam.Param _ ty variadic _)
+        [(AstMacroParam.Param param-name ty variadic type-kinds)
           (if variadic
             (cond
               [(tc-macro-type-param-kind? ty)
@@ -49616,7 +49631,10 @@
                   ctx
                   decls
                   fallback-module
+                  macro-name
+                  param-name
                   ty
+                  type-kinds
                   head-expr
                   env
                   fuel
@@ -49626,6 +49644,7 @@
                       ctx
                       decls
                       fallback-module
+                      macro-name
                       params
                       args
                       (+ index 1)
@@ -49653,6 +49672,7 @@
     ctx
     decls
     fallback-module
+    macro-name
     params
     args
     env
@@ -54850,6 +54870,62 @@
             (ResultMacroTypeArg.Ok resolved-ty)]
           [(ResultMacroTypeArg.Err _) (ResultMacroTypeArg.Err primary-diag)]))]))
 
+(define (macro-type-kind-list-render [kinds : AstMacroTypeKindList]) : String
+  (match kinds
+    [(AstMacroTypeKindList.Nil) ""]
+    [(AstMacroTypeKindList.Cons head rest)
+      (let
+        [tail : AstMacroTypeKindList (box-get rest)]
+        (str_cat.str-cat
+          (intern-str head)
+          (match tail
+            [(AstMacroTypeKindList.Nil) ""]
+            [_ (str_cat.str-cat ", " (macro-type-kind-list-render tail))])))]))
+
+(define (macro-type-kind-constraint-message
+  [macro-name : String]
+  [param-name : i64]
+  [resolved-ty : AstType]
+  [type-kinds : AstMacroTypeKindList]) : String
+  (str_cat.str-cat
+    "typecheck: macro "
+    (macro-output-source-name macro-name)
+    " type operand "
+    (intern-str param-name)
+    " rejects "
+    (tc-type-render resolved-ty)
+    ": expected one of :kind "
+    (macro-type-kind-list-render type-kinds)))
+
+(define (macro-validate-type-kind-constraint
+  [ctx : TcContext]
+  [macro-name : String]
+  [param-name : i64]
+  [resolved-ty : AstType]
+  [type-kinds : AstMacroTypeKindList]
+  [arg-expr : AstExpr]) : ResultMacroCheck
+  (match type-kinds
+    [(AstMacroTypeKindList.Nil) ResultMacroCheck.Ok]
+    [_
+      (let
+        [actual-kind : i64
+          (intern
+            (ctfe-type-kind-with-reflections-and-pools
+              (tc-context-pools ctx)
+              (ctfe-reflect-info-list-empty)
+              resolved-ty))]
+        (if (ast-macro-type-kind-list-contains-id? type-kinds actual-kind)
+          ResultMacroCheck.Ok
+          (ResultMacroCheck.Err
+            (box
+              (ctfe-diagnostic-at-expr
+                arg-expr
+                (macro-type-kind-constraint-message
+                  macro-name
+                  param-name
+                  resolved-ty
+                  type-kinds))))))]))
+
 (define (macro-module-strategy-unknown-message [name : String]) : String
   (str_cat.str-cat
     "typecheck: unknown module strategy "
@@ -55305,8 +55381,10 @@
   [decls : AstDeclList]
   [fallback-module : String]
   [type-env : TcTypeEnv]
+  [macro-name : String]
   [name : i64]
   [ty : AstType]
+  [type-kinds : AstMacroTypeKindList]
   [arg-id : i64]
   [arg-expr : AstExpr]
   [capture-expr-types : bool]
@@ -55315,11 +55393,20 @@
     [(tc-macro-type-param-kind? ty)
       (match (macro-type-arg-with-fallback ctx decls fallback-module arg-expr)
         [(ResultMacroTypeArg.Ok resolved-ty)
-          (ResultMacroEnv.Ok
-            (ctfe-env-extend
-              env
-              (intern-str name)
-              (CompilerCtfeValue.Type resolved-ty)))]
+          (match (macro-validate-type-kind-constraint
+            ctx
+            macro-name
+            name
+            resolved-ty
+            type-kinds
+            arg-expr)
+            [(ResultMacroCheck.Ok)
+              (ResultMacroEnv.Ok
+                (ctfe-env-extend
+                  env
+                  (intern-str name)
+                  (CompilerCtfeValue.Type resolved-ty)))]
+            [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]
         [(ResultMacroTypeArg.Err diag) (ResultMacroEnv.Err diag)])]
     [(tc-macro-module-param-kind? ty)
       (match (macro-module-strategy-arg-with-fallback
@@ -55383,6 +55470,7 @@
   [decls : AstDeclList]
   [fallback-module : String]
   [type-env : TcTypeEnv]
+  [macro-name : String]
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]
@@ -55393,6 +55481,7 @@
     decls
     fallback-module
     type-env
+    macro-name
     (& params)
     (& args)
     0
@@ -55405,6 +55494,7 @@
   [decls : AstDeclList]
   [fallback-module : String]
   [type-env : TcTypeEnv]
+  [macro-name : String]
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
   [index : i64]
@@ -55422,7 +55512,7 @@
               "macro call has too many arguments"))))]
     [else
       (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-        [(AstMacroParam.Param pname pty variadic _)
+        [(AstMacroParam.Param pname pty variadic type-kinds)
           (if variadic
             (macro-bind-variadic-param
               ctx
@@ -55446,8 +55536,10 @@
                   decls
                   fallback-module
                   type-env
+                  macro-name
                   pname
                   pty
+                  type-kinds
                   arg
                   arg-expr
                   capture-expr-types
@@ -55458,6 +55550,7 @@
                       decls
                       fallback-module
                       type-env
+                      macro-name
                       params
                       args
                       (+ index 1)
@@ -55503,6 +55596,7 @@
       decls
       fallback-module
       type-env
+      macro-name
       params
       expanded-args
       (tc-ctfe-env ctx)
@@ -56031,6 +56125,7 @@
         decls
         definition-module
         type-env
+        _macro-name
         params
         expanded-args
         (ctfe-env-empty)
@@ -56072,6 +56167,7 @@
     decls
     definition-module
     type-env
+    _macro-name
     params
     args
     (ctfe-env-empty)

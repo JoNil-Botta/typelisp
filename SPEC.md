@@ -1135,7 +1135,7 @@ stdlib-version diagnostic, not a silent fallback to a separate internal
 A fixed `defmacro` operand whose declared type is exactly `type` may carry one
 optional kind constraint after its type annotation:
 
-```lisp test=ignore name=macro-type-kind-constraint-surface reason=specified-before-implementation
+```lisp test=ignore name=macro-type-kind-constraint-surface reason=illustrative-signature-fragment
 [T : type (:kind i64 i32 string)]
 ```
 
@@ -1208,7 +1208,7 @@ name, so an outer generator failure does not obscure which constraint failed.
 An equality-like expression macro can state its finite scalar surface without
 claiming a general equality trait:
 
-```lisp test=ignore name=macro-type-kind-constraint-equality reason=specified-before-implementation
+```lisp test=ignore name=macro-type-kind-constraint-equality reason=illustrative-call-site-contract
 (defmacro (scalar-eq
   [T : type (:kind i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char)]
   [left : Expr]
@@ -1226,7 +1226,7 @@ A generated serializer family can restrict its first slice to reflected
 aggregate shapes while keeping format behavior in an explicit strategy
 module:
 
-```lisp test=ignore name=macro-type-kind-constraint-generated-module reason=specified-before-implementation
+```lisp test=ignore name=macro-type-kind-constraint-generated-module reason=illustrative-strategy-module-contract
 (defmacro (record-codec
   [format : Module]
   [T : type (:kind struct enum)]) : Module
@@ -6298,7 +6298,8 @@ in documentation passes.
   multi-destination maps with one shared lane shape, distinct destinations,
   and no destination read by a fused value; eligible vectorized
   `spmd-reduce` folds; AVX2/AVX-512 masked varying `if` subsets including
-  nested branch-mask composition and value-producing selects; runtime
+  nested branch-mask composition and value-producing selects; AVX2/AVX-512
+  varying `while` with loop-carried active masks and nested masked flow; runtime
   dispatch via `defdispatch` with cached CPUID/XGETBV selection.
 - Comptime: declaration-emitting typed macros, type reflection, CTFE with
   deterministic fuel, and per-package `tlci` comptime interface images.
@@ -6306,7 +6307,8 @@ in documentation passes.
   doctests, `fmt`, `lint`, `doc` generation, the published docs site, a
   stdio LSP server with diagnostics, definition, completion, inlay hints,
   formatting, hover, document links, flat top-level document-symbol outlines,
-  and TypeLisp structural-edit/query extensions, plus a REPL that evaluates
+  lexical document highlights, and TypeLisp structural-edit/query extensions,
+  plus a REPL that evaluates
   through the real compile/link/run pipeline.
 
 ### 8.2 Not yet implemented, in migration, or deferred
@@ -6315,7 +6317,7 @@ in documentation passes.
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD lowering for standalone bool dynamic-array lanes | AVX-512 subset only; scalar reference lowering is complete and AVX2 reports an explicit diagnostic outside supported masked-if lowering. |
-| AVX2 lowering for varying `while`/`match`, and SIMD early exits | Deferred; scalar reference lowering is complete and unsupported SIMD backend modes report explicit diagnostics. |
+| AVX2 lowering for varying `match`, and SIMD early exits | Deferred; AVX2 varying `while` is implemented, while scalar reference lowering is complete and unsupported SIMD backend modes report explicit diagnostics for the remaining forms. |
 | Vectorized `spmd-scan`, vectorized shuffles, vectorized enum-payload gather/match | Deferred. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Frontend analysis and private scalar/AVX-512 call IR lowering are implemented; native backend emission is deferred under #3767. |
@@ -6329,7 +6331,7 @@ in documentation passes.
 | Removal of legacy `comptime-decl` forms | Stdlib well-known declarations now use plain declarations; legacy syntax remains accepted as parser/typechecker compatibility pending final removal. |
 | Compiled comptime execution from embedded/package `tlci` images | In progress: CTFE is the executing path today, with byte-identical expansion required between the two paths. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
-| Richer LSP/IDE features | Hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, references/rename through standard methods, and workspace indexing remain pending. |
+| Richer LSP/IDE features | Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, references/rename through standard methods, and workspace indexing remain pending. |
 
 ---
 

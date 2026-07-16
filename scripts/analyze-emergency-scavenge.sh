@@ -21,6 +21,7 @@ benchmarks/*/bench.tl at opt2. Results are written to:
 Environment:
   TYPELISP_BIN                         seed compiler when no argument is given
   TYPELISP_EMERGENCY_SCAVENGE_OUT      output directory
+  TYPELISP_EMERGENCY_SCAVENGE_CFG      optional additional cfg predicate
 EOF
 }
 
@@ -51,6 +52,21 @@ if [ ! -x "$COMPILER" ]; then
 fi
 
 WORKDIR=${TYPELISP_EMERGENCY_SCAVENGE_OUT:-target/emergency-scavenge-census/$NL_HOST_OS}
+EXTRA_CFG=${TYPELISP_EMERGENCY_SCAVENGE_CFG:-}
+case "$EXTRA_CFG" in
+    "") ;;
+    *[!A-Za-z0-9_-]*)
+        echo "invalid TYPELISP_EMERGENCY_SCAVENGE_CFG: $EXTRA_CFG" >&2
+        exit 2
+        ;;
+esac
+
+extra_cfg_args() {
+    if [ -n "$EXTRA_CFG" ]; then
+        printf '%s\n' --cfg "$EXTRA_CFG"
+    fi
+}
+
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR/asm" "$WORKDIR/logs"
 
@@ -166,6 +182,7 @@ if ! "$COMPILER" compile src/main.tl \
     --stdlib-root stdlib \
     --stdlib-root src \
     --cfg scavenge-census \
+    $(extra_cfg_args) \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "census-enabled CLI compile failed"

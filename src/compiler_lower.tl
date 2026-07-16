@@ -378,9 +378,11 @@
 (defenum LowerArgWriteback
   (Writeback i64 CompilerIrValue AstType AstExpr))
 
-(defstruct LowerArgWritebackList
-  (items (Array LowerArgWriteback))
-  (count i64))
+(import (vector.vector LowerArgWriteback core) as lower_arg_writeback_vec)
+
+(defenum LowerArgWritebacks
+  (None)
+  (Some lower_arg_writeback_vec.Vec))
 
 (defenum LowerMaybeArgWriteback
   (No)
@@ -394,7 +396,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultLowerCallArgs
-  (Ok LowerState CompilerIrValueList LowerArgWritebackList)
+  (Ok LowerState CompilerIrValueList LowerArgWritebacks)
   (Err (Box CompilerDiagnostic)))
 
 (defenum LowerCAbiEightbyteClass
@@ -17367,56 +17369,15 @@
     [(ResultTcExpr.Err message)
       (ResultLowerCallArg.Err (box (lower-diagnostic-at-expr arg message)))]))
 
-(define (lower-arg-writeback-list-empty) : LowerArgWritebackList
-  (LowerArgWritebackList (make-array LowerArgWriteback 0) 0))
-
-(define (lower-arg-writeback-list-count [writebacks : LowerArgWritebackList]) : i64
-  (struct-get writebacks count))
-
-(define (lower-arg-writeback-list-ref
-  [writebacks : LowerArgWritebackList]
-  [index : i64]) : LowerArgWriteback
-  (array-ref (struct-get writebacks items) index))
-
-(define (lower-arg-writeback-list-add
-  [writebacks : LowerArgWritebackList]
-  [writeback : LowerArgWriteback]) : LowerArgWritebackList
-  (let
-    [items : (Array LowerArgWriteback) (struct-get writebacks items)]
-    [count : i64 (struct-get writebacks count)]
-    [out : (Array LowerArgWriteback) (make-array LowerArgWriteback (+ count 1))]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (array-set! out index (array-ref items index))
-          (set! index (+ index 1))))
-      (array-set! out count writeback)
-      (LowerArgWritebackList out (+ count 1)))))
-
-(define (lower-arg-writeback-list-add-front
-  [writebacks : LowerArgWritebackList]
-  [writeback : LowerArgWriteback]) : LowerArgWritebackList
-  (let
-    [items : (Array LowerArgWriteback) (struct-get writebacks items)]
-    [count : i64 (struct-get writebacks count)]
-    [out : (Array LowerArgWriteback) (make-array LowerArgWriteback (+ count 1))]
-    [index : i64 0]
-    (begin
-      (array-set! out 0 writeback)
-      (while (< index count)
-        (begin
-          (array-set! out (+ index 1) (array-ref items index))
-          (set! index (+ index 1))))
-      (LowerArgWritebackList out (+ count 1)))))
-
-(define (lower-call-arg-writebacks-add-maybe
-  [writebacks : LowerArgWritebackList]
-  [maybe-writeback : LowerMaybeArgWriteback]) : LowerArgWritebackList
+;; Arguments lower left-to-right, so append each writeback before recurring.
+;; This preserves post-call writeback order without a prepend/copy pass.
+(define (lower-call-arg-writebacks-push-maybe
+  [writebacks : (&mut writebacks lower_arg_writeback_vec.Vec)]
+  [maybe-writeback : LowerMaybeArgWriteback]) : unit
   (match maybe-writeback
-    [(LowerMaybeArgWriteback.No) writebacks]
+    [(LowerMaybeArgWriteback.No) unit]
     [(LowerMaybeArgWriteback.Some writeback)
-      (lower-arg-writeback-list-add-front writebacks writeback)]))
+      (lower_arg_writeback_vec.push writebacks writeback)]))
 
 (define (lower-call-args-as
   [ctx : TcContext]
@@ -17425,7 +17386,15 @@
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerCallArgs
-  (lower-call-args-as-at ctx state env type-env (& args) (& types) 0))
+  (lower-call-args-as-at
+    ctx
+    state
+    env
+    type-env
+    (& args)
+    (& types)
+    0
+    (lower_arg_writeback_vec.new)))
 
 (define (lower-call-args-as-at
   [ctx : TcContext]
@@ -17434,13 +17403,14 @@
   [type-env : TcTypeEnv]
   [args : (& args AstExprList)]
   [types : (& types AstTypeList)]
-  [index : i64]) : ResultLowerCallArgs
+  [index : i64]
+  [writebacks : lower_arg_writeback_vec.Vec]) : ResultLowerCallArgs
   (if (>= index (struct-get args len))
     (if (>= index (ast-type-list-len types))
       (ResultLowerCallArgs.Ok
         state
         CompilerIrValueList.Nil
-        (lower-arg-writeback-list-empty))
+        (LowerArgWritebacks.Some writebacks))
       (ResultLowerCallArgs.Err
         (box (lower-diagnostic "lower: constructor arity mismatch"))))
     (if (>= index (ast-type-list-len types))
@@ -17459,26 +17429,31 @@
           [(ResultLowerCallArg.Ok lowered-arg)
             (match lowered-arg
               [(LowerCallArg.Arg arg-state value maybe-writeback)
-                (match (lower-call-args-as-at
-                  ctx
-                  arg-state
-                  env
-                  type-env
-                  args
-                  types
-                  (+ index 1))
-                  [(ResultLowerCallArgs.Ok
-                      rest-state
-                      rest-values
-                      rest-writebacks)
-                    (ResultLowerCallArgs.Ok
-                      rest-state
-                      (compiler-ir-value-cons value rest-values)
-                      (lower-call-arg-writebacks-add-maybe
-                        rest-writebacks
-                        maybe-writeback))]
-                  [(ResultLowerCallArgs.Err message)
-                    (ResultLowerCallArgs.Err message)])])]
+                (let
+                  [next-writebacks : lower_arg_writeback_vec.Vec writebacks]
+                  (begin
+                    (lower-call-arg-writebacks-push-maybe
+                      (&mut next-writebacks)
+                      maybe-writeback)
+                    (match (lower-call-args-as-at
+                      ctx
+                      arg-state
+                      env
+                      type-env
+                      args
+                      types
+                      (+ index 1)
+                      next-writebacks)
+                      [(ResultLowerCallArgs.Ok
+                          rest-state
+                          rest-values
+                          rest-writebacks)
+                        (ResultLowerCallArgs.Ok
+                          rest-state
+                          (compiler-ir-value-cons value rest-values)
+                          rest-writebacks)]
+                      [(ResultLowerCallArgs.Err message)
+                        (ResultLowerCallArgs.Err message)])))])]
           [(ResultLowerCallArg.Err message) (ResultLowerCallArgs.Err message)])))))
 
 (define (lower-apply-arg-writeback
@@ -17498,25 +17473,38 @@
             (CompilerIrInstr.Mov local-id loaded referent-ty)
             origin)])]))
 
+(define lower-arg-writeback-fallback : LowerArgWriteback
+  (LowerArgWriteback.Writeback
+    0
+    (CompilerIrValue.I64 0)
+    (AstType.I64)
+    (AstExpr.Literal (ast-lit-int 0))))
+
 (define (lower-apply-arg-writebacks
   [ctx : TcContext]
   [state : LowerState]
-  [writebacks : LowerArgWritebackList]) : LowerState
-  (let
-    [count : i64 (lower-arg-writeback-list-count writebacks)]
-    [index : i64 0]
-    [out : LowerState state]
-    (begin
-      (while (< index count)
+  [writebacks : LowerArgWritebacks]) : LowerState
+  (match writebacks
+    [(LowerArgWritebacks.None) state]
+    [(LowerArgWritebacks.Some items)
+      (let
+        [count : i64 (lower_arg_writeback_vec.len (& items))]
+        [index : i64 0]
+        [out : LowerState state]
         (begin
-          (set!
-            out
-            (lower-apply-arg-writeback
-              ctx
-              out
-              (lower-arg-writeback-list-ref writebacks index)))
-          (set! index (+ index 1))))
-      out)))
+          (while (< index count)
+            (begin
+              (set!
+                out
+                (lower-apply-arg-writeback
+                  ctx
+                  out
+                  (lower_arg_writeback_vec.get
+                    (& items)
+                    index
+                    lower-arg-writeback-fallback)))
+              (set! index (+ index 1))))
+          out))]))
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-lower-bootstrap-runtime-id? name-id))
@@ -17620,10 +17608,7 @@
     (lower-call-args-as ctx state env type-env args types)
     (match (lower-args-as ctx state env type-env args types)
       [(ResultLowerArgs.Ok args-state values)
-        (ResultLowerCallArgs.Ok
-          args-state
-          values
-          (lower-arg-writeback-list-empty))]
+        (ResultLowerCallArgs.Ok args-state values (LowerArgWritebacks.None))]
       [(ResultLowerArgs.Err message) (ResultLowerCallArgs.Err message)])))
 
 (define (lower-construct-struct-inline-from-values
@@ -24077,10 +24062,7 @@
     [_
       (match (lower-args ctx state env type-env args)
         [(ResultLowerArgs.Ok args-state values)
-          (ResultLowerCallArgs.Ok
-            args-state
-            values
-            (lower-arg-writeback-list-empty))]
+          (ResultLowerCallArgs.Ok args-state values (LowerArgWritebacks.None))]
         [(ResultLowerArgs.Err message) (ResultLowerCallArgs.Err message)])]))
 
 (define (lower-indirect-call
@@ -34579,8 +34561,7 @@
           out-of-line-call))
       (and
         (lower-mode-avx2? mode)
-        varying-if
-        (not varying-while)
+        (or varying-if varying-while)
         (not varying-match)))
       (let
         [lanes : i64
@@ -59012,24 +58993,6 @@
           "cleanup-a")
         "hidden-b"
         "cleanup-b")]
-    [origin : AstExpr (AstExpr.Literal (ast-lit-int 0))]
-    [tail-writebacks : LowerArgWritebackList
-      (lower-arg-writeback-list-add
-        (lower-arg-writeback-list-empty)
-        (LowerArgWriteback.Writeback
-          12
-          (CompilerIrValue.Var 22)
-          (AstType.Bool)
-          origin))]
-    [writebacks : LowerArgWritebackList
-      (lower-call-arg-writebacks-add-maybe
-        tail-writebacks
-        (LowerMaybeArgWriteback.Some
-          (LowerArgWriteback.Writeback
-            11
-            (CompilerIrValue.Var 21)
-            (AstType.I64)
-            origin)))]
     [slots : LowerCAbiSlotList
       (lower-c-abi-slot-list-pair
         (LowerCAbiSlot.Slot (AstType.I64) 0)
@@ -59046,23 +59009,6 @@
       (= (lower-cleanup-stack-count cleanups) 2)
       (lower-cleanup-stack-entry? cleanups 0 "hidden-a" "cleanup-a")
       (lower-cleanup-stack-entry? cleanups 1 "hidden-b" "cleanup-b")
-      (= (lower-arg-writeback-list-count writebacks) 2)
-      (match (lower-arg-writeback-list-ref writebacks 0)
-        [(LowerArgWriteback.Writeback local-id storage ty _)
-          (and
-            (= local-id 11)
-            (match storage
-              [(CompilerIrValue.Var storage-id) (= storage-id 21)]
-              [_ false])
-            (tc-type-eq ty (AstType.I64)))])
-      (match (lower-arg-writeback-list-ref writebacks 1)
-        [(LowerArgWriteback.Writeback local-id storage ty _)
-          (and
-            (= local-id 12)
-            (match storage
-              [(CompilerIrValue.Var storage-id) (= storage-id 22)]
-              [_ false])
-            (tc-type-eq ty (AstType.Bool)))])
       (= (lower-c-abi-slot-list-count slots) 2)
       (match (lower-c-abi-slot-list-ref slots 0)
         [(LowerCAbiSlot.Slot ty offset)

@@ -44,11 +44,11 @@ use.
   and runtime hot paths that need construction, push, append, reserve, length,
   and explicit finish/copy boundaries without importing the full borrowed
   `bytes` view surface. Import it with `(import stdlib.byte_buf_core)`.
-- `clone.tl`: typed declaration-macro producer for compiler-discovered
-  reachable `clone` roots. The staged first surface synthesizes helpers for
-  one-field named structs after typechecking; cloneability, diagnostics, arena
-  behavior, and root discovery remain compiler-owned. Import it with
-  `(import stdlib.clone)` to enable the handoff.
+- `clone.tl`: declaration-macro producer for every compiler-discovered
+  reachable named `clone` root, including full structs, ordinary enums, and
+  tail-recursive list-shaped enums. Cloneability, diagnostics, arena behavior,
+  and root discovery remain compiler-owned. The compiler loads this producer
+  through its implicit macro prelude; an explicit import is optional.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
   `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,
@@ -56,7 +56,8 @@ use.
   exported compile-time helper signatures such as `expr-int`,
   `expr-binary-data`, `expr-string?`,
   `expr-string-value`, `string-slice`,
-  `expr-list-nth`, `expr-list-fold-if`, `expr-clause-list-fold-if`,
+  `expr-list-nth`, `expr-list-type-nth`, `expr-list-fold-if`,
+  `expr-clause-list-fold-if`,
   `expr-clause-list->expr-list`, `pattern-variant`,
   `pattern-list-bindings`, `match-arm`, and `expr-match`. Reflection intrinsics
   include `type-cleanup-owning?` and `type-cleanup-function` for generated

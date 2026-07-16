@@ -19,6 +19,9 @@
 ;# ```
 (import stdlib.comptime)
 
+;; lint-allow: unused-import -- loads the typed clone declaration producer.
+(import stdlib.clone)
+
 ;: Short-circuiting boolean conjunction.
 ;:
 ;: All operands must be bool-valued. With no operands, this macro expands to

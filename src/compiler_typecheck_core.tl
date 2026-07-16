@@ -1341,12 +1341,26 @@
   compile-profile
   (define compiler-tc-macro-profile-entries : CompilerTcMacroProfileEntries
     (CompilerTcMacroProfileEntries.Nil)))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-profile-active : bool
+    false))
 
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-reset) : unit
     (begin
       (set! compiler-tc-macro-profile-start-ms 0)
+      (set! compiler-tc-macro-profile-active true)
+      (set!
+        compiler-tc-macro-profile-entries
+        (CompilerTcMacroProfileEntries.Nil)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-clear) : unit
+    (begin
+      (set! compiler-tc-macro-profile-active false)
       (set!
         compiler-tc-macro-profile-entries
         (CompilerTcMacroProfileEntries.Nil)))))
@@ -1407,13 +1421,15 @@
     [macro-name : String]
     [arity : i64]
     [elapsed-ms : i64]) : unit
-    (set!
-      compiler-tc-macro-profile-entries
-      (compiler-tc-macro-profile-record-in
+    (if compiler-tc-macro-profile-active
+      (set!
         compiler-tc-macro-profile-entries
-        macro-name
-        arity
-        elapsed-ms))))
+        (compiler-tc-macro-profile-record-in
+          compiler-tc-macro-profile-entries
+          macro-name
+          arity
+          elapsed-ms))
+      unit)))
 
 (cfg
   compile-profile
@@ -1484,7 +1500,9 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-emit) : unit
-    (compiler-tc-macro-profile-emit-entries compiler-tc-macro-profile-entries)))
+    (begin
+      (compiler-tc-macro-profile-emit-entries compiler-tc-macro-profile-entries)
+      (set! compiler-tc-macro-profile-active false))))
 
 (cfg
   compile-profile
@@ -8782,6 +8800,10 @@
           "enum-variant-payload-type"
           (tc-fn3 expr (AstType.I64) (AstType.I64) expr)))
       (set! out (tc-bind out "array-element-type" (tc-fn1 expr expr)))
+      (set! out (tc-bind out "box-element-type" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind out "stdlib.comptime.box-element-type" (tc-fn1 expr expr)))
       (set! out (tc-bind out "array-length" (tc-fn1 expr (AstType.I64))))
       (set! out (tc-bind out "array-dynamic?" (tc-fn1 expr (AstType.Bool))))
       (set! out (tc-bind out "tuple-element-count" (tc-fn1 expr (AstType.I64))))
@@ -48790,6 +48812,10 @@
         (set! macro-expand-scratch-enabled false)
         (set! macro-expand-scratch-arena 0)
         (macro-expand-scratch-clear-owned-caches!)
+        ;; Macro timing entries were emitted before this boundary and live in
+        ;; scratch. Clear the global before destroying their backing storage so
+        ;; a later lowering-time declaration macro starts from a valid list.
+        (cfg compile-profile (compiler-tc-macro-profile-clear))
         ;; Cache clearing can release independently owned arenas. Start the
         ;; scratch counter after that work so this phase attributes only the
         ;; arena named by macro_scratch_release.

@@ -20456,7 +20456,15 @@
   (FloatBitcastValueXmm)
   (FloatBitcastValueGp)
   (FloatMoveValueXmm)
-  (FloatMemoryValueXmm))
+  (FloatMemoryValueXmm)
+  (ScalarPrimary)
+  (ScalarSecondary)
+  (ScalarTertiary)
+  (FixedRax)
+  (FixedRdx)
+  (FixedRcx)
+  (BranchTest)
+  (CpuIdSave))
 
 (defstruct CompilerRegScratchConstraint
   (register-class CompilerRegScratchClass)
@@ -20706,10 +20714,27 @@
       1
       0)))
 
+(define (compiler-reg-scratch-binop-return-next?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= (+ index 1) (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp dst _ _ _ _)
+        (match (compiler-ir-instr-seq-ref instrs (+ index 1))
+          [(CompilerIrInstr.Return maybe)
+            (match maybe
+              [(CompilerIrMaybeValue.Some (CompilerIrValue.Var value))
+                (= value dst)]
+              [_ false])]
+          [_ false])]
+      [_ false])))
+
 (define (compiler-reg-scratch-vreg-slots
   [_assignments : CompilerRegAssignmentList]
   [_instr : CompilerIrInstr]
-  [_phi-targets : CompilerRegStringList]) : i64
+  [_phi-targets : CompilerRegStringList]
+  [_binop-return : bool]) : i64
   (cfg
     scratch-vreg
     (match _instr
@@ -20727,12 +20752,117 @@
         (if (compiler-reg-string-list-contains? _phi-targets target)
           2
           0)]
-      [(CompilerIrInstr.Branch _ true-label false-label)
+      [(CompilerIrInstr.Branch condition true-label false-label)
         (if (or
           (compiler-reg-string-list-contains? _phi-targets true-label)
           (compiler-reg-string-list-contains? _phi-targets false-label))
-          2
-          0)]
+          3
+          (if (compiler-reg-scratch-value-direct? _assignments condition)
+            0
+            1))]
+      ;; Division has two explicit fixed operands plus three simultaneously
+      ;; live GP temporaries. Variable shifts have a fixed %rcx count plus one
+      ;; result temporary. Other scalar binops reserve only the staging home
+      ;; their selected shape consumes; notably, a Var RHS immediately returned
+      ;; through %rax gets one context-aware home instead of taxing every ALU.
+      [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+        (if (compiler-reg-float-type? ty)
+          0
+          (if (compiler-reg-clobber-binop-div? op)
+            5
+            (if (compiler-reg-clobber-binop-shift? op rhs ty)
+              2
+              (match op
+                ;; Fused comparisons keep two distinct operand homes live
+                ;; through the following Branch.
+                [(CompilerIrBinOp.Eq)
+                  (if (or
+                    (compiler-reg-scratch-value-direct? _assignments lhs)
+                    (compiler-reg-scratch-value-direct? _assignments rhs))
+                    0
+                    2)]
+                [(CompilerIrBinOp.Ne)
+                  (if (or
+                    (compiler-reg-scratch-value-direct? _assignments lhs)
+                    (compiler-reg-scratch-value-direct? _assignments rhs))
+                    0
+                    2)]
+                [(CompilerIrBinOp.Lt)
+                  (if (or
+                    (compiler-reg-scratch-value-direct? _assignments lhs)
+                    (compiler-reg-scratch-value-direct? _assignments rhs))
+                    0
+                    2)]
+                [(CompilerIrBinOp.Le)
+                  (if (or
+                    (compiler-reg-scratch-value-direct? _assignments lhs)
+                    (compiler-reg-scratch-value-direct? _assignments rhs))
+                    0
+                    2)]
+                [(CompilerIrBinOp.Gt)
+                  (if (or
+                    (compiler-reg-scratch-value-direct? _assignments lhs)
+                    (compiler-reg-scratch-value-direct? _assignments rhs))
+                    0
+                    2)]
+                [(CompilerIrBinOp.Ge)
+                  (if (or
+                    (compiler-reg-scratch-value-direct? _assignments lhs)
+                    (compiler-reg-scratch-value-direct? _assignments rhs))
+                    0
+                    2)]
+                ;; Constant shifts accumulate directly in a register-homed
+                ;; destination; a spill needs one result staging home.
+                [(CompilerIrBinOp.Shl)
+                  (if (compiler-reg-scratch-var-register-homed?
+                    _assignments
+                    dst)
+                    0
+                    1)]
+                [(CompilerIrBinOp.Shr)
+                  (if (compiler-reg-scratch-var-register-homed?
+                    _assignments
+                    dst)
+                    0
+                    1)]
+                [_
+                  (if _binop-return
+                    (match rhs
+                      [(CompilerIrValue.Var _) 1]
+                      [_ 0])
+                    (match rhs
+                      [(CompilerIrValue.Var _)
+                        (if (compiler-reg-scratch-var-register-homed?
+                          _assignments
+                          dst)
+                          (if (compiler-reg-scratch-value-same-home?
+                            _assignments
+                            dst
+                            rhs)
+                            (if (and
+                              (compiler-reg-scratch-value-direct?
+                                _assignments
+                                lhs)
+                              (match op
+                                [(CompilerIrBinOp.Add) true]
+                                [(CompilerIrBinOp.And) true]
+                                [(CompilerIrBinOp.Or) true]
+                                [(CompilerIrBinOp.BitAnd) true]
+                                [(CompilerIrBinOp.BitOr) true]
+                                [(CompilerIrBinOp.BitXor) true]
+                                [_ false]))
+                              0
+                              1)
+                            0)
+                          0)]
+                      [_ 0]))]))))]
+      [(CompilerIrInstr.UnOp dst _ _ ty)
+        (if (or
+          (compiler-reg-float-type? ty)
+          (compiler-reg-scratch-var-register-homed? _assignments dst))
+          0
+          1)]
+      [(CompilerIrInstr.CpuId _ _ _ _) 1]
       [(CompilerIrInstr.Switch _ _ _ _) 2]
       [(CompilerIrInstr.BoundsCheck _ _ _) 2]
       [(CompilerIrInstr.AddrOf dst _)
@@ -20845,7 +20975,8 @@
               (compiler-reg-scratch-vreg-slots
                 assignments
                 (array-ref slots i)
-                phi-targets)))
+                phi-targets
+                (compiler-reg-scratch-binop-return-next? instrs i))))
           (set! i (+ i 1))))
       out)))
 
@@ -21150,6 +21281,24 @@
       (compiler-reg-string-list-append
         (compiler-reg-scratch-value-registers assignments index)
         (compiler-reg-scratch-value-registers assignments length))]
+    [(CompilerIrInstr.BinOp dst _ lhs rhs _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-string-list-append
+          (compiler-reg-scratch-value-registers assignments lhs)
+          (compiler-reg-scratch-value-registers assignments rhs)))]
+    [(CompilerIrInstr.UnOp dst _ src _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments src))]
+    [(CompilerIrInstr.Branch cond _ _)
+      (compiler-reg-scratch-value-registers assignments cond)]
+    [(CompilerIrInstr.CpuId dst leaf subleaf _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-string-list-append
+          (compiler-reg-scratch-value-registers assignments leaf)
+          (compiler-reg-scratch-value-registers assignments subleaf)))]
     [(CompilerIrInstr.Switch index _ _ _)
       (compiler-reg-scratch-value-registers assignments index)]
     [(CompilerIrInstr.Store _ value _)
@@ -21240,6 +21389,39 @@
     (compiler-reg-string-list-append
       (struct-get policy phi-excluded)
       (compiler-reg-scratch-instr-registers assignments instr))))
+
+(define (compiler-reg-scratch-fixed-constraint
+  [assignments : CompilerRegAssignmentList]
+  [instr : CompilerIrInstr]
+  [reg : String]) : CompilerRegScratchConstraint
+  (CompilerRegScratchConstraint
+    (CompilerRegScratchClass.Gp)
+    CompilerRegStringList.Nil
+    (compiler-reg-scratch-instr-registers assignments instr)
+    reg))
+
+(define (compiler-reg-scratch-scalar-constraint
+  [assignments : CompilerRegAssignmentList]
+  [instr : CompilerIrInstr]
+  [extra : CompilerRegStringList]) : CompilerRegScratchConstraint
+  (compiler-reg-scratch-gp-constraint-excluding
+    (compiler-reg-string-list-append
+      extra
+      (compiler-reg-scratch-instr-registers assignments instr))))
+
+(define (compiler-reg-scratch-div-fixed-registers) : CompilerRegStringList
+  (compiler-reg-string-cons
+    "%rax"
+    (compiler-reg-string-cons "%rdx" CompilerRegStringList.Nil)))
+
+(define (compiler-reg-scratch-cpuid-fixed-registers) : CompilerRegStringList
+  (compiler-reg-string-cons
+    "%rax"
+    (compiler-reg-string-cons
+      "%rbx"
+      (compiler-reg-string-cons
+        "%rcx"
+        (compiler-reg-string-cons "%rdx" CompilerRegStringList.Nil)))))
 
 ;; Phi copies execute on predecessor edges, before the merge block's phi
 ;; destinations become live.  Exclude every phi destination home in the
@@ -21478,14 +21660,102 @@
         point
         (+ point 1)
         var)]
+    [(CompilerIrInstr.BinOp _ op _ _ _)
+      (let
+        [div? : bool (compiler-reg-clobber-binop-div? op)]
+        [shift? : bool
+          (match instr
+            [(CompilerIrInstr.BinOp _ shift-op _ rhs ty)
+              (compiler-reg-clobber-binop-shift? shift-op rhs ty)]
+            [_ false])]
+        [role : CompilerRegScratchRole
+          (if div?
+            (cond
+              [(= ordinal 0) (CompilerRegScratchRole.FixedRax)]
+              [(= ordinal 1) (CompilerRegScratchRole.FixedRdx)]
+              [(= ordinal 2) (CompilerRegScratchRole.ScalarPrimary)]
+              [(= ordinal 3) (CompilerRegScratchRole.ScalarSecondary)]
+              [else (CompilerRegScratchRole.ScalarTertiary)])
+            (if (and shift? (= ordinal 0))
+              (CompilerRegScratchRole.FixedRcx)
+              (if (= ordinal 0)
+                (CompilerRegScratchRole.ScalarPrimary)
+                (CompilerRegScratchRole.ScalarSecondary))))]
+        [constraint : CompilerRegScratchConstraint
+          (if (and div? (= ordinal 0))
+            (compiler-reg-scratch-fixed-constraint assignments instr "%rax")
+            (if (and div? (= ordinal 1))
+              (compiler-reg-scratch-fixed-constraint assignments instr "%rdx")
+              (if (and shift? (= ordinal 0))
+                (compiler-reg-scratch-fixed-constraint assignments instr "%rcx")
+                (compiler-reg-scratch-scalar-constraint
+                  assignments
+                  instr
+                  (if div?
+                    (compiler-reg-scratch-div-fixed-registers)
+                    (if shift?
+                      (compiler-reg-string-cons
+                        "%rcx"
+                        CompilerRegStringList.Nil)
+                      CompilerRegStringList.Nil))))))]
+        (CompilerRegScratchRequirement
+          point
+          ordinal
+          role
+          constraint
+          point
+          ;; A compare can fuse through the following Branch. Its operand
+          ;; homes end at this IR point, so keep the planned homes live through
+          ;; that successor point and explicitly exclude those operands above.
+          (if (compiler-reg-clobber-binop-div? op)
+            (+ point 1)
+            (match op
+              [(CompilerIrBinOp.Eq) (+ point 3)]
+              [(CompilerIrBinOp.Ne) (+ point 3)]
+              [(CompilerIrBinOp.Lt) (+ point 3)]
+              [(CompilerIrBinOp.Le) (+ point 3)]
+              [(CompilerIrBinOp.Gt) (+ point 3)]
+              [(CompilerIrBinOp.Ge) (+ point 3)]
+              [_ (+ point 1)]))
+          var))]
+    [(CompilerIrInstr.UnOp _ _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (CompilerRegScratchRole.ScalarPrimary)
+        (compiler-reg-scratch-scalar-constraint
+          assignments
+          instr
+          CompilerRegStringList.Nil)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.CpuId _ _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (CompilerRegScratchRole.CpuIdSave)
+        (compiler-reg-scratch-scalar-constraint
+          assignments
+          instr
+          (compiler-reg-scratch-cpuid-fixed-registers))
+        point
+        (+ point 1)
+        var)]
     [(CompilerIrInstr.Branch _ _ _)
       (CompilerRegScratchRequirement
         point
         ordinal
+        (cond
+          [(= ordinal 0) (CompilerRegScratchRole.BranchTest)]
+          [(= ordinal 1) (CompilerRegScratchRole.PhiCycle)]
+          [else (CompilerRegScratchRole.PhiStage)])
         (if (= ordinal 0)
-          (CompilerRegScratchRole.PhiCycle)
-          (CompilerRegScratchRole.PhiStage))
-        (compiler-reg-scratch-phi-constraint policy)
+          (compiler-reg-scratch-scalar-constraint
+            assignments
+            instr
+            CompilerRegStringList.Nil)
+          (compiler-reg-scratch-phi-constraint policy))
         point
         (+ point 1)
         var)]
@@ -21803,7 +22073,11 @@
         (let
           [instr : CompilerIrInstr (array-ref instr-slots i)]
           [n : i64
-            (compiler-reg-scratch-vreg-slots assignments instr phi-targets)]
+            (compiler-reg-scratch-vreg-slots
+              assignments
+              instr
+              phi-targets
+              (compiler-reg-scratch-binop-return-next? instrs i))]
           (begin
             (array-set! firsts instruction item)
             (array-set! slot-counts instruction n)
@@ -22075,6 +22349,35 @@
           ref-counts
           vars)))))
 
+(define (compiler-reg-scratch-compact-assignments-from
+  [items : (Array CompilerRegScratchAssignment)]
+  [index : i64]
+  [success : i64]
+  [vars : i64]
+  [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
+  (if (>= index (array-length items))
+    assignments
+    (let
+      [item : CompilerRegScratchAssignment (array-ref items index)]
+      [reg : String (struct-get item register)]
+      (if (string.eq reg "")
+        (compiler-reg-scratch-compact-assignments-from
+          items
+          (+ index 1)
+          success
+          vars
+          assignments)
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            (+ vars success)
+            (CompilerRegLocation.Register reg))
+          (compiler-reg-scratch-compact-assignments-from
+            items
+            (+ index 1)
+            (+ success 1)
+            vars
+            assignments))))))
+
 (define (compiler-reg-plan-with-scratch-vreg-result
   [_abi : CompilerRegTargetAbi]
   [_func : CompilerIrFunction]
@@ -22224,18 +22527,30 @@
                           (CompilerRegScratchPlanResult.Result
                             (match plan
                               [(CompilerRegPlan.Plan
-                                  _
+                                  base-assignments
                                   ineligible
-                                  _
-                                  _
+                                  base-intervals
+                                  base-types
                                   call-split
                                   split-plan)
                                 (CompilerRegPlan.Plan
-                                  (compiler-reg-assignment-table-to-list
-                                    assignments)
+                                  ;; Scratch requirements are not IR values and
+                                  ;; never need stack slots. Publish only their
+                                  ;; successful register homes, densely after
+                                  ;; the real vars, so callee-save accounting
+                                  ;; sees them without exposing failed/sparse
+                                  ;; synthetic ids to frame coloring.
+                                  (compiler-reg-assignment-list-merge
+                                    (compiler-reg-scratch-compact-assignments-from
+                                      items
+                                      0
+                                      0
+                                      _vars
+                                      CompilerRegAssignmentList.Nil)
+                                    base-assignments)
                                   ineligible
-                                  intervals
-                                  (struct-get type-info entries)
+                                  base-intervals
+                                  base-types
                                   call-split
                                   split-plan)])
                             (CompilerRegScratchPlan items firsts slot-counts))))))]))))])

@@ -21627,7 +21627,7 @@
       "entry"
       (compiler-ir-instr-cons
         (CompilerIrInstr.Store
-          "scratch_float_global"
+          (ci.intern "scratch_float_global")
           (CompilerIrValue.Var 0)
           (AstType.F64))
         CompilerIrInstrList.Nil))
@@ -22280,7 +22280,8 @@
                             "%r14"
                             "%r15"
                             (CompilerIrValue.Var 0)
-                            (CompilerIrValue.Global "scratch_length")
+                            (CompilerIrValue.Global
+                              (ci.intern "scratch_length"))
                             "ok"
                             (compiler-backend-runtime-helper-full-plan)
                             CompilerIrFunctionList.Nil
@@ -22856,7 +22857,8 @@
           (compiler-reg-scratch-vreg-slots
             same-home
             (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.F64))
-            CompilerRegStringList.Nil)
+            CompilerRegStringList.Nil
+            false)
           0)
         (match cast
           [(CompilerRegScratchPlanResult.Result _ plan)
@@ -23436,6 +23438,467 @@
             (compiler-backend-string-contains? asm "    movzbq 48(%rbp), %r9\n")))]
       [(ResultCompilerBackend.Err _) false])))
 
+(define (compiler-backend-scratch-vreg-scalar-div-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.Div)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+          CompilerIrInstrList.Nil)))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-scalar-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -24))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-scratch-vreg-scalar-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [result : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_scalar_div"
+          (compiler-backend-scratch-vreg-scalar-div-blocks)
+          3
+          (compiler-backend-scratch-vreg-scalar-assignments))]
+      (match result
+        [(CompilerRegScratchPlanResult.Result _ plan)
+          (let
+            [items : (Array CompilerRegScratchAssignment)
+              (struct-get plan items)]
+            [rax : String (compiler-reg-scratch-plan-register plan 0 0)]
+            [rdx : String (compiler-reg-scratch-plan-register plan 0 1)]
+            [temp0 : String (compiler-reg-scratch-plan-register plan 0 2)]
+            [temp1 : String (compiler-reg-scratch-plan-register plan 0 3)]
+            [temp2 : String (compiler-reg-scratch-plan-register plan 0 4)]
+            (and
+              (= (compiler-reg-scratch-plan-count plan) 5)
+              (string.eq rax "%rax")
+              (string.eq rdx "%rdx")
+              (not (string.eq temp0 ""))
+              (not (string.eq temp1 ""))
+              (not (string.eq temp2 ""))
+              (not (string.eq temp0 temp1))
+              (not (string.eq temp0 temp2))
+              (not (string.eq temp1 temp2))
+              (not (string.eq temp0 "%rax"))
+              (not (string.eq temp0 "%rdx"))
+              (not (string.eq temp0 "%r12"))
+              (not (string.eq temp0 "%r13"))
+              (match (struct-get
+                (struct-get (array-ref items 0) requirement)
+                role)
+                [(CompilerRegScratchRole.FixedRax) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref items 1) requirement)
+                role)
+                [(CompilerRegScratchRole.FixedRdx) true]
+                [_ false])
+              (string.eq
+                (struct-get
+                  (struct-get
+                    (struct-get (array-ref items 0) requirement)
+                    constraint)
+                  fixed)
+                "%rax")
+              (string.eq
+                (struct-get
+                  (struct-get
+                    (struct-get (array-ref items 1) requirement)
+                    constraint)
+                  fixed)
+                "%rdx")))]))
+    true))
+
+(define (compiler-backend-scratch-vreg-scalar-shift-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.Shl)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-scalar-shift-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-backend-scratch-test-result
+      "scratch_vreg_scalar_shift"
+      (compiler-backend-scratch-vreg-scalar-shift-blocks)
+      3
+      (compiler-backend-scratch-vreg-scalar-assignments))
+      [(CompilerRegScratchPlanResult.Result _ plan)
+        (let
+          [fixed : String (compiler-reg-scratch-plan-register plan 0 0)]
+          [result : String (compiler-reg-scratch-plan-register plan 0 1)]
+          (and
+            (= (compiler-reg-scratch-plan-count plan) 2)
+            (string.eq fixed "%rcx")
+            (not (string.eq result ""))
+            (not (string.eq result fixed))
+            (match (struct-get
+              (struct-get (array-ref (struct-get plan items) 0) requirement)
+              role)
+              [(CompilerRegScratchRole.FixedRcx) true]
+              [_ false])))])
+    true))
+
+(define (compiler-backend-scratch-vreg-scalar-return-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+          CompilerIrInstrList.Nil)))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-scalar-return-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-backend-scratch-test-result
+      "scratch_vreg_scalar_return"
+      (compiler-backend-scratch-vreg-scalar-return-blocks)
+      3
+      (compiler-backend-scratch-vreg-scalar-assignments))
+      [(CompilerRegScratchPlanResult.Result _ plan)
+        (and
+          (= (compiler-reg-scratch-plan-count plan) 1)
+          (not (string.eq (compiler-reg-scratch-plan-register plan 0 0) ""))
+          (match (struct-get
+            (struct-get (array-ref (struct-get plan items) 0) requirement)
+            role)
+            [(CompilerRegScratchRole.ScalarPrimary) true]
+            [_ false]))])
+    true))
+
+(define (compiler-backend-scratch-vreg-scalar-control-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.Eq)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.Bool))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "yes" "no")
+          CompilerIrInstrList.Nil)))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-scalar-control-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -24))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-scratch-vreg-scalar-control-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-backend-scratch-test-result
+      "scratch_vreg_scalar_control"
+      (compiler-backend-scratch-vreg-scalar-control-blocks)
+      3
+      (compiler-backend-scratch-vreg-scalar-control-assignments))
+      [(CompilerRegScratchPlanResult.Result _ plan)
+        (let
+          [lhs : String (compiler-reg-scratch-plan-register plan 0 0)]
+          [rhs : String (compiler-reg-scratch-plan-register plan 0 1)]
+          [test : String (compiler-reg-scratch-plan-register plan 2 0)]
+          (and
+            (= (compiler-reg-scratch-plan-count plan) 3)
+            (not (string.eq lhs ""))
+            (not (string.eq rhs ""))
+            (not (string.eq lhs rhs))
+            (not (string.eq test ""))
+            (=
+              (struct-get
+                (struct-get (array-ref (struct-get plan items) 0) requirement)
+                hi)
+              3)
+            (match (struct-get
+              (struct-get (array-ref (struct-get plan items) 2) requirement)
+              role)
+              [(CompilerRegScratchRole.BranchTest) true]
+              [_ false])))])
+    true))
+
+(define (compiler-backend-scratch-vreg-result-contains?
+  [result : ResultCompilerBackend]
+  [needle : String]) : bool
+  (match result
+    [(ResultCompilerBackend.Ok asm)
+      (compiler-backend-string-contains? asm needle)]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-scratch-vreg-scalar-spill-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -24))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-scalar-spill-assignments)]
+      [shift-register-assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            0
+            (CompilerRegLocation.Register "%r12"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              1
+              (CompilerRegLocation.Register "%r13"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                2
+                (CompilerRegLocation.Register "%rcx"))
+              CompilerRegAssignmentList.Nil)))]
+      [fallthrough : CompilerBackendMaybeLabel (CompilerBackendMaybeLabel.No)]
+      [div-guard : String
+        (compiler-backend-div-overflow-guard-asm-with-plan
+          (AstType.I64)
+          "%r8"
+          "%r12"
+          "%r13")]
+      [literal-ok : bool
+        (match (compiler-backend-binop-literal-divmod-asm-here-with-plan
+          (CompilerIrBinOp.Mod)
+          (CompilerIrValue.I64 7)
+          (AstType.I64)
+          "%r12"
+          "%r13"
+          "%r14")
+          [(CompilerBackendMaybeAsm.Some asm)
+            (and
+              (compiler-backend-string-contains? asm "%r12")
+              (compiler-backend-string-contains? asm "%r13")
+              (compiler-backend-string-contains? asm "%r14"))]
+          [(CompilerBackendMaybeAsm.No) false])]
+      (and
+        (not
+          (string.eq
+            (compiler-backend-scavenge-binop-return-rhs-reg
+              assignments
+              (CompilerIrBinOp.Eq)
+              (CompilerIrValue.Var 1)
+              "%rax")
+            "%rax"))
+        (compiler-backend-string-contains? div-guard "%r12")
+        (compiler-backend-string-contains? div-guard "%r13")
+        literal-ok
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-binop-spill-direct-shift
+            assignments
+            2
+            (CompilerIrBinOp.Shl)
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.I64)
+            (AstType.I64)
+            "%rcx"
+            "%r14")
+          "    movq -16(%rbp), %rcx\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-binop-spill-direct-shift
+            assignments
+            2
+            (CompilerIrBinOp.Shl)
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.I64)
+            (AstType.I64)
+            "%rcx"
+            "%r14")
+          "    shlq %cl, %r14\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-binop-spill-direct-shift
+            shift-register-assignments
+            2
+            (CompilerIrBinOp.Shl)
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.I64)
+            (AstType.I64)
+            "%rcx"
+            "%r14")
+          "    movq %r14, %rcx\n")
+        (not
+          (compiler-backend-scratch-vreg-result-contains?
+            (compiler-backend-emit-binop-spill-direct-shift
+              shift-register-assignments
+              2
+              (CompilerIrBinOp.Shl)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (AstType.I64)
+              (AstType.I64)
+              "%rcx"
+              "%r14")
+            "    shlq %cl, %rcx\n"))
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-branch-with-plan
+            assignments
+            "scratch_control"
+            (CompilerIrValue.Global (ci.intern "scratch_condition"))
+            "yes"
+            "no"
+            fallthrough
+            "%r14")
+          "    testq %r14, %r14\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-compare-branch-with-plan
+            assignments
+            "scratch_compare"
+            (CompilerIrBinOp.Eq)
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.I64)
+            "yes"
+            "no"
+            fallthrough
+            "%r14"
+            "%r15")
+          "    movq -16(%rbp), %r15\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-compare-branch-with-plan
+            assignments
+            "scratch_compare_collision"
+            (CompilerIrBinOp.Eq)
+            (CompilerIrValue.Global (ci.intern "scratch_lhs"))
+            (CompilerIrValue.Global (ci.intern "scratch_rhs"))
+            (AstType.I64)
+            "yes"
+            "no"
+            fallthrough
+            "%r14"
+            "%r14")
+          "    cmpq ")
+        (not
+          (compiler-backend-scratch-vreg-result-contains?
+            (compiler-backend-emit-compare-branch-with-plan
+              assignments
+              "scratch_compare_collision"
+              (CompilerIrBinOp.Eq)
+              (CompilerIrValue.Global (ci.intern "scratch_lhs"))
+              (CompilerIrValue.Global (ci.intern "scratch_rhs"))
+              (AstType.I64)
+              "yes"
+              "no"
+              fallthrough
+              "%r14"
+              "%r14")
+            "    cmpq %r14, %r14\n"))
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-binop-direct-compare
+            assignments
+            2
+            "%r14"
+            (CompilerIrBinOp.Eq)
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.I64)
+            "%r14")
+          "    cmpq ")
+        (not
+          (compiler-backend-scratch-vreg-result-contains?
+            (compiler-backend-emit-binop-direct-compare
+              assignments
+              2
+              "%r14"
+              (CompilerIrBinOp.Eq)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (AstType.I64)
+              "%r14")
+            "    cmpq %r14, %r14\n"))
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-load-compare-branch-with-plan
+            assignments
+            "scratch_load_compare"
+            (CompilerIrValue.Var 0)
+            (CompilerIrBinOp.Eq)
+            (CompilerIrValue.Var 1)
+            (AstType.I64)
+            "yes"
+            "no"
+            fallthrough
+            "%r14"
+            "%r15")
+          "    cmpq %r15, (%r14)\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-gep-load-compare-branch-with-plan
+            assignments
+            "scratch_gep_compare"
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 2)
+            (AstType.I64)
+            (CompilerIrBinOp.Eq)
+            (CompilerIrValue.Var 1)
+            (AstType.I64)
+            "yes"
+            "no"
+            fallthrough
+            "%r14"
+            "%r15")
+          "    cmpq %r15, 16(%r14)\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-unop-with-plan
+            assignments
+            2
+            (CompilerIrUnOp.Neg)
+            (CompilerIrValue.Var 0)
+            (AstType.I64)
+            "%r14")
+          "    negq %r14\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          (compiler-backend-emit-cpuid
+            assignments
+            2
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            1
+            "%r14")
+          "    movq %rbx, %r14\n    cpuid\n")))
+    true))
+
 (define (compiler-backend-self-test) : i64
   (if (and
     (backend-and8
@@ -23490,6 +23953,11 @@
         (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-conversion-plan-ok?)
         (compiler-backend-scratch-vreg-conversion-emission-uses-plan-ok?)
+        (compiler-backend-scratch-vreg-scalar-plan-ok?)
+        (compiler-backend-scratch-vreg-scalar-shift-plan-ok?)
+        (compiler-backend-scratch-vreg-scalar-return-plan-ok?)
+        (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
+        (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)

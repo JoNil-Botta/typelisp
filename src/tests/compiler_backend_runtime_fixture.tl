@@ -2,7 +2,6 @@
 (import stdlib.io)
 (import stdlib.string)
 (import "../compiler_backend.tl")
-(import compiler_builtin_ids as cbi)
 
 (define (compiler-backend-runtime-fixture-emit [target-name : String]) : ResultCompilerBackend
   (cond

@@ -395,6 +395,9 @@ run_with_compiler "$STAGE2_BIN" "stage2 PIC relocation verifier" scripts/verify-
 run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
 run_gate "integration manifest validator self-tests" scripts/verify-integration-manifest-validator.sh
 run_with_compiler "$STAGE2_BIN" "integration compile-failure diagnostics" scripts/verify-integration.sh --self-test-empty-compile-diagnostic
+if [ "$HOST_OS" = linux ]; then
+    run_gate "integration signal notice capture" scripts/verify-integration.sh --self-test-signal-notice-capture
+fi
 run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verify-integration.sh
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 regalloc/backend asm shape gates" scripts/verify-asm-shape-gates.sh

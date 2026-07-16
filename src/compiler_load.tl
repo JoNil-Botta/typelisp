@@ -1441,14 +1441,16 @@
   (match cfgs
     [(sym_i64_env.SymI64Nil) out]
     [(sym_i64_env.SymI64Bind key value rest)
-      (compiler-load-cfg-cache-key-from
-        (box-get rest)
-        (str_cat.str-cat
-          out
-          (compiler-cfg-key-name key)
-          "="
-          (string.int->string value)
-          ";"))]))
+      (if (< key 0)
+        (compiler-load-cfg-cache-key-from (box-get rest) out)
+        (compiler-load-cfg-cache-key-from
+          (box-get rest)
+          (str_cat.str-cat
+            out
+            (compiler-cfg-key-name key)
+            "="
+            (string.int->string value)
+            ";")))]))
 
 (define (compiler-load-cfg-cache-key [cfgs : sym_i64_env.SymI64Env]) : String
   (compiler-load-cfg-cache-key-from cfgs ""))

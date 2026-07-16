@@ -53,6 +53,7 @@
   (expr-pool (Array AstExprNodePoolState))
   (type-pool (Array AstTypeNodePoolState))
   (intern-state (Array ci.InternCompatState))
+  (parser-state CompilerParseState)
   (builtin-ids (Array cbi.CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
@@ -85,6 +86,7 @@
         expr-cell
         type-cell
         intern-cell
+        (compiler-parse-state-new-with-intern-state (array-ref intern-cell 0))
         builtin-cell
         lower-cell
         (compiler-load-session-state-new)
@@ -2411,13 +2413,16 @@
             (arena.tl_arena_set frontend-arena)))
         unit)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
+    [parser-state : CompilerParseState (struct-get state parser-state)]
     [_reset-type-literal-tracking : unit
-      (compiler-parse-type-literal-tracking-reset!)]
+      (compiler-parse-state-type-literal-reset! parser-state)]
+    [parse-cfgs : sym_i64_env.SymI64Env
+      (compiler-parse-state-cfgs parser-state cfgs)]
     (match (compiler-driver-load-file-with-runtime-with-state-and-pools
       (struct-get state load-session)
       input-path
       stdlib-roots
-      cfgs
+      parse-cfgs
       pools)
       [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
@@ -2434,7 +2439,7 @@
             [defer-source-destroy? : bool
               (and
                 release-source-pools?
-                (compiler-parse-current-load-has-type-literal?))]
+                (compiler-parse-state-has-type-literal? parser-state))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -2596,12 +2601,15 @@
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
+    [parser-state : CompilerParseState (struct-get state parser-state)]
     [_reset-type-literal-tracking : unit
-      (compiler-parse-type-literal-tracking-reset!)]
+      (compiler-parse-state-type-literal-reset! parser-state)]
+    [parse-cfgs : sym_i64_env.SymI64Env
+      (compiler-parse-state-cfgs parser-state cfgs)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
       input-path
       stdlib-roots
-      cfgs
+      parse-cfgs
       pools)
       [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
@@ -2617,7 +2625,7 @@
             [defer-source-destroy? : bool
               (and
                 release-source-pools?
-                (compiler-parse-current-load-has-type-literal?))]
+                (compiler-parse-state-has-type-literal? parser-state))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)

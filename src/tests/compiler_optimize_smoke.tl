@@ -21,7 +21,6 @@
 ;; unused call-graph/SCC infrastructure for the next inliner phases; returns 42
 ;; only when every self-test passes.
 (import "../compiler_optimize.tl")
-(import compiler_intern as ci)
 (import stdlib.string)
 (import stdlib.test)
 
@@ -106,7 +105,7 @@
 
 (define (opt-switch-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (ci.intern-generated-canonical-name "switch_form")
+    (opt-test-symbol "switch_form")
     (opt-switch-test-params)
     (AstType.I64)
     16
@@ -437,7 +436,7 @@
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         30
-        (ci.intern-generated-canonical-name "touch")
+        (opt-test-symbol "touch")
         (CompilerIrCallArgs.Nil)
         (AstType.Unit))
       (smoke-bounds-object-length-check-fragment
@@ -624,18 +623,22 @@
   [with-nonnegative : bool]
   [op : CompilerIrBinOp]
   [length-var : i64]) : i64
-  (opt-count-bounds-blocks
-    (opt-loop-bce-blocks
-      (opt-loop-bce-test-summaries false false)
-      (opt-loop-bce-string-test-params)
-      (smoke-range-bce-blocks with-nonnegative op length-var))))
+  (let
+    [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
+    (opt-count-bounds-blocks
+      (opt-loop-bce-blocks
+        (opt-loop-bce-test-summaries symbols false false)
+        (opt-loop-bce-string-test-params)
+        (smoke-range-bce-blocks with-nonnegative op length-var)))))
 
 (define (smoke-range-bce-redefined-count) : i64
-  (opt-count-bounds-blocks
-    (opt-loop-bce-blocks
-      (opt-loop-bce-test-summaries false false)
-      (opt-loop-bce-string-test-params)
-      (smoke-range-bce-redefined-blocks))))
+  (let
+    [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
+    (opt-count-bounds-blocks
+      (opt-loop-bce-blocks
+        (opt-loop-bce-test-summaries symbols false false)
+        (opt-loop-bce-string-test-params)
+        (smoke-range-bce-redefined-blocks)))))
 
 (define (smoke-range-bce-self-test) : i64
   (let
@@ -708,6 +711,7 @@
           (CompilerIrInstrList.Nil))))))
 
 (define (smoke-ssa-iv-bce-body
+  [symbols : OptLoopBceTestSymbols]
   [object-var : i64]
   [step : i64]
   [next-var : i64]
@@ -735,7 +739,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               80
-              (ci.intern-generated-canonical-name "touch")
+              (struct-get symbols touch)
               (CompilerIrCallArgs.One (CompilerIrValue.Var object-var))
               (AstType.Unit))
             tail)
@@ -747,6 +751,7 @@
         after-call))))
 
 (define (smoke-ssa-iv-bce-blocks
+  [symbols : OptLoopBceTestSymbols]
   [start : CompilerIrValue]
   [step : i64]
   [op : CompilerIrBinOp]
@@ -762,6 +767,7 @@
         (smoke-ssa-iv-bce-header start next-var op upper-var)
         (compiler-ir-block-cons
           (smoke-ssa-iv-bce-body
+            symbols
             object-var
             step
             next-var
@@ -779,18 +785,21 @@
   [object-var : i64]
   [with-call : bool]
   [redefine-index : bool]) : i64
-  (opt-count-bounds-blocks
-    (opt-loop-bce-blocks
-      (opt-loop-bce-test-summaries false false)
-      (smoke-ssa-iv-bce-params)
-      (smoke-ssa-iv-bce-blocks
-        start
-        step
-        op
-        upper-var
-        object-var
-        with-call
-        redefine-index))))
+  (let
+    [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
+    (opt-count-bounds-blocks
+      (opt-loop-bce-blocks
+        (opt-loop-bce-test-summaries symbols false false)
+        (smoke-ssa-iv-bce-params)
+        (smoke-ssa-iv-bce-blocks
+          symbols
+          start
+          step
+          op
+          upper-var
+          object-var
+          with-call
+          redefine-index)))))
 
 (define (smoke-ssa-iv-bce-self-test) : i64
   (let
@@ -941,9 +950,11 @@
   [op : CompilerIrBinOp]
   [object-var : i64]
   [redefine-bound : bool]) : i64
-  (opt-loop-bce-string-test-count
-    (smoke-nonlength-guard-blocks with-upper op object-var redefine-bound)
-    (opt-loop-bce-test-summaries false false)))
+  (let
+    [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
+    (opt-loop-bce-string-test-count
+      (smoke-nonlength-guard-blocks with-upper op object-var redefine-bound)
+      (opt-loop-bce-test-summaries symbols false false))))
 
 (define (smoke-nonlength-guard-bce-self-test) : i64
   (let
@@ -1121,15 +1132,17 @@
   [op : CompilerIrBinOp]
   [upper-var : i64]
   [redefine-index : bool]) : i64
-  (opt-loop-bce-string-test-count
-    (smoke-additive-blocks
-      offset
-      upper-offset
-      with-nonnegative
-      op
-      upper-var
-      redefine-index)
-    (opt-loop-bce-test-summaries false false)))
+  (let
+    [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
+    (opt-loop-bce-string-test-count
+      (smoke-additive-blocks
+        offset
+        upper-offset
+        with-nonnegative
+        op
+        upper-var
+        redefine-index)
+      (opt-loop-bce-test-summaries symbols false false))))
 
 (define (smoke-additive-wrap-risk-entry) : CompilerIrBlock
   (compiler-ir-block
@@ -1137,7 +1150,7 @@
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
-        (ci.intern-generated-canonical-name "unknown_len")
+        (opt-test-symbol "unknown_len")
         (CompilerIrCallArgs.Nil)
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -1207,6 +1220,7 @@
 
 (define (smoke-additive-bce-self-test) : i64
   (let
+    [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
     [plus1 : i64 (smoke-additive-count 1 1 true (CompilerIrBinOp.Lt) 40 false)]
     [plus3 : i64 (smoke-additive-count 3 3 true (CompilerIrBinOp.Lt) 40 false)]
     [missing-nonnegative : i64
@@ -1216,7 +1230,7 @@
     [wrap-risk : i64
       (opt-loop-bce-test-count
         (smoke-additive-wrap-risk-blocks)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [negative-offset : i64
       (smoke-additive-count (- 0 1) 0 true (CompilerIrBinOp.Lt) 1 false)]
     [redefined-index : i64
@@ -1290,7 +1304,7 @@
 
 (define (smoke-heavy-pass-large-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (ci.intern-generated-canonical-name "heavy_pass_large")
+    (opt-test-symbol "heavy_pass_large")
     (opt-gvn-test-params)
     (AstType.I64)
     4

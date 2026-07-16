@@ -34899,16 +34899,27 @@
           (= (opt-count-exact-instr-program optimized producer) 0)
           (= (opt-count-exact-instr-program optimized addr) 0))])))
 
-(define (opt-inline-span-callee-call) : CompilerIrInstr
+(defstruct OptInlineSpanTestSymbols
+  (main i64)
+  (inline-span i64)
+  (opaque i64))
+
+(define (opt-inline-span-test-symbols) : OptInlineSpanTestSymbols
+  (OptInlineSpanTestSymbols
+    (opt-test-symbol "main")
+    (opt-test-symbol "inline_span")
+    (opt-test-symbol "opaque")))
+
+(define (opt-inline-span-callee-call [symbols : OptInlineSpanTestSymbols]) : CompilerIrInstr
   (CompilerIrInstr.Call
     1
-    (opt-test-symbol "opaque")
+    (struct-get symbols opaque)
     (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
     (AstType.I64)))
 
-(define (opt-inline-span-callee) : CompilerIrFunction
+(define (opt-inline-span-callee [symbols : OptInlineSpanTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "inline_span")
+    (struct-get symbols inline-span)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "value" (AstType.I64) 0)
       CompilerIrParamList.Nil)
@@ -34918,23 +34929,23 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (opt-inline-span-callee-call)
+          (opt-inline-span-callee-call symbols)
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-span-caller-call) : CompilerIrInstr
+(define (opt-inline-span-caller-call [symbols : OptInlineSpanTestSymbols]) : CompilerIrInstr
   (CompilerIrInstr.Call
     0
-    (opt-test-symbol "inline_span")
+    (struct-get symbols inline-span)
     (CompilerIrCallArgs.One (CompilerIrValue.I64 7))
     (AstType.I64)))
 
-(define (opt-inline-span-caller) : CompilerIrFunction
+(define (opt-inline-span-caller [symbols : OptInlineSpanTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -34942,43 +34953,44 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (opt-inline-span-caller-call)
+          (opt-inline-span-caller-call symbols)
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-span-program) : CompilerIrProgram
+(define (opt-inline-span-program [symbols : OptInlineSpanTestSymbols]) : CompilerIrProgram
   (CompilerIrProgram.Program
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
-      (opt-inline-span-caller)
+      (opt-inline-span-caller symbols)
       (compiler-ir-function-cons
-        (opt-inline-span-callee)
+        (opt-inline-span-callee symbols)
         CompilerIrFunctionList.Nil))
     CompilerIrExternList.Nil))
 
 (define (compiler-optimize-spans-inline-callee-ok?) : bool
   (let
+    [symbols : OptInlineSpanTestSymbols (opt-inline-span-test-symbols)]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
           (opt-spans-base)
           "inline_span"
-          (opt-inline-span-callee-call)
+          (opt-inline-span-callee-call symbols)
           (opt-test-span 71 13))
         "main"
-        (opt-inline-span-caller-call)
+        (opt-inline-span-caller-call symbols)
         (opt-test-span 81 15))]
     [cloned-call : CompilerIrInstr
       (CompilerIrInstr.Call
         1
-        (opt-test-symbol "opaque")
+        (struct-get symbols opaque)
         (CompilerIrCallArgs.One (CompilerIrValue.I64 7))
         (AstType.I64))]
     (match (optimize-program-with-spans-and-level
-      (opt-inline-span-program)
+      (opt-inline-span-program symbols)
       spans
       2)
       [(CompilerOptimizedProgram.Program _ optimized-spans)
@@ -34986,20 +34998,21 @@
 
 (define (compiler-optimize-spans-inline-fallback-ok?) : bool
   (let
+    [symbols : OptInlineSpanTestSymbols (opt-inline-span-test-symbols)]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (opt-spans-base)
         "main"
-        (opt-inline-span-caller-call)
+        (opt-inline-span-caller-call symbols)
         (opt-test-span 91 17))]
     [cloned-call : CompilerIrInstr
       (CompilerIrInstr.Call
         1
-        (opt-test-symbol "opaque")
+        (struct-get symbols opaque)
         (CompilerIrCallArgs.One (CompilerIrValue.I64 7))
         (AstType.I64))]
     (match (optimize-program-with-spans-and-level
-      (opt-inline-span-program)
+      (opt-inline-span-program symbols)
       spans
       2)
       [(CompilerOptimizedProgram.Program _ optimized-spans)
@@ -35016,6 +35029,7 @@
 
 (define (compiler-optimize-spans-inline-multiblock-ok?) : bool
   (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
@@ -35024,12 +35038,12 @@
           (opt-inline-branch-callee-mov)
           (opt-test-span 141 27))
         "main"
-        (opt-inline-branch-caller-call)
+        (opt-inline-branch-caller-call symbols)
         (opt-test-span 151 29))]
     [phi : CompilerIrInstr
       (CompilerIrInstr.Phi 0 (opt-inline-span-branch-phi-inputs) (AstType.I64))]
     (match (opt-inline-program-functions-with-spans
-      (opt-inline-branch-functions)
+      (opt-inline-branch-functions symbols)
       2
       spans)
       [(OptInlineSpanProgram.Program optimized optimized-spans)
@@ -37618,40 +37632,57 @@
 ;; zero-valued globals are excluded) and the binop-operand rewrite (uses of a
 ;; proven constant global -- both ordinary operands and div/mod divisors -- become
 ;; literals; excluded globals are left as hidden loads).
-(define (opt-const-divisor-test-globals) : CompilerIrGlobalList
+(defstruct OptConstDivisorTestSymbols
+  (konst i64)
+  (mutable i64)
+  (uninit i64)
+  (borrowed i64)
+  (zero i64)
+  (big i64))
+
+(define (opt-const-divisor-test-symbols) : OptConstDivisorTestSymbols
+  (OptConstDivisorTestSymbols
+    (opt-test-symbol "konst")
+    (opt-test-symbol "mut")
+    (opt-test-symbol "uninit")
+    (opt-test-symbol "borrowed")
+    (opt-test-symbol "zero")
+    (opt-test-symbol "big")))
+
+(define (opt-const-divisor-test-globals [symbols : OptConstDivisorTestSymbols]) : CompilerIrGlobalList
   (compiler-ir-global-cons
     (CompilerIrGlobal.Global
-      (compiler-ir-test-symbol "konst")
+      (struct-get symbols konst)
       (AstType.I64)
       (CompilerIrValue.I64 1000000007))
     (compiler-ir-global-cons
       (CompilerIrGlobal.Global
-        (compiler-ir-test-symbol "mut")
+        (struct-get symbols mutable)
         (AstType.I64)
         (CompilerIrValue.I64 7))
       (compiler-ir-global-cons
         (CompilerIrGlobal.Global
-          (compiler-ir-test-symbol "uninit")
+          (struct-get symbols uninit)
           (AstType.I64)
           (CompilerIrValue.Unit))
         (compiler-ir-global-cons
           (CompilerIrGlobal.Global
-            (compiler-ir-test-symbol "borrowed")
+            (struct-get symbols borrowed)
             (AstType.I64)
             (CompilerIrValue.I64 99))
           (compiler-ir-global-cons
             (CompilerIrGlobal.Global
-              (compiler-ir-test-symbol "zero")
+              (struct-get symbols zero)
               (AstType.I64)
               (CompilerIrValue.I64 0))
             (compiler-ir-global-cons
               (CompilerIrGlobal.Global
-                (opt-test-symbol "big")
+                (struct-get symbols big)
                 (AstType.I64)
                 (CompilerIrValue.I64 4294967295))
               CompilerIrGlobalList.Nil)))))))
 
-(define (opt-const-divisor-test-blocks) : CompilerIrBlockList
+(define (opt-const-divisor-test-blocks [symbols : OptConstDivisorTestSymbols]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
       "entry"
@@ -37661,7 +37692,7 @@
           10
           (CompilerIrBinOp.Mod)
           (CompilerIrValue.Var 0)
-          (CompilerIrValue.Global (compiler-ir-test-symbol "konst"))
+          (CompilerIrValue.Global (struct-get symbols konst))
           (AstType.I64))
         (compiler-ir-instr-cons
           ;; mod by a written global -> must NOT be rewritten
@@ -37669,7 +37700,7 @@
             11
             (CompilerIrBinOp.Mod)
             (CompilerIrValue.Var 0)
-            (CompilerIrValue.Global (compiler-ir-test-symbol "mut"))
+            (CompilerIrValue.Global (struct-get symbols mutable))
             (AstType.I64))
           (compiler-ir-instr-cons
             ;; div by a non-literal (init-function) global -> must NOT be rewritten
@@ -37677,7 +37708,7 @@
               12
               (CompilerIrBinOp.Div)
               (CompilerIrValue.Var 0)
-              (CompilerIrValue.Global (compiler-ir-test-symbol "uninit"))
+              (CompilerIrValue.Global (struct-get symbols uninit))
               (AstType.I64))
             (compiler-ir-instr-cons
               ;; ordinary operand use of the constant global -> rewritten (general)
@@ -37685,7 +37716,7 @@
                 13
                 (CompilerIrBinOp.Add)
                 (CompilerIrValue.Var 0)
-                (CompilerIrValue.Global (compiler-ir-test-symbol "konst"))
+                (CompilerIrValue.Global (struct-get symbols konst))
                 (AstType.I64))
               (compiler-ir-instr-cons
                 ;; use of an address-taken global -> must NOT be rewritten
@@ -37693,7 +37724,7 @@
                   14
                   (CompilerIrBinOp.BitAnd)
                   (CompilerIrValue.Var 0)
-                  (CompilerIrValue.Global (compiler-ir-test-symbol "borrowed"))
+                  (CompilerIrValue.Global (struct-get symbols borrowed))
                   (AstType.I64))
                 (compiler-ir-instr-cons
                   ;; use of a zero-valued global -> must NOT be rewritten
@@ -37701,7 +37732,7 @@
                     15
                     (CompilerIrBinOp.BitAnd)
                     (CompilerIrValue.Var 0)
-                    (CompilerIrValue.Global (compiler-ir-test-symbol "zero"))
+                    (CompilerIrValue.Global (struct-get symbols zero))
                     (AstType.I64))
                   (compiler-ir-instr-cons
                     ;; use of a >imm32 global -> must NOT be rewritten
@@ -37709,19 +37740,19 @@
                       16
                       (CompilerIrBinOp.BitAnd)
                       (CompilerIrValue.Var 0)
-                      (CompilerIrValue.Global (opt-test-symbol "big"))
+                      (CompilerIrValue.Global (struct-get symbols big))
                       (AstType.I64))
                     (compiler-ir-instr-cons
                       ;; taking the address disqualifies "borrowed"
                       (CompilerIrInstr.Mov
                         20
                         (CompilerIrValue.GlobalAddr
-                          (compiler-ir-test-symbol "borrowed"))
+                          (struct-get symbols borrowed))
                         (AstType.U64))
                       (compiler-ir-instr-cons
                         ;; the store disqualifies "mut"
                         (CompilerIrInstr.Store
-                          (compiler-ir-test-symbol "mut")
+                          (struct-get symbols mutable)
                           (CompilerIrValue.I64 9)
                           (AstType.I64))
                         (compiler-ir-instr-cons
@@ -37772,7 +37803,9 @@
 
 (define (compiler-optimize-const-divisor-self-test) : i64
   (let
-    [globals : CompilerIrGlobalList (opt-const-divisor-test-globals)]
+    [symbols : OptConstDivisorTestSymbols (opt-const-divisor-test-symbols)]
+    [globals : CompilerIrGlobalList (opt-const-divisor-test-globals symbols)]
+    [blocks : CompilerIrBlockList (opt-const-divisor-test-blocks symbols)]
     [functions : CompilerIrFunctionList
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
@@ -37780,22 +37813,22 @@
           CompilerIrParamList.Nil
           (AstType.I64)
           16
-          (opt-const-divisor-test-blocks))
+          blocks)
         CompilerIrFunctionList.Nil)]
     [table : opt_i64_i64_map.Map (opt-const-divisors-build globals functions)]
     [rewritten : CompilerIrBlockList
-      (opt-const-divisor-rewrite-blocks table (opt-const-divisor-test-blocks))]
+      (opt-const-divisor-rewrite-blocks table blocks)]
     (cond
-      [(not (opt_i64_i64_map.contains? (& table) 1)) 1]
+      [(not (opt_i64_i64_map.contains? (& table) (struct-get symbols konst))) 1]
       [(not
-          (match (opt_i64_i64_map.get (& table) 1)
+          (match (opt_i64_i64_map.get (& table) (struct-get symbols konst))
             [(opt_i64_i64_map.LookupFound n) (= n 1000000007)]
             [(opt_i64_i64_map.LookupMissing) false]))
         2]
-      [(opt_i64_i64_map.contains? (& table) 2) 3]
-      [(opt_i64_i64_map.contains? (& table) 3) 4]
-      [(opt_i64_i64_map.contains? (& table) 4) 5]
-      [(opt_i64_i64_map.contains? (& table) 5) 6]
+      [(opt_i64_i64_map.contains? (& table) (struct-get symbols mutable)) 3]
+      [(opt_i64_i64_map.contains? (& table) (struct-get symbols uninit)) 4]
+      [(opt_i64_i64_map.contains? (& table) (struct-get symbols borrowed)) 5]
+      [(opt_i64_i64_map.contains? (& table) (struct-get symbols zero)) 6]
       [(not
           (opt-const-divisor-test-is-i64?
             (opt-const-divisor-test-rhs rewritten 10)
@@ -37828,7 +37861,7 @@
         12]
       [(opt_i64_i64_map.contains?
           (& table)
-          (compiler-ir-symbol-id (opt-test-symbol "big")))
+          (compiler-ir-symbol-id (struct-get symbols big)))
         13]
       [(not
           (opt-const-divisor-test-is-global?
@@ -38758,7 +38791,21 @@
           (CompilerIrInstrList.Nil)))
       (CompilerIrBlockList.Nil))))
 
-(define (opt-loop-bce-test-summaries [clean-touch : bool] [argc-return : bool]) : OptLoopBceSummaries
+(defstruct OptLoopBceTestSymbols
+  (touch i64)
+  (argc i64)
+  (base i64))
+
+(define (opt-loop-bce-test-symbols) : OptLoopBceTestSymbols
+  (OptLoopBceTestSymbols
+    (opt-test-symbol "touch")
+    (opt-test-symbol "argc")
+    (opt-test-symbol "base")))
+
+(define (opt-loop-bce-test-summaries
+  [symbols : OptLoopBceTestSymbols]
+  [clean-touch : bool]
+  [argc-return : bool]) : OptLoopBceSummaries
   (let
     [clean : opt_i64_i64_map.Map
       (if clean-touch
@@ -38767,7 +38814,7 @@
           (begin
             (opt_i64_i64_map.insert-ref!
               (&mut map)
-              (compiler-ir-symbol-id (opt-test-symbol "touch"))
+              (compiler-ir-symbol-id (struct-get symbols touch))
               1)
             map))
         (opt_i64_i64_map.with-capacity 8))]
@@ -38778,7 +38825,7 @@
           (begin
             (opt_i64_i64_map.insert-ref!
               (&mut map)
-              (compiler-ir-symbol-id (opt-test-symbol "argc"))
+              (compiler-ir-symbol-id (struct-get symbols argc))
               1)
             map))
         (opt_i64_i64_map.with-capacity 8))]
@@ -38796,20 +38843,26 @@
       (CompilerIrInstr.Jump "header")
       (CompilerIrInstrList.Nil))))
 
-(define (opt-loop-bce-test-entry-after-store [init : i64] [with-call : bool]) : CompilerIrInstrList
+(define (opt-loop-bce-test-entry-after-store
+  [symbols : OptLoopBceTestSymbols]
+  [init : i64]
+  [with-call : bool]) : CompilerIrInstrList
   (let
     [tail : CompilerIrInstrList (opt-loop-bce-test-entry-tail init)]
     (if with-call
       (compiler-ir-instr-cons
         (CompilerIrInstr.Call
           20
-          (opt-test-symbol "touch")
+          (struct-get symbols touch)
           (CompilerIrCallArgs.One (CompilerIrValue.Var 2))
           (AstType.Unit))
         tail)
       tail)))
 
-(define (opt-loop-bce-test-entry [init : i64] [with-call : bool]) : CompilerIrBlock
+(define (opt-loop-bce-test-entry
+  [symbols : OptLoopBceTestSymbols]
+  [init : i64]
+  [with-call : bool]) : CompilerIrBlock
   (compiler-ir-block
     "entry"
     (compiler-ir-instr-cons
@@ -38827,21 +38880,24 @@
               (CompilerIrValue.Var 3)
               (CompilerIrValue.Var 1)
               (AstType.I64))
-            (opt-loop-bce-test-entry-after-store init with-call)))))))
+            (opt-loop-bce-test-entry-after-store symbols init with-call)))))))
 
-(define (opt-loop-bce-test-argc-entry [init : i64] [with-call : bool]) : CompilerIrBlock
+(define (opt-loop-bce-test-argc-entry
+  [symbols : OptLoopBceTestSymbols]
+  [init : i64]
+  [with-call : bool]) : CompilerIrBlock
   (compiler-ir-block
     "entry"
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         10
-        (opt-test-symbol "argc")
+        (struct-get symbols argc)
         (CompilerIrCallArgs.Nil)
         (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Load
           11
-          (CompilerIrValue.Global (opt-test-symbol "base"))
+          (CompilerIrValue.Global (struct-get symbols base))
           (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
@@ -38855,13 +38911,13 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 12
-                (opt-test-symbol "argc")
+                (struct-get symbols argc)
                 (CompilerIrCallArgs.Nil)
                 (AstType.I64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Load
                   13
-                  (CompilerIrValue.Global (opt-test-symbol "base"))
+                  (CompilerIrValue.Global (struct-get symbols base))
                   (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
@@ -38881,7 +38937,10 @@
                         (CompilerIrValue.Var 3)
                         (CompilerIrValue.Var 14)
                         (AstType.I64))
-                      (opt-loop-bce-test-entry-after-store init with-call))))))))))))
+                      (opt-loop-bce-test-entry-after-store
+                        symbols
+                        init
+                        with-call))))))))))))
 
 (define (opt-loop-bce-test-header) : CompilerIrBlock
   (compiler-ir-block
@@ -39005,13 +39064,15 @@
 (define (opt-loop-bce-test-affine-body [reversed : bool]) : CompilerIrBlock
   (compiler-ir-block "body" (opt-loop-bce-test-affine-body-instrs reversed)))
 
-(define (opt-loop-bce-test-affine-call-body [reversed : bool]) : CompilerIrBlock
+(define (opt-loop-bce-test-affine-call-body
+  [symbols : OptLoopBceTestSymbols]
+  [reversed : bool]) : CompilerIrBlock
   (compiler-ir-block
     "body"
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         20
-        (opt-test-symbol "touch")
+        (struct-get symbols touch)
         (CompilerIrCallArgs.One (CompilerIrValue.Var 2))
         (AstType.Unit))
       (opt-loop-bce-test-affine-body-instrs reversed))))
@@ -39023,9 +39084,12 @@
       (CompilerIrInstr.Return (CompilerIrMaybeValue.No))
       (CompilerIrInstrList.Nil))))
 
-(define (opt-loop-bce-test-blocks [init : i64] [with-call : bool]) : CompilerIrBlockList
+(define (opt-loop-bce-test-blocks
+  [symbols : OptLoopBceTestSymbols]
+  [init : i64]
+  [with-call : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-loop-bce-test-entry init with-call)
+    (opt-loop-bce-test-entry symbols init with-call)
     (compiler-ir-block-cons
       (opt-loop-bce-test-header)
       (compiler-ir-block-cons
@@ -39035,12 +39099,13 @@
           (CompilerIrBlockList.Nil))))))
 
 (define (opt-loop-bce-test-affine-blocks
+  [symbols : OptLoopBceTestSymbols]
   [init : i64]
   [limit : i64]
   [body : CompilerIrBlock]
   [with-call : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-loop-bce-test-entry init with-call)
+    (opt-loop-bce-test-entry symbols init with-call)
     (compiler-ir-block-cons
       (opt-loop-bce-test-affine-header limit)
       (compiler-ir-block-cons
@@ -39049,9 +39114,12 @@
           (opt-loop-bce-test-exit)
           (CompilerIrBlockList.Nil))))))
 
-(define (opt-loop-bce-test-argc-blocks [init : i64] [with-call : bool]) : CompilerIrBlockList
+(define (opt-loop-bce-test-argc-blocks
+  [symbols : OptLoopBceTestSymbols]
+  [init : i64]
+  [with-call : bool]) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-loop-bce-test-argc-entry init with-call)
+    (opt-loop-bce-test-argc-entry symbols init with-call)
     (compiler-ir-block-cons
       (opt-loop-bce-test-header)
       (compiler-ir-block-cons
@@ -39060,13 +39128,13 @@
           (opt-loop-bce-test-exit)
           (CompilerIrBlockList.Nil))))))
 
-(define (opt-loop-bce-test-nested-entry) : CompilerIrBlock
+(define (opt-loop-bce-test-nested-entry [symbols : OptLoopBceTestSymbols]) : CompilerIrBlock
   (compiler-ir-block
     "entry"
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         10
-        (opt-test-symbol "argc")
+        (struct-get symbols argc)
         (CompilerIrCallArgs.Nil)
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -39145,9 +39213,9 @@
           (CompilerIrInstr.Jump "outer_header")
           (CompilerIrInstrList.Nil))))))
 
-(define (opt-loop-bce-test-nested-blocks) : CompilerIrBlockList
+(define (opt-loop-bce-test-nested-blocks [symbols : OptLoopBceTestSymbols]) : CompilerIrBlockList
   (compiler-ir-block-cons
-    (opt-loop-bce-test-nested-entry)
+    (opt-loop-bce-test-nested-entry symbols)
     (compiler-ir-block-cons
       (opt-loop-bce-test-outer-header)
       (compiler-ir-block-cons
@@ -39411,13 +39479,15 @@
 (define (opt-loop-bce-string-test-body [object-var : i64]) : CompilerIrBlock
   (compiler-ir-block "body" (opt-loop-bce-string-test-body-instrs object-var)))
 
-(define (opt-loop-bce-string-test-call-body [object-var : i64]) : CompilerIrBlock
+(define (opt-loop-bce-string-test-call-body
+  [symbols : OptLoopBceTestSymbols]
+  [object-var : i64]) : CompilerIrBlock
   (compiler-ir-block
     "body"
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         21
-        (opt-test-symbol "touch")
+        (struct-get symbols touch)
         (CompilerIrCallArgs.One (CompilerIrValue.Var object-var))
         (AstType.Unit))
       (opt-loop-bce-string-test-body-instrs object-var))))
@@ -39685,6 +39755,7 @@
 
 (define (compiler-optimize-bounds-self-test) : i64
   (let
+    [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
     [duplicate : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsFacts.Nil)
@@ -39725,105 +39796,107 @@
       (optimize-block-list (opt-bounds-cross-blocks))]
     [loop-positive : i64
       (opt-loop-bce-test-count
-        (opt-loop-bce-test-blocks 0 false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-blocks symbols 0 false)
+        (opt-loop-bce-test-summaries symbols false false))]
     [loop-negative-init : i64
       (opt-loop-bce-test-count
-        (opt-loop-bce-test-argc-blocks (- 0 1) false)
-        (opt-loop-bce-test-summaries false true))]
+        (opt-loop-bce-test-argc-blocks symbols (- 0 1) false)
+        (opt-loop-bce-test-summaries symbols false true))]
     [loop-unknown-call : i64
       (opt-loop-bce-test-count
-        (opt-loop-bce-test-argc-blocks 0 true)
-        (opt-loop-bce-test-summaries false true))]
+        (opt-loop-bce-test-argc-blocks symbols 0 true)
+        (opt-loop-bce-test-summaries symbols false true))]
     [loop-clean-call : i64
       (opt-loop-bce-test-count
-        (opt-loop-bce-test-argc-blocks 0 true)
-        (opt-loop-bce-test-summaries true true))]
+        (opt-loop-bce-test-argc-blocks symbols 0 true)
+        (opt-loop-bce-test-summaries symbols true true))]
     [loop-argc : i64
       (opt-loop-bce-test-count
-        (opt-loop-bce-test-argc-blocks 0 false)
-        (opt-loop-bce-test-summaries false true))]
+        (opt-loop-bce-test-argc-blocks symbols 0 false)
+        (opt-loop-bce-test-summaries symbols false true))]
     [loop-nested : i64
       (opt-loop-bce-test-count
-        (opt-loop-bce-test-nested-blocks)
-        (opt-loop-bce-test-summaries false true))]
+        (opt-loop-bce-test-nested-blocks symbols)
+        (opt-loop-bce-test-summaries symbols false true))]
     [string-positive : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-blocks
           0
           (opt-loop-bce-string-test-body 2)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-mismatch : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-blocks
           0
           (opt-loop-bce-string-test-body 20)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-call : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-blocks
           0
-          (opt-loop-bce-string-test-call-body 2)
+          (opt-loop-bce-string-test-call-body symbols 2)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-store : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-blocks
           0
           (opt-loop-bce-string-test-store-body 2)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-negative-init : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-blocks
           (- 0 1)
           (opt-loop-bce-string-test-body 2)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-off-by-one : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-blocks
           0
           (opt-loop-bce-string-test-body 2)
           true)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-reassign : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-blocks
           0
           (opt-loop-bce-string-test-reassign-body)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-split : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-split-blocks)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-transitive : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-transitive-blocks true)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-transitive-missing-upper : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-transitive-blocks false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [loop-affine-reversed : i64
       (opt-loop-bce-test-count
         (opt-loop-bce-test-affine-blocks
+          symbols
           0
           7
           (opt-loop-bce-test-affine-body true)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [loop-affine-missing-offset-bound : i64
       (opt-loop-bce-test-count
         (opt-loop-bce-test-affine-blocks
+          symbols
           0
           10
           (opt-loop-bce-test-affine-body true)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [string-affine-missing-offset-bound : i64
       (opt-loop-bce-string-test-count
         (opt-loop-bce-string-test-blocks
@@ -39832,23 +39905,25 @@
             "body"
             (opt-loop-bce-string-test-affine-body-instrs 2 true))
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [loop-affine-negative-init : i64
       (opt-loop-bce-test-count
         (opt-loop-bce-test-affine-blocks
+          symbols
           (- 0 1)
           7
           (opt-loop-bce-test-affine-body true)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [loop-affine-call : i64
       (opt-loop-bce-test-count
         (opt-loop-bce-test-affine-blocks
+          symbols
           0
           7
-          (opt-loop-bce-test-affine-call-body true)
+          (opt-loop-bce-test-affine-call-body symbols true)
           false)
-        (opt-loop-bce-test-summaries false false))]
+        (opt-loop-bce-test-summaries symbols false false))]
     [index-cast : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsFacts.Nil)
@@ -39925,15 +40000,18 @@
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
             (CompilerIrInstrList.Nil)))))))
 
-(define (opt-test-function-named [name : String] [instrs : CompilerIrInstrList]) : CompilerIrFunction
+(define (opt-test-function-symbol [name : i64] [instrs : CompilerIrInstrList]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol name)
+    name
     (CompilerIrParamList.Nil)
     (AstType.I64)
     5
     (compiler-ir-block-cons
       (compiler-ir-block "entry" instrs)
       (CompilerIrBlockList.Nil))))
+
+(define (opt-test-function-named [name : String] [instrs : CompilerIrInstrList]) : CompilerIrFunction
+  (opt-test-function-symbol (opt-test-symbol name) instrs))
 
 (define (opt-test-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
   (opt-test-function-named "fixed" instrs))
@@ -40096,21 +40174,44 @@
     (unless (compiler-optimize-level1-escape-equivalent-ok?) (return 3))
     42))
 
-(define (opt-global-dce-main-instrs) : CompilerIrInstrList
+(defstruct OptGlobalDceTestSymbols
+  (main i64)
+  (helper i64)
+  (dead i64)
+  (callback-target i64)
+  (callback i64)
+  (used-global i64)
+  (stored-global i64)
+  (runtime-global i64)
+  (dead-global i64))
+
+(define (opt-global-dce-test-symbols) : OptGlobalDceTestSymbols
+  (OptGlobalDceTestSymbols
+    (opt-test-symbol "main")
+    (opt-test-symbol "helper")
+    (opt-test-symbol "dead")
+    (opt-test-symbol "callback-target")
+    (opt-test-symbol "callback")
+    (opt-test-symbol "used-global")
+    (opt-test-symbol "stored-global")
+    (opt-test-symbol "runtime-global")
+    (opt-test-symbol "dead-global")))
+
+(define (opt-global-dce-main-instrs [symbols : OptGlobalDceTestSymbols]) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.Mov
       3
-      (CompilerIrValue.Global (opt-test-symbol "used-global"))
+      (CompilerIrValue.Global (struct-get symbols used-global))
       (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Store
-        (opt-test-symbol "stored-global")
+        (struct-get symbols stored-global)
         (CompilerIrValue.I64 99)
         (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Call
           1
-          (opt-test-symbol "helper")
+          (struct-get symbols helper)
           (CompilerIrCallArgs.Nil)
           (AstType.I64))
         (compiler-ir-instr-cons
@@ -40137,43 +40238,49 @@
       (CompilerIrMaybeValue.Some (CompilerIrValue.I64 value)))
     (CompilerIrInstrList.Nil)))
 
-(define (opt-global-dce-program) : CompilerIrProgram
+(define (opt-global-dce-program [symbols : OptGlobalDceTestSymbols]) : CompilerIrProgram
   (CompilerIrProgram.Program
     (compiler-ir-global-cons
       (CompilerIrGlobal.Global
-        (opt-test-symbol "callback")
+        (struct-get symbols callback)
         (AstType.I64)
-        (CompilerIrValue.Global (opt-test-symbol "callback-target")))
+        (CompilerIrValue.Global (struct-get symbols callback-target)))
       (compiler-ir-global-cons
         (CompilerIrGlobal.Global
-          (opt-test-symbol "used-global")
+          (struct-get symbols used-global)
           (AstType.I64)
           (CompilerIrValue.I64 3))
         (compiler-ir-global-cons
           (CompilerIrGlobal.Global
-            (opt-test-symbol "stored-global")
+            (struct-get symbols stored-global)
             (AstType.I64)
             (CompilerIrValue.I64 0))
           (compiler-ir-global-cons
             (CompilerIrGlobal.Global
-              (opt-test-symbol "runtime-global")
+              (struct-get symbols runtime-global)
               (AstType.I64)
               (CompilerIrValue.Unit))
             (compiler-ir-global-cons
               (CompilerIrGlobal.Global
-                (opt-test-symbol "dead-global")
+                (struct-get symbols dead-global)
                 (AstType.I64)
                 (CompilerIrValue.I64 5))
               (CompilerIrGlobalList.Nil))))))
     (compiler-ir-function-cons
-      (opt-test-function-named "main" (opt-global-dce-main-instrs))
+      (opt-test-function-symbol
+        (struct-get symbols main)
+        (opt-global-dce-main-instrs symbols))
       (compiler-ir-function-cons
-        (opt-test-function-named "helper" (opt-global-dce-return-instrs 7))
+        (opt-test-function-symbol
+          (struct-get symbols helper)
+          (opt-global-dce-return-instrs 7))
         (compiler-ir-function-cons
-          (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
+          (opt-test-function-symbol
+            (struct-get symbols dead)
+            (opt-global-dce-return-instrs 9))
           (compiler-ir-function-cons
-            (opt-test-function-named
-              "callback-target"
+            (opt-test-function-symbol
+              (struct-get symbols callback-target)
               (opt-global-dce-return-instrs 11))
             (compiler-ir-function-cons
               (opt-test-function-named
@@ -40198,7 +40305,8 @@
 
 (define (compiler-optimize-global-dce-ok?) : bool
   (let
-    [program : CompilerIrProgram (opt-global-dce-program)]
+    [symbols : OptGlobalDceTestSymbols (opt-global-dce-test-symbols)]
+    [program : CompilerIrProgram (opt-global-dce-program symbols)]
     ;; Level 0 keeps every function; level 1 (the cheap optimized build) prunes
     ;; functions unreachable from the roots without inlining the survivors.
     [level0 : CompilerIrProgram (optimize-program-with-level program 0)]
@@ -40238,16 +40346,43 @@
     42
     1))
 
-(define (opt-callgraph-test-slot [index : OptFunctionIndex] [name : String]) : i64
-  (match (opt-function-index-slot index (opt-test-symbol name))
+(defstruct OptCallgraphTestSymbols
+  (main i64)
+  (a i64)
+  (b i64)
+  (c i64)
+  (address-taken i64)
+  (external i64)
+  (rec-even i64)
+  (rec-odd i64)
+  (lonely i64)
+  (self i64)
+  (leaf i64))
+
+(define (opt-callgraph-test-symbols) : OptCallgraphTestSymbols
+  (OptCallgraphTestSymbols
+    (opt-test-symbol "main")
+    (opt-test-symbol "a")
+    (opt-test-symbol "b")
+    (opt-test-symbol "c")
+    (opt-test-symbol "address_taken")
+    (opt-test-symbol "external")
+    (opt-test-symbol "rec_even")
+    (opt-test-symbol "rec_odd")
+    (opt-test-symbol "lonely")
+    (opt-test-symbol "self")
+    (opt-test-symbol "leaf")))
+
+(define (opt-callgraph-test-slot [index : OptFunctionIndex] [name : i64]) : i64
+  (match (opt-function-index-slot index name)
     [(option_i64.Some slot) slot]
     [(option_i64.None) -1]))
 
 (define (opt-callgraph-test-edge?
   [index : OptFunctionIndex]
   [graph : OptCallGraph]
-  [caller : String]
-  [callee : String]) : bool
+  [caller : i64]
+  [callee : i64]) : bool
   (opt-callgraph-has-edge?
     graph
     (opt-callgraph-test-slot index caller)
@@ -40256,58 +40391,51 @@
 (define (opt-callgraph-test-edge-count
   [index : OptFunctionIndex]
   [graph : OptCallGraph]
-  [caller : String]) : i64
+  [caller : i64]) : i64
   (opt-callgraph-callee-count graph (opt-callgraph-test-slot index caller)))
 
-(define (opt-callgraph-main-instrs) : CompilerIrInstrList
+(define (opt-callgraph-main-instrs [symbols : OptCallgraphTestSymbols]) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.Call
       0
-      (opt-test-symbol "a")
+      (struct-get symbols a)
       CompilerIrCallArgs.Nil
       (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
-        (opt-test-symbol "external")
+        (struct-get symbols external)
         CompilerIrCallArgs.Nil
         (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.CallIndirect
           2
-          (CompilerIrValue.Function (opt-test-symbol "c"))
+          (CompilerIrValue.Function (struct-get symbols c))
           CompilerIrCallArgs.Nil
           (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Mov
             3
-            (CompilerIrValue.Global (opt-test-symbol "address_taken"))
+            (CompilerIrValue.Global (struct-get symbols address-taken))
             (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.TailCall
-              (opt-test-symbol "b")
+              (struct-get symbols b)
               CompilerIrCallArgs.Nil
               (AstType.I64))
             CompilerIrInstrList.Nil))))))
 
-(define (opt-callgraph-call-instrs [name : String]) : CompilerIrInstrList
+(define (opt-callgraph-call-instrs [name : i64]) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Call
-      0
-      (opt-test-symbol name)
-      CompilerIrCallArgs.Nil
-      (AstType.I64))
+    (CompilerIrInstr.Call 0 name CompilerIrCallArgs.Nil (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Return
         (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
       CompilerIrInstrList.Nil)))
 
-(define (opt-callgraph-tail-instrs [name : String]) : CompilerIrInstrList
+(define (opt-callgraph-tail-instrs [name : i64]) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.TailCall
-      (opt-test-symbol name)
-      CompilerIrCallArgs.Nil
-      (AstType.I64))
+    (CompilerIrInstr.TailCall name CompilerIrCallArgs.Nil (AstType.I64))
     CompilerIrInstrList.Nil))
 
 (define (opt-callgraph-return-instrs) : CompilerIrInstrList
@@ -40315,32 +40443,40 @@
     (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
     CompilerIrInstrList.Nil))
 
-(define (opt-callgraph-acyclic-functions) : CompilerIrFunctionList
+(define (opt-callgraph-acyclic-functions [symbols : OptCallgraphTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-test-function-named "main" (opt-callgraph-main-instrs))
+    (opt-test-function-symbol
+      (struct-get symbols main)
+      (opt-callgraph-main-instrs symbols))
     (compiler-ir-function-cons
-      (opt-test-function-named "a" (opt-callgraph-call-instrs "c"))
+      (opt-test-function-symbol
+        (struct-get symbols a)
+        (opt-callgraph-call-instrs (struct-get symbols c)))
       (compiler-ir-function-cons
-        (opt-test-function-named "b" (opt-callgraph-return-instrs))
+        (opt-test-function-symbol
+          (struct-get symbols b)
+          (opt-callgraph-return-instrs))
         (compiler-ir-function-cons
-          (opt-test-function-named "c" (opt-callgraph-tail-instrs "b"))
+          (opt-test-function-symbol
+            (struct-get symbols c)
+            (opt-callgraph-tail-instrs (struct-get symbols b)))
           (compiler-ir-function-cons
-            (opt-test-function-named
-              "address_taken"
+            (opt-test-function-symbol
+              (struct-get symbols address-taken)
               (opt-callgraph-return-instrs))
             CompilerIrFunctionList.Nil))))))
 
-(define (opt-callgraph-rec-even-instrs) : CompilerIrInstrList
+(define (opt-callgraph-rec-even-instrs [symbols : OptCallgraphTestSymbols]) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.Call
       0
-      (opt-test-symbol "rec_odd")
+      (struct-get symbols rec-odd)
       CompilerIrCallArgs.Nil
       (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
-        (opt-test-symbol "rec_odd")
+        (struct-get symbols rec-odd)
         CompilerIrCallArgs.Nil
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -40348,49 +40484,156 @@
           (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
         CompilerIrInstrList.Nil))))
 
-(define (opt-callgraph-recursive-functions) : CompilerIrFunctionList
+(define (opt-callgraph-recursive-functions [symbols : OptCallgraphTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-test-function-named "rec_even" (opt-callgraph-rec-even-instrs))
+    (opt-test-function-symbol
+      (struct-get symbols rec-even)
+      (opt-callgraph-rec-even-instrs symbols))
     (compiler-ir-function-cons
-      (opt-test-function-named "rec_odd" (opt-callgraph-tail-instrs "rec_even"))
+      (opt-test-function-symbol
+        (struct-get symbols rec-odd)
+        (opt-callgraph-tail-instrs (struct-get symbols rec-even)))
       (compiler-ir-function-cons
-        (opt-test-function-named "lonely" (opt-callgraph-return-instrs))
+        (opt-test-function-symbol
+          (struct-get symbols lonely)
+          (opt-callgraph-return-instrs))
         CompilerIrFunctionList.Nil))))
 
 (define (compiler-optimize-callgraph-acyclic-ok?) : bool
   (let
-    [functions : CompilerIrFunctionList (opt-callgraph-acyclic-functions)]
+    [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
+    [functions : CompilerIrFunctionList
+      (opt-callgraph-acyclic-functions symbols)]
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     (cond
       [(not (= (struct-get graph count) 5)) false]
-      [(not (= (opt-callgraph-test-edge-count index graph "main") 2)) false]
-      [(not (opt-callgraph-test-edge? index graph "main" "a")) false]
-      [(not (opt-callgraph-test-edge? index graph "main" "b")) false]
-      [(opt-callgraph-test-edge? index graph "main" "c") false]
-      [(opt-callgraph-test-edge? index graph "main" "address_taken") false]
-      [(not (= (opt-callgraph-test-edge-count index graph "a") 1)) false]
-      [(not (opt-callgraph-test-edge? index graph "a" "c")) false]
-      [(not (= (opt-callgraph-test-edge-count index graph "b") 0)) false]
-      [(not (= (opt-callgraph-test-edge-count index graph "c") 1)) false]
-      [(not (opt-callgraph-test-edge? index graph "c" "b")) false]
-      [(not (= (opt-callgraph-test-edge-count index graph "address_taken") 0))
+      [(not
+          (=
+            (opt-callgraph-test-edge-count
+              index
+              graph
+              (struct-get symbols main))
+            2))
+        false]
+      [(not
+          (opt-callgraph-test-edge?
+            index
+            graph
+            (struct-get symbols main)
+            (struct-get symbols a)))
+        false]
+      [(not
+          (opt-callgraph-test-edge?
+            index
+            graph
+            (struct-get symbols main)
+            (struct-get symbols b)))
+        false]
+      [(opt-callgraph-test-edge?
+          index
+          graph
+          (struct-get symbols main)
+          (struct-get symbols c))
+        false]
+      [(opt-callgraph-test-edge?
+          index
+          graph
+          (struct-get symbols main)
+          (struct-get symbols address-taken))
+        false]
+      [(not
+          (=
+            (opt-callgraph-test-edge-count index graph (struct-get symbols a))
+            1))
+        false]
+      [(not
+          (opt-callgraph-test-edge?
+            index
+            graph
+            (struct-get symbols a)
+            (struct-get symbols c)))
+        false]
+      [(not
+          (=
+            (opt-callgraph-test-edge-count index graph (struct-get symbols b))
+            0))
+        false]
+      [(not
+          (=
+            (opt-callgraph-test-edge-count index graph (struct-get symbols c))
+            1))
+        false]
+      [(not
+          (opt-callgraph-test-edge?
+            index
+            graph
+            (struct-get symbols c)
+            (struct-get symbols b)))
+        false]
+      [(not
+          (=
+            (opt-callgraph-test-edge-count
+              index
+              graph
+              (struct-get symbols address-taken))
+            0))
         false]
       [else true])))
 
 (define (compiler-optimize-callgraph-recursive-ok?) : bool
   (let
-    [functions : CompilerIrFunctionList (opt-callgraph-recursive-functions)]
+    [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
+    [functions : CompilerIrFunctionList
+      (opt-callgraph-recursive-functions symbols)]
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     (cond
       [(not (= (struct-get graph count) 3)) false]
-      [(not (= (opt-callgraph-test-edge-count index graph "rec_even") 1)) false]
-      [(not (opt-callgraph-test-edge? index graph "rec_even" "rec_odd")) false]
-      [(opt-callgraph-test-edge? index graph "rec_even" "rec_even") false]
-      [(not (= (opt-callgraph-test-edge-count index graph "rec_odd") 1)) false]
-      [(not (opt-callgraph-test-edge? index graph "rec_odd" "rec_even")) false]
-      [(not (= (opt-callgraph-test-edge-count index graph "lonely") 0)) false]
+      [(not
+          (=
+            (opt-callgraph-test-edge-count
+              index
+              graph
+              (struct-get symbols rec-even))
+            1))
+        false]
+      [(not
+          (opt-callgraph-test-edge?
+            index
+            graph
+            (struct-get symbols rec-even)
+            (struct-get symbols rec-odd)))
+        false]
+      [(opt-callgraph-test-edge?
+          index
+          graph
+          (struct-get symbols rec-even)
+          (struct-get symbols rec-even))
+        false]
+      [(not
+          (=
+            (opt-callgraph-test-edge-count
+              index
+              graph
+              (struct-get symbols rec-odd))
+            1))
+        false]
+      [(not
+          (opt-callgraph-test-edge?
+            index
+            graph
+            (struct-get symbols rec-odd)
+            (struct-get symbols rec-even)))
+        false]
+      [(not
+          (=
+            (opt-callgraph-test-edge-count
+              index
+              graph
+              (struct-get symbols lonely))
+            0))
+        false]
       [else true])))
 
 (define (opt-scc-result-component [result : OptSccResult] [slot : i64]) : i64
@@ -40432,21 +40675,27 @@
     [right-pos : i64 (opt-scc-order-position result right)]
     (and (>= left-pos 0) (>= right-pos 0) (< left-pos right-pos))))
 
-(define (opt-scc-self-recursive-functions) : CompilerIrFunctionList
+(define (opt-scc-self-recursive-functions [symbols : OptCallgraphTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-test-function-named "self" (opt-callgraph-tail-instrs "self"))
+    (opt-test-function-symbol
+      (struct-get symbols self)
+      (opt-callgraph-tail-instrs (struct-get symbols self)))
     (compiler-ir-function-cons
-      (opt-test-function-named "leaf" (opt-callgraph-return-instrs))
+      (opt-test-function-symbol
+        (struct-get symbols leaf)
+        (opt-callgraph-return-instrs))
       CompilerIrFunctionList.Nil)))
 
 (define (compiler-optimize-scc-self-recursive-ok?) : bool
   (let
-    [functions : CompilerIrFunctionList (opt-scc-self-recursive-functions)]
+    [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
+    [functions : CompilerIrFunctionList
+      (opt-scc-self-recursive-functions symbols)]
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     [result : OptSccResult (opt-scc-compute graph)]
-    [self-slot : i64 (opt-callgraph-test-slot index "self")]
-    [leaf-slot : i64 (opt-callgraph-test-slot index "leaf")]
+    [self-slot : i64 (opt-callgraph-test-slot index (struct-get symbols self))]
+    [leaf-slot : i64 (opt-callgraph-test-slot index (struct-get symbols leaf))]
     [self-scc : i64 (opt-scc-result-component result self-slot)]
     [leaf-scc : i64 (opt-scc-result-component result leaf-slot)]
     (cond
@@ -40460,13 +40709,18 @@
 
 (define (compiler-optimize-scc-mutual-recursive-ok?) : bool
   (let
-    [functions : CompilerIrFunctionList (opt-callgraph-recursive-functions)]
+    [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
+    [functions : CompilerIrFunctionList
+      (opt-callgraph-recursive-functions symbols)]
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     [result : OptSccResult (opt-scc-compute graph)]
-    [even-slot : i64 (opt-callgraph-test-slot index "rec_even")]
-    [odd-slot : i64 (opt-callgraph-test-slot index "rec_odd")]
-    [lonely-slot : i64 (opt-callgraph-test-slot index "lonely")]
+    [even-slot : i64
+      (opt-callgraph-test-slot index (struct-get symbols rec-even))]
+    [odd-slot : i64
+      (opt-callgraph-test-slot index (struct-get symbols rec-odd))]
+    [lonely-slot : i64
+      (opt-callgraph-test-slot index (struct-get symbols lonely))]
     [even-scc : i64 (opt-scc-result-component result even-slot)]
     [odd-scc : i64 (opt-scc-result-component result odd-slot)]
     [lonely-scc : i64 (opt-scc-result-component result lonely-slot)]
@@ -40480,23 +40734,33 @@
 
 (define (compiler-optimize-scc-reverse-topo-ok?) : bool
   (let
-    [functions : CompilerIrFunctionList (opt-callgraph-acyclic-functions)]
+    [symbols : OptCallgraphTestSymbols (opt-callgraph-test-symbols)]
+    [functions : CompilerIrFunctionList
+      (opt-callgraph-acyclic-functions symbols)]
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [graph : OptCallGraph (opt-callgraph-build index)]
     [result : OptSccResult (opt-scc-compute graph)]
     [order : (Array i64) (struct-get result order)]
     [main-scc : i64
-      (opt-scc-result-component result (opt-callgraph-test-slot index "main"))]
+      (opt-scc-result-component
+        result
+        (opt-callgraph-test-slot index (struct-get symbols main)))]
     [a-scc : i64
-      (opt-scc-result-component result (opt-callgraph-test-slot index "a"))]
+      (opt-scc-result-component
+        result
+        (opt-callgraph-test-slot index (struct-get symbols a)))]
     [b-scc : i64
-      (opt-scc-result-component result (opt-callgraph-test-slot index "b"))]
+      (opt-scc-result-component
+        result
+        (opt-callgraph-test-slot index (struct-get symbols b)))]
     [c-scc : i64
-      (opt-scc-result-component result (opt-callgraph-test-slot index "c"))]
+      (opt-scc-result-component
+        result
+        (opt-callgraph-test-slot index (struct-get symbols c)))]
     [address-scc : i64
       (opt-scc-result-component
         result
-        (opt-callgraph-test-slot index "address_taken"))]
+        (opt-callgraph-test-slot index (struct-get symbols address-taken)))]
     (cond
       [(not (= (array-length order) 5)) false]
       [(not (= (array-ref order 0) b-scc)) false]
@@ -40539,9 +40803,22 @@
       (CompilerIrParam.Param "right" (AstType.I64) 1)
       CompilerIrParamList.Nil)))
 
-(define (opt-inline-frame-callee) : CompilerIrFunction
-  (CompilerIrFunction.Function
+(defstruct OptInlineFrameTestSymbols
+  (main i64)
+  (inline-add i64)
+  (inline-mid i64)
+  (inline-group-word i64))
+
+(define (opt-inline-frame-test-symbols) : OptInlineFrameTestSymbols
+  (OptInlineFrameTestSymbols
+    (opt-test-symbol "main")
     (opt-test-symbol "inline_add")
+    (opt-test-symbol "inline_mid")
+    (opt-test-symbol "inline_group_word")))
+
+(define (opt-inline-frame-callee [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols inline-add)
     (opt-inline-frame-params)
     (AstType.I64)
     3
@@ -40561,9 +40838,9 @@
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-frame-caller) : CompilerIrFunction
+(define (opt-inline-frame-caller [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     3
@@ -40577,7 +40854,7 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 2
-                (opt-test-symbol "inline_add")
+                (struct-get symbols inline-add)
                 (CompilerIrCallArgs.Two
                   (CompilerIrValue.Var 0)
                   (CompilerIrValue.Var 1))
@@ -40588,16 +40865,16 @@
                 CompilerIrInstrList.Nil)))))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-frame-functions) : CompilerIrFunctionList
+(define (opt-inline-frame-functions [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-frame-caller)
+    (opt-inline-frame-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-frame-callee)
+      (opt-inline-frame-callee symbols)
       CompilerIrFunctionList.Nil)))
 
-(define (opt-inline-known-indirect-caller) : CompilerIrFunction
+(define (opt-inline-known-indirect-caller [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     3
@@ -40611,7 +40888,7 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.CallIndirect
                 2
-                (CompilerIrValue.Function (opt-test-symbol "inline_add"))
+                (CompilerIrValue.Function (struct-get symbols inline-add))
                 (CompilerIrCallArgs.Two
                   (CompilerIrValue.Var 0)
                   (CompilerIrValue.Var 1))
@@ -40622,16 +40899,17 @@
                 CompilerIrInstrList.Nil)))))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-known-indirect-functions) : CompilerIrFunctionList
+(define (opt-inline-known-indirect-functions
+  [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-known-indirect-caller)
+    (opt-inline-known-indirect-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-frame-callee)
+      (opt-inline-frame-callee symbols)
       CompilerIrFunctionList.Nil)))
 
-(define (opt-inline-pack-word-callee) : CompilerIrFunction
+(define (opt-inline-pack-word-callee [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "inline_group_word")
+    (struct-get symbols inline-group-word)
     (opt-inline-frame-params)
     (AstType.I64)
     4
@@ -40660,9 +40938,9 @@
 ;; operands is observable: the cloned Pack must read vars 1/2 (the call
 ;; arguments), never the callee-local 0/1 (regression guard -- the inliner
 ;; cloned Pack/Word through its catch-all without remapping).
-(define (opt-inline-pack-word-caller) : CompilerIrFunction
+(define (opt-inline-pack-word-caller [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     4
@@ -40678,7 +40956,7 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   3
-                  (opt-test-symbol "inline_group_word")
+                  (struct-get symbols inline-group-word)
                   (CompilerIrCallArgs.Two
                     (CompilerIrValue.Var 1)
                     (CompilerIrValue.Var 2))
@@ -40689,15 +40967,17 @@
                   CompilerIrInstrList.Nil))))))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-pack-word-functions) : CompilerIrFunctionList
+(define (opt-inline-pack-word-functions [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-pack-word-caller)
+    (opt-inline-pack-word-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-pack-word-callee)
+      (opt-inline-pack-word-callee symbols)
       CompilerIrFunctionList.Nil)))
 
 (define (opt-inline-level-functions [level : i64]) : CompilerIrFunctionList
-  (opt-inline-program-functions (opt-inline-frame-functions) level))
+  (let
+    [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
+    (opt-inline-program-functions (opt-inline-frame-functions symbols) level)))
 
 (define (opt-inline-self-recursive) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -40737,9 +41017,22 @@
         (AstType.I64))
       (opt-inline-large-callee-instrs (+ idx 1)))))
 
-(define (opt-inline-large-callee) : CompilerIrFunction
-  (CompilerIrFunction.Function
+(defstruct OptInlineBoundsTestSymbols
+  (main i64)
+  (too-large i64)
+  (bounds-inline i64)
+  (bounds-leaf-inline i64))
+
+(define (opt-inline-bounds-test-symbols) : OptInlineBoundsTestSymbols
+  (OptInlineBoundsTestSymbols
+    (opt-test-symbol "main")
     (opt-test-symbol "too_large_inline")
+    (opt-test-symbol "bounds_inline")
+    (opt-test-symbol "bounds_leaf_inline")))
+
+(define (opt-inline-large-callee [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols too-large)
     CompilerIrParamList.Nil
     (AstType.I64)
     (+ (opt-inline-max-body) 2)
@@ -40747,9 +41040,9 @@
       (compiler-ir-block "entry" (opt-inline-large-callee-instrs 0))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-bounds-callee) : CompilerIrFunction
+(define (opt-inline-bounds-callee [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "bounds_inline")
+    (struct-get symbols bounds-inline)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "idx" (AstType.I64) 0)
       (compiler-ir-param-cons
@@ -40771,31 +41064,29 @@
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-call-one [dst : i64] [callee : String]) : CompilerIrInstrList
+(define (opt-inline-call-one [dst : i64] [callee : i64]) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Call
-      dst
-      (opt-test-symbol callee)
-      CompilerIrCallArgs.Nil
-      (AstType.I64))
+    (CompilerIrInstr.Call dst callee CompilerIrCallArgs.Nil (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Return
         (CompilerIrMaybeValue.Some (CompilerIrValue.Var dst)))
       CompilerIrInstrList.Nil)))
 
-(define (opt-inline-call-large) : CompilerIrFunction
+(define (opt-inline-call-large [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     1
     (compiler-ir-block-cons
-      (compiler-ir-block "entry" (opt-inline-call-one 0 "too_large_inline"))
+      (compiler-ir-block
+        "entry"
+        (opt-inline-call-one 0 (struct-get symbols too-large)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-call-bounds) : CompilerIrFunction
+(define (opt-inline-call-bounds [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     3
@@ -40805,7 +41096,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             2
-            (opt-test-symbol "bounds_inline")
+            (struct-get symbols bounds-inline)
             (CompilerIrCallArgs.Two
               (CompilerIrValue.I64 0)
               (CompilerIrValue.I64 4))
@@ -40816,9 +41107,9 @@
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-call-bounds-twice) : CompilerIrFunction
+(define (opt-inline-call-bounds-twice [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     4
@@ -40828,7 +41119,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             2
-            (opt-test-symbol "bounds_inline")
+            (struct-get symbols bounds-inline)
             (CompilerIrCallArgs.Two
               (CompilerIrValue.I64 0)
               (CompilerIrValue.I64 4))
@@ -40836,7 +41127,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               3
-              (opt-test-symbol "bounds_inline")
+              (struct-get symbols bounds-inline)
               (CompilerIrCallArgs.Two
                 (CompilerIrValue.I64 1)
                 (CompilerIrValue.I64 4))
@@ -40847,9 +41138,10 @@
               CompilerIrInstrList.Nil))))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-duplicate-bounds-label-function) : CompilerIrFunction
+(define (opt-inline-duplicate-bounds-label-function
+  [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     0
@@ -40872,25 +41164,26 @@
               CompilerIrInstrList.Nil))))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-large-functions) : CompilerIrFunctionList
+(define (opt-inline-large-functions [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-call-large)
+    (opt-inline-call-large symbols)
     (compiler-ir-function-cons
-      (opt-inline-large-callee)
+      (opt-inline-large-callee symbols)
       CompilerIrFunctionList.Nil)))
 
-(define (opt-inline-bounds-functions) : CompilerIrFunctionList
+(define (opt-inline-bounds-functions [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-call-bounds)
+    (opt-inline-call-bounds symbols)
     (compiler-ir-function-cons
-      (opt-inline-bounds-callee)
+      (opt-inline-bounds-callee symbols)
       CompilerIrFunctionList.Nil)))
 
-(define (opt-inline-bounds-twice-functions) : CompilerIrFunctionList
+(define (opt-inline-bounds-twice-functions
+  [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-call-bounds-twice)
+    (opt-inline-call-bounds-twice symbols)
     (compiler-ir-function-cons
-      (opt-inline-bounds-callee)
+      (opt-inline-bounds-callee symbols)
       CompilerIrFunctionList.Nil)))
 
 (define (opt-inline-bounds-leaf-instrs [index : i64] [limit : i64]) : CompilerIrInstrList
@@ -40910,10 +41203,12 @@
           (AstType.I64)))
       (opt-inline-bounds-leaf-instrs (+ index 1) limit))))
 
-(define (opt-inline-bounds-leaf-callee [body : i64]) : CompilerIrFunction
+(define (opt-inline-bounds-leaf-callee
+  [symbols : OptInlineBoundsTestSymbols]
+  [body : i64]) : CompilerIrFunction
   (compiler-ir-function-compact-blocks
     (CompilerIrFunction.Function
-      (opt-test-symbol "bounds_leaf_inline")
+      (struct-get symbols bounds-leaf-inline)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "idx" (AstType.I64) 0)
         (compiler-ir-param-cons
@@ -40925,9 +41220,9 @@
         (compiler-ir-block "entry" (opt-inline-bounds-leaf-instrs 0 body))
         CompilerIrBlockList.Nil))))
 
-(define (opt-inline-call-bounds-leaf) : CompilerIrFunction
+(define (opt-inline-call-bounds-leaf [symbols : OptInlineBoundsTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     3
@@ -40941,7 +41236,7 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 2
-                (opt-test-symbol "bounds_leaf_inline")
+                (struct-get symbols bounds-leaf-inline)
                 (CompilerIrCallArgs.Two
                   (CompilerIrValue.Var 0)
                   (CompilerIrValue.Var 1))
@@ -40952,16 +41247,18 @@
                 CompilerIrInstrList.Nil)))))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-bounds-leaf-functions [body : i64]) : CompilerIrFunctionList
+(define (opt-inline-bounds-leaf-functions
+  [symbols : OptInlineBoundsTestSymbols]
+  [body : i64]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-call-bounds-leaf)
+    (opt-inline-call-bounds-leaf symbols)
     (compiler-ir-function-cons
-      (opt-inline-bounds-leaf-callee body)
+      (opt-inline-bounds-leaf-callee symbols body)
       CompilerIrFunctionList.Nil)))
 
-(define (opt-inline-multi-call-caller) : CompilerIrFunction
+(define (opt-inline-multi-call-caller [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     6
@@ -40975,7 +41272,7 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 2
-                (opt-test-symbol "inline_add")
+                (struct-get symbols inline-add)
                 (CompilerIrCallArgs.Two
                   (CompilerIrValue.Var 0)
                   (CompilerIrValue.Var 1))
@@ -40983,7 +41280,7 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   3
-                  (opt-test-symbol "inline_add")
+                  (struct-get symbols inline-add)
                   (CompilerIrCallArgs.Two
                     (CompilerIrValue.Var 1)
                     (CompilerIrValue.Var 2))
@@ -40994,16 +41291,16 @@
                   CompilerIrInstrList.Nil))))))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-multi-call-functions) : CompilerIrFunctionList
+(define (opt-inline-multi-call-functions [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-multi-call-caller)
+    (opt-inline-multi-call-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-frame-callee)
+      (opt-inline-frame-callee symbols)
       CompilerIrFunctionList.Nil)))
 
-(define (opt-inline-cascade-mid) : CompilerIrFunction
+(define (opt-inline-cascade-mid [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "inline_mid")
+    (struct-get symbols inline-mid)
     (opt-inline-frame-params)
     (AstType.I64)
     3
@@ -41013,7 +41310,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             2
-            (opt-test-symbol "inline_add")
+            (struct-get symbols inline-add)
             (CompilerIrCallArgs.Two
               (CompilerIrValue.Var 0)
               (CompilerIrValue.Var 1))
@@ -41024,9 +41321,9 @@
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-cascade-main) : CompilerIrFunction
+(define (opt-inline-cascade-main [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     3
@@ -41040,7 +41337,7 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 2
-                (opt-test-symbol "inline_mid")
+                (struct-get symbols inline-mid)
                 (CompilerIrCallArgs.Two
                   (CompilerIrValue.Var 0)
                   (CompilerIrValue.Var 1))
@@ -41051,13 +41348,13 @@
                 CompilerIrInstrList.Nil)))))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-cascade-functions) : CompilerIrFunctionList
+(define (opt-inline-cascade-functions [symbols : OptInlineFrameTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-cascade-main)
+    (opt-inline-cascade-main symbols)
     (compiler-ir-function-cons
-      (opt-inline-cascade-mid)
+      (opt-inline-cascade-mid symbols)
       (compiler-ir-function-cons
-        (opt-inline-frame-callee)
+        (opt-inline-frame-callee symbols)
         CompilerIrFunctionList.Nil))))
 
 (define (opt-inline-mutual-a) : CompilerIrFunction
@@ -41335,15 +41632,17 @@
 
 (define (compiler-optimize-inline-large-callee-ok?) : bool
   (let
+    [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-large-functions) 2)]
+      (opt-inline-program-functions (opt-inline-large-functions symbols) 2)]
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
     (= (opt-count-direct-call-name instrs "too_large_inline") 1)))
 
 (define (compiler-optimize-inline-bounds-callee-ok?) : bool
   (let
+    [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-bounds-functions) 2)]
+      (opt-inline-program-functions (opt-inline-bounds-functions symbols) 2)]
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
     (and
       (= (opt-count-direct-call-name instrs "bounds_inline") 0)
@@ -41364,8 +41663,11 @@
 
 (define (compiler-optimize-inline-bounds-labels-distinct-ok?) : bool
   (let
+    [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-bounds-twice-functions) 2)]
+      (opt-inline-program-functions
+        (opt-inline-bounds-twice-functions symbols)
+        2)]
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
     (and
       (= (opt-count-direct-call-name instrs "bounds_inline") 0)
@@ -41402,11 +41704,15 @@
 
 (define (compiler-optimize-inline-bounds-label-guard-ok?) : bool
   (let
+    [symbols : OptInlineBoundsTestSymbols (opt-inline-bounds-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-bounds-twice-functions) 2)]
+      (opt-inline-program-functions
+        (opt-inline-bounds-twice-functions symbols)
+        2)]
     [duplicate : CompilerIrFunction
-      (opt-inline-duplicate-bounds-label-function)]
-    [fallback : CompilerIrFunction (opt-inline-frame-caller)]
+      (opt-inline-duplicate-bounds-label-function symbols)]
+    [fallback : CompilerIrFunction
+      (opt-inline-frame-caller (opt-inline-frame-test-symbols))]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (and
@@ -41419,13 +41725,20 @@
 
 (define (compiler-optimize-inline-bounds-leaf-body-gate-ok?) : bool
   (let
+    [accepted-symbols : OptInlineBoundsTestSymbols
+      (opt-inline-bounds-test-symbols)]
+    [rejected-symbols : OptInlineBoundsTestSymbols
+      (opt-inline-bounds-test-symbols)]
     [accepted : CompilerIrFunctionList
       (opt-inline-program-functions
-        (opt-inline-bounds-leaf-functions (opt-inline-bounds-leaf-max-body))
+        (opt-inline-bounds-leaf-functions
+          accepted-symbols
+          (opt-inline-bounds-leaf-max-body))
         2)]
     [rejected : CompilerIrFunctionList
       (opt-inline-program-functions
         (opt-inline-bounds-leaf-functions
+          rejected-symbols
           (+ (opt-inline-bounds-leaf-max-body) 1))
         2)]
     [accepted-instrs : CompilerIrInstrList
@@ -41439,8 +41752,9 @@
 
 (define (compiler-optimize-inline-multi-call-ok?) : bool
   (let
+    [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-multi-call-functions) 2)]
+      (opt-inline-program-functions (opt-inline-multi-call-functions symbols) 2)]
     [instrs : CompilerIrInstrList (opt-inline-function-instrs optimized "main")]
     [frame : i64 (opt-inline-function-frame optimized "main")]
     (cond
@@ -41455,8 +41769,9 @@
 
 (define (compiler-optimize-inline-bottom-up-writeback-ok?) : bool
   (let
+    [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-cascade-functions) 2)]
+      (opt-inline-program-functions (opt-inline-cascade-functions symbols) 2)]
     [main-instrs : CompilerIrInstrList
       (opt-inline-function-instrs optimized "main")]
     [mid-instrs : CompilerIrInstrList
@@ -41534,8 +41849,9 @@
 
 (define (compiler-optimize-inline-pack-word-ok?) : bool
   (let
+    [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-pack-word-functions) 2)]
+      (opt-inline-program-functions (opt-inline-pack-word-functions symbols) 2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (and
@@ -41559,9 +41875,34 @@
 (define (opt-inline-branch-callee-mov) : CompilerIrInstr
   (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 7) (AstType.I64)))
 
-(define (opt-inline-branch-callee) : CompilerIrFunction
-  (CompilerIrFunction.Function
+(defstruct OptInlineMultiTestSymbols
+  (main i64)
+  (inline-branch i64)
+  (inline-tiny-predicate i64)
+  (inline-loop i64)
+  (mb-bounds i64)
+  (inline-mut-param-loop i64)
+  (inline-nonleaf i64)
+  (external-helper i64)
+  (inline-tiny-nonleaf-predicate i64)
+  (external-predicate i64))
+
+(define (opt-inline-multi-test-symbols) : OptInlineMultiTestSymbols
+  (OptInlineMultiTestSymbols
+    (opt-test-symbol "main")
     (opt-test-symbol "inline_branch")
+    (opt-test-symbol "inline_tiny_predicate")
+    (opt-test-symbol "inline_loop")
+    (opt-test-symbol "mb_bounds")
+    (opt-test-symbol "inline_mut_param_loop")
+    (opt-test-symbol "inline_nonleaf")
+    (opt-test-symbol "external_helper")
+    (opt-test-symbol "inline_tiny_nonleaf_predicate")
+    (opt-test-symbol "external_predicate")))
+
+(define (opt-inline-branch-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols inline-branch)
     (opt-inline-branch-params)
     (AstType.I64)
     2
@@ -41589,16 +41930,16 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-branch-caller-call) : CompilerIrInstr
+(define (opt-inline-branch-caller-call [symbols : OptInlineMultiTestSymbols]) : CompilerIrInstr
   (CompilerIrInstr.Call
     0
-    (opt-test-symbol "inline_branch")
+    (struct-get symbols inline-branch)
     (CompilerIrCallArgs.One (CompilerIrValue.Bool true))
     (AstType.I64)))
 
-(define (opt-inline-branch-caller) : CompilerIrFunction
+(define (opt-inline-branch-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -41606,23 +41947,24 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (opt-inline-branch-caller-call)
+          (opt-inline-branch-caller-call symbols)
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-branch-functions) : CompilerIrFunctionList
+(define (opt-inline-branch-functions [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-branch-caller)
+    (opt-inline-branch-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-branch-callee)
+      (opt-inline-branch-callee symbols)
       CompilerIrFunctionList.Nil)))
 
-(define (opt-inline-repeated-predicate-callee) : CompilerIrFunction
+(define (opt-inline-repeated-predicate-callee
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "inline_tiny_predicate")
+    (struct-get symbols inline-tiny-predicate)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "value" (AstType.I64) 0)
       CompilerIrParamList.Nil)
@@ -41657,9 +41999,10 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-repeated-predicate-caller) : CompilerIrFunction
+(define (opt-inline-repeated-predicate-caller
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.Bool)
     2
@@ -41669,7 +42012,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
-            (opt-test-symbol "inline_tiny_predicate")
+            (struct-get symbols inline-tiny-predicate)
             (CompilerIrCallArgs.One (CompilerIrValue.I64 7))
             (AstType.Bool))
           (compiler-ir-instr-cons
@@ -41681,7 +42024,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
-              (opt-test-symbol "inline_tiny_predicate")
+              (struct-get symbols inline-tiny-predicate)
               (CompilerIrCallArgs.One (CompilerIrValue.I64 12))
               (AstType.Bool))
             (compiler-ir-instr-cons
@@ -41697,21 +42040,31 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-repeated-predicate-functions) : CompilerIrFunctionList
+(define (opt-inline-repeated-predicate-functions
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-repeated-predicate-caller)
+    (opt-inline-repeated-predicate-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-repeated-predicate-callee)
+      (opt-inline-repeated-predicate-callee symbols)
       CompilerIrFunctionList.Nil)))
 
 (define (compiler-optimize-inline-repeated-tiny-predicate-ok?) : bool
   (let
+    [level0-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [level1-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [level2-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [level0 : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-repeated-predicate-functions) 0)]
+      (opt-inline-program-functions
+        (opt-inline-repeated-predicate-functions level0-symbols)
+        0)]
     [level1 : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-repeated-predicate-functions) 1)]
+      (opt-inline-program-functions
+        (opt-inline-repeated-predicate-functions level1-symbols)
+        1)]
     [level2 : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-repeated-predicate-functions) 2)]
+      (opt-inline-program-functions
+        (opt-inline-repeated-predicate-functions level2-symbols)
+        2)]
     (match (opt-function-list-find level2 "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -41737,8 +42090,9 @@
 
 (define (compiler-optimize-inline-multiblock-ok?) : bool
   (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-branch-functions) 2)]
+      (opt-inline-program-functions (opt-inline-branch-functions symbols) 2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -41751,9 +42105,10 @@
             (opt-inline-structure-ok? blocks)))]
       [(OptMaybeFunction.No) false])))
 
-(define (opt-inline-phi-predecessor-caller) : CompilerIrFunction
+(define (opt-inline-phi-predecessor-caller
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     2
@@ -41761,7 +42116,7 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (opt-inline-branch-caller-call)
+          (opt-inline-branch-caller-call symbols)
           (compiler-ir-instr-cons
             (CompilerIrInstr.Jump "join")
             CompilerIrInstrList.Nil)))
@@ -41782,17 +42137,21 @@
               CompilerIrInstrList.Nil)))
         CompilerIrBlockList.Nil))))
 
-(define (opt-inline-phi-predecessor-functions) : CompilerIrFunctionList
+(define (opt-inline-phi-predecessor-functions
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-phi-predecessor-caller)
+    (opt-inline-phi-predecessor-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-branch-callee)
+      (opt-inline-branch-callee symbols)
       CompilerIrFunctionList.Nil)))
 
 (define (compiler-optimize-inline-multiblock-phi-predecessor-ok?) : bool
   (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-phi-predecessor-functions) 2)]
+      (opt-inline-program-functions
+        (opt-inline-phi-predecessor-functions symbols)
+        2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -41803,9 +42162,9 @@
             (opt-inline-structure-ok? blocks)))]
       [(OptMaybeFunction.No) false])))
 
-(define (opt-inline-loop-callee) : CompilerIrFunction
+(define (opt-inline-loop-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "inline_loop")
+    (struct-get symbols inline-loop)
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -41830,9 +42189,9 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-loop-caller) : CompilerIrFunction
+(define (opt-inline-loop-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -41842,7 +42201,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
-            (opt-test-symbol "inline_loop")
+            (struct-get symbols inline-loop)
             CompilerIrCallArgs.Nil
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -41851,17 +42210,18 @@
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-loop-functions) : CompilerIrFunctionList
+(define (opt-inline-loop-functions [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-loop-caller)
+    (opt-inline-loop-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-loop-callee)
+      (opt-inline-loop-callee symbols)
       CompilerIrFunctionList.Nil)))
 
 (define (compiler-optimize-inline-multiblock-acyclic-ok?) : bool
   (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-loop-functions) 2)]
+      (opt-inline-program-functions (opt-inline-loop-functions symbols) 2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -41877,9 +42237,9 @@
 ;; the multiblock instruction set, a single-call-site helper whose body
 ;; contains a check must inline (the absorb bonus), with its ok-label
 ;; freshened by the site prefix so the caller's labels stay unique.
-(define (opt-inline-mb-bounds-callee) : CompilerIrFunction
+(define (opt-inline-mb-bounds-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "mb_bounds")
+    (struct-get symbols mb-bounds)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "idx" (AstType.I64) 0)
       (compiler-ir-param-cons
@@ -41914,9 +42274,9 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-mb-bounds-caller) : CompilerIrFunction
+(define (opt-inline-mb-bounds-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     (compiler-ir-param-cons
       (CompilerIrParam.Param "a" (AstType.I64) 0)
       (compiler-ir-param-cons
@@ -41930,7 +42290,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             2
-            (opt-test-symbol "mb_bounds")
+            (struct-get symbols mb-bounds)
             (CompilerIrCallArgs.Two
               (CompilerIrValue.Var 0)
               (CompilerIrValue.Var 1))
@@ -41943,12 +42303,13 @@
 
 (define (compiler-optimize-inline-multiblock-bounds-ok?) : bool
   (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
         (compiler-ir-function-cons
-          (opt-inline-mb-bounds-caller)
+          (opt-inline-mb-bounds-caller symbols)
           (compiler-ir-function-cons
-            (opt-inline-mb-bounds-callee)
+            (opt-inline-mb-bounds-callee symbols)
             CompilerIrFunctionList.Nil))
         2)]
     (match (opt-function-list-find optimized "main")
@@ -41966,9 +42327,9 @@
     (CompilerIrParam.Param "n" (AstType.I64) 0)
     CompilerIrParamList.Nil))
 
-(define (opt-inline-mut-param-callee) : CompilerIrFunction
+(define (opt-inline-mut-param-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "inline_mut_param_loop")
+    (struct-get symbols inline-mut-param-loop)
     (opt-inline-mut-param-params)
     (AstType.I64)
     1
@@ -42003,9 +42364,9 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-mut-param-caller) : CompilerIrFunction
+(define (opt-inline-mut-param-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -42015,7 +42376,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
-            (opt-test-symbol "inline_mut_param_loop")
+            (struct-get symbols inline-mut-param-loop)
             (CompilerIrCallArgs.One (CompilerIrValue.I64 4))
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -42024,17 +42385,18 @@
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-mut-param-functions) : CompilerIrFunctionList
+(define (opt-inline-mut-param-functions [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-mut-param-caller)
+    (opt-inline-mut-param-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-mut-param-callee)
+      (opt-inline-mut-param-callee symbols)
       CompilerIrFunctionList.Nil)))
 
 (define (compiler-optimize-inline-mut-param-loop-ok?) : bool
   (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-mut-param-functions) 2)]
+      (opt-inline-program-functions (opt-inline-mut-param-functions symbols) 2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -42047,9 +42409,10 @@
             (opt-verify-ok? (opt-verify-function main))))]
       [(OptMaybeFunction.No) false])))
 
-(define (opt-inline-caller-phi-loop-caller) : CompilerIrFunction
+(define (opt-inline-caller-phi-loop-caller
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     2
@@ -42059,7 +42422,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
-            (opt-test-symbol "inline_loop")
+            (struct-get symbols inline-loop)
             CompilerIrCallArgs.Nil
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -42097,17 +42460,21 @@
                   CompilerIrInstrList.Nil)))
             CompilerIrBlockList.Nil))))))
 
-(define (opt-inline-caller-phi-loop-functions) : CompilerIrFunctionList
+(define (opt-inline-caller-phi-loop-functions
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-caller-phi-loop-caller)
+    (opt-inline-caller-phi-loop-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-loop-callee)
+      (opt-inline-loop-callee symbols)
       CompilerIrFunctionList.Nil)))
 
 (define (compiler-optimize-inline-caller-phi-loop-ok?) : bool
   (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-caller-phi-loop-functions) 2)]
+      (opt-inline-program-functions
+        (opt-inline-caller-phi-loop-functions symbols)
+        2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -42119,9 +42486,9 @@
             (opt-inline-structure-ok? blocks)))]
       [(OptMaybeFunction.No) false])))
 
-(define (opt-inline-nonleaf-callee) : CompilerIrFunction
+(define (opt-inline-nonleaf-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "inline_nonleaf")
+    (struct-get symbols inline-nonleaf)
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -42137,7 +42504,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               0
-              (opt-test-symbol "external_helper")
+              (struct-get symbols external-helper)
               CompilerIrCallArgs.Nil
               (AstType.I64))
             (compiler-ir-instr-cons
@@ -42153,9 +42520,9 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-nonleaf-caller) : CompilerIrFunction
+(define (opt-inline-nonleaf-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -42165,7 +42532,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
-            (opt-test-symbol "inline_nonleaf")
+            (struct-get symbols inline-nonleaf)
             CompilerIrCallArgs.Nil
             (AstType.I64))
           (compiler-ir-instr-cons
@@ -42174,17 +42541,18 @@
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
-(define (opt-inline-nonleaf-functions) : CompilerIrFunctionList
+(define (opt-inline-nonleaf-functions [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-nonleaf-caller)
+    (opt-inline-nonleaf-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-nonleaf-callee)
+      (opt-inline-nonleaf-callee symbols)
       CompilerIrFunctionList.Nil)))
 
 (define (compiler-optimize-inline-multiblock-nonleaf-ok?) : bool
   (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-nonleaf-functions) 2)]
+      (opt-inline-program-functions (opt-inline-nonleaf-functions symbols) 2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -42196,9 +42564,10 @@
             (opt-inline-structure-ok? blocks)))]
       [(OptMaybeFunction.No) false])))
 
-(define (opt-inline-repeated-nonleaf-predicate-callee) : CompilerIrFunction
+(define (opt-inline-repeated-nonleaf-predicate-callee
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "inline_tiny_nonleaf_predicate")
+    (struct-get symbols inline-tiny-nonleaf-predicate)
     CompilerIrParamList.Nil
     (AstType.Bool)
     2
@@ -42214,7 +42583,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
-              (opt-test-symbol "external_predicate")
+              (struct-get symbols external-predicate)
               CompilerIrCallArgs.Nil
               (AstType.Bool))
             (compiler-ir-instr-cons
@@ -42230,9 +42599,10 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-repeated-nonleaf-predicate-caller) : CompilerIrFunction
+(define (opt-inline-repeated-nonleaf-predicate-caller
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (opt-test-symbol "main")
+    (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.Bool)
     2
@@ -42242,7 +42612,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
-            (opt-test-symbol "inline_tiny_nonleaf_predicate")
+            (struct-get symbols inline-tiny-nonleaf-predicate)
             CompilerIrCallArgs.Nil
             (AstType.Bool))
           (compiler-ir-instr-cons
@@ -42254,7 +42624,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
-              (opt-test-symbol "inline_tiny_nonleaf_predicate")
+              (struct-get symbols inline-tiny-nonleaf-predicate)
               CompilerIrCallArgs.Nil
               (AstType.Bool))
             (compiler-ir-instr-cons
@@ -42270,18 +42640,20 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
-(define (opt-inline-repeated-nonleaf-predicate-functions) : CompilerIrFunctionList
+(define (opt-inline-repeated-nonleaf-predicate-functions
+  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-inline-repeated-nonleaf-predicate-caller)
+    (opt-inline-repeated-nonleaf-predicate-caller symbols)
     (compiler-ir-function-cons
-      (opt-inline-repeated-nonleaf-predicate-callee)
+      (opt-inline-repeated-nonleaf-predicate-callee symbols)
       CompilerIrFunctionList.Nil)))
 
 (define (compiler-optimize-inline-repeated-nonleaf-predicate-refusal-ok?) : bool
   (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [optimized : CompilerIrFunctionList
       (opt-inline-program-functions
-        (opt-inline-repeated-nonleaf-predicate-functions)
+        (opt-inline-repeated-nonleaf-predicate-functions symbols)
         2)]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
@@ -42298,40 +42670,46 @@
 
 (define (compiler-optimize-inline-census-direct-ok?) : bool
   (let
-    [functions : CompilerIrFunctionList (opt-inline-frame-functions)]
+    [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
+    [functions : CompilerIrFunctionList (opt-inline-frame-functions symbols)]
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [census : OptInlineCensus (opt-inline-census-build index functions)]
     (and
       (=
-        (opt-inline-census-refcount index census (opt-test-symbol "inline_add"))
+        (opt-inline-census-refcount
+          index
+          census
+          (struct-get symbols inline-add))
         1)
       (not
         (opt-inline-census-address-taken?
           index
           census
-          (opt-test-symbol "inline_add")))
+          (struct-get symbols inline-add)))
       (opt-inline-census-absorbable?
         index
         census
-        (opt-test-symbol "main")
-        (opt-test-symbol "inline_add")))))
+        (struct-get symbols main)
+        (struct-get symbols inline-add)))))
 
 (define (compiler-optimize-inline-census-address-ok?) : bool
   (let
-    [functions : CompilerIrFunctionList (opt-inline-known-indirect-functions)]
+    [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
+    [functions : CompilerIrFunctionList
+      (opt-inline-known-indirect-functions symbols)]
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [census : OptInlineCensus (opt-inline-census-build index functions)]
     (and
       (opt-inline-census-address-taken?
         index
         census
-        (opt-test-symbol "inline_add"))
+        (struct-get symbols inline-add))
       (not
         (opt-inline-census-absorbable?
           index
           census
-          (opt-test-symbol "main")
-          (opt-test-symbol "inline_add"))))))
+          (struct-get symbols main)
+          (struct-get symbols inline-add))))))
 
 (define (compiler-optimize-inline-cost-model-ok?) : bool
   (and
@@ -42376,38 +42754,43 @@
 
 (define (compiler-optimize-inline-self-test) : i64
   (let
+    [symbols : OptInlineFrameTestSymbols (opt-inline-frame-test-symbols)]
     [optimized : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-frame-functions) 2)]
+      (opt-inline-program-functions (opt-inline-frame-functions symbols) 2)]
     [devirt-direct : CompilerIrFunction
-      (opt-devirt-known-function-function (opt-inline-known-indirect-caller))]
+      (opt-devirt-known-function-function
+        (opt-inline-known-indirect-caller symbols))]
     [devirt-dynamic : CompilerIrFunction
       (opt-devirt-known-function-function (opt-devirt-dynamic-caller))]
     [devirt-inlined : CompilerIrFunctionList
-      (opt-inline-program-functions (opt-inline-known-indirect-functions) 2)]
+      (opt-inline-program-functions
+        (opt-inline-known-indirect-functions symbols)
+        2)]
     [devirt-reach : CompilerIrFunctionList
       (opt-program-functions
         (optimize-program-with-level (opt-devirt-reach-program) 2))]
     [valid-structure : bool
-      (opt-inline-structure-ok? (opt-function-blocks (opt-inline-frame-caller)))]
+      (opt-inline-structure-ok?
+        (opt-function-blocks (opt-inline-frame-caller symbols)))]
     [duplicate-def-structure : bool
       (opt-inline-structure-ok?
         (opt-function-blocks (opt-ssa-duplicate-def-function)))]
     [duplicate-label-revert : CompilerIrFunction
       (opt-inline-revert-or-keep
-        (opt-inline-frame-caller)
+        (opt-inline-frame-caller symbols)
         (opt-ssa-duplicate-label-function))]
     [unknown-successor-revert : CompilerIrFunction
       (opt-inline-revert-or-keep
-        (opt-inline-frame-caller)
+        (opt-inline-frame-caller symbols)
         (opt-ssa-unknown-successor-function))]
     [bad-phi-revert : CompilerIrFunction
       (opt-inline-revert-or-keep
-        (opt-inline-frame-caller)
+        (opt-inline-frame-caller symbols)
         (opt-ssa-bad-phi-function))]
     [valid-keep : CompilerIrFunction
       (opt-inline-revert-or-keep
-        (opt-inline-frame-caller)
-        (opt-inline-frame-callee))]
+        (opt-inline-frame-caller symbols)
+        (opt-inline-frame-callee symbols))]
     (match (opt-function-list-find optimized "main")
       [(OptMaybeFunction.Some main)
         (let
@@ -42485,18 +42868,22 @@
                     (unless
                       (opt-function-eq
                         duplicate-label-revert
-                        (opt-inline-frame-caller))
+                        (opt-inline-frame-caller symbols))
                       (return 22))
                     (unless
                       (opt-function-eq
                         unknown-successor-revert
-                        (opt-inline-frame-caller))
+                        (opt-inline-frame-caller symbols))
                       (return 23))
                     (unless
-                      (opt-function-eq bad-phi-revert (opt-inline-frame-caller))
+                      (opt-function-eq
+                        bad-phi-revert
+                        (opt-inline-frame-caller symbols))
                       (return 24))
                     (unless
-                      (opt-function-eq valid-keep (opt-inline-frame-callee))
+                      (opt-function-eq
+                        valid-keep
+                        (opt-inline-frame-callee symbols))
                       (return 25))
                     (unless
                       (compiler-optimize-inline-level-gate-ok?)
@@ -42728,26 +43115,28 @@
       (CompilerIrParamList.Nil))))
 
 (define (opt-tailrec-test-function) : CompilerIrFunction
-  (CompilerIrFunction.Function
-    (opt-test-symbol "tail_swap")
-    (opt-tailrec-test-params)
-    (AstType.I64)
-    2
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        "entry"
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.TailCall
-            (opt-test-symbol "tail_swap")
-            (CompilerIrCallArgs.Two
-              (CompilerIrValue.Var 1)
-              (CompilerIrValue.Var 0))
-            (AstType.I64))
+  (let
+    [name : i64 (opt-test-symbol "tail_swap")]
+    (CompilerIrFunction.Function
+      name
+      (opt-tailrec-test-params)
+      (AstType.I64)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Return
-              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
-            (CompilerIrInstrList.Nil))))
-      (CompilerIrBlockList.Nil))))
+            (CompilerIrInstr.TailCall
+              name
+              (CompilerIrCallArgs.Two
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.Var 0))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+              (CompilerIrInstrList.Nil))))
+        (CompilerIrBlockList.Nil)))))
 
 (define (opt-tailrec-expected-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -45682,7 +46071,20 @@
           (opt-licm-loop-finish-instrs))))
     8))
 
-(define (opt-licm-header-load-call-blocks) : CompilerIrBlockList
+(defstruct OptLicmTestSymbols
+  (touch i64)
+  (probe i64)
+  (writer i64)
+  (leaf i64))
+
+(define (opt-licm-test-symbols) : OptLicmTestSymbols
+  (OptLicmTestSymbols
+    (opt-test-symbol "touch")
+    (opt-test-symbol "probe")
+    (opt-test-symbol "writer")
+    (opt-test-symbol "leaf")))
+
+(define (opt-licm-header-load-call-blocks [symbols : OptLicmTestSymbols]) : CompilerIrBlockList
   (opt-licm-loop-blocks-with-body
     (compiler-ir-instr-cons
       (CompilerIrInstr.Gep
@@ -45714,7 +46116,7 @@
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Call
                     12
-                    (opt-test-symbol "touch")
+                    (struct-get symbols touch)
                     (CompilerIrCallArgs.Nil)
                     (AstType.I64))
                   (opt-licm-loop-finish-instrs))))))))
@@ -45764,14 +46166,15 @@
               (opt-licm-loop-finish-instrs))))))
     10))
 
-(define (opt-licm-direct-call-clean-test-functions) : CompilerIrFunctionList
+(define (opt-licm-direct-call-clean-test-functions
+  [symbols : OptLicmTestSymbols]) : CompilerIrFunctionList
   (compiler-ir-function-cons
-    (opt-test-function-named
-      "probe"
+    (opt-test-function-symbol
+      (struct-get symbols probe)
       (compiler-ir-instr-cons
         (CompilerIrInstr.Call
           90
-          (opt-test-symbol "probe")
+          (struct-get symbols probe)
           (CompilerIrCallArgs.Nil)
           (AstType.I64))
         (compiler-ir-instr-cons
@@ -45779,8 +46182,8 @@
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 90)))
           (CompilerIrInstrList.Nil))))
     (compiler-ir-function-cons
-      (opt-test-function-named
-        "writer"
+      (opt-test-function-symbol
+        (struct-get symbols writer)
         (compiler-ir-instr-cons
           (CompilerIrInstr.StorePtr
             (CompilerIrValue.Var 1)
@@ -45791,8 +46194,8 @@
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
             (CompilerIrInstrList.Nil))))
       (compiler-ir-function-cons
-        (opt-test-function-named
-          "leaf"
+        (opt-test-function-symbol
+          (struct-get symbols leaf)
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
@@ -45801,6 +46204,7 @@
 
 (define (compiler-optimize-licm-self-test) : i64
   (let
+    [symbols : OptLicmTestSymbols (opt-licm-test-symbols)]
     [arith-func : CompilerIrFunction
       (opt-licm-optimized-function (opt-licm-arithmetic-blocks))]
     [arith : CompilerIrBlockList (opt-function-blocks arith-func)]
@@ -45843,7 +46247,8 @@
     [copybytes-blocks : CompilerIrBlockList
       (opt-function-blocks copybytes-func)]
     [header-call-func : CompilerIrFunction
-      (opt-licm-array-optimized-function (opt-licm-header-load-call-blocks))]
+      (opt-licm-array-optimized-function
+        (opt-licm-header-load-call-blocks symbols))]
     [header-call : CompilerIrBlockList (opt-function-blocks header-call-func)]
     [clean-touch-calls : opt_i64_i64_map.Map
       (let
@@ -45851,12 +46256,12 @@
         (begin
           (opt_i64_i64_map.insert-ref!
             (&mut map)
-            (compiler-ir-symbol-id (opt-test-symbol "touch"))
+            (compiler-ir-symbol-id (struct-get symbols touch))
             1)
           map))]
     [header-clean-call-func : CompilerIrFunction
       (opt-licm-array-optimized-function-with-direct-call-clean
-        (opt-licm-header-load-call-blocks)
+        (opt-licm-header-load-call-blocks symbols)
         clean-touch-calls)]
     [header-clean-call : CompilerIrBlockList
       (opt-function-blocks header-clean-call-func)]
@@ -45890,14 +46295,14 @@
       (opt-licm-summary-for-instr
         (CompilerIrInstr.Call
           81
-          (opt-test-symbol "touch")
+          (struct-get symbols touch)
           (CompilerIrCallArgs.Nil)
           (AstType.I64)))]
     [element-summary : OptLicmStoreSummary
       (opt-licm-store-summary-element-only-store)]
     [direct-clean-built : opt_i64_i64_map.Map
       (opt-loop-bce-direct-call-clean-map
-        (opt-licm-direct-call-clean-test-functions)
+        (opt-licm-direct-call-clean-test-functions symbols)
         8)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function arith-func))) 1]
@@ -45967,15 +46372,15 @@
       [(not
           (opt_i64_i64_map.contains?
             (& direct-clean-built)
-            (compiler-ir-symbol-id (opt-test-symbol "probe"))))
+            (compiler-ir-symbol-id (struct-get symbols probe))))
         62]
       [(opt_i64_i64_map.contains?
           (& direct-clean-built)
-          (compiler-ir-symbol-id (opt-test-symbol "writer")))
+          (compiler-ir-symbol-id (struct-get symbols writer)))
         63]
       [(opt_i64_i64_map.contains?
           (& direct-clean-built)
-          (compiler-ir-symbol-id (opt-test-symbol "leaf")))
+          (compiler-ir-symbol-id (struct-get symbols leaf)))
         64]
       [else 42])))
 
@@ -48880,7 +49285,7 @@
       (opt-function-blocks pipeline-loop)]
     [entry-backedge : CompilerIrFunction (opt-ssa-entry-backedge-function)]
     [entry-backedge-out : CompilerIrFunction
-      (opt-ssa-construct-function (opt-ssa-entry-backedge-function))]
+      (opt-ssa-construct-function entry-backedge)]
     [constructed-nested : CompilerIrFunction
       (opt-ssa-construct-function (opt-ssa-nested-loop-function))]
     [constructed-nested-blocks : CompilerIrBlockList
@@ -50852,119 +51257,123 @@
     [_ false]))
 
 (define (compiler-optimize-scratch-region-self-test) : i64
-  (let
-    [positive : OptScratchScopeReport
-      (opt-scratch-scope-report-instrs (opt-scratch-positive-instrs))]
-    [loop-positive : bool
-      (opt-scratch-loop-list-has-candidate?
-        (opt-cfg-natural-loops (opt-scratch-loop-candidate-blocks)))]
-    [call-blocked : OptScratchScopeReport
-      (opt-scratch-scope-report-instrs
-        (opt-scratch-test-one-block
-          (CompilerIrInstr.Call
-            9
-            (opt-test-symbol "touch")
-            (CompilerIrCallArgs.Nil)
-            (AstType.Unit))))]
-    [extern-blocked : OptScratchScopeReport
-      (opt-scratch-scope-report-instrs
-        (opt-scratch-test-one-block
-          (CompilerIrInstr.CallIndirectC
-            9
-            (CompilerIrValue.Function (opt-test-symbol "ffi_touch"))
-            (CompilerIrCallArgs.Nil)
-            (AstType.I64))))]
-    [raw-blocked : OptScratchScopeReport
-      (opt-scratch-scope-report-instrs
-        (opt-scratch-test-one-block (CompilerIrInstr.AddrOf 2 1)))]
-    [store-blocked : OptScratchScopeReport
-      (let
-        [roots : OptScratchRootList
-          (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
-        [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
-        (begin
-          (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
-          (OptScratchScopeReport.Report
-            1
-            32
-            (opt-scratch-blocker-reason
-              roots
-              (OptAliasFacts.Facts facts-map)
-              (CompilerIrInstr.StorePtr
-                (CompilerIrValue.Var 99)
-                (CompilerIrValue.Var 1)
-                (AstType.U64))))))]
-    [arena-blocked : OptScratchScopeReport
-      (opt-scratch-scope-report-instrs
-        (opt-scratch-test-one-block
-          (CompilerIrInstr.Call
-            9
-            (opt-test-symbol "tl_region_mark")
-            (CompilerIrCallArgs.Nil)
-            (AstType.I64))))]
-    [return-blocked : OptScratchScopeReport
-      (let
-        [roots : OptScratchRootList
-          (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
-        [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
-        (begin
-          (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
-          (OptScratchScopeReport.Report
-            1
-            32
-            (opt-scratch-blocker-reason
-              roots
-              (OptAliasFacts.Facts facts-map)
-              (CompilerIrInstr.Return
-                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))))))]
-    [reset-positive : CompilerIrFunction
-      (opt-scratch-reset-rewrite (opt-scratch-reset-positive-blocks))]
-    [reset-call-blocked : CompilerIrFunction
-      (opt-scratch-reset-rewrite (opt-scratch-reset-call-blocked-blocks))]
-    [reset-header-alloc : CompilerIrFunction
-      (opt-scratch-reset-rewrite (opt-scratch-reset-header-alloc-blocks))]
-    [reset-early-exit : CompilerIrFunction
-      (opt-scratch-reset-rewrite (opt-scratch-reset-early-exit-blocks))]
-    [reset-pre-ssa : CompilerIrFunction
-      (match (opt-scratch-reset-pre-ssa-function-with-context-result
-        (opt-scratch-reset-level-function))
-        [(OptFunctionCtxResult.Result f _) f])]
-    [level0-mark-count : i64
-      (opt-scratch-reset-level-program-call-count 0 "tl_region_mark")]
-    [level0-reset-count : i64
-      (opt-scratch-reset-level-program-call-count 0 "tl_region_reset")]
-    [level1-mark-count : i64
-      (opt-scratch-reset-level-program-call-count 1 "tl_region_mark")]
-    [level1-reset-count : i64
-      (opt-scratch-reset-level-program-call-count 1 "tl_region_reset")]
-    [level2-mark-count : i64
-      (opt-scratch-reset-level-program-call-count 2 "tl_region_mark")]
-    [level2-reset-count : i64
-      (opt-scratch-reset-level-program-call-count 2 "tl_region_reset")]
-    (cond
-      [(not (opt-scratch-report-candidate? positive 1 32)) 1]
-      [(not loop-positive) 2]
-      [(not (opt-scratch-report-blocked? call-blocked 1 32 "call")) 3]
-      [(not (opt-scratch-report-blocked? extern-blocked 1 32 "extern_call")) 4]
-      [(not (opt-scratch-report-blocked? raw-blocked 1 32 "raw_pointer")) 5]
-      [(not (opt-scratch-report-blocked? store-blocked 1 32 "store_outer")) 6]
-      [(not (opt-scratch-report-blocked? arena-blocked 1 32 "arena_helper")) 7]
-      [(not (opt-scratch-report-blocked? return-blocked 1 32 "return_escape"))
-        8]
-      [(not (opt-scratch-reset-emitted? reset-positive)) 9]
-      [(not (= (opt-function-frame reset-positive) 12)) 10]
-      [(not (opt-scratch-reset-not-emitted? reset-call-blocked)) 11]
-      [(not (opt-scratch-reset-not-emitted? reset-header-alloc)) 12]
-      [(not (opt-scratch-reset-not-emitted? reset-early-exit)) 13]
-      [(not (opt-scratch-reset-emitted? reset-pre-ssa)) 14]
-      [(not (= level0-mark-count 0)) 15]
-      [(not (= level0-reset-count 0)) 16]
-      [(not (= level1-mark-count 0)) 17]
-      [(not (= level1-reset-count 0)) 18]
-      [(not (= level2-mark-count 1)) 19]
-      [(not (= level2-reset-count 1)) 20]
-      [(not (opt-scratch-reset-runtime-ids-canonical?)) 21]
-      [else 42])))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [positive : OptScratchScopeReport
+        (opt-scratch-scope-report-instrs (opt-scratch-positive-instrs))]
+      [loop-positive : bool
+        (opt-scratch-loop-list-has-candidate?
+          (opt-cfg-natural-loops (opt-scratch-loop-candidate-blocks)))]
+      [call-blocked : OptScratchScopeReport
+        (opt-scratch-scope-report-instrs
+          (opt-scratch-test-one-block
+            (CompilerIrInstr.Call
+              9
+              (opt-test-symbol "touch")
+              (CompilerIrCallArgs.Nil)
+              (AstType.Unit))))]
+      [extern-blocked : OptScratchScopeReport
+        (opt-scratch-scope-report-instrs
+          (opt-scratch-test-one-block
+            (CompilerIrInstr.CallIndirectC
+              9
+              (CompilerIrValue.Function (opt-test-symbol "ffi_touch"))
+              (CompilerIrCallArgs.Nil)
+              (AstType.I64))))]
+      [raw-blocked : OptScratchScopeReport
+        (opt-scratch-scope-report-instrs
+          (opt-scratch-test-one-block (CompilerIrInstr.AddrOf 2 1)))]
+      [store-blocked : OptScratchScopeReport
+        (let
+          [roots : OptScratchRootList
+            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+          [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
+            (OptScratchScopeReport.Report
+              1
+              32
+              (opt-scratch-blocker-reason
+                roots
+                (OptAliasFacts.Facts facts-map)
+                (CompilerIrInstr.StorePtr
+                  (CompilerIrValue.Var 99)
+                  (CompilerIrValue.Var 1)
+                  (AstType.U64))))))]
+      [arena-blocked : OptScratchScopeReport
+        (opt-scratch-scope-report-instrs
+          (opt-scratch-test-one-block
+            (CompilerIrInstr.Call
+              9
+              (opt-test-symbol "tl_region_mark")
+              (CompilerIrCallArgs.Nil)
+              (AstType.I64))))]
+      [return-blocked : OptScratchScopeReport
+        (let
+          [roots : OptScratchRootList
+            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+          [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+          (begin
+            (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
+            (OptScratchScopeReport.Report
+              1
+              32
+              (opt-scratch-blocker-reason
+                roots
+                (OptAliasFacts.Facts facts-map)
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))))))]
+      [reset-positive : CompilerIrFunction
+        (opt-scratch-reset-rewrite (opt-scratch-reset-positive-blocks))]
+      [reset-call-blocked : CompilerIrFunction
+        (opt-scratch-reset-rewrite (opt-scratch-reset-call-blocked-blocks))]
+      [reset-header-alloc : CompilerIrFunction
+        (opt-scratch-reset-rewrite (opt-scratch-reset-header-alloc-blocks))]
+      [reset-early-exit : CompilerIrFunction
+        (opt-scratch-reset-rewrite (opt-scratch-reset-early-exit-blocks))]
+      [reset-pre-ssa : CompilerIrFunction
+        (match (opt-scratch-reset-pre-ssa-function-with-context-result
+          (opt-scratch-reset-level-function))
+          [(OptFunctionCtxResult.Result f _) f])]
+      [level0-mark-count : i64
+        (opt-scratch-reset-level-program-call-count 0 "tl_region_mark")]
+      [level0-reset-count : i64
+        (opt-scratch-reset-level-program-call-count 0 "tl_region_reset")]
+      [level1-mark-count : i64
+        (opt-scratch-reset-level-program-call-count 1 "tl_region_mark")]
+      [level1-reset-count : i64
+        (opt-scratch-reset-level-program-call-count 1 "tl_region_reset")]
+      [level2-mark-count : i64
+        (opt-scratch-reset-level-program-call-count 2 "tl_region_mark")]
+      [level2-reset-count : i64
+        (opt-scratch-reset-level-program-call-count 2 "tl_region_reset")]
+      (cond
+        [(not (opt-scratch-report-candidate? positive 1 32)) 1]
+        [(not loop-positive) 2]
+        [(not (opt-scratch-report-blocked? call-blocked 1 32 "call")) 3]
+        [(not (opt-scratch-report-blocked? extern-blocked 1 32 "extern_call"))
+          4]
+        [(not (opt-scratch-report-blocked? raw-blocked 1 32 "raw_pointer")) 5]
+        [(not (opt-scratch-report-blocked? store-blocked 1 32 "store_outer")) 6]
+        [(not (opt-scratch-report-blocked? arena-blocked 1 32 "arena_helper"))
+          7]
+        [(not (opt-scratch-report-blocked? return-blocked 1 32 "return_escape"))
+          8]
+        [(not (opt-scratch-reset-emitted? reset-positive)) 9]
+        [(not (= (opt-function-frame reset-positive) 12)) 10]
+        [(not (opt-scratch-reset-not-emitted? reset-call-blocked)) 11]
+        [(not (opt-scratch-reset-not-emitted? reset-header-alloc)) 12]
+        [(not (opt-scratch-reset-not-emitted? reset-early-exit)) 13]
+        [(not (opt-scratch-reset-emitted? reset-pre-ssa)) 14]
+        [(not (= level0-mark-count 0)) 15]
+        [(not (= level0-reset-count 0)) 16]
+        [(not (= level1-mark-count 0)) 17]
+        [(not (= level1-reset-count 0)) 18]
+        [(not (= level2-mark-count 1)) 19]
+        [(not (= level2-reset-count 1)) 20]
+        [(not (opt-scratch-reset-runtime-ids-canonical?)) 21]
+        [else 42]))))
 
 ;; --- block-local redundant-load CSE -----------------------------------------
 ;;

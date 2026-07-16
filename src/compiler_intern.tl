@@ -235,6 +235,36 @@
 (define (intern-template-source-name-id [id : i64]) : i64
   (- id (intern-template-source-base)))
 
+;; Compiler rewrites sometimes need a fresh lexical identity while retaining a
+;; parsed binding's spelling. Encode that identity structurally instead of
+;; allocating another string-pool entry. This range is above every macro-local
+;; identity and below the quasiquoted-source range.
+(define (intern-structural-local-base) : i64
+  (let
+    [stride : i64 (intern-capacity)]
+    (* 1536 (* stride (* stride stride)))))
+
+(define (intern-structural-local-id [ordinal : i64] [source-name-id : i64]) : i64
+  (let
+    [stride : i64 (intern-capacity)]
+    [id : i64
+      (+ (intern-structural-local-base) (+ (* ordinal stride) source-name-id))]
+    (if (or
+      (< ordinal 0)
+      (< source-name-id 0)
+      (>= source-name-id stride)
+      (>= id (intern-template-source-base)))
+      (tl_oob_abort)
+      id)))
+
+(define (intern-structural-local-id? [id : i64]) : bool
+  (and
+    (>= id (intern-structural-local-base))
+    (< id (intern-template-source-base))))
+
+(define (intern-structural-local-source-name-id [id : i64]) : i64
+  (% (- id (intern-structural-local-base)) (intern-capacity)))
+
 (define (intern-colon-keyword-id? [id : i64]) : bool
   (let
     [text : String (intern-str id)]
@@ -1959,19 +1989,21 @@
     (intern-lookup-content name)
     (InternLookupMissing)))
 
-;: Recover the original String for an interned id.
+;: Recover the original String for an interned or source-backed structural id.
 (define (intern-str [id : i64]) : String
-  (cfg
-    compile-profile
-    (if (or (< id 0) (>= id (array-length intern-pool-slots)))
-      (begin
-        (set!
-          intern-profile-invalid-str-count
-          (+ intern-profile-invalid-str-count 1))
-        (set! intern-profile-invalid-str-last-id id)
-        "<invalid-intern-id>")
-      (array-ref intern-pool-slots id))
-    (array-ref intern-pool-slots id)))
+  (if (intern-structural-local-id? id)
+    (array-ref intern-pool-slots (intern-structural-local-source-name-id id))
+    (cfg
+      compile-profile
+      (if (or (< id 0) (>= id (array-length intern-pool-slots)))
+        (begin
+          (set!
+            intern-profile-invalid-str-count
+            (+ intern-profile-invalid-str-count 1))
+          (set! intern-profile-invalid-str-last-id id)
+          "<invalid-intern-id>")
+        (array-ref intern-pool-slots id))
+      (array-ref intern-pool-slots id))))
 
 (define (intern-generation) : i64
   intern-reset-generation)
@@ -2068,6 +2100,8 @@
       [dotted-prefix-id : i64 (intern "generated-base.Variant")]
       [dotted-tail-id : i64 (intern "Variant.Item")]
       [source-len : i64 (intern-pool-len)]
+      [structural-local-id : i64 (intern-structural-local-id 7 source-id)]
+      [structural-local-again-id : i64 (intern-structural-local-id 8 source-id)]
       [home : i64 (tl_arena_current)]
       [scratch : i64 (tl_arena_make)]
       [opaque-id : i64
@@ -2101,6 +2135,22 @@
       [ok : bool true]
       (begin
         (unless (= (intern-pool-len) source-len) (set! ok false))
+        (unless
+          (intern-structural-local-id? structural-local-id)
+          (set! ok false))
+        (unless
+          (not (= structural-local-id structural-local-again-id))
+          (set! ok false))
+        (unless
+          (=
+            (intern-structural-local-source-name-id structural-local-id)
+            source-id)
+          (set! ok false))
+        (unless
+          (intern-private-string-eq
+            (intern-str structural-local-id)
+            "generated-source-anchor")
+          (set! ok false))
         (unless (= opaque-id (- (intern-capacity) 1)) (set! ok false))
         (unless (= opaque-again-id (- (intern-capacity) 2)) (set! ok false))
         (unless

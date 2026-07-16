@@ -5084,12 +5084,14 @@
 (define (lower-spmd-inline-recursive-message) : String
   "lower: recursive SPMD helper call is not supported")
 
-(define (lower-spmd-inline-fresh-local-id) : i64
+(define (lower-spmd-inline-fresh-local-id [source-name-id : i64]) : i64
   (let
     [next : i64 lower-spmd-inline-next-temp]
     (begin
       (set! lower-spmd-inline-next-temp (+ lower-spmd-inline-next-temp 1))
-      (lower-private-name-id 15 next))))
+      (intern-structural-local-id
+        next
+        (macro-hygiene-global-source-name-id-or source-name-id source-name-id)))))
 
 (define (lower-spmd-inline-subst-lookup
   [subs : LowerSpmdInlineSubst]
@@ -5376,7 +5378,7 @@
               [_ true])]
           [bind-id : i64
             (if renamed
-              (lower-spmd-inline-fresh-local-id)
+              (lower-spmd-inline-fresh-local-id name)
               name)]
           (match (lower-spmd-inline-expr ctx env type-env init subst shadowed)
             [(ResultLowerAstExpr.Ok rewritten-init)

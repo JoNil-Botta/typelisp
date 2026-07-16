@@ -592,6 +592,11 @@
 (define (compiler-lower-checked-frontend-intern-count) : i64
   lower-checked-frontend-intern-count)
 
+(define (compiler-lower-checked-frontend-intern-count-advance! [count : i64]) : unit
+  (if lower-checked-frontend-interns-prepared
+    (set! lower-checked-frontend-intern-count count)
+    unit))
+
 (define (compiler-lower-checked-frontend-intern-preparation-clear!) : unit
   (begin
     (set! lower-checked-frontend-interns-prepared false)

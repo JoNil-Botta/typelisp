@@ -17341,7 +17341,9 @@
         [body : String (compiler-backend-asm-function-body asm "_tl_contains")]
         (and
           (not (string.eq body ""))
-          (compiler-backend-string-contains? body "    testq ")
+          (or
+            (compiler-backend-string-contains? body "    cmpq $0, ")
+            (compiler-backend-string-contains? body "    testq "))
           (not (compiler-backend-string-contains? body "    xorq $1, "))))]
     [(ResultCompilerBackend.Err _) false]))
 
@@ -19017,8 +19019,16 @@
       ""
       (let
         [body-start : i64 (+ start (string.string-length label))]
-        [next : i64
+        [plain-next : i64
           (compiler-backend-string-find-from asm "\n.globl " body-start)]
+        [indented-next : i64
+          (compiler-backend-string-find-from asm "\n    .globl " body-start)]
+        [next : i64
+          (if (< plain-next 0)
+            indented-next
+            (if (and (>= indented-next 0) (< indented-next plain-next))
+              indented-next
+              plain-next))]
         [body-end : i64
           (if (< next 0)
             (string.string-length asm)

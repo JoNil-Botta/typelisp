@@ -1435,11 +1435,14 @@
           ;; Macro compaction already relocated the prefix needed to retire the
           ;; frontend. Promote only names added by typecheck/lower, then rebuild
           ;; direct String entries in the dedup map before checked storage dies.
-          (ci.intern-persist-range! persisted-count intern-count)
-          (ci.intern-reset-to! intern-count)
-          (if (> (array-length compiler-driver-pending-intern-state) 0)
-            (ci.intern-compat-state-capture-from-globals!
-              (array-ref compiler-driver-pending-intern-state 0))
+          (if (< persisted-count intern-count)
+            (begin
+              (ci.intern-persist-range! persisted-count intern-count)
+              (ci.intern-reset-to! intern-count)
+              (if (> (array-length compiler-driver-pending-intern-state) 0)
+                (ci.intern-compat-state-capture-from-globals!
+                  (array-ref compiler-driver-pending-intern-state 0))
+                unit))
             unit)
           ;; Optimizer/backend names are discovered after checked storage is
           ;; retired, so preserve the established persistent tail policy here.
@@ -1466,6 +1469,25 @@
             ;; early checked-arena release.
             (ci.intern-persistent-storage-enable!)
             persistent-before))))))
+
+;; A lowered result may outlive an unrelated driver-state reset. Promote the
+;; typecheck/lower tail while its marker-name arena is still live, then advance
+;; the handoff floor so the emission boundary only handles names added later.
+(define (compiler-driver-persist-lowered-intern-tail!
+  [state : CompilerDriverState]) : unit
+  (if (compiler-lower-checked-frontend-interns-prepared?)
+    (let
+      [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
+      [intern-count : i64 (ci.intern-pool-len)]
+      (if (< persisted-count intern-count)
+        (begin
+          (ci.intern-persist-range! persisted-count intern-count)
+          (ci.intern-reset-to! intern-count)
+          (ci.intern-compat-state-capture-from-globals!
+            (array-ref (struct-get state intern-state) 0))
+          (compiler-lower-checked-frontend-intern-count-advance! intern-count))
+        unit))
+    unit))
 
 (define (compiler-driver-abort-early-intern-preparation!) : unit
   (if (compiler-lower-checked-frontend-interns-prepared?)
@@ -2402,6 +2424,7 @@
             (match lowered
               [(ResultCompilerLower.Ok program spans)
                 (begin
+                  (compiler-driver-persist-lowered-intern-tail! state)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
@@ -2570,6 +2593,7 @@
             (match lowered
               [(ResultCompilerLower.Ok program spans)
                 (begin
+                  (compiler-driver-persist-lowered-intern-tail! state)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))

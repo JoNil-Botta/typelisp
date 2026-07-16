@@ -16,6 +16,369 @@
 (import token)
 (import (option i64) as option_i64)
 
+(defenum CompilerParseMaybeDeclSpan
+  (Some AstSourceSpan)
+  (None))
+
+(define (compiler-parse-decl-origin-cache-reset!) : unit
+  unit)
+
+(define (compiler-parse-token-span-from-ast-span [span : AstSourceSpan]) : token.SourceSpan
+  (token.SourceSpan
+    (ast-source-span-start-line span)
+    (ast-source-span-start-col span)
+    (ast-source-span-end-line span)
+    (ast-source-span-end-col span)))
+
+(define (compiler-parse-decl-list-storage-key [decls : (& decls AstDeclList)]) : i64
+  (unsafe
+    (cast
+      (ptr->int (ptr-cast (array-data (struct-get decls slots)) : (Ptr u8)))
+      : i64)))
+
+;; Declaration origins are cold records in the transient spanned-node pool.
+;; A run is marker(key), marker(start slot), then one Nil(span) per slot.
+(define (compiler-parse-decl-origin-span-key-slot-depth
+  [key : i64]
+  [target : i64]
+  [depth : i64]) : CompilerParseMaybeDeclSpan
+  (let
+    [cursor : i64 0]
+    [result : CompilerParseMaybeDeclSpan (CompilerParseMaybeDeclSpan.None)]
+    [alias-key : i64 0]
+    [alias-slot : i64 0]
+    [alias-found : bool false]
+    (begin
+      (while (< cursor (reader.sp-node-pool-len))
+        (begin
+          (match (reader.sp-node-get cursor)
+            [(reader.SpannedSexpr.Int record-key marker marker-span)
+              (if (= record-key key)
+                (if (and
+                  (string.eq marker "__tl_decl_origin")
+                  (< (+ cursor 2) (reader.sp-node-pool-len)))
+                  (match (reader.sp-node-get (+ cursor 1))
+                    [(reader.SpannedSexpr.Int run-start run-marker _)
+                      (if (and
+                        (= run-start target)
+                        (string.eq run-marker "__tl_decl_origin_start"))
+                        (match (reader.sp-node-get (+ cursor 2))
+                          [(reader.SpannedSexpr.Nil span)
+                            (begin
+                              (set!
+                                result
+                                (CompilerParseMaybeDeclSpan.Some
+                                  (ast-source-span-from-source-span span)))
+                              (set! alias-found false))]
+                          [_ unit])
+                        unit)]
+                    [_ unit])
+                  (if (or
+                    (string.eq marker "__tl_decl_origin_alias")
+                    (string.eq marker "__tl_decl_origin_alias_repeat"))
+                    (let
+                      [alias-start : i64 (token.span-start-line marker-span)]
+                      [alias-count : i64 (token.span-start-col marker-span)]
+                      (if (and
+                        (>= target alias-start)
+                        (< target (+ alias-start alias-count)))
+                        (begin
+                          (set! alias-key (token.span-end-line marker-span))
+                          (set!
+                            alias-slot
+                            (if (string.eq
+                              marker
+                              "__tl_decl_origin_alias_repeat")
+                              (token.span-end-col marker-span)
+                              (+
+                                (token.span-end-col marker-span)
+                                (- target alias-start))))
+                          (set! alias-found true))
+                        unit))
+                    unit))
+                unit)]
+            [_ unit])
+          (set! cursor (+ cursor 1))))
+      (if (and alias-found (< depth 64))
+        (compiler-parse-decl-origin-span-key-slot-depth
+          alias-key
+          alias-slot
+          (+ depth 1))
+        result))))
+
+(define (compiler-parse-decl-origin-span-key-slot [key : i64] [target : i64]) : CompilerParseMaybeDeclSpan
+  (compiler-parse-decl-origin-span-key-slot-depth key target 0))
+
+(define (compiler-parse-decl-origin-span
+  [decls : (& decls AstDeclList)]
+  [slot : i64]) : CompilerParseMaybeDeclSpan
+  (compiler-parse-decl-origin-span-key-slot
+    (compiler-parse-decl-list-storage-key decls)
+    (+ (struct-get decls offset) slot)))
+
+(define (compiler-parse-decl-origin-register-key-maybe!
+  [key : i64]
+  [slot : i64]
+  [origin : CompilerParseMaybeDeclSpan]) : unit
+  (match origin
+    [(CompilerParseMaybeDeclSpan.Some span)
+      (let
+        [marker-span : token.SourceSpan
+          (compiler-parse-token-span-from-ast-span span)]
+        (begin
+          (reader.sp-node-push
+            (reader.SpannedSexpr.Int key "__tl_decl_origin" marker-span))
+          (reader.sp-node-push
+            (reader.SpannedSexpr.Int slot "__tl_decl_origin_start" marker-span))
+          (reader.sp-node-push (reader.SpannedSexpr.Nil marker-span))
+          unit))]
+    [(CompilerParseMaybeDeclSpan.None) unit]))
+
+(define (compiler-parse-decl-origin-register-maybe!
+  [decls : (& decls AstDeclList)]
+  [slot : i64]
+  [origin : CompilerParseMaybeDeclSpan]) : unit
+  (compiler-parse-decl-origin-register-key-maybe!
+    (compiler-parse-decl-list-storage-key decls)
+    (+ (struct-get decls offset) slot)
+    origin))
+
+(define (compiler-parse-decl-origin-register-alias-record!
+  [decls : (& decls AstDeclList)]
+  [decl-slot : i64]
+  [count : i64]
+  [source-key : i64]
+  [source-slot : i64]
+  [repeat : bool]) : unit
+  (if (<= count 0)
+    unit
+    (begin
+      (reader.sp-node-push
+        (reader.SpannedSexpr.Int
+          (compiler-parse-decl-list-storage-key decls)
+          (if repeat
+            "__tl_decl_origin_alias_repeat"
+            "__tl_decl_origin_alias")
+          (token.SourceSpan
+            (+ (struct-get decls offset) decl-slot)
+            count
+            source-key
+            source-slot)))
+      unit)))
+
+(define (compiler-parse-decl-origin-copy-direct-records!
+  [source : AstDeclList]
+  [dest : (& dest AstDeclList)]
+  [dest-slot : i64]
+  [scan-start : i64]
+  [scan-end : i64]) : unit
+  (let
+    [source-key : i64 (compiler-parse-decl-list-storage-key (& source))]
+    [source-start : i64 (struct-get source offset)]
+    [source-end : i64 (+ source-start (ast-decl-list-len (& source)))]
+    [dest-key : i64 (compiler-parse-decl-list-storage-key dest)]
+    [dest-start : i64 (+ (struct-get dest offset) dest-slot)]
+    [cursor : i64 scan-start]
+    [limit : i64 scan-end]
+    (while (< cursor limit)
+      (begin
+        (match (reader.sp-node-get cursor)
+          [(reader.SpannedSexpr.Int record-key marker _)
+            (if (and
+              (= record-key source-key)
+              (string.eq marker "__tl_decl_origin")
+              (< (+ cursor 2) limit))
+              (match (reader.sp-node-get (+ cursor 1))
+                [(reader.SpannedSexpr.Int record-slot run-marker marker-span)
+                  (if (and
+                    (string.eq run-marker "__tl_decl_origin_start")
+                    (>= record-slot source-start)
+                    (< record-slot source-end))
+                    (begin
+                      (reader.sp-node-push
+                        (reader.SpannedSexpr.Int
+                          dest-key
+                          "__tl_decl_origin"
+                          marker-span))
+                      (reader.sp-node-push
+                        (reader.SpannedSexpr.Int
+                          (+ dest-start (- record-slot source-start))
+                          "__tl_decl_origin_start"
+                          marker-span))
+                      (reader.sp-node-push (reader.sp-node-get (+ cursor 2)))
+                      unit)
+                    unit)]
+                [_ unit])
+              unit)]
+          [_ unit])
+        (set! cursor (+ cursor 1))))))
+
+(define (compiler-parse-decl-origin-register-list-aliases!
+  [decls : (& decls AstDeclList)]
+  [decl-slot : i64]
+  [source : AstDeclList]) : unit
+  (compiler-parse-decl-origin-register-alias-record!
+    decls
+    decl-slot
+    (ast-decl-list-len (& source))
+    (compiler-parse-decl-list-storage-key (& source))
+    (struct-get source offset)
+    false))
+
+(defstruct CompilerParseDeclOriginAlias
+  (target-start i64)
+  (count i64)
+  (source-key i64)
+  (source-slot i64))
+
+(defstruct CompilerParseDeclOriginAliasVec
+  (items (Array CompilerParseDeclOriginAlias))
+  (len i64))
+
+(define (compiler-parse-decl-origin-alias-vec-with-capacity [capacity : i64]) : CompilerParseDeclOriginAliasVec
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (CompilerParseDeclOriginAliasVec
+      (make-array CompilerParseDeclOriginAlias cap)
+      0)))
+
+(define (compiler-parse-decl-origin-alias-vec-grow!
+  [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]) : unit
+  (let
+    [old-items : (Array CompilerParseDeclOriginAlias)
+      (struct-get aliases items)]
+    [len : i64 (struct-get aliases len)]
+    [next-items : (Array CompilerParseDeclOriginAlias)
+      (make-array CompilerParseDeclOriginAlias (* (array-length old-items) 2))]
+    [index : i64 0]
+    (begin
+      (while (< index len)
+        (let
+          [item : CompilerParseDeclOriginAlias (array-ref old-items index)]
+          (begin
+            (array-set!
+              next-items
+              index
+              (CompilerParseDeclOriginAlias
+                (struct-get item target-start)
+                (struct-get item count)
+                (struct-get item source-key)
+                (struct-get item source-slot)))
+            (set! index (+ index 1)))))
+      (set! (struct-get aliases items) next-items))))
+
+(define (compiler-parse-decl-origin-alias-vec-extend-last?
+  [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]
+  [target-start : i64]
+  [count : i64]
+  [source-key : i64]
+  [source-slot : i64]
+  [repeat : bool]) : bool
+  (if (or repeat (<= (struct-get aliases len) 0))
+    false
+    (let
+      [index : i64 (- (struct-get aliases len) 1)]
+      [last : CompilerParseDeclOriginAlias
+        (array-ref (struct-get aliases items) index)]
+      (if (and
+        (>= (struct-get last source-slot) 0)
+        (= (struct-get last source-key) source-key)
+        (=
+          (+ (struct-get last target-start) (struct-get last count))
+          target-start)
+        (=
+          (+ (struct-get last source-slot) (struct-get last count))
+          source-slot))
+        (begin
+          (array-set!
+            (struct-get aliases items)
+            index
+            (CompilerParseDeclOriginAlias
+              (struct-get last target-start)
+              (+ (struct-get last count) count)
+              (struct-get last source-key)
+              (struct-get last source-slot)))
+          true)
+        false))))
+
+(define (compiler-parse-decl-origin-alias-vec-push-key-slot!
+  [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]
+  [target-start : i64]
+  [count : i64]
+  [source-key : i64]
+  [source-slot : i64]
+  [source-decl : AstDecl]
+  [repeat : bool]) : unit
+  (if (and (> count 0) (compiler-parse-decl-origin-needs-record? source-decl))
+    (if (compiler-parse-decl-origin-alias-vec-extend-last?
+      aliases
+      target-start
+      count
+      source-key
+      source-slot
+      repeat)
+      unit
+      (begin
+        (if (>=
+          (struct-get aliases len)
+          (array-length (struct-get aliases items)))
+          (compiler-parse-decl-origin-alias-vec-grow! aliases)
+          unit)
+        (let
+          [index : i64 (struct-get aliases len)]
+          (begin
+            (array-set!
+              (struct-get aliases items)
+              index
+              (CompilerParseDeclOriginAlias
+                target-start
+                count
+                source-key
+                (if repeat
+                  (- (- 0 source-slot) 1)
+                  source-slot)))
+            (set! (struct-get aliases len) (+ index 1))))))
+    unit))
+
+(define (compiler-parse-decl-origin-alias-vec-push!
+  [aliases : (&mut aliases CompilerParseDeclOriginAliasVec)]
+  [target-start : i64]
+  [count : i64]
+  [source : AstDeclList]
+  [repeat : bool]) : unit
+  (compiler-parse-decl-origin-alias-vec-push-key-slot!
+    aliases
+    target-start
+    count
+    (compiler-parse-decl-list-storage-key (& source))
+    (struct-get source offset)
+    (ast-decl-list-get (& source) 0 (ast-decl-fallback))
+    repeat))
+
+(define (compiler-parse-decl-origin-alias-vec-register!
+  [decls : (& decls AstDeclList)]
+  [aliases : (& aliases CompilerParseDeclOriginAliasVec)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (struct-get aliases len))
+      (let
+        [alias : CompilerParseDeclOriginAlias
+          (array-ref (struct-get aliases items) index)]
+        (begin
+          (compiler-parse-decl-origin-register-alias-record!
+            decls
+            (struct-get alias target-start)
+            (struct-get alias count)
+            (struct-get alias source-key)
+            (if (< (struct-get alias source-slot) 0)
+              (- (- 0 (struct-get alias source-slot)) 1)
+              (struct-get alias source-slot))
+            (< (struct-get alias source-slot) 0))
+          (set! index (+ index 1)))))))
+
 ;; Aggregate member origins reuse the transient spanned-node pool instead of
 ;; widening hot AST nodes. After each top-level form, only marker + span records
 ;; are compacted below the next form's pool mark; lookup is error-path-only.
@@ -8058,8 +8421,9 @@
             (parse-ast-decl-vec-push-with-span
               out
               decl
-              (ast-source-span-from-source-span
-                (reader.spanned-sexpr-span (reader.sp-node-get form))))
+              (compiler-parse-decl-origin-syntax-span
+                dispatch
+                (reader.sp-node-get form)))
             (parse-ast-module-body-forms-into-vec
               dispatch
               pools
@@ -8942,13 +9306,98 @@
         (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
       (parse-ast-decl-vec-copy-to-list items (+ index 1) out))))
 
+(define (compiler-parse-decl-origin-needs-record? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Def _ _ _) false]
+    [(AstDecl.DefFn _ _ _ _ _) false]
+    [(AstDecl.DefMacro _ _ _ _) false]
+    [(AstDecl.Test _ _ _) false]
+    [(AstDecl.Unsafe inner-box)
+      (compiler-parse-decl-origin-needs-record? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (compiler-parse-decl-origin-needs-record? (box-get template-box))]
+    [_ true]))
+
+(define (compiler-parse-decl-origin-register-selected!
+  [items : (& items ParseAstDeclVec)]
+  [out : (& out AstDeclList)]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (parse-ast-decl-vec-len items))
+      (begin
+        (if (compiler-parse-decl-origin-needs-record?
+          (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
+          (let
+            [span : AstSourceSpan (array-ref (struct-get items spans) index)]
+            (compiler-parse-decl-origin-register-maybe!
+              out
+              index
+              (CompilerParseMaybeDeclSpan.Some
+                (AstSourceSpan
+                  (struct-get span start-line)
+                  (struct-get span start-col)
+                  (struct-get span end-line)
+                  (struct-get span end-col)))))
+          unit)
+        (set! index (+ index 1))))))
+
 (define (parse-ast-decl-vec-to-list [items : (& items ParseAstDeclVec)]) : AstDeclList
   (let
     [out : AstDeclList
       (ast-decl-list-with-capacity (parse-ast-decl-vec-len items))]
     (begin
       (parse-ast-decl-vec-copy-to-list items 0 (&mut out))
+      (compiler-parse-decl-origin-register-selected! items (& out))
       out)))
+
+;; Wrappers are declarations semantically, but declaration-shape errors belong
+;; to the declaration inside them. Keep the innermost source form's bounds.
+(define (compiler-parse-decl-origin-syntax-span
+  [dispatch : sym_i64_env.SymI64Env]
+  [form : reader.SpannedSexpr]) : AstSourceSpan
+  (let
+    [fallback : AstSourceSpan
+      (ast-source-span-from-source-span (reader.spanned-sexpr-span form))]
+    (match form
+      [(reader.SpannedSexpr.Cons head-node rest _)
+        (match (reader.sp-node-get head-node)
+          [(reader.SpannedSexpr.Sym head _)
+            (let
+              [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
+              (cond
+                [(string.eq head "cfg")
+                  (match (reader.sp-node-get rest)
+                    [(reader.SpannedSexpr.Cons _ decl-tail _)
+                      (match (reader.sp-node-get decl-tail)
+                        [(reader.SpannedSexpr.Cons decl-form _ _)
+                          (compiler-parse-decl-origin-syntax-span
+                            dispatch
+                            (reader.sp-node-get decl-form))]
+                        [_ fallback])]
+                    [_ fallback])]
+                [(= tag (compiler-parse-tag-expr-unsafe))
+                  (match (reader.sp-node-get rest)
+                    [(reader.SpannedSexpr.Cons inner _ _)
+                      (compiler-parse-decl-origin-syntax-span
+                        dispatch
+                        (reader.sp-node-get inner))]
+                    [_ fallback])]
+                [(= tag (compiler-parse-tag-decl-comptime-decl))
+                  (match (reader.sp-node-get rest)
+                    [(reader.SpannedSexpr.Cons first tail _)
+                      (match (reader.sp-node-get tail)
+                        [(reader.SpannedSexpr.Cons template _ _)
+                          (compiler-parse-decl-origin-syntax-span
+                            dispatch
+                            (reader.sp-node-get template))]
+                        [_
+                          (compiler-parse-decl-origin-syntax-span
+                            dispatch
+                            (reader.sp-node-get first))])]
+                    [_ fallback])]
+                [else fallback]))]
+          [_ fallback])]
+      [_ fallback])))
 
 (define (parse-ast-program-forms-into-vec
   [dispatch : sym_i64_env.SymI64Env]
@@ -8974,8 +9423,7 @@
                   (parse-ast-decl-vec-push-with-span
                     out
                     decl
-                    (ast-source-span-from-source-span
-                      (reader.spanned-sexpr-span form)))
+                    (compiler-parse-decl-origin-syntax-span dispatch form))
                   (compiler-parse-member-records-compact! mark records-start)
                   (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
               [(ResultAstMaybeDecl.Decls decls)
@@ -9194,8 +9642,9 @@
                     (parse-ast-decl-vec-push-with-span
                       out
                       decl
-                      (ast-source-span-from-source-span
-                        (reader.spanned-sexpr-span spanned-form)))
+                      (compiler-parse-decl-origin-syntax-span
+                        dispatch
+                        spanned-form))
                     (compiler-parse-member-records-compact! mark records-start)
                     (parse-ast-program-forms-diagnostic-into-vec
                       path

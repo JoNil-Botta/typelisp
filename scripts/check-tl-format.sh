@@ -6,6 +6,8 @@ set -eu
 # Local usage:
 #   scripts/check-tl-format.sh
 #   TYPELISP_BIN=./target/stage0/typelisp scripts/check-tl-format.sh
+# CI usage after proving TYPELISP_BIN is a current-tree bootstrap fixpoint:
+#   TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
 #
 # The check runs the self-hosted formatter through `typelisp fmt --check` over
 # most of the TypeLisp corpus. Files using syntax that the published seed
@@ -16,6 +18,32 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
+
+SELF_TEST_CURRENT_COMPILER_MODE=0
+case "${1:-}" in
+    "") ;;
+    --self-test-current-compiler-mode)
+        SELF_TEST_CURRENT_COMPILER_MODE=1
+        shift
+        ;;
+    *)
+        echo "usage: scripts/check-tl-format.sh [--self-test-current-compiler-mode]" >&2
+        exit 2
+        ;;
+esac
+if [ "$#" -ne 0 ]; then
+    echo "usage: scripts/check-tl-format.sh [--self-test-current-compiler-mode]" >&2
+    exit 2
+fi
+
+FORMAT_COMPILER_IS_CURRENT_TREE=${TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE:-0}
+case "$FORMAT_COMPILER_IS_CURRENT_TREE" in
+    0 | 1) ;;
+    *)
+        echo "TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
 
 # `typelisp fmt` runs the self-hosted formatter as native code for the host.
 # Allow Linux and Windows (Git Bash / MSYS / MINGW / Cygwin) hosts so both CI
@@ -31,7 +59,9 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ -n "${TYPELISP_BIN:-}" ]; then
+if [ "$SELF_TEST_CURRENT_COMPILER_MODE" -eq 1 ]; then
+    COMPILER="$ROOT/scripts/check-tl-format.sh"
+elif [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
     # Local-development fallback: fetch the published
@@ -91,6 +121,49 @@ build_current_cli_for_format() {
     assemble_and_link "current-formatter" "$CURRENT_CLI_ASM" "$CURRENT_CLI_OBJ" "$CURRENT_CLI_BIN"
 }
 
+select_current_cli_for_format() {
+    if [ "$FORMAT_COMPILER_IS_CURRENT_TREE" -eq 1 ]; then
+        CURRENT_CLI_BIN=$COMPILER
+        echo "Using fixpoint-proven current-tree compiler for current-syntax-aware TypeLisp formatting."
+    else
+        build_current_cli_for_format
+    fi
+}
+
+verify_current_compiler_mode_control() (
+    marker="$WORKDIR/current-formatter-rebuilt"
+    build_current_cli_for_format() {
+        : > "$marker"
+        CURRENT_CLI_BIN="$WORKDIR/rebuilt-current-formatter"
+    }
+
+    FORMAT_COMPILER_IS_CURRENT_TREE=0
+    select_current_cli_for_format >/dev/null
+    if [ ! -f "$marker" ] || [ "$CURRENT_CLI_BIN" != "$WORKDIR/rebuilt-current-formatter" ]; then
+        echo "local/stale formatter mode did not rebuild the current-tree CLI" >&2
+        exit 1
+    fi
+
+    rm -f "$marker"
+    FORMAT_COMPILER_IS_CURRENT_TREE=1
+    COMPILER="$WORKDIR/fixpoint-proven-current-compiler"
+    select_current_cli_for_format >/dev/null
+    if [ -e "$marker" ]; then
+        echo "CI-current formatter mode unexpectedly rebuilt the current-tree CLI" >&2
+        exit 1
+    fi
+    if [ "$CURRENT_CLI_BIN" != "$COMPILER" ]; then
+        echo "CI-current formatter mode did not select the supplied compiler" >&2
+        exit 1
+    fi
+)
+
+if [ "$SELF_TEST_CURRENT_COMPILER_MODE" -eq 1 ]; then
+    verify_current_compiler_mode_control
+    echo "TypeLisp format compiler selection self-test passed."
+    exit 0
+fi
+
 # Check every git-tracked *.tl file in the repository so TypeLisp code in any
 # directory (including tools/, benchmarks/) meets the same formatting standard.
 # Exclusions below are explicit:
@@ -136,7 +209,7 @@ fi
 
 if [ -s "$METADATA_FILES" ]; then
     echo "Checking current-syntax-aware TypeLisp formatting for $metadata_count file(s)."
-    build_current_cli_for_format
+    select_current_cli_for_format
     if ! xargs "$CURRENT_CLI_BIN" fmt --check < "$METADATA_FILES"; then
         echo "Current-syntax-aware TypeLisp format check failed." >&2
         echo "Run: $CURRENT_CLI_BIN fmt --check \$(cat $METADATA_FILES)" >&2

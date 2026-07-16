@@ -346,7 +346,8 @@ run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_
 # The deterministic assembly gate reuses the manifest's emitted .s as its first
 # compile for overlapping sources, so it must run after the manifest gate.
 run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
-run_with_compiler "$STAGE2_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
+run_gate "TypeLisp format compiler selection control" scripts/check-tl-format.sh --self-test-current-compiler-mode
+run_with_compiler "$STAGE2_BIN" "TypeLisp source formatting" env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
 run_with_compiler "$STAGE2_BIN" "TypeLisp source lint" scripts/check-tl-lint.sh
 # The freshly bootstrapped compiler (and the programs it builds) must depend on
 # no C runtime: kernel32 only on Windows, nothing dynamic on Linux.

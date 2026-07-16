@@ -459,45 +459,72 @@
   (compiler-load-session-state-program-cache-clear!
     compiler-load-active-session-state))
 
-(define (compiler-load-program-cache-ensure!) : unit
-  (if (array-ref
-    (struct-get compiler-load-active-session-state program-cache-ready)
-    0)
+(define (compiler-load-session-state-program-cache-ensure!
+  [state : CompilerLoadSessionState]) : unit
+  (if (array-ref (struct-get state program-cache-ready) 0)
     unit
-    (compiler-load-program-cache-clear!)))
+    (compiler-load-session-state-program-cache-clear! state)))
+
+(define (compiler-load-program-cache-ensure!) : unit
+  (compiler-load-session-state-program-cache-ensure!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-program-cache-note-hit!
+  [state : CompilerLoadSessionState]) : unit
+  (array-set!
+    (struct-get state program-cache-hit-count)
+    0
+    (+ (compiler-load-session-state-program-cache-hit-count-value state) 1)))
 
 (define (compiler-load-program-cache-note-hit!) : unit
+  (compiler-load-session-state-program-cache-note-hit!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-program-cache-note-miss!
+  [state : CompilerLoadSessionState]) : unit
   (array-set!
-    (struct-get compiler-load-active-session-state program-cache-hit-count)
+    (struct-get state program-cache-miss-count)
     0
-    (+ (compiler-load-program-cache-hit-count-value) 1)))
+    (+ (compiler-load-session-state-program-cache-miss-count-value state) 1)))
 
 (define (compiler-load-program-cache-note-miss!) : unit
+  (compiler-load-session-state-program-cache-note-miss!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-program-cache-note-store!
+  [state : CompilerLoadSessionState]) : unit
   (array-set!
-    (struct-get compiler-load-active-session-state program-cache-miss-count)
+    (struct-get state program-cache-store-count)
     0
-    (+ (compiler-load-program-cache-miss-count-value) 1)))
+    (+ (compiler-load-session-state-program-cache-store-count-value state) 1)))
 
 (define (compiler-load-program-cache-note-store!) : unit
-  (array-set!
-    (struct-get compiler-load-active-session-state program-cache-store-count)
-    0
-    (+ (compiler-load-program-cache-store-count-value) 1)))
+  (compiler-load-session-state-program-cache-note-store!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-program-cache-hit-count-value
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref (struct-get state program-cache-hit-count) 0))
 
 (define (compiler-load-program-cache-hit-count-value) : i64
-  (array-ref
-    (struct-get compiler-load-active-session-state program-cache-hit-count)
-    0))
+  (compiler-load-session-state-program-cache-hit-count-value
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-program-cache-miss-count-value
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref (struct-get state program-cache-miss-count) 0))
 
 (define (compiler-load-program-cache-miss-count-value) : i64
-  (array-ref
-    (struct-get compiler-load-active-session-state program-cache-miss-count)
-    0))
+  (compiler-load-session-state-program-cache-miss-count-value
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-program-cache-store-count-value
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref (struct-get state program-cache-store-count) 0))
 
 (define (compiler-load-program-cache-store-count-value) : i64
-  (array-ref
-    (struct-get compiler-load-active-session-state program-cache-store-count)
-    0))
+  (compiler-load-session-state-program-cache-store-count-value
+    compiler-load-active-session-state))
 
 (define (compiler-load-cfg-key-equal?
   [left : sym_i64_env.SymI64Env]
@@ -559,79 +586,135 @@
     (struct-get key path-id)
     (compiler-load-cfg-key-copy (struct-get key cfgs))))
 
-(define (compiler-load-program-cache-lookup-from
+(define (compiler-load-session-state-program-cache-lookup-from
+  [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [index : i64]) : CompilerLoadProgramCacheLookup
   (if (>= index compiler-load-program-cache-capacity)
     (CompilerLoadProgramCacheMiss)
-    (match (array-ref
-      (struct-get compiler-load-active-session-state program-cache)
-      index)
+    (match (array-ref (struct-get state program-cache) index)
       [(CompilerLoadProgramCacheEmpty) (CompilerLoadProgramCacheMiss)]
       [(CompilerLoadProgramCacheFull slot-key program)
         (if (compiler-load-program-cache-key-equal? slot-key key)
           (CompilerLoadProgramCacheHit program)
-          (compiler-load-program-cache-lookup-from key (+ index 1)))])))
+          (compiler-load-session-state-program-cache-lookup-from
+            state
+            key
+            (+ index 1)))])))
+
+(define (compiler-load-program-cache-lookup-from
+  [key : CompilerLoadProgramCacheKey]
+  [index : i64]) : CompilerLoadProgramCacheLookup
+  (compiler-load-session-state-program-cache-lookup-from
+    compiler-load-active-session-state
+    key
+    index))
+
+(define (compiler-load-session-state-program-cache-lookup
+  [state : CompilerLoadSessionState]
+  [key : CompilerLoadProgramCacheKey]) : CompilerLoadProgramCacheLookup
+  (begin
+    (compiler-load-session-state-program-cache-ensure! state)
+    (compiler-load-session-state-program-cache-lookup-from state key 0)))
 
 (define (compiler-load-program-cache-lookup [key : CompilerLoadProgramCacheKey]) : CompilerLoadProgramCacheLookup
-  (begin
-    (compiler-load-program-cache-ensure!)
-    (compiler-load-program-cache-lookup-from key 0)))
+  (compiler-load-session-state-program-cache-lookup
+    compiler-load-active-session-state
+    key))
 
-(define (compiler-load-program-cache-store-at
+(define (compiler-load-session-state-program-cache-store-at
+  [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [program : AstProgram]
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref
-      (struct-get compiler-load-active-session-state program-cache)
-      index)
+    (match (array-ref (struct-get state program-cache) index)
       [(CompilerLoadProgramCacheEmpty)
         (begin
           (array-set!
-            (struct-get compiler-load-active-session-state program-cache)
+            (struct-get state program-cache)
             index
             (CompilerLoadProgramCacheFull key program))
-          (compiler-load-program-cache-note-store!)
+          (compiler-load-session-state-program-cache-note-store! state)
           true)]
       [(CompilerLoadProgramCacheFull slot-key _)
         (if (compiler-load-program-cache-key-equal? slot-key key)
           (begin
             (array-set!
-              (struct-get compiler-load-active-session-state program-cache)
+              (struct-get state program-cache)
               index
               (CompilerLoadProgramCacheFull key program))
-            (compiler-load-program-cache-note-store!)
+            (compiler-load-session-state-program-cache-note-store! state)
             true)
-          (compiler-load-program-cache-store-at key program (+ index 1)))])))
+          (compiler-load-session-state-program-cache-store-at
+            state
+            key
+            program
+            (+ index 1)))])))
+
+(define (compiler-load-program-cache-store-at
+  [key : CompilerLoadProgramCacheKey]
+  [program : AstProgram]
+  [index : i64]) : bool
+  (compiler-load-session-state-program-cache-store-at
+    compiler-load-active-session-state
+    key
+    program
+    index))
+
+(define (compiler-load-session-state-program-cache-store
+  [state : CompilerLoadSessionState]
+  [key : CompilerLoadProgramCacheKey]
+  [program : AstProgram]) : bool
+  (begin
+    (compiler-load-session-state-program-cache-ensure! state)
+    (compiler-load-session-state-program-cache-store-at state key program 0)))
 
 (define (compiler-load-program-cache-store
   [key : CompilerLoadProgramCacheKey]
   [program : AstProgram]) : bool
-  (begin
-    (compiler-load-program-cache-ensure!)
-    (compiler-load-program-cache-store-at key program 0)))
+  (compiler-load-session-state-program-cache-store
+    compiler-load-active-session-state
+    key
+    program))
 
-(define (compiler-load-program-cache-can-store-at
+(define (compiler-load-session-state-program-cache-can-store-at
+  [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref
-      (struct-get compiler-load-active-session-state program-cache)
-      index)
+    (match (array-ref (struct-get state program-cache) index)
       [(CompilerLoadProgramCacheEmpty) true]
       [(CompilerLoadProgramCacheFull slot-key _)
         (if (compiler-load-program-cache-key-equal? slot-key key)
           true
-          (compiler-load-program-cache-can-store-at key (+ index 1)))])))
+          (compiler-load-session-state-program-cache-can-store-at
+            state
+            key
+            (+ index 1)))])))
+
+(define (compiler-load-program-cache-can-store-at
+  [key : CompilerLoadProgramCacheKey]
+  [index : i64]) : bool
+  (compiler-load-session-state-program-cache-can-store-at
+    compiler-load-active-session-state
+    key
+    index))
+
+(define (compiler-load-session-state-program-cache-can-store
+  [state : CompilerLoadSessionState]
+  [key : CompilerLoadProgramCacheKey]) : bool
+  (begin
+    (compiler-load-session-state-program-cache-ensure! state)
+    (compiler-load-session-state-program-cache-can-store-at state key 0)))
 
 (define (compiler-load-program-cache-can-store
   [key : CompilerLoadProgramCacheKey]) : bool
-  (begin
-    (compiler-load-program-cache-ensure!)
-    (compiler-load-program-cache-can-store-at key 0)))
+  (compiler-load-session-state-program-cache-can-store
+    compiler-load-active-session-state
+    key))
 
 (define (compiler-load-session-state-program-admission-fill!
   [state : CompilerLoadSessionState]
@@ -660,62 +743,100 @@
   (compiler-load-session-state-program-admission-clear!
     compiler-load-active-session-state))
 
-(define (compiler-load-program-admission-ensure!) : unit
-  (if (array-ref
-    (struct-get compiler-load-active-session-state program-admission-ready)
-    0)
+(define (compiler-load-session-state-program-admission-ensure!
+  [state : CompilerLoadSessionState]) : unit
+  (if (array-ref (struct-get state program-admission-ready) 0)
     unit
-    (compiler-load-program-admission-clear!)))
+    (compiler-load-session-state-program-admission-clear! state)))
 
-(define (compiler-load-program-admission-contains-from?
+(define (compiler-load-program-admission-ensure!) : unit
+  (compiler-load-session-state-program-admission-ensure!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-program-admission-contains-from?
+  [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref
-      (struct-get compiler-load-active-session-state program-admission)
-      index)
+    (match (array-ref (struct-get state program-admission) index)
       [(CompilerLoadProgramAdmissionEmpty) false]
       [(CompilerLoadProgramAdmissionFull slot-key)
         (if (compiler-load-program-cache-key-equal? slot-key key)
           true
-          (compiler-load-program-admission-contains-from? key (+ index 1)))])))
+          (compiler-load-session-state-program-admission-contains-from?
+            state
+            key
+            (+ index 1)))])))
+
+(define (compiler-load-program-admission-contains-from?
+  [key : CompilerLoadProgramCacheKey]
+  [index : i64]) : bool
+  (compiler-load-session-state-program-admission-contains-from?
+    compiler-load-active-session-state
+    key
+    index))
+
+(define (compiler-load-session-state-program-admission-contains?
+  [state : CompilerLoadSessionState]
+  [key : CompilerLoadProgramCacheKey]) : bool
+  (begin
+    (compiler-load-session-state-program-admission-ensure! state)
+    (compiler-load-session-state-program-admission-contains-from? state key 0)))
 
 (define (compiler-load-program-admission-contains?
   [key : CompilerLoadProgramCacheKey]) : bool
-  (begin
-    (compiler-load-program-admission-ensure!)
-    (compiler-load-program-admission-contains-from? key 0)))
+  (compiler-load-session-state-program-admission-contains?
+    compiler-load-active-session-state
+    key))
 
-(define (compiler-load-program-admission-record-at
+(define (compiler-load-session-state-program-admission-record-at
+  [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [index : i64]) : bool
   (if (>= index compiler-load-program-cache-capacity)
     false
-    (match (array-ref
-      (struct-get compiler-load-active-session-state program-admission)
-      index)
+    (match (array-ref (struct-get state program-admission) index)
       [(CompilerLoadProgramAdmissionEmpty)
         (begin
           (array-set!
-            (struct-get compiler-load-active-session-state program-admission)
+            (struct-get state program-admission)
             index
             (CompilerLoadProgramAdmissionFull key))
           true)]
       [(CompilerLoadProgramAdmissionFull slot-key)
         (if (compiler-load-program-cache-key-equal? slot-key key)
           true
-          (compiler-load-program-admission-record-at key (+ index 1)))])))
+          (compiler-load-session-state-program-admission-record-at
+            state
+            key
+            (+ index 1)))])))
+
+(define (compiler-load-program-admission-record-at
+  [key : CompilerLoadProgramCacheKey]
+  [index : i64]) : bool
+  (compiler-load-session-state-program-admission-record-at
+    compiler-load-active-session-state
+    key
+    index))
+
+(define (compiler-load-session-state-program-admission-record
+  [state : CompilerLoadSessionState]
+  [key : CompilerLoadProgramCacheKey]) : bool
+  (begin
+    (compiler-load-session-state-program-admission-ensure! state)
+    (compiler-load-session-state-program-admission-record-at state key 0)))
 
 (define (compiler-load-program-admission-record
   [key : CompilerLoadProgramCacheKey]) : bool
-  (begin
-    (compiler-load-program-admission-ensure!)
-    (compiler-load-program-admission-record-at key 0)))
+  (compiler-load-session-state-program-admission-record
+    compiler-load-active-session-state
+    key))
 
-(define (compiler-load-program-admission-record-persistent
+(define (compiler-load-session-state-program-admission-record-persistent
+  [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]) : bool
-  (if (compiler-load-program-admission-contains? key)
+  (if (compiler-load-session-state-program-admission-contains? state key)
     true
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
@@ -729,78 +850,95 @@
             (begin
               (unsafe
                 (arena.tl_arena_set prev-arena))
-              (compiler-load-program-admission-record persistent-key))))]
+              (compiler-load-session-state-program-admission-record
+                state
+                persistent-key))))]
       recorded)))
 
-(define (compiler-load-session-note-persistent!) : unit
+(define (compiler-load-program-admission-record-persistent
+  [key : CompilerLoadProgramCacheKey]) : bool
+  (compiler-load-session-state-program-admission-record-persistent
+    compiler-load-active-session-state
+    key))
+
+(define (compiler-load-session-state-note-persistent!
+  [state : CompilerLoadSessionState]) : unit
   (let
-    [old-intern-floor : i64 (compiler-load-session-intern-floor-value)]
+    [old-intern-floor : i64
+      (compiler-load-session-state-intern-floor-value state)]
     [new-intern-floor : i64 (intern-pool-len)]
     (begin
-      (if (> (ast-node-pool-len) (compiler-load-session-ast-floor-value))
-        (array-set!
-          (struct-get compiler-load-active-session-state ast-floor)
-          0
-          (ast-node-pool-len))
+      (if (>
+        (ast-node-pool-len)
+        (compiler-load-session-state-ast-floor-value state))
+        (array-set! (struct-get state ast-floor) 0 (ast-node-pool-len))
         unit)
-      (if (> (ty-node-pool-len) (compiler-load-session-ty-floor-value))
-        (array-set!
-          (struct-get compiler-load-active-session-state ty-floor)
-          0
-          (ty-node-pool-len))
+      (if (>
+        (ty-node-pool-len)
+        (compiler-load-session-state-ty-floor-value state))
+        (array-set! (struct-get state ty-floor) 0 (ty-node-pool-len))
         unit)
       (if (> new-intern-floor old-intern-floor)
         (begin
           (intern-persistent-arena-floor-refresh!)
-          (array-set!
-            (struct-get compiler-load-active-session-state intern-floor)
-            0
-            new-intern-floor))
+          (array-set! (struct-get state intern-floor) 0 new-intern-floor))
         unit))))
 
-(define (compiler-load-session-note-persistent-interns!) : unit
+(define (compiler-load-session-note-persistent!) : unit
+  (compiler-load-session-state-note-persistent!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-note-persistent-interns!
+  [state : CompilerLoadSessionState]) : unit
   (let
-    [old-intern-floor : i64 (compiler-load-session-intern-floor-value)]
+    [old-intern-floor : i64
+      (compiler-load-session-state-intern-floor-value state)]
     [new-intern-floor : i64 (intern-pool-len)]
     (if (> new-intern-floor old-intern-floor)
       (begin
         (intern-persistent-arena-floor-refresh!)
-        (array-set!
-          (struct-get compiler-load-active-session-state intern-floor)
-          0
-          new-intern-floor))
+        (array-set! (struct-get state intern-floor) 0 new-intern-floor))
       unit)))
 
-(define (compiler-load-session-note-persistent-with-pools!
+(define (compiler-load-session-note-persistent-interns!) : unit
+  (compiler-load-session-state-note-persistent-interns!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-note-persistent-with-pools!
+  [state : CompilerLoadSessionState]
   [pools : AstNodePoolContext]) : unit
   (let
-    [old-intern-floor : i64 (compiler-load-session-intern-floor-value)]
+    [old-intern-floor : i64
+      (compiler-load-session-state-intern-floor-value state)]
     [new-intern-floor : i64 (intern-pool-len)]
     (begin
       (if (>
         (ast-node-pool-context-expr-len pools)
-        (compiler-load-session-ast-floor-value))
+        (compiler-load-session-state-ast-floor-value state))
         (array-set!
-          (struct-get compiler-load-active-session-state ast-floor)
+          (struct-get state ast-floor)
           0
           (ast-node-pool-context-expr-len pools))
         unit)
       (if (>
         (ast-node-pool-context-type-len pools)
-        (compiler-load-session-ty-floor-value))
+        (compiler-load-session-state-ty-floor-value state))
         (array-set!
-          (struct-get compiler-load-active-session-state ty-floor)
+          (struct-get state ty-floor)
           0
           (ast-node-pool-context-type-len pools))
         unit)
       (if (> new-intern-floor old-intern-floor)
         (begin
           (intern-persistent-arena-floor-refresh!)
-          (array-set!
-            (struct-get compiler-load-active-session-state intern-floor)
-            0
-            new-intern-floor))
+          (array-set! (struct-get state intern-floor) 0 new-intern-floor))
         unit))))
+
+(define (compiler-load-session-note-persistent-with-pools!
+  [pools : AstNodePoolContext]) : unit
+  (compiler-load-session-state-note-persistent-with-pools!
+    compiler-load-active-session-state
+    pools))
 
 (define (compiler-load-session-state-ast-floor-value
   [state : CompilerLoadSessionState]) : i64
@@ -884,10 +1022,13 @@
       false)
     (compiler-load-program-cache-clear!)))
 
+(define (compiler-load-session-state-program-cache-enabled?
+  [state : CompilerLoadSessionState]) : bool
+  (array-ref (struct-get state program-cache-enabled) 0))
+
 (define (compiler-load-session-program-cache-enabled?) : bool
-  (array-ref
-    (struct-get compiler-load-active-session-state program-cache-enabled)
-    0))
+  (compiler-load-session-state-program-cache-enabled?
+    compiler-load-active-session-state))
 
 (define (compiler-load-session-cache-disable-for-test!) : unit
   (begin
@@ -1028,12 +1169,15 @@
   (compiler-load-session-state-runtime-prelude-cache-clear!
     compiler-load-active-session-state))
 
-(define (compiler-load-runtime-prelude-cache-ensure!) : unit
-  (if (array-ref
-    (struct-get compiler-load-active-session-state runtime-prelude-cache-ready)
-    0)
+(define (compiler-load-session-state-runtime-prelude-cache-ensure!
+  [state : CompilerLoadSessionState]) : unit
+  (if (array-ref (struct-get state runtime-prelude-cache-ready) 0)
     unit
-    (compiler-load-runtime-prelude-cache-clear!)))
+    (compiler-load-session-state-runtime-prelude-cache-clear! state)))
+
+(define (compiler-load-runtime-prelude-cache-ensure!) : unit
+  (compiler-load-session-state-runtime-prelude-cache-ensure!
+    compiler-load-active-session-state))
 
 (define (compiler-load-intern-id-list-equal?
   [left : CompilerLoadInternIdList]
@@ -1078,27 +1222,45 @@
     (compiler-load-intern-id-list-copy (struct-get key root-ids))
     (compiler-load-cfg-key-copy (struct-get key cfgs))))
 
-(define (compiler-load-runtime-prelude-cache-lookup-from
+(define (compiler-load-session-state-runtime-prelude-cache-lookup-from
+  [state : CompilerLoadSessionState]
   [key : CompilerLoadPreludeCacheKey]
   [index : i64]) : CompilerLoadPreludeCacheLookup
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     (CompilerLoadPreludeCacheMiss)
-    (match (array-ref
-      (struct-get compiler-load-active-session-state runtime-prelude-cache)
-      index)
+    (match (array-ref (struct-get state runtime-prelude-cache) index)
       [(CompilerLoadPreludeCacheEmpty) (CompilerLoadPreludeCacheMiss)]
       [(CompilerLoadPreludeCacheFull slot-key decls paths modules seen)
         (if (compiler-load-prelude-cache-key-equal? slot-key key)
           (CompilerLoadPreludeCacheHit decls paths modules seen)
-          (compiler-load-runtime-prelude-cache-lookup-from key (+ index 1)))])))
+          (compiler-load-session-state-runtime-prelude-cache-lookup-from
+            state
+            key
+            (+ index 1)))])))
+
+(define (compiler-load-runtime-prelude-cache-lookup-from
+  [key : CompilerLoadPreludeCacheKey]
+  [index : i64]) : CompilerLoadPreludeCacheLookup
+  (compiler-load-session-state-runtime-prelude-cache-lookup-from
+    compiler-load-active-session-state
+    key
+    index))
+
+(define (compiler-load-session-state-runtime-prelude-cache-lookup
+  [state : CompilerLoadSessionState]
+  [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
+  (begin
+    (compiler-load-session-state-runtime-prelude-cache-ensure! state)
+    (compiler-load-session-state-runtime-prelude-cache-lookup-from state key 0)))
 
 (define (compiler-load-runtime-prelude-cache-lookup
   [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
-  (begin
-    (compiler-load-runtime-prelude-cache-ensure!)
-    (compiler-load-runtime-prelude-cache-lookup-from key 0)))
+  (compiler-load-session-state-runtime-prelude-cache-lookup
+    compiler-load-active-session-state
+    key))
 
-(define (compiler-load-runtime-prelude-cache-store-at
+(define (compiler-load-session-state-runtime-prelude-cache-store-at
+  [state : CompilerLoadSessionState]
   [key : CompilerLoadPreludeCacheKey]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -1107,23 +1269,20 @@
   [index : i64]) : unit
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     unit
-    (match (array-ref
-      (struct-get compiler-load-active-session-state runtime-prelude-cache)
-      index)
+    (match (array-ref (struct-get state runtime-prelude-cache) index)
       [(CompilerLoadPreludeCacheEmpty)
         (array-set!
-          (struct-get compiler-load-active-session-state runtime-prelude-cache)
+          (struct-get state runtime-prelude-cache)
           index
           (CompilerLoadPreludeCacheFull key decls paths modules seen))]
       [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
         (if (compiler-load-prelude-cache-key-equal? slot-key key)
           (array-set!
-            (struct-get
-              compiler-load-active-session-state
-              runtime-prelude-cache)
+            (struct-get state runtime-prelude-cache)
             index
             (CompilerLoadPreludeCacheFull key decls paths modules seen))
-          (compiler-load-runtime-prelude-cache-store-at
+          (compiler-load-session-state-runtime-prelude-cache-store-at
+            state
             key
             decls
             paths
@@ -1131,22 +1290,74 @@
             seen
             (+ index 1)))])))
 
-(define (compiler-load-runtime-prelude-cache-store
+(define (compiler-load-runtime-prelude-cache-store-at
+  [key : CompilerLoadPreludeCacheKey]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]
+  [seen : sym_i64_env.SymI64Env]
+  [index : i64]) : unit
+  (compiler-load-session-state-runtime-prelude-cache-store-at
+    compiler-load-active-session-state
+    key
+    decls
+    paths
+    modules
+    seen
+    index))
+
+(define (compiler-load-session-state-runtime-prelude-cache-store
+  [state : CompilerLoadSessionState]
   [key : CompilerLoadPreludeCacheKey]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]) : unit
   (begin
-    (compiler-load-runtime-prelude-cache-ensure!)
-    (compiler-load-runtime-prelude-cache-store-at
+    (compiler-load-session-state-runtime-prelude-cache-ensure! state)
+    (compiler-load-session-state-runtime-prelude-cache-store-at
+      state
       key
       decls
       paths
       modules
       seen
       0)
-    (compiler-load-session-note-persistent!)))
+    (compiler-load-session-state-note-persistent! state)))
+
+(define (compiler-load-runtime-prelude-cache-store
+  [key : CompilerLoadPreludeCacheKey]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]
+  [seen : sym_i64_env.SymI64Env]) : unit
+  (compiler-load-session-state-runtime-prelude-cache-store
+    compiler-load-active-session-state
+    key
+    decls
+    paths
+    modules
+    seen))
+
+(define (compiler-load-session-state-runtime-prelude-cache-store-with-pools
+  [state : CompilerLoadSessionState]
+  [key : CompilerLoadPreludeCacheKey]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]
+  [seen : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (begin
+    (compiler-load-session-state-runtime-prelude-cache-ensure! state)
+    (compiler-load-session-state-runtime-prelude-cache-store-at
+      state
+      key
+      decls
+      paths
+      modules
+      seen
+      0)
+    (compiler-load-session-state-note-persistent-with-pools! state pools)))
 
 (define (compiler-load-runtime-prelude-cache-store-with-pools
   [key : CompilerLoadPreludeCacheKey]
@@ -1155,16 +1366,14 @@
   [modules : AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
-  (begin
-    (compiler-load-runtime-prelude-cache-ensure!)
-    (compiler-load-runtime-prelude-cache-store-at
-      key
-      decls
-      paths
-      modules
-      seen
-      0)
-    (compiler-load-session-note-persistent-with-pools! pools)))
+  (compiler-load-session-state-runtime-prelude-cache-store-with-pools
+    compiler-load-active-session-state
+    key
+    decls
+    paths
+    modules
+    seen
+    pools))
 
 (define (compiler-load-root-cache-ids-from
   [roots : svec.Vec]
@@ -1180,7 +1389,8 @@
         root-id
         (box (compiler-load-root-cache-ids-from roots (+ index 1) count))))))
 
-(define (compiler-load-runtime-prelude-cache-key
+(define (compiler-load-session-state-runtime-prelude-cache-key
+  [state : CompilerLoadSessionState]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadPreludeCacheKey
   (let
@@ -1190,8 +1400,17 @@
         effective-roots
         0
         (svec.len (& effective-roots)))]
-    [_persist-root-ids : unit (compiler-load-session-note-persistent-interns!)]
+    [_persist-root-ids : unit
+      (compiler-load-session-state-note-persistent-interns! state)]
     (CompilerLoadPreludeCacheKey root-ids cfgs)))
+
+(define (compiler-load-runtime-prelude-cache-key
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadPreludeCacheKey
+  (compiler-load-session-state-runtime-prelude-cache-key
+    compiler-load-active-session-state
+    stdlib-roots
+    cfgs))
 
 (define (compiler-load-roots-cache-key-from
   [roots : svec.Vec]
@@ -1247,13 +1466,25 @@
       "|cfg:"
       (compiler-load-cfg-cache-key cfgs))))
 
-(define (compiler-load-program-cache-key-id
+(define (compiler-load-session-state-program-cache-key-id
+  [state : CompilerLoadSessionState]
   [kind : CompilerLoadProgramSourceKind]
   [path-id : i64]
   [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadProgramCacheKey
   (let
-    [_persist-path-id : unit (compiler-load-session-note-persistent-interns!)]
+    [_persist-path-id : unit
+      (compiler-load-session-state-note-persistent-interns! state)]
     (CompilerLoadProgramCacheKey kind path-id cfgs)))
+
+(define (compiler-load-program-cache-key-id
+  [kind : CompilerLoadProgramSourceKind]
+  [path-id : i64]
+  [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadProgramCacheKey
+  (compiler-load-session-state-program-cache-key-id
+    compiler-load-active-session-state
+    kind
+    path-id
+    cfgs))
 
 (define (compiler-load-char-code-at [text : String] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
@@ -1710,12 +1941,15 @@
           (set! i (+ i 1))))
       (string.concat3 out ".tl" ""))))
 
-(define (compiler-load-dotted-module-path-id
+(define (compiler-load-session-state-dotted-module-path-id
+  [state : CompilerLoadSessionState]
   [module-id : i64]
   [module-name : String]) : String
   (begin
-    (compiler-load-dotted-path-cache-ensure!)
-    (match (compiler-load-dotted-path-cache-lookup module-id)
+    (compiler-load-session-state-dotted-path-cache-ensure! state)
+    (match (compiler-load-session-state-dotted-path-cache-lookup
+      state
+      module-id)
       [(CompilerLoadSomeString path) path]
       [(CompilerLoadNoString)
         (let
@@ -1727,10 +1961,21 @@
               [path : String
                 (compiler-load-dotted-module-path-uncached module-name)]
               (begin
-                (compiler-load-dotted-path-cache-store! module-id path)
+                (compiler-load-session-state-dotted-path-cache-store!
+                  state
+                  module-id
+                  path)
                 (unsafe
                   (arena.tl_arena_set prev-arena))
                 path))))])))
+
+(define (compiler-load-dotted-module-path-id
+  [module-id : i64]
+  [module-name : String]) : String
+  (compiler-load-session-state-dotted-module-path-id
+    compiler-load-active-session-state
+    module-id
+    module-name))
 
 (define (compiler-load-dotted-module-path [module-name : String]) : String
   (compiler-load-dotted-module-path-uncached module-name))
@@ -13634,6 +13879,81 @@
       (= (array-ref shared 4) tail-a-id)
       (= (array-ref shared 5) tail-b-id))))
 
+(define (compiler-load-session-explicit-cache-api-isolation-ok?) : bool
+  (let
+    [previous-state : CompilerLoadSessionState
+      compiler-load-active-session-state]
+    [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [_select-b : unit (compiler-load-session-state-use! state-b)]
+    [cfgs : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+    [program-key : CompilerLoadProgramCacheKey
+      (CompilerLoadProgramCacheKey CompilerLoadProgramEmbedded 701 cfgs)]
+    [program : AstProgram (ast-program (ast-decl-list-new))]
+    [_store-program : bool
+      (compiler-load-session-state-program-cache-store
+        state-a
+        program-key
+        program)]
+    [_note-hit : unit
+      (compiler-load-session-state-program-cache-note-hit! state-a)]
+    [_admit : bool
+      (compiler-load-session-state-program-admission-record state-a program-key)]
+    [prelude-key : CompilerLoadPreludeCacheKey
+      (CompilerLoadPreludeCacheKey (CompilerLoadInternIdNil) cfgs)]
+    [_store-prelude : unit
+      (compiler-load-session-state-runtime-prelude-cache-store
+        state-a
+        prelude-key
+        (ast-decl-list-new)
+        (ast-decl-path-list-new)
+        (ast-decl-module-list-new)
+        (sym_i64_env.sym-i64-empty))]
+    [dotted : String
+      (compiler-load-session-state-dotted-module-path-id
+        state-a
+        702
+        "pkg.explicit")]
+    [ok : bool
+      (and
+        (match (compiler-load-session-state-program-cache-lookup
+          state-a
+          program-key)
+          [(CompilerLoadProgramCacheHit _) true]
+          [_ false])
+        (=
+          (compiler-load-session-state-program-cache-hit-count-value state-a)
+          1)
+        (=
+          (compiler-load-session-state-program-cache-store-count-value state-a)
+          1)
+        (compiler-load-session-state-program-admission-contains?
+          state-a
+          program-key)
+        (match (compiler-load-session-state-runtime-prelude-cache-lookup
+          state-a
+          prelude-key)
+          [(CompilerLoadPreludeCacheHit _ _ _ _) true]
+          [_ false])
+        (string.eq dotted "pkg/explicit.tl")
+        (not (array-ref (struct-get state-b program-cache-ready) 0))
+        (=
+          (compiler-load-session-state-program-cache-hit-count-value state-b)
+          0)
+        (=
+          (compiler-load-session-state-program-cache-store-count-value state-b)
+          0)
+        (not (array-ref (struct-get state-b program-admission-ready) 0))
+        (not (array-ref (struct-get state-b runtime-prelude-cache-ready) 0))
+        (match (compiler-load-session-state-dotted-path-cache-lookup
+          state-b
+          702)
+          [(CompilerLoadNoString) true]
+          [_ false]))]
+    (begin
+      (compiler-load-session-state-use! previous-state)
+      ok)))
+
 (define (compiler-load-session-owned-traversal-isolation-ok?) : bool
   (let
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
@@ -13763,6 +14083,10 @@
 
 (define (compiler-load-self-test) : i64
   (begin
+    (unless
+      (compiler-load-session-explicit-cache-api-isolation-ok?)
+      (return
+        (io.panic "compiler-load: explicit cache API isolation smoke mismatch")))
     (unless
       (compiler-load-session-owned-traversal-isolation-ok?)
       (return

@@ -1989,21 +1989,19 @@
     (intern-lookup-content name)
     (InternLookupMissing)))
 
-;: Recover the original String for an interned or source-backed structural id.
+;: Recover the original String for an interned id.
 (define (intern-str [id : i64]) : String
-  (if (intern-structural-local-id? id)
-    (array-ref intern-pool-slots (intern-structural-local-source-name-id id))
-    (cfg
-      compile-profile
-      (if (or (< id 0) (>= id (array-length intern-pool-slots)))
-        (begin
-          (set!
-            intern-profile-invalid-str-count
-            (+ intern-profile-invalid-str-count 1))
-          (set! intern-profile-invalid-str-last-id id)
-          "<invalid-intern-id>")
-        (array-ref intern-pool-slots id))
-      (array-ref intern-pool-slots id))))
+  (cfg
+    compile-profile
+    (if (or (< id 0) (>= id (array-length intern-pool-slots)))
+      (begin
+        (set!
+          intern-profile-invalid-str-count
+          (+ intern-profile-invalid-str-count 1))
+        (set! intern-profile-invalid-str-last-id id)
+        "<invalid-intern-id>")
+      (array-ref intern-pool-slots id))
+    (array-ref intern-pool-slots id)))
 
 (define (intern-generation) : i64
   intern-reset-generation)
@@ -2148,7 +2146,8 @@
           (set! ok false))
         (unless
           (intern-private-string-eq
-            (intern-str structural-local-id)
+            (intern-str
+              (intern-structural-local-source-name-id structural-local-id))
             "generated-source-anchor")
           (set! ok false))
         (unless (= opaque-id (- (intern-capacity) 1)) (set! ok false))

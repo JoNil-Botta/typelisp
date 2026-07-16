@@ -6511,10 +6511,16 @@
       (< name-id (intern-capacity))
       (tc-hygiene-global-name? (intern-str name-id)))))
 
+(define (tc-structural-local-name-id? [name-id : i64]) : bool
+  (if (< name-id (intern-capacity))
+    false
+    (or
+      (macro-hygiene-local-id? name-id)
+      (ci.intern-structural-local-id? name-id))))
+
 (define (tc-hygiene-local-name-id? [name-id : i64]) : bool
   (or
-    (macro-hygiene-local-id? name-id)
-    (ci.intern-structural-local-id? name-id)
+    (tc-structural-local-name-id? name-id)
     (and
       (>= name-id 0)
       (< name-id (intern-capacity))
@@ -6522,6 +6528,7 @@
 
 (define (tc-hygiene-name-text-id [name-id : i64]) : String
   (cond
+    [(and (>= name-id 0) (< name-id (intern-capacity))) (intern-str name-id)]
     [(ci.intern-structural-local-id? name-id)
       (intern-str (ci.intern-structural-local-source-name-id name-id))]
     [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
@@ -9089,7 +9096,7 @@
   (if (or
     (tc-env-key-has-name-id? name-id)
     (macro-hygiene-global-id? name-id)
-    (tc-hygiene-local-name-id? name-id))
+    (tc-structural-local-name-id? name-id))
     (tc-hygiene-name-text-id name-id)
     (let
       [capacity : i64 (intern-capacity)]
@@ -9110,7 +9117,7 @@
   (if (or
     (tc-env-key-has-name-id? name-id)
     (macro-hygiene-global-id? name-id)
-    (tc-hygiene-local-name-id? name-id))
+    (tc-structural-local-name-id? name-id))
     (tc-hygiene-name-text-id name-id)
     (tc-env-key-display name-id)))
 
@@ -9402,7 +9409,7 @@
   [name-id : i64]) : TcMaybeString
   (if (and
     tc-unqualified-import-has-ambiguity
-    (not (tc-hygiene-local-name-id? name-id)))
+    (not (tc-structural-local-name-id? name-id)))
     (let
       [source-id : i64 (macro-hygiene-global-source-name-id-or name-id name-id)]
       [name : String (intern-str source-id)]
@@ -11670,7 +11677,9 @@
 ;; from callers is semantics-preserving and skips the hash. Refs #4427.
 (define (tc-name-first-dot-id [name-id : i64]) : i64
   (cond
-    [(or (macro-hygiene-global-id? name-id) (tc-hygiene-local-name-id? name-id))
+    [(or
+        (macro-hygiene-global-id? name-id)
+        (tc-structural-local-name-id? name-id))
       (intern-first-dot
         (macro-hygiene-global-source-name-id-or name-id name-id))]
     [(and (>= name-id 0) (< name-id (intern-capacity)))
@@ -11680,7 +11689,7 @@
 (define (tc-name-qualified-id? [name-id : i64]) : bool
   (cond
     [(< name-id 0) false]
-    [(tc-hygiene-local-name-id? name-id) false]
+    [(tc-structural-local-name-id? name-id) false]
     [(macro-hygiene-global-id? name-id)
       (not
         (compiler-symbol-root-module-id?
@@ -12003,7 +12012,7 @@
     [(AstExpr.Var name)
       (if (or
         (macro-hygiene-global-id? name)
-        (tc-hygiene-local-name-id? name)
+        (tc-structural-local-name-id? name)
         (< (tc-name-first-dot-id name) 0))
         ResultTcUnit.Ok
         (if (tc-dotted-local-field-name-id? env name)
@@ -12017,7 +12026,7 @@
     [(AstExpr.Set name value-box)
       (if (or
         (macro-hygiene-global-id? name)
-        (tc-hygiene-local-name-id? name)
+        (tc-structural-local-name-id? name)
         (< (tc-name-first-dot-id name) 0))
         ResultTcUnit.Ok
         (if (tc-dotted-local-field-name-id? env name)
@@ -13961,7 +13970,7 @@
   [name : String]
   [name-id : i64]
   [check-local-field : bool]) : TcNameLookup
-  (if (tc-hygiene-local-name-id? name-id)
+  (if (tc-structural-local-name-id? name-id)
     (TcNameLookup.Ok (tc-hygiene-name-text-id name-id) name-id)
     (if (macro-hygiene-global-id? name-id)
       (let
@@ -22327,7 +22336,7 @@
       [(AstExpr.Var name)
         (if (or
           (macro-hygiene-global-id? name)
-          (tc-hygiene-local-name-id? name)
+          (tc-structural-local-name-id? name)
           (< (tc-name-first-dot-id name) 0))
           (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
             ctx
@@ -22347,7 +22356,7 @@
       [(AstExpr.Set name _)
         (if (or
           (macro-hygiene-global-id? name)
-          (tc-hygiene-local-name-id? name)
+          (tc-structural-local-name-id? name)
           (< (tc-name-first-dot-id name) 0))
           (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
             ctx
@@ -51464,7 +51473,7 @@
       (macro-internal-resolved-struct-type-marker)]
     [(= name-id (ctfe-internal-resolved-enum-type-marker-id))
       (macro-internal-resolved-enum-type-marker)]
-    [(tc-hygiene-local-name-id? name-id) (tc-hygiene-name-text-id name-id)]
+    [(tc-structural-local-name-id? name-id) (tc-hygiene-name-text-id name-id)]
     [(macro-hygiene-global-id? name-id)
       (intern-str (macro-hygiene-structural-source-name-id name-id))]
     [(ci.intern-template-source-id? name-id)
@@ -51499,7 +51508,9 @@
 
 (define (macro-output-source-identity-id-at [name-id : i64] [site : String]) : i64
   (cond
-    [(or (macro-hygiene-global-id? name-id) (tc-hygiene-local-name-id? name-id))
+    [(or
+        (macro-hygiene-global-id? name-id)
+        (tc-structural-local-name-id? name-id))
       name-id]
     [(ci.intern-template-source-id? name-id)
       (ci.intern-template-source-name-id name-id)]
@@ -58948,7 +58959,7 @@
             [(AstExpr.Var name)
               (if (or
                 (macro-hygiene-global-id? name)
-                (tc-hygiene-local-name-id? name)
+                (tc-structural-local-name-id? name)
                 (compiler-composite-pair-key-id? name)
                 (compiler-composite-triple-key-id? name)
                 (tc-name-qualified-id? name))
@@ -59069,7 +59080,7 @@
     (if (and
       (> (string.string-length module) 0)
       (not (macro-hygiene-global-id? name))
-      (not (tc-hygiene-local-name-id? name))
+      (not (tc-structural-local-name-id? name))
       (not (compiler-composite-pair-key-id? name))
       (not (compiler-composite-triple-key-id? name))
       (not (tc-name-qualified-id? name))
@@ -60959,7 +60970,7 @@
     [(AstExpr.Var name)
       (if (or
         (macro-hygiene-global-id? name)
-        (tc-hygiene-local-name-id? name)
+        (tc-structural-local-name-id? name)
         (compiler-composite-pair-key-id? name)
         (compiler-composite-triple-key-id? name))
         (TcMaybeString.No)

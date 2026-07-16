@@ -2187,9 +2187,11 @@
           names))]))
 
 (define (lower-name-has-clone-prefix? [name : String]) : bool
-  (if (>= (string.string-length name) 6)
-    (string.eq (string.substring name 0 6) "clone$")
-    false))
+  (let
+    [source-name : String (tc-hygiene-global-call-name name)]
+    (if (>= (string.string-length source-name) 6)
+      (string.eq (string.substring source-name 0 6) "clone$")
+      false)))
 
 (define (lower-resolve-name [state : LowerState] [source-name : String]) : String
   (lower-name-cache-resolve-hygiene (lower-state-names state) source-name))
@@ -2778,22 +2780,36 @@
     [(AstDecl.DefFn name _ _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (if (lower-name-has-clone-prefix? name-str)
+        [source-name : String (tc-hygiene-global-call-name name-str)]
+        (if (lower-name-has-clone-prefix? source-name)
           (lower-name-env-add-module-binding
             names
             module
-            name-str
-            (lower-decl-logical-name entry-path decl-path module name-str))
+            source-name
+            (lower-decl-logical-name entry-path decl-path module source-name))
           names))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (lower-name-env-add-clone-decl-in-module
-          names
-          entry-path
-          decl-path
-          module
-          template))]
+    [(AstDecl.ComptimeDecl meta template-box)
+      (match meta
+        [(AstGeneratedDeclMeta.Some generator item _ _)
+          (if (string.eq generator "stdlib.clone/synthesize-helpers")
+            (lower-name-env-add-module-binding
+              names
+              module
+              item
+              (lower-decl-logical-name entry-path decl-path module item))
+            (lower-name-env-add-clone-decl-in-module
+              names
+              entry-path
+              decl-path
+              module
+              (box-get template-box)))]
+        [(AstGeneratedDeclMeta.No)
+          (lower-name-env-add-clone-decl-in-module
+            names
+            entry-path
+            decl-path
+            module
+            (box-get template-box))])]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -2823,8 +2839,7 @@
             (array-ref
               (struct-get decls slots)
               (+ (struct-get decls offset) index))]
-          [decl-path : String
-            (ast-decl-path-list-get (& paths) index entry-path)]
+          [decl-path : String (ast-decl-path-list-get (& paths) index "")]
           (begin
             (match decl
               [(AstDecl.Module next-module) (set! cur-module-id next-module)]
@@ -5523,23 +5538,37 @@
             bindings
             (+ index 1)))])))
 
+(define (lower-clone-handoff-type-args
+  [pools : AstNodePoolContext]
+  [roots : CloneNameList]) : AstExprList
+  (match roots
+    [(CloneNameList.Nil) (ast-expr-list-new)]
+    [(CloneNameList.Cons root rest)
+      (ast-expr-cons
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Literal (AstLiteral.String (clone-type-name-module root))))
+        (ast-expr-cons
+          (ast-node-pool-context-expr-push
+            pools
+            (AstExpr.TypeLiteral (AstType.Var (intern root))))
+          (lower-clone-handoff-type-args pools (box-get rest))))]))
+
 (define (lower-clone-handoff-request-decl
   [pools : AstNodePoolContext]
-  [root : String]) : AstDecl
+  [roots : CloneNameList]) : AstDecl
   (let
     [callee : i64
       (ast-node-pool-context-expr-push
         pools
-        (AstExpr.Var (intern "stdlib.clone.synthesize-one-field-struct")))]
-    [type-arg : i64
-      (ast-node-pool-context-expr-push
-        pools
-        (AstExpr.TypeLiteral (AstType.Struct (intern root))))]
+        (AstExpr.Var
+          (intern
+            (tc-hygiene-global-context-name "stdlib.clone" "synthesize-helpers"))))]
     [call-id : i64
       (ast-expr-call-with-pools
         pools
         callee
-        (ast-expr-cons type-arg (ast-expr-list-new)))]
+        (lower-clone-handoff-type-args pools roots))]
     (AstDecl.Import
       (AstImportSpec.Spec
         (AstImportKind.MacroDecls call-id AstMaybeModuleName.No)
@@ -5566,13 +5595,11 @@
             (match meta
               [(AstGeneratedDeclMeta.Some generator item _ key)
                 (if (and
-                  (string.eq
-                    generator
-                    "stdlib.clone/synthesize-one-field-struct")
+                  (string.eq generator "stdlib.clone/synthesize-helpers")
                   (string.eq item (clone-local-helper-name root))
                   (tc-string-prefix?
                     key
-                    "decls:stdlib.clone:stdlib.clone/synthesize-one-field-struct(")
+                    "decls:stdlib.clone:stdlib.clone/synthesize-helpers(")
                   (string.eq module (clone-type-name-module root))
                   (=
                     (clone-helper-decl-count
@@ -5607,24 +5634,71 @@
   [source-decls : AstDeclList]
   [entry-path : String]
   [pools : AstNodePoolContext]
-  [root : String]) : ResultMacroDeclExpansion
+  [roots : CloneNameList]) : ResultMacroDeclExpansion
   (let
-    [module : String (clone-type-name-module root)]
-    [request : AstDecl (lower-clone-handoff-request-decl pools root)]
+    [request : AstDecl (lower-clone-handoff-request-decl pools roots)]
     (match (macro-expand-decl-with-path
-      (tc-context-with-module ctx module)
+      (tc-context-with-module ctx "")
       top-env
       source-decls
-      module
+      ""
       request
       entry-path)
       [(ResultMacroDeclExpansion.Ok generated generated-paths)
-        (ResultMacroDeclExpansion.Ok
-          (if (string.eq module "")
-            generated
-            (ast-decl-cons (ast-decl-module module) generated))
-          generated-paths)]
+        (ResultMacroDeclExpansion.Ok generated generated-paths)]
       [(ResultMacroDeclExpansion.Err diag) (ResultMacroDeclExpansion.Err diag)])))
+
+(define (lower-clone-handoff-source-conflict-in-module
+  [source-decls : AstDeclList]
+  [roots : CloneNameSet]
+  [module : String]) : String
+  (match (ast-decl-list-step source-decls)
+    [(AstDeclListStep.Nil) ""]
+    [(AstDeclListStep.Cons decl rest)
+      (match (ast-decl-unwrapped decl)
+        [(AstDecl.Module next-module)
+          (lower-clone-handoff-source-conflict-in-module
+            rest
+            roots
+            (intern-str next-module))]
+        [(AstDecl.DefFn name _ _ _ _)
+          (let
+            [source-name : String (intern-str name)]
+            (if (and
+              (lower-name-has-clone-prefix? source-name)
+              (clone-name-set-contains-canonical?
+                roots
+                module
+                (string.substring
+                  source-name
+                  6
+                  (- (string.string-length source-name) 6))))
+              (clone-type-name-canonical
+                module
+                (string.substring
+                  source-name
+                  6
+                  (- (string.string-length source-name) 6)))
+              (lower-clone-handoff-source-conflict-in-module rest roots module)))]
+        [_ (lower-clone-handoff-source-conflict-in-module rest roots module)])]))
+
+(define (lower-clone-handoff-source-conflict
+  [source-decls : AstDeclList]
+  [roots : CloneNameList]) : String
+  (lower-clone-handoff-source-conflict-in-module
+    source-decls
+    (clone-name-list-to-set roots (clone-name-set-empty))
+    ""))
+
+(define (lower-clone-handoff-generated-roots-ok?
+  [generated : AstDeclList]
+  [roots : CloneNameList]) : bool
+  (match roots
+    [(CloneNameList.Nil) true]
+    [(CloneNameList.Cons root rest)
+      (and
+        (= (lower-clone-handoff-generated-origin-count generated root) 1)
+        (lower-clone-handoff-generated-roots-ok? generated (box-get rest)))]))
 
 (define (lower-clone-handoff-expand-roots
   [ctx : TcContext]
@@ -5637,48 +5711,34 @@
   (match roots
     [(CloneNameList.Nil) (ResultMacroDecls.Ok acc)]
     [(CloneNameList.Cons root rest)
-      (if (> (clone-helper-decl-count source-decls root) 0)
-        (ResultMacroDecls.Err
-          (box
-            (tc-diag-at-start
-              (str_cat.str-cat
-                "clone: conflicting helper producer for "
-                (clone-helper-name root)))))
-        (match (lower-clone-handoff-expand-one
-          ctx
-          top-env
-          source-decls
-          entry-path
-          pools
-          root)
-          [(ResultMacroDeclExpansion.Ok generated _)
-            (if (and
-              (= (clone-helper-decl-count generated root) 1)
-              (= (lower-clone-handoff-generated-origin-count generated root) 1))
-              (lower-clone-handoff-expand-roots
-                ctx
-                top-env
-                source-decls
-                entry-path
-                pools
-                (box-get rest)
-                (clone-decl-list-append acc generated))
-              (ResultMacroDecls.Err
-                (box
-                  (tc-diag-at-start
-                    (str_cat.str-cat
-                      "clone: stdlib handoff produced an invalid or conflicting helper for "
-                      root
-                      " (helper-count="
-                      (string.int->string
-                        (clone-helper-decl-count generated root))
-                      ", origin-count="
-                      (string.int->string
-                        (lower-clone-handoff-generated-origin-count
-                          generated
-                          root))
-                      ")")))))]
-          [(ResultMacroDeclExpansion.Err diag) (ResultMacroDecls.Err diag)]))]))
+      (match (lower-clone-handoff-expand-one
+        ctx
+        top-env
+        source-decls
+        entry-path
+        pools
+        roots)
+        [(ResultMacroDeclExpansion.Ok generated _)
+          (if (lower-clone-handoff-generated-roots-ok? generated roots)
+            (begin
+              (ast-node-pool-context-capture-active! pools)
+              (ResultMacroDecls.Ok (clone-decl-list-append acc generated)))
+            (ResultMacroDecls.Err
+              (box
+                (tc-diag-at-start
+                  (str_cat.str-cat
+                    "clone: stdlib handoff produced an invalid or conflicting helper for "
+                    root
+                    " (helper-count="
+                    (string.int->string
+                      (clone-helper-decl-count generated root))
+                    ", origin-count="
+                    (string.int->string
+                      (lower-clone-handoff-generated-origin-count
+                        generated
+                        root))
+                    ")")))))]
+        [(ResultMacroDeclExpansion.Err diag) (ResultMacroDecls.Err diag)])]))
 
 (define (lower-clone-handoff-augment
   [ctx : TcContext]
@@ -5694,40 +5754,37 @@
         [source-decls : AstDeclList (box-get decls-box)]
         [handoff-roots : CloneNameList
           (clone-stdlib-handoff-roots pools source-decls able roots)]
-        (match (lower-clone-handoff-expand-roots
-          ctx
-          top-env
-          source-decls
-          entry-path
-          pools
-          handoff-roots
-          (ast-decl-list-new))
-          [(ResultMacroDecls.Ok handoff-decls)
-            (let
-              [legacy-decls : AstDeclList
-                (clone-generated-decls-with-roots-and-able-skipping
-                  pools
-                  source-decls
-                  able
-                  roots
-                  handoff-roots)]
-              [augmented-decls : AstDeclList
-                (clone-decl-list-append
-                  source-decls
-                  (clone-decl-list-append handoff-decls legacy-decls))]
-              (ResultLowerCloneAugment.Ok
-                (ast-program augmented-decls)
-                handoff-decls))]
-          [(ResultMacroDecls.Err diag)
-            (ResultLowerCloneAugment.Err
-              (compiler-diagnostic-message (box-get diag)))]))]))
+        [conflict : String
+          (lower-clone-handoff-source-conflict source-decls handoff-roots)]
+        (if (> (string.string-length conflict) 0)
+          (ResultLowerCloneAugment.Err
+            (str_cat.str-cat
+              "clone: conflicting helper producer for "
+              (clone-helper-name conflict)))
+          (match (lower-clone-handoff-expand-roots
+            ctx
+            top-env
+            source-decls
+            entry-path
+            pools
+            handoff-roots
+            (ast-decl-list-new))
+            [(ResultMacroDecls.Ok handoff-decls)
+              (let
+                [augmented-decls : AstDeclList
+                  (clone-decl-list-append source-decls handoff-decls)]
+                (ResultLowerCloneAugment.Ok
+                  (ast-program augmented-decls)
+                  handoff-decls))]
+            [(ResultMacroDecls.Err diag)
+              (ResultLowerCloneAugment.Err
+                (compiler-diagnostic-message (box-get diag)))])))]))
 
 (define (lower-extend-checked-context-with-clone-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [source-decl-count : i64]
-  [program : AstProgram]
-  [handoff-decls : AstDeclList]) : ResultLowerCheckedContext
+  [program : AstProgram]) : ResultLowerCheckedContext
   (match program
     [(AstProgram.Program decls-box)
       (let
@@ -5736,20 +5793,11 @@
         [next-ctx : TcContext (tc-context-with-program ctx program)]
         (match (env-extend-with-module next-ctx top-env clone-decls)
           [(ResultTcEnv.Ok next-env)
-            (match (tc-check-decls
-              next-ctx
-              next-env
-              handoff-decls
-              (CompilerTypecheckSummary 0 0 0))
-              [(ResultCompilerTypecheck.Ok _)
-                (begin
-                  (tc-context-capture-active-pools! next-ctx)
-                  (tc-hygiene-reset-active-top-env! next-env)
-                  (tc-macro-helper-env-cache-reset!)
-                  (ResultLowerCheckedContext.Ok next-ctx next-env))]
-              [(ResultCompilerTypecheck.Err diag)
-                (ResultLowerCheckedContext.Err
-                  (compiler-diagnostic-message (box-get diag)))])]
+            (begin
+              (tc-context-capture-active-pools! next-ctx)
+              (tc-hygiene-reset-active-top-env! next-env)
+              (tc-macro-helper-env-cache-reset!)
+              (ResultLowerCheckedContext.Ok next-ctx next-env))]
           [(ResultTcEnv.Err message) (ResultLowerCheckedContext.Err message)]))]))
 
 (define (lower-reach-call-callee
@@ -8063,8 +8111,8 @@
         (box-get inner-box))]
     [_ used]))
 
-;; A synthesized clone$<T> helper (compiler_clone.tl). Clone helpers are
-;; generated as the exact transitive closure the reachable clone-roots need and
+;; A synthesized clone$<T> helper (`stdlib/clone.tl`). Clone helpers are
+;; generated as the exact transitive closure the reachable clone roots need and
 ;; reference one another through `(clone x)` forms the AST reachability walk does
 ;; not resolve to names, so a reachable helper's callees would otherwise be
 ;; dropped (undefined-symbol link error). Keep every synthesized helper.
@@ -8074,8 +8122,14 @@
       (lower-name-has-clone-prefix? (intern-str name))]
     [(AstDecl.Unsafe inner-box)
       (lower-decl-is-clone-helper? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ inner-box)
-      (lower-decl-is-clone-helper? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl meta inner-box)
+      (match meta
+        [(AstGeneratedDeclMeta.Some generator _ _ _)
+          (if (string.eq generator "stdlib.clone/synthesize-helpers")
+            true
+            (lower-decl-is-clone-helper? (box-get inner-box)))]
+        [(AstGeneratedDeclMeta.No)
+          (lower-decl-is-clone-helper? (box-get inner-box))])]
     [_ false]))
 
 (define (lower-runtime-decl-kept-by-reach-or-dispatch?
@@ -8087,8 +8141,8 @@
   [dispatch-variants : lower_string_i64_map.Map]
   [decl : AstDecl]) : bool
   (if (lower-decl-is-clone-helper? decl)
-    ;; P4/C4.2: clone-augment (see lower-compiler-expanded-program-...) emits
-    ;; exactly the clone$<T> closure the reachable code needs, so keep them all.
+    ;; The clone handoff emits exactly the clone$<T> closure reachable code
+    ;; needs, so keep it all.
     true
     (match (lower-function-logical-name-from-decl
       entry-path
@@ -48724,10 +48778,6 @@
           (match clone-augmentation
             [(ResultLowerCloneAugment.Ok augmented _) augmented]
             [(ResultLowerCloneAugment.Err _) program])]
-        [handoff-decls : AstDeclList
-          (match clone-augmentation
-            [(ResultLowerCloneAugment.Ok _ generated) generated]
-            [(ResultLowerCloneAugment.Err _) (ast-decl-list-new)])]
         [_install-augmented-pools : unit (ast-node-pool-context-install! pools)]
         [checked-context : ResultLowerCheckedContext
           (match clone-augmentation
@@ -48736,8 +48786,7 @@
                 source-ctx
                 source-top-env
                 source-decl-count
-                checked-program
-                handoff-decls)]
+                checked-program)]
             [(ResultLowerCloneAugment.Err message)
               (ResultLowerCheckedContext.Err message)])]
         [lower-names : LowerNameEnv
@@ -50805,6 +50854,18 @@
     [item : NestedClone (make-nested s)]
     (__tl_string_length (struct-get (struct-get item used) name))))")
 
+;; Nominal clone helpers are declaration macros now, so clone-producing lowering
+;; fixtures must load the same implicit prelude as the compiler driver.
+(define (compiler-lower-clone-source-with-prelude [src : String]) : ResultCompilerLower
+  (begin
+    (intern-reset!)
+    (lower-reset-intern-owned-state!)
+    (cbi.compiler-builtin-reset!)
+    (match (typecheck-compiler-source-load src)
+      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        (lower-compiler-program-with-decl-paths "" (ast-program decls) paths)]
+      [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerLower.Err diag)])))
+
 ;; `main` must lower with both element stores (bool + i64 each written into the
 ;; aggregate) and a load for the `tuple-ref`.
 (define (compiler-lower-tuple-shape-ok?) : bool
@@ -50818,200 +50879,175 @@
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-clone-shape-ok?) : bool
-  (match (parse-ast-source (compiler-lower-clone-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (let
-                [ok : bool true]
-                (begin
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-tuple"
-                      "tl_substring")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-tuple"
-                      "tl_alloc")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-fixed"
-                      "tl_substring")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-dyn"
-                      "tl_alloc")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-branch-count
-                      functions
-                      "<source>::clone-dyn")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-holder"
-                      "<source>::clone$Holder")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-list"
-                      "<source>::clone$StringList")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone$Holder"
-                      "tl_substring")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone$Holder"
-                      "tl_alloc")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone$StringList$acc"
-                      "tl_substring")
-                    0)
-                    unit
-                    (set! ok false))
-                  ok))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-clone-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-tuple"
+                  "tl_substring")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-tuple"
+                  "tl_alloc")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-fixed"
+                  "tl_substring")
+                1)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-dyn"
+                  "tl_alloc")
+                1)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-branch-count functions ".::clone-dyn")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-holder"
+                  ".::clone$Holder")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-list"
+                  ".::clone$StringList")
+                1)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone$Holder"
+                  "tl_substring")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone$Holder"
+                  "tl_alloc")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone$StringList$acc"
+                  "tl_substring")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-clone-dynarray-bulk-copy-ok?) : bool
-  (match (parse-ast-source (compiler-lower-clone-dynarray-bulk-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (let
-                [ok : bool true]
-                (begin
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::copy-i64-items"
-                      "tl_memcpy")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-branch-count
-                      functions
-                      "<source>::copy-i64-items")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::copy-word-items"
-                      "tl_memcpy")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-branch-count
-                      functions
-                      "<source>::copy-word-items")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::copy-string-items"
-                      "tl_memcpy")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::copy-string-items"
-                      "tl_substring")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-branch-count
-                      functions
-                      "<source>::copy-string-items")
-                    0)
-                    unit
-                    (set! ok false))
-                  ok))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-clone-dynarray-bulk-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::copy-i64-items"
+                  "tl_memcpy")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-branch-count functions ".::copy-i64-items")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::copy-word-items"
+                  "tl_memcpy")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-branch-count
+                  functions
+                  ".::copy-word-items")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::copy-string-items"
+                  "tl_memcpy")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::copy-string-items"
+                  "tl_substring")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-branch-count
+                  functions
+                  ".::copy-string-items")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-clone-reachable-helpers-ok?) : bool
-  (match (parse-ast-source (compiler-lower-clone-reachable-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (and
-                (lower-test-function-defined?
-                  functions
-                  "<source>::clone$NestedClone")
-                (lower-test-function-defined?
-                  functions
-                  "<source>::clone$UsedClone")
-                (not
-                  (lower-test-function-defined?
-                    functions
-                    "<source>::clone$UnusedClone"))
-                (=
-                  (lower-test-function-call-count
-                    functions
-                    "<source>::clone$NestedClone"
-                    "<source>::clone$UsedClone")
-                  1))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-clone-reachable-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (lower-test-function-defined? functions ".::clone$NestedClone")
+            (lower-test-function-defined? functions ".::clone$UsedClone")
+            (not
+              (lower-test-function-defined? functions ".::clone$UnusedClone"))
+            (=
+              (lower-test-function-call-count
+                functions
+                ".::clone$NestedClone"
+                ".::clone$UsedClone")
+              1))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-struct-source) : String
   "(defstruct Packet (tag i64) (small u8) (count i64))
@@ -56854,21 +56890,16 @@
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
-  (match (parse-ast-source (compiler-lower-with-escape-owning-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (and
-                (compiler-lower-with-escape-arena-shape-ok?
-                  (compiler-lower-with-escape-owning-source))
-                (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-with-escape-owning-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (compiler-lower-with-escape-arena-shape-ok?
+              (compiler-lower-with-escape-owning-source))
+            (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-shape-ok?) : bool
   (let
@@ -57007,21 +57038,16 @@
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-scratch-owning-shape-ok?) : bool
-  (match (parse-ast-source (compiler-lower-with-scratch-owning-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (and
-                (compiler-lower-with-scratch-arena-shape-ok?
-                  (compiler-lower-with-scratch-owning-source))
-                (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-with-scratch-owning-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (compiler-lower-with-scratch-arena-shape-ok?
+              (compiler-lower-with-scratch-owning-source))
+            (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-scratch-shape-ok?) : bool
   (let

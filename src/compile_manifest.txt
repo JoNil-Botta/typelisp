@@ -40,6 +40,7 @@ end
 
 case|integration_clone_macro_handoff|tests/integration/clone_macro_handoff.tl|assembly|exactly-one|direct
 contains|_tl_clone_macro_handoff_clone_u24CloneMacroUsed:
+contains|_tl_clone_macro_handoff_clone_u24CloneMacroChoice:
 not-contains|_tl_clone_macro_handoff_clone_u24CloneMacroUnused
 end
 
@@ -328,7 +329,7 @@ decision|src/repl_cli_core.tl|REPL command logic (#1641): line loop, dot command
 decision|src/scaffold_cli_core.tl|new/init scaffold command logic (#1642): package skeleton creation shared by src/main.tl; main-less and exercised through the selfhost_main case
 decision|src/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/lsp_vector_families.tl|generated vector-backed LSP collection shim: document and declaration vector helpers split out of lsp_frame_core.tl; main-less, imported through src/lsp_frame_core.tl and exercised through the selfhost_main case
-decision|src/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by src/compiler_lower.tl and exercised through the selfhost_compiler_lower case
+decision|src/compiler_clone.tl|type-directed clone$<Type> support (#1633, #4779): compiler-side least-fixpoint cloneability and reachable-root discovery feed the stdlib/clone.tl declaration macro, including match-reconstruct and tail-recursive list helper generation; main-less, imported by src/compiler_lower.tl and exercised through the selfhost_compiler_lower case
 decision|src/compiler_profile_summary.tl|bounded compact compile-profile aggregation (#4849): main-less and cfg-only, imported by compiler_optimize.tl and compiler_backend.tl under compile-profile-summary; exercised by scripts/verify-compile-profile.sh and the selfhost_main import graph
 decision|src/compiler_abi.tl|shared x86_64 ABI fact table (#4364): main-less, imported by compiler_backend.tl and compiler_regalloc.tl; exercised through backend/regalloc smoke tests and their selfhost cases
 decision|src/compiler_allocation_profile.tl|opt-in compiler arena ownership telemetry (#3863/#2559): main-less, imported by compile_cli_core.tl, compiler_driver_core.tl, and compiler_optimize.tl; exercised by scripts/verify-allocation-profile.sh and the selfhost_main import graph
@@ -396,16 +397,16 @@ contains|_tl_compiler_diagnostic_self_test:
 end
 
 case|selfhost_compiler_driver_core|src/compiler_driver_core.tl|assembly|skip|direct
-contains|_tl_compiler_driver_compile_file:
-contains|_tl_compiler_driver_compile_file_with_roots_level_and_mode:
-contains|_tl_compiler_driver_compile_file_for_target:
-contains|_tl_compiler_driver_emit_file:
-contains|_tl_compiler_driver_emit_file_with_target_roots_level_and_mode:
-contains|_tl_compiler_driver_emit_file_with_target_roots_level_mode_and_cfg:
-contains|_tl_compiler_driver_emit_file_for_target:
-contains|_tl_compiler_driver_emit_ir_summary_file_with_roots_and_level:
+contains|_tl_compiler_driver_emit_file_with_target_roots_level_mode_cfg_and_crt:
+contains|_tl_compiler_driver_emit_file_buffer_with_target_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_emit_file_object_image_with_target_roots_level_mode_cfg_and_crt:
+contains|_tl_compiler_driver_emit_file_pic_with_target_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_state_emit_file_buffer_with_target_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_state_emit_file_pic_with_target_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_emit_package_loaded:
+contains|_tl_compiler_driver_emit_package_loaded_object_image:
 contains|_tl_compiler_driver_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
-contains|_tl_compiler_driver_compile_file_for_target_with_roots_level_mode_and_cfg:
+contains|_tl_compiler_driver_state_emit_ir_summary_file_with_target_roots_level_mode_and_cfg:
 contains|_tl_compiler_driver_ir_summary_render:
 contains|_tl_compiler_backend_emit_program_target_with_mode_buffer_and_crt:
 contains|_tl_compiler_backend_emit_source:
@@ -457,8 +458,8 @@ decision|src/compiler_intern_state.tl|explicit worker-owned intern table API for
 decision|src/compiler_builtin_ids.tl|reset-aware interned builtin/runtime id predicates (#2380/#2464): imports only src/compiler_intern.tl; used by src/compiler_lower.tl dispatch, src/compiler_typecheck_core.tl dispatch, backend runtime-plan id dispatch, and backend target-lowering cache resets
 
 case|selfhost_compiler_load|src/compiler_load.tl|assembly|skip|direct
-contains|_tl_compiler_load_file:
-contains|_tl_compiler_load_file_with_roots:
+contains|_tl_compiler_load_file_with_paths_and_roots_cfg_with_pools:
+contains|_tl_compiler_load_file_with_paths_and_roots_expect_cfg_root_cache_current_with_pools:
 contains|_tl_compiler_load_file_with_paths_and_roots_cfg:
 contains|_tl_compiler_load_source_with_paths_and_roots_cfg:
 contains|_tl_compiler_load_resolve_import_with_roots:

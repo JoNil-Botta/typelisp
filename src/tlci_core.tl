@@ -422,8 +422,12 @@
   171)
 (define tlci-host-callback-op-expr-binary-data : i64
   172)
+(define tlci-host-callback-op-box-element-type : i64
+  173)
+(define tlci-host-callback-op-expr-list-type-nth : i64
+  174)
 (define tlci-host-callback-stdlib-op-count : i64
-  73)
+  75)
 (define tlci-header-size : i64
   160)
 (define tlci-page-align : i64
@@ -2516,7 +2520,9 @@
     (= tlci-host-callback-op-type-cleanup-owning? 170)
     (= tlci-host-callback-op-type-cleanup-function 171)
     (= tlci-host-callback-op-expr-binary-data 172)
-    (= tlci-host-callback-stdlib-op-count 73)))
+    (= tlci-host-callback-op-box-element-type 173)
+    (= tlci-host-callback-op-expr-list-type-nth 174)
+    (= tlci-host-callback-stdlib-op-count 75)))
 
 (define (tlci-test-host-abi-ok?) : bool
   (and

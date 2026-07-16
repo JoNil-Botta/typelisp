@@ -18,22 +18,32 @@ cd "$ROOT"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/verify-integration.sh [--self-test-empty-compile-diagnostic | --validate-manifest-only]
+usage: scripts/verify-integration.sh [--self-test-empty-compile-diagnostic | --self-test-signal-notice-capture | --validate-manifest-only]
 
 Runs manifest-driven native integration tests.
 --self-test-empty-compile-diagnostic exercises the compile-failure diagnostic
 helper without invoking a compiler or native toolchain.
+--self-test-signal-notice-capture exercises Linux signal exit and shell-notice
+capture without invoking a compiler or native toolchain.
 --validate-manifest-only validates the host manifest and exits before builds.
 EOF
 }
 
 SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=0
+SELF_TEST_SIGNAL_NOTICE_CAPTURE=0
+SELF_TEST_WITHOUT_COMPILER=0
 VALIDATE_MANIFEST_ONLY=0
 case "${1:-}" in
     "")
         ;;
     --self-test-empty-compile-diagnostic)
         SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=1
+        SELF_TEST_WITHOUT_COMPILER=1
+        shift
+        ;;
+    --self-test-signal-notice-capture)
+        SELF_TEST_SIGNAL_NOTICE_CAPTURE=1
+        SELF_TEST_WITHOUT_COMPILER=1
         shift
         ;;
     --validate-manifest-only)
@@ -64,7 +74,7 @@ case "$(uname -s)" in
         ;;
 esac
 
-if [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 0 ]; then
+if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     if [ -n "${TYPELISP_BIN:-}" ]; then
         COMPILER=$TYPELISP_BIN
     else
@@ -105,7 +115,34 @@ run_fixture() {
     fi
 }
 
-if [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 0 ]; then
+# Run a Linux manifest binary under a child shell that remains alive long
+# enough to observe and report a signal-shaped exit. The child shell's own
+# crash notice goes to a diagnostic-only stream, while the program's stderr
+# stays isolated for the manifest comparison. Ending with an explicit exit
+# prevents shells from replacing themselves with the manifest binary.
+run_linux_manifest_program() {
+    _bin=$1
+    _stdout=$2
+    _stderr=$3
+    _run_shell_stderr=$4
+    shift 4
+
+    sh -c '
+        _bin=$1
+        _stdout=$2
+        _stderr=$3
+        shift 3
+        set +e
+        (
+            exec "$_bin" "$@" > "$_stdout" 2> "$_stderr"
+        )
+        _rc=$?
+        exit "$_rc"
+    ' typelisp-integration-run \
+        "$_bin" "$_stdout" "$_stderr" "$@" 2> "$_run_shell_stderr"
+}
+
+if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     if [ "$HOST_OS" = linux ]; then
         command -v as >/dev/null 2>&1 || {
             echo "missing assembler: as" >&2
@@ -172,7 +209,7 @@ WINDOWS_DIRECT_CYGPATH_CONVERSIONS=0
 WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS=0
 WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=0
 
-if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 0 ]; then
+if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     WINDOWS_RUNNER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-runner.ps1")
     WINDOWS_LEGACY_RUNNER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-legacy-runner.ps1")
     WINDOWS_WORKDIR_WIN=$(cygpath -aw "$WORKDIR")
@@ -896,8 +933,59 @@ run_empty_compile_diagnostic_self_test() {
     printf '%s\n' "verify-integration empty compile diagnostic self-test passed"
 }
 
+run_signal_notice_capture_self_test() {
+    if [ "$HOST_OS" != linux ]; then
+        echo "signal notice capture self-test requires Linux" >&2
+        exit 1
+    fi
+
+    _dir="$WORKDIR/signal-notice-capture-self-test"
+    rm -rf "$_dir"
+    mkdir -p "$_dir"
+    _fixture="$_dir/signal-fixture.sh"
+    _attempts="$_dir/attempts.txt"
+    _stdout="$_dir/program.stdout"
+    _stderr="$_dir/program.stderr"
+    _run_shell_stderr="$_dir/run-shell.stderr"
+    _global_stderr="$_dir/global.stderr"
+    _rc_file="$_dir/exit-code.txt"
+
+    cat > "$_fixture" <<'EOF'
+#!/bin/sh
+printf 'attempt\n' >> "$1"
+kill -SEGV "$$"
+EOF
+    chmod +x "$_fixture"
+    : > "$_attempts"
+
+    (
+        set +e
+        run_linux_manifest_program \
+            "$_fixture" "$_stdout" "$_stderr" "$_run_shell_stderr" "$_attempts"
+        _rc=$?
+        set -e
+        printf '%s\n' "$_rc" > "$_rc_file"
+    ) 2> "$_global_stderr"
+
+    assert_file_text "$_rc_file" 139 signal-notice-capture
+    assert_file_text "$_attempts" attempt signal-notice-capture
+    assert_empty_file "$_stdout" signal-notice-capture-program-stdout
+    assert_empty_file "$_stderr" signal-notice-capture-program-stderr
+    assert_empty_file "$_global_stderr" signal-notice-capture-global-stderr
+    if [ ! -s "$_run_shell_stderr" ]; then
+        echo "FAIL: signal-notice-capture expected captured shell diagnostics" >&2
+        exit 1
+    fi
+
+    printf '%s\n' "verify-integration signal notice capture self-test passed"
+}
+
 if [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 1 ]; then
     run_empty_compile_diagnostic_self_test
+    exit 0
+fi
+if [ "$SELF_TEST_SIGNAL_NOTICE_CAPTURE" -eq 1 ]; then
+    run_signal_notice_capture_self_test
     exit 0
 fi
 
@@ -2045,13 +2133,13 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             ci_timing_set_now_ms
             run_started=$CI_TIMING_NOW_MS
         fi
-        (
-            # Keep parent-shell crash notices (for example dash's
-            # "Segmentation fault (core dumped)") out of the program stderr
-            # comparison; the manifest still checks the actual signal exit code.
-            # shellcheck disable=SC2086
-            "$bin" $(deps_or_empty "$runtime_args") > "$stdout" 2> "$stderr"
-        ) 2> "$run_shell_stderr"
+        # Keep shell crash notices (for example dash's "Segmentation fault
+        # (core dumped)") out of both the program stderr comparison and this
+        # runner's global stderr. The manifest still checks the exact exit code.
+        # shellcheck disable=SC2086
+        run_linux_manifest_program \
+            "$bin" "$stdout" "$stderr" "$run_shell_stderr" \
+            $(deps_or_empty "$runtime_args")
         got=$?
         set -e
         if ci_timing_enabled; then

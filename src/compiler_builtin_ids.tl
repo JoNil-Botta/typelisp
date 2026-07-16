@@ -1414,9 +1414,7 @@
     (set! compiler-builtin-id-fix-when (state-ref state 268))
     (set! compiler-builtin-id-fix-unless (state-ref state 269))
     (set! compiler-builtin-id-fix-stdlib_dot_clone (state-ref state 270))
-    (set!
-      compiler-builtin-id-fix-synthesize_helpers
-      (state-ref state 271))
+    (set! compiler-builtin-id-fix-synthesize_helpers (state-ref state 271))
     (set!
       compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
       (state-ref state 272))
@@ -2645,9 +2643,7 @@
       (compiler-builtin-resolve-name insert-missing "stdlib.clone"))
     (set!
       compiler-builtin-id-fix-synthesize_helpers
-      (compiler-builtin-resolve-name
-        insert-missing
-        "synthesize-helpers"))
+      (compiler-builtin-resolve-name insert-missing "synthesize-helpers"))
     (set!
       compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
       (compiler-builtin-resolve-name

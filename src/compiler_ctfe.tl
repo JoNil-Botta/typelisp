@@ -6542,8 +6542,7 @@
               [name : String (string.append prefix (string.int->string index))]
               (let
                 [name-id : i64 (ctfe-materialize-generated-name-id name)]
-                (ctfe-pat-binding-id
-                  (ctfe-string-syntax-name-id name name-id)))))
+                (ctfe-pat-binding-id (ctfe-string-syntax-name-id name name-id)))))
           (set! index (+ index 1))))
       patterns)))
 

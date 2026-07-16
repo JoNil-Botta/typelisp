@@ -543,7 +543,6 @@
             (set! index (+ index 1)))))
       out)))
 
-
 (define (clone-fixpoint-step
   [pools : AstNodePoolContext]
   [decls : AstDeclList]

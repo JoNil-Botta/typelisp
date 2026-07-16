@@ -140,7 +140,7 @@ validate_support_table() {
         {
             key = $1 SUBSEP $2
             if (NF != 4 || seen[key]++ || !contains(cases, $1) || $2 != "avx512") failed = 1
-            if ($3 == "measured") {
+            if ($3 == "measured" || $3 == "supported") {
                 if ($4 != "-") failed = 1
             } else if ($3 == "unsupported") {
                 if ($4 !~ /^lower: /) failed = 1
@@ -384,7 +384,8 @@ run_self_test() {
     [ "$C_FLAGS" = "-O2 -march=x86-64 -mavx512f -mavx512bw -mavx512dq -mno-avx512vl -static" ] || fail "self-test clang flags"
     validate_support_table
     support_lookup spmd_mask
-    [ "$SUPPORT_STATUS" = unsupported ] || fail "self-test unsupported row"
+    [ "$SUPPORT_STATUS" = supported ] || fail "self-test supported spmd_mask row"
+    [ "$SUPPORT_DIAGNOSTIC" = "-" ] || fail "self-test supported spmd_mask diagnostic"
 
     _dir="$ROOT/target/spmd-avx512-instruction-self-test"
     rm -rf "$_dir"; mkdir -p "$_dir"

@@ -3963,34 +3963,6 @@
       [(I64I64MapProbeFull) (I64I64MapUpdateMissing map)])))
 
 ;: Generated concrete hashmap family helper.
-(define (i64-i64-map-insert-into-empty
-  [slots : (Array I64I64MapSlot)]
-  [capacity : i64]
-  [key : i64]
-  [value : i64]
-  [hash : i64]) : unit
-  (if (<= capacity 0)
-    unit
-    (let
-      [cursor : i64 (i64-i64-map-normalized-bucket-index hash capacity)]
-      [walked : i64 0]
-      [done : bool false]
-      (begin
-        (while (if done
-          false
-          (< walked capacity))
-          (match (array-ref slots cursor)
-            [(I64I64MapEmpty)
-              (begin
-                (array-set! slots cursor (I64I64MapOccupied key value hash))
-                (set! done true))]
-            [_
-              (begin
-                (set! cursor (i64-i64-map-next-index cursor capacity))
-                (set! walked (+ walked 1)))]))
-        unit))))
-
-;: Generated concrete hashmap family helper.
 (define (i64-i64-map-rehash-from
   [src : (Array I64I64MapSlot)]
   [dst : (Array I64I64MapSlot)]
@@ -3999,12 +3971,20 @@
   [count : i64]) : unit
   (let
     [i : i64 index]
+    [mask : i64 (- dst-capacity 1)]
     (begin
       (while (< i count)
         (begin
           (match (array-ref src i)
             [(I64I64MapOccupied key value hash)
-              (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
+              (let
+                [cursor : i64 (bit-and hash mask)]
+                (begin
+                  (while (match (array-ref dst cursor)
+                    [(I64I64MapEmpty) false]
+                    [_ true])
+                    (set! cursor (bit-and (+ cursor 1) mask)))
+                  (array-set! dst cursor (I64I64MapOccupied key value hash))))]
             [(I64I64MapEmpty) unit]
             [(I64I64MapTombstone) unit])
           (set! i (+ i 1))))
@@ -5333,12 +5313,20 @@
   [count : i64]) : unit
   (let
     [i : i64 index]
+    [mask : i64 (- dst-capacity 1)]
     (begin
       (while (< i count)
         (begin
           (match (array-ref src i)
             [(I64I64MapOccupied key value hash)
-              (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
+              (let
+                [cursor : i64 (bit-and hash mask)]
+                (begin
+                  (while (match (array-ref dst cursor)
+                    [(I64I64MapEmpty) false]
+                    [_ true])
+                    (set! cursor (bit-and (+ cursor 1) mask)))
+                  (array-set! dst cursor (I64I64MapOccupied key value hash))))]
             [(I64I64MapEmpty) unit]
             [(I64I64MapTombstone) unit])
           (set! i (+ i 1))))

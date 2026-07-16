@@ -1137,7 +1137,7 @@ stdlib-version diagnostic, not a silent fallback to a separate internal
 A fixed `defmacro` operand whose declared type is exactly `type` may carry one
 optional kind constraint after its type annotation:
 
-```lisp test=ignore name=macro-type-kind-constraint-surface reason=specified-before-implementation
+```lisp test=ignore name=macro-type-kind-constraint-surface reason=illustrative-signature-fragment
 [T : type (:kind i64 i32 string)]
 ```
 
@@ -1210,7 +1210,7 @@ name, so an outer generator failure does not obscure which constraint failed.
 An equality-like expression macro can state its finite scalar surface without
 claiming a general equality trait:
 
-```lisp test=ignore name=macro-type-kind-constraint-equality reason=specified-before-implementation
+```lisp test=ignore name=macro-type-kind-constraint-equality reason=illustrative-call-site-contract
 (defmacro (scalar-eq
   [T : type (:kind i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char)]
   [left : Expr]
@@ -1228,7 +1228,7 @@ A generated serializer family can restrict its first slice to reflected
 aggregate shapes while keeping format behavior in an explicit strategy
 module:
 
-```lisp test=ignore name=macro-type-kind-constraint-generated-module reason=specified-before-implementation
+```lisp test=ignore name=macro-type-kind-constraint-generated-module reason=illustrative-strategy-module-contract
 (defmacro (record-codec
   [format : Module]
   [T : type (:kind struct enum)]) : Module

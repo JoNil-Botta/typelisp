@@ -6875,6 +6875,43 @@
   (comptime.expr-int (array-length T)))
 (define (main) : i64 (fixed-length (Array i64)))")
 
+(define (compiler-typecheck-macro-type-kind-constraint-source) : String
+  "(defmacro (kind-code [T : type (:kind i64 bool)]) : i64
+  (if (__tl_string_eq (type-kind T) \"i64\")
+    (expr-int 64)
+    (expr-int 1)))
+(define (main) : i64 (+ (kind-code i64) (kind-code bool)))")
+
+(define (compiler-typecheck-macro-type-kind-constraint-reject-source) : String
+  "(module app)
+(defmacro (kind-code [T : type (:kind i64 i32 bool)]) : i64
+  (expr-int 0))
+(define (main) : i64 (kind-code (Array i64 4)))")
+
+(define (compiler-typecheck-module-macro-type-kind-constraint-source) : String
+  "(defstruct Point (x i64))
+(defmacro (record-leaf [T : type (:kind struct enum)]) : Module
+  `(begin
+    (module generated.type_kind_leaf)
+    (define reflected-kind : String ,(expr-string (type-kind T)))))
+(defmacro (record-module [T : type (:kind struct enum)]) : Module
+  `(begin
+    (module generated.type_kind_record)
+    (import (record-leaf T) as leaf)
+    (define reflected-kind : String leaf.reflected-kind)))
+(import (record-module Point) as first)
+(import (record-module Point) as second)
+(define (main) : i64
+  (if (__tl_string_eq first.reflected-kind second.reflected-kind) 0 1))")
+
+(define (compiler-typecheck-module-macro-type-kind-constraint-reject-source) : String
+  "(defmacro (record-module [T : type (:kind struct enum)]) : Module
+  `(begin
+    (module generated.type_kind_record)
+    (define reflected-kind : String ,(expr-string (type-kind T)))))
+(import (record-module (Array i64 4)) as rejected)
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-reflection-runtime-source) : String
   "(define (main) : String (type-kind (type i64)))")
 
@@ -6904,6 +6941,16 @@
       (compiler-typecheck-reflection-tuple-generator-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-reflection-array-length-macro-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-type-kind-constraint-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-type-kind-constraint-reject-source)
+      "typecheck: macro app.kind-code type operand T rejects (Array i64 4): expected one of :kind i64, i32, bool")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-module-macro-type-kind-constraint-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-module-macro-type-kind-constraint-reject-source)
+      "typecheck: macro record-module type operand T rejects (Array i64 4): expected one of :kind struct, enum")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-array-length-dynamic-source)
       "array-length requires fixed array type")

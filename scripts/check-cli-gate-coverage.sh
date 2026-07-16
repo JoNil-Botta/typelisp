@@ -79,9 +79,16 @@ SITE_COUNTS="$WORKDIR/site-counts.tsv"
 EXPANDED_COUNTS="$WORKDIR/expanded-counts.tsv"
 DUPLICATES="$WORKDIR/duplicates.tsv"
 SUMMARY="$WORKDIR/summary.tsv"
+EXPECTED_COUNTS="$WORKDIR/expected-counts.tsv"
+ACTUAL_COUNTS="$WORKDIR/actual-counts.tsv"
+CHILD_CORPORA="$WORKDIR/child-corpora.tsv"
+COUNT_SCHEMA="$WORKDIR/count-schema.txt"
 
 : > "$ROWS"
 : > "$REGISTERED_SOURCES"
+: > "$EXPECTED_COUNTS"
+: > "$CHILD_CORPORA"
+: > "$COUNT_SCHEMA"
 
 if ! awk -F '\t' -v rows_out="$ROWS" -v sources_out="$REGISTERED_SOURCES" '
 function fail(message) {
@@ -198,6 +205,103 @@ END {
     }
 }
 ' "$INVENTORY"; then
+    exit 1
+fi
+
+# Count expectations live beside the behavior rows so inventory changes cannot
+# silently weaken or broaden a gate. Custom fixture inventories may omit the
+# count schema; the checked-in production inventory must carry it.
+if ! awk -F '\t' \
+    -v expected_out="$EXPECTED_COUNTS" \
+    -v child_out="$CHILD_CORPORA" \
+    -v schema_out="$COUNT_SCHEMA" '
+function fail(message) {
+    print message > "/dev/stderr"
+    failed = 1
+}
+function valid_key(value) {
+    return value ~ /^[A-Za-z0-9][A-Za-z0-9+._-]*$/
+}
+function valid_path(path) {
+    return path ~ /^[A-Za-z0-9_.][A-Za-z0-9_.\/-]*$/ &&
+        path !~ /(^|\/)\.\.($|\/)/ && path !~ /^\//
+}
+{
+    sub(/\r$/, "", $0)
+    if ($1 == "# cli-gate-coverage-counts") {
+        if (NF != 2 || $2 != "1") {
+            fail("CLI gate coverage count schema marker must be version 1")
+        }
+        count_schema += 1
+        next
+    }
+    if ($0 ~ /^# cli-gate-coverage-counts([[:space:]]|$)/) {
+        fail("malformed CLI gate coverage count schema marker at line " FNR)
+        next
+    }
+    if ($1 == "# count") {
+        if (NF != 5 || !valid_key($2) || !valid_key($3) || !valid_key($4) || $5 !~ /^[0-9]+$/) {
+            fail("malformed CLI gate coverage count expectation at line " FNR)
+        } else {
+            key = $2 SUBSEP $3 SUBSEP $4
+            if (key in count_seen) {
+                fail("duplicate CLI gate coverage count expectation at line " FNR)
+            }
+            count_seen[key] = 1
+            print $2 "\t" $3 "\t" $4 "\t" $5 > expected_out
+            expectation_count += 1
+        }
+        next
+    }
+    if ($0 ~ /^# count([[:space:]]|$)/) {
+        fail("malformed CLI gate coverage count expectation at line " FNR)
+        next
+    }
+    if ($1 == "# child-corpus") {
+        if (NF != 7 || !valid_key($2) || ($3 != "all" && $3 != "linux" && $3 != "windows") ||
+                !valid_path($4) || $5 == "" || $5 ~ /[\/[:space:]]/ ||
+                ($6 != "-" && ($6 == "" || $6 ~ /[\/[:space:]]/)) || $7 !~ /^[0-9]+$/) {
+            fail("malformed CLI gate child-corpus expectation at line " FNR)
+        } else {
+            key = $2 SUBSEP $3 SUBSEP $4 SUBSEP $5 SUBSEP $6
+            if (key in child_seen) {
+                fail("duplicate CLI gate child-corpus expectation at line " FNR)
+            }
+            child_seen[key] = 1
+            print $2 "\t" $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 > child_out
+            child_count += 1
+        }
+        next
+    }
+    if ($0 ~ /^# child-corpus([[:space:]]|$)/) {
+        fail("malformed CLI gate child-corpus expectation at line " FNR)
+        next
+    }
+}
+END {
+    if (count_schema > 1) {
+        fail("CLI gate coverage inventory must contain at most one count schema marker")
+    }
+    if (!count_schema && (expectation_count || child_count)) {
+        fail("CLI gate coverage count directives require a version-1 count schema marker")
+    }
+    if (count_schema && !expectation_count) {
+        fail("CLI gate coverage count schema has no count expectations")
+    }
+    if (count_schema) {
+        print "1" > schema_out
+    }
+    if (failed) {
+        print "CLI gate coverage count schema validation failed" > "/dev/stderr"
+        exit 1
+    }
+}
+' "$INVENTORY"; then
+    exit 1
+fi
+
+if [ "$INVENTORY" = scripts/cli-gate-coverage.tsv ] && [ ! -s "$COUNT_SCHEMA" ]; then
+    echo "checked-in CLI gate coverage inventory is missing its count schema" >&2
     exit 1
 fi
 
@@ -535,6 +639,149 @@ LC_ALL=C sort -o "$DUPLICATES" "$DUPLICATES"
 TAB=$(printf '\t')
 IFS="$TAB" read -r row_count annotation_count site_count < "$SUMMARY"
 source_count=$(wc -l < "$SOURCES" | tr -d ' ')
+
+if [ -s "$COUNT_SCHEMA" ]; then
+    : > "$ACTUAL_COUNTS"
+    if ! awk -F '\t' \
+        -v rows="$ROWS" \
+        -v annotations="$ANNOTATIONS" \
+        -v duplicates="$DUPLICATES" \
+        -v source_count="$source_count" \
+        -v actual_out="$ACTUAL_COUNTS" '
+FILENAME == rows {
+    id = $2
+    gate[id] = $3
+    gate_rows[$3] += 1
+    host_rows[$6] += 1
+    kind_rows[$5] += 1
+    process_rows[$12] += 1
+    if ($6 == "all" || $6 == "linux") {
+        platform_rows["linux"] += 1
+    }
+    if ($6 == "all" || $6 == "windows") {
+        platform_rows["windows"] += 1
+    }
+    row_count += 1
+    next
+}
+FILENAME == annotations {
+    annotation_count += 1
+    source_site[$2 SUBSEP $3] = 1
+    gate_site[gate[$1] SUBSEP $2 SUBSEP $3] = 1
+    if ($6 + 0) {
+        gate_expanded[gate[$1]] += 1
+        expanded_count += 1
+    }
+    next
+}
+FILENAME == duplicates {
+    duplicate_owner[$1] = 1
+    duplicate_rows += 1
+    next
+}
+END {
+    for (site in source_site) {
+        site_count += 1
+    }
+    for (site in gate_site) {
+        split(site, parts, SUBSEP)
+        gate_sites[parts[1]] += 1
+    }
+    for (owner in duplicate_owner) {
+        duplicate_groups += 1
+    }
+
+    print "total\tall\trows\t" row_count > actual_out
+    print "total\tall\tannotations\t" annotation_count > actual_out
+    print "total\tall\tsources\t" source_count > actual_out
+    print "total\tall\tsource-sites\t" site_count > actual_out
+    print "total\tall\texpanded-cases\t" (expanded_count + 0) > actual_out
+    for (name in gate_rows) {
+        print "gate\t" name "\trows\t" gate_rows[name] > actual_out
+        print "gate\t" name "\tsource-sites\t" gate_sites[name] > actual_out
+        print "gate\t" name "\texpanded-cases\t" (gate_expanded[name] + 0) > actual_out
+    }
+    for (name in host_rows) {
+        print "host\t" name "\trows\t" host_rows[name] > actual_out
+    }
+    for (name in platform_rows) {
+        print "platform\t" name "\trows\t" platform_rows[name] > actual_out
+    }
+    for (name in kind_rows) {
+        print "kind\t" name "\trows\t" kind_rows[name] > actual_out
+    }
+    for (name in process_rows) {
+        print "process\t" name "\trows\t" process_rows[name] > actual_out
+    }
+    print "duplicates\tall\tgroups\t" (duplicate_groups + 0) > actual_out
+    print "duplicates\tall\trows\t" (duplicate_rows + 0) > actual_out
+}
+' "$ROWS" "$ANNOTATIONS" "$DUPLICATES"; then
+        exit 1
+    fi
+
+    LC_ALL=C sort -o "$EXPECTED_COUNTS" "$EXPECTED_COUNTS"
+    LC_ALL=C sort -o "$ACTUAL_COUNTS" "$ACTUAL_COUNTS"
+    if ! cmp -s "$EXPECTED_COUNTS" "$ACTUAL_COUNTS"; then
+        echo "CLI gate coverage authoritative counts are stale or incomplete:" >&2
+        diff -u "$EXPECTED_COUNTS" "$ACTUAL_COUNTS" >&2 || true
+        exit 1
+    fi
+fi
+
+if [ -s "$CHILD_CORPORA" ]; then
+    if ! awk -F '\t' -v rows="$ROWS" -v children="$CHILD_CORPORA" '
+FILENAME == rows {
+    row[$2] = 1
+    kind[$2] = $5
+    host[$2] = $6
+    next
+}
+FILENAME == children {
+    if (!($1 in row)) {
+        print "child-corpus expectation names unknown case `" $1 "`" > "/dev/stderr"
+        failed = 1
+    } else if (kind[$1] != "delegated") {
+        print "child-corpus expectation names non-delegated case `" $1 "`" > "/dev/stderr"
+        failed = 1
+    } else if (host[$1] != "all" && host[$1] != $2) {
+        print "child-corpus host `" $2 "` is incompatible with case `" $1 "` host `" host[$1] "`" > "/dev/stderr"
+        failed = 1
+    }
+}
+END { exit failed ? 1 : 0 }
+' "$ROWS" "$CHILD_CORPORA"; then
+        exit 1
+    fi
+
+    child_index=0
+    while IFS="$TAB" read -r case_id host directory include exclude expected; do
+        [ -n "$case_id" ] || continue
+        if [ ! -d "$directory" ]; then
+            echo "CLI gate child corpus directory not found: $directory" >&2
+            exit 1
+        fi
+        child_index=$((child_index + 1))
+        matches="$WORKDIR/child-matches-$child_index.txt"
+        find "$directory" -maxdepth 1 -type f -name "$include" -print > "$matches"
+        actual=0
+        while IFS= read -r child_path; do
+            child_name=${child_path##*/}
+            if [ "$exclude" != "-" ]; then
+                case "$child_name" in
+                    $exclude) continue ;;
+                esac
+            fi
+            actual=$((actual + 1))
+        done < "$matches"
+        if [ "$actual" -ne "$expected" ]; then
+            echo "CLI gate child corpus count is stale for $case_id ($host, $directory/$include excluding $exclude): expected $expected, found $actual" >&2
+            exit 1
+        fi
+        printf 'count\tchild-corpus\t%s\t%s\t%s\t%s\n' "$case_id" "$host" "$directory" "$actual"
+    done < "$CHILD_CORPORA"
+fi
+
 printf 'CLI gate coverage check passed: %s row(s), %s annotation(s), %s source(s), %s source site(s)\n' \
     "$row_count" "$annotation_count" "$source_count" "$site_count"
 while IFS="$TAB" read -r gate count; do

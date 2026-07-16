@@ -169,23 +169,12 @@
     (compiler-load-session-state-cache-enable! (struct-get state load-session))
     state))
 
-(define (compiler-driver-state-session-program-cache-enabled?
-  [state : CompilerDriverState]) : bool
-  (compiler-load-session-state-program-cache-enabled?
-    (struct-get state load-session)))
-
 (define (compiler-driver-state-session-program-cache-disable
   [state : CompilerDriverState]) : CompilerDriverState
   (begin
     (compiler-load-session-state-program-cache-disable!
       (struct-get state load-session))
     state))
-
-(define (compiler-driver-state-apply-session-floors!
-  [state : CompilerDriverState]) : unit
-  (compiler-load-session-state-use-with-intern-state!
-    (struct-get state load-session)
-    (array-ref (struct-get state intern-state) 0)))
 
 (define (compiler-driver-state-apply-session-flags!
   [state : CompilerDriverState]) : unit
@@ -521,9 +510,6 @@
     program
     spans
     (ast-node-pool-context-snapshot pools)))
-
-(define (compiler-driver-install-lowered-pools! [pools : AstNodePoolContext]) : unit
-  (ast-node-pool-context-install! pools))
 
 (define (compiler-driver-runtime-prelude-cache-lookup
   [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
@@ -1182,20 +1168,6 @@
             cfgs
             intern-state)])
       intern-state)))
-
-(define (compiler-driver-emit-lowered
-  [input-path : String]
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [target : CompilerBackendTarget]
-  [has-target : bool]) : ResultCompilerDriver
-  (compiler-driver-emit-lowered-with-level
-    input-path
-    program
-    spans
-    target
-    has-target
-    (compiler-optimize-default-level)))
 
 (define (compiler-driver-emit-lowered-with-level
   [input-path : String]
@@ -1948,40 +1920,6 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
 
-(define (compiler-driver-load-source-with-runtime
-  [input-path : String]
-  [source : String]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
-    [(ResultCompilerLoadWithPaths.Ok
-        prelude-decls
-        prelude-paths
-        prelude-modules
-        prelude-seen)
-      (match (compiler-load-source-with-paths-and-roots-cfg
-        input-path
-        source
-        prelude-seen
-        stdlib-roots
-        cfgs)
-        [(ResultCompilerLoadWithPaths.Ok
-            entry-decls
-            entry-paths
-            entry-modules
-            seen)
-          (ResultCompilerLoadWithPaths.Ok
-            (compiler-load-decl-list-append prelude-decls entry-decls)
-            (compiler-load-decl-path-list-append prelude-paths entry-paths)
-            (compiler-load-decl-module-list-append
-              prelude-modules
-              entry-modules)
-            seen)]
-        [(ResultCompilerLoadWithPaths.Err diag)
-          (ResultCompilerLoadWithPaths.Err diag)])]
-    [(ResultCompilerLoadWithPaths.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
-
 (define (compiler-driver-load-file-for-pic-image
   [input-path : String]
   [stdlib-roots : svec.Vec]
@@ -2657,95 +2595,6 @@
     cfgs
     false))
 
-(define (compiler-driver-emit-file-with-target
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-and-roots
-    input-path
-    target
-    has-target
-    (svec.new)))
-
-(define (compiler-driver-emit-file-with-target-and-roots
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-roots-and-level
-    input-path
-    target
-    has-target
-    stdlib-roots
-    (compiler-optimize-default-level)))
-
-(define (compiler-driver-emit-file-with-target-roots-and-level
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-roots-level-and-mode
-    input-path
-    target
-    has-target
-    stdlib-roots
-    opt-level
-    (CompilerBackendMode.Scalar)))
-
-(define (compiler-driver-emit-file-with-target-roots-level-and-mode
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
-    input-path
-    target
-    has-target
-    stdlib-roots
-    opt-level
-    mode
-    (compiler-cfg-empty)
-    false))
-
-(define (compiler-driver-emit-file-with-target-roots-level-mode-and-cfg
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
-    input-path
-    target
-    has-target
-    stdlib-roots
-    opt-level
-    mode
-    cfgs
-    false))
-
-(define (compiler-driver-emit-file-with-target-roots-level-mode-and-crt
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [crt-entry : bool]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
-    input-path
-    target
-    has-target
-    stdlib-roots
-    opt-level
-    mode
-    (compiler-cfg-empty)
-    crt-entry))
-
 (define (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
   [input-path : String]
   [target : CompilerBackendTarget]
@@ -2915,52 +2764,6 @@
           false
           false)))))
 
-(define (compiler-driver-emit-package-file-with-target-roots-and-level
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [manifest-dir : String]
-  [package-owner : String]
-  [deps : CompilerPkgDeps]
-  [emit-entry : bool]) : ResultCompilerDriver
-  (compiler-driver-emit-package-file-with-target-roots-level-and-crt
-    input-path
-    target
-    has-target
-    stdlib-roots
-    opt-level
-    manifest-dir
-    package-owner
-    deps
-    emit-entry
-    false))
-
-(define (compiler-driver-emit-package-file-with-target-roots-level-and-crt
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [manifest-dir : String]
-  [package-owner : String]
-  [deps : CompilerPkgDeps]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerDriver
-  (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
-    input-path
-    target
-    has-target
-    stdlib-roots
-    opt-level
-    (CompilerBackendMode.Scalar)
-    manifest-dir
-    package-owner
-    deps
-    emit-entry
-    crt-entry))
-
 (define (compiler-driver-emit-package-loaded
   [input-path : String]
   [target : CompilerBackendTarget]
@@ -3016,50 +2819,6 @@
     emit-entry
     crt-entry))
 
-(define (compiler-driver-emit-package-file-with-target-roots-level-mode-and-crt
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [manifest-dir : String]
-  [package-owner : String]
-  [deps : CompilerPkgDeps]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerDriver
-  (match (compiler-driver-load-package-file-with-runtime-owned
-    input-path
-    target
-    stdlib-roots
-    manifest-dir
-    package-owner
-    deps
-    emit-entry)
-    [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
-      (match (lower-compiler-program-with-decl-paths-mode-cache
-        ""
-        (ast-program decls)
-        (ast-decl-path-list-with-modules paths modules)
-        (compiler-driver-lower-mode-for-target target mode)
-        stdlib-roots
-        (compiler-load-prelude-cache-key
-          "typecheck-prefix-lower"
-          stdlib-roots
-          (compiler-driver-target-cfgs target (compiler-cfg-empty))))
-        [(ResultCompilerLower.Ok program spans)
-          (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-            input-path
-            (compiler-driver-lowered-from-active-pools program spans)
-            target
-            has-target
-            mode
-            opt-level
-            emit-entry
-            crt-entry)]
-        [(ResultCompilerLower.Err diag) (ResultCompilerDriver.Err diag)])]
-    [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerDriver.Err diag)]))
-
 (define (compiler-driver-load-package-file-with-runtime-cfg
   [input-path : String]
   [stdlib-roots : svec.Vec]
@@ -3089,36 +2848,6 @@
     deps
     emit-entry
     (compiler-driver-target-cfgs target (compiler-cfg-empty))))
-
-(define (compiler-driver-load-package-file-with-runtime-owned
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : svec.Vec]
-  [manifest-dir : String]
-  [package-owner : String]
-  [deps : CompilerPkgDeps]
-  [emit-entry : bool]) : ResultCompilerLoadWithPaths
-  (match (compiler-driver-load-package-file-with-runtime
-    input-path
-    target
-    stdlib-roots
-    manifest-dir
-    deps
-    emit-entry)
-    [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
-      (ResultCompilerLoadWithPaths.Ok
-        decls
-        (compiler-load-package-owned-paths-for-decls
-          package-owner
-          manifest-dir
-          stdlib-roots
-          input-path
-          decls
-          paths)
-        modules
-        seen)]
-    [(ResultCompilerLoadWithPaths.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-package-file-with-runtime-owned-cfg
   [input-path : String]
@@ -3311,16 +3040,6 @@
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriver.Err diag))]))
 
-(define (compiler-driver-emit-ir-summary-file-with-roots-and-level
-  [input-path : String]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]) : ResultCompilerDriver
-  (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
-    input-path
-    stdlib-roots
-    opt-level
-    (compiler-cfg-empty)))
-
 (define (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
   [input-path : String]
   [target : CompilerBackendTarget]
@@ -3355,72 +3074,6 @@
       stdlib-roots
       mode
       (compiler-driver-state-target-cfgs state target cfgs))
-    opt-level))
-
-(define (compiler-driver-emit-ir-summary-file-with-roots-level-and-cfg
-  [input-path : String]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
-  (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
-    input-path
-    (CompilerBackendTarget.Linux)
-    stdlib-roots
-    opt-level
-    (CompilerBackendMode.Scalar)
-    cfgs))
-
-(define (compiler-driver-emit-file [input-path : String]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target
-    input-path
-    (CompilerBackendTarget.Linux)
-    false))
-
-(define (compiler-driver-emit-file-with-roots
-  [input-path : String]
-  [stdlib-roots : svec.Vec]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-and-roots
-    input-path
-    (CompilerBackendTarget.Linux)
-    false
-    stdlib-roots))
-
-(define (compiler-driver-emit-file-with-roots-and-level
-  [input-path : String]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-roots-and-level
-    input-path
-    (CompilerBackendTarget.Linux)
-    false
-    stdlib-roots
-    opt-level))
-
-(define (compiler-driver-emit-file-for-target
-  [input-path : String]
-  [target : CompilerBackendTarget]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target input-path target true))
-
-(define (compiler-driver-emit-file-for-target-with-roots
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : svec.Vec]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-and-roots
-    input-path
-    target
-    true
-    stdlib-roots))
-
-(define (compiler-driver-emit-file-for-target-with-roots-and-level
-  [input-path : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target-roots-and-level
-    input-path
-    target
-    true
-    stdlib-roots
     opt-level))
 
 (define (compiler-driver-write-text-buf
@@ -3500,181 +3153,3 @@
         (cfg compile-profile (compiler-driver-profile-finish-total))
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
-
-(define (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-  [input-path : String]
-  [output-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : i64
-  (compiler-driver-write-buffer-result
-    (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
-      input-path
-      target
-      has-target
-      stdlib-roots
-      opt-level
-      mode
-      cfgs)
-    output-path))
-
-(define (compiler-driver-compile-file-pic-with-target-roots-level-mode-cfg
-  [input-path : String]
-  [output-path : String]
-  [target : CompilerBackendTarget]
-  [has-target : bool]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : i64
-  (compiler-driver-write-pic-result
-    (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
-      input-path
-      target
-      has-target
-      stdlib-roots
-      opt-level
-      mode
-      cfgs)
-    output-path))
-
-(define (compiler-driver-compile-file
-  [input-path : String]
-  [output-path : String]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    (CompilerBackendTarget.Linux)
-    false
-    (svec.new)
-    (compiler-optimize-default-level)
-    (CompilerBackendMode.Scalar)
-    (compiler-cfg-empty)))
-
-(define (compiler-driver-compile-file-with-roots
-  [input-path : String]
-  [output-path : String]
-  [stdlib-roots : svec.Vec]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    (CompilerBackendTarget.Linux)
-    false
-    stdlib-roots
-    (compiler-optimize-default-level)
-    (CompilerBackendMode.Scalar)
-    (compiler-cfg-empty)))
-
-(define (compiler-driver-compile-file-with-roots-and-level
-  [input-path : String]
-  [output-path : String]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    (CompilerBackendTarget.Linux)
-    false
-    stdlib-roots
-    opt-level
-    (CompilerBackendMode.Scalar)
-    (compiler-cfg-empty)))
-
-(define (compiler-driver-compile-file-with-roots-level-and-mode
-  [input-path : String]
-  [output-path : String]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    (CompilerBackendTarget.Linux)
-    false
-    stdlib-roots
-    opt-level
-    mode
-    (compiler-cfg-empty)))
-
-(define (compiler-driver-compile-file-for-target
-  [input-path : String]
-  [output-path : String]
-  [target : CompilerBackendTarget]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    target
-    true
-    (svec.new)
-    (compiler-optimize-default-level)
-    (CompilerBackendMode.Scalar)
-    (compiler-cfg-empty)))
-
-(define (compiler-driver-compile-file-for-target-with-roots
-  [input-path : String]
-  [output-path : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : svec.Vec]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    target
-    true
-    stdlib-roots
-    (compiler-optimize-default-level)
-    (CompilerBackendMode.Scalar)
-    (compiler-cfg-empty)))
-
-(define (compiler-driver-compile-file-for-target-with-roots-and-level
-  [input-path : String]
-  [output-path : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    target
-    true
-    stdlib-roots
-    opt-level
-    (CompilerBackendMode.Scalar)
-    (compiler-cfg-empty)))
-
-(define (compiler-driver-compile-file-for-target-with-roots-level-and-mode
-  [input-path : String]
-  [output-path : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    target
-    true
-    stdlib-roots
-    opt-level
-    mode
-    (compiler-cfg-empty)))
-
-(define (compiler-driver-compile-file-for-target-with-roots-level-mode-and-cfg
-  [input-path : String]
-  [output-path : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : svec.Vec]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : i64
-  (compiler-driver-compile-file-with-target-roots-level-mode-cfg
-    input-path
-    output-path
-    target
-    true
-    stdlib-roots
-    opt-level
-    mode
-    cfgs))

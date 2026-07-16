@@ -51948,10 +51948,11 @@
   test
   (test
     macro-decl-list-append-headroom
-    (if (and
-      (macro-decl-list-append-headroom-smoke?)
-      (macro-decl-path-list-append-headroom-smoke?))
-      unit
+    (if (macro-decl-list-append-headroom-smoke?)
+      (if (macro-decl-path-list-append-headroom-smoke?)
+        unit
+        (io.panic
+          "typecheck: macro decl-path-list append headroom smoke failed"))
       (io.panic "typecheck: macro decl-list append headroom smoke failed"))))
 
 (define (macro-decl-list-current-suffix [head : AstDecl] [rest : AstDeclList]) : AstDeclList
@@ -52029,20 +52030,23 @@
         [done : bool false]
         (begin
           (while (not done)
-            (match (ast-decl-path-list-step cursor)
-              [(AstDeclPathListStep.Nil) (set! done true)]
-              [(AstDeclPathListStep.Cons path rest)
-                (begin
-                  (array-set! (struct-get suffix slots) write-index path)
-                  (array-set!
-                    (struct-get suffix owner-ids)
-                    write-index
-                    (ast-decl-path-list-owner-id
-                      (& cursor)
-                      0
-                      cbi.compiler-builtin-id-fix-empty))
-                  (set! write-index (- write-index 1))
-                  (set! cursor rest))]))
+            (let
+              [owner-id : i64
+                (ast-decl-path-list-owner-id
+                  (& cursor)
+                  0
+                  cbi.compiler-builtin-id-fix-empty)]
+              (match (ast-decl-path-list-step cursor)
+                [(AstDeclPathListStep.Nil) (set! done true)]
+                [(AstDeclPathListStep.Cons path rest)
+                  (begin
+                    (array-set! (struct-get suffix slots) write-index path)
+                    (array-set!
+                      (struct-get suffix owner-ids)
+                      write-index
+                      owner-id)
+                    (set! write-index (- write-index 1))
+                    (set! cursor rest))])))
           (AstDeclPathList
             (struct-get suffix slots)
             (struct-get suffix owner-ids)

@@ -13694,6 +13694,8 @@
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDecl.IncludeStr _ _)
             (tc-nominal-owner-name-list rest target index module)]
+          [(AstDecl.IncludeStrComptime _ _)
+            (tc-nominal-owner-name-list rest target index module)]
           [(AstDecl.IncludeBin _ _)
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDecl.Module next-module)
@@ -15454,6 +15456,9 @@
     [(AstDecl.IncludeStr _ _)
       (ResultTcUnit.Err
         "typecheck: include-str must be expanded by compiler loader")]
+    [(AstDecl.IncludeStrComptime _ _)
+      (ResultTcUnit.Err
+        "typecheck: include-str-comptime must be expanded by compiler loader")]
     [(AstDecl.IncludeBin _ _)
       (ResultTcUnit.Err
         "typecheck: include-bin must be expanded by compiler loader")]
@@ -19077,6 +19082,7 @@
         (tc-build-top-env-bind-decl-in-module ctx env module template))]
     [(AstDecl.Import _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeStr _ _) (ResultTcEnv.Ok env)]
+    [(AstDecl.IncludeStrComptime _ _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeBin _ _) (ResultTcEnv.Ok env)]
     [(AstDecl.Test _ _ _) (ResultTcEnv.Ok env)]))
 
@@ -19534,6 +19540,7 @@
                     (set! cur rest))]
                 [(AstDecl.Import _) (set! cur rest)]
                 [(AstDecl.IncludeStr _ _) (set! cur rest)]
+                [(AstDecl.IncludeStrComptime _ _) (set! cur rest)]
                 [(AstDecl.IncludeBin _ _) (set! cur rest)]
                 [(AstDecl.Test _ _ _) (set! cur rest)]
                 [_
@@ -33429,6 +33436,8 @@
           [(AstDecl.Import _)
             (tc-variant-owner-name-list rest target index module)]
           [(AstDecl.IncludeStr _ _)
+            (tc-variant-owner-name-list rest target index module)]
+          [(AstDecl.IncludeStrComptime _ _)
             (tc-variant-owner-name-list rest target index module)]
           [(AstDecl.IncludeBin _ _)
             (tc-variant-owner-name-list rest target index module)]
@@ -48358,6 +48367,7 @@
     [(AstDecl.Test _ _ _) true]
     [(AstDecl.Import _) false]
     [(AstDecl.IncludeStr _ _) false]
+    [(AstDecl.IncludeStrComptime _ _) false]
     [(AstDecl.IncludeBin _ _) false]
     [(AstDecl.DefMacro _ _ _ _) false]
     [(AstDecl.Unsafe inner-box)
@@ -50788,6 +50798,9 @@
 (define (macro-internal-resolved-enum-type-marker) : String
   "__typelisp internal resolved enum type")
 
+(define (macro-internal-binary-data-marker) : String
+  "__typelisp internal binary data")
+
 (define (macro-resolved-nominal-type-sexpr
   [marker : String]
   [name : String]
@@ -51658,6 +51671,12 @@
       (macro-child-form2 "string-from-bytes" ptr-id len-id span origin)]
     [(AstExpr.ArrayData value-id)
       (macro-child-form1 "array-data" value-id span origin)]
+    [(AstExpr.BinaryData bytes)
+      (ResultMacroSexpr.Ok
+        (macro-form1
+          (macro-internal-binary-data-marker)
+          (reader.SpannedSexpr.Str bytes span)
+          span))]
     [(AstExpr.ProgramArgc)
       (ResultMacroSexpr.Ok (macro-form0 "program-argc" span))]
     [(AstExpr.ProgramArgv)
@@ -62672,6 +62691,8 @@
       (str_cat.str-cat "struct-lifetimes:" (intern-str name))]
     [(AstDecl.Import _) "import"]
     [(AstDecl.IncludeStr name _) (str_cat.str-cat "include-str:" name)]
+    [(AstDecl.IncludeStrComptime name _)
+      (str_cat.str-cat "include-str-comptime:" name)]
     [(AstDecl.IncludeBin name _) (str_cat.str-cat "include-bin:" name)]
     [(AstDecl.DefDispatch name _)
       (str_cat.str-cat "dispatch:" (intern-str name))]

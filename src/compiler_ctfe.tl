@@ -26,7 +26,7 @@
 (define ctfe-builtin-ready : bool
   false)
 (define ctfe-builtin-ids : (Array i64)
-  (array.make-array i64 105))
+  (array.make-array i64 106))
 
 (define (ctfe-builtin-reset!) : unit
   (begin
@@ -145,6 +145,7 @@
       (ctfe-builtin-set! 102 "expr-clause-list-fold-if")
       (ctfe-builtin-set! 103 "type-cleanup-owning?")
       (ctfe-builtin-set! 104 "type-cleanup-function")
+      (ctfe-builtin-set! 105 "expr-binary-data")
       (set! ctfe-builtin-generation (intern-generation))
       (set! ctfe-builtin-ready true))))
 
@@ -4646,6 +4647,40 @@
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "expr-string expects exactly one arg")))))
 
+;; `(expr-binary-data bytes)` builds an opaque static `(Array u8)` payload.
+(define (ctfe-eval-expr-binary-data-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 1)
+    (let
+      [arg : AstExpr (ctfe-expr-arg args 0 env)]
+      (match (compiler-ctfe-eval arg env fuel)
+        [(ResultCtfe.Ok value arg-fuel)
+          (match value
+            [(CompilerCtfeValue.String bytes)
+              (ResultCtfe.Ok
+                (ctfe-syntax-expr-push
+                  env
+                  (AstExpr.BinaryData bytes)
+                  (ast-ty-dyn-array-with-pools
+                    (ctfe-env-pools env)
+                    (AstType.U8)))
+                arg-fuel)]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-binary-data expects String")))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "expr-binary-data expects exactly one arg")))))
+
 ;; String-literal inspection intentionally uses helpers instead of growing the
 ;; verified public `Expr` enum. This keeps older stage0 compilers able to read
 ;; the declaration while exposing only the stable literal surface macros need.
@@ -6785,6 +6820,8 @@
             (ctfe-eval-expr-int-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 29))
             (ctfe-eval-expr-string-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 105))
+            (ctfe-eval-expr-binary-data-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 91))
             (ctfe-eval-expr-string-inspector-call false args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 92))
@@ -13127,6 +13164,9 @@
     [name-expr : i64 (compiler-ctfe-call1-in-env env "expr-string" name-lit)]
     [expected-name : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "Ada")))]
+    [binary-expr : i64
+      (compiler-ctfe-call1-in-env env "expr-binary-data" name-lit)]
+    [expected-binary : i64 (ctfe-ast-push env (AstExpr.BinaryData "Ada"))]
     [point-expr : i64
       (compiler-ctfe-call1-in-env env "expr-var" point-name-lit)]
     [field-expr : i64
@@ -13229,6 +13269,22 @@
               (and
                 (ctfe-type-eq checked-ty (AstType.String))
                 (ctfe-test-expr-eq-in-env env node expected-name))]
+            [_ false])]
+        [(ResultCtfe.Err _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env binary-expr)
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.Expr node checked-ty)
+              (and
+                (ctfe-type-eq
+                  checked-ty
+                  (ast-ty-dyn-array-with-pools
+                    (ctfe-env-pools env)
+                    (AstType.U8)))
+                (ctfe-test-expr-eq-in-env env node expected-binary))]
             [_ false])]
         [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval

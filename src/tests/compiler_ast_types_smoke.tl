@@ -555,11 +555,12 @@
         (ast.AstExpr.Literal (ast.ast-lit-int 222)))]
     [source-type : i64
       (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
+    [appended-name-id : i64 (ci.intern-generated-name "appended")]
     [program : ast.AstProgram
       (ast.ast-program
         (ast.ast-decl-cons
-          (ast.ast-decl-def
-            "appended"
+          (ast.ast-decl-def-id
+            appended-name-id
             (ast.AstMaybeType.Some (ast.AstType.Ptr source-type))
             source-expr)
           (ast.ast-decl-list-new)))]
@@ -588,6 +589,59 @@
                           [_ false]))]
                     [_ false])]
                 [_ false])]))])))
+
+(define (compiler-ast-compaction-borrow-child-smoke?) : bool
+  (let
+    [source-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 1)]
+    [dest-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 1)]
+    [name : i64 (ci.intern-generated-name "borrow-child")]
+    [var-id : i64
+      (ast.ast-node-pool-context-expr-push source-pools (ast.AstExpr.Var name))]
+    [spanned-id : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Spanned var-id (ast.ast-source-span 1 1 1 2)))]
+    [borrow-id : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Borrow false ast.AstBorrowLifetime.Inferred spanned-id))]
+    [program : ast.AstProgram
+      (ast.ast-program
+        (ast.ast-decl-cons
+          (ast.ast-decl-def-id name ast.AstMaybeType.No borrow-id)
+          (ast.ast-decl-list-new)))]
+    [compacted : ast.AstProgramCompaction
+      (ast.ast-program-compact-with-pools source-pools dest-pools program)]
+    (match compacted
+      [(ast.AstProgramCompaction out-program out-pools)
+        (match out-program
+          [(ast.AstProgram.Program decls-box)
+            (match (ast.ast-decl-list-step (box-get decls-box))
+              [(ast.AstDeclListStep.Cons decl _)
+                (match decl
+                  [(ast.AstDecl.Def _ _ body)
+                    (match (ast.ast-node-pool-context-expr-get out-pools body)
+                      [(ast.AstExpr.Borrow mutable lifetime inner)
+                        (and
+                          (not mutable)
+                          (match lifetime
+                            [(ast.AstBorrowLifetime.Inferred) true]
+                            [_ false])
+                          (match (ast.ast-node-pool-context-expr-get
+                            out-pools
+                            inner)
+                            [(ast.AstExpr.Spanned var _)
+                              (match (ast.ast-node-pool-context-expr-get
+                                out-pools
+                                var)
+                                [(ast.AstExpr.Var got-name) (= got-name name)]
+                                [_ false])]
+                            [_ false]))]
+                      [_ false])]
+                  [_ false])]
+              [_ false])])])))
 
 (define (compiler-ast-compaction-string-def-ok?
   [pools : ast.AstNodePoolContext]
@@ -716,6 +770,7 @@
 (define (compiler-ast-program-compaction-string-payloads-smoke?) : bool
   (let
     [include-name-id : i64 (ci.intern-generated-name "inc")]
+    [macro-func-name-id : i64 (ci.intern-generated-name "emit")]
     [source-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new
         (ast.ast-expr-node-pool-state-create 8)
@@ -741,7 +796,7 @@
     [macro-func : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
-        (ast.AstExpr.Var (ci.intern "emit")))]
+        (ast.AstExpr.Var macro-func-name-id))]
     [macro-call : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
@@ -765,7 +820,7 @@
             (&mut items)
             (ast.AstDispatchVariant.Variant
               (ast.AstDispatchIsa.Avx2)
-              (ci.intern "fast")))
+              (ci.intern-generated-name "fast")))
           items))]
     [lifetimes : ast.AstLifetimeList
       (let
@@ -830,7 +885,7 @@
                         ast.AstMaybeImportAlias.No
                         (box (ast.ast-source-span 3 1 3 1))))
                     (ast.ast-decl-cons
-                      (ast.ast-decl-def-dispatch "dispatch" variants)
+                      (ast.ast-decl-def-dispatch-id dispatch-name-id variants)
                       (ast.ast-decl-cons
                         (ast.AstDecl.DefStructLifetimes
                           0
@@ -839,7 +894,7 @@
                           (ast.AstStructCleanup.No)
                           (ast.ast-field-def-list-new))
                         (ast.ast-decl-cons
-                          (ast.AstDecl.IncludeStr "inc" "data.txt")
+                          (ast.AstDecl.IncludeStr include-name-id "data.txt")
                           (ast.ast-decl-list-new)))))))))))]
     [compacted : ast.AstProgramCompaction
       (ast.ast-program-compact-with-pools source-pools dest-pools program)]

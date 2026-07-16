@@ -20455,7 +20455,8 @@
   (FloatCastScratchGp)
   (FloatBitcastValueXmm)
   (FloatBitcastValueGp)
-  (FloatMoveValueXmm))
+  (FloatMoveValueXmm)
+  (FloatMemoryValueXmm))
 
 (defstruct CompilerRegScratchConstraint
   (register-class CompilerRegScratchClass)
@@ -20752,7 +20753,6 @@
           [value? : bool
             (and
               (compiler-reg-scalar-type? ty)
-              (not (compiler-reg-float-type? ty))
               (not (compiler-reg-scratch-var-register-homed? _assignments dst)))]
           (if value?
             2
@@ -20766,7 +20766,6 @@
           [value? : bool
             (and
               (compiler-reg-scalar-type? ty)
-              (not (compiler-reg-float-type? ty))
               (not (compiler-reg-scratch-value-direct? _assignments src)))]
           (if value?
             2
@@ -20792,7 +20791,6 @@
       [(CompilerIrInstr.Store _ value ty)
         (if (and
           (compiler-reg-scalar-type? ty)
-          (not (compiler-reg-float-type? ty))
           (not (compiler-reg-scratch-value-direct? _assignments value)))
           1
           0)]
@@ -21500,25 +21498,33 @@
         ;; instruction point. Keep both siblings live through that point.
         (+ point 3)
         var)]
-    [(CompilerIrInstr.Load _ _ _)
+    [(CompilerIrInstr.Load _ _ ty)
       (CompilerRegScratchRequirement
         point
         ordinal
         (if (= ordinal 0)
           (CompilerRegScratchRole.MemoryAddress)
-          (CompilerRegScratchRole.MemoryValue))
-        (compiler-reg-scratch-memory-constraint assignments instr)
+          (if (compiler-reg-float-type? ty)
+            (CompilerRegScratchRole.FloatMemoryValueXmm)
+            (CompilerRegScratchRole.MemoryValue)))
+        (if (and (> ordinal 0) (compiler-reg-float-type? ty))
+          (compiler-reg-scratch-xmm-constraint assignments instr)
+          (compiler-reg-scratch-memory-constraint assignments instr))
         point
         (+ point 1)
         var)]
-    [(CompilerIrInstr.StorePtr _ _ _)
+    [(CompilerIrInstr.StorePtr _ _ ty)
       (CompilerRegScratchRequirement
         point
         ordinal
         (if (= ordinal 0)
           (CompilerRegScratchRole.MemoryAddress)
-          (CompilerRegScratchRole.MemoryValue))
-        (compiler-reg-scratch-memory-constraint assignments instr)
+          (if (compiler-reg-float-type? ty)
+            (CompilerRegScratchRole.FloatMemoryValueXmm)
+            (CompilerRegScratchRole.MemoryValue)))
+        (if (and (> ordinal 0) (compiler-reg-float-type? ty))
+          (compiler-reg-scratch-xmm-constraint assignments instr)
+          (compiler-reg-scratch-memory-constraint assignments instr))
         point
         (+ point 1)
         var)]
@@ -21534,12 +21540,16 @@
         point
         (+ point 1)
         var)]
-    [(CompilerIrInstr.Store _ _ _)
+    [(CompilerIrInstr.Store _ _ ty)
       (CompilerRegScratchRequirement
         point
         ordinal
-        (CompilerRegScratchRole.MemoryValue)
-        (compiler-reg-scratch-memory-constraint assignments instr)
+        (if (compiler-reg-float-type? ty)
+          (CompilerRegScratchRole.FloatMemoryValueXmm)
+          (CompilerRegScratchRole.MemoryValue))
+        (if (compiler-reg-float-type? ty)
+          (compiler-reg-scratch-xmm-constraint assignments instr)
+          (compiler-reg-scratch-memory-constraint assignments instr))
         point
         (+ point 1)
         var)]

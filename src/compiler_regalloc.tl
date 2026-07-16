@@ -21669,35 +21669,34 @@
               (compiler-reg-clobber-binop-shift? shift-op rhs ty)]
             [_ false])]
         [role : CompilerRegScratchRole
-          (if div?
-            (cond
-              [(= ordinal 0) (CompilerRegScratchRole.FixedRax)]
-              [(= ordinal 1) (CompilerRegScratchRole.FixedRdx)]
-              [(= ordinal 2) (CompilerRegScratchRole.ScalarPrimary)]
-              [(= ordinal 3) (CompilerRegScratchRole.ScalarSecondary)]
-              [else (CompilerRegScratchRole.ScalarTertiary)])
-            (if (and shift? (= ordinal 0))
-              (CompilerRegScratchRole.FixedRcx)
-              (if (= ordinal 0)
-                (CompilerRegScratchRole.ScalarPrimary)
-                (CompilerRegScratchRole.ScalarSecondary))))]
+          (cond
+            [div?
+              (cond
+                [(= ordinal 0) (CompilerRegScratchRole.FixedRax)]
+                [(= ordinal 1) (CompilerRegScratchRole.FixedRdx)]
+                [(= ordinal 2) (CompilerRegScratchRole.ScalarPrimary)]
+                [(= ordinal 3) (CompilerRegScratchRole.ScalarSecondary)]
+                [else (CompilerRegScratchRole.ScalarTertiary)])]
+            [(and shift? (= ordinal 0)) (CompilerRegScratchRole.FixedRcx)]
+            [(= ordinal 0) (CompilerRegScratchRole.ScalarPrimary)]
+            [else (CompilerRegScratchRole.ScalarSecondary)])]
         [constraint : CompilerRegScratchConstraint
-          (if (and div? (= ordinal 0))
-            (compiler-reg-scratch-fixed-constraint assignments instr "%rax")
-            (if (and div? (= ordinal 1))
-              (compiler-reg-scratch-fixed-constraint assignments instr "%rdx")
-              (if (and shift? (= ordinal 0))
-                (compiler-reg-scratch-fixed-constraint assignments instr "%rcx")
-                (compiler-reg-scratch-scalar-constraint
-                  assignments
-                  instr
-                  (if div?
-                    (compiler-reg-scratch-div-fixed-registers)
-                    (if shift?
-                      (compiler-reg-string-cons
-                        "%rcx"
-                        CompilerRegStringList.Nil)
-                      CompilerRegStringList.Nil))))))]
+          (cond
+            [(and div? (= ordinal 0))
+              (compiler-reg-scratch-fixed-constraint assignments instr "%rax")]
+            [(and div? (= ordinal 1))
+              (compiler-reg-scratch-fixed-constraint assignments instr "%rdx")]
+            [(and shift? (= ordinal 0))
+              (compiler-reg-scratch-fixed-constraint assignments instr "%rcx")]
+            [else
+              (compiler-reg-scratch-scalar-constraint
+                assignments
+                instr
+                (cond
+                  [div? (compiler-reg-scratch-div-fixed-registers)]
+                  [shift?
+                    (compiler-reg-string-cons "%rcx" CompilerRegStringList.Nil)]
+                  [else CompilerRegStringList.Nil]))])]
         (CompilerRegScratchRequirement
           point
           ordinal

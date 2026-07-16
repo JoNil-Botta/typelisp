@@ -699,7 +699,7 @@ echo "[compile-profile] verify embedded stdlib tlci routing and differential out
 mkdir -p "$STDLIB_TLCI_DIR"
 if ! (
     cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$ROOT/tests/integration/arithmetic.tl" \
+    "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
         -o "$STDLIB_TLCI_EMBEDDED_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args)
@@ -709,7 +709,7 @@ if ! (
 fi
 if ! (
     cd "$STDLIB_TLCI_DIR"
-    "$PROFILE_BIN" compile "$ROOT/tests/integration/arithmetic.tl" \
+    "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
         -o "$STDLIB_TLCI_SOURCE_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \

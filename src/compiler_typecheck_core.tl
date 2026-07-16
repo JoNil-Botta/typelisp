@@ -14,6 +14,7 @@
 (import "compiler_clone.tl")
 (import compiler_allocation_profile as allocation_profile)
 (import (hashmap i64 i64) as tc_i64_i64_map)
+(import (hashmap String i64) as tc_string_i64_map)
 (import "compiler_parse_core.tl")
 (import read as reader)
 (import stdlib.string)
@@ -59986,7 +59987,9 @@
   [definition-module : String]
   ;; lint-allow: unused-variable -- used by embedded-stdlib-tlci builds.
   [macro-name : String]) : unit
-  (if (ctfe-string-prefix? definition-module "stdlib.")
+  (if (or
+    (ctfe-string-prefix? definition-module "stdlib.")
+    (ctfe-string-prefix? macro-name "stdlib."))
     (if macro-expand-stdlib-tlci-route-active
       (begin
         (cfg

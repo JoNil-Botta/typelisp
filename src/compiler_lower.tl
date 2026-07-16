@@ -263,6 +263,9 @@
   ;; Gather `source[indexes[i]]`; indexes are contiguous i64 lanes and source
   ;; accesses are non-contiguous reads.
   (Gather i64 i64)
+  ;; Gather `source[i + offsets[program-index]]` without materializing a
+  ;; logical-index array. The backend forms the i64 index lanes directly.
+  (GatherLaneOffset i64 i64)
   ;; A dynamic array indexed by `(program-index)`. Unlike `Array`, this source
   ;; repeats the same lane vector for every foreach gang.
   (LaneArray i64)
@@ -291,6 +294,7 @@
 (defenum LowerVectorMapValueKey
   (Array i64)
   (Gather i64 i64)
+  (GatherLaneOffset i64 i64)
   (LaneArray i64)
   (Uniform CompilerIrValue)
   (BroadcastArray i64 CompilerIrValue)
@@ -35657,6 +35661,38 @@
         (LowerMaybeVectorMapValue.No))]
     [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)]))
 
+(define (lower-simple-vector-map-gather-lane-offset-var
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [value : AstExpr]) : LowerMaybeArrayVar
+  (match value
+    [(AstExpr.Spanned inner-box _)
+      (lower-simple-vector-map-gather-lane-offset-var
+        ctx
+        env
+        type-env
+        index
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Ann inner-box _)
+      (lower-simple-vector-map-gather-lane-offset-var
+        ctx
+        env
+        type-env
+        index
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Binary (AstBinOp.Add) lhs-box rhs-box)
+      (let
+        [lhs : AstExpr (lower-context-expr-get ctx lhs-box)]
+        [rhs : AstExpr (lower-context-expr-get ctx rhs-box)]
+        (if (lower-expr-is-var? ctx lhs index)
+          (lower-array-ref-var-for-program-index ctx env type-env rhs)
+          (if (lower-expr-is-var? ctx rhs index)
+            (lower-array-ref-var-for-program-index ctx env type-env lhs)
+            (LowerMaybeArrayVar.No))))]
+    [_ (LowerMaybeArrayVar.No)]))
+
 (define (lower-simple-vector-map-gather-value
   [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
@@ -35684,7 +35720,23 @@
                   (LowerMaybeVectorMapValue.Some
                     (LowerVectorMapValue.Gather source-var indexes-var))
                   (LowerMaybeVectorMapValue.No))]
-              [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])]
+              [(LowerMaybeArrayVar.No)
+                (match (lower-simple-vector-map-gather-lane-offset-var
+                  ctx
+                  env
+                  type-env
+                  index
+                  indexes)
+                  [(LowerMaybeArrayVar.Some offsets-var offsets-elem)
+                    (if (and
+                      (tc-type-eq source-elem dst-elem)
+                      (tc-type-eq offsets-elem (AstType.I64)))
+                      (LowerMaybeVectorMapValue.Some
+                        (LowerVectorMapValue.GatherLaneOffset
+                          source-var
+                          offsets-var))
+                      (LowerMaybeVectorMapValue.No))]
+                  [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])])]
           [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)]))]
     [_ (LowerMaybeVectorMapValue.No)]))
 
@@ -35884,6 +35936,7 @@
       ;; Only the contiguous index stream participates in the vector loop's
       ;; range proof. Gathered source indexes are checked individually below.
       (lower-array-var-set-add (lower-array-var-set-empty) indexes-var 0)]
+    [(LowerVectorMapValue.GatherLaneOffset _ _) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.LaneArray _) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.Uniform _) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.BroadcastArray array-var _)
@@ -35902,6 +35955,8 @@
     [(LowerVectorMapValue.Array found) (= found array-var)]
     [(LowerVectorMapValue.Gather source indexes)
       (or (= source array-var) (= indexes array-var))]
+    [(LowerVectorMapValue.GatherLaneOffset source offsets)
+      (or (= source array-var) (= offsets array-var))]
     [(LowerVectorMapValue.LaneArray found) (= found array-var)]
     [(LowerVectorMapValue.BroadcastArray found _) (= found array-var)]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
@@ -36278,6 +36333,7 @@
   [base : CompilerIrValue]
   [index-base : CompilerIrValue]
   [index : CompilerIrValue]
+  [lane-offset : bool]
   [lanes : i64]
   [elem-ty : AstType]) : LowerExpr
   (match (lower-state-alloc-var state)
@@ -36285,7 +36341,14 @@
       (LowerExpr.Expr
         (lower-state-emit
           s
-          (ir-instr-gather-load v base index-base index lanes elem-ty))
+          (ir-instr-gather-load
+            v
+            base
+            index-base
+            index
+            lane-offset
+            lanes
+            elem-ty))
         (CompilerIrValue.Var v)
         elem-ty)]))
 
@@ -36330,6 +36393,50 @@
                   (+ lane 1)
                   lanes
                   source-len)])])])))
+
+(define (lower-emit-gather-lane-offset-checks
+  [state : LowerState]
+  [offsets-data : CompilerIrValue]
+  [base-index-var : i64]
+  [lane : i64]
+  [lanes : i64]
+  [source-len : CompilerIrValue]) : LowerExpr
+  (if (>= lane lanes)
+    (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit))
+    (match (if (= lane 0)
+      (LowerExpr.Expr state (CompilerIrValue.Var base-index-var) (AstType.I64))
+      (lower-emit-binop
+        state
+        CompilerIrBinOp.Add
+        (CompilerIrValue.Var base-index-var)
+        (CompilerIrValue.I64 lane)
+        (AstType.I64)))
+      [(LowerExpr.Expr logical-state logical-index _)
+        (match (lower-emit-gep
+          logical-state
+          offsets-data
+          (CompilerIrValue.I64 lane)
+          (AstType.I64))
+          [(LowerExpr.Expr addr-state offset-ptr _)
+            (match (lower-emit-load addr-state offset-ptr (AstType.I64))
+              [(LowerExpr.Expr offset-state offset _)
+                (match (lower-emit-binop
+                  offset-state
+                  CompilerIrBinOp.Add
+                  logical-index
+                  offset
+                  (AstType.I64))
+                  [(LowerExpr.Expr index-state gathered-index _)
+                    (lower-emit-gather-lane-offset-checks
+                      (lower-emit-bounds-check
+                        index-state
+                        gathered-index
+                        source-len)
+                      offsets-data
+                      base-index-var
+                      (+ lane 1)
+                      lanes
+                      source-len)])])])])))
 
 (define (lower-emit-vector-store
   [state : LowerState]
@@ -36840,6 +36947,7 @@
     state
     base-index-var
     current-index-var
+    (CompilerIrValue.I64 0)
     active-lanes
     lanes
     elem-ty
@@ -37493,6 +37601,11 @@
         [(LowerVectorMapValueKey.Gather right-source right-indexes)
           (and (= left-source right-source) (= left-indexes right-indexes))]
         [_ false])]
+    [(LowerVectorMapValueKey.GatherLaneOffset left-source left-offsets)
+      (match right
+        [(LowerVectorMapValueKey.GatherLaneOffset right-source right-offsets)
+          (and (= left-source right-source) (= left-offsets right-offsets))]
+        [_ false])]
     [(LowerVectorMapValueKey.LaneArray left-array)
       (match right
         [(LowerVectorMapValueKey.LaneArray right-array)
@@ -37607,8 +37720,43 @@
                         source-data
                         indexes-data
                         (CompilerIrValue.Var index-var)
+                        false
                         lanes
                         elem-ty)])])])])]
+    [(LowerVectorMapValue.GatherLaneOffset source-var offsets-var)
+      (match (lower-array-len-value state (CompilerIrValue.Var source-var))
+        [(LowerExpr.Expr len-state source-len _)
+          (match (lower-array-data-pointer-value
+            len-state
+            (CompilerIrValue.Var source-var))
+            [(LowerExpr.Expr source-state source-data _)
+              (match (lower-array-len-value
+                source-state
+                (CompilerIrValue.Var offsets-var))
+                [(LowerExpr.Expr offsets-len-state offsets-len _)
+                  (match (lower-array-data-pointer-value
+                    (lower-emit-bounds-check
+                      offsets-len-state
+                      (CompilerIrValue.I64 (- lanes 1))
+                      offsets-len)
+                    (CompilerIrValue.Var offsets-var))
+                    [(LowerExpr.Expr offsets-state offsets-data _)
+                      (match (lower-emit-gather-lane-offset-checks
+                        offsets-state
+                        offsets-data
+                        index-var
+                        0
+                        lanes
+                        source-len)
+                        [(LowerExpr.Expr checked-state _ _)
+                          (lower-emit-gather-load
+                            checked-state
+                            source-data
+                            offsets-data
+                            (CompilerIrValue.Var index-var)
+                            true
+                            lanes
+                            elem-ty)])])])])])]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-array-len-value state (CompilerIrValue.Var array-var))
         [(LowerExpr.Expr len-state array-len _)
@@ -37739,6 +37887,24 @@
               (LowerVectorMapValue.Gather source-var indexes-var)
               emit-mode)
             (LowerVectorMapValueKey.Gather source-var indexes-var)
+            cache)])]
+    [(LowerVectorMapValue.GatherLaneOffset source-var offsets-var)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.GatherLaneOffset source-var offsets-var))
+        [(LowerMaybeIrValue.Some value)
+          (LowerVectorMapCachedEmit.Emit state value cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-vector-map-value-for-mode
+              ctx
+              state
+              index-var
+              lanes
+              elem-ty
+              (LowerVectorMapValue.GatherLaneOffset source-var offsets-var)
+              emit-mode)
+            (LowerVectorMapValueKey.GatherLaneOffset source-var offsets-var)
             cache)])]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-vector-map-value-cache-lookup
@@ -37889,6 +38055,8 @@
     ;; Gather maps use the scalar tail path so only active lanes are checked.
     [(LowerVectorMapValue.Gather _ _)
       (LowerExpr.Expr state CompilerIrValue.Unit elem-ty)]
+    [(LowerVectorMapValue.GatherLaneOffset _ _)
+      (LowerExpr.Expr state CompilerIrValue.Unit elem-ty)]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-emit-binop
         state
@@ -37969,6 +38137,7 @@
 (define (lower-vector-map-value-needs-scalar-tail? [plan : LowerVectorMapValue]) : bool
   (match plan
     [(LowerVectorMapValue.Gather _ _) true]
+    [(LowerVectorMapValue.GatherLaneOffset _ _) true]
     [(LowerVectorMapValue.BroadcastArray _ _) true]
     [(LowerVectorMapValue.LaneArray _) true]
     [(LowerVectorMapValue.LaneIndex) true]
@@ -37982,6 +38151,7 @@
 (define (lower-vector-map-value-has-gather? [plan : LowerVectorMapValue]) : bool
   (match plan
     [(LowerVectorMapValue.Gather _ _) true]
+    [(LowerVectorMapValue.GatherLaneOffset _ _) true]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (or
         (lower-vector-map-value-has-gather? (box-get lhs))
@@ -38035,6 +38205,7 @@
   [state : LowerState]
   [base-index-var : i64]
   [current-index-var : i64]
+  [lane-index : CompilerIrValue]
   [active-lanes : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
@@ -38070,6 +38241,49 @@
                 elem-ty)
                 [(LowerExpr.Expr source-addr-state source-ptr _)
                   (lower-emit-load source-addr-state source-ptr elem-ty)])])])]
+    [(LowerVectorMapValue.GatherLaneOffset source-var offsets-var)
+      ;; The tail loop mutates `current-index-var`. Emit this subtraction raw
+      ;; instead of using the lowering-time copy folder, which otherwise sees
+      ;; the loop's initial `current == base` assignment and freezes every tail
+      ;; iteration to lane zero.
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc.Alloc lane-alloc-state lane-var)
+          (match (lower-array-element-addr
+            ctx
+            (lower-state-emit
+              lane-alloc-state
+              (CompilerIrInstr.BinOp
+                lane-var
+                CompilerIrBinOp.Sub
+                (CompilerIrValue.Var current-index-var)
+                (CompilerIrValue.Var base-index-var)
+                (AstType.I64)))
+            (CompilerIrValue.Var offsets-var)
+            lane-index
+            (AstType.I64)
+            (AstType.I64))
+            [(LowerExpr.Expr offset-addr-state offset-ptr _)
+              (match (lower-emit-load
+                offset-addr-state
+                offset-ptr
+                (AstType.I64))
+                [(LowerExpr.Expr offset-state offset _)
+                  (match (lower-emit-binop
+                    offset-state
+                    CompilerIrBinOp.Add
+                    (CompilerIrValue.Var current-index-var)
+                    offset
+                    (AstType.I64))
+                    [(LowerExpr.Expr index-state gathered-index _)
+                      (match (lower-array-element-addr
+                        ctx
+                        index-state
+                        (CompilerIrValue.Var source-var)
+                        gathered-index
+                        (AstType.I64)
+                        elem-ty)
+                        [(LowerExpr.Expr source-addr-state source-ptr _)
+                          (lower-emit-load source-addr-state source-ptr elem-ty)])])])])])]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-emit-binop
         state
@@ -38120,6 +38334,7 @@
         state
         base-index-var
         current-index-var
+        lane-index
         active-lanes
         lanes
         elem-ty
@@ -38130,6 +38345,7 @@
             lhs-state
             base-index-var
             current-index-var
+            lane-index
             active-lanes
             lanes
             elem-ty
@@ -38156,6 +38372,7 @@
               tail-var
               (CompilerIrValue.Var index-var)
               (AstType.I64)))]
+        [tail-lane-var : i64 0]
         [header-label : String ""]
         [body-label : String ""]
         [active-lanes : CompilerIrValue CompilerIrValue.Unit]
@@ -38164,6 +38381,19 @@
         [elem-ptr : CompilerIrValue CompilerIrValue.Unit]
         [store-index : i64 0]
         (begin
+          (match (lower-state-alloc-var s)
+            [(LowerAlloc.Alloc next-s var)
+              (begin
+                (set! s next-s)
+                (set! tail-lane-var var))])
+          (set!
+            s
+            (lower-state-emit
+              s
+              (CompilerIrInstr.Mov
+                tail-lane-var
+                (CompilerIrValue.I64 0)
+                (AstType.I64))))
           (match (lower-state-fresh-label s "foreach_broadcast_tail_header")
             [(LowerLabel.Label next-s label)
               (begin
@@ -38215,6 +38445,7 @@
                     s
                     index-var
                     tail-var
+                    (CompilerIrValue.Var tail-lane-var)
                     active-lanes
                     lanes
                     elem-ty
@@ -38245,27 +38476,41 @@
                   (set! store-index (+ store-index 1)))]))
           (match (lower-state-alloc-var s)
             [(LowerAlloc.Alloc inc-alloc inc-var)
-              (ResultLowerExpr.Ok
-                (LowerExpr.Expr
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      (lower-state-emit
+              (match (lower-state-alloc-var inc-alloc)
+                [(LowerAlloc.Alloc lane-inc-alloc lane-inc-var)
+                  (ResultLowerExpr.Ok
+                    (LowerExpr.Expr
+                      (lower-state-finish-block
                         (lower-state-emit
-                          inc-alloc
-                          (CompilerIrInstr.BinOp
-                            inc-var
-                            CompilerIrBinOp.Add
-                            (CompilerIrValue.Var tail-var)
-                            (CompilerIrValue.I64 1)
-                            (AstType.I64)))
-                        (CompilerIrInstr.Mov
-                          tail-var
-                          (CompilerIrValue.Var inc-var)
-                          (AstType.I64)))
-                      (CompilerIrInstr.Jump header-label))
-                    exit-label)
-                  CompilerIrValue.Unit
-                  (AstType.Unit)))])))]))
+                          (lower-state-emit
+                            (lower-state-emit
+                              (lower-state-emit
+                                (lower-state-emit
+                                  lane-inc-alloc
+                                  (CompilerIrInstr.BinOp
+                                    inc-var
+                                    CompilerIrBinOp.Add
+                                    (CompilerIrValue.Var tail-var)
+                                    (CompilerIrValue.I64 1)
+                                    (AstType.I64)))
+                                (CompilerIrInstr.Mov
+                                  tail-var
+                                  (CompilerIrValue.Var inc-var)
+                                  (AstType.I64)))
+                              (CompilerIrInstr.BinOp
+                                lane-inc-var
+                                CompilerIrBinOp.Add
+                                (CompilerIrValue.Var tail-lane-var)
+                                (CompilerIrValue.I64 1)
+                                (AstType.I64)))
+                            (CompilerIrInstr.Mov
+                              tail-lane-var
+                              (CompilerIrValue.Var lane-inc-var)
+                              (AstType.I64)))
+                          (CompilerIrInstr.Jump header-label))
+                        exit-label)
+                      CompilerIrValue.Unit
+                      (AstType.Unit)))])])))]))
 
 (define (lower-avx2-vector-map-body
   [ctx : TcContext]
@@ -42358,8 +42603,10 @@
                         tail-body-label))))
                 unit)
               (if (and
-                (not (lower-mode-avx512? (lower-state-mode s)))
-                (lower-maybe-vector-map-needs-scalar-tail? plan))
+                (lower-maybe-vector-map-needs-scalar-tail? plan)
+                (or
+                  (not (lower-mode-avx512? (lower-state-mode s)))
+                  (lower-maybe-vector-map-has-gather? plan)))
                 (match plan
                   [(LowerMaybeVectorMap.Some stores elem-ty store-lanes)
                     (lower-avx2-broadcast-tail-map-body

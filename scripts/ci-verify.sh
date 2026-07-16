@@ -341,6 +341,7 @@ fi
 # stage1 expectation mode on both hosts.
 run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
 run_with_compiler "$STAGE2_BIN" "embedded stdlib build payload" scripts/verify-embedded-stdlib-payload.sh
+run_with_compiler "$STAGE2_BIN" "embedded stdlib tlci image" scripts/verify-embedded-stdlib-tlci.sh
 # The deterministic assembly gate reuses the manifest's emitted .s as its first
 # compile for overlapping sources, so it must run after the manifest gate.
 run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh

@@ -454,6 +454,10 @@ packages include deterministic native entry shells and one registration-table
 record per package-owned macro. `typelisp inspect <file.tlci>` renders the
 image header, sections, and package metadata. Macro-body lowering and consumer
 dispatch remain staged separately from these package emission artifacts.
+Self-host bootstrap builds the compiler's exact embedded stdlib source set into
+a source-bound `stdlib.tlci`, embeds it in the next compiler stage, and validates
+all registered macro identities through the production loader. A bootstrapped
+compiler exposes that payload as `typelisp inspect embedded:stdlib.tlci`.
 `typelisp run [--manifest-path <typelisp.pkg>]` uses the same package
 resolution and build profile rules, then executes `bin` package artifacts;
 runtime arguments are passed after `--`.

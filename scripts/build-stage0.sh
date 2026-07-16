@@ -95,6 +95,12 @@ while [ "$i" -le "$STAGES" ]; do
     else
         STAGE_BIN="$WORKDIR/stage$i$NL_BIN_EXT"
     fi
+    EMBEDDED_STDLIB_TLCI_ARGS=
+    if [ "$i" -gt 1 ]; then
+        scripts/build-embedded-stdlib-tlci.sh \
+            "$PREV" target/embedded-stdlib-tlci/stdlib.tlci "$NL_HOST_OS"
+        EMBEDDED_STDLIB_TLCI_ARGS="--cfg embedded-stdlib-tlci"
+    fi
     echo "[build-stage0] stage$i: compile src/main.tl ($NL_BOOTSTRAP_TARGET)"
     stage_compile_failed=0
     if [ "$i" -eq 1 ] && [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
@@ -107,7 +113,7 @@ while [ "$i" -le "$STAGES" ]; do
                 --target "$NL_BOOTSTRAP_TARGET" \
                 $(native_target_cfg_args) \
                 --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2 \
-                --cfg stage0-build-version $(stage_seed_bootstrap_cfg_args "$i")
+                --cfg stage0-build-version $(stage_seed_bootstrap_cfg_args "$i") $EMBEDDED_STDLIB_TLCI_ARGS
         ); then
             stage_compile_failed=1
         fi
@@ -117,7 +123,7 @@ while [ "$i" -le "$STAGES" ]; do
             --target "$NL_BOOTSTRAP_TARGET" \
             $(native_target_cfg_args) \
             --stdlib-root stdlib --stdlib-root src --opt-level 2 \
-            --cfg stage0-build-version $(stage_seed_bootstrap_cfg_args "$i"); then
+            --cfg stage0-build-version $(stage_seed_bootstrap_cfg_args "$i") $EMBEDDED_STDLIB_TLCI_ARGS; then
             stage_compile_failed=1
         fi
     fi

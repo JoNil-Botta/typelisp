@@ -1,282 +1,48 @@
 ;; compiler_intern_state.tl - explicit worker-owned intern table API.
 ;;
-;; This module is intentionally separate from compiler_intern.tl while the
-;; existing compiler call graph still uses the long-standing single-compile
-;; wrappers. Worker code can allocate an InternState and use the intern-state-*
-;; functions below without touching the process-global compatibility table,
-;; builtin-id cache, backend symbol cache, or typecheck caches keyed by
-;; intern-generation.
+;; The authoritative table layout and lookup implementation live in
+;; compiler_intern. This wrapper gives worker code an explicit owner without
+;; duplicating that interner or installing it into the process-global state.
 (import compiler_intern as ci)
 
 (defstruct InternState
-  (pool-slots (Array String))
-  (pool-qualified-slots (Array bool))
-  (pool-last-slash-slots (Array i64))
-  (pool-first-dot-slots (Array i64))
-  (pool-module-id-slots (Array i64))
-  (pool-base-id-slots (Array i64))
-  (pool-count (Array i64))
-  (map-slots (Array ci.InternSlot))
-  (map-ready (Array bool))
-  (reset-generation (Array i64)))
+  (compat ci.InternCompatState))
 
 (define (intern-state-new) : InternState
-  (let
-    [pool-count : (Array i64) (make-array i64 1)]
-    [map-ready : (Array bool) (make-array bool 1)]
-    [reset-generation : (Array i64) (make-array i64 1)]
-    (begin
-      (array-set! pool-count 0 0)
-      (array-set! map-ready 0 false)
-      (array-set! reset-generation 0 0)
-      (InternState
-        (make-array String (ci.intern-capacity))
-        (make-array bool (ci.intern-capacity))
-        (make-array i64 (ci.intern-capacity))
-        (make-array i64 (ci.intern-capacity))
-        (make-array i64 (ci.intern-capacity))
-        (make-array i64 (ci.intern-capacity))
-        pool-count
-        (make-array ci.InternSlot (ci.intern-capacity))
-        map-ready
-        reset-generation))))
+  (InternState (ci.intern-compat-state-new)))
 
 (define (intern-state-pool-len [state : InternState]) : i64
-  (array-ref (struct-get state pool-count) 0))
+  (ci.intern-compat-state-pool-len (struct-get state compat)))
 
 (define (intern-state-generation [state : InternState]) : i64
-  (array-ref (struct-get state reset-generation) 0))
-
-(define (intern-state-set-pool-len! [state : InternState] [len : i64]) : unit
-  (array-set! (struct-get state pool-count) 0 len))
-
-(define (intern-state-map-ready? [state : InternState]) : bool
-  (array-ref (struct-get state map-ready) 0))
-
-(define (intern-state-set-map-ready! [state : InternState] [ready : bool]) : unit
-  (array-set! (struct-get state map-ready) 0 ready))
-
-(define (intern-state-bump-generation! [state : InternState]) : unit
-  (array-set!
-    (struct-get state reset-generation)
-    0
-    (+ (intern-state-generation state) 1)))
-
-(define (intern-state-fill-empty
-  [state : InternState]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array-set! (struct-get state map-slots) index (ci.InternEmpty))
-      (intern-state-fill-empty state (+ index 1) count))))
-
-(define (intern-state-map-insert-existing-from
-  [state : InternState]
-  [name : String]
-  [id : i64]
-  [hash : i64]
-  [cursor : i64]
-  [steps : i64]
-  [capacity : i64]) : unit
-  (if (>= steps capacity)
-    unit
-    (match (array-ref (struct-get state map-slots) cursor)
-      [(ci.InternEmpty)
-        (array-set!
-          (struct-get state map-slots)
-          cursor
-          (ci.InternUsed name id hash))]
-      [_
-        (intern-state-map-insert-existing-from
-          state
-          name
-          id
-          hash
-          (ci.intern-bucket (+ cursor 1) capacity)
-          (+ steps 1)
-          capacity)])))
-
-(define (intern-state-map-insert-existing! [state : InternState] [id : i64]) : unit
-  (let
-    [name : String (array-ref (struct-get state pool-slots) id)]
-    [hash : i64 (ci.intern-hash name)]
-    [capacity : i64 (array-length (struct-get state map-slots))]
-    (intern-state-map-insert-existing-from
-      state
-      name
-      id
-      hash
-      (ci.intern-bucket hash capacity)
-      0
-      capacity)))
-
-(define (intern-state-map-rebuild-prefix
-  [state : InternState]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (intern-state-map-insert-existing! state index)
-      (intern-state-map-rebuild-prefix state (+ index 1) count))))
+  (ci.intern-compat-state-generation (struct-get state compat)))
 
 (define (intern-state-reset! [state : InternState]) : unit
-  (begin
-    (intern-state-set-pool-len! state 0)
-    (intern-state-fill-empty
-      state
-      0
-      (array-length (struct-get state map-slots)))
-    (intern-state-bump-generation! state)
-    (intern-state-set-map-ready! state true)))
+  (ci.intern-compat-state-reset! (struct-get state compat)))
 
 (define (intern-state-reset-to! [state : InternState] [mark : i64]) : unit
-  (begin
-    (intern-state-set-pool-len! state mark)
-    (intern-state-fill-empty
-      state
-      0
-      (array-length (struct-get state map-slots)))
-    (intern-state-map-rebuild-prefix state 0 mark)
-    (intern-state-bump-generation! state)
-    (intern-state-set-map-ready! state true)))
-
-(define (intern-state-record-qualified-metadata
-  [state : InternState]
-  [id : i64]
-  [name : String]) : unit
-  (let
-    [i : i64 0]
-    [n : i64 (ci.intern-private-string-length name)]
-    [slash : i64 -1]
-    [dot : i64 -1]
-    (begin
-      (while (< i n)
-        (let
-          [c : char (ci.intern-private-string-ref name i)]
-          (begin
-            (if (= c '/')
-              (set! slash i)
-              unit)
-            (if (and (< dot 0) (= c '.'))
-              (set! dot i)
-              unit)
-            (set! i (+ i 1)))))
-      (array-set! (struct-get state pool-last-slash-slots) id slash)
-      (array-set! (struct-get state pool-first-dot-slots) id dot)
-      (if (< slash 0)
-        (begin
-          (array-set! (struct-get state pool-qualified-slots) id false)
-          (array-set! (struct-get state pool-module-id-slots) id -1)
-          (array-set! (struct-get state pool-base-id-slots) id id))
-        (let
-          [base-start : i64 (+ slash 1)]
-          [module-name : String (ci.intern-substring name 0 slash)]
-          [base-name : String
-            (ci.intern-substring
-              name
-              base-start
-              (- (ci.intern-private-string-length name) base-start))]
-          (begin
-            (array-set! (struct-get state pool-qualified-slots) id true)
-            (array-set!
-              (struct-get state pool-module-id-slots)
-              id
-              (intern-state-intern state module-name))
-            (array-set!
-              (struct-get state pool-base-id-slots)
-              id
-              (intern-state-intern state base-name))))))))
+  (ci.intern-compat-state-reset-to! (struct-get state compat) mark))
 
 (define (intern-state-intern [state : InternState] [name : String]) : i64
-  (begin
-    (if (intern-state-map-ready? state)
-      unit
-      (intern-state-reset! state))
-    (let
-      [capacity : i64 (array-length (struct-get state map-slots))]
-      [hash : i64 (ci.intern-hash name)]
-      [cursor : i64 (ci.intern-bucket hash capacity)]
-      [steps : i64 0]
-      [out : i64 -1]
-      [done : bool false]
-      (begin
-        (while (if done
-          false
-          (< steps capacity))
-          (match (array-ref (struct-get state map-slots) cursor)
-            [(ci.InternEmpty)
-              (let
-                [id : i64 (intern-state-pool-len state)]
-                (begin
-                  (array-set! (struct-get state pool-slots) id name)
-                  (array-set!
-                    (struct-get state map-slots)
-                    cursor
-                    (ci.InternUsed name id hash))
-                  (intern-state-set-pool-len! state (+ id 1))
-                  (intern-state-record-qualified-metadata state id name)
-                  (set! out id)
-                  (set! done true)))]
-            [(ci.InternUsed slot-key slot-id slot-hash)
-              (if (if (= slot-hash hash)
-                (ci.intern-private-string-eq slot-key name)
-                false)
-                (begin
-                  (set! out slot-id)
-                  (set! done true))
-                (begin
-                  (set! cursor (ci.intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))]))
-        out))))
+  (ci.intern-compat-state-intern (struct-get state compat) name))
 
 (define (intern-state-lookup [state : InternState] [name : String]) : ci.InternLookup
-  (if (intern-state-map-ready? state)
-    (let
-      [capacity : i64 (array-length (struct-get state map-slots))]
-      [hash : i64 (ci.intern-hash name)]
-      [cursor : i64 (ci.intern-bucket hash capacity)]
-      [steps : i64 0]
-      [out : ci.InternLookup ci.InternLookupMissing]
-      [done : bool false]
-      (begin
-        (while (if done
-          false
-          (< steps capacity))
-          (match (array-ref (struct-get state map-slots) cursor)
-            [(ci.InternEmpty)
-              (begin
-                (set! out (ci.InternLookupMissing))
-                (set! done true))]
-            [(ci.InternUsed slot-key slot-id slot-hash)
-              (if (if (= slot-hash hash)
-                (ci.intern-private-string-eq slot-key name)
-                false)
-                (begin
-                  (set! out (ci.InternLookupFound slot-id))
-                  (set! done true))
-                (begin
-                  (set! cursor (ci.intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))]))
-        out))
-    (ci.InternLookupMissing)))
+  (ci.intern-compat-state-lookup (struct-get state compat) name))
 
 (define (intern-state-str [state : InternState] [id : i64]) : String
-  (array-ref (struct-get state pool-slots) id))
+  (ci.intern-compat-state-str (struct-get state compat) id))
 
 (define (intern-state-qualified? [state : InternState] [id : i64]) : bool
-  (array-ref (struct-get state pool-qualified-slots) id))
+  (ci.intern-compat-state-qualified? (struct-get state compat) id))
 
 (define (intern-state-qualified-last-slash [state : InternState] [id : i64]) : i64
-  (array-ref (struct-get state pool-last-slash-slots) id))
+  (ci.intern-compat-state-qualified-last-slash (struct-get state compat) id))
 
 (define (intern-state-qualified-module-id [state : InternState] [id : i64]) : i64
-  (array-ref (struct-get state pool-module-id-slots) id))
+  (ci.intern-compat-state-qualified-module-id (struct-get state compat) id))
 
 (define (intern-state-qualified-base-id [state : InternState] [id : i64]) : i64
-  (array-ref (struct-get state pool-base-id-slots) id))
+  (ci.intern-compat-state-qualified-base-id (struct-get state compat) id))
 
 (define (intern-state-qualified-module [state : InternState] [id : i64]) : String
   (let
@@ -333,7 +99,7 @@
         (set! ok false))
       (intern-state-reset! state-a)
       (unless
-        (= (intern-state-generation state-a) (+ a-generation 1))
+        (not (= (intern-state-generation state-a) a-generation))
         (set! ok false))
       (unless
         (= (intern-state-generation state-b) b-generation)

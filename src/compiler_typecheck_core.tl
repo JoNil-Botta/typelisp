@@ -6510,9 +6510,14 @@
       (tc-hygiene-local-name? (intern-str name-id)))))
 
 (define (tc-hygiene-name-text-id [name-id : i64]) : String
-  (if (or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
-    (intern-str (macro-hygiene-structural-source-name-id name-id))
-    (intern-str name-id)))
+  (cond
+    [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
+      (intern-str (macro-hygiene-structural-source-name-id name-id))]
+    [(or
+        (compiler-composite-pair-key-id? name-id)
+        (compiler-composite-triple-key-id? name-id))
+      (ast-nominal-name-id-display name-id)]
+    [else (intern-str name-id)]))
 
 (define (tc-hygiene-global-base [name : String]) : String
   (tc-hygiene-name-base name (tc-hygiene-global-prefix)))
@@ -55128,9 +55133,11 @@
         [func : AstExpr (ast-node-get func-box)]
         (match (ast-expr-unspan func)
           [(AstExpr.Var name)
-            (if (string.eq
-              (intern-str (macro-output-syntax-id-at name "parse-call-head"))
-              "begin")
+            (if (=
+              (compiler-parse-dispatch-tag-id
+                dispatch
+                (macro-output-syntax-id-at name "parse-call-head"))
+              (compiler-parse-tag-expr-begin))
               (macro-parse-decls-from-exprs dispatch args origin)
               (macro-parse-decls-from-one-expr dispatch expr origin))]
           [_ (macro-parse-decls-from-one-expr dispatch expr origin)]))]

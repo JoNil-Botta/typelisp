@@ -10,7 +10,9 @@
   (match (compiler-load-decls-with-module-and-roots-cfg-root
     (ast-decl-list-new)
     "src/tests/compiler_load_decls_nil_smoke.tl"
+    cbi.compiler-builtin-id-fix-empty
     ""
+    cbi.compiler-builtin-id-fix-empty
     ""
     cbi.compiler-builtin-id-fix-empty
     (sym_i64_env.sym-i64-empty)

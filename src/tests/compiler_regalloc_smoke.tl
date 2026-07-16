@@ -1,6 +1,7 @@
 ;; compiler_regalloc_smoke.tl - Runnable smoke for compiler_regalloc.tl.
 (import "../compiler_liveness.tl")
 (import "../compiler_regalloc.tl")
+(import compiler_intern as ci)
 
 (define (compiler-reg-smoke-spmd-call-function) : CompilerIrFunction
   (let
@@ -17,7 +18,7 @@
             (compiler-reg-i64-ty))
           CompilerIrSpmdCallArgList.Nil))]
     (CompilerIrFunction.Function
-      "spmd_call"
+      (ci.intern-generated-canonical-name "spmd_call")
       CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       5
@@ -41,7 +42,7 @@
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (ir-instr-spmd-call
-                    "spmd_helper"
+                    (ci.intern-generated-canonical-name "spmd_helper")
                     (CompilerIrSpmdBackend.Avx512)
                     8
                     (CompilerIrValue.Var 0)
@@ -87,7 +88,7 @@
 
 (define (compiler-reg-smoke-descriptor-pair-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "descriptor_pair"
+    (ci.intern-generated-canonical-name "descriptor_pair")
     (compiler-ir-param-cons
       (CompilerIrParam.Param "handle" (AstType.String) 0)
       CompilerIrParamList.Nil)

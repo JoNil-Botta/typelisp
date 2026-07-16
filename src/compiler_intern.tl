@@ -822,6 +822,11 @@
 (define (intern-compat-state-qualified? [state : InternCompatState] [id : i64]) : bool
   (array-ref (struct-get state pool-qualified-slots) id))
 
+(define (intern-compat-state-qualified-last-slash
+  [state : InternCompatState]
+  [id : i64]) : i64
+  (cast (array-ref (struct-get state pool-last-slash-slots) id) : i64))
+
 (define (intern-compat-state-first-dot [state : InternCompatState] [id : i64]) : i64
   (cast (array-ref (struct-get state pool-first-dot-slots) id) : i64))
 
@@ -1532,7 +1537,7 @@
   [dotted-tail-id : i64]) : i64
   (begin
     (if (or
-      (< (intern-private-first-dot name) 1)
+      (< (intern-private-first-dot name) 0)
       (< leading-dot-id 0)
       (< dotted-prefix-id 0)
       (< dotted-tail-id 0))

@@ -3,13 +3,17 @@
 (import "../compiler_ir_types.tl")
 (import compiler_intern as ci)
 
+(define (compiler-ir-smoke-symbol-id [name : String]) : i64
+  (ci.intern-generated-canonical-name name))
+
 (define (compiler-ir-smoke-function-list-first-name?
   [functions : CompilerIrFunctionList]
   [want : String]) : bool
   (match (compiler-ir-function-list-force-cons functions)
     [(CompilerIrFunctionList.Cons func _)
       (match func
-        [(CompilerIrFunction.Function name _ _ _ _) (string.eq name want)])]
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (string.eq (ci.intern-str name) want)])]
     [(CompilerIrFunctionList.Nil) false]
     [(CompilerIrFunctionList.Array _) false]))
 
@@ -21,7 +25,8 @@
     [(CompilerIrFunctionList.Cons func rest)
       (if (= index 0)
         (match func
-          [(CompilerIrFunction.Function name _ _ _ _) (string.eq name want)])
+          [(CompilerIrFunction.Function name _ _ _ _)
+            (string.eq (ci.intern-str name) want)])
         (compiler-ir-smoke-function-list-name-at?
           (box-get rest)
           (- index 1)
@@ -84,7 +89,7 @@
           CompilerIrParamList.Nil))]
     [func : CompilerIrFunction
       (CompilerIrFunction.Function
-        "with_params"
+        (compiler-ir-smoke-symbol-id "with_params")
         params
         (AstType.Unit)
         6
@@ -143,7 +148,8 @@
     [(CompilerIrGlobalList.Cons global rest)
       (if (= index 0)
         (match global
-          [(CompilerIrGlobal.Global name _ _) (string.eq name want)])
+          [(CompilerIrGlobal.Global name _ _)
+            (string.eq (ci.intern-str name) want)])
         (compiler-ir-smoke-global-list-name-at? (box-get rest) (- index 1) want))]
     [(CompilerIrGlobalList.Nil) false]
     [(CompilerIrGlobalList.Array _) false]))
@@ -167,12 +173,12 @@
   (let
     [first-global : CompilerIrGlobal
       (CompilerIrGlobal.Global
-        "first-global"
+        (compiler-ir-smoke-symbol-id "first-global")
         (AstType.I64)
         (CompilerIrValue.I64 1))]
     [second-global : CompilerIrGlobal
       (CompilerIrGlobal.Global
-        "second-global"
+        (compiler-ir-smoke-symbol-id "second-global")
         (AstType.Bool)
         (CompilerIrValue.Bool true))]
     [reversed-globals : CompilerIrGlobalList
@@ -187,12 +193,12 @@
       (compiler-ir-clone-global-list compact-globals)]
     [first-extern : CompilerIrExtern
       (compiler-ir-extern-default-id
-        (ci.intern-source-slice "first-extern" 0 12)
+        (compiler-ir-smoke-symbol-id "first-extern")
         "first-extern"
         (AstType.I64))]
     [second-extern : CompilerIrExtern
       (compiler-ir-extern-default-id
-        (ci.intern-source-slice "second-extern" 0 13)
+        (compiler-ir-smoke-symbol-id "second-extern")
         "second-extern"
         (AstType.Bool))]
     [reversed-externs : CompilerIrExternList
@@ -248,14 +254,14 @@
           CompilerIrBlockList.Nil))]
     [first : CompilerIrFunction
       (CompilerIrFunction.Function
-        "first"
+        (compiler-ir-smoke-symbol-id "first")
         CompilerIrParamList.Nil
         (AstType.I64)
         2
         blocks)]
     [second : CompilerIrFunction
       (CompilerIrFunction.Function
-        "second"
+        (compiler-ir-smoke-symbol-id "second")
         CompilerIrParamList.Nil
         (AstType.I64)
         2
@@ -304,21 +310,21 @@
       (compiler-ir-block-list-compact-reversed compact-blocks)]
     [first-func : CompilerIrFunction
       (CompilerIrFunction.Function
-        "first-func"
+        (compiler-ir-smoke-symbol-id "first-func")
         CompilerIrParamList.Nil
         (AstType.Unit)
         0
         compact-blocks)]
     [second-func : CompilerIrFunction
       (CompilerIrFunction.Function
-        "second-func"
+        (compiler-ir-smoke-symbol-id "second-func")
         CompilerIrParamList.Nil
         (AstType.Unit)
         0
         compact-blocks)]
     [third-func : CompilerIrFunction
       (CompilerIrFunction.Function
-        "third-func"
+        (compiler-ir-smoke-symbol-id "third-func")
         CompilerIrParamList.Nil
         (AstType.Unit)
         0
@@ -378,7 +384,7 @@
           CompilerIrSpmdCallArgList.Nil))]
     [instr : CompilerIrInstr
       (ir-instr-spmd-call
-        "helper"
+        (compiler-ir-smoke-symbol-id "helper")
         (CompilerIrSpmdBackend.Avx2)
         8
         (CompilerIrValue.Var 20)

@@ -21,6 +21,7 @@
 ;; unused call-graph/SCC infrastructure for the next inliner phases; returns 42
 ;; only when every self-test passes.
 (import "../compiler_optimize.tl")
+(import compiler_intern as ci)
 (import stdlib.string)
 (import stdlib.test)
 
@@ -105,7 +106,7 @@
 
 (define (opt-switch-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "switch_form"
+    (ci.intern-generated-canonical-name "switch_form")
     (opt-switch-test-params)
     (AstType.I64)
     16
@@ -434,7 +435,11 @@
     (CompilerIrValue.Var 0)
     "bounds_ok.0"
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Call 30 "touch" (CompilerIrCallArgs.Nil) (AstType.Unit))
+      (CompilerIrInstr.Call
+        30
+        (ci.intern-generated-canonical-name "touch")
+        (CompilerIrCallArgs.Nil)
+        (AstType.Unit))
       (smoke-bounds-object-length-check-fragment
         20
         21
@@ -730,7 +735,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               80
-              "touch"
+              (ci.intern-generated-canonical-name "touch")
               (CompilerIrCallArgs.One (CompilerIrValue.Var object-var))
               (AstType.Unit))
             tail)
@@ -1132,7 +1137,7 @@
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
-        "unknown_len"
+        (ci.intern-generated-canonical-name "unknown_len")
         (CompilerIrCallArgs.Nil)
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -1285,7 +1290,7 @@
 
 (define (smoke-heavy-pass-large-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "heavy_pass_large"
+    (ci.intern-generated-canonical-name "heavy_pass_large")
     (opt-gvn-test-params)
     (AstType.I64)
     4

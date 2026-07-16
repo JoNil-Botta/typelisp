@@ -11866,7 +11866,7 @@
         false
         false
         false
-        (CompilerBackendRuntimeTailPlan false false false -1 -1))
+        (CompilerBackendRuntimeTailPlan false false false))
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil
       (compiler-backend-program-index-build
@@ -12142,7 +12142,7 @@
     true
     true
     true
-    (CompilerBackendRuntimeTailPlan true true true -1 -1)))
+    (CompilerBackendRuntimeTailPlan true true true)))
 
 ;; Test fixtures start from readable spellings, then exercise only the backend's
 ;; ID-native runtime inventory. Production never performs this conversion.

@@ -549,6 +549,20 @@
 (define (ctfe-source-string-value [string-id : i64]) : CompilerCtfeValue
   (CompilerCtfeValue.String (intern-str string-id) string-id))
 
+(define (ctfe-generated-leading-dot-suffix-id [suffix-id : i64]) : i64
+  (let
+    [suffix : String (intern-str suffix-id)]
+    [prefix-id : i64
+      (if (ci.intern-dotted? suffix-id)
+        (ctfe-generated-leading-dot-suffix-id
+          (ci.intern-dotted-prefix-id suffix-id))
+        cbi.compiler-builtin-id-fix-empty)]
+    (ci.intern-generated-canonical-dotted-name
+      (string.append "." suffix)
+      cbi.compiler-builtin-id-fix-empty
+      prefix-id
+      suffix-id)))
+
 (define (ctfe-generated-dotted-append-member-id
   [prefix-id : i64]
   [member-id : i64]) : i64
@@ -588,24 +602,34 @@
   (let
     [text : String (string.append left right)]
     [right-len : i64 (string.string-length right)]
-    (if (and
-      (> (string.string-length left) 0)
-      (> right-len 1)
-      (= (cast (string.string-ref right 0) : i64) 46)
-      (>= left-id 0)
-      (< left-id (intern-capacity))
-      (not (= (ci.intern-first-dot left-id) 0))
-      (>= right-id 0)
-      (< right-id (intern-capacity))
-      (= (ci.intern-first-dot right-id) 0))
-      (let
-        [suffix-id : i64 (ci.intern-dotted-tail-id right-id)]
-        (if (>= suffix-id 0)
-          (CompilerCtfeValue.String
-            text
-            (ctfe-generated-dotted-append-suffix-id left-id suffix-id))
-          (ctfe-generated-string-value text)))
-      (ctfe-generated-string-value text))))
+    (cond
+      [(and
+          (= (string.string-length left) 1)
+          (= (cast (string.string-ref left 0) : i64) 46)
+          (> right-len 0)
+          (>= right-id 0)
+          (< right-id (intern-capacity)))
+        (CompilerCtfeValue.String
+          text
+          (ctfe-generated-leading-dot-suffix-id right-id))]
+      [(and
+          (> (string.string-length left) 0)
+          (> right-len 1)
+          (= (cast (string.string-ref right 0) : i64) 46)
+          (>= left-id 0)
+          (< left-id (intern-capacity))
+          (not (= (ci.intern-first-dot left-id) 0))
+          (>= right-id 0)
+          (< right-id (intern-capacity))
+          (= (ci.intern-first-dot right-id) 0))
+        (let
+          [suffix-id : i64 (ci.intern-dotted-tail-id right-id)]
+          (if (>= suffix-id 0)
+            (CompilerCtfeValue.String
+              text
+              (ctfe-generated-dotted-append-suffix-id left-id suffix-id))
+            (ctfe-generated-string-value text)))]
+      [else (ctfe-generated-string-value text)])))
 
 (define (ctfe-value-name-id [value : CompilerCtfeValue]) : i64
   (match value
@@ -738,7 +762,7 @@
 
 (defenum CtfeReflectCleanup
   (No)
-  (Fn String))
+  (Fn String i64))
 
 (defenum CtfeReflectInfo
   (Struct String String String i64 CtfeReflectCleanup CtfeReflectFieldList)
@@ -1444,17 +1468,29 @@
 
 (define (ctfe-reflect-struct-cleanup
   [module : String]
+  [module-id : i64]
   [cleanup : AstStructCleanup]) : CtfeReflectCleanup
   (match cleanup
     [(AstStructCleanup.No) CtfeReflectCleanup.No]
     [(AstStructCleanup.Fn name)
-      (CtfeReflectCleanup.Fn (ctfe-symbol-module-key module (intern-str name)))]))
+      (CtfeReflectCleanup.Fn
+        (ctfe-symbol-module-key module (intern-str name))
+        (if (= (string.string-length module) 0)
+          name
+          (ctfe-qualified-name-key-id module-id name)))]))
 
-(define (ctfe-reflect-enum-cleanup [module : String] [cleanup : AstEnumCleanup]) : CtfeReflectCleanup
+(define (ctfe-reflect-enum-cleanup
+  [module : String]
+  [module-id : i64]
+  [cleanup : AstEnumCleanup]) : CtfeReflectCleanup
   (match cleanup
     [(AstEnumCleanup.No) CtfeReflectCleanup.No]
     [(AstEnumCleanup.Fn name)
-      (CtfeReflectCleanup.Fn (ctfe-symbol-module-key module (intern-str name)))]))
+      (CtfeReflectCleanup.Fn
+        (ctfe-symbol-module-key module (intern-str name))
+        (if (= (string.string-length module) 0)
+          name
+          (ctfe-qualified-name-key-id module-id name)))]))
 
 (define (ctfe-reflect-info-add-names
   [infos : CtfeReflectInfoList]
@@ -1493,7 +1529,7 @@
         module
         name-str
         key-id
-        (ctfe-reflect-struct-cleanup module cleanup)
+        (ctfe-reflect-struct-cleanup module module-id cleanup)
         (ctfe-reflect-field-list-from-fields fields))]
     (ctfe-reflect-info-add-names infos info key-id name-str name module)))
 
@@ -1520,7 +1556,7 @@
         module
         name-str
         key-id
-        (ctfe-reflect-enum-cleanup module cleanup)
+        (ctfe-reflect-enum-cleanup module module-id cleanup)
         (ctfe-reflect-variant-list-from-variants variants))]
     (ctfe-reflect-info-add-names infos info key-id name-str name module)))
 
@@ -3881,7 +3917,7 @@
                             (ResultCtfe.Ok
                               (CompilerCtfeValue.Bool false)
                               arg-fuel)]
-                          [(CtfeReflectCleanup.Fn _)
+                          [(CtfeReflectCleanup.Fn _ _)
                             (ResultCtfe.Ok
                               (CompilerCtfeValue.Bool true)
                               arg-fuel)])]
@@ -3891,7 +3927,7 @@
                             (ResultCtfe.Ok
                               (CompilerCtfeValue.Bool false)
                               arg-fuel)]
-                          [(CtfeReflectCleanup.Fn _)
+                          [(CtfeReflectCleanup.Fn _ _)
                             (ResultCtfe.Ok
                               (CompilerCtfeValue.Bool true)
                               arg-fuel)])])]
@@ -3909,9 +3945,11 @@
                           [(CtfeReflectInfo.Struct _ _ _ _ value _) value]
                           [(CtfeReflectInfo.Enum _ _ _ _ value _) value])]
                       (match cleanup
-                        [(CtfeReflectCleanup.Fn cleanup-name)
+                        [(CtfeReflectCleanup.Fn cleanup-name cleanup-name-id)
                           (ResultCtfe.Ok
-                            (ctfe-generated-string-value cleanup-name)
+                            (CompilerCtfeValue.String
+                              cleanup-name
+                              cleanup-name-id)
                             arg-fuel)]
                         [(CtfeReflectCleanup.No)
                           (ResultCtfe.Err
@@ -12852,7 +12890,9 @@
               ""
               "Point"
               cbi.compiler-builtin-id-fix-Point
-              (CtfeReflectCleanup.Fn "cleanup-point")
+              (CtfeReflectCleanup.Fn
+                "cleanup-point"
+                (ctfe-materialize-generated-name-id "cleanup-point"))
               point-fields)
             cbi.compiler-builtin-id-fix-Point)
           (CtfeReflectInfo.Enum
@@ -14437,6 +14477,37 @@
             "compile-time evaluation limit exceeded")]
         [(ResultCtfe.Ok _ _) false]))))
 
+(define (compiler-ctfe-generated-dotted-suffix-id-ok?) : bool
+  (match (ctfe-generated-string-append-value
+    "."
+    -1
+    "Some"
+    cbi.compiler-builtin-id-fix-Some)
+    [(CompilerCtfeValue.String suffix suffix-id)
+      (if (and
+        (string.eq suffix ".Some")
+        (= (ci.intern-first-dot suffix-id) 0)
+        (=
+          (ci.intern-dotted-tail-id suffix-id)
+          cbi.compiler-builtin-id-fix-Some))
+        (match (ctfe-generated-string-append-value
+          "Maybe"
+          cbi.compiler-builtin-id-fix-Maybe
+          suffix
+          suffix-id)
+          [(CompilerCtfeValue.String full full-id)
+            (and
+              (string.eq full "Maybe.Some")
+              (=
+                (ci.intern-leading-dot-id full-id)
+                cbi.compiler-builtin-id-fix-Maybe)
+              (=
+                (ci.intern-dotted-tail-id full-id)
+                cbi.compiler-builtin-id-fix-Some))]
+          [_ false])
+        false)]
+    [_ false]))
+
 (define (compiler-ctfe-self-test) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -14460,6 +14531,7 @@
     (unless (compiler-ctfe-captured-quote-syntax-ok?) (return 1))
     (unless (compiler-ctfe-expr-pattern-match-ok?) (return 1))
     (unless (compiler-ctfe-local-while-ok?) (return 1))
+    (unless (compiler-ctfe-generated-dotted-suffix-id-ok?) (return 1))
     42))
 
 (cfg

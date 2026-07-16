@@ -22,6 +22,7 @@
 (import (vector String) as svec)
 (import token)
 (cfg compile-profile (import stdlib.profile))
+(cfg embedded-stdlib-tlci (import "compiler_embedded_stdlib_tlci.tl"))
 (cfg test (import stdlib.test))
 (import sym_i64_env)
 
@@ -2247,6 +2248,26 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-stdlib-tlci-catalog-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-stdlib-tlci-catalog-misses : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-stdlib-tlci-load-failures : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-stdlib-tlci-interpreted-fallbacks : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-stdlib-source-interpreted : i64
+    0))
+(cfg
+  compile-profile
   (define tc-lp-counts : (Array i64)
     (array.make-array i64 15)))
 
@@ -2377,6 +2398,11 @@
       (set! compiler-tc-macro-live-reuses 0)
       (set! compiler-tc-macro-live-registry-rebuilds 0)
       (set! compiler-tc-macro-live-registry-reuses 0)
+      (set! compiler-tc-macro-stdlib-tlci-catalog-hits 0)
+      (set! compiler-tc-macro-stdlib-tlci-catalog-misses 0)
+      (set! compiler-tc-macro-stdlib-tlci-load-failures 0)
+      (set! compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 0)
+      (set! compiler-tc-macro-stdlib-source-interpreted 0)
       (set! compiler-tc-macro-walk-decls-shared 0)
       (set! compiler-tc-macro-walk-decls-expanded 0)
       (set! compiler-tc-macro-walk-share-gate-open 0))))
@@ -3020,6 +3046,21 @@
       (compiler-tc-macro-counter-profile-line
         "live_registry_reuses"
         compiler-tc-macro-live-registry-reuses)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_catalog_hits"
+        compiler-tc-macro-stdlib-tlci-catalog-hits)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_catalog_misses"
+        compiler-tc-macro-stdlib-tlci-catalog-misses)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_load_failures"
+        compiler-tc-macro-stdlib-tlci-load-failures)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_interpreted_fallbacks"
+        compiler-tc-macro-stdlib-tlci-interpreted-fallbacks)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_source_interpreted"
+        compiler-tc-macro-stdlib-source-interpreted)
       (compiler-tc-macro-counter-profile-line
         "walk_decls_shared"
         compiler-tc-macro-walk-decls-shared)
@@ -59901,6 +59942,96 @@
                       call-expr)]
                   [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))))])]))
 
+;; Route embedded-stdlib macro calls through the TLCI catalog before the
+;; semantic CTFE fallback. The current image contains native registration
+;; shells, not lowered transformer bodies, so a catalog hit is deliberately
+;; counted separately from the interpreted execution that follows. Explicit
+;; stdlib roots never enter this branch because loader provenance is per
+;; compilation session.
+(define macro-expand-stdlib-tlci-route-active : bool
+  false)
+(cfg
+  embedded-stdlib-tlci
+  (define macro-expand-stdlib-tlci-catalog-cache : tc_string_i64_map.Map
+    (tc_string_i64_map.new)))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-expand-stdlib-tlci-catalog-lookup-cached [name : String]) : CompilerEmbeddedStdlibTlciLookup
+    (match (tc_string_i64_map.get
+      (& macro-expand-stdlib-tlci-catalog-cache)
+      name)
+      [(tc_string_i64_map.LookupFound outcome)
+        (cond
+          [(= outcome 1) CompilerEmbeddedStdlibTlciLookup.Cataloged]
+          [(= outcome 0) CompilerEmbeddedStdlibTlciLookup.Missing]
+          [else
+            (CompilerEmbeddedStdlibTlciLookup.Unavailable
+              "cached embedded stdlib tlci load failure")])]
+      [(tc_string_i64_map.LookupMissing)
+        (let
+          [lookup : CompilerEmbeddedStdlibTlciLookup
+            (compiler-embedded-stdlib-tlci-catalog-lookup name)]
+          (begin
+            (tc_string_i64_map.insert-ref!
+              (&mut macro-expand-stdlib-tlci-catalog-cache)
+              name
+              (match lookup
+                [(CompilerEmbeddedStdlibTlciLookup.Cataloged) 1]
+                [(CompilerEmbeddedStdlibTlciLookup.Missing) 0]
+                [(CompilerEmbeddedStdlibTlciLookup.Unavailable _) -1]))
+            lookup))])))
+
+(define (macro-note-stdlib-tlci-route
+  [definition-module : String]
+  ;; lint-allow: unused-variable -- used by embedded-stdlib-tlci builds.
+  [macro-name : String]) : unit
+  (if (ctfe-string-prefix? definition-module "stdlib.")
+    (if macro-expand-stdlib-tlci-route-active
+      (begin
+        (cfg
+          embedded-stdlib-tlci
+          (match (macro-expand-stdlib-tlci-catalog-lookup-cached
+            (if (ctfe-string-prefix? macro-name "stdlib.")
+              macro-name
+              (str_cat.str-cat definition-module "/" macro-name)))
+            [(CompilerEmbeddedStdlibTlciLookup.Cataloged)
+              (cfg
+                compile-profile
+                (set!
+                  compiler-tc-macro-stdlib-tlci-catalog-hits
+                  (+ compiler-tc-macro-stdlib-tlci-catalog-hits 1)))]
+            [(CompilerEmbeddedStdlibTlciLookup.Missing)
+              (cfg
+                compile-profile
+                (set!
+                  compiler-tc-macro-stdlib-tlci-catalog-misses
+                  (+ compiler-tc-macro-stdlib-tlci-catalog-misses 1)))]
+            [(CompilerEmbeddedStdlibTlciLookup.Unavailable _)
+              (cfg
+                compile-profile
+                (set!
+                  compiler-tc-macro-stdlib-tlci-load-failures
+                  (+ compiler-tc-macro-stdlib-tlci-load-failures 1)))]))
+        (cfg
+          (not embedded-stdlib-tlci)
+          (cfg
+            compile-profile
+            (set!
+              compiler-tc-macro-stdlib-tlci-load-failures
+              (+ compiler-tc-macro-stdlib-tlci-load-failures 1))))
+        (cfg
+          compile-profile
+          (set!
+            compiler-tc-macro-stdlib-tlci-interpreted-fallbacks
+            (+ compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 1))))
+      (cfg
+        compile-profile
+        (set!
+          compiler-tc-macro-stdlib-source-interpreted
+          (+ compiler-tc-macro-stdlib-source-interpreted 1))))
+    unit))
+
 ;; Run a macro transformer via CTFE. Module/declaration macro expansion also
 ;; needs the bound CTFE environment while normalizing generated import operands.
 (define (macro-eval-transformer-expanded-with-env
@@ -59948,6 +60079,7 @@
       call-expr)
       [(ResultMacroEnv.Ok env)
         (begin
+          (macro-note-stdlib-tlci-route fallback-module macro-name)
           (cfg compile-profile (compiler-tc-macro-profile-start))
           (match (ctfe-eval-node
             body
@@ -65278,6 +65410,17 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
+    (set!
+      macro-expand-stdlib-tlci-route-active
+      (and
+        (= (svec.len (& stdlib-roots)) 0)
+        (compiler-load-session-embedded-stdlib-source-used?)))
+    (cfg
+      embedded-stdlib-tlci
+      (if macro-expand-stdlib-tlci-route-active
+        (set! macro-expand-stdlib-tlci-catalog-cache (tc_string_i64_map.new))
+        unit))
+    (cfg embedded-stdlib-tlci (compiler-embedded-stdlib-tlci-session-close!))
     (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
     (tc-stdlib-comptime-macro-surface-ok-reset!)
     (macro-generated-module-memo-reset!)
@@ -65303,22 +65446,30 @@
       stdlib-roots
       cfgs)
       [(ResultMacroExpand.Ok expanded expanded-paths)
-        (let
-          [_profile-owners : unit (macro-expand-allocation-profile-snapshot! 0)]
-          [_release-scratch : unit (macro-expand-scratch-release!)]
-          (if (compiler-specialize-needed? expanded)
-            (match (gen-normalize-program-with-paths-and-pools
-              expanded
-              expanded-paths
-              (tc-decl-path-list-last expanded-paths "")
-              pools)
-              [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
-                (ResultMacroExpand.Ok normalized normalized-paths)]
-              [(ResultGenProgramWithPaths.Err diag)
-                (ResultMacroExpand.Err diag)])
-            (ResultMacroExpand.Ok expanded expanded-paths)))]
+        (begin
+          (cfg
+            embedded-stdlib-tlci
+            (compiler-embedded-stdlib-tlci-session-close!))
+          (let
+            [_profile-owners : unit
+              (macro-expand-allocation-profile-snapshot! 0)]
+            [_release-scratch : unit (macro-expand-scratch-release!)]
+            (if (compiler-specialize-needed? expanded)
+              (match (gen-normalize-program-with-paths-and-pools
+                expanded
+                expanded-paths
+                (tc-decl-path-list-last expanded-paths "")
+                pools)
+                [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
+                  (ResultMacroExpand.Ok normalized normalized-paths)]
+                [(ResultGenProgramWithPaths.Err diag)
+                  (ResultMacroExpand.Err diag)])
+              (ResultMacroExpand.Ok expanded expanded-paths))))]
       [(ResultMacroExpand.Err diag)
         (begin
+          (cfg
+            embedded-stdlib-tlci
+            (compiler-embedded-stdlib-tlci-session-close!))
           (macro-expand-allocation-profile-snapshot! 0)
           (macro-expand-scratch-release!)
           (ResultMacroExpand.Err diag))])))

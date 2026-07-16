@@ -458,6 +458,13 @@ Self-host bootstrap builds the compiler's exact embedded stdlib source set into
 a source-bound `stdlib.tlci`, embeds it in the next compiler stage, and validates
 all registered macro identities through the production loader. A bootstrapped
 compiler exposes that payload as `typelisp inspect embedded:stdlib.tlci`.
+When compilation consumes the embedded stdlib and no explicit `--stdlib-root`
+was supplied, macro expansion maps that image once per expansion pass and
+checks each stdlib macro against its native registration catalog. Transformer
+bodies still execute through CTFE; compile-profile counters report catalog
+hits/misses, load failures, and the interpreted fallback separately. Supplying
+an explicit stdlib root skips the TLCI route. The compile-profile gate compiles
+the same corpus through both routes and requires byte-identical assembly.
 `typelisp run [--manifest-path <typelisp.pkg>]` uses the same package
 resolution and build profile rules, then executes `bin` package artifacts;
 runtime arguments are passed after `--`.

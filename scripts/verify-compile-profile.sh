@@ -51,6 +51,13 @@ BUILD_STDOUT="$WORKDIR/profile-build.stdout"
 BUILD_STDERR="$WORKDIR/profile-build.stderr"
 CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
+STDLIB_TLCI_DIR="$WORKDIR/stdlib-tlci-dispatch"
+STDLIB_TLCI_EMBEDDED_ASM="$STDLIB_TLCI_DIR/embedded.s"
+STDLIB_TLCI_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/embedded.stdout"
+STDLIB_TLCI_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/embedded.stderr"
+STDLIB_TLCI_SOURCE_ASM="$STDLIB_TLCI_DIR/source.s"
+STDLIB_TLCI_SOURCE_STDOUT="$STDLIB_TLCI_DIR/source.stdout"
+STDLIB_TLCI_SOURCE_STDERR="$STDLIB_TLCI_DIR/source.stderr"
 VECTOR_CORE_STDOUT="$WORKDIR/profile-vector-core.stdout"
 VECTOR_CORE_STDERR="$WORKDIR/profile-vector-core.stderr"
 VECTOR_FULL_STDOUT="$WORKDIR/profile-vector-full.stdout"
@@ -278,6 +285,10 @@ assert_lower_row() {
         "$OPT_STDERR"
 }
 
+echo "[compile-profile] build embedded stdlib tlci input"
+scripts/build-embedded-stdlib-tlci.sh \
+    "$COMPILER" target/embedded-stdlib-tlci/stdlib.tlci "$NL_HOST_OS"
+
 echo "[compile-profile] compile profile-enabled CLI"
 if ! "$COMPILER" compile src/main.tl \
     -o "$PROFILE_ASM" \
@@ -286,6 +297,7 @@ if ! "$COMPILER" compile src/main.tl \
     --stdlib-root stdlib \
     --stdlib-root src \
     --cfg compile-profile \
+    --cfg embedded-stdlib-tlci \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI compile failed"
@@ -655,6 +667,23 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_rebuilds|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_reuses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_registry_rebuilds|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_registry_reuses|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_catalog_hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_catalog_misses|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_load_failures|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_interpreted_fallbacks|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_source_interpreted|"
+assert_profile_counter_eq_in \
+    "$CHECK_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$CHECK_STDOUT" \
+    "$CHECK_STDERR"
+assert_profile_counter_at_least_in \
+    "$CHECK_STDERR" \
+    "typecheck.macro.stdlib_source_interpreted" \
+    1 \
+    "$CHECK_STDOUT" \
+    "$CHECK_STDERR"
 # The multi-pass fixed-point loop and its follow-up worklist are deleted: macro
 # expansion is a single demand-driven pass, so the fixed_point_* counters no
 # longer exist.
@@ -665,6 +694,70 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_f
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_func.misses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.misses|"
+
+echo "[compile-profile] verify embedded stdlib tlci routing and differential output"
+mkdir -p "$STDLIB_TLCI_DIR"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$ROOT/tests/integration/arithmetic.tl" \
+        -o "$STDLIB_TLCI_EMBEDDED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$STDLIB_TLCI_EMBEDDED_STDOUT" 2> "$STDLIB_TLCI_EMBEDDED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_EMBEDDED_STDOUT" "$STDLIB_TLCI_EMBEDDED_STDERR"
+    fail "embedded stdlib tlci routing fixture compile failed"
+fi
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$ROOT/tests/integration/arithmetic.tl" \
+        -o "$STDLIB_TLCI_SOURCE_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root "$ROOT/stdlib"
+) > "$STDLIB_TLCI_SOURCE_STDOUT" 2> "$STDLIB_TLCI_SOURCE_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_SOURCE_STDOUT" "$STDLIB_TLCI_SOURCE_STDERR"
+    fail "source stdlib routing fixture compile failed"
+fi
+assert_profile_counter_at_least_in \
+    "$STDLIB_TLCI_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    1 \
+    "$STDLIB_TLCI_EMBEDDED_STDOUT" \
+    "$STDLIB_TLCI_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STDLIB_TLCI_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_misses" \
+    0 \
+    "$STDLIB_TLCI_EMBEDDED_STDOUT" \
+    "$STDLIB_TLCI_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STDLIB_TLCI_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_load_failures" \
+    0 \
+    "$STDLIB_TLCI_EMBEDDED_STDOUT" \
+    "$STDLIB_TLCI_EMBEDDED_STDERR"
+assert_profile_counter_at_least_in \
+    "$STDLIB_TLCI_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+    1 \
+    "$STDLIB_TLCI_EMBEDDED_STDOUT" \
+    "$STDLIB_TLCI_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STDLIB_TLCI_SOURCE_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$STDLIB_TLCI_SOURCE_STDOUT" \
+    "$STDLIB_TLCI_SOURCE_STDERR"
+assert_profile_counter_at_least_in \
+    "$STDLIB_TLCI_SOURCE_STDERR" \
+    "typecheck.macro.stdlib_source_interpreted" \
+    1 \
+    "$STDLIB_TLCI_SOURCE_STDOUT" \
+    "$STDLIB_TLCI_SOURCE_STDERR"
+if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_SOURCE_ASM"; then
+    diff -u "$STDLIB_TLCI_SOURCE_ASM" "$STDLIB_TLCI_EMBEDDED_ASM" >&2 || true
+    fail "embedded and source stdlib routing changed generated assembly"
+fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_core.tl \

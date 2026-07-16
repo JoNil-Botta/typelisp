@@ -29,7 +29,7 @@
   (ConsId i64 i64 (Box CloneNameList)))
 
 (define (clone-helper-name-id-new-for-key [type-key-id : i64]) : i64
-  (ci.intern-generated-name
+  (ci.intern-generated-canonical-name
     (clone-local-helper-name
       (ci.intern-str (clone-name-key-base-id type-key-id)))))
 
@@ -543,6 +543,7 @@
             (set! index (+ index 1)))))
       out)))
 
+
 (define (clone-fixpoint-step
   [pools : AstNodePoolContext]
   [decls : AstDeclList]
@@ -983,4 +984,3 @@
               (set! out (clone-name-set-insert-id out name-key-id))
               (set! cur (box-get rest)))]))
       out)))
-

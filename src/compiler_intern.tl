@@ -256,7 +256,7 @@
   (let
     [stride : i64 (intern-capacity)]
     [base : i64 (intern-macro-global-structural-base)]
-    (and (>= id base) (< id (+ base (* 3 (* stride stride)))))))
+    (and (>= id base) (< id (+ base (* 2 (* stride stride)))))))
 
 (define (intern-macro-global-source-name-id [id : i64]) : i64
   (% (- id (intern-macro-global-structural-base)) (intern-capacity)))

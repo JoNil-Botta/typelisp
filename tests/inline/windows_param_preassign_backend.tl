@@ -1,6 +1,7 @@
 ;; windows_param_preassign_backend.tl - backend smoke for #3493's Win64
 ;; incoming scalar parameter homes.
 (import stdlib.io)
+(import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 
 ;; Retained for #2454 path-import compatibility: compiler_backend.tl is raw
@@ -13,7 +14,9 @@
     (io.panic message)))
 
 (define (win-param-preassign-logical-name [name : String]) : i64
-  (ci.intern-generated-name name))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (ci.intern-generated-name name)))
 
 (define (win-param-preassign-globals
   [pa : i64]

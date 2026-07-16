@@ -3911,14 +3911,10 @@
     [source-id : i64 17]
     [module-id : i64 23]
     [declaration-id : i64 42]
-    [legacy-id : i64 (macro-hygiene-global-id module-id source-id -1 true)]
-    [context-id : i64 (macro-hygiene-global-id module-id source-id -1 false)]
-    [direct-id : i64
-      (macro-hygiene-global-id
-        (compiler-symbol-root-module-id)
-        source-id
-        declaration-id
-        false)]
+    [legacy-id : i64 (macro-hygiene-global-id module-id source-id true)]
+    [context-id : i64 (macro-hygiene-global-id module-id source-id false)]
+    [root-context-id : i64
+      (macro-hygiene-global-id (compiler-symbol-root-module-id) source-id false)]
     [direct-local-id : i64
       (macro-hygiene-local-id
         (MacroHygieneContext
@@ -3941,9 +3937,11 @@
       (macro-hygiene-global-legacy-id? legacy-id)
       (= (macro-hygiene-global-module-id legacy-id) module-id)
       (= (macro-hygiene-global-module-id context-id) module-id)
-      (macro-hygiene-global-direct-decl-id? direct-id)
-      (= (macro-hygiene-global-declaration-id direct-id) declaration-id)
-      (= (macro-hygiene-structural-source-name-id direct-id) source-id)
+      (not (macro-hygiene-global-legacy-id? root-context-id))
+      (=
+        (macro-hygiene-global-module-id root-context-id)
+        (compiler-symbol-root-module-id))
+      (= (macro-hygiene-structural-source-name-id root-context-id) source-id)
       (macro-hygiene-local-id? direct-local-id)
       (macro-hygiene-local-id? surface-local-id)
       (not (= direct-local-id surface-local-id)))))

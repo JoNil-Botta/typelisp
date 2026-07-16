@@ -9577,30 +9577,6 @@
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
 
-(define (tc-hygiene-direct-decl-type-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [declaration-id : i64]
-  [source-name-id : i64]
-  [fallback : String]) : ResultTcType
-  (match (compiler-symbols-decl-at-index
-    (tc-context-symbols ctx)
-    declaration-id)
-    [(ResultAstDecl.Ok _)
-      (if tc-hygiene-active-top-env-ready
-        (match (tc-lookup-unsafe-persistent-id
-          tc-hygiene-active-top-env
-          (tc-env-name-key-id source-name-id))
-          [(ResultTcTypeUnsafe.Ok ty unsafe)
-            (if unsafe
-              (match (tc-require-unsafe env (intern-str source-name-id))
-                [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
-                [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-              (ResultTcType.Ok ty))]
-          [(ResultTcTypeUnsafe.Err _) (ResultTcType.Err fallback)])
-        (ResultTcType.Err fallback))]
-    [(ResultAstDecl.Err _) (ResultTcType.Err fallback)]))
-
 (define (tc-lookup-hygiene-context-global-visible-id-inner
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -39720,28 +39696,21 @@
             "typecheck: macro hygiene source id unavailable: "
             name-text))
         (if (macro-hygiene-global-id? name)
-          (if (macro-hygiene-global-direct-decl-id? name)
-            (tc-hygiene-direct-decl-type-id
-              ctx
-              env
-              (macro-hygiene-global-declaration-id name)
-              global-id
-              (string.append "typecheck: unbound name " name-text))
-            (let
-              [module-id : i64 (macro-hygiene-global-module-id name)]
-              (if (macro-hygiene-global-legacy-id? name)
-                (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                  (match (tc-require-unsafe env (intern-str global-id))
-                    [(ResultTcUnit.Ok)
-                      (tc-lookup-hygiene-global-visible-id ctx env global-id)]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-                  (tc-lookup-hygiene-global-visible-id ctx env global-id))
-                (tc-lookup-hygiene-context-global-visible-id
-                  ctx
-                  env
-                  (macro-decl-module-display module-id)
-                  module-id
-                  global-id))))
+          (let
+            [module-id : i64 (macro-hygiene-global-module-id name)]
+            (if (macro-hygiene-global-legacy-id? name)
+              (if (tc-hygiene-global-binding-unsafe-id? env global-id)
+                (match (tc-require-unsafe env (intern-str global-id))
+                  [(ResultTcUnit.Ok)
+                    (tc-lookup-hygiene-global-visible-id ctx env global-id)]
+                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+                (tc-lookup-hygiene-global-visible-id ctx env global-id))
+              (tc-lookup-hygiene-context-global-visible-id
+                ctx
+                env
+                (macro-decl-module-display module-id)
+                module-id
+                global-id)))
           (match (tc-hygiene-global-decode name-text)
             [(TcHygieneGlobalName.Legacy global-name)
               (if (tc-hygiene-global-binding-unsafe-id? env global-id)
@@ -55819,7 +55788,6 @@
 (define (macro-hygiene-global-id
   [module-id : i64]
   [source-name-id : i64]
-  [binding-declaration-id : i64]
   [legacy? : bool]) : i64
   (let
     [stride : i64 (intern-capacity)]
@@ -55828,32 +55796,22 @@
       (if (compiler-symbol-root-module-id? module-id)
         0
         (+ module-id 1))]
-    [direct? : bool
-      (and
-        (not legacy?)
-        (compiler-symbol-root-module-id? module-id)
-        (>= binding-declaration-id 0))]
     (begin
       (when
         (or
           (< source-name-id 0)
           (>= source-name-id stride)
           (< stored-module-id 0)
-          (>= stored-module-id stride)
-          (and direct? (>= binding-declaration-id stride)))
+          (>= stored-module-id stride))
         (io.panic
           "typecheck: hygienic global identity exceeds structural range"))
       (+
         (macro-hygiene-structural-base)
         (+
-          (cond [legacy? 0] [direct? (* 2 stride2)] [else stride2])
-          (+
-            (*
-              (if direct?
-                binding-declaration-id
-                stored-module-id)
-              stride)
-            source-name-id))))))
+          (if legacy?
+            0
+            stride2)
+          (+ (* stored-module-id stride) source-name-id))))))
 
 (define (macro-hygiene-global-id? [name-id : i64]) : bool
   (ci.intern-macro-global-structural-id? name-id))
@@ -55863,34 +55821,20 @@
     name-id
     (+ (macro-hygiene-structural-base) (* (intern-capacity) (intern-capacity)))))
 
-(define (macro-hygiene-global-direct-decl-id? [name-id : i64]) : bool
-  (let
-    [stride2 : i64 (* (intern-capacity) (intern-capacity))]
-    [base : i64 (macro-hygiene-structural-base)]
-    (and (>= name-id (+ base (* 2 stride2))) (< name-id (+ base (* 3 stride2))))))
-
-(define (macro-hygiene-global-declaration-id [name-id : i64]) : i64
-  (let
-    [stride : i64 (intern-capacity)]
-    [stride2 : i64 (* stride stride)]
-    (/ (- name-id (+ (macro-hygiene-structural-base) (* 2 stride2))) stride)))
-
 (define (macro-hygiene-global-module-id [name-id : i64]) : i64
-  (if (macro-hygiene-global-direct-decl-id? name-id)
-    (compiler-symbol-root-module-id)
-    (let
-      [stored : i64
-        (%
-          (/ (- name-id (macro-hygiene-structural-base)) (intern-capacity))
-          (intern-capacity))]
-      (if (= stored 0)
-        (compiler-symbol-root-module-id)
-        (- stored 1)))))
+  (let
+    [stored : i64
+      (%
+        (/ (- name-id (macro-hygiene-structural-base)) (intern-capacity))
+        (intern-capacity))]
+    (if (= stored 0)
+      (compiler-symbol-root-module-id)
+      (- stored 1))))
 
 (define (macro-hygiene-local-base) : i64
   (let
     [stride : i64 (intern-capacity)]
-    (+ (macro-hygiene-structural-base) (* 3 (* stride stride)))))
+    (+ (macro-hygiene-structural-base) (* 2 (* stride stride)))))
 
 (define (macro-hygiene-local-id
   [hygiene : MacroHygieneContext]
@@ -56243,10 +56187,11 @@
         [_ env])]
     [_ env]))
 
-(define (macro-hygiene-binding-declaration-id
+(define (macro-hygiene-binding-owner-module-id-or
   [hygiene : MacroHygieneContext]
   [module-id : i64]
-  [source-name-id : i64]) : i64
+  [source-name-id : i64]
+  [fallback : i64]) : i64
   (let
     [lookup-module-id : i64
       (if (compiler-symbol-root-module-id? module-id)
@@ -56270,14 +56215,32 @@
         lookup-module-id
         source-name-id
         (compiler-symbols-missing-handle))]
-    (cond
-      [(compiler-symbols-handle-found? value-handle)
-        (compiler-symbol-handle-index value-handle)]
-      [(compiler-symbols-handle-found? type-handle)
-        (compiler-symbol-handle-index type-handle)]
-      [(compiler-symbols-handle-found? macro-handle)
-        (compiler-symbol-handle-index macro-handle)]
-      [else -1])))
+    [declaration-id : i64
+      (cond
+        [(compiler-symbols-handle-found? value-handle)
+          (compiler-symbol-handle-index value-handle)]
+        [(compiler-symbols-handle-found? type-handle)
+          (compiler-symbol-handle-index type-handle)]
+        [(compiler-symbols-handle-found? macro-handle)
+          (compiler-symbol-handle-index macro-handle)]
+        [else -1])]
+    (if (< declaration-id 0)
+      fallback
+      (let
+        [owner-module-id : i64
+          (compiler-symbols-owner-module-id-at-index-or
+            (struct-get hygiene symbols)
+            declaration-id
+            fallback)]
+        ;; A prior expansion can add a flat unqualified alias after a root
+        ;; macro declaration. It is output scope, not a definition-site capture.
+        (if (and
+          (compiler-symbol-root-module-id? module-id)
+          (>= (struct-get hygiene declaration-id) 0)
+          (> declaration-id (struct-get hygiene declaration-id))
+          (intern-generated-id-active? owner-module-id))
+          fallback
+          owner-module-id)))))
 
 (define (macro-hygiene-global-name-id
   [source-name-id : i64]
@@ -56288,16 +56251,18 @@
     [first-dot : i64 (tc-name-first-dot-id source-name-id)]
     (if (< first-dot 0)
       (let
-        [binding-declaration-id : i64
-          (macro-hygiene-binding-declaration-id
+        [binding-owner-module-id : i64
+          (macro-hygiene-binding-owner-module-id-or
             hygiene
             definition-module-id
-            source-name-id)]
-        (if (or legacy? (>= binding-declaration-id 0))
-          (macro-hygiene-global-id
-            definition-module-id
             source-name-id
-            binding-declaration-id
+            -2)]
+        (if (or legacy? (>= binding-owner-module-id -1))
+          (macro-hygiene-global-id
+            (if legacy?
+              definition-module-id
+              binding-owner-module-id)
+            source-name-id
             legacy?)
           source-name-id))
       (let
@@ -56309,33 +56274,33 @@
           (if (compiler-symbol-root-module-id? definition-module-id)
             cbi.compiler-builtin-id-fix-empty
             definition-module-id)]
-        [full-binding-id : i64
+        [full-binding-owner-module-id : i64
           (if (or (< full-module-id 0) (< final-id 0))
-            -1
-            (macro-hygiene-binding-declaration-id
+            -2
+            (macro-hygiene-binding-owner-module-id-or
               hygiene
               full-module-id
-              final-id))]
-        (if (>= full-binding-id 0)
-          (macro-hygiene-global-id
-            full-module-id
-            final-id
-            full-binding-id
-            false)
+              final-id
+              -2))]
+        (if (>= full-binding-owner-module-id -1)
+          (macro-hygiene-global-id full-binding-owner-module-id final-id false)
           (if (or (< alias-id 0) (< tail-id 0))
             source-name-id
             (match (tc-lazy-import-stub-target-id lookup-module-id alias-id)
               [(TcMaybeNameId.Some target-module-id)
-                (macro-hygiene-global-id
-                  target-module-id
-                  tail-id
-                  (if (< (tc-name-first-dot-id tail-id) 0)
-                    (macro-hygiene-binding-declaration-id
-                      hygiene
-                      target-module-id
-                      tail-id)
-                    -1)
-                  false)]
+                (let
+                  [binding-owner-module-id : i64
+                    (if (< (tc-name-first-dot-id tail-id) 0)
+                      (macro-hygiene-binding-owner-module-id-or
+                        hygiene
+                        target-module-id
+                        tail-id
+                        target-module-id)
+                      target-module-id)]
+                  (macro-hygiene-global-id
+                    binding-owner-module-id
+                    tail-id
+                    false))]
               [(TcMaybeNameId.No) source-name-id])))))))
 
 (define (macro-hygiene-rename-var-id

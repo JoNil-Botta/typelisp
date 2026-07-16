@@ -2062,9 +2062,7 @@
     (if structural?
       (let
         [module-id : i64 (macro-hygiene-global-module-id name-id)]
-        (if (or
-          (macro-hygiene-global-legacy-id? name-id)
-          (macro-hygiene-global-direct-decl-id? name-id))
+        (if (macro-hygiene-global-legacy-id? name-id)
           name
           (lower-hygiene-context-source-name-id
             ctx
@@ -2145,9 +2143,7 @@
   (let
     [source-id : i64 (macro-hygiene-global-source-name-id-or name-id -1)]
     [source-name : String (intern-str source-id)]
-    (if (or
-      (macro-hygiene-global-legacy-id? name-id)
-      (macro-hygiene-global-direct-decl-id? name-id))
+    (if (macro-hygiene-global-legacy-id? name-id)
       (lower-type-cache-lookup-id
         type-cache
         (tc-env-name-key-id source-id)
@@ -6610,6 +6606,7 @@
             (+ index 1)))])))
 
 (define (lower-clone-handoff-type-args
+  [ctx : TcContext]
   [pools : AstNodePoolContext]
   [roots : CloneNameList]) : AstExprList
   (match roots
@@ -6627,10 +6624,12 @@
           (ast-expr-cons
             (ast-node-pool-context-expr-push
               pools
-              (AstExpr.TypeLiteral (AstType.Var root-key-id)))
-            (lower-clone-handoff-type-args pools (box-get rest)))))]))
+              (AstExpr.TypeLiteral
+                (tc-resolve-type ctx (AstType.Var root-key-id))))
+            (lower-clone-handoff-type-args ctx pools (box-get rest)))))]))
 
 (define (lower-clone-handoff-request-decl
+  [ctx : TcContext]
   [pools : AstNodePoolContext]
   [roots : CloneNameList]) : AstDecl
   (let
@@ -6638,12 +6637,15 @@
       (ast-node-pool-context-expr-push
         pools
         (AstExpr.Var
-          cbi.compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers))]
+          (macro-hygiene-global-id
+            cbi.compiler-builtin-id-fix-stdlib_dot_clone
+            cbi.compiler-builtin-id-fix-synthesize_helpers
+            false)))]
     [call-id : i64
       (ast-expr-call-with-pools
         pools
         callee
-        (lower-clone-handoff-type-args pools roots))]
+        (lower-clone-handoff-type-args ctx pools roots))]
     (AstDecl.Import
       (AstImportSpec.Spec
         (AstImportKind.MacroDecls call-id AstMaybeModuleName.No)
@@ -6725,12 +6727,9 @@
   [pools : AstNodePoolContext]
   [roots : CloneNameList]) : ResultMacroDeclExpansion
   (let
-    [request : AstDecl (lower-clone-handoff-request-decl pools roots)]
+    [request : AstDecl (lower-clone-handoff-request-decl ctx pools roots)]
     (match (macro-expand-decl-with-path
-      (tc-context-with-module-id
-        ctx
-        ""
-        cbi.compiler-builtin-id-fix-empty)
+      (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
       top-env
       source-decls
       ""
@@ -6755,9 +6754,7 @@
             cbi.compiler-builtin-id-fix-empty)]
         (if (and
           (= module-id root-module-id)
-          (string.eq
-            (tc-env-key-name-text name-id)
-            (intern-str helper-name-id)))
+          (string.eq (tc-env-key-name-text name-id) (intern-str helper-name-id)))
           root-key-id
           (lower-clone-handoff-source-helper-root-id
             name-id
@@ -6773,28 +6770,18 @@
     [(AstDeclListStep.Cons decl rest)
       (match (ast-decl-unwrapped decl)
         [(AstDecl.Module next-module)
-          (lower-clone-handoff-source-conflict-in-module
-            rest
-            roots
-            next-module)]
+          (lower-clone-handoff-source-conflict-in-module rest roots next-module)]
         [(AstDecl.DefFn name _ _ _ _)
           (let
             [root-key-id : i64
-              (lower-clone-handoff-source-helper-root-id
-                name
-                module-id
-                roots)]
+              (lower-clone-handoff-source-helper-root-id name module-id roots)]
             (if (>= root-key-id 0)
               root-key-id
               (lower-clone-handoff-source-conflict-in-module
                 rest
                 roots
                 module-id)))]
-        [_
-          (lower-clone-handoff-source-conflict-in-module
-            rest
-            roots
-            module-id)])]))
+        [_ (lower-clone-handoff-source-conflict-in-module rest roots module-id)])]))
 
 (define (lower-clone-handoff-source-conflict
   [source-decls : AstDeclList]
@@ -52157,6 +52144,7 @@
           5)
         (set! ok false))
       ok)))
+
 
 (define (compiler-lower-mode-error-ok?
   [src : String]

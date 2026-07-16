@@ -51,6 +51,7 @@ comparison. AVX2 `i32x8` and AVX-512 `x16` remain width-matched for f32 lanes.
 
 | Case | Lane type | Upstream kernel | Current TypeLisp status |
 | --- | --- | --- | --- |
+| [`perfbench_gathers`](perfbench_gathers/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::gathers` | Scalar, AVX2, and AVX-512 supported |
 | [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` | Scalar, AVX2, and AVX-512 supported |
 | [`perfbench_stores`](perfbench_stores/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::stores` | Supported |
 | [`mandelbrot`](mandelbrot/) | `f32`/`i32` | `examples/cpu/mandelbrot/mandelbrot.ispc::mandelbrot_ispc` | Scalar and AVX-512 supported; AVX2 staged by #4971 |
@@ -73,6 +74,11 @@ gang widths 1, 8, and 16 for f32. Its distinct integer-valued lane inputs make
 the complete output byte pattern repeat at exactly that width. The TypeLisp
 and width-matched ISPC rows must agree, while generic x4 is validation only.
 
+`perfbench_gathers` preserves the upstream lane-specific offset selection as
+`values[i + offsets[program-index]]`. SIMD modes issue checked `vgatherqps`;
+scalar uses checked lane loads. Five backing elements cover active offsets 0
+through 4 while leaving incorrectly active tail lanes out of range.
+
 `point_transform` factors the upstream uniform `sin(rotation)`/`cos(rotation)`
 prelude out of both implementations and passes identical exact f32 constants.
 It preserves the scale/rotate/translate/strength zip body without adding a
@@ -83,6 +89,8 @@ Validate the required metadata/diagnostic contract, and optionally the real
 ISPC generic/AVX2 driver when v1.31.0 is installed, with:
 
 ```sh
+scripts/verify-ispc-perfbench-gathers.sh
+ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-gathers.sh
 scripts/verify-ispc-perfbench-loads.sh
 ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-loads.sh
 scripts/verify-ispc-perfbench-stores.sh

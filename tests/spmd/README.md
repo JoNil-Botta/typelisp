@@ -126,6 +126,10 @@ falling back to scalar code.
 - `../integration/spmd_scan_scalar.tl` - `spmd-scan` inclusive prefixes for
   i64 sum/min/max, i32 sum/min/max, and bool all/any across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
+- `../../benchmarks/ispc/perfbench_gathers/bench.tl` - f32 `spmd-reduce`
+  over lane-varying gathers with distinct and repeated offsets across empty,
+  sub-lane, exact-lane, and tail lengths. All modes exit 42; SIMD modes use
+  native gathers plus horizontal vector reduction.
 - `runtime_dispatch_select.tl` — one `defdispatch` binary whose variants share
   the same i64 SPMD checksum and encode the selected variant in the exit code.
   Scalar exits 42, AVX2 exits 106, and AVX-512 exits 170.

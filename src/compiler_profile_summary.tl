@@ -209,19 +209,23 @@
   (array 0 0 0 0 0))
 
 ;; Pass and module names recur across many hooks. Retain their full aggregates
-;; here, then select the bounded top rows only when the report is emitted.
-(define compiler-profile-summary-exact-slots : (Array i64 8448)
-  (init))
+;; here, then select the bounded top rows only when the report is emitted. Keep
+;; the large tables as runtime-sized arrays: lowering `(init)` for a fixed array
+;; expands one initializer expression per element, which made this module's test
+;; harness consume more than 5 GiB while compiling only a few thousand slots.
+;; `make-array` emits the existing bounded runtime initialization loop instead.
+(define compiler-profile-summary-exact-slots : (Array i64)
+  (make-array i64 8448))
 (define compiler-profile-summary-exact-counts : (Array i64 3)
   (array 0 0 0))
-(define compiler-profile-summary-exact-names : (Array String 4224)
-  (init))
-(define compiler-profile-summary-exact-keys : (Array i64 4224)
-  (init))
-(define compiler-profile-summary-exact-elapsed : (Array i64 4224)
-  (init))
-(define compiler-profile-summary-exact-calls : (Array i64 4224)
-  (init))
+(define compiler-profile-summary-exact-names : (Array String)
+  (make-array String 4224))
+(define compiler-profile-summary-exact-keys : (Array i64)
+  (make-array i64 4224))
+(define compiler-profile-summary-exact-elapsed : (Array i64)
+  (make-array i64 4224))
+(define compiler-profile-summary-exact-calls : (Array i64)
+  (make-array i64 4224))
 (define compiler-profile-summary-exact-top : (Array i64 24)
   (init))
 

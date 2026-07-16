@@ -5922,7 +5922,9 @@
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
       "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")
     (compiler-typecheck-ok?
-      "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))")))
+      "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))")
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [offsets : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (+ i (array-ref offsets (program-index))))))")))
 
 (define (compiler-typecheck-spmd-broadcast-tests-ok?) : bool
   (and

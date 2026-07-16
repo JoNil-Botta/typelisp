@@ -34,21 +34,23 @@ scripts/measure-ispc-spmd.sh --cases perfbench_gathers
 ISPC_BIN=/path/to/ispc scripts/measure-ispc-spmd.sh --cases perfbench_gathers
 ```
 
-A real Linux x86-64 run with the pinned v1.31.0 binary recorded the following
+A Linux x86-64 run after direct gather lowering recorded the following
 kernel-symbol census. TypeLisp uses checked 64-bit indices (`vgatherqps`), while
-ISPC converts its f32 offsets to 32-bit indices and emits `vgatherdps`. Scalar
-TypeLisp has zero hardware gathers and uses checked scalar lane extraction.
+the pinned ISPC v1.31.0 comparison converts its f32 offsets to 32-bit indices
+and emits `vgatherdps`. Scalar TypeLisp has zero hardware gathers and uses
+checked scalar lane extraction.
 
 | Mode/implementation | SHA-256 | Bytes | Instructions | Branches | Calls | Spill candidates | GPR/vector/mask registers | Gathers | Stack accesses |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |
-| scalar / TypeLisp | `15fc5cc040e83086e4b525807e015f1cf6f5cf1606efb2583ec6af02d2575333` | 4,202 | 153 | 25 | 14 | 9 | 20 / 5 / 0 | 0 | 9 |
-| AVX2 / TypeLisp | `47ef62ce7fe03d81951fe96b153c1ccd4c248fbb897c84453dfacbb4e767762e` | 11,024 | 397 | 43 | 23 | 109 | 15 / 14 / 0 | 2 | 125 |
+| scalar / TypeLisp | `df6d09703ca21486f1a30d9c383700b3b90c1ead2ecb15787b613fc8258d6db8` | 2,881 | 95 | 18 | 10 | 0 | 14 / 5 / 0 | 0 | 0 |
+| AVX2 / TypeLisp | `a4524ef6d89445db032f3da1486757dab59d1b2dda4a9c3b21ef9e0999cc0839` | 6,878 | 255 | 21 | 11 | 68 | 13 / 13 / 0 | 2 | 82 |
 | AVX2 / ISPC | `0a75fad4342cfc9c552a80b66c2eb66c97d54858cd3f77f72ad3c2db76dfed61` | 1,711 | 51 | 5 | 0 | 0 | 7 / 13 / 0 | 2 | 0 |
-| AVX-512 / TypeLisp | `21f9f55b796df461463349a95cd4503d978449608e07cc99a5beec9a92e1bd57` | 12,970 | 476 | 51 | 31 | 123 | 15 / 13 / 1 | 2 | 139 |
+| AVX-512 / TypeLisp | `af80f28bff20d8a7e2cf1a490b4f8db116e5c760a7e68b05894831184679bff8` | 8,935 | 342 | 29 | 19 | 82 | 13 / 12 / 1 | 2 | 104 |
 | AVX-512 / ISPC | `8dd3f7fb32fe80121f0977a5b610f875bba9793b3d816507edea32a717f04f32` | 1,680 | 49 | 5 | 0 | 0 | 7 / 11 / 4 | 2 | 0 |
 
-The large TypeLisp gap is reported rather than normalized away: it includes
-the explicit index-materialization loop, checked array accesses, runtime
-support calls, and current vector spills. Follow-up #5116 tracks direct
-computed-index gather lowering so this port can remove the materialization
-without changing semantics or the safety contract.
+Removing index materialization reduced the TypeLisp kernel from 4,202 to 2,881
+bytes and 153 to 95 instructions in scalar mode, from 11,024 to 6,878 bytes and
+397 to 255 instructions in AVX2 mode, and from 12,970 to 8,935 bytes and 476 to
+342 instructions in AVX-512 mode. The remaining TypeLisp gap is reported rather
+than normalized away: it includes checked array accesses, runtime support
+calls, and current vector spills.

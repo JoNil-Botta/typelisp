@@ -74,13 +74,10 @@ gang widths 1, 8, and 16 for f32. Its distinct integer-valued lane inputs make
 the complete output byte pattern repeat at exactly that width. The TypeLisp
 and width-matched ISPC rows must agree, while generic x4 is validation only.
 
-`perfbench_gathers` preserves the upstream lane-specific offset selection by
-materializing `i + offsets[i % gang-width]` inside the measured symbol, then
-reducing `values[indexes[i]]`. SIMD modes issue checked `vgatherqps`; scalar
-uses checked lane loads. The extra scalar index-materialization loop is kept in
-the TypeLisp kernel census rather than hidden from the comparison. Five backing
-elements cover active offsets 0 through 4 while leaving incorrectly active
-tail lanes out of range.
+`perfbench_gathers` preserves the upstream lane-specific offset selection as
+`values[i + offsets[program-index]]`. SIMD modes issue checked `vgatherqps`;
+scalar uses checked lane loads. Five backing elements cover active offsets 0
+through 4 while leaving incorrectly active tail lanes out of range.
 
 `point_transform` factors the upstream uniform `sin(rotation)`/`cos(rotation)`
 prelude out of both implementations and passes identical exact f32 constants.

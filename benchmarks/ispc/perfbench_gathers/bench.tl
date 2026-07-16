@@ -9,24 +9,12 @@
 (import stdlib.array)
 (import stdlib.io)
 
-(define (gathers
-  [values : (Array f32)]
-  [count : i64]
-  [offsets : (Array i64)]
-  [indexes : (Array i64)]
-  [width : i64]) : f32
-  (let
-    [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (array-set! indexes i (+ i (array-ref offsets (% i width))))
-          (set! i (+ i 1))))
-      (spmd-reduce
-        sum
-        ([j : i64 0 count])
-        (cast 0.0 : f32)
-        (array-ref values (array-ref indexes j))))))
+(define (gathers [values : (Array f32)] [count : i64] [offsets : (Array i64)]) : f32
+  (spmd-reduce
+    sum
+    ([i : i64 0 count])
+    (cast 0.0 : f32)
+    (array-ref values (+ i (array-ref offsets (program-index))))))
 
 (define (gathers-scalar
   [values : (Array f32)]
@@ -123,7 +111,6 @@
           [count : i64 (gathers-case-count case-id)]
           [length : i64 (+ count 5)]
           [values : (Array f32) (array.make-array f32 length)]
-          [indexes : (Array i64) (array.make-array i64 count)]
           [expected : f32 (cast 0.0 : f32)]
           [result : f32 (cast 0.0 : f32)]
           [repetition : i64 0]
@@ -132,7 +119,7 @@
             (set! expected (gathers-scalar values count offsets width))
             (while (< repetition 100)
               (begin
-                (set! result (gathers values count offsets indexes width))
+                (set! result (gathers values count offsets))
                 (set! repetition (+ repetition 1))))
             (if (= (io.float-f32-bits result) (io.float-f32-bits expected))
               unit

@@ -144,10 +144,12 @@ for mode in scalar avx2 avx512; do
             ;;
         avx2)
             grep -q 'vgatherqps' "$asm" || { echo "perfbench_gathers: AVX2 lacks vgatherqps" >&2; exit 1; }
+            grep -q 'vpaddq' "$asm" || { echo "perfbench_gathers: AVX2 lacks direct lane-offset indexes" >&2; exit 1; }
             grep -q 'vaddps' "$asm" || { echo "perfbench_gathers: AVX2 lacks f32 reduction" >&2; exit 1; }
             ;;
         avx512)
             grep -q 'vgatherqps' "$asm" || { echo "perfbench_gathers: AVX-512 lacks vgatherqps" >&2; exit 1; }
+            grep -q 'vpaddq' "$asm" || { echo "perfbench_gathers: AVX-512 lacks direct lane-offset indexes" >&2; exit 1; }
             grep -q 'vextractf32x8' "$asm" || { echo "perfbench_gathers: AVX-512 lacks f32 reduction" >&2; exit 1; }
             ;;
     esac

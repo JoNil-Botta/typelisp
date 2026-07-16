@@ -36980,65 +36980,74 @@
   [value-plan : LowerVectorMapValue]
   [elem-ty : AstType]
   [lanes : i64]) : ResultLowerExpr
-  (match (lower-emit-scalar-vector-map-value
-    ctx
-    state
-    base-index-var
-    current-index-var
-    (CompilerIrValue.I64 0)
-    active-lanes
-    lanes
-    elem-ty
-    value-plan)
-    [(LowerExpr.Expr value-state scalar-value _)
-      (let
-        [s : LowerState value-state]
-        [value-var : i64 0]
-        (begin
-          (match scalar-value
-            [(CompilerIrValue.Var var) (set! value-var var)]
-            [_
-              (match (lower-state-alloc-var s)
-                [(LowerAlloc.Alloc alloc-state tmp-var)
-                  (begin
-                    (set!
-                      s
-                      (lower-state-emit
-                        alloc-state
-                        (CompilerIrInstr.Mov tmp-var scalar-value elem-ty)))
-                    (set! value-var tmp-var))])])
-          (match (lower-spmd-reduce-apply-update
-            ctx
-            s
-            env
-            type-env
-            op
-            acc-var
-            elem-ty
-            value-var)
-            [(ResultLowerExpr.Ok update-lowered)
-              (match update-lowered
-                [(LowerExpr.Expr update-state _ _)
-                  (match (lower-state-alloc-var update-state)
-                    [(LowerAlloc.Alloc inc-alloc inc-var)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc lane-state lane-var)
+      (match (lower-emit-scalar-vector-map-value
+        ctx
+        (lower-state-emit
+          lane-state
+          (CompilerIrInstr.BinOp
+            lane-var
+            CompilerIrBinOp.Sub
+            (CompilerIrValue.Var current-index-var)
+            (CompilerIrValue.Var base-index-var)
+            (AstType.I64)))
+        base-index-var
+        current-index-var
+        (CompilerIrValue.Var lane-var)
+        active-lanes
+        lanes
+        elem-ty
+        value-plan)
+        [(LowerExpr.Expr value-state scalar-value _)
+          (let
+            [s : LowerState value-state]
+            [value-var : i64 0]
+            (begin
+              (match scalar-value
+                [(CompilerIrValue.Var var) (set! value-var var)]
+                [_
+                  (match (lower-state-alloc-var s)
+                    [(LowerAlloc.Alloc alloc-state tmp-var)
+                      (begin
+                        (set!
+                          s
                           (lower-state-emit
-                            (lower-state-emit
-                              inc-alloc
-                              (CompilerIrInstr.BinOp
-                                inc-var
-                                CompilerIrBinOp.Add
-                                (CompilerIrValue.Var current-index-var)
-                                (CompilerIrValue.I64 1)
-                                index-ty))
-                            (CompilerIrInstr.Mov
-                              current-index-var
-                              (CompilerIrValue.Var inc-var)
-                              index-ty))
-                          CompilerIrValue.Unit
-                          (AstType.Unit)))])])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))]))
+                            alloc-state
+                            (CompilerIrInstr.Mov tmp-var scalar-value elem-ty)))
+                        (set! value-var tmp-var))])])
+              (match (lower-spmd-reduce-apply-update
+                ctx
+                s
+                env
+                type-env
+                op
+                acc-var
+                elem-ty
+                value-var)
+                [(ResultLowerExpr.Ok update-lowered)
+                  (match update-lowered
+                    [(LowerExpr.Expr update-state _ _)
+                      (match (lower-state-alloc-var update-state)
+                        [(LowerAlloc.Alloc inc-alloc inc-var)
+                          (ResultLowerExpr.Ok
+                            (LowerExpr.Expr
+                              (lower-state-emit
+                                (lower-state-emit
+                                  inc-alloc
+                                  (CompilerIrInstr.BinOp
+                                    inc-var
+                                    CompilerIrBinOp.Add
+                                    (CompilerIrValue.Var current-index-var)
+                                    (CompilerIrValue.I64 1)
+                                    index-ty))
+                                (CompilerIrInstr.Mov
+                                  current-index-var
+                                  (CompilerIrValue.Var inc-var)
+                                  index-ty))
+                              CompilerIrValue.Unit
+                              (AstType.Unit)))])])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))])]))
 
 (define (lower-avx2-spmd-reduce-build
   [ctx : TcContext]
@@ -38280,48 +38289,32 @@
                 [(LowerExpr.Expr source-addr-state source-ptr _)
                   (lower-emit-load source-addr-state source-ptr elem-ty)])])])]
     [(LowerVectorMapValue.GatherLaneOffset source-var offsets-var)
-      ;; The tail loop mutates `current-index-var`. Emit this subtraction raw
-      ;; instead of using the lowering-time copy folder, which otherwise sees
-      ;; the loop's initial `current == base` assignment and freezes every tail
-      ;; iteration to lane zero.
-      (match (lower-state-alloc-var state)
-        [(LowerAlloc.Alloc lane-alloc-state lane-var)
-          (match (lower-array-element-addr
-            ctx
-            (lower-state-emit
-              lane-alloc-state
-              (CompilerIrInstr.BinOp
-                lane-var
-                CompilerIrBinOp.Sub
+      (match (lower-array-element-addr
+        ctx
+        state
+        (CompilerIrValue.Var offsets-var)
+        lane-index
+        (AstType.I64)
+        (AstType.I64))
+        [(LowerExpr.Expr offset-addr-state offset-ptr _)
+          (match (lower-emit-load offset-addr-state offset-ptr (AstType.I64))
+            [(LowerExpr.Expr offset-state offset _)
+              (match (lower-emit-binop
+                offset-state
+                CompilerIrBinOp.Add
                 (CompilerIrValue.Var current-index-var)
-                (CompilerIrValue.Var base-index-var)
-                (AstType.I64)))
-            (CompilerIrValue.Var offsets-var)
-            lane-index
-            (AstType.I64)
-            (AstType.I64))
-            [(LowerExpr.Expr offset-addr-state offset-ptr _)
-              (match (lower-emit-load
-                offset-addr-state
-                offset-ptr
+                offset
                 (AstType.I64))
-                [(LowerExpr.Expr offset-state offset _)
-                  (match (lower-emit-binop
-                    offset-state
-                    CompilerIrBinOp.Add
-                    (CompilerIrValue.Var current-index-var)
-                    offset
-                    (AstType.I64))
-                    [(LowerExpr.Expr index-state gathered-index _)
-                      (match (lower-array-element-addr
-                        ctx
-                        index-state
-                        (CompilerIrValue.Var source-var)
-                        gathered-index
-                        (AstType.I64)
-                        elem-ty)
-                        [(LowerExpr.Expr source-addr-state source-ptr _)
-                          (lower-emit-load source-addr-state source-ptr elem-ty)])])])])])]
+                [(LowerExpr.Expr index-state gathered-index _)
+                  (match (lower-array-element-addr
+                    ctx
+                    index-state
+                    (CompilerIrValue.Var source-var)
+                    gathered-index
+                    (AstType.I64)
+                    elem-ty)
+                    [(LowerExpr.Expr source-addr-state source-ptr _)
+                      (lower-emit-load source-addr-state source-ptr elem-ty)])])])])]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-emit-binop
         state
@@ -52489,6 +52482,7 @@
             _
             _
             _
+            _
             actual-lanes
             actual-ty)
           (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
@@ -58866,13 +58860,11 @@
             (= (lower-test-function-bounds-count functions "f") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-spmd-reduce-gather-shape-ok?
+(define (compiler-lower-spmd-reduce-gather-source-shape-ok?
+  [source : String]
   [mode : CompilerLowerMode]
   [lanes : i64]) : bool
-  (match (lower-compiler-source-with-mode
-    "(define (f [xs : (Array f32)] [ix : (Array i64)] [n : i64]) : f32
-  (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs (array-ref ix i))))"
-    mode)
+  (match (lower-compiler-source-with-mode source mode)
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
@@ -58888,6 +58880,21 @@
               2)
             (> (lower-test-function-bounds-count functions "f") 0))])]
     [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-spmd-reduce-gather-shape-ok?
+  [mode : CompilerLowerMode]
+  [lanes : i64]) : bool
+  (and
+    (compiler-lower-spmd-reduce-gather-source-shape-ok?
+      "(define (f [xs : (Array f32)] [ix : (Array i64)] [n : i64]) : f32
+  (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs (array-ref ix i))))"
+      mode
+      lanes)
+    (compiler-lower-spmd-reduce-gather-source-shape-ok?
+      "(define (f [xs : (Array f32)] [offsets : (Array i64)] [n : i64]) : f32
+  (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs (+ i (array-ref offsets (program-index))))))"
+      mode
+      lanes)))
 
 (define (compiler-lower-avx2-spmd-reduce-tests-ok?) : bool
   (and

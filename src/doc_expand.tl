@@ -348,6 +348,9 @@
     [(AstMaybeImportAlias.Some name) (intern-str name)]
     [(AstMaybeImportAlias.No) ""]))
 
+(define (doc-symbol-text [name-id : i64]) : String
+  (tc-hygiene-name-text-id name-id))
+
 (define (doc-ast-type-id-source [ty-id : i64]) : String
   (doc-ast-type-source (ast-node-pool-reader-type-get ty-id)))
 
@@ -377,7 +380,7 @@
       (if (= index 0)
         ""
         " ")
-      (intern-str
+      (doc-symbol-text
         (ast-lifetime-list-get (& lifetimes) index (ast-lifetime-fallback)))
       (doc-ast-lifetime-list-source-from lifetimes (+ index 1) count))))
 
@@ -434,30 +437,30 @@
     [(AstType.Region region elem)
       (doc-cat5
         "(Region "
-        (intern-str region)
+        (doc-symbol-text region)
         " "
         (doc-ast-type-id-source elem)
         ")")]
     [(AstType.Ref lifetime elem)
       (doc-cat5
         "(& "
-        (intern-str lifetime)
+        (doc-symbol-text lifetime)
         " "
         (doc-ast-type-id-source elem)
         ")")]
     [(AstType.MutRef lifetime elem)
       (doc-cat5
         "(&mut "
-        (intern-str lifetime)
+        (doc-symbol-text lifetime)
         " "
         (doc-ast-type-id-source elem)
         ")")]
-    [(AstType.Enum name) (intern-str name)]
-    [(AstType.EnumArgs name _) (intern-str name)]
-    [(AstType.Struct name) (intern-str name)]
-    [(AstType.StructArgs name _) (intern-str name)]
-    [(AstType.Var name) (intern-str name)]
-    [(AstType.VarArgs name _) (intern-str name)]
+    [(AstType.Enum name) (doc-symbol-text name)]
+    [(AstType.EnumArgs name _) (doc-symbol-text name)]
+    [(AstType.Struct name) (doc-symbol-text name)]
+    [(AstType.StructArgs name _) (doc-symbol-text name)]
+    [(AstType.Var name) (doc-symbol-text name)]
+    [(AstType.VarArgs name _) (doc-symbol-text name)]
     [(AstType.Ptr elem) (doc-cat3 "(Ptr " (doc-ast-type-id-source elem) ")")]
     [(AstType.MutPtr elem)
       (doc-cat3 "(MutPtr " (doc-ast-type-id-source elem) ")")]

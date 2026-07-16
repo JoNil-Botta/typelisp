@@ -323,6 +323,21 @@
       (set! compiler-driver-pending-retired-source-arena old-arena)
       (compiler-driver-lowered-from-pools program spans retained))))
 
+(define (compiler-driver-state-clear-pool-backed-caches-for-state!
+  [state : CompilerDriverState]) : unit
+  (begin
+    (compiler-load-session-state-floors-set!
+      (struct-get state load-session)
+      0
+      0
+      0)
+    (compiler-load-session-state-program-cache-clear!
+      (struct-get state load-session))
+    (compiler-load-session-state-runtime-prelude-cache-clear!
+      (struct-get state load-session))
+    (tc-prefix-snapshot-cache-clear!)))
+
+;; Serial compatibility adapter for the post-lowering arena retirement path.
 (define (compiler-driver-state-clear-pool-backed-caches!) : unit
   (begin
     (compiler-load-session-floors-set! 0 0 0)
@@ -347,7 +362,7 @@
           (compiler-driver-state-pool-context state))]
       [new-arena : i64 (arena.tl_arena_make)]
       (begin
-        (compiler-driver-state-clear-pool-backed-caches!)
+        (compiler-driver-state-clear-pool-backed-caches-for-state! state)
         ;; Do not materialize the replacement backing arrays while the retired
         ;; pool chain is still live. If that chain is also the active arena,
         ;; move allocation to the already-created replacement root first.
@@ -574,8 +589,11 @@
     (let
       [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
       (begin
-        (compiler-load-session-reset-pools-with-pools! pools)
-        (compiler-load-session-reset-interns-with-state!
+        (compiler-load-session-state-reset-pools-with-pools!
+          (struct-get state load-session)
+          pools)
+        (compiler-load-session-state-reset-interns-with-state!
+          (struct-get state load-session)
           (array-ref (struct-get state intern-state) 0))
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
@@ -602,8 +620,11 @@
     (let
       [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
       (begin
-        (compiler-load-session-reset-pools-with-pools! pools)
-        (compiler-load-session-reset-interns-with-state!
+        (compiler-load-session-state-reset-pools-with-pools!
+          (struct-get state load-session)
+          pools)
+        (compiler-load-session-state-reset-interns-with-state!
+          (struct-get state load-session)
           (array-ref (struct-get state intern-state) 0))
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
@@ -630,8 +651,11 @@
       (let
         [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
         (begin
-          (compiler-load-session-reset-pools-with-pools! pools)
-          (compiler-load-session-reset-interns-with-state!
+          (compiler-load-session-state-reset-pools-with-pools!
+            (struct-get state load-session)
+            pools)
+          (compiler-load-session-state-reset-interns-with-state!
+            (struct-get state load-session)
             (array-ref (struct-get state intern-state) 0))
           (compiler-typecheck-reset-intern-owned-state!)
           (compiler-driver-state-install-transients! state)
@@ -2315,7 +2339,11 @@
             [source-pools-arena : i64 (compiler-driver-node-pool-base-arena)]
             [_clear-source-floors : unit
               (if release-source-pools?
-                (compiler-load-session-floors-set! 0 0 0)
+                (compiler-load-session-state-floors-set!
+                  (struct-get state load-session)
+                  0
+                  0
+                  0)
                 unit)]
             [_arm-release : unit
               (if release-source-pools?
@@ -2494,7 +2522,11 @@
             [source-pools-arena : i64 (compiler-driver-node-pool-base-arena)]
             [_clear-source-floors : unit
               (if release-source-pools?
-                (compiler-load-session-floors-set! 0 0 0)
+                (compiler-load-session-state-floors-set!
+                  (struct-get state load-session)
+                  0
+                  0
+                  0)
                 unit)]
             [_arm-release : unit
               (if release-source-pools?

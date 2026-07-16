@@ -213,13 +213,6 @@
   (CompilerLoadNoSurfaceSummary)
   (CompilerLoadSomeSurfaceSummary CompilerLoadSurfaceSummary))
 
-(define compiler-load-active-surface-summaries : CompilerLoadSurfaceSummaryList
-  (CompilerLoadSurfaceSummaryNil))
-(define compiler-load-surface-summary-load-depth : i64
-  0)
-(define compiler-load-lazy-import-skip-record-count : i64
-  0)
-
 (defenum CompilerLoadPreludeCacheLookup
   (CompilerLoadPreludeCacheMiss)
   (CompilerLoadPreludeCacheHit
@@ -275,8 +268,30 @@
 (define compiler-load-dotted-path-cache-capacity : i64
   256)
 
-;; Loader cache data is owned by an explicit session state. The no-arg
-;; compatibility helpers below operate on the active state pointer only.
+(defenum CompilerLoadLazyQualifiedObserverStack
+  (Empty)
+  (Frame
+    bool
+    i64
+    sym_i64_env.SymI64Env
+    i64
+    sym_i64_env.SymI64Env
+    bool
+    bool
+    (Box CompilerLoadLazyQualifiedObserverStack)))
+
+(defstruct CompilerLoadLazyQualifiedObserverState
+  ;; flags: active, exhaustive, secondary-qualified, secondary-direct.
+  (flags (Array bool))
+  ;; root-ids/member-sets: primary, secondary.
+  (root-ids (Array i64))
+  (member-sets (Array sym_i64_env.SymI64Env))
+  (stack (Array CompilerLoadLazyQualifiedObserverStack)))
+
+;; Loader cache and traversal data is owned by an explicit session state. The
+;; no-argument compatibility helpers below are serial/test-only adapters over
+;; the active state pointer. State-owned driver reset paths use the explicit
+;; APIs so resetting one job cannot mutate another job's storage.
 (defstruct CompilerLoadSessionState
   (cache-enabled (Array bool))
   (program-cache-enabled (Array bool))
@@ -295,13 +310,33 @@
   (dotted-path-cache-ready (Array bool))
   (dotted-path-cache-keys (Array i64))
   (dotted-path-cache-values (Array String))
-  (dotted-path-cache-generation (Array i64)))
+  (dotted-path-cache-generation (Array i64))
+  (surface-summaries (Array CompilerLoadSurfaceSummaryList))
+  (surface-summary-load-depth (Array i64))
+  (lazy-import-skip-record-count (Array i64))
+  (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState))
 
 (define (compiler-load-session-state-bool-cell [value : bool]) : (Array bool)
   (make-array value))
 
 (define (compiler-load-session-state-i64-cell [value : i64]) : (Array i64)
   (make-array value))
+
+(define (compiler-load-lazy-qualified-observer-stack-empty) : CompilerLoadLazyQualifiedObserverStack
+  CompilerLoadLazyQualifiedObserverStack.Empty)
+
+(define (compiler-load-lazy-qualified-observer-state-new) : CompilerLoadLazyQualifiedObserverState
+  (let
+    [flags : (Array bool) (array.make-array bool 4)]
+    [root-ids : (Array i64) (array.make-array i64 2)]
+    [member-sets : (Array sym_i64_env.SymI64Env)
+      (array.make-array sym_i64_env.SymI64Env 2)]
+    [stack : (Array CompilerLoadLazyQualifiedObserverStack)
+      (make-array (compiler-load-lazy-qualified-observer-stack-empty))]
+    (begin
+      (array-set! member-sets 0 (sym_i64_env.sym-i64-empty))
+      (array-set! member-sets 1 (sym_i64_env.sym-i64-empty))
+      (CompilerLoadLazyQualifiedObserverState flags root-ids member-sets stack))))
 
 (define (compiler-load-session-state-bool-cell-get [cell : (Array bool)]) : bool
   (array-ref cell 0))
@@ -312,28 +347,44 @@
   (array-set! cell 0 value))
 
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
-  (CompilerLoadSessionState
-    (compiler-load-session-state-bool-cell false)
-    (compiler-load-session-state-bool-cell true)
-    (compiler-load-session-state-i64-cell 0)
-    (compiler-load-session-state-i64-cell 0)
-    (compiler-load-session-state-i64-cell 0)
-    (make-array CompilerLoadProgramCacheSlot 256)
-    (make-array CompilerLoadProgramAdmissionSlot 256)
-    (compiler-load-session-state-bool-cell false)
-    (compiler-load-session-state-bool-cell false)
-    (compiler-load-session-state-i64-cell 0)
-    (compiler-load-session-state-i64-cell 0)
-    (compiler-load-session-state-i64-cell 0)
-    (make-array CompilerLoadPreludeCacheSlot 16)
-    (compiler-load-session-state-bool-cell false)
-    (make-array bool compiler-load-dotted-path-cache-capacity)
-    (make-array i64 compiler-load-dotted-path-cache-capacity)
-    (make-array String compiler-load-dotted-path-cache-capacity)
-    (compiler-load-session-state-i64-cell 0)))
+  (let
+    [surface-summaries : (Array CompilerLoadSurfaceSummaryList)
+      (make-array (CompilerLoadSurfaceSummaryNil))]
+    [surface-summary-load-depth : (Array i64)
+      (compiler-load-session-state-i64-cell 0)]
+    [lazy-import-skip-record-count : (Array i64)
+      (compiler-load-session-state-i64-cell 0)]
+    [lazy-qualified-observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-lazy-qualified-observer-state-new)]
+    (CompilerLoadSessionState
+      (compiler-load-session-state-bool-cell false)
+      (compiler-load-session-state-bool-cell true)
+      (compiler-load-session-state-i64-cell 0)
+      (compiler-load-session-state-i64-cell 0)
+      (compiler-load-session-state-i64-cell 0)
+      (make-array CompilerLoadProgramCacheSlot 256)
+      (make-array CompilerLoadProgramAdmissionSlot 256)
+      (compiler-load-session-state-bool-cell false)
+      (compiler-load-session-state-bool-cell false)
+      (compiler-load-session-state-i64-cell 0)
+      (compiler-load-session-state-i64-cell 0)
+      (compiler-load-session-state-i64-cell 0)
+      (make-array CompilerLoadPreludeCacheSlot 16)
+      (compiler-load-session-state-bool-cell false)
+      (make-array bool compiler-load-dotted-path-cache-capacity)
+      (make-array i64 compiler-load-dotted-path-cache-capacity)
+      (make-array String compiler-load-dotted-path-cache-capacity)
+      (compiler-load-session-state-i64-cell 0)
+      surface-summaries
+      surface-summary-load-depth
+      lazy-import-skip-record-count
+      lazy-qualified-observer)))
 
 (define compiler-load-default-session-state : (Array CompilerLoadSessionState)
   (make-array (compiler-load-session-state-new)))
+
+;; Serial/test compatibility selector. Production call sites are migrated to
+;; explicit state APIs incrementally; do not add new compile-job dependencies.
 (define compiler-load-active-session-state : CompilerLoadSessionState
   (array-ref compiler-load-default-session-state 0))
 
@@ -367,40 +418,45 @@
     (struct-get state program-cache-enabled)
     enabled))
 
-(define (compiler-load-program-cache-fill! [index : i64]) : unit
+(define (compiler-load-session-state-program-cache-fill!
+  [state : CompilerLoadSessionState]
+  [index : i64]) : unit
   (if (>= index compiler-load-program-cache-capacity)
     unit
     (begin
       (array-set!
-        (struct-get compiler-load-active-session-state program-cache)
+        (struct-get state program-cache)
         index
         (CompilerLoadProgramCacheEmpty))
-      (compiler-load-program-cache-fill! (+ index 1)))))
+      (compiler-load-session-state-program-cache-fill! state (+ index 1)))))
+
+(define (compiler-load-program-cache-fill! [index : i64]) : unit
+  (compiler-load-session-state-program-cache-fill!
+    compiler-load-active-session-state
+    index))
+
+(define (compiler-load-session-state-program-cache-stats-reset!
+  [state : CompilerLoadSessionState]) : unit
+  (begin
+    (array-set! (struct-get state program-cache-hit-count) 0 0)
+    (array-set! (struct-get state program-cache-miss-count) 0 0)
+    (array-set! (struct-get state program-cache-store-count) 0 0)))
 
 (define (compiler-load-program-cache-stats-reset!) : unit
+  (compiler-load-session-state-program-cache-stats-reset!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-program-cache-clear!
+  [state : CompilerLoadSessionState]) : unit
   (begin
-    (array-set!
-      (struct-get compiler-load-active-session-state program-cache-hit-count)
-      0
-      0)
-    (array-set!
-      (struct-get compiler-load-active-session-state program-cache-miss-count)
-      0
-      0)
-    (array-set!
-      (struct-get compiler-load-active-session-state program-cache-store-count)
-      0
-      0)))
+    (compiler-load-session-state-program-cache-fill! state 0)
+    (array-set! (struct-get state program-cache-ready) 0 true)
+    (compiler-load-session-state-program-admission-clear! state)
+    (compiler-load-session-state-program-cache-stats-reset! state)))
 
 (define (compiler-load-program-cache-clear!) : unit
-  (begin
-    (compiler-load-program-cache-fill! 0)
-    (array-set!
-      (struct-get compiler-load-active-session-state program-cache-ready)
-      0
-      true)
-    (compiler-load-program-admission-clear!)
-    (compiler-load-program-cache-stats-reset!)))
+  (compiler-load-session-state-program-cache-clear!
+    compiler-load-active-session-state))
 
 (define (compiler-load-program-cache-ensure!) : unit
   (if (array-ref
@@ -576,23 +632,32 @@
     (compiler-load-program-cache-ensure!)
     (compiler-load-program-cache-can-store-at key 0)))
 
-(define (compiler-load-program-admission-fill! [index : i64]) : unit
+(define (compiler-load-session-state-program-admission-fill!
+  [state : CompilerLoadSessionState]
+  [index : i64]) : unit
   (if (>= index compiler-load-program-cache-capacity)
     unit
     (begin
       (array-set!
-        (struct-get compiler-load-active-session-state program-admission)
+        (struct-get state program-admission)
         index
         (CompilerLoadProgramAdmissionEmpty))
-      (compiler-load-program-admission-fill! (+ index 1)))))
+      (compiler-load-session-state-program-admission-fill! state (+ index 1)))))
+
+(define (compiler-load-program-admission-fill! [index : i64]) : unit
+  (compiler-load-session-state-program-admission-fill!
+    compiler-load-active-session-state
+    index))
+
+(define (compiler-load-session-state-program-admission-clear!
+  [state : CompilerLoadSessionState]) : unit
+  (begin
+    (compiler-load-session-state-program-admission-fill! state 0)
+    (array-set! (struct-get state program-admission-ready) 0 true)))
 
 (define (compiler-load-program-admission-clear!) : unit
-  (begin
-    (compiler-load-program-admission-fill! 0)
-    (array-set!
-      (struct-get compiler-load-active-session-state program-admission-ready)
-      0
-      true)))
+  (compiler-load-session-state-program-admission-clear!
+    compiler-load-active-session-state))
 
 (define (compiler-load-program-admission-ensure!) : unit
   (if (array-ref
@@ -736,32 +801,49 @@
             new-intern-floor))
         unit))))
 
+(define (compiler-load-session-state-ast-floor-value
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref (struct-get state ast-floor) 0))
+
 (define (compiler-load-session-ast-floor-value) : i64
-  (array-ref (struct-get compiler-load-active-session-state ast-floor) 0))
+  (compiler-load-session-state-ast-floor-value
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-ty-floor-value
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref (struct-get state ty-floor) 0))
 
 (define (compiler-load-session-ty-floor-value) : i64
-  (array-ref (struct-get compiler-load-active-session-state ty-floor) 0))
+  (compiler-load-session-state-ty-floor-value
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-intern-floor-value
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref (struct-get state intern-floor) 0))
 
 (define (compiler-load-session-intern-floor-value) : i64
-  (array-ref (struct-get compiler-load-active-session-state intern-floor) 0))
+  (compiler-load-session-state-intern-floor-value
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-floors-set!
+  [state : CompilerLoadSessionState]
+  [ast-floor : i64]
+  [ty-floor : i64]
+  [intern-floor : i64]) : unit
+  (begin
+    (array-set! (struct-get state ast-floor) 0 ast-floor)
+    (array-set! (struct-get state ty-floor) 0 ty-floor)
+    (array-set! (struct-get state intern-floor) 0 intern-floor)))
 
 (define (compiler-load-session-floors-set!
   [ast-floor : i64]
   [ty-floor : i64]
   [intern-floor : i64]) : unit
-  (begin
-    (array-set!
-      (struct-get compiler-load-active-session-state ast-floor)
-      0
-      ast-floor)
-    (array-set!
-      (struct-get compiler-load-active-session-state ty-floor)
-      0
-      ty-floor)
-    (array-set!
-      (struct-get compiler-load-active-session-state intern-floor)
-      0
-      intern-floor)))
+  (compiler-load-session-state-floors-set!
+    compiler-load-active-session-state
+    ast-floor
+    ty-floor
+    intern-floor))
 
 (define (compiler-load-session-state-use! [state : CompilerLoadSessionState]) : unit
   (set! compiler-load-active-session-state state))
@@ -844,8 +926,11 @@
     ;; before truncating so stale scratch-owned cells are not updated.
     (ast-node-pool-active-context-clear!)
     (compiler-load-surface-summaries-reset!)
-    (set! compiler-load-surface-summary-load-depth 0)
-    (reader.sp-node-pool-reset!)
+    (compiler-load-lazy-qualified-observer-reset!)
+    (array-set!
+      (struct-get compiler-load-active-session-state surface-summary-load-depth)
+      0
+      0)
     (if (compiler-load-session-cache-enabled?)
       (begin
         (ast-node-pool-reset-to! (compiler-load-session-ast-floor-value))
@@ -854,61 +939,91 @@
         (ast-node-pool-reset!)
         (ty-node-pool-reset!)))))
 
-(define (compiler-load-session-reset-pools-with-pools!
+(define (compiler-load-session-state-reset-pools-with-pools!
+  [state : CompilerLoadSessionState]
   [pools : AstNodePoolContext]) : unit
   (begin
-    (compiler-load-surface-summaries-reset!)
-    (set! compiler-load-surface-summary-load-depth 0)
-    (reader.sp-node-pool-reset!)
-    (if (compiler-load-session-cache-enabled?)
+    (compiler-load-session-state-surface-summaries-reset! state)
+    (compiler-load-session-state-lazy-qualified-observer-reset! state)
+    (array-set! (struct-get state surface-summary-load-depth) 0 0)
+    (if (compiler-load-session-state-cache-enabled? state)
       (ast-node-pool-context-reset-to!
         pools
-        (compiler-load-session-ast-floor-value)
-        (compiler-load-session-ty-floor-value))
-      (ast-node-pool-context-reset-to! pools 0 0))))
+        (compiler-load-session-state-ast-floor-value state)
+        (compiler-load-session-state-ty-floor-value state))
+      (begin
+        (reader.sp-node-pool-reset!)
+        (ast-node-pool-context-reset-to! pools 0 0)))))
+
+(define (compiler-load-session-reset-pools-with-pools!
+  [pools : AstNodePoolContext]) : unit
+  (compiler-load-session-state-reset-pools-with-pools!
+    compiler-load-active-session-state
+    pools))
 
 (define (compiler-load-session-reset-interns!) : unit
   (begin
     (compiler-load-surface-summaries-reset!)
-    (set! compiler-load-surface-summary-load-depth 0)
+    (compiler-load-lazy-qualified-observer-reset!)
+    (array-set!
+      (struct-get compiler-load-active-session-state surface-summary-load-depth)
+      0
+      0)
     (if (compiler-load-session-cache-enabled?)
       (begin
         (intern-reset-to! (compiler-load-session-intern-floor-value))
         (intern-persistent-arena-reset-to-floor!))
       (intern-reset!))))
 
-(define (compiler-load-session-reset-interns-with-state!
-  [state : ci.InternCompatState]) : unit
+(define (compiler-load-session-state-reset-interns-with-state!
+  [load-state : CompilerLoadSessionState]
+  [intern-state : ci.InternCompatState]) : unit
   (begin
-    (compiler-load-surface-summaries-reset!)
-    (set! compiler-load-surface-summary-load-depth 0)
-    (if (compiler-load-session-cache-enabled?)
+    (compiler-load-session-state-surface-summaries-reset! load-state)
+    (compiler-load-session-state-lazy-qualified-observer-reset! load-state)
+    (array-set! (struct-get load-state surface-summary-load-depth) 0 0)
+    (if (compiler-load-session-state-cache-enabled? load-state)
       (begin
         (ci.intern-compat-state-reset-to!
-          state
-          (compiler-load-session-intern-floor-value))
-        (ci.intern-compat-state-persistent-arena-reset-to-floor! state))
-      (ci.intern-compat-state-reset! state))))
+          intern-state
+          (compiler-load-session-state-intern-floor-value load-state))
+        (ci.intern-compat-state-persistent-arena-reset-to-floor! intern-state))
+      (ci.intern-compat-state-reset! intern-state))))
 
-(define (compiler-load-runtime-prelude-cache-fill! [index : i64]) : unit
+(define (compiler-load-session-reset-interns-with-state!
+  [intern-state : ci.InternCompatState]) : unit
+  (compiler-load-session-state-reset-interns-with-state!
+    compiler-load-active-session-state
+    intern-state))
+
+(define (compiler-load-session-state-runtime-prelude-cache-fill!
+  [state : CompilerLoadSessionState]
+  [index : i64]) : unit
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     unit
     (begin
       (array-set!
-        (struct-get compiler-load-active-session-state runtime-prelude-cache)
+        (struct-get state runtime-prelude-cache)
         index
         (CompilerLoadPreludeCacheEmpty))
-      (compiler-load-runtime-prelude-cache-fill! (+ index 1)))))
+      (compiler-load-session-state-runtime-prelude-cache-fill!
+        state
+        (+ index 1)))))
+
+(define (compiler-load-runtime-prelude-cache-fill! [index : i64]) : unit
+  (compiler-load-session-state-runtime-prelude-cache-fill!
+    compiler-load-active-session-state
+    index))
+
+(define (compiler-load-session-state-runtime-prelude-cache-clear!
+  [state : CompilerLoadSessionState]) : unit
+  (begin
+    (compiler-load-session-state-runtime-prelude-cache-fill! state 0)
+    (array-set! (struct-get state runtime-prelude-cache-ready) 0 true)))
 
 (define (compiler-load-runtime-prelude-cache-clear!) : unit
-  (begin
-    (compiler-load-runtime-prelude-cache-fill! 0)
-    (array-set!
-      (struct-get
-        compiler-load-active-session-state
-        runtime-prelude-cache-ready)
-      0
-      true)))
+  (compiler-load-session-state-runtime-prelude-cache-clear!
+    compiler-load-active-session-state))
 
 (define (compiler-load-runtime-prelude-cache-ensure!) : unit
   (if (array-ref
@@ -1496,78 +1611,85 @@
             primary))]
       (ResultPkgResolve.Ok resolved))))
 
-(define (compiler-load-dotted-path-cache-clear-ready! [index : i64]) : unit
+(define (compiler-load-session-state-dotted-path-cache-clear-ready!
+  [state : CompilerLoadSessionState]
+  [index : i64]) : unit
   (if (>= index compiler-load-dotted-path-cache-capacity)
     unit
     (begin
-      (array-set!
-        (struct-get compiler-load-active-session-state dotted-path-cache-ready)
-        index
-        false)
-      (compiler-load-dotted-path-cache-clear-ready! (+ index 1)))))
+      (array-set! (struct-get state dotted-path-cache-ready) index false)
+      (compiler-load-session-state-dotted-path-cache-clear-ready!
+        state
+        (+ index 1)))))
 
-(define (compiler-load-dotted-path-cache-reset!) : unit
+(define (compiler-load-dotted-path-cache-clear-ready! [index : i64]) : unit
+  (compiler-load-session-state-dotted-path-cache-clear-ready!
+    compiler-load-active-session-state
+    index))
+
+(define (compiler-load-session-state-dotted-path-cache-reset!
+  [state : CompilerLoadSessionState]) : unit
   (begin
-    (compiler-load-dotted-path-cache-clear-ready! 0)
+    (compiler-load-session-state-dotted-path-cache-clear-ready! state 0)
     (array-set!
-      (struct-get
-        compiler-load-active-session-state
-        dotted-path-cache-generation)
+      (struct-get state dotted-path-cache-generation)
       0
       (intern-generation))))
 
-(define (compiler-load-dotted-path-cache-ensure!) : unit
+(define (compiler-load-dotted-path-cache-reset!) : unit
+  (compiler-load-session-state-dotted-path-cache-reset!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-dotted-path-cache-ensure!
+  [state : CompilerLoadSessionState]) : unit
   (if (=
-    (array-ref
-      (struct-get
-        compiler-load-active-session-state
-        dotted-path-cache-generation)
-      0)
+    (array-ref (struct-get state dotted-path-cache-generation) 0)
     (intern-generation))
     unit
-    (compiler-load-dotted-path-cache-reset!)))
+    (compiler-load-session-state-dotted-path-cache-reset! state)))
+
+(define (compiler-load-dotted-path-cache-ensure!) : unit
+  (compiler-load-session-state-dotted-path-cache-ensure!
+    compiler-load-active-session-state))
 
 (define (compiler-load-dotted-path-cache-bucket [module-id : i64]) : i64
   (bit-and module-id (- compiler-load-dotted-path-cache-capacity 1)))
 
-(define (compiler-load-dotted-path-cache-lookup [module-id : i64]) : CompilerLoadMaybeString
+(define (compiler-load-session-state-dotted-path-cache-lookup
+  [state : CompilerLoadSessionState]
+  [module-id : i64]) : CompilerLoadMaybeString
   (let
     [bucket : i64 (compiler-load-dotted-path-cache-bucket module-id)]
-    (if (if (array-ref
-      (struct-get compiler-load-active-session-state dotted-path-cache-ready)
-      bucket)
-      (=
-        (array-ref
-          (struct-get compiler-load-active-session-state dotted-path-cache-keys)
-          bucket)
-        module-id)
+    (if (if (array-ref (struct-get state dotted-path-cache-ready) bucket)
+      (= (array-ref (struct-get state dotted-path-cache-keys) bucket) module-id)
       false)
       (CompilerLoadSomeString
-        (array-ref
-          (struct-get
-            compiler-load-active-session-state
-            dotted-path-cache-values)
-          bucket))
+        (array-ref (struct-get state dotted-path-cache-values) bucket))
       (CompilerLoadNoString))))
 
-(define (compiler-load-dotted-path-cache-store!
+(define (compiler-load-dotted-path-cache-lookup [module-id : i64]) : CompilerLoadMaybeString
+  (compiler-load-session-state-dotted-path-cache-lookup
+    compiler-load-active-session-state
+    module-id))
+
+(define (compiler-load-session-state-dotted-path-cache-store!
+  [state : CompilerLoadSessionState]
   [module-id : i64]
   [path : String]) : unit
   (let
     [bucket : i64 (compiler-load-dotted-path-cache-bucket module-id)]
     (begin
-      (array-set!
-        (struct-get compiler-load-active-session-state dotted-path-cache-ready)
-        bucket
-        true)
-      (array-set!
-        (struct-get compiler-load-active-session-state dotted-path-cache-keys)
-        bucket
-        module-id)
-      (array-set!
-        (struct-get compiler-load-active-session-state dotted-path-cache-values)
-        bucket
-        path))))
+      (array-set! (struct-get state dotted-path-cache-ready) bucket true)
+      (array-set! (struct-get state dotted-path-cache-keys) bucket module-id)
+      (array-set! (struct-get state dotted-path-cache-values) bucket path))))
+
+(define (compiler-load-dotted-path-cache-store!
+  [module-id : i64]
+  [path : String]) : unit
+  (compiler-load-session-state-dotted-path-cache-store!
+    compiler-load-active-session-state
+    module-id
+    path))
 
 (define (compiler-load-dotted-module-path-uncached [module-name : String]) : String
   (let
@@ -2863,37 +2985,70 @@
               "compiler-load: duplicate module import alias "
               alias))))]))
 
-(define (compiler-load-surface-summaries-reset!) : unit
+(define (compiler-load-session-state-surface-summaries-reset!
+  [state : CompilerLoadSessionState]) : unit
   (begin
-    (set!
-      compiler-load-active-surface-summaries
+    (array-set!
+      (struct-get state surface-summaries)
+      0
       (CompilerLoadSurfaceSummaryNil))
-    (set! compiler-load-lazy-import-skip-record-count 0)))
+    (array-set! (struct-get state lazy-import-skip-record-count) 0 0)))
+
+(define (compiler-load-surface-summaries-reset!) : unit
+  (compiler-load-session-state-surface-summaries-reset!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-surface-summary-load-enter!
+  [state : CompilerLoadSessionState]) : unit
+  (let
+    [depth : i64 (array-ref (struct-get state surface-summary-load-depth) 0)]
+    (begin
+      (if (= depth 0)
+        (compiler-load-session-state-surface-summaries-reset! state)
+        unit)
+      (array-set! (struct-get state surface-summary-load-depth) 0 (+ depth 1)))))
 
 (define (compiler-load-surface-summary-load-enter!) : unit
-  (begin
-    (if (= compiler-load-surface-summary-load-depth 0)
-      (compiler-load-surface-summaries-reset!)
-      unit)
-    (set!
-      compiler-load-surface-summary-load-depth
-      (+ compiler-load-surface-summary-load-depth 1))))
+  (compiler-load-session-state-surface-summary-load-enter!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-surface-summary-load-exit!
+  [state : CompilerLoadSessionState]) : unit
+  (array-set!
+    (struct-get state surface-summary-load-depth)
+    0
+    (- (array-ref (struct-get state surface-summary-load-depth) 0) 1)))
 
 (define (compiler-load-surface-summary-load-exit!) : unit
-  (set!
-    compiler-load-surface-summary-load-depth
-    (- compiler-load-surface-summary-load-depth 1)))
+  (compiler-load-session-state-surface-summary-load-exit!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-surface-summaries
+  [state : CompilerLoadSessionState]) : CompilerLoadSurfaceSummaryList
+  (array-ref (struct-get state surface-summaries) 0))
 
 (define (compiler-load-surface-summaries) : CompilerLoadSurfaceSummaryList
-  compiler-load-active-surface-summaries)
+  (compiler-load-session-state-surface-summaries
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-lazy-import-skip-count
+  [state : CompilerLoadSessionState]) : i64
+  (array-ref (struct-get state lazy-import-skip-record-count) 0))
 
 (define (compiler-load-lazy-import-skip-count) : i64
-  compiler-load-lazy-import-skip-record-count)
+  (compiler-load-session-state-lazy-import-skip-count
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-lazy-import-record-skip!
+  [state : CompilerLoadSessionState]) : unit
+  (array-set!
+    (struct-get state lazy-import-skip-record-count)
+    0
+    (+ (compiler-load-session-state-lazy-import-skip-count state) 1)))
 
 (define (compiler-load-lazy-import-record-skip!) : unit
-  (set!
-    compiler-load-lazy-import-skip-record-count
-    (+ compiler-load-lazy-import-skip-record-count 1)))
+  (compiler-load-session-state-lazy-import-record-skip!
+    compiler-load-active-session-state))
 
 (define (compiler-load-surface-summary-source-active?
   [summaries : CompilerLoadSurfaceSummaryList]
@@ -2907,17 +3062,25 @@
           (box-get rest)
           source-path-id))]))
 
-(define (compiler-load-record-surface-summary!
+(define (compiler-load-session-state-record-surface-summary!
+  [state : CompilerLoadSessionState]
   [summary : CompilerLoadSurfaceSummary]) : unit
   (if (compiler-load-surface-summary-source-active?
-    compiler-load-active-surface-summaries
+    (compiler-load-session-state-surface-summaries state)
     (struct-get summary source-path-id))
     unit
-    (set!
-      compiler-load-active-surface-summaries
+    (array-set!
+      (struct-get state surface-summaries)
+      0
       (CompilerLoadSurfaceSummaryCons
         summary
-        (box compiler-load-active-surface-summaries)))))
+        (box (compiler-load-session-state-surface-summaries state))))))
+
+(define (compiler-load-record-surface-summary!
+  [summary : CompilerLoadSurfaceSummary]) : unit
+  (compiler-load-session-state-record-surface-summary!
+    compiler-load-active-session-state
+    summary))
 
 (define (compiler-load-surface-summary-find-source-in
   [summaries : CompilerLoadSurfaceSummaryList]
@@ -2931,9 +3094,16 @@
           (box-get rest)
           source-path-id))]))
 
-(define (compiler-load-surface-summary-find-source [source-path-id : i64]) : CompilerLoadMaybeSurfaceSummary
+(define (compiler-load-session-state-surface-summary-find-source
+  [state : CompilerLoadSessionState]
+  [source-path-id : i64]) : CompilerLoadMaybeSurfaceSummary
   (compiler-load-surface-summary-find-source-in
-    compiler-load-active-surface-summaries
+    (compiler-load-session-state-surface-summaries state)
+    source-path-id))
+
+(define (compiler-load-surface-summary-find-source [source-path-id : i64]) : CompilerLoadMaybeSurfaceSummary
+  (compiler-load-session-state-surface-summary-find-source
+    compiler-load-active-session-state
     source-path-id))
 
 (define (compiler-load-surface-summary-find-module-in
@@ -2946,9 +3116,16 @@
         (CompilerLoadSomeSurfaceSummary summary)
         (compiler-load-surface-summary-find-module-in (box-get rest) module-id))]))
 
-(define (compiler-load-surface-summary-find-module [module-id : i64]) : CompilerLoadMaybeSurfaceSummary
+(define (compiler-load-session-state-surface-summary-find-module
+  [state : CompilerLoadSessionState]
+  [module-id : i64]) : CompilerLoadMaybeSurfaceSummary
   (compiler-load-surface-summary-find-module-in
-    compiler-load-active-surface-summaries
+    (compiler-load-session-state-surface-summaries state)
+    module-id))
+
+(define (compiler-load-surface-summary-find-module [module-id : i64]) : CompilerLoadMaybeSurfaceSummary
+  (compiler-load-session-state-surface-summary-find-module
+    compiler-load-active-session-state
     module-id))
 
 (define (compiler-load-surface-summary-seen-expected-module?
@@ -3020,12 +3197,20 @@
               (box-get rest)
               source-path-id))))]))
 
-(define (compiler-load-surface-summary-remove-source! [source-path-id : i64]) : unit
-  (set!
-    compiler-load-active-surface-summaries
+(define (compiler-load-session-state-surface-summary-remove-source!
+  [state : CompilerLoadSessionState]
+  [source-path-id : i64]) : unit
+  (array-set!
+    (struct-get state surface-summaries)
+    0
     (compiler-load-surface-summary-remove-source-in
-      compiler-load-active-surface-summaries
+      (compiler-load-session-state-surface-summaries state)
       source-path-id)))
+
+(define (compiler-load-surface-summary-remove-source! [source-path-id : i64]) : unit
+  (compiler-load-session-state-surface-summary-remove-source!
+    compiler-load-active-session-state
+    source-path-id))
 
 (define (compiler-load-surface-summary-load-with-pools
   [path : String]
@@ -3238,6 +3423,320 @@
       -1)
     (compiler-load-lazy-dotted-tail-after-prefix-id name alias)))
 
+;; A catalog selector can ask one existing structural demand walk to retain the
+;; first member below an alias root for every qualified use it sees. This keeps
+;; the ordinary three-bit result intact while avoiding one whole-program walk
+;; per candidate member of a generated Module catalog. The observer is strictly
+;; dynamic and single-threaded. Nested demand queries save only an active outer
+;; observer; a top-level query clears the stack without copying inactive state
+;; that may belong to a reclaimed batch-entry arena.
+;; The primary root drives the ordinary demand result; a second root is observed
+;; opportunistically during that same walk so generated-catalog selection does
+;; not traverse the importer program a second time for its canonical module.
+(defstruct CompilerLoadLazyQualifiedObserverResult
+  (primary-members sym_i64_env.SymI64Env)
+  (secondary-members sym_i64_env.SymI64Env)
+  (secondary-qualified bool)
+  (secondary-direct bool))
+
+(define (compiler-load-session-state-lazy-qualified-observer
+  [state : CompilerLoadSessionState]) : CompilerLoadLazyQualifiedObserverState
+  (struct-get state lazy-qualified-observer))
+
+(define (compiler-load-lazy-qualified-observer-flag
+  [observer : CompilerLoadLazyQualifiedObserverState]
+  [index : i64]) : bool
+  (array-ref (struct-get observer flags) index))
+
+(define (compiler-load-lazy-qualified-observer-flag-set!
+  [observer : CompilerLoadLazyQualifiedObserverState]
+  [index : i64]
+  [value : bool]) : unit
+  (array-set! (struct-get observer flags) index value))
+
+(define (compiler-load-lazy-qualified-observer-root-id
+  [observer : CompilerLoadLazyQualifiedObserverState]
+  [index : i64]) : i64
+  (array-ref (struct-get observer root-ids) index))
+
+(define (compiler-load-lazy-qualified-observer-root-id-set!
+  [observer : CompilerLoadLazyQualifiedObserverState]
+  [index : i64]
+  [value : i64]) : unit
+  (array-set! (struct-get observer root-ids) index value))
+
+(define (compiler-load-lazy-qualified-observer-members
+  [observer : CompilerLoadLazyQualifiedObserverState]
+  [index : i64]) : sym_i64_env.SymI64Env
+  (array-ref (struct-get observer member-sets) index))
+
+(define (compiler-load-lazy-qualified-observer-members-set!
+  [observer : CompilerLoadLazyQualifiedObserverState]
+  [index : i64]
+  [value : sym_i64_env.SymI64Env]) : unit
+  (array-set! (struct-get observer member-sets) index value))
+
+(define (compiler-load-session-state-lazy-qualified-observer-active?
+  [state : CompilerLoadSessionState]) : bool
+  (compiler-load-lazy-qualified-observer-flag
+    (compiler-load-session-state-lazy-qualified-observer state)
+    0))
+
+(define (compiler-load-session-state-lazy-qualified-observer-exhaustive?
+  [state : CompilerLoadSessionState]) : bool
+  (compiler-load-lazy-qualified-observer-flag
+    (compiler-load-session-state-lazy-qualified-observer state)
+    1))
+
+(define (compiler-load-lazy-qualified-observer-active?) : bool
+  (compiler-load-session-state-lazy-qualified-observer-active?
+    compiler-load-active-session-state))
+
+(define (compiler-load-lazy-qualified-observer-exhaustive?) : bool
+  (compiler-load-session-state-lazy-qualified-observer-exhaustive?
+    compiler-load-active-session-state))
+
+;; Catalog observers only need lexical bindings that shadow either observed
+;; root. Avoid allocating a lexical environment spine for every unrelated
+;; parameter, binding, and pattern during those full scans while preserving
+;; exact treatment of a local alias-name binding.
+(define (compiler-load-session-state-lazy-demand-bind-local-exhaustive
+  [state : CompilerLoadSessionState]
+  [locals : sym_i64_env.SymI64Env]
+  [name : i64]) : sym_i64_env.SymI64Env
+  (let
+    [observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-session-state-lazy-qualified-observer state)]
+    (if (or
+      (= name (compiler-load-lazy-qualified-observer-root-id observer 0))
+      (= name (compiler-load-lazy-qualified-observer-root-id observer 1)))
+      (sym_i64_env.sym-i64-bind-id locals name 1)
+      locals)))
+
+(define (compiler-load-lazy-demand-bind-local-exhaustive
+  [locals : sym_i64_env.SymI64Env]
+  [name : i64]) : sym_i64_env.SymI64Env
+  (compiler-load-session-state-lazy-demand-bind-local-exhaustive
+    compiler-load-active-session-state
+    locals
+    name))
+
+(define (compiler-load-session-state-lazy-qualified-observer-reset!
+  [state : CompilerLoadSessionState]) : unit
+  (let
+    [observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-session-state-lazy-qualified-observer state)]
+    (begin
+      (compiler-load-lazy-qualified-observer-flag-set! observer 0 false)
+      (compiler-load-lazy-qualified-observer-flag-set! observer 1 false)
+      (compiler-load-lazy-qualified-observer-root-id-set! observer 0 0)
+      (compiler-load-lazy-qualified-observer-members-set!
+        observer
+        0
+        (sym_i64_env.sym-i64-empty))
+      (compiler-load-lazy-qualified-observer-root-id-set! observer 1 0)
+      (compiler-load-lazy-qualified-observer-members-set!
+        observer
+        1
+        (sym_i64_env.sym-i64-empty))
+      (compiler-load-lazy-qualified-observer-flag-set! observer 2 false)
+      (compiler-load-lazy-qualified-observer-flag-set! observer 3 false)
+      (array-set!
+        (struct-get observer stack)
+        0
+        (compiler-load-lazy-qualified-observer-stack-empty)))))
+
+(define (compiler-load-lazy-qualified-observer-reset!) : unit
+  (compiler-load-session-state-lazy-qualified-observer-reset!
+    compiler-load-active-session-state))
+
+(define (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+  [state : CompilerLoadSessionState]
+  [root-id : i64]
+  [secondary-root-id : i64]) : unit
+  (let
+    [observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-session-state-lazy-qualified-observer state)]
+    (begin
+      ;; A top-level query may follow a completed batch entry whose inactive
+      ;; observer frame belonged to the reclaimed entry arena. Clear it before
+      ;; preserving the ordinary push/pop semantics used by the demand walker.
+      (if (compiler-load-session-state-lazy-qualified-observer-active? state)
+        unit
+        (compiler-load-session-state-lazy-qualified-observer-reset! state))
+      (array-set!
+        (struct-get observer stack)
+        0
+        (CompilerLoadLazyQualifiedObserverStack.Frame
+          (compiler-load-lazy-qualified-observer-flag observer 0)
+          (compiler-load-lazy-qualified-observer-root-id observer 0)
+          (compiler-load-lazy-qualified-observer-members observer 0)
+          (compiler-load-lazy-qualified-observer-root-id observer 1)
+          (compiler-load-lazy-qualified-observer-members observer 1)
+          (compiler-load-lazy-qualified-observer-flag observer 2)
+          (compiler-load-lazy-qualified-observer-flag observer 3)
+          (box (array-ref (struct-get observer stack) 0))))
+      (compiler-load-lazy-qualified-observer-flag-set! observer 1 true)
+      (compiler-load-lazy-qualified-observer-flag-set! observer 0 true)
+      (compiler-load-lazy-qualified-observer-root-id-set! observer 0 root-id)
+      (compiler-load-lazy-qualified-observer-members-set!
+        observer
+        0
+        (sym_i64_env.sym-i64-empty))
+      (compiler-load-lazy-qualified-observer-root-id-set!
+        observer
+        1
+        secondary-root-id)
+      (compiler-load-lazy-qualified-observer-members-set!
+        observer
+        1
+        (sym_i64_env.sym-i64-empty))
+      (compiler-load-lazy-qualified-observer-flag-set! observer 2 false)
+      (compiler-load-lazy-qualified-observer-flag-set! observer 3 false))))
+
+(define (compiler-load-lazy-qualified-observer-begin-pair!
+  [root-id : i64]
+  [secondary-root-id : i64]) : unit
+  (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+    compiler-load-active-session-state
+    root-id
+    secondary-root-id))
+
+(define (compiler-load-lazy-qualified-observer-members-with-note
+  [name : i64]
+  [root-id : i64]
+  [members : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (let
+    [member-id : i64 (compiler-load-lazy-qualified-member-id name root-id)]
+    (if (< member-id 0)
+      members
+      (compiler-load-structural-member-set-add-id members member-id))))
+
+(define (compiler-load-session-state-lazy-qualified-observer-note!
+  [state : CompilerLoadSessionState]
+  [name : i64]) : unit
+  (let
+    [observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-session-state-lazy-qualified-observer state)]
+    (compiler-load-lazy-qualified-observer-members-set!
+      observer
+      0
+      (compiler-load-lazy-qualified-observer-members-with-note
+        name
+        (compiler-load-lazy-qualified-observer-root-id observer 0)
+        (compiler-load-lazy-qualified-observer-members observer 0)))))
+
+(define (compiler-load-lazy-qualified-observer-note! [name : i64]) : unit
+  (compiler-load-session-state-lazy-qualified-observer-note!
+    compiler-load-active-session-state
+    name))
+
+(define (compiler-load-session-state-lazy-qualified-observer-note-secondary!
+  [state : CompilerLoadSessionState]
+  [name : i64]
+  [locals : sym_i64_env.SymI64Env]) : unit
+  (let
+    [observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-session-state-lazy-qualified-observer state)]
+    [secondary-root-id : i64
+      (compiler-load-lazy-qualified-observer-root-id observer 1)]
+    (begin
+      (if (compiler-load-lazy-name-qualified-by-id? name secondary-root-id)
+        (begin
+          (compiler-load-lazy-qualified-observer-flag-set! observer 2 true)
+          (compiler-load-lazy-qualified-observer-members-set!
+            observer
+            1
+            (compiler-load-lazy-qualified-observer-members-with-note
+              name
+              secondary-root-id
+              (compiler-load-lazy-qualified-observer-members observer 1))))
+        (if (and
+          (not (sym_i64_env.sym-i64-contains-id locals name))
+          (= name secondary-root-id))
+          (compiler-load-lazy-qualified-observer-flag-set! observer 3 true)
+          unit))
+      unit)))
+
+(define (compiler-load-lazy-qualified-observer-note-secondary!
+  [name : i64]
+  [locals : sym_i64_env.SymI64Env]) : unit
+  (compiler-load-session-state-lazy-qualified-observer-note-secondary!
+    compiler-load-active-session-state
+    name
+    locals))
+
+(define (compiler-load-session-state-lazy-qualified-observer-end-pair!
+  [state : CompilerLoadSessionState]) : CompilerLoadLazyQualifiedObserverResult
+  (let
+    [observer : CompilerLoadLazyQualifiedObserverState
+      (compiler-load-session-state-lazy-qualified-observer state)]
+    [out : CompilerLoadLazyQualifiedObserverResult
+      (CompilerLoadLazyQualifiedObserverResult
+        (compiler-load-lazy-qualified-observer-members observer 0)
+        (compiler-load-lazy-qualified-observer-members observer 1)
+        (compiler-load-lazy-qualified-observer-flag observer 2)
+        (compiler-load-lazy-qualified-observer-flag observer 3))]
+    (begin
+      (match (array-ref (struct-get observer stack) 0)
+        [(CompilerLoadLazyQualifiedObserverStack.Empty)
+          (begin
+            (compiler-load-lazy-qualified-observer-flag-set! observer 0 false)
+            (compiler-load-lazy-qualified-observer-flag-set! observer 1 false)
+            (compiler-load-lazy-qualified-observer-root-id-set! observer 0 0)
+            (compiler-load-lazy-qualified-observer-members-set!
+              observer
+              0
+              (sym_i64_env.sym-i64-empty))
+            (compiler-load-lazy-qualified-observer-root-id-set! observer 1 0)
+            (compiler-load-lazy-qualified-observer-members-set!
+              observer
+              1
+              (sym_i64_env.sym-i64-empty))
+            (compiler-load-lazy-qualified-observer-flag-set! observer 2 false)
+            (compiler-load-lazy-qualified-observer-flag-set! observer 3 false))]
+        [(CompilerLoadLazyQualifiedObserverStack.Frame
+            active
+            root-id
+            members
+            secondary-root-id
+            secondary-members
+            secondary-qualified
+            secondary-direct
+            rest)
+          (begin
+            (compiler-load-lazy-qualified-observer-flag-set! observer 0 active)
+            (compiler-load-lazy-qualified-observer-root-id-set!
+              observer
+              0
+              root-id)
+            (compiler-load-lazy-qualified-observer-members-set!
+              observer
+              0
+              members)
+            (compiler-load-lazy-qualified-observer-root-id-set!
+              observer
+              1
+              secondary-root-id)
+            (compiler-load-lazy-qualified-observer-members-set!
+              observer
+              1
+              secondary-members)
+            (compiler-load-lazy-qualified-observer-flag-set!
+              observer
+              2
+              secondary-qualified)
+            (compiler-load-lazy-qualified-observer-flag-set!
+              observer
+              3
+              secondary-direct)
+            (array-set! (struct-get observer stack) 0 (box-get rest)))])
+      out)))
+
+(define (compiler-load-lazy-qualified-observer-end-pair!) : CompilerLoadLazyQualifiedObserverResult
+  (compiler-load-session-state-lazy-qualified-observer-end-pair!
+    compiler-load-active-session-state))
+
 (define (compiler-load-lazy-name-qualified-by-id? [name : i64] [alias : i64]) : bool
   (>= (compiler-load-lazy-tail-after-prefix-id name alias) 0))
 
@@ -3293,19 +3792,30 @@
   [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
-  (cond
-    [(compiler-load-lazy-name-qualified-by-id? name alias)
-      (compiler-load-lazy-alias-demand-qualified
-        (compiler-load-lazy-qualified-member-id name alias))]
-    [(sym_i64_env.sym-i64-contains-id locals name)
-      (compiler-load-lazy-alias-demand-none)]
-    [(or
-        (= name alias)
-        (compiler-load-lazy-surface-decls-direct-name?
-          (struct-get summary decls)
-          name))
-      (compiler-load-lazy-alias-demand-direct)]
-    [else (compiler-load-lazy-alias-demand-none)]))
+  (begin
+    (if (compiler-load-lazy-qualified-observer-active?)
+      (compiler-load-lazy-qualified-observer-note-secondary! name locals)
+      unit)
+    (cond
+      [(compiler-load-lazy-name-qualified-by-id? name alias)
+        (let
+          [member-id : i64 (compiler-load-lazy-qualified-member-id name alias)]
+          (if (< member-id 0)
+            (compiler-load-lazy-alias-demand-unknown)
+            (begin
+              (if (compiler-load-lazy-qualified-observer-active?)
+                (compiler-load-lazy-qualified-observer-note! name)
+                unit)
+              (compiler-load-lazy-alias-demand-qualified member-id))))]
+      [(sym_i64_env.sym-i64-contains-id locals name)
+        (compiler-load-lazy-alias-demand-none)]
+      [(or
+          (= name alias)
+          (compiler-load-lazy-surface-decls-direct-name?
+            (struct-get summary decls)
+            name))
+        (compiler-load-lazy-alias-demand-direct)]
+      [else (compiler-load-lazy-alias-demand-none)])))
 
 (define (compiler-load-surface-decl-decl-emitting?
   [decl : CompilerLoadSurfaceDecl]) : bool
@@ -3487,7 +3997,9 @@
       [(AstParam.Param name _ _ _)
         (compiler-load-lazy-param-list-locals-at
           params
-          (sym_i64_env.sym-i64-bind-id locals name 1)
+          (if (compiler-load-lazy-qualified-observer-exhaustive?)
+            (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+            (sym_i64_env.sym-i64-bind-id locals name 1))
           (+ index 1))])))
 
 (define (compiler-load-lazy-param-list-locals
@@ -3540,7 +4052,9 @@
       [(AstMacroParam.Param name _ _ _)
         (compiler-load-lazy-macro-param-list-locals-at
           params
-          (sym_i64_env.sym-i64-bind-id locals name 1)
+          (if (compiler-load-lazy-qualified-observer-exhaustive?)
+            (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+            (sym_i64_env.sym-i64-bind-id locals name 1))
           (+ index 1))])))
 
 (define (compiler-load-lazy-macro-param-list-locals
@@ -3666,8 +4180,14 @@
   [pattern : AstPattern]
   [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match pattern
-    [(AstPattern.Var name _) (sym_i64_env.sym-i64-bind-id locals name 1)]
-    [(AstPattern.Binding name) (sym_i64_env.sym-i64-bind-id locals name 1)]
+    [(AstPattern.Var name _)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+        (sym_i64_env.sym-i64-bind-id locals name 1))]
+    [(AstPattern.Binding name)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+        (sym_i64_env.sym-i64-bind-id locals name 1))]
     [(AstPattern.Tuple patterns)
       (compiler-load-lazy-pattern-list-locals (box-get patterns) locals)]
     [(AstPattern.Variant _ patterns)
@@ -3742,7 +4262,9 @@
               bindings
               alias
               summary
-              (sym_i64_env.sym-i64-bind-id locals name 1)
+              (if (compiler-load-lazy-qualified-observer-exhaustive?)
+                (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+                (sym_i64_env.sym-i64-bind-id locals name 1))
               (+ index 1))))])))
 
 (define (compiler-load-lazy-let-bindings-locals-at
@@ -3755,8 +4277,79 @@
       [(AstLetBinding.Binding name _ _)
         (compiler-load-lazy-let-bindings-locals-at
           bindings
-          (sym_i64_env.sym-i64-bind-id locals name 1)
+          (if (compiler-load-lazy-qualified-observer-exhaustive?)
+            (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+            (sym_i64_env.sym-i64-bind-id locals name 1))
           (+ index 1))])))
+
+(define (compiler-load-lazy-resource-bindings-demand-at?
+  [bindings : (& bindings AstResourceBindingList)]
+  [alias : i64]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-resource-binding-list-len bindings))
+    (compiler-load-lazy-alias-demand-none)
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init cleanup)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-expr-demand
+            (ast-node-get init)
+            alias
+            summary
+            locals)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-expr-demand
+              (ast-node-get cleanup)
+              alias
+              summary
+              locals)
+            (compiler-load-lazy-resource-bindings-demand-at?
+              bindings
+              alias
+              summary
+              (if (compiler-load-lazy-qualified-observer-exhaustive?)
+                (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+                (sym_i64_env.sym-i64-bind-id locals name 1))
+              (+ index 1))))])))
+
+(define (compiler-load-lazy-resource-bindings-demand
+  [bindings : AstResourceBindingList]
+  [alias : i64]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-resource-bindings-demand-at?
+    (& bindings)
+    alias
+    summary
+    locals
+    0))
+
+(define (compiler-load-lazy-resource-bindings-locals-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : sym_i64_env.SymI64Env
+  (if (>= index (ast-resource-binding-list-len bindings))
+    locals
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name _ _)
+        (compiler-load-lazy-resource-bindings-locals-at
+          bindings
+          (if (compiler-load-lazy-qualified-observer-exhaustive?)
+            (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+            (sym_i64_env.sym-i64-bind-id locals name 1))
+          (+ index 1))])))
+
+(define (compiler-load-lazy-resource-bindings-locals
+  [bindings : AstResourceBindingList]
+  [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (compiler-load-lazy-resource-bindings-locals-at (& bindings) locals 0))
 
 (define (compiler-load-lazy-match-arms-demand-at?
   [arms : (& arms AstMatchArmList)]
@@ -3990,6 +4583,133 @@
               summary
               locals)
             (compiler-load-lazy-match-arms-demand arms alias summary locals))])]
+    [(AstExpr.Foreach foreach-box)
+      (match (box-get foreach-box)
+        [(AstForeach.Foreach index ty start end body)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-type-demand ty alias summary locals)
+            (compiler-load-lazy-alias-demand-merge
+              (compiler-load-lazy-expr-demand
+                (ast-node-get start)
+                alias
+                summary
+                locals)
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-lazy-expr-demand
+                  (ast-node-get end)
+                  alias
+                  summary
+                  locals)
+                (compiler-load-lazy-expr-demand
+                  (ast-node-get body)
+                  alias
+                  summary
+                  (if (compiler-load-lazy-qualified-observer-exhaustive?)
+                    (compiler-load-lazy-demand-bind-local-exhaustive
+                      locals
+                      index)
+                    (sym_i64_env.sym-i64-bind-id locals index 1))))))])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ index ty start end init value)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-type-demand ty alias summary locals)
+            (compiler-load-lazy-alias-demand-merge
+              (compiler-load-lazy-expr-demand
+                (ast-node-get start)
+                alias
+                summary
+                locals)
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-lazy-expr-demand
+                  (ast-node-get end)
+                  alias
+                  summary
+                  locals)
+                (compiler-load-lazy-alias-demand-merge
+                  (compiler-load-lazy-expr-demand
+                    (ast-node-get init)
+                    alias
+                    summary
+                    locals)
+                  (compiler-load-lazy-expr-demand
+                    (ast-node-get value)
+                    alias
+                    summary
+                    (if (compiler-load-lazy-qualified-observer-exhaustive?)
+                      (compiler-load-lazy-demand-bind-local-exhaustive
+                        locals
+                        index)
+                      (sym_i64_env.sym-i64-bind-id locals index 1)))))))])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan _ index ty start end prefix _ init value body)
+          (let
+            [value-locals : sym_i64_env.SymI64Env
+              (if (compiler-load-lazy-qualified-observer-exhaustive?)
+                (compiler-load-lazy-demand-bind-local-exhaustive locals index)
+                (sym_i64_env.sym-i64-bind-id locals index 1))]
+            [body-locals : sym_i64_env.SymI64Env
+              (if (compiler-load-lazy-qualified-observer-exhaustive?)
+                (compiler-load-lazy-demand-bind-local-exhaustive
+                  value-locals
+                  prefix)
+                (sym_i64_env.sym-i64-bind-id value-locals prefix 1))]
+            (compiler-load-lazy-alias-demand-merge
+              (compiler-load-lazy-type-demand ty alias summary locals)
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-lazy-expr-demand
+                  (ast-node-get start)
+                  alias
+                  summary
+                  locals)
+                (compiler-load-lazy-alias-demand-merge
+                  (compiler-load-lazy-expr-demand
+                    (ast-node-get end)
+                    alias
+                    summary
+                    locals)
+                  (compiler-load-lazy-alias-demand-merge
+                    (compiler-load-lazy-expr-demand
+                      (ast-node-get init)
+                      alias
+                      summary
+                      locals)
+                    (compiler-load-lazy-alias-demand-merge
+                      (compiler-load-lazy-expr-demand
+                        (ast-node-get value)
+                        alias
+                        summary
+                        value-locals)
+                      (compiler-load-lazy-expr-demand
+                        (ast-node-get body)
+                        alias
+                        summary
+                        body-locals)))))))])]
+    [(AstExpr.SpmdBroadcast value lane)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get lane)
+          alias
+          summary
+          locals))]
+    [(AstExpr.SpmdShuffle value lane)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get lane)
+          alias
+          summary
+          locals))]
     [(AstExpr.StructGet receiver _)
       (compiler-load-lazy-expr-demand
         (ast-node-get receiver)
@@ -4048,6 +4768,46 @@
       (compiler-load-lazy-type-demand ty alias summary locals)]
     [(AstExpr.Init maybe-ty)
       (compiler-load-lazy-maybe-type-demand maybe-ty alias summary locals)]
+    [(AstExpr.Comptime inner)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstExpr.Quote inner)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstExpr.Quasiquote inner)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstExpr.Unquote inner)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstExpr.UnquoteSplicing inner)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstExpr.Try inner)
       (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
     [(AstExpr.Return inner)
@@ -4160,6 +4920,16 @@
         (compiler-load-lazy-decl-module-macro-qualified-by? decl module-id)
         (compiler-load-lazy-decl-list-module-macro-qualified-by? rest module-id))]))
 
+(define (compiler-load-lazy-generated-meta-demand
+  [meta : AstGeneratedDeclMeta]
+  [alias : i64]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (match meta
+    [(AstGeneratedDeclMeta.No) (compiler-load-lazy-alias-demand-none)]
+    [(AstGeneratedDeclMeta.Some _ _ args _)
+      (compiler-load-lazy-expr-list-demand args alias summary locals)]))
+
 (define (compiler-load-lazy-decl-demand
   [decl : AstDecl]
   [alias : i64]
@@ -4187,6 +4957,42 @@
             alias
             summary
             (compiler-load-lazy-param-list-locals params locals))))]
+    [(AstDecl.DefMacro _ params ret body)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-macro-param-list-demand
+            params
+            alias
+            summary
+            locals)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-type-demand ret alias summary locals)
+            (compiler-load-lazy-expr-demand
+              (ast-node-get body)
+              alias
+              summary
+              (compiler-load-lazy-macro-param-list-locals params locals))))
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.Extern _ _ _ ty)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-type-demand ty alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.DefEnum _ _ variants)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-variant-list-demand variants alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.DefEnumLifetimes _ _ _ variants)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-variant-list-demand variants alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.DefStruct _ _ _ fields)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-field-list-demand fields alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.DefStructLifetimes _ _ _ _ fields)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-field-list-demand fields alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.Import
         (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
       (compiler-load-lazy-module-macro-demand
@@ -4202,7 +5008,12 @@
       (compiler-load-lazy-expr-demand (ast-node-get body) alias summary locals)]
     [(AstDecl.Unsafe inner)
       (compiler-load-lazy-decl-demand (box-get inner) alias summary locals)]
-    [(AstDecl.ComptimeDecl _ _) (compiler-load-lazy-alias-demand-unknown)]
+    [(AstDecl.ComptimeDecl meta inner)
+      (if (compiler-load-lazy-qualified-observer-exhaustive?)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-generated-meta-demand meta alias summary locals)
+          (compiler-load-lazy-decl-demand (box-get inner) alias summary locals))
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.DefDispatch _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStrComptime _ _) (compiler-load-lazy-alias-demand-none)]
@@ -4228,6 +5039,29 @@
           (compiler-load-lazy-alias-demand-merge
             head
             (compiler-load-lazy-decl-list-demand rest alias summary locals))))]))
+
+(define (compiler-load-lazy-decl-list-demand-full
+  [decls : AstDeclList]
+  [alias : i64]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (let
+    [cursor : AstDeclList decls]
+    [out : CompilerLoadLazyAliasDemand (compiler-load-lazy-alias-demand-none)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (begin
+              (set!
+                out
+                (compiler-load-lazy-alias-demand-merge
+                  out
+                  (compiler-load-lazy-decl-demand decl alias summary locals)))
+              (set! cursor rest))]))
+      out)))
 
 (define (compiler-load-lazy-empty-surface-summary) : CompilerLoadSurfaceSummary
   ;; The first structural pass only decides whether a qualified or unresolved
@@ -12585,8 +13419,148 @@
       (= (array-ref shared 4) tail-a-id)
       (= (array-ref shared 5) tail-b-id))))
 
+(define (compiler-load-required-source-id [text : String]) : i64
+  (match (ci.intern-lookup text)
+    [(ci.InternLookupFound id) id]
+    [(ci.InternLookupMissing)
+      (io.panic "compiler-load: missing parsed source identity")]))
+
+(define (compiler-load-session-owned-traversal-isolation-ok?) : bool
+  (let
+    [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-module-id : i64 (compiler-load-required-source-id "state-module")]
+    [state-path-id : i64 (compiler-load-required-source-id "state.tl")]
+    [alias-a-id : i64 (compiler-load-required-source-id "alias-a")]
+    [module-a-id : i64 (compiler-load-required-source-id "module-a")]
+    [alias-a-member-id : i64
+      (compiler-load-required-source-id "alias-a.member-a")]
+    [member-a-id : i64 (compiler-load-required-source-id "member-a")]
+    [alias-b-id : i64 (compiler-load-required-source-id "alias-b")]
+    [module-b-id : i64 (compiler-load-required-source-id "module-b")]
+    [alias-b-member-id : i64
+      (compiler-load-required-source-id "alias-b.member-b")]
+    [member-b-id : i64 (compiler-load-required-source-id "member-b")]
+    [summary : CompilerLoadSurfaceSummary
+      (CompilerLoadSurfaceSummary
+        state-module-id
+        state-path-id
+        "state.tl"
+        ""
+        (CompilerLoadSurfaceImportNil)
+        (CompilerLoadSurfaceDeclNil)
+        false
+        false
+        false
+        false
+        (CompilerLoadLazyImportDirect))]
+    [_seed-b-caches : unit
+      (begin
+        (array-set! (struct-get state-b program-cache-hit-count) 0 7)
+        (array-set! (struct-get state-b runtime-prelude-cache-ready) 0 true))]
+    [_clear-a-caches : unit
+      (begin
+        (compiler-load-session-state-program-cache-clear! state-a)
+        (compiler-load-session-state-runtime-prelude-cache-clear! state-a))]
+    [dotted-id : i64 (compiler-load-required-source-id "pkg.member")]
+    [_seed-b-dotted : unit
+      (begin
+        (compiler-load-session-state-dotted-path-cache-reset! state-b)
+        (compiler-load-session-state-dotted-path-cache-store!
+          state-b
+          dotted-id
+          "pkg/member.tl")
+        (compiler-load-session-state-dotted-path-cache-reset! state-a))]
+    [_record-a : unit
+      (begin
+        (compiler-load-session-state-surface-summary-load-enter! state-a)
+        (compiler-load-session-state-record-surface-summary! state-a summary)
+        (compiler-load-session-state-lazy-import-record-skip! state-a)
+        (compiler-load-session-state-lazy-import-record-skip! state-a)
+        (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+          state-a
+          alias-a-id
+          module-a-id)
+        (compiler-load-session-state-lazy-qualified-observer-note!
+          state-a
+          alias-a-member-id))]
+    [_record-b : unit
+      (begin
+        (compiler-load-session-state-surface-summary-load-enter! state-b)
+        (compiler-load-session-state-record-surface-summary! state-b summary)
+        (compiler-load-session-state-lazy-import-record-skip! state-b)
+        (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+          state-b
+          alias-b-id
+          module-b-id)
+        (compiler-load-session-state-lazy-qualified-observer-note!
+          state-b
+          alias-b-member-id))]
+    [observed-b : CompilerLoadLazyQualifiedObserverResult
+      (compiler-load-session-state-lazy-qualified-observer-end-pair! state-b)]
+    [a-still-active : bool
+      (compiler-load-session-state-lazy-qualified-observer-active? state-a)]
+    [observed-a : CompilerLoadLazyQualifiedObserverResult
+      (compiler-load-session-state-lazy-qualified-observer-end-pair! state-a)]
+    [_finish : unit
+      (begin
+        (compiler-load-session-state-surface-summary-load-exit! state-a)
+        (compiler-load-session-state-surface-summary-load-exit! state-b))]
+    [before-reset : bool
+      (and
+        a-still-active
+        (not
+          (compiler-load-session-state-lazy-qualified-observer-active? state-b))
+        (= (compiler-load-session-state-lazy-import-skip-count state-a) 2)
+        (= (compiler-load-session-state-lazy-import-skip-count state-b) 1)
+        (sym_i64_env.sym-i64-contains-id
+          (struct-get observed-a primary-members)
+          member-a-id)
+        (sym_i64_env.sym-i64-contains-id
+          (struct-get observed-b primary-members)
+          member-b-id))]
+    [_reset-a : unit
+      (compiler-load-session-state-surface-summaries-reset! state-a)]
+    (cond
+      [(not before-reset)
+        (io.panic "compiler-load: traversal before-reset mismatch")]
+      [(not (= (array-ref (struct-get state-b program-cache-hit-count) 0) 7))
+        (io.panic "compiler-load: traversal program cache mismatch")]
+      [(not (array-ref (struct-get state-b runtime-prelude-cache-ready) 0))
+        (io.panic "compiler-load: traversal prelude cache mismatch")]
+      [(not
+          (match (compiler-load-session-state-dotted-path-cache-lookup
+            state-b
+            dotted-id)
+            [(CompilerLoadSomeString path) (string.eq path "pkg/member.tl")]
+            [_ false]))
+        (io.panic "compiler-load: traversal dotted cache mismatch")]
+      [(not (= (compiler-load-session-state-lazy-import-skip-count state-a) 0))
+        (io.panic "compiler-load: traversal reset count mismatch")]
+      [(not (= (compiler-load-session-state-lazy-import-skip-count state-b) 1))
+        (io.panic "compiler-load: traversal peer count mismatch")]
+      [(not
+          (match (compiler-load-session-state-surface-summary-find-source
+            state-a
+            state-path-id)
+            [(CompilerLoadNoSurfaceSummary) true]
+            [_ false]))
+        (io.panic "compiler-load: traversal reset summary mismatch")]
+      [(not
+          (match (compiler-load-session-state-surface-summary-find-source
+            state-b
+            state-path-id)
+            [(CompilerLoadSomeSurfaceSummary _) true]
+            [_ false]))
+        (io.panic "compiler-load: traversal peer summary mismatch")]
+      [else true])))
+
 (define (compiler-load-self-test) : i64
   (begin
+    (unless
+      (compiler-load-session-owned-traversal-isolation-ok?)
+      (return
+        (io.panic "compiler-load: owned traversal isolation smoke mismatch")))
     (unless
       (compiler-load-append-onto-reuse-ok?)
       (return (io.panic "compiler-load: append-onto reuse smoke mismatch")))

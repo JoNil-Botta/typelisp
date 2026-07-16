@@ -221,6 +221,7 @@
         (ctfe-builtin-ref 85)
         (ctfe-builtin-ref 87))
       (= name-id (ctfe-builtin-ref 89))
+      (= name-id (ctfe-builtin-ref 214))
       (ctfe-builtin-id-any2?
         name-id
         (ctfe-builtin-ref 210)
@@ -1643,7 +1644,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (define (ctfe-fuel-limit) : i64
-  10000)
+  100000)
 
 (define (ctfe-fuel-diagnostic-message) : String
   (comptime_diagnostics.compiler-comptime-fuel-diagnostic-message))
@@ -3938,6 +3939,18 @@
                         (ctfe-diagnostic-at-expr
                           expr
                           "array-element-type requires array type")))])]
+              [(string.eq name "box-element-type")
+                (match ty
+                  [(AstType.Box elem)
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
+                      arg-fuel)]
+                  [_
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          "box-element-type requires box type")))])]
               [(string.eq name "array-length")
                 (match ty
                   [(AstType.Array _ count)
@@ -5687,6 +5700,87 @@
           expr
           (string.append name " expects a sequence and an index"))))))
 
+(define (ctfe-eval-expr-list-type-node
+  [pools : AstNodePoolContext]
+  [node : i64]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match (ast-node-pool-context-expr-get pools node)
+    [(AstExpr.TypeLiteral ty) (ResultCtfe.Ok (CompilerCtfeValue.Type ty) fuel)]
+    [(AstExpr.Spanned inner _)
+      (ctfe-eval-expr-list-type-node pools inner expr fuel)]
+    [_
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "expr-list-type-nth expects a captured type literal")))]))
+
+(define (ctfe-eval-expr-list-type-nth-value
+  [value : CompilerCtfeValue]
+  [index : i64]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match value
+    [(CompilerCtfeValue.ExprList nodes)
+      (if (or (< index 0) (>= index (ctfe-expr-list-length nodes)))
+        (ctfe-comptime-array-index-error expr)
+        (ctfe-eval-expr-list-type-node
+          (ctfe-env-pools env)
+          (ctfe-expr-list-nth nodes index)
+          expr
+          fuel))]
+    [(CompilerCtfeValue.CapturedExprList nodes pools)
+      (if (or (< index 0) (>= index (ctfe-expr-list-length nodes)))
+        (ctfe-comptime-array-index-error expr)
+        (ctfe-eval-expr-list-type-node
+          pools
+          (ctfe-expr-list-nth nodes index)
+          expr
+          fuel))]
+    [_
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "expr-list-type-nth expects an ExprList")))]))
+
+(define (ctfe-eval-expr-list-type-nth-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [items-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [index-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      (match (compiler-ctfe-eval items-arg env fuel)
+        [(ResultCtfe.Ok items items-fuel)
+          (match (compiler-ctfe-eval index-arg env items-fuel)
+            [(ResultCtfe.Ok index-value index-fuel)
+              (match index-value
+                [(CompilerCtfeValue.I64 index)
+                  (ctfe-eval-expr-list-type-nth-value
+                    items
+                    index
+                    expr
+                    env
+                    index-fuel)]
+                [_
+                  (ResultCtfe.Err
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "expr-list-type-nth index must be i64")))])]
+            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "expr-list-type-nth expects an ExprList and index")))))
+
 (define (ctfe-expr-if-condition-type-ok? [env : CtfeEnv] [ty : AstType]) : bool
   (or (ctfe-type-eq-in-env env ty (AstType.Bool)) (ctfe-untyped-expr-type? ty)))
 
@@ -7200,6 +7294,8 @@
               fuel)]
           [(ctfe-builtin-sequence-nth-id? call-id)
             (ctfe-eval-comptime-sequence-nth-call call-name args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 215))
+            (ctfe-eval-expr-list-type-nth-call args expr env fuel)]
           [(ctfe-builtin-source-helper-id? call-id)
             (ctfe-eval-comptime-source-helper-call call-name args expr env fuel)]
           [(ctfe-builtin-expr-clause-list-inspector-id? call-id)
@@ -12817,6 +12913,8 @@
       (ast-node-push (AstExpr.TypeLiteral (ast-ty-array (AstType.I64) 4)))]
     [dyn-array-ty : i64
       (ast-node-push (AstExpr.TypeLiteral (ast-ty-dyn-array (AstType.Bool))))]
+    [box-ty : i64
+      (ast-node-push (AstExpr.TypeLiteral (ast-ty-box (AstType.String))))]
     [tuple-ty : i64
       (ast-node-push
         (AstExpr.TypeLiteral
@@ -12950,6 +13048,12 @@
         (compiler-ctfe-call1 (ctfe-builtin-ref 82) array-ty)
         env
         (AstType.I64))
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-type-ok?
+        (compiler-ctfe-call1 (ctfe-builtin-ref 214) box-ty)
+        env
+        (AstType.String))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
@@ -13598,7 +13702,9 @@
         prefix
         negative-count)]
     [huge-count : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Int 10000 "")))]
+      (ctfe-ast-push
+        env
+        (AstExpr.Literal (AstLiteral.Int (ctfe-fuel-limit) "")))]
     [huge-call : i64
       (compiler-ctfe-call2-in-env env (ctfe-builtin-ref 90) prefix huge-count)]
     (and

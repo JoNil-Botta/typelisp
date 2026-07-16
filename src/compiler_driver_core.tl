@@ -1796,14 +1796,16 @@
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverPic.Err diag))]))
 
-;; The implicit prelude prepended before every entry program. It is two
-;; always-linked stdlib modules loaded as files:
+;; The implicit prelude prepended before every entry program. Its runtime and
+;; macro roots are loaded as files:
 ;;   - stdlib/runtime.tl  - fault/abort handlers + OS primitives,
 ;;     exported as fixed symbols; kept as reachability roots.
 ;;   - stdlib/core_macros.tl - the implicit core macro prelude: `and`,
 ;;     `or`, `when`, `unless`, `cond`. Loaded right after runtime so its macros
 ;;     are source-order visible to the entry and resolve as bare unqualified
 ;;     calls via the prelude fallback in `macro-call-decl`.
+;;     It also loads `stdlib.clone`; the late typed clone-helper handoff calls
+;;     that declaration macro by its hygienic canonical identity.
 ;; Loading the prelude first lets the entry's own (possibly transitive) imports
 ;; dedup against it before the decls/paths/modules are concatenated.
 (define (compiler-driver-load-runtime-prelude-cold

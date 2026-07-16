@@ -574,9 +574,9 @@
   -1)
 (define compiler-builtin-id-fix-stdlib_dot_clone : i64
   -1)
-(define compiler-builtin-id-fix-synthesize_one_field_struct : i64
+(define compiler-builtin-id-fix-synthesize_helpers : i64
   -1)
-(define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct : i64
+(define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
   -1)
 (define compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer : i64
   -1)
@@ -601,7 +601,7 @@
 (define compiler-builtin-id-cfg-feature-cleanup-owner-reflection : i64
   -1)
 (define compiler-builtin-ctfe-ids : (Array i64)
-  (make-array i64 214))
+  (make-array i64 216))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -613,7 +613,7 @@
   (let
     [metadata : (Array i64) (make-array i64 4)]
     [ids : (Array i64) (make-array i64 295)]
-    [ctfe-ids : (Array i64) (make-array i64 214)]
+    [ctfe-ids : (Array i64) (make-array i64 216)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
@@ -625,7 +625,7 @@
           (array-set! ids i -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 214)
+      (while (< i 216)
         (begin
           (array-set! ctfe-ids i -1)
           (set! i (+ i 1))))
@@ -687,7 +687,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 214)
+    (while (< i 216)
       (begin
         (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -695,7 +695,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 214)
+    (while (< i 216)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
@@ -1026,11 +1026,11 @@
     (state-set! state 268 compiler-builtin-id-fix-when)
     (state-set! state 269 compiler-builtin-id-fix-unless)
     (state-set! state 270 compiler-builtin-id-fix-stdlib_dot_clone)
-    (state-set! state 271 compiler-builtin-id-fix-synthesize_one_field_struct)
+    (state-set! state 271 compiler-builtin-id-fix-synthesize_helpers)
     (state-set!
       state
       272
-      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct)
+      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers)
     (state-set!
       state
       273
@@ -1415,10 +1415,10 @@
     (set! compiler-builtin-id-fix-unless (state-ref state 269))
     (set! compiler-builtin-id-fix-stdlib_dot_clone (state-ref state 270))
     (set!
-      compiler-builtin-id-fix-synthesize_one_field_struct
+      compiler-builtin-id-fix-synthesize_helpers
       (state-ref state 271))
     (set!
-      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct
+      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
       (state-ref state 272))
     (set!
       compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer
@@ -1746,7 +1746,9 @@
     (compiler-builtin-load-ctfe-id!
       insert-missing
       213
-      "__typelisp internal binary data")))
+      "__typelisp internal binary data")
+    (compiler-builtin-load-ctfe-id! insert-missing 214 "box-element-type")
+    (compiler-builtin-load-ctfe-id! insert-missing 215 "expr-list-type-nth")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -2642,15 +2644,15 @@
       compiler-builtin-id-fix-stdlib_dot_clone
       (compiler-builtin-resolve-name insert-missing "stdlib.clone"))
     (set!
-      compiler-builtin-id-fix-synthesize_one_field_struct
+      compiler-builtin-id-fix-synthesize_helpers
       (compiler-builtin-resolve-name
         insert-missing
-        "synthesize-one-field-struct"))
+        "synthesize-helpers"))
     (set!
-      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct
+      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
       (compiler-builtin-resolve-name
         insert-missing
-        "stdlib.clone.synthesize-one-field-struct"))
+        "stdlib.clone.synthesize-helpers"))
     (set!
       compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer
       (compiler-builtin-resolve-name

@@ -710,8 +710,10 @@ resolution, payload arity, arm result types, and exhaustiveness after macro
 expansion.
 
 Macro bodies can inspect variadic expression captures with `expr-list-length`
-and `expr-list-nth`. Dense capture lists are indexed from zero; empty lists
-therefore have length `0` and reject every `expr-list-nth` access. They can
+and `expr-list-nth`. `expr-list-type-nth` requires a captured type-literal
+operand and resolves it as a type value for reflection. Dense capture lists are
+indexed from zero; empty lists therefore have length `0` and reject every list
+item access. They can
 inspect clause captures with `expr-clause-first`, `expr-clause-second`,
 `expr-clause-list-length`, and `expr-clause-list-nth`.
 `expr-clause-list->expr-list` converts a clause list back into a list of
@@ -4562,6 +4564,7 @@ Primitive names and signatures are fixed as follows:
 | `(enum-variant-payload-count type-expr index-expr)` | `i64` | Number of payload fields for that variant. |
 | `(enum-variant-payload-type type-expr variant-index-expr payload-index-expr)` | `type` | Zero-based payload type. |
 | `(array-element-type type-expr)` | `type` | Requires fixed or compatibility dynamic array. |
+| `(box-element-type type-expr)` | `type` | Requires `Box`; returns its element type. |
 | `(array-length type-expr)` | `i64` | Requires fixed array. Compatibility dynamic arrays reject this. |
 | `(array-dynamic? type-expr)` | `bool` | True for `(Array T)`, false for `(Array T n)`. |
 | `(tuple-element-count type-expr)` | `i64` | Requires tuple type. |
@@ -4580,7 +4583,7 @@ diagnostic names the primitive and the expected kind, for example
 
 - Builtins: `i64`, `i32`, `i16`, `i8`, `u64`, `u32`, `u16`, `u8`, `f64`,
   `f32`, `bool`, `char`, `string`, `unit`, `never`.
-- Shapes: `array`, `dyn-array`, `function`, `tuple`, `struct`, `enum`.
+- Shapes: `array`, `dyn-array`, `box`, `function`, `tuple`, `struct`, `enum`.
 - Reserved/partial shapes: `str`, `ptr`, `mut-ptr`, `ref`, `mut-ref`,
   `region`, `type-var`.
 
@@ -4870,6 +4873,8 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 170 | `type-cleanup-owning?` |
 | 171 | `type-cleanup-function` |
 | 172 | `expr-binary-data` |
+| 173 | `box-element-type` |
+| 174 | `expr-list-type-nth` |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned
@@ -6242,20 +6247,22 @@ and not a general manual memory management feature.
   behavior. After the clone-generator migration, helper declarations are
   owned by a declared stdlib `: Decls` macro rather than by a second language
   semantic form.
-- The staged v1 clone handoff runs only after typechecking has resolved and
-  deduplicated reachable named-aggregate roots. When `stdlib.clone` is loaded,
-  its first proof surface routes reachable one-field structs through
-  `stdlib.clone/synthesize-one-field-struct`; other shapes retain the
-  compatibility compiler producer until the broader generator port lands, and
-  programs that do not load the module retain compatibility synthesis.
-  A routed root has exactly one producer: the stdlib result is typechecked,
-  lowered, and retained, and that root is omitted from compatibility
-  synthesis. An existing or conflicting `clone$Type` declaration is an error.
+- The clone handoff runs only after typechecking has resolved and deduplicated
+  the reachable named-aggregate closure. `stdlib.clone` is part of the implicit
+  macro prelude and routes every reachable named struct or enum through
+  `stdlib.clone/synthesize-helpers`; the compiler has no compatibility AST
+  producer. Each root has exactly one producer: the stdlib result is
+  typechecked, lowered, and retained. An existing or conflicting `clone$Type`
+  declaration is an error. Struct helpers reconstruct all fields, ordinary
+  enum helpers reconstruct all variants and payloads, and two-variant
+  list-shaped enums use tail-recursive accumulator/reverse helpers so cloning
+  does not consume one native stack frame per element.
   The helper name is `clone$<unqualified-nominal-name>` in the nominal type's
   canonical module. The deterministic request/generated-origin key is
-  `decls:stdlib.clone:stdlib.clone/synthesize-one-field-struct(<canonical-type-key>)`;
-  repeated identical roots/import paths reuse that identity and may not emit a
-  second helper. Diagnostics from a generated helper use its generated-decl
+  prefixed by `decls:stdlib.clone:stdlib.clone/synthesize-helpers(` and encodes
+  the ordered module-name/type-literal request pairs; repeated identical root
+  closures reuse that identity and may not emit a second helper. Diagnostics
+  from a generated helper use its generated-decl
   origin and the compiler handoff request location; producer conflicts name
   the conflicting helper explicitly.
 - `clone` rejects unsupported ownership/lifetime forms rather than silently

@@ -322,6 +322,11 @@
 (define (type-info [ty : Expr]) : TypeInfo
   (type-info ty))
 
+;: Return the element type of a boxed type during macro CTFE.
+;: The compiler replaces this bootstrap body with reflected type syntax.
+(define (box-element-type [ty : Expr]) : Expr
+  ty)
+
 ;: Return the canonical identity string for a module strategy operand.
 (define (module-name [module : String]) : String
   module)
@@ -381,6 +386,10 @@
     (if (>= index (struct-get items len))
       (comptime-error "expr-list-nth index out of range")
       (__tl_array-ref (struct-get items items) index))))
+
+;: Resolve a captured type-literal expression list item as a type operand.
+(define (expr-list-type-nth [items : ExprList] [index : i64]) : Expr
+  (expr-list-nth items index))
 
 ;: Return the first expression from a clause.
 (define (expr-clause-first [clause : ExprClause]) : Expr

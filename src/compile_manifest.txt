@@ -441,6 +441,14 @@ case|selfhost_compiler_embedded_stdlib_payload|src/compiler_embedded_stdlib_payl
 contains|compiler_embedded_stdlib_payload_lookup:
 end
 
+decision|src/compiler_embedded_stdlib_payload_a.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
+decision|src/compiler_embedded_stdlib_payload_b.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
+decision|src/compiler_embedded_stdlib_payload_c.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
+decision|src/compiler_embedded_stdlib_payload_d.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
+decision|src/compiler_embedded_stdlib_payload_e.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
+decision|src/compiler_embedded_stdlib_payload_f.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
+decision|src/compiler_embedded_stdlib_payload_seed.tl|payload-free seed-bootstrap and package-test placeholder; production payload coverage starts with the converged compiler and is verified by bootstrap fixpoint plus scripts/verify-embedded-stdlib-payload.sh (#5108)
+
 case|selfhost_compiler_float|src/compiler_float.tl|assembly|skip|direct
 contains|_tl_compiler_float_parse_f64:
 contains|_tl_compiler_float_format_f64:

@@ -573,6 +573,7 @@
                         decl-path))]
                   [(AstDecl.IncludeStr _ _) unit]
                   [(AstDecl.IncludeStrComptime _ _) unit]
+                  [(AstDecl.IncludeStrComptimeLzss _ _) unit]
                   [(AstDecl.IncludeBin _ _) unit]
                   [_
                     (if (tltest-main-decl? decl)

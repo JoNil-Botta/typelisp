@@ -12,8 +12,8 @@ usage() {
 usage: scripts/analyze-stage0-size.sh [options] <stage0-binary>
 
 Options:
-  --embedded-stdlib <file>  generated payload source to count
-                            (default: src/compiler_embedded_stdlib_payload.tl)
+  --embedded-stdlib <file>  payload build-input declaration file to count
+                            (default: all six embedded stdlib payload shards)
 
 The section report uses llvm-readobj when available, then readelf, then objdump.
 It reports only the supplied binary format; Linux and Windows binaries can be
@@ -24,7 +24,7 @@ EOF
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-EMBEDDED_STDLIB=src/compiler_embedded_stdlib_payload.tl
+EMBEDDED_STDLIB='src/compiler_embedded_stdlib_payload_[a-f].tl'
 BINARY=
 
 while [ "$#" -gt 0 ]; do
@@ -68,10 +68,12 @@ done
     echo "stage0 binary is empty: $BINARY" >&2
     exit 1
 }
-[ -f "$EMBEDDED_STDLIB" ] || {
-    echo "embedded stdlib manifest not found: $EMBEDDED_STDLIB" >&2
-    exit 1
-}
+for embedded_file in $EMBEDDED_STDLIB; do
+    [ -f "$embedded_file" ] || {
+        echo "embedded stdlib build-input declarations not found: $embedded_file" >&2
+        exit 1
+    }
+done
 
 SECTION_TOOL_CANDIDATES=
 if command -v llvm-readobj >/dev/null 2>&1; then
@@ -318,42 +320,137 @@ done
     exit 1
 }
 
-if grep -F '(include-str ' "$EMBEDDED_STDLIB" >/dev/null 2>&1; then
-    awk '
-    match($0, /\(include-str[ \t]+[^ \t]+[ \t]+"[^"]+"/) {
-        path = $0
-        sub(/^[^"]*"/, "", path)
-        sub(/".*$/, "", path)
-        print path
+awk '
+function emit_input() {
+    path = declaration
+    sub(/^[^"]*"/, "", path)
+    sub(/".*$/, "", path)
+    if (path ~ /^\.\.\/stdlib\//) {
+        sub(/^\.\.\/stdlib\//, "", path)
+        print "stdlib/" path
+    } else {
+        directory = declaration_file
+        sub(/[^\/]*$/, "", directory)
+        print directory path
     }
-    ' "$EMBEDDED_STDLIB" | sort > "$payload_paths"
-    encoded_payload_bytes=0
-    compressed_payload_bytes=0
-else
-    tr -d '\r' < tools/embedded-stdlib-payload/modules.txt |
-        sed '/^[[:space:]]*$/d; s#^#stdlib/#' |
-        sort > "$payload_paths"
-    encoded_payload_bytes=$(awk '
-    /^[ \t]+"[A-Za-z0-9+\/=]+"[ \t]*$/ {
-        line = $0
-        sub(/^[ \t]+"/, "", line)
-        sub(/"[ \t]*$/, "", line)
-        total += length(line)
+    declaration = ""
+    collecting = 0
+}
+/^\(include-str-comptime-lzss([ \t]|$)/ {
+    declaration = $0
+    declaration_file = FILENAME
+    collecting = 1
+    if ($0 ~ /\)[ \t]*$/) {
+        emit_input()
     }
-    END { printf "%d\n", total }
-    ' "$EMBEDDED_STDLIB")
-    compressed_payload_bytes=$(awk '
-    /\(CompilerEmbeddedStdlibPayloadSome[ \t]*$/ { state = 1; next }
-    state == 1 && $0 ~ /^[ \t]+[0-9]+[ \t]*$/ { state = 2; next }
-    state == 2 && $0 ~ /^[ \t]+[0-9]+[ \t]*$/ {
-        value = $0
-        gsub(/[ \t]/, "", value)
-        total += value
-        state = 0
+    next
+}
+collecting {
+    declaration = declaration " " $0
+    if ($0 ~ /\)[ \t]*$/) {
+        emit_input()
     }
-    END { printf "%d\n", total }
-    ' "$EMBEDDED_STDLIB")
-fi
+}
+' $EMBEDDED_STDLIB | sort > "$payload_paths"
+
+[ -s "$payload_paths" ] || {
+    echo "embedded stdlib build-input declaration list is empty" >&2
+    exit 1
+}
+
+# Recover each bounded static LZSS stream directly from the linked binary.
+# This keeps the report useful now that no base64/generated source exists.
+set -- $(od -An -v -tu1 "$BINARY" | awk '
+BEGIN {
+    split("95 95 116 121 112 101 108 105 115 112 95 101 109 98 101 100 100 101 100 95 115 116 100 108 105 98 95 108 122 115 115 95 118 49 95 95", prefix)
+    prefix_len = 36
+    mode = "scan"
+}
+function reset_scan() {
+    mode = "scan"
+    prefix_index = 0
+}
+function finish_payload() {
+    payload_count += 1
+    compressed_total += compressed_bytes
+    static_total += prefix_len + header_digits + 1 + compressed_bytes
+    reset_scan()
+}
+{
+    for (field = 1; field <= NF; field += 1) {
+        byte = $field + 0
+        if (mode == "scan") {
+            if (byte == prefix[prefix_index + 1]) {
+                prefix_index += 1
+            } else if (byte == prefix[1]) {
+                prefix_index = 1
+            } else {
+                prefix_index = 0
+            }
+            if (prefix_index == prefix_len) {
+                mode = "header"
+                raw_len = 0
+                header_digits = 0
+            }
+        } else if (mode == "header") {
+            if (byte >= 48 && byte <= 57) {
+                raw_len = (raw_len * 10) + byte - 48
+                header_digits += 1
+            } else if (byte == 10 && header_digits > 0) {
+                compressed_bytes = 0
+                out_bytes = 0
+                bit = 8
+                if (raw_len == 0) {
+                    finish_payload()
+                } else {
+                    mode = "flags"
+                }
+            } else {
+                reset_scan()
+            }
+        } else if (mode == "flags") {
+            flags = byte
+            compressed_bytes += 1
+            bit = 0
+            mode = "token"
+        } else if (mode == "token") {
+            if (int(flags / (2 ^ bit)) % 2 == 1) {
+                compressed_bytes += 1
+                out_bytes += 1
+                bit += 1
+                if (out_bytes >= raw_len) {
+                    finish_payload()
+                } else if (bit == 8) {
+                    mode = "flags"
+                }
+            } else {
+                compressed_bytes += 1
+                mode = "reference-second"
+            }
+        } else if (mode == "reference-second") {
+            compressed_bytes += 1
+            out_bytes += (byte % 16) + 3
+            bit += 1
+            if (out_bytes >= raw_len) {
+                finish_payload()
+            } else if (bit == 8) {
+                mode = "flags"
+            } else {
+                mode = "token"
+            }
+        }
+    }
+}
+END { printf "%d %d %d\n", payload_count, compressed_total, static_total }
+')
+payload_streams=$1
+compressed_payload_bytes=$2
+static_payload_bytes=$3
+encoded_payload_bytes=0
+[ "$payload_streams" -eq 42 ] || {
+    echo "expected 42 embedded stdlib payloads in binary, found $payload_streams" >&2
+    exit 1
+}
 
 while IFS= read -r path; do
     [ -n "$path" ] || continue
@@ -398,6 +495,7 @@ printf 'source_manifest\t%s\n' "$EMBEDDED_STDLIB"
 printf 'total_files\t%s\n' "$payload_files"
 printf 'expanded_source_bytes\t%s\n' "$payload_total"
 printf 'compressed_token_bytes\t%s\n' "$compressed_payload_bytes"
+printf 'static_payload_bytes\t%s\n' "$static_payload_bytes"
 printf 'encoded_payload_bytes\t%s\n' "$encoded_payload_bytes"
 printf 'bucket\tfiles\tbytes\n'
 for bucket in stdlib_top_level_modules stdlib_tests stdlib_other other; do

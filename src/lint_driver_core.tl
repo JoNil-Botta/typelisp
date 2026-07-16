@@ -2017,6 +2017,7 @@
     [(AstDecl.Import _) scan]
     [(AstDecl.IncludeStr _ _) scan]
     [(AstDecl.IncludeStrComptime _ _) scan]
+    [(AstDecl.IncludeStrComptimeLzss _ _) scan]
     [(AstDecl.IncludeBin _ _) scan]
     [(AstDecl.DefDispatch name variants)
       (selfhost-lint-dead-add-visible-node

@@ -3050,6 +3050,39 @@
             (tc-generated-decl-diag meta (tc-decl-diag template message)))]
         [_ (tc-diag-at-start message)]))))
 
+(define (tc-decl-diag-with-maybe-origin
+  [origin : CompilerParseMaybeDeclSpan]
+  [decl : AstDecl]
+  [message : String]) : CompilerDiagnostic
+  (let
+    [diag : CompilerDiagnostic (tc-decl-diag decl message)]
+    (if (and
+      (= (compiler-diagnostic-line diag) 1)
+      (= (compiler-diagnostic-col diag) 1)
+      (= (compiler-diagnostic-end-line diag) 1)
+      (= (compiler-diagnostic-end-col diag) 1))
+      (match origin
+        [(CompilerParseMaybeDeclSpan.Some span)
+          (compiler-diagnostic-with-primary-span
+            diag
+            (CompilerDiagnosticSpan
+              ""
+              (ast-source-span-start-line span)
+              (ast-source-span-start-col span)
+              (ast-source-span-end-line span)
+              (ast-source-span-end-col span)))]
+        [(CompilerParseMaybeDeclSpan.None) diag])
+      diag)))
+
+(define (tc-decl-diag-with-origin
+  [decls : (& decls AstDeclList)]
+  [decl : AstDecl]
+  [message : String]) : CompilerDiagnostic
+  (tc-decl-diag-with-maybe-origin
+    (compiler-parse-decl-origin-span decls 0)
+    decl
+    message))
+
 (define (tc-locate-error-at-expr [expr : AstExpr] [message : String]) : String
   (if (or (tc-rich-error? message) (tc-located-error? message))
     message
@@ -15102,7 +15135,13 @@
                 (intern-str name)
                 repr))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDecl.DefDispatch _ _) ResultTcUnit.Ok]
+    [(AstDecl.DefDispatch _ variants)
+      (if (!= (tc-dispatch-variant-list-scalar-count variants) 1)
+        (ResultTcUnit.Err
+          "typecheck: defdispatch requires exactly one scalar variant")
+        (if (tc-dispatch-variant-list-duplicate-isa? variants)
+          (ResultTcUnit.Err "typecheck: duplicate defdispatch ISA variant")
+          ResultTcUnit.Ok))]
     [(AstDecl.IncludeStr _ _)
       (ResultTcUnit.Err
         "typecheck: include-str must be expanded by compiler loader")]
@@ -15117,11 +15156,9 @@
         "typecheck: include-bin must be expanded by compiler loader")]
     [(AstDecl.Import _) ResultTcUnit.Ok]
     [(AstDecl.Module _) ResultTcUnit.Ok]
-    [(AstDecl.ModuleBody name body-box)
-      (tc-source-decl-list-policy-ok-in-module
-        (tc-context-with-module ctx (intern-str name))
-        (box-get body-box)
-        (intern-str name))]
+    ;; Module bodies are traversed by the declaration-list diagnostic adapter,
+    ;; which retains their nested list origin and owning path.
+    [(AstDecl.ModuleBody _ _) ResultTcUnit.Ok]
     [(AstDecl.Test _ body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
@@ -15135,42 +15172,100 @@
         [template : AstDecl (box-get template-box)]
         (tc-source-decl-policy-ok ctx template))]))
 
-(define (tc-source-decl-list-policy-ok [ctx : TcContext] [decls : AstDeclList]) : ResultTcUnit
-  (tc-source-decl-list-policy-ok-in-module ctx decls ""))
+(defenum ResultTcSourcePolicyDiagnostic
+  (Ok)
+  (Err (Box CompilerDiagnostic)))
 
-(define (tc-source-decl-list-policy-ok-in-module
+(define (tc-source-decl-shape-origin-message? [message : String]) : bool
+  (or
+    (string.eq
+      message
+      "typecheck: defdispatch requires exactly one scalar variant")
+    (string.eq message "typecheck: duplicate defdispatch ISA variant")
+    (string.eq message "typecheck: duplicate lifetime parameter")
+    (string.contains message " cannot use repr c")))
+
+(define (tc-source-decl-list-policy-diagnostic-in-module
   [ctx : TcContext]
   [decls : AstDeclList]
-  [module : String]) : ResultTcUnit
+  [paths : AstDeclPathList]
+  [fallback-path : String]
+  [module : String]) : ResultTcSourcePolicyDiagnostic
   (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) ResultTcUnit.Ok]
+    [(AstDeclListStep.Nil) ResultTcSourcePolicyDiagnostic.Ok]
     [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList rest]
+        [decl-path : String
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) fallback-path])]
+        [rest-paths : AstDeclPathList
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest) path-rest]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         (match decl
           [(AstDecl.Module next-module)
-            (tc-source-decl-list-policy-ok-in-module
+            (tc-source-decl-list-policy-diagnostic-in-module
               ctx
               rest
+              rest-paths
+              fallback-path
               (intern-str next-module))]
+          [(AstDecl.ModuleBody target-module body-box)
+            (match (tc-source-decl-list-policy-diagnostic-in-module
+              (tc-context-with-module ctx (intern-str target-module))
+              (box-get body-box)
+              (ast-decl-path-list-new)
+              decl-path
+              (intern-str target-module))
+              [(ResultTcSourcePolicyDiagnostic.Ok)
+                (tc-source-decl-list-policy-diagnostic-in-module
+                  ctx
+                  rest
+                  rest-paths
+                  fallback-path
+                  module)]
+              [(ResultTcSourcePolicyDiagnostic.Err diag)
+                (ResultTcSourcePolicyDiagnostic.Err diag)])]
           [_
             (match (tc-source-decl-policy-ok
               (tc-context-with-module ctx module)
               decl)
               [(ResultTcUnit.Ok)
-                (tc-source-decl-list-policy-ok-in-module ctx rest module)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+                (tc-source-decl-list-policy-diagnostic-in-module
+                  ctx
+                  rest
+                  rest-paths
+                  fallback-path
+                  module)]
+              [(ResultTcUnit.Err message)
+                (ResultTcSourcePolicyDiagnostic.Err
+                  (box
+                    (if (tc-source-decl-shape-origin-message? message)
+                      (tc-typecheck-diag-with-path
+                        (& decls)
+                        decl
+                        decl-path
+                        message)
+                      (tc-diag-at-start message))))])]))]))
 
 (define (tc-program-source-types-policy-ok
   [ctx : TcContext]
-  [program : AstProgram]) : ResultTcUnit
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultTcSourcePolicyDiagnostic
   (begin
     (tc-nominal-owner-cache-reset!)
     (match program
       [(AstProgram.Program decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
-          (tc-source-decl-list-policy-ok ctx decls))])))
+          (tc-source-decl-list-policy-diagnostic-in-module
+            ctx
+            decls
+            paths
+            ""
+            ""))])))
 
 (define (tc-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool
   (and
@@ -48587,10 +48682,11 @@
           (macro-decl-list-append-from (&mut out) (& right))
           out)))))
 
-(define (macro-flatten-module-body-decls-into
+(define (macro-flatten-module-body-decls-into-with-origins
   [decls : AstDeclList]
   [module : String]
-  [out : AstDeclList]) : AstDeclList
+  [out : AstDeclList]
+  [out-origins : (&mut out-origins CompilerParseDeclOriginAliasVec)]) : AstDeclList
   (let
     [cursor : AstDeclList decls]
     [current-module : String module]
@@ -48606,6 +48702,14 @@
                 [(AstDecl.Module next-module)
                   (begin
                     (ast-decl-list-push (&mut result) decl)
+                    (compiler-parse-decl-origin-alias-vec-push-key-slot!
+                      out-origins
+                      (- (ast-decl-list-len (& result)) 1)
+                      1
+                      (compiler-parse-decl-list-storage-key (& rest))
+                      (- (struct-get rest offset) 1)
+                      decl
+                      false)
                     (set! current-module (intern-str next-module)))]
                 [(AstDecl.ModuleBody target-module-id body-box)
                   (let
@@ -48614,17 +48718,64 @@
                       (ast-decl-list-push
                         (&mut result)
                         (ast-decl-module target-module))
+                      (compiler-parse-decl-origin-alias-vec-push-key-slot!
+                        out-origins
+                        (- (ast-decl-list-len (& result)) 1)
+                        1
+                        (compiler-parse-decl-list-storage-key (& rest))
+                        (- (struct-get rest offset) 1)
+                        decl
+                        false)
                       (set!
                         result
-                        (macro-flatten-module-body-decls-into
+                        (macro-flatten-module-body-decls-into-with-origins
                           (box-get body-box)
                           target-module
-                          result))
+                          result
+                          out-origins))
                       (ast-decl-list-push
                         (&mut result)
-                        (ast-decl-module current-module))))]
-                [_ (ast-decl-list-push (&mut result) decl)])
+                        (ast-decl-module current-module))
+                      (compiler-parse-decl-origin-alias-vec-push-key-slot!
+                        out-origins
+                        (- (ast-decl-list-len (& result)) 1)
+                        1
+                        (compiler-parse-decl-list-storage-key (& rest))
+                        (- (struct-get rest offset) 1)
+                        decl
+                        false)))]
+                [_
+                  (begin
+                    (ast-decl-list-push (&mut result) decl)
+                    (compiler-parse-decl-origin-alias-vec-push-key-slot!
+                      out-origins
+                      (- (ast-decl-list-len (& result)) 1)
+                      1
+                      (compiler-parse-decl-list-storage-key (& rest))
+                      (- (struct-get rest offset) 1)
+                      decl
+                      false))])
               (set! cursor rest))]))
+      result)))
+
+(define (macro-flatten-module-body-decls-into
+  [decls : AstDeclList]
+  [module : String]
+  [out : AstDeclList]) : AstDeclList
+  (let
+    [out-origins : CompilerParseDeclOriginAliasVec
+      (compiler-parse-decl-origin-alias-vec-with-capacity
+        (ast-decl-list-len (& decls)))]
+    [result : AstDeclList
+      (macro-flatten-module-body-decls-into-with-origins
+        decls
+        module
+        out
+        (&mut out-origins))]
+    (begin
+      (compiler-parse-decl-origin-alias-vec-register!
+        (& result)
+        (& out-origins))
       result)))
 
 (define (macro-flatten-module-body-decls-in-module
@@ -63143,15 +63294,41 @@
       [_ false])
     false))
 
-(define (tc-typecheck-diag-with-path
+(define (tc-typecheck-diag-with-maybe-origin-and-path
+  [origin : CompilerParseMaybeDeclSpan]
   [decl : AstDecl]
   [path : String]
   [message : String]) : CompilerDiagnostic
   (let
-    [diag : CompilerDiagnostic (tc-decl-diag decl message)]
+    [diag : CompilerDiagnostic
+      (tc-decl-diag-with-maybe-origin origin decl message)]
     (if (string.eq path "")
       diag
       (compiler-diagnostic-with-path diag path))))
+
+(define (tc-typecheck-diag-with-path
+  [decls : (& decls AstDeclList)]
+  [decl : AstDecl]
+  [path : String]
+  [message : String]) : CompilerDiagnostic
+  (tc-typecheck-diag-with-maybe-origin-and-path
+    (compiler-parse-decl-origin-span decls 0)
+    decl
+    path
+    message))
+
+(define (tc-typecheck-diag-with-rest-path
+  [rest : (& rest AstDeclList)]
+  [decl : AstDecl]
+  [path : String]
+  [message : String]) : CompilerDiagnostic
+  (tc-typecheck-diag-with-maybe-origin-and-path
+    (compiler-parse-decl-origin-span-key-slot
+      (compiler-parse-decl-list-storage-key rest)
+      (- (struct-get rest offset) 1))
+    decl
+    path
+    message))
 
 ;; Direct declaration typechecking stays below the self-build memory budget and
 ;; avoids the per-declaration scratch arena overhead.
@@ -63291,7 +63468,8 @@
                                 result
                                 (ResultCompilerTypecheck.Err
                                   (box
-                                    (tc-typecheck-diag-with-path
+                                    (tc-typecheck-diag-with-rest-path
+                                      (& rest)
                                       decl
                                       decl-path
                                       message))))
@@ -63305,7 +63483,8 @@
                             result
                             (ResultCompilerTypecheck.Err
                               (box
-                                (tc-typecheck-diag-with-path
+                                (tc-typecheck-diag-with-rest-path
+                                  (& rest)
                                   decl
                                   decl-path
                                   message))))
@@ -63349,7 +63528,8 @@
                                 result
                                 (ResultCompilerTypecheck.Err
                                   (box
-                                    (tc-typecheck-diag-with-path
+                                    (tc-typecheck-diag-with-rest-path
+                                      (& rest)
                                       decl
                                       decl-path
                                       message))))
@@ -63376,8 +63556,8 @@
               [ctx : TcContext (TcContext program symbols registries "" pools)]
               (match (tc-stdlib-comptime-surface-ok ctx)
                 [(ResultTcUnit.Ok)
-                  (match (tc-program-source-types-policy-ok ctx program)
-                    [(ResultTcUnit.Ok)
+                  (match (tc-program-source-types-policy-ok ctx program paths)
+                    [(ResultTcSourcePolicyDiagnostic.Ok)
                       (match (tc-build-top-env ctx program)
                         [(ResultTcEnv.Ok top-env)
                           (match program
@@ -63409,9 +63589,8 @@
                         [(ResultTcEnv.Err message)
                           (ResultCompilerTypecheckChecked.Err
                             (box (tc-diag-at-start message)))])]
-                    [(ResultTcUnit.Err message)
-                      (ResultCompilerTypecheckChecked.Err
-                        (box (tc-diag-at-start message)))])]
+                    [(ResultTcSourcePolicyDiagnostic.Err diag)
+                      (ResultCompilerTypecheckChecked.Err diag)])]
                 [(ResultTcUnit.Err message)
                   (ResultCompilerTypecheckChecked.Err
                     (box (tc-diag-at-start message)))]))]

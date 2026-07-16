@@ -1630,6 +1630,8 @@
     [count : i64 (ast-decl-list-len (& decls))]
     [cursor : AstDeclList decls]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
+    [out-origins : CompilerParseDeclOriginAliasVec
+      (compiler-parse-decl-origin-alias-vec-with-capacity count)]
     [cur-registry : GenRegistry registry]
     [cur-module : String module]
     [result : ResultGenDecls
@@ -1646,16 +1648,31 @@
         (match (ast-decl-list-step cursor)
           [(AstDeclListStep.Nil)
             (begin
+              (compiler-parse-decl-origin-alias-vec-register!
+                (& out)
+                (& out-origins))
               (set! result (ResultGenDecls.Ok out cur-registry cur-module))
               (set! done true))]
           [(AstDeclListStep.Cons decl rest)
             (match (gen-rewrite-decl decl cur-module cur-registry env)
               [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
-                (begin
-                  (ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
-                  (set! cur-registry decl-registry)
-                  (set! cur-module decl-module)
-                  (set! cursor rest))]
+                (let
+                  [out-start : i64 (ast-decl-list-len (& out))]
+                  [rewritten-count : i64
+                    (ast-decl-list-len (& rewritten-decls))]
+                  (begin
+                    (compiler-parse-decl-origin-alias-vec-push-key-slot!
+                      (&mut out-origins)
+                      out-start
+                      rewritten-count
+                      (compiler-parse-decl-list-storage-key (& rest))
+                      (- (struct-get rest offset) 1)
+                      decl
+                      (!= rewritten-count 1))
+                    (ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
+                    (set! cur-registry decl-registry)
+                    (set! cur-module decl-module)
+                    (set! cursor rest)))]
               [(ResultGenDecl.Err diag)
                 (begin
                   (set! result (ResultGenDecls.Err diag))
@@ -1719,6 +1736,8 @@
     [path-cursor : AstDeclPathList paths]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
     [out-paths : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [out-origins : CompilerParseDeclOriginAliasVec
+      (compiler-parse-decl-origin-alias-vec-with-capacity count)]
     [cur-registry : GenRegistry registry]
     [cur-module : String module]
     [result : ResultGenDeclsWithPaths
@@ -1735,6 +1754,9 @@
         (match (ast-decl-list-step decl-cursor)
           [(AstDeclListStep.Nil)
             (begin
+              (compiler-parse-decl-origin-alias-vec-register!
+                (& out)
+                (& out-origins))
               (set!
                 result
                 (ResultGenDeclsWithPaths.Ok
@@ -1749,17 +1771,32 @@
                 (gen-path-list-head-or path-cursor fallback-path)]
               (match (gen-rewrite-decl decl cur-module cur-registry env)
                 [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
-                  (begin
-                    (ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
-                    (gen-path-list-push-for-decls
-                      (&mut out-paths)
-                      rewritten-decls
-                      decl-path
-                      0)
-                    (set! cur-registry decl-registry)
-                    (set! cur-module decl-module)
-                    (set! decl-cursor rest)
-                    (set! path-cursor (gen-path-list-tail path-cursor)))]
+                  (let
+                    [out-start : i64 (ast-decl-list-len (& out))]
+                    [rewritten-count : i64
+                      (ast-decl-list-len (& rewritten-decls))]
+                    (begin
+                      (compiler-parse-decl-origin-alias-vec-push-key-slot!
+                        (&mut out-origins)
+                        out-start
+                        rewritten-count
+                        (compiler-parse-decl-list-storage-key (& rest))
+                        (- (struct-get rest offset) 1)
+                        decl
+                        (!= rewritten-count 1))
+                      (ast-decl-list-append-from
+                        (&mut out)
+                        (& rewritten-decls)
+                        0)
+                      (gen-path-list-push-for-decls
+                        (&mut out-paths)
+                        rewritten-decls
+                        decl-path
+                        0)
+                      (set! cur-registry decl-registry)
+                      (set! cur-module decl-module)
+                      (set! decl-cursor rest)
+                      (set! path-cursor (gen-path-list-tail path-cursor))))]
                 [(ResultGenDecl.Err diag)
                   (begin
                     (set!
@@ -5415,6 +5452,8 @@
     [count : i64 (ast-decl-list-len (& decls))]
     [cursor : AstDeclList decls]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
+    [out-origins : CompilerParseDeclOriginAliasVec
+      (compiler-parse-decl-origin-alias-vec-with-capacity count)]
     [cur-state : SpecState state]
     [result : ResultSpecDecls
       (ResultSpecDecls.Err
@@ -5430,6 +5469,9 @@
         (match (ast-decl-list-step cursor)
           [(AstDeclListStep.Nil)
             (begin
+              (compiler-parse-decl-origin-alias-vec-register!
+                (& out)
+                (& out-origins))
               (set! result (ResultSpecDecls.Ok out cur-state))
               (set! done true))]
           [(AstDeclListStep.Cons decl rest)
@@ -5440,7 +5482,16 @@
                   (match maybe-decl
                     [(SpecMaybeDecl.None) unit]
                     [(SpecMaybeDecl.Some rewritten-decl)
-                      (ast-decl-list-push (&mut out) rewritten-decl)])
+                      (begin
+                        (ast-decl-list-push (&mut out) rewritten-decl)
+                        (compiler-parse-decl-origin-alias-vec-push-key-slot!
+                          (&mut out-origins)
+                          (- (ast-decl-list-len (& out)) 1)
+                          1
+                          (compiler-parse-decl-list-storage-key (& rest))
+                          (- (struct-get rest offset) 1)
+                          decl
+                          false))])
                   (set! cursor rest))]
               [(ResultSpecDecl.Err diag)
                 (begin
@@ -5460,6 +5511,8 @@
     [path-cursor : AstDeclPathList paths]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
     [out-paths : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [out-origins : CompilerParseDeclOriginAliasVec
+      (compiler-parse-decl-origin-alias-vec-with-capacity count)]
     [cur-state : SpecState state]
     [result : ResultSpecDeclsWithPaths
       (ResultSpecDeclsWithPaths.Err
@@ -5475,6 +5528,9 @@
         (match (ast-decl-list-step decl-cursor)
           [(AstDeclListStep.Nil)
             (begin
+              (compiler-parse-decl-origin-alias-vec-register!
+                (& out)
+                (& out-origins))
               (set!
                 result
                 (ResultSpecDeclsWithPaths.Ok out out-paths cur-state))
@@ -5492,6 +5548,14 @@
                       [(SpecMaybeDecl.Some rewritten-decl)
                         (begin
                           (ast-decl-list-push (&mut out) rewritten-decl)
+                          (compiler-parse-decl-origin-alias-vec-push-key-slot!
+                            (&mut out-origins)
+                            (- (ast-decl-list-len (& out)) 1)
+                            1
+                            (compiler-parse-decl-list-storage-key (& rest))
+                            (- (struct-get rest offset) 1)
+                            decl
+                            false)
                           (ast-decl-path-list-push (&mut out-paths) decl-path))])
                     (set! decl-cursor rest)
                     (set! path-cursor (gen-path-list-tail path-cursor)))]

@@ -2441,8 +2441,16 @@
             new-offset
             0
             left-len)
+          (ast-decl-module-list-copy-to
+            (&mut (struct-get right owner-ids))
+            (& (struct-get left owner-ids))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
           (AstDeclPathList
             (struct-get right slots)
+            (struct-get right owner-ids)
             new-offset
             (+ left-len right-len)
             true)))
@@ -6187,11 +6195,6 @@
         expr-capacity
         type-capacity
         scratch-base)]
-    [persistent-before : bool (intern-persistent-storage-on?)]
-    [_persist-new-interns : unit
-      (if persistent-before
-        unit
-        (intern-persistent-storage-enable!))]
     [parsed : ResultAstProgramDiagnostic
       (compiler-load-parse-source-diagnostic-escaping-with-pools
         path
@@ -6210,9 +6213,6 @@
               [out : ResultAstProgramDiagnostic
                 (ResultAstProgramDiagnostic.Ok out-program)]
               (begin
-                (if persistent-before
-                  unit
-                  (intern-persistent-storage-disable!))
                 (unsafe
                   (arena.tl_arena_destroy scratch-head))
                 out))])]
@@ -6227,9 +6227,6 @@
           [out : ResultAstProgramDiagnostic
             (ResultAstProgramDiagnostic.Err stable-diag)]
           (begin
-            (if persistent-before
-              unit
-              (intern-persistent-storage-disable!))
             (unsafe
               (arena.tl_arena_destroy scratch-head))
             out))])))
@@ -7009,10 +7006,23 @@
           [parse-identity : CompilerLoadParseIdentity
             (CompilerLoadParseIdentity
               source-path-id
-              stdlib-roots
-              parse-cfgs
-              pools)
-            (compiler-load-parse-file-diagnostic-detached-with-pools
+              (compiler-load-module-fallback-id-for-parse
+                module-id-fallback
+                expected-module))]
+          [module-id-fallback-id : i64
+            (struct-get parse-identity module-fallback-id)]
+          [source-module-fallback-id : i64
+            (cond
+              [(>= source-module-fallback-id-hint 0)
+                source-module-fallback-id-hint]
+              [(= (string.string-length source-module-fallback) 0)
+                cbi.compiler-builtin-id-fix-empty]
+              [(string.eq source-module-fallback module-id-fallback)
+                module-id-fallback-id]
+              [else
+                (compiler-load-parse-context-name-id source-module-fallback)])]
+          [parse-cfgs : sym_i64_env.SymI64Env
+            (compiler-load-stdlib-private-cfgs
               path
               stdlib-roots
               expected-module
@@ -7025,7 +7035,7 @@
                 stdlib-roots
                 parse-cfgs
                 pools)
-              (compiler-load-parse-file-diagnostic-escaping-with-pools
+              (compiler-load-parse-file-diagnostic-detached-with-pools
                 path
                 parse-cfgs
                 pools))
@@ -12675,26 +12685,34 @@
 
 (define (compiler-load-append-onto-reuse-ok?) : bool
   (let
+    [left-a-id : i64 (ci.intern-generated-name "left-a")]
+    [left-b-id : i64 (ci.intern-generated-name "left-b")]
+    [right-a-id : i64 (ci.intern-generated-name "right-a")]
+    [right-b-id : i64 (ci.intern-generated-name "right-b")]
+    [alias-a-id : i64 (ci.intern-generated-name "alias-a")]
+    [alias-b-id : i64 (ci.intern-generated-name "alias-b")]
+    [tail-a-id : i64 (ci.intern-generated-name "tail-a")]
+    [tail-b-id : i64 (ci.intern-generated-name "tail-b")]
     [left : AstDeclModuleList (ast-decl-module-list-with-capacity 2)]
     [_left : unit
       (begin
-        (ast-decl-module-list-push (&mut left) "left-a")
-        (ast-decl-module-list-push (&mut left) "left-b"))]
+        (ast-decl-module-list-push-id (&mut left) left-a-id)
+        (ast-decl-module-list-push-id (&mut left) left-b-id))]
     [right-base : AstDeclModuleList (ast-decl-module-list-new)]
     [right-tail : AstDeclModuleList
-      (ast-decl-module-list-prepend-builder "right-b" right-base)]
+      (ast-decl-module-list-prepend-builder-id right-b-id right-base)]
     [right : AstDeclModuleList
-      (ast-decl-module-list-prepend-builder "right-a" right-tail)]
+      (ast-decl-module-list-prepend-builder-id right-a-id right-tail)]
     [right-address : i64 (compiler-load-module-list-slots-address right)]
     [reused : AstDeclModuleList
       (compiler-load-decl-module-list-append-onto left right)]
-    [shared : (Array String) (array.make-array String 8)]
+    [shared : (Array i64) (array.make-array i64 8)]
     [_shared : unit
       (begin
-        (array-set! shared 1 "alias-a")
-        (array-set! shared 2 "alias-b")
-        (array-set! shared 4 "tail-a")
-        (array-set! shared 5 "tail-b"))]
+        (array-set! shared 1 alias-a-id)
+        (array-set! shared 2 alias-b-id)
+        (array-set! shared 4 tail-a-id)
+        (array-set! shared 5 tail-b-id))]
     [alias-left : AstDeclModuleList (AstDeclModuleList shared 1 2 true)]
     [alias-right : AstDeclModuleList (AstDeclModuleList shared 4 2 true)]
     [alias-address : i64 (compiler-load-module-list-slots-address alias-right)]
@@ -12703,20 +12721,20 @@
     (and
       (= (compiler-load-module-list-slots-address reused) right-address)
       (= (ast-decl-module-list-len (& reused)) 4)
-      (string.eq (ast-decl-module-list-get (& reused) 0 "") "left-a")
-      (string.eq (ast-decl-module-list-get (& reused) 1 "") "left-b")
-      (string.eq (ast-decl-module-list-get (& reused) 2 "") "right-a")
-      (string.eq (ast-decl-module-list-get (& reused) 3 "") "right-b")
+      (= (ast-decl-module-list-get-id (& reused) 0 -1) left-a-id)
+      (= (ast-decl-module-list-get-id (& reused) 1 -1) left-b-id)
+      (= (ast-decl-module-list-get-id (& reused) 2 -1) right-a-id)
+      (= (ast-decl-module-list-get-id (& reused) 3 -1) right-b-id)
       (not (= (compiler-load-module-list-slots-address copied) alias-address))
       (= (ast-decl-module-list-len (& copied)) 4)
-      (string.eq (ast-decl-module-list-get (& copied) 0 "") "alias-a")
-      (string.eq (ast-decl-module-list-get (& copied) 1 "") "alias-b")
-      (string.eq (ast-decl-module-list-get (& copied) 2 "") "tail-a")
-      (string.eq (ast-decl-module-list-get (& copied) 3 "") "tail-b")
-      (string.eq (array-ref shared 1) "alias-a")
-      (string.eq (array-ref shared 2) "alias-b")
-      (string.eq (array-ref shared 4) "tail-a")
-      (string.eq (array-ref shared 5) "tail-b"))))
+      (= (ast-decl-module-list-get-id (& copied) 0 -1) alias-a-id)
+      (= (ast-decl-module-list-get-id (& copied) 1 -1) alias-b-id)
+      (= (ast-decl-module-list-get-id (& copied) 2 -1) tail-a-id)
+      (= (ast-decl-module-list-get-id (& copied) 3 -1) tail-b-id)
+      (= (array-ref shared 1) alias-a-id)
+      (= (array-ref shared 2) alias-b-id)
+      (= (array-ref shared 4) tail-a-id)
+      (= (array-ref shared 5) tail-b-id))))
 
 (define (compiler-load-self-test) : i64
   (begin

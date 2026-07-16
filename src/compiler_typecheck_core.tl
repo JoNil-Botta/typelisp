@@ -51142,7 +51142,6 @@
             [previous : i64 macro-live-symbols-arena]
             [retired : i64 macro-live-symbols-retired-arena]
             (begin
-              (macro-live-symbols-promote-owner-names! symbols)
               (set! macro-live-symbols-arena next-head)
               (set! macro-live-symbols-retired-arena previous)
               (macro-expand-allocation-profile-snapshot! retired)
@@ -51330,11 +51329,6 @@
         "typecheck.macro.peak"
         "typecheck-prefix-cache"
         tc-prefix-snapshot-cache-arena)
-      (allocation_profile.compiler-allocation-profile-control!
-        2
-        "typecheck.macro.peak"
-        "typecheck-marker-names"
-        tc-marker-name-id-arena)
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
@@ -51544,7 +51538,9 @@
 (define (macro-decl-list-with-prefix-reserve
   [items : AstDeclList]
   [reserve : i64]) : AstDeclList
-  (if (>= (struct-get items offset) reserve)
+  (if (and
+    (>= (struct-get items offset) reserve)
+    (struct-get items prependable))
     items
     (let
       [count : i64 (ast-decl-list-len (& items))]
@@ -51557,7 +51553,7 @@
           reserve
           0
           count)
-        (AstDeclList slots reserve count false)))))
+        (AstDeclList slots reserve count true)))))
 
 (define (macro-decl-list-append-from
   [out : (&mut out AstDeclList)]
@@ -51578,6 +51574,7 @@
     [right-len : i64 (ast-decl-list-len (& right))]
     (if (and
       (<= left-len (struct-get right offset))
+      (struct-get right prependable)
       (not
         (unsafe
           (=
@@ -51604,7 +51601,7 @@
             (struct-get right slots)
             new-offset
             (+ left-len right-len)
-            false)))
+            true)))
       (let
         [out : AstDeclList (ast-decl-list-with-capacity (+ left-len right-len))]
         (begin
@@ -51701,11 +51698,14 @@
 (define (macro-decl-path-list-with-prefix-reserve
   [items : AstDeclPathList]
   [reserve : i64]) : AstDeclPathList
-  (if (>= (struct-get items offset) reserve)
+  (if (and
+    (>= (struct-get items offset) reserve)
+    (struct-get items prependable))
     items
     (let
       [count : i64 (ast-decl-path-list-len (& items))]
       [slots : (Array String) (array.make-array String (+ reserve count))]
+      [owner-ids : (Array i64) (array.make-array i64 (+ reserve count))]
       (begin
         (ast-decl-path-list-copy-to
           (&mut slots)
@@ -51714,7 +51714,14 @@
           reserve
           0
           count)
-        (AstDeclPathList slots reserve count false)))))
+        (ast-decl-module-list-copy-to
+          (&mut owner-ids)
+          (& (struct-get items owner-ids))
+          (struct-get items offset)
+          reserve
+          0
+          count)
+        (AstDeclPathList slots owner-ids reserve count true)))))
 
 (define (macro-decl-path-list-append-from
   [out : (&mut out AstDeclPathList)]
@@ -51741,6 +51748,7 @@
     [right-len : i64 (ast-decl-path-list-len (& right))]
     (if (and
       (<= left-len (struct-get right offset))
+      (struct-get right prependable)
       (not
         (unsafe
           (=
@@ -51758,11 +51766,19 @@
             new-offset
             0
             left-len)
+          (ast-decl-module-list-copy-to
+            (&mut (struct-get right owner-ids))
+            (& (struct-get left owner-ids))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
           (AstDeclPathList
             (struct-get right slots)
+            (struct-get right owner-ids)
             new-offset
             (+ left-len right-len)
-            false)))
+            true)))
       (let
         [out : AstDeclPathList
           (ast-decl-path-list-with-capacity (+ left-len right-len))]
@@ -51789,83 +51805,114 @@
 
 (cfg
   test
-  (define (macro-decl-module-eq? [decl : AstDecl] [wanted : String]) : bool
+  (define (macro-decl-module-eq? [decl : AstDecl] [wanted : i64]) : bool
     (match decl
-      [(AstDecl.Module name) (string.eq (intern-str name) wanted)]
+      [(AstDecl.Module name) (= name wanted)]
       [_ false])))
 
 (cfg
   test
   (define (macro-decl-list-append-headroom-smoke?) : bool
     (let
+      [left-id : i64 (ci.intern-generated-name "left")]
+      [right-a-id : i64 (ci.intern-generated-name "right-a")]
+      [right-b-id : i64 (ci.intern-generated-name "right-b")]
+      [alias-id : i64 (ci.intern-generated-name "alias")]
+      [prefix-a-id : i64 (ci.intern-generated-name "prefix-a")]
+      [prefix-b-id : i64 (ci.intern-generated-name "prefix-b")]
       [left : AstDeclList (ast-decl-list-with-capacity 1)]
-      [_left : unit (ast-decl-list-push (&mut left) (ast-decl-module "left"))]
+      [_left : unit (ast-decl-list-push (&mut left) (AstDecl.Module left-id))]
       [right-base : AstDeclList (ast-decl-list-new)]
       [right-tail : AstDeclList
-        (ast-decl-list-prepend-builder (ast-decl-module "right-b") right-base)]
+        (ast-decl-list-prepend-builder (AstDecl.Module right-b-id) right-base)]
       [right : AstDeclList
-        (ast-decl-list-prepend-builder (ast-decl-module "right-a") right-tail)]
+        (ast-decl-list-prepend-builder (AstDecl.Module right-a-id) right-tail)]
       [right-address : i64 (macro-decl-list-slots-address right)]
       [reused : AstDeclList (macro-decl-list-append left right)]
       [alias-left : AstDeclList
         (begin
-          (array-set! (struct-get right slots) 0 (ast-decl-module "alias"))
+          (array-set! (struct-get right slots) 0 (AstDecl.Module alias-id))
           (AstDeclList (struct-get right slots) 0 1 false))]
       [copied : AstDeclList (macro-decl-list-append alias-left right)]
       [reserved : AstDeclList (macro-decl-list-with-prefix-reserve right 8)]
       [reserved-address : i64 (macro-decl-list-slots-address reserved)]
       [prefix-base : AstDeclList (ast-decl-list-new)]
       [prefix-tail : AstDeclList
-        (ast-decl-list-prepend-builder (ast-decl-module "prefix-a") prefix-base)]
+        (ast-decl-list-prepend-builder (AstDecl.Module prefix-a-id) prefix-base)]
       [prefix-rev : AstDeclList
-        (ast-decl-list-prepend-builder (ast-decl-module "prefix-b") prefix-tail)]
+        (ast-decl-list-prepend-builder (AstDecl.Module prefix-b-id) prefix-tail)]
       [prefixed : AstDeclList
         (macro-decl-list-prefix-rev-current-suffix prefix-rev reserved)]
       (and
         (= (macro-decl-list-slots-address reused) right-address)
         (= (struct-get reused offset) 1)
         (= (ast-decl-list-len (& reused)) 3)
-        (macro-decl-module-eq? (ast-decl-list-ref reused 0) "left")
-        (macro-decl-module-eq? (ast-decl-list-ref reused 1) "right-a")
-        (macro-decl-module-eq? (ast-decl-list-ref reused 2) "right-b")
+        (macro-decl-module-eq? (ast-decl-list-ref reused 0) left-id)
+        (macro-decl-module-eq? (ast-decl-list-ref reused 1) right-a-id)
+        (macro-decl-module-eq? (ast-decl-list-ref reused 2) right-b-id)
         (not (= (macro-decl-list-slots-address copied) right-address))
-        (macro-decl-module-eq? (ast-decl-list-ref copied 0) "alias")
-        (macro-decl-module-eq? (ast-decl-list-ref copied 1) "right-a")
-        (macro-decl-module-eq? (ast-decl-list-ref copied 2) "right-b")
+        (macro-decl-module-eq? (ast-decl-list-ref copied 0) alias-id)
+        (macro-decl-module-eq? (ast-decl-list-ref copied 1) right-a-id)
+        (macro-decl-module-eq? (ast-decl-list-ref copied 2) right-b-id)
         (= (struct-get reserved offset) 8)
         (= (macro-decl-list-slots-address prefixed) reserved-address)
         (= (struct-get prefixed offset) 6)
-        (macro-decl-module-eq? (ast-decl-list-ref prefixed 0) "prefix-a")
-        (macro-decl-module-eq? (ast-decl-list-ref prefixed 1) "prefix-b")
-        (macro-decl-module-eq? (ast-decl-list-ref prefixed 2) "right-a")
-        (macro-decl-module-eq? (ast-decl-list-ref prefixed 3) "right-b")))))
+        (macro-decl-module-eq? (ast-decl-list-ref prefixed 0) prefix-a-id)
+        (macro-decl-module-eq? (ast-decl-list-ref prefixed 1) prefix-b-id)
+        (macro-decl-module-eq? (ast-decl-list-ref prefixed 2) right-a-id)
+        (macro-decl-module-eq? (ast-decl-list-ref prefixed 3) right-b-id)))))
 
 (cfg
   test
   (define (macro-decl-path-list-append-headroom-smoke?) : bool
     (let
+      [left-id : i64 (ci.intern-generated-name "left-path")]
+      [right-a-id : i64 (ci.intern-generated-name "right-a-path")]
+      [right-b-id : i64 (ci.intern-generated-name "right-b-path")]
+      [alias-id : i64 (ci.intern-generated-name "alias-path")]
+      [prefix-a-id : i64 (ci.intern-generated-name "prefix-a-path")]
+      [prefix-b-id : i64 (ci.intern-generated-name "prefix-b-path")]
       [left : AstDeclPathList (ast-decl-path-list-with-capacity 1)]
-      [_left : unit (ast-decl-path-list-push (&mut left) "left")]
+      [_left : unit
+        (ast-decl-path-list-push-with-owner-id (&mut left) "left" left-id)]
       [right-base : AstDeclPathList (ast-decl-path-list-new)]
       [right-tail : AstDeclPathList
-        (ast-decl-path-list-prepend-builder "right-b" right-base)]
+        (ast-decl-path-list-prepend-builder-with-owner-id
+          "right-b"
+          right-b-id
+          right-base)]
       [right : AstDeclPathList
-        (ast-decl-path-list-prepend-builder "right-a" right-tail)]
+        (ast-decl-path-list-prepend-builder-with-owner-id
+          "right-a"
+          right-a-id
+          right-tail)]
       [right-address : i64 (macro-decl-path-list-slots-address right)]
       [reused : AstDeclPathList (macro-decl-path-list-append left right)]
       [alias-left : AstDeclPathList
         (begin
           (array-set! (struct-get right slots) 0 "alias")
-          (AstDeclPathList (struct-get right slots) 0 1 false))]
+          (array-set! (struct-get right owner-ids) 0 alias-id)
+          (AstDeclPathList
+            (struct-get right slots)
+            (struct-get right owner-ids)
+            0
+            1
+            false))]
       [copied : AstDeclPathList (macro-decl-path-list-append alias-left right)]
       [reserved : AstDeclPathList
         (macro-decl-path-list-with-prefix-reserve right 8)]
       [reserved-address : i64 (macro-decl-path-list-slots-address reserved)]
       [prefix-base : AstDeclPathList (ast-decl-path-list-new)]
       [prefix-tail : AstDeclPathList
-        (ast-decl-path-list-prepend-builder "prefix-a" prefix-base)]
+        (ast-decl-path-list-prepend-builder-with-owner-id
+          "prefix-a"
+          prefix-a-id
+          prefix-base)]
       [prefix-rev : AstDeclPathList
-        (ast-decl-path-list-prepend-builder "prefix-b" prefix-tail)]
+        (ast-decl-path-list-prepend-builder-with-owner-id
+          "prefix-b"
+          prefix-b-id
+          prefix-tail)]
       [prefixed : AstDeclPathList
         (macro-decl-path-list-prefix-rev-current-suffix prefix-rev reserved)]
       (and
@@ -51875,17 +51922,27 @@
         (string.eq (ast-decl-path-list-get (& reused) 0 "") "left")
         (string.eq (ast-decl-path-list-get (& reused) 1 "") "right-a")
         (string.eq (ast-decl-path-list-get (& reused) 2 "") "right-b")
+        (= (ast-decl-path-list-owner-id (& reused) 0 -1) left-id)
+        (= (ast-decl-path-list-owner-id (& reused) 1 -1) right-a-id)
+        (= (ast-decl-path-list-owner-id (& reused) 2 -1) right-b-id)
         (not (= (macro-decl-path-list-slots-address copied) right-address))
         (string.eq (ast-decl-path-list-get (& copied) 0 "") "alias")
         (string.eq (ast-decl-path-list-get (& copied) 1 "") "right-a")
         (string.eq (ast-decl-path-list-get (& copied) 2 "") "right-b")
+        (= (ast-decl-path-list-owner-id (& copied) 0 -1) alias-id)
+        (= (ast-decl-path-list-owner-id (& copied) 1 -1) right-a-id)
+        (= (ast-decl-path-list-owner-id (& copied) 2 -1) right-b-id)
         (= (struct-get reserved offset) 8)
         (= (macro-decl-path-list-slots-address prefixed) reserved-address)
         (= (struct-get prefixed offset) 6)
         (string.eq (ast-decl-path-list-get (& prefixed) 0 "") "prefix-a")
         (string.eq (ast-decl-path-list-get (& prefixed) 1 "") "prefix-b")
         (string.eq (ast-decl-path-list-get (& prefixed) 2 "") "right-a")
-        (string.eq (ast-decl-path-list-get (& prefixed) 3 "") "right-b")))))
+        (string.eq (ast-decl-path-list-get (& prefixed) 3 "") "right-b")
+        (= (ast-decl-path-list-owner-id (& prefixed) 0 -1) prefix-a-id)
+        (= (ast-decl-path-list-owner-id (& prefixed) 1 -1) prefix-b-id)
+        (= (ast-decl-path-list-owner-id (& prefixed) 2 -1) right-a-id)
+        (= (ast-decl-path-list-owner-id (& prefixed) 3 -1) right-b-id)))))
 
 (cfg
   test
@@ -64330,7 +64387,7 @@
         (& decls)
         (& paths)
         (sym_i64_env.sym-i64-empty)
-        "")]
+        cbi.compiler-builtin-id-fix-empty)]
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-module : String module]
@@ -64424,7 +64481,7 @@
                                         (& expanded)
                                         (& expanded-paths)
                                         cur-materialize-seen
-                                        cur-module))]
+                                        cur-module-id))]
                                   [marker-tail : AstDeclList
                                     (macro-scratch-decl-list-append
                                       expanded
@@ -64542,7 +64599,7 @@
                                         (& expanded)
                                         (& expanded-paths)
                                         cur-materialize-seen
-                                        cur-module))]
+                                        cur-module-id))]
                                   [spliced-tail : AstDeclList
                                     (macro-scratch-decl-list-append
                                       expanded
@@ -64683,6 +64740,7 @@
                           decl-path
                           decl-owner-id
                           cur-module
+                          cur-module-id
                           cur-materialize-seen
                           stdlib-roots
                           cfgs
@@ -64744,6 +64802,7 @@
                                   next-decls
                                   next-paths
                                   cur-module
+                                  cur-module-id
                                   (MacroSpliceEnvPlan.Refresh
                                     cur-top-env
                                     materialized-decls
@@ -65037,13 +65096,6 @@
                 [active-program : AstProgram (ast-program active-decls)]
                 (begin
                   (macro-expand-scratch-begin!)
-                  (if (> (svec.len (& stdlib-roots)) 0)
-                    (begin
-                      (macro-generated-catalog-demand-index-build!
-                        active-decls
-                        active-paths)
-                      (set! macro-generated-catalog-demand-index-enabled true))
-                    (macro-generated-catalog-demand-index-invalidate!))
                   (cfg compile-profile (compiler-tc-profile-start))
                   (match (macro-live-symbols-build-or-reuse!
                     active-program
@@ -65063,6 +65115,7 @@
                                 symbols
                                 registries
                                 ""
+                                cbi.compiler-builtin-id-fix-empty
                                 pools)]
                             (match (tc-stdlib-comptime-surface-ok-for-macro ctx)
                               [(ResultTcUnit.Ok)
@@ -65183,12 +65236,12 @@
   [decls : (& decls AstDeclList)]
   [paths : (& paths AstDeclPathList)]
   [seen : sym_i64_env.SymI64Env]
-  [module : String]) : sym_i64_env.SymI64Env
+  [module-id : i64]) : sym_i64_env.SymI64Env
   (let
     [count : i64 (ast-decl-list-len decls)]
     [path-count : i64 (ast-decl-path-list-len paths)]
     [index : i64 0]
-    [cur-module : String module]
+    [cur-module-id : i64 module-id]
     [out : sym_i64_env.SymI64Env seen]
     (begin
       (while (< index count)
@@ -65197,29 +65250,37 @@
             (if (< index path-count)
               (ast-decl-path-list-get paths index "")
               "")]
+          [decl-owner-id : i64
+            (if (< index path-count)
+              (ast-decl-path-list-owner-id
+                paths
+                index
+                cbi.compiler-builtin-id-fix-empty)
+              cbi.compiler-builtin-id-fix-empty)]
           (begin
-            (if (> (string.string-length decl-path) 0)
+            (if (and
+              (> (string.string-length decl-path) 0)
+              (not (= decl-owner-id cbi.compiler-builtin-id-fix-empty)))
               (set!
                 out
-                (sym_i64_env.sym-i64-bind
+                (sym_i64_env.sym-i64-bind-id
                   out
-                  (compiler-load-seen-path-key-in-module decl-path cur-module)
+                  (compiler-load-seen-path-key-id decl-owner-id cur-module-id)
                   1))
               unit)
-            (if (match (ast-decl-list-ref-borrowed decls index)
-              [(AstDecl.Module _) true]
-              [_ false])
-              (match (ast-decl-list-get decls index (ast-decl-module ""))
-                [(AstDecl.Module name)
-                  (let
-                    [module-name : String (intern-str name)]
+            (match (ast-decl-list-ref-borrowed decls index)
+              [(AstDecl.Module _)
+                (match (array-ref
+                  (struct-get decls slots)
+                  (+ (struct-get decls offset) index))
+                  [(AstDecl.Module name)
                     (begin
-                      (if (> (string.string-length module-name) 0)
-                        (set! out (sym_i64_env.sym-i64-bind out module-name 1))
-                        unit)
-                      (set! cur-module module-name)))]
-                [_ unit])
-              unit)
+                      (if (= name cbi.compiler-builtin-id-fix-empty)
+                        unit
+                        (set! out (sym_i64_env.sym-i64-bind-id out name 1)))
+                      (set! cur-module-id name))]
+                  [_ unit])]
+              [_ unit])
             (set! index (+ index 1)))))
       out)))
 

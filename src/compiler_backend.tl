@@ -32054,7 +32054,7 @@
 (define (compiler-backend-emit-fused-not-branch-rest
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]

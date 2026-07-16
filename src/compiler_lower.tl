@@ -532,16 +532,6 @@
   0)
 (define lower-checked-frontend-released : bool
   false)
-(define lower-checked-frontend-interns-prepared : bool
-  false)
-(define lower-checked-frontend-intern-persistence-before : bool
-  false)
-(define lower-checked-frontend-intern-count : i64
-  0)
-(define lower-checked-macro-intern-persistence-forced : bool
-  false)
-(define lower-checked-macro-intern-persistence-before : bool
-  false)
 (define lower-checked-dest-pools-rolled-over : bool
   false)
 (define lower-checked-dest-pools-deferred : bool
@@ -560,11 +550,6 @@
     (set! lower-checked-source-release-arena source-release-arena)
     (set! lower-checked-frontend-release-arena frontend-release-arena)
     (set! lower-checked-frontend-released false)
-    (set! lower-checked-frontend-interns-prepared false)
-    (set! lower-checked-frontend-intern-persistence-before false)
-    (set! lower-checked-frontend-intern-count 0)
-    (set! lower-checked-macro-intern-persistence-forced false)
-    (set! lower-checked-macro-intern-persistence-before false)
     (set! lower-checked-dest-pools-rolled-over false)
     (set! lower-checked-dest-pools-deferred false)
     (set! lower-checked-dest-pools-committed false)
@@ -577,7 +562,6 @@
     (set! lower-checked-source-release-arena 0)
     (set! lower-checked-frontend-release-arena 0)
     (set! lower-checked-frontend-released false)
-    (set! lower-checked-macro-intern-persistence-forced false)
     (set! lower-checked-dest-pools-rolled-over false)
     (set! lower-checked-dest-pools-deferred false)))
 
@@ -609,26 +593,6 @@
 (define (compiler-lower-checked-frontend-released?) : bool
   lower-checked-frontend-released)
 
-(define (compiler-lower-checked-frontend-interns-prepared?) : bool
-  lower-checked-frontend-interns-prepared)
-
-(define (compiler-lower-checked-frontend-intern-persistence-before?) : bool
-  lower-checked-frontend-intern-persistence-before)
-
-(define (compiler-lower-checked-frontend-intern-count) : i64
-  lower-checked-frontend-intern-count)
-
-(define (compiler-lower-checked-frontend-intern-count-advance! [count : i64]) : unit
-  (if lower-checked-frontend-interns-prepared
-    (set! lower-checked-frontend-intern-count count)
-    unit))
-
-(define (compiler-lower-checked-frontend-intern-preparation-clear!) : unit
-  (begin
-    (set! lower-checked-frontend-interns-prepared false)
-    (set! lower-checked-frontend-intern-persistence-before false)
-    (set! lower-checked-frontend-intern-count 0)))
-
 (define (compiler-lower-checked-dest-pools-abort-uncommitted!) : unit
   (if lower-checked-dest-pools-rolled-over
     (begin
@@ -641,12 +605,6 @@
         (unsafe
           (arena.tl_arena_destroy
             (ast-node-pool-context-base-arena lower-checked-dest-pools-context))))
-      (if (and
-        lower-checked-macro-intern-persistence-forced
-        (not lower-checked-macro-intern-persistence-before))
-        (intern-persistent-storage-disable!)
-        unit)
-      (set! lower-checked-macro-intern-persistence-forced false)
       (set! lower-checked-dest-pools-rolled-over false)
       (set! lower-checked-dest-pools-deferred false)
       (set! lower-checked-dest-pools-active false))
@@ -679,14 +637,6 @@
         ;; that fact so an error between the two compactions restores allocation
         ;; to the caller arena rather than to the unmapped original frontend.
         (set! lower-checked-frontend-released true)
-        ;; Macro symbol generations are reclaimed during the walk. Make every
-        ;; newly interned name own persistent bytes immediately so the final
-        ;; pool handoff never has to read a retired symbol-generation string.
-        (set!
-          lower-checked-macro-intern-persistence-before
-          lower-checked-frontend-intern-persistence-before)
-        (set! lower-checked-macro-intern-persistence-forced true)
-        (intern-persistent-storage-enable!)
         (set! lower-checked-dest-pools-committed false)
         (set! lower-checked-dest-pools-rolled-over true)
         (set! lower-checked-dest-pools-active true)
@@ -818,38 +768,10 @@
         ;; program-lifetime storage unchanged.
         (if (= old-frontend-arena 0)
           unit
-          (let
-            [intern-count : i64 (intern-pool-len)]
-            [forced-for-macro? : bool
-              lower-checked-macro-intern-persistence-forced]
-            [persistent-before : bool
-              (if forced-for-macro?
-                lower-checked-macro-intern-persistence-before
-                (intern-persistent-storage-on?))]
-            (begin
-              ;; Intern pool entries and the dedup map both store String values
-              ;; directly. Relocate the pool, then rebuild the map from those
-              ;; relocated values before the frontend arena is unmapped.
-              (if forced-for-macro?
-                unit
-                (intern-persist-range! 0 intern-count))
-              (intern-reset-to! intern-count)
-              ;; Keep the caller's persistence policy while typecheck/lower add
-              ;; names in the checked destination arena. The outer retirement
-              ;; handoff promotes just that tail before destroying the arena;
-              ;; enabling persistent insertion here penalizes every hot intern.
-              (set!
-                lower-checked-frontend-intern-persistence-before
-                persistent-before)
-              (set! lower-checked-frontend-intern-count intern-count)
-              (set! lower-checked-frontend-interns-prepared true)
-              (if (and forced-for-macro? (not persistent-before))
-                (intern-persistent-storage-disable!)
-                unit)
-              (set! lower-checked-macro-intern-persistence-forced false)
-              (unsafe
-                (arena.tl_arena_destroy old-frontend-arena))
-              (set! lower-checked-frontend-released true))))))
+          (begin
+            (unsafe
+              (arena.tl_arena_destroy old-frontend-arena))
+            (set! lower-checked-frontend-released true)))))
     unit))
 
 (defenum LowerFieldInfo

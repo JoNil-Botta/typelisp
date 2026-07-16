@@ -1554,82 +1554,6 @@
                             (box-get diag)
                             input-path))))]))))]))))
 
-(define (compiler-driver-prepare-lowered-source-retirement!) : bool
-  (let
-    [early-prepared? : bool (compiler-lower-checked-frontend-interns-prepared?)]
-    [persistent-before : bool
-      (if early-prepared?
-        (compiler-lower-checked-frontend-intern-persistence-before?)
-        (ci.intern-persistent-storage-on?))]
-    (if early-prepared?
-      (let
-        [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
-        [intern-count : i64 (ci.intern-pool-len)]
-        (begin
-          ;; Macro compaction already relocated the prefix needed to retire the
-          ;; frontend. Promote only names added by typecheck/lower, then rebuild
-          ;; direct String entries in the dedup map before checked storage dies.
-          (if (< persisted-count intern-count)
-            (begin
-              (ci.intern-persist-range! persisted-count intern-count)
-              (ci.intern-reset-to! intern-count)
-              (if (> (array-length compiler-driver-pending-intern-state) 0)
-                (ci.intern-compat-state-capture-from-globals!
-                  (array-ref compiler-driver-pending-intern-state 0))
-                unit))
-            unit)
-          ;; Optimizer/backend names are discovered after checked storage is
-          ;; retired, so preserve the established persistent tail policy here.
-          (ci.intern-persistent-storage-enable!)
-          (compiler-lower-checked-frontend-intern-preparation-clear!)
-          persistent-before))
-      (if (= compiler-driver-pending-retired-source-arena 0)
-        persistent-before
-        (let
-          [intern-count : i64 (ci.intern-pool-len)]
-          (begin
-            ;; Do this before optimizer/backend reset any producer-owned scratch
-            ;; arenas. The dedup map stores each interned String value directly.
-            (ci.intern-persist-range! 0 intern-count)
-            (ci.intern-reset-to! intern-count)
-            ;; Batch state owns the arrays updated above but snapshots scalar
-            ;; count/generation/map flags separately. Refresh those scalars while
-            ;; the original persistence policy is still active.
-            (if (> (array-length compiler-driver-pending-intern-state) 0)
-              (ci.intern-compat-state-capture-from-globals!
-                (array-ref compiler-driver-pending-intern-state 0))
-              unit)
-            ;; Names first discovered after this boundary must also survive an
-            ;; early checked-arena release.
-            (ci.intern-persistent-storage-enable!)
-            persistent-before))))))
-
-;; A lowered result may outlive an unrelated driver-state reset. Promote the
-;; typecheck/lower tail while its marker-name arena is still live, then advance
-;; the handoff floor so the emission boundary only handles names added later.
-(define (compiler-driver-persist-lowered-intern-tail!
-  [state : CompilerDriverState]) : unit
-  (if (compiler-lower-checked-frontend-interns-prepared?)
-    (let
-      [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
-      [intern-count : i64 (ci.intern-pool-len)]
-      (if (< persisted-count intern-count)
-        (begin
-          (ci.intern-persist-range! persisted-count intern-count)
-          (ci.intern-reset-to! intern-count)
-          (ci.intern-compat-state-capture-from-globals!
-            (array-ref (struct-get state intern-state) 0))
-          (compiler-lower-checked-frontend-intern-count-advance! intern-count))
-        unit))
-    unit))
-
-(define (compiler-driver-abort-early-intern-preparation!) : unit
-  (compiler-lower-checked-frontend-intern-preparation-clear!))
-
-(define (compiler-driver-restore-intern-persistence!
-  [_persistent-before : bool]) : unit
-  unit)
-
 (define (compiler-driver-restore-frontend-return-arena!) : unit
   (if (= compiler-driver-pending-frontend-return-arena 0)
     unit
@@ -2519,7 +2443,6 @@
             (match lowered
               [(ResultCompilerLower.Ok program spans)
                 (begin
-                  (compiler-driver-persist-lowered-intern-tail! state)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
@@ -2689,7 +2612,6 @@
             (match lowered
               [(ResultCompilerLower.Ok program spans)
                 (begin
-                  (compiler-driver-persist-lowered-intern-tail! state)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))

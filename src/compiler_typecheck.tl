@@ -3533,7 +3533,8 @@
 (extern (foreign-box [arg0 : Box]) : unit (:abi c) (:symbol \"foreign_box\"))")
 
 (define (compiler-typecheck-extern-abi-tuple-source) : String
-  "(extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c) (:symbol \"bad_tuple\"))")
+  "(module main)
+(extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c) (:symbol \"bad_tuple\"))")
 
 (define (compiler-typecheck-extern-abi-array-source) : String
   "(extern (bad [arg0 : (Array i64 2)]) : i64 (:abi c) (:symbol \"bad_array\"))")
@@ -3620,9 +3621,11 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-extern-abi-source))
     (compiler-typecheck-extern-head-varargs-tests-ok?)
-    (compiler-typecheck-error-ok?
+    (compiler-typecheck-error-location-ok?
       (compiler-typecheck-extern-abi-tuple-source)
-      "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)")
+      "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)"
+      2
+      1)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-abi-array-source)
       "typecheck: extern ABI c does not support parameter type (Array i64 2)")
@@ -3853,7 +3856,8 @@
   (let [other : i64 1] (same-owner (& n) (& other))))")
 
 (define (compiler-typecheck-lifetime-duplicate-source) : String
-  "(defstruct RefBox (:lifetimes a a) (value (& a i64)))")
+  "(module main)
+(defstruct RefBox (:lifetimes a a) (value (& a i64)))")
 
 (define (compiler-typecheck-lifetime-missing-args-source) : String
   "(defstruct RefBox (:lifetimes a) (value (& a i64)))
@@ -4253,9 +4257,11 @@
         (compiler-typecheck-regular-call-lifetime-conflict-source)
         "typecheck: constructor lifetime mismatch")]
     [lifetime-duplicate-error-ok : bool
-      (compiler-typecheck-error-ok?
+      (compiler-typecheck-error-location-ok?
         (compiler-typecheck-lifetime-duplicate-source)
-        "typecheck: duplicate lifetime parameter")]
+        "typecheck: duplicate lifetime parameter"
+        2
+        1)]
     [lifetime-missing-args-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-lifetime-missing-args-source)
@@ -9631,12 +9637,16 @@
     (compiler-typecheck-ok? (compiler-typecheck-defdispatch-scalar-only-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-defdispatch-export-alias-source))
-    (compiler-typecheck-error-ok?
+    (compiler-typecheck-error-location-ok?
       (compiler-typecheck-defdispatch-no-scalar-source)
-      "typecheck: defdispatch requires exactly one scalar variant")
-    (compiler-typecheck-error-ok?
+      "typecheck: defdispatch requires exactly one scalar variant"
+      2
+      1)
+    (compiler-typecheck-error-location-ok?
       (compiler-typecheck-defdispatch-duplicate-isa-source)
-      "typecheck: duplicate defdispatch ISA variant")
+      "typecheck: duplicate defdispatch ISA variant"
+      4
+      1)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defdispatch-unknown-source)
       "typecheck: unknown defdispatch variant dot-avx2")
@@ -9729,6 +9739,83 @@
         [(ResultCompilerTypecheck.Ok _) false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-typecheck-unsafe-decl-origin-source) : String
+  "(module main)
+(unsafe (extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c)))")
+
+(define (compiler-typecheck-comptime-decl-origin-source) : String
+  "(comptime-decl
+  (defstruct RefBox (:lifetimes a a) (value (& a i64))))")
+
+(define (compiler-typecheck-module-body-decl-origin-source) : String
+  "(module nested
+  (defdispatch dot (avx2 dot-avx2)))")
+
+(define (compiler-typecheck-cleanup-repr-c-origin-ok?) : bool
+  ;; Source syntax rejects this metadata combination earlier, so retain a real
+  ;; parsed declaration origin and then construct the invalid semantic AST.
+  (match (parse-ast-source-diagnostic
+    ""
+    "
+(defstruct Bad (:cleanup cleanup-bad) (fd i64))")
+    [(ResultAstProgramDiagnostic.Ok program)
+      (match program
+        [(AstProgram.Program decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            [decl : AstDecl (ast-decl-list-get (& decls) 0 (ast-decl-fallback))]
+            (match decl
+              [(AstDecl.DefStruct name _ cleanup fields)
+                (begin
+                  (array-set!
+                    (struct-get decls slots)
+                    (struct-get decls offset)
+                    (AstDecl.DefStruct name (AstStructRepr.C) cleanup fields))
+                  (match (typecheck-compiler-program program)
+                    [(ResultCompilerTypecheck.Err diag)
+                      (let
+                        [value : CompilerDiagnostic (box-get diag)]
+                        (and
+                          (string.eq
+                            (compiler-diagnostic-message value)
+                            "typecheck: cleanup-owning struct Bad cannot use repr c")
+                          (= (compiler-diagnostic-line value) 2)
+                          (= (compiler-diagnostic-col value) 1)))]
+                    [(ResultCompilerTypecheck.Ok _) false]))]
+              [_ false]))])]
+    [(ResultAstProgramDiagnostic.Err _) false]))
+
+(define (compiler-typecheck-imported-decl-origin-ok?) : bool
+  (begin
+    (io.write-file
+      "target/tc_decl_origin_dep.tl"
+      "(module tc.decl_origin_dep)
+(extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c))")
+    (io.write-file
+      "target/tc_decl_origin_entry.tl"
+      "(module tc.decl_origin_entry)
+(import \"tc_decl_origin_dep.tl\" module tc.decl_origin_dep as dep)
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/tc_decl_origin_entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        (match (typecheck-compiler-program-with-paths (ast-program decls) paths)
+          [(ResultCompilerTypecheck.Err diag)
+            (let
+              [value : CompilerDiagnostic (box-get diag)]
+              (and
+                (string.eq
+                  (compiler-diagnostic-message value)
+                  "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)")
+                (string.eq
+                  (compiler-diagnostic-path value)
+                  "target/tc_decl_origin_dep.tl")
+                (= (compiler-diagnostic-line value) 2)
+                (= (compiler-diagnostic-col value) 1)))]
+          [(ResultCompilerTypecheck.Ok _) false])]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
 (define (compiler-typecheck-semantic-diagnostic-spans-ok?) : bool
   (and
     (compiler-typecheck-error-location-ok?
@@ -9745,7 +9832,24 @@
       (compiler-typecheck-unknown-variant-source)
       "typecheck: unknown variant Other"
       3
-      3)))
+      3)
+    (compiler-typecheck-error-location-ok?
+      (compiler-typecheck-unsafe-decl-origin-source)
+      "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)"
+      2
+      9)
+    (compiler-typecheck-error-location-ok?
+      (compiler-typecheck-comptime-decl-origin-source)
+      "typecheck: duplicate lifetime parameter"
+      2
+      3)
+    (compiler-typecheck-error-location-ok?
+      (compiler-typecheck-module-body-decl-origin-source)
+      "typecheck: defdispatch requires exactly one scalar variant"
+      2
+      3)
+    (compiler-typecheck-cleanup-repr-c-origin-ok?)
+    (compiler-typecheck-imported-decl-origin-ok?)))
 
 (define (compiler-typecheck-cross-module-mismatch-source) : String
   "(module left)

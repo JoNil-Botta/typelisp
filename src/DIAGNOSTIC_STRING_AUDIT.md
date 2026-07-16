@@ -89,7 +89,14 @@ path. Generated-declaration specialization/rebuild failures now select a
 concrete generated payload span first and a generated-metadata argument span
 second, stamps the owning declaration path, and preserves generated
 declaration/identity context as notes; only origin-free synthetic declarations
-use the 1:1 phase fallback. The remaining
-semantic-location gaps include other declaration-shape failures plus internal
-macro/load rebuild errors that still cross string boundaries before a concrete
-origin is available.
+use the 1:1 phase fallback. Source-authored declaration-shape failures retain a
+cold declaration-origin record through parsing, detached-file compaction,
+loader filtering/concatenation, generated normalization, specialization, and
+list tails. Loader copies use flattened cold aliases to the original span runs
+instead of duplicating per-declaration span payloads; the final typecheck
+adapter combines those bounds with the aligned declaration path. This covers
+top-level, nested-module, wrapper, and imported declarations without widening
+`AstDecl` or its hot list representation. The
+remaining semantic-location gaps are origin-free internal/synthetic macro or
+load rebuild errors that cross string boundaries before a concrete origin is
+available.

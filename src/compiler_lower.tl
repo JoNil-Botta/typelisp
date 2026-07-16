@@ -3946,6 +3946,8 @@
 
 (define lower-spmd-inline-helper-stack : LowerStringSet
   (lower-spmd-inline-empty-helper-stack))
+(define lower-spmd-inline-recursion-detected : bool
+  false)
 (define lower-spmd-inline-next-temp : i64
   0)
 (define lower-spmd-scalar-call-context : LowerSpmdScalarCallContext
@@ -3958,6 +3960,7 @@
     (set! lower-entry-main-module-active false)
     (set! lower-entry-main-module "")
     (set! lower-spmd-inline-helper-stack (lower-spmd-inline-empty-helper-stack))
+    (set! lower-spmd-inline-recursion-detected false)
     (set! lower-spmd-inline-next-temp 0)
     (set! lower-spmd-scalar-call-context (LowerSpmdScalarCallContext.No))
     (lower-reach-scratch-globals-reset!)
@@ -4065,11 +4068,13 @@
       (if (string.eq name "")
         (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))
         (if (lower-string-set-contains? lower-spmd-inline-helper-stack name)
-          (ResultLowerSpmdInlineHelper.Err
-            (box
-              (lower-diagnostic-at-expr
-                func
-                (lower-spmd-inline-recursive-message))))
+          (begin
+            (set! lower-spmd-inline-recursion-detected true)
+            (ResultLowerSpmdInlineHelper.Err
+              (box
+                (lower-diagnostic-at-expr
+                  func
+                  (lower-spmd-inline-recursive-message)))))
           (let
             [handle : i64
               (lower-symbols-lookup-value-hygiene (tc-context-symbols ctx) name)]
@@ -40376,6 +40381,7 @@
       (tc-bind-return-type
         (tc-bind-params ctx (tc-hygiene-global-env top-env) params)
         ret-ty)]
+    [_recursion-reset : unit (set! lower-spmd-inline-recursion-detected false)]
     [body-lanes : i64
       (lower-masked-vector-expr-lanes-with-locals
         ctx
@@ -40410,6 +40416,8 @@
             [(AstSpmdParamClass.Varying) false]
             [_ true]))
         "lower: :spmd-callable index-param must name a varying argument"]
+      [lower-spmd-inline-recursion-detected
+        (lower-spmd-inline-recursive-message)]
       [(< body-lanes 0)
         "lower: :spmd-callable body does not support SPMD specialization"]
       [(tc-type-eq ret-ty (AstType.Unit))
@@ -40782,7 +40790,7 @@
           (lower-diagnostic
             "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512")))]))
 
-(define (lower-spmd-package-specialization-function
+(define (lower-spmd-package-specialization-function-active
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
@@ -40846,23 +40854,76 @@
         [index-name : String
           (lower-spmd-package-index-name (& params) index-param)]
         (if (string.eq collision-error "")
-          (lower-spmd-specialized-helper-function
+          (let
+            [previous : LowerStringSet lower-spmd-inline-helper-stack]
+            (begin
+              (set!
+                lower-spmd-inline-helper-stack
+                (lower-string-set-insert previous canonical-name))
+              (let
+                [result : ResultLowerFunction
+                  (lower-spmd-specialized-helper-function
+                    ctx
+                    top-env
+                    type-cache
+                    hidden-name
+                    params
+                    ret
+                    body
+                    backend
+                    call-args
+                    lanes
+                    index-name
+                    index-param
+                    spans
+                    names
+                    mode)]
+                (begin
+                  (set! lower-spmd-inline-helper-stack previous)
+                  result))))
+          (ResultLowerFunction.Err (box (lower-diagnostic collision-error))))))))
+
+(define (lower-spmd-package-specialization-function
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [canonical-name : String]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : AstExpr]
+  [specialization : AstSpmdSpecialization]
+  [backend : CompilerIrSpmdBackend]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameCache]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (let
+    [previous : LowerStringSet lower-spmd-inline-helper-stack]
+    [with-canonical : LowerStringSet
+      (lower-string-set-insert previous canonical-name)]
+    (begin
+      (set!
+        lower-spmd-inline-helper-stack
+        (lower-string-set-insert
+          with-canonical
+          (intern-name-base canonical-name)))
+      (let
+        [result : ResultLowerFunction
+          (lower-spmd-package-specialization-function-active
             ctx
             top-env
             type-cache
-            hidden-name
+            canonical-name
             params
             ret
             body
+            specialization
             backend
-            call-args
-            lanes
-            index-name
-            index-param
             spans
             names
-            mode)
-          (ResultLowerFunction.Err (box (lower-diagnostic collision-error))))))))
+            mode)]
+        (begin
+          (set! lower-spmd-inline-helper-stack previous)
+          result)))))
 
 (define (lower-spmd-package-specializations-from
   [ctx : TcContext]
@@ -58347,12 +58408,8 @@
           collision
           "lower: :spmd-callable stable symbol collision for __collision")))))
 
-(define (compiler-lower-spmd-package-callable-errors-ok?) : bool
+(define (compiler-lower-spmd-package-callable-validation-errors-ok?) : bool
   (and
-    (compiler-lower-spmd-package-callable-error-ok?
-      (compiler-lower-spmd-package-callable-source)
-      (CompilerLowerMode.Avx2)
-      "lower: :spmd-callable is not supported in AVX2 backend mode; use scalar or avx512")
     (compiler-lower-spmd-package-callable-error-ok?
       "(module spmd_fixture)
 (define (helper [x : i64])
@@ -58372,27 +58429,38 @@
 (define (helper [x : i64])
   (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 0)))
   : i64
-  (helper x))"
+  (unsafe (+ x 1)))"
       (CompilerLowerMode.Avx512)
-      "lower: recursive SPMD helper call is not supported")
-    (compiler-lower-spmd-package-callable-error-ok?
-      "(module spmd_fixture)
+      "lower: :spmd-callable body does not support SPMD specialization")))
+
+(define (compiler-lower-spmd-package-callable-recursion-errors-ok?) : bool
+  (compiler-lower-spmd-package-callable-error-ok?
+    "(module spmd_fixture)
 (define (helper [x : i64])
   (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 0)))
   : i64
-  (unsafe (+ x 1)))"
-      (CompilerLowerMode.Avx512)
-      "lower: :spmd-callable body does not support SPMD specialization")
-    (compiler-lower-spmd-package-callable-error-ok?
-      "(module spmd_fixture)
+  (helper x))"
+    (CompilerLowerMode.Avx512)
+    "lower: recursive SPMD helper call is not supported"))
+
+(define (compiler-lower-spmd-package-callable-mutual-recursion-error-ok?) : bool
+  (compiler-lower-spmd-package-callable-error-ok?
+    "(module spmd_fixture)
 (define (helper [x : i64])
   (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 0)))
   : i64
   (other x))
 (define (other [x : i64]) : i64
   (helper x))"
-      (CompilerLowerMode.Avx512)
-      "lower: recursive SPMD helper call is not supported")
+    (CompilerLowerMode.Avx512)
+    "lower: recursive SPMD helper call is not supported"))
+
+(define (compiler-lower-spmd-package-callable-abi-errors-ok?) : bool
+  (and
+    (compiler-lower-spmd-package-callable-error-ok?
+      (compiler-lower-spmd-package-callable-source)
+      (CompilerLowerMode.Avx2)
+      "lower: :spmd-callable is not supported in AVX2 backend mode; use scalar or avx512")
     (compiler-lower-spmd-package-callable-error-ok?
       "(module spmd_fixture)
 (define (helper [x : String])
@@ -58410,6 +58478,18 @@
       (CompilerLowerMode.Avx512)
       "lower: :spmd-callable lane width does not match varying parameter type")
     (compiler-lower-spmd-package-symbol-collision-ok?)))
+
+(define (compiler-lower-spmd-package-callable-errors-ok?) : bool
+  (and
+    (compiler-lower-spmd-package-callable-validation-errors-ok?)
+    (compiler-lower-spmd-package-callable-recursion-errors-ok?)
+    (compiler-lower-spmd-package-callable-mutual-recursion-error-ok?)
+    (compiler-lower-spmd-package-callable-abi-errors-ok?)))
+
+(define (compiler-lower-spmd-package-callable-tests-ok?) : bool
+  (and
+    (compiler-lower-spmd-package-callable-mode-ok? (CompilerLowerMode.Scalar))
+    (compiler-lower-spmd-package-callable-mode-ok? (CompilerLowerMode.Avx512))))
 
 (define (compiler-lower-spmd-varying-local-call-source) : String
   "(define (heavy [x : i64]) : i64
@@ -58430,22 +58510,20 @@
     (array-set! out i (heavy (+ offset 1)))))")
 
 (define (compiler-lower-spmd-scalar-call-shape-ok?) : bool
-  (and
-    (match (lower-compiler-source-with-mode
-      (compiler-lower-spmd-scalar-call-shape-source)
-      (CompilerLowerMode.Scalar))
-      [(ResultCompilerLower.Ok program _)
-        (match program
-          [(CompilerIrProgram.Program _ functions _)
-            (and
-              (> (lower-test-function-spmd-call-count functions "fill-value") 0)
-              (> (lower-test-function-spmd-call-count functions "fill-unit") 0)
-              (> (compiler-ir-function-list-count functions) 4)
-              (match lower-spmd-scalar-call-context
-                [(LowerSpmdScalarCallContext.No) true]
-                [(LowerSpmdScalarCallContext.Some _) false]))])]
-      [(ResultCompilerLower.Err _) false])
-    (compiler-lower-spmd-package-callable-mode-ok? (CompilerLowerMode.Scalar))))
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-spmd-scalar-call-shape-source)
+    (CompilerLowerMode.Scalar))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (> (lower-test-function-spmd-call-count functions "fill-value") 0)
+            (> (lower-test-function-spmd-call-count functions "fill-unit") 0)
+            (> (compiler-ir-function-list-count functions) 4)
+            (match lower-spmd-scalar-call-context
+              [(LowerSpmdScalarCallContext.No) true]
+              [(LowerSpmdScalarCallContext.Some _) false]))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-varying-local-call-shape-ok?) : bool
   (>
@@ -58500,8 +58578,6 @@
       2)
     (compiler-lower-spmd-varying-local-call-shape-ok?)
     (compiler-lower-spmd-uniform-arg-call-shape-ok?)
-    (compiler-lower-spmd-package-callable-mode-ok? (CompilerLowerMode.Avx512))
-    (compiler-lower-spmd-package-callable-errors-ok?)
     (compiler-lower-mode-error-ok?
       (compiler-lower-spmd-out-of-line-value-source)
       (CompilerLowerMode.Avx2)

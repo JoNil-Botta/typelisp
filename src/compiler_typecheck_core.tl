@@ -36002,13 +36002,14 @@
 ;; diagnostic rather than guessing at varying/uniform semantics not yet
 ;; implemented: the varying index, uniform variables, and literals;
 ;; arithmetic/comparison/boolean operators over those; `ann`/`cast` wrappers;
-;; dynamic-array reads whose index is not itself another array read (direct,
-;; non-gather indexing only); and local `let` bindings whose initializers obey
+;; dynamic-array reads, including pure gather-only reads through another array;
+;; and local `let` bindings whose initializers obey
 ;; the same rules. Writes (`set!`, `array-set!`), function calls, nested
 ;; `foreach`/`spmd-reduce`, varying control flow (`if`/`while`/`match`),
-;; sequencing, and aggregate constructors are rejected. The `in-index` flag is
-;; set while walking an array-read index so a nested read (a gather) is
-;; rejected. Uniformity of `start`/`end`/`init` is enforced by scoping: they are
+;; sequencing, and aggregate constructors are rejected. The `in-index` flag
+;; preserves the broadcast/shuffle index restrictions while nested pure array
+;; reads remain valid. Uniformity of `start`/`end`/`init` is enforced by
+;; scoping: they are
 ;; typed outside the lane context, so referencing the index is an unbound error.
 (define (tc-spmd-value-pure [expr : AstExpr]) : ResultTcUnit
   (tc-spmd-value-pure-at expr false))
@@ -36054,12 +36055,9 @@
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
-        (if in-index
-          (ResultTcUnit.Err
-            "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md 5.15)")
-          (match (tc-spmd-value-pure-at array false)
-            [(ResultTcUnit.Ok) (tc-spmd-value-pure-at index true)]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))]
+        (match (tc-spmd-value-pure-at array false)
+          [(ResultTcUnit.Ok) (tc-spmd-value-pure-at index true)]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstExpr.Set _ _)
       (ResultTcUnit.Err
         "`set!` is not allowed inside a spmd-reduce value expression; reductions must use the explicit accumulator, not outer mutation (SPEC.md 5.15)")]

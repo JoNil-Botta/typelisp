@@ -5907,7 +5907,7 @@
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying
 ;; index, but rejects writes (`array-set!`), function calls (also covers
 ;; `print*`/`panic`/file I/O and varying-argument user calls), varying control
-;; flow (`if`/`while`/`match`), and indirect/gather array indexing.
+;; flow (`if`/`while`/`match`). Pure gather-only array reads are supported.
 (define (compiler-typecheck-spmd-reduce-purity-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -5921,9 +5921,10 @@
     (compiler-typecheck-error-ok?
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (if (< (array-ref xs i) 0) 0 1)))"
       "varying control flow is not allowed inside a spmd-reduce value expression; the first slice has no varying if/while/match (SPEC.md 5.15)")
-    (compiler-typecheck-error-ok?
-      "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))"
-      "indirect array indexing is not allowed inside a spmd-reduce value expression; gather/scatter is deferred in the first slice (SPEC.md 5.15)")))
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [ys : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (array-ref ys i))))")
+    (compiler-typecheck-ok?
+      "(define (main [xs : (Array i64)] [offsets : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs (+ i (array-ref offsets (program-index))))))")))
 
 (define (compiler-typecheck-spmd-broadcast-tests-ok?) : bool
   (and

@@ -13419,32 +13419,23 @@
       (= (array-ref shared 4) tail-a-id)
       (= (array-ref shared 5) tail-b-id))))
 
-(define (compiler-load-required-source-id [text : String]) : i64
-  (match (ci.intern-lookup text)
-    [(ci.InternLookupFound id) id]
-    [(ci.InternLookupMissing)
-      (io.panic "compiler-load: missing parsed source identity")]))
-
 (define (compiler-load-session-owned-traversal-isolation-ok?) : bool
   (let
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
-    [state-module-id : i64 (compiler-load-required-source-id "state-module")]
-    [state-path-id : i64 (compiler-load-required-source-id "state.tl")]
-    [alias-a-id : i64 (compiler-load-required-source-id "alias-a")]
-    [module-a-id : i64 (compiler-load-required-source-id "module-a")]
-    [alias-a-member-id : i64
-      (compiler-load-required-source-id "alias-a.member-a")]
-    [member-a-id : i64 (compiler-load-required-source-id "member-a")]
-    [alias-b-id : i64 (compiler-load-required-source-id "alias-b")]
-    [module-b-id : i64 (compiler-load-required-source-id "module-b")]
-    [alias-b-member-id : i64
-      (compiler-load-required-source-id "alias-b.member-b")]
-    [member-b-id : i64 (compiler-load-required-source-id "member-b")]
+    [alias-a-member-id : i64 cbi.compiler-builtin-id-fix-arena_dot_Arena]
+    [alias-a-id : i64 (intern-leading-dot-id alias-a-member-id)]
+    [member-a-id : i64
+      (compiler-load-lazy-qualified-member-id alias-a-member-id alias-a-id)]
+    [alias-b-member-id : i64 cbi.compiler-builtin-id-fix-stdlib_dot_string]
+    [alias-b-id : i64 (intern-leading-dot-id alias-b-member-id)]
+    [member-b-id : i64
+      (compiler-load-lazy-qualified-member-id alias-b-member-id alias-b-id)]
+    [secondary-root-id : i64 cbi.compiler-builtin-id-fix-empty]
     [summary : CompilerLoadSurfaceSummary
       (CompilerLoadSurfaceSummary
-        state-module-id
-        state-path-id
+        alias-a-id
+        alias-b-id
         "state.tl"
         ""
         (CompilerLoadSurfaceImportNil)
@@ -13462,7 +13453,7 @@
       (begin
         (compiler-load-session-state-program-cache-clear! state-a)
         (compiler-load-session-state-runtime-prelude-cache-clear! state-a))]
-    [dotted-id : i64 (compiler-load-required-source-id "pkg.member")]
+    [dotted-id : i64 alias-a-member-id]
     [_seed-b-dotted : unit
       (begin
         (compiler-load-session-state-dotted-path-cache-reset! state-b)
@@ -13480,7 +13471,7 @@
         (compiler-load-session-state-lazy-qualified-observer-begin-pair!
           state-a
           alias-a-id
-          module-a-id)
+          secondary-root-id)
         (compiler-load-session-state-lazy-qualified-observer-note!
           state-a
           alias-a-member-id))]
@@ -13492,7 +13483,7 @@
         (compiler-load-session-state-lazy-qualified-observer-begin-pair!
           state-b
           alias-b-id
-          module-b-id)
+          secondary-root-id)
         (compiler-load-session-state-lazy-qualified-observer-note!
           state-b
           alias-b-member-id))]
@@ -13542,14 +13533,14 @@
       [(not
           (match (compiler-load-session-state-surface-summary-find-source
             state-a
-            state-path-id)
+            alias-b-id)
             [(CompilerLoadNoSurfaceSummary) true]
             [_ false]))
         (io.panic "compiler-load: traversal reset summary mismatch")]
       [(not
           (match (compiler-load-session-state-surface-summary-find-source
             state-b
-            state-path-id)
+            alias-b-id)
             [(CompilerLoadSomeSurfaceSummary _) true]
             [_ false]))
         (io.panic "compiler-load: traversal peer summary mismatch")]

@@ -3043,11 +3043,283 @@
     (compiler-load-stdlib-import? path)
     (build-package-tlci-owner-stdlib-path? owner path)))
 
-(define (build-package-tlci-metadata [manifest : CompilerPkgManifest]) : TlciMetadata
-  (tlci-make-metadata
-    tlci-metadata-version
-    (struct-get manifest name)
-    (struct-get manifest version)))
+(define (build-package-tlci-metadata
+  [manifest : CompilerPkgManifest]
+  [callables : TlciSpmdCallableList]) : TlciMetadata
+  (match callables
+    [(TlciSpmdCallableList.Nil)
+      (tlci-make-metadata
+        "v1"
+        (struct-get manifest name)
+        (struct-get manifest version))]
+    [(TlciSpmdCallableList.Cons _ _)
+      (tlci-make-metadata-v2
+        (struct-get manifest name)
+        (struct-get manifest version)
+        callables)]))
+
+(defstruct BuildPackageTlciCallableCollector
+  (items TlciSpmdCallableList)
+  (error String))
+
+(define (build-package-tlci-specialization-insert
+  [item : TlciSpmdSpecialization]
+  [items : TlciSpmdSpecializationList]) : TlciSpmdSpecializationList
+  (match items
+    [(TlciSpmdSpecializationList.Nil)
+      (tlci-spmd-specialization-list-cons item items)]
+    [(TlciSpmdSpecializationList.Cons head rest)
+      (if (< (tlci-spmd-specialization-compare item head) 0)
+        (tlci-spmd-specialization-list-cons item items)
+        (tlci-spmd-specialization-list-cons
+          head
+          (build-package-tlci-specialization-insert item (box-get rest))))]))
+
+(define (build-package-tlci-callable-insert
+  [item : TlciSpmdCallable]
+  [items : TlciSpmdCallableList]) : TlciSpmdCallableList
+  (match items
+    [(TlciSpmdCallableList.Nil) (tlci-spmd-callable-list-cons item items)]
+    [(TlciSpmdCallableList.Cons head rest)
+      (if (< (tlci-spmd-callable-compare item head) 0)
+        (tlci-spmd-callable-list-cons item items)
+        (tlci-spmd-callable-list-cons
+          head
+          (build-package-tlci-callable-insert item (box-get rest))))]))
+
+(define (build-package-tlci-backend [mode : CompilerBackendMode]) : CompilerIrSpmdBackend
+  (match mode
+    [(CompilerBackendMode.Scalar) CompilerIrSpmdBackend.Scalar]
+    [(CompilerBackendMode.Avx2) CompilerIrSpmdBackend.Avx2]
+    [(CompilerBackendMode.Avx512) CompilerIrSpmdBackend.Avx512]))
+
+(define (build-package-tlci-specializations-at
+  [package-name : String]
+  [canonical-name : String]
+  [signature : String]
+  [ret : AstType]
+  [items : (& items AstSpmdSpecializationList)]
+  [index : i64]
+  [limit : i64]
+  [backend : CompilerIrSpmdBackend]
+  [out : TlciSpmdSpecializationList]) : TlciSpmdSpecializationList
+  (if (or (>= index limit) (>= index (ast-spmd-specialization-list-len items)))
+    out
+    (let
+      [fallback : AstSpmdSpecialization
+        (AstSpmdSpecialization
+          2
+          (box (ast-spmd-param-class-list-new))
+          AstSpmdResultClass.Unit
+          -1)]
+      [specialization : AstSpmdSpecialization
+        (ast-spmd-specialization-list-get items index fallback)]
+      [classes : AstSpmdParamClassList
+        (box-get (struct-get specialization args))]
+      [args : String (lower-spmd-ast-param-classes-code classes)]
+      [result : String
+        (lower-spmd-ast-result-class-code (struct-get specialization result))]
+      [lanes : i64
+        (match backend
+          [(CompilerIrSpmdBackend.Scalar) 1]
+          [_ (struct-get specialization lanes)])]
+      [index-param : i64 (struct-get specialization index-param)]
+      [logical-symbol : String
+        (lower-spmd-package-symbol
+          package-name
+          canonical-name
+          signature
+          ret
+          backend
+          lanes
+          args
+          result
+          index-param)]
+      [item : TlciSpmdSpecialization
+        (tlci-make-spmd-specialization
+          "spmd-call-v1"
+          (lower-spmd-package-backend-name backend)
+          lanes
+          args
+          result
+          index-param
+          (compiler-backend-user-symbol logical-symbol))]
+      (build-package-tlci-specializations-at
+        package-name
+        canonical-name
+        signature
+        ret
+        items
+        (+ index 1)
+        limit
+        backend
+        (build-package-tlci-specialization-insert item out)))))
+
+(define (build-package-tlci-callable
+  [package-name : String]
+  [module : String]
+  [name : i64]
+  [params : AstParamList]
+  [ret : AstType]
+  [specializations : AstSpmdSpecializationList]
+  [mode : CompilerBackendMode]) : TlciSpmdCallable
+  (let
+    [canonical-name : String
+      (compiler-symbol-module-key
+        (if (= (string.string-length module) 0)
+          package-name
+          module)
+        (intern-str name))]
+    [signature : String (lower-spmd-source-signature params ret)]
+    [backend : CompilerIrSpmdBackend (build-package-tlci-backend mode)]
+    [count : i64 (ast-spmd-specialization-list-len (& specializations))]
+    [emitted-count : i64
+      (match backend
+        [(CompilerIrSpmdBackend.Scalar)
+          (if (> count 0)
+            1
+            0)]
+        [_ count])]
+    (tlci-make-spmd-callable
+      canonical-name
+      signature
+      (build-package-tlci-specializations-at
+        package-name
+        canonical-name
+        signature
+        ret
+        (& specializations)
+        0
+        emitted-count
+        backend
+        TlciSpmdSpecializationList.Nil))))
+
+(cfg
+  test
+  (define (build-package-tlci-callable-smoke-ok?) : bool
+    (let
+      [classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
+      [specializations : AstSpmdSpecializationList
+        (ast-spmd-specialization-list-new)]
+      (begin
+        (ast-spmd-param-class-list-push
+          (&mut classes)
+          AstSpmdParamClass.Varying)
+        (ast-spmd-param-class-list-push
+          (&mut classes)
+          AstSpmdParamClass.Uniform)
+        (ast-spmd-specialization-list-push
+          (&mut specializations)
+          (AstSpmdSpecialization 8 (box classes) AstSpmdResultClass.Varying 0))
+        (let
+          [callable : TlciSpmdCallable
+            (build-package-tlci-callable
+              "pkg"
+              "pkg"
+              (intern "helper")
+              (ast-param-cons
+                (ast-param "x" (AstType.I64) false)
+                (ast-param-cons
+                  (ast-param "scale" (AstType.I64) false)
+                  (ast-param-list-new)))
+              (AstType.I64)
+              specializations
+              (CompilerBackendMode.Scalar))]
+          [ordinary-metadata : TlciMetadata
+            (build-package-tlci-metadata
+              (build-package-graph-test-manifest "pkg")
+              TlciSpmdCallableList.Nil)]
+          (and
+            (string.eq (struct-get ordinary-metadata version) "v1")
+            (match (struct-get ordinary-metadata spmd-callables)
+              [(TlciSpmdCallableList.Nil) true]
+              [_ false])
+            (string.eq (struct-get callable name) "pkg/helper")
+            (string.eq (struct-get callable signature) "(-> i64 i64 i64)")
+            (match (struct-get callable specializations)
+              [(TlciSpmdSpecializationList.Cons item rest)
+                (and
+                  (string.eq (struct-get item abi) "spmd-call-v1")
+                  (string.eq (struct-get item backend) "scalar")
+                  (= (struct-get item lanes) 1)
+                  (string.eq (struct-get item args) "vu")
+                  (string.eq (struct-get item result) "v")
+                  (= (struct-get item index-param) 0)
+                  (string.eq
+                    (struct-get item symbol)
+                    (compiler-backend-user-symbol
+                      (lower-spmd-package-symbol
+                        "pkg"
+                        "pkg/helper"
+                        "(-> i64 i64 i64)"
+                        (AstType.I64)
+                        CompilerIrSpmdBackend.Scalar
+                        1
+                        "vu"
+                        "v"
+                        0)))
+                  (match (box-get rest)
+                    [(TlciSpmdSpecializationList.Nil) true]
+                    [_ false]))]
+              [_ false])))))))
+
+(cfg
+  test
+  (test
+    build-package-tlci-callable-smoke
+    (unless
+      (build-package-tlci-callable-smoke-ok?)
+      (io.panic "build package TLCI callable smoke failed"))))
+
+(define (build-package-tlci-collect-decl-callable
+  [decl : AstDecl]
+  [owned-path : String]
+  [module : String]
+  [package-name : String]
+  [mode : CompilerBackendMode]
+  [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
+  (match decl
+    [(AstDecl.DefFn name params ret _ metadata)
+      (if (= (string.string-length owned-path) 0)
+        collector
+        (match (ast-fn-metadata-spmd-callable metadata)
+          [(AstSpmdCallable.No) collector]
+          [(AstSpmdCallable.Callable specializations)
+            (if (match mode
+              [(CompilerBackendMode.Avx2) true]
+              [_ false])
+              (BuildPackageTlciCallableCollector
+                (struct-get collector items)
+                "build: :spmd-callable is not supported with --backend-mode avx2")
+              (BuildPackageTlciCallableCollector
+                (build-package-tlci-callable-insert
+                  (build-package-tlci-callable
+                    package-name
+                    module
+                    name
+                    params
+                    ret
+                    specializations
+                    mode)
+                  (struct-get collector items))
+                (struct-get collector error)))]))]
+    [(AstDecl.Unsafe inner-box)
+      (build-package-tlci-collect-decl-callable
+        (box-get inner-box)
+        owned-path
+        module
+        package-name
+        mode
+        collector)]
+    [(AstDecl.ComptimeDecl _ inner-box)
+      (build-package-tlci-collect-decl-callable
+        (box-get inner-box)
+        owned-path
+        module
+        package-name
+        mode
+        collector)]
+    [_ collector]))
 
 (define (build-package-tlci-push-macro-name!
   [out : (&mut out cli_svec.Vec)]
@@ -3201,6 +3473,92 @@
               (&mut out)))])
       (cli_svec.to-array (& out)))))
 
+(define (build-package-tlci-collect-callables-into!
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [fallback-path : String]
+  [initial-module : String]
+  [package-name : String]
+  [mode : CompilerBackendMode]
+  [owned-sources : build_string_i64_map.Map]
+  [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
+  (let
+    [decl-cursor : AstDeclList decls]
+    [path-cursor : AstDeclPathList paths]
+    [module : String initial-module]
+    [done : bool false]
+    [current : BuildPackageTlciCallableCollector collector]
+    (begin
+      (while (and
+        (not done)
+        (= (string.string-length (struct-get current error)) 0))
+        (match (ast-decl-list-step decl-cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (let
+              [decl-path : String
+                (match (ast-decl-path-list-step path-cursor)
+                  [(AstDeclPathListStep.Nil) fallback-path]
+                  [(AstDeclPathListStep.Cons path _) path])]
+              [owned-path : String
+                (if (build-package-tlci-source-owned? owned-sources decl-path)
+                  decl-path
+                  "")]
+              (begin
+                (match decl
+                  [(AstDecl.Module name) (set! module (intern-str name))]
+                  [(AstDecl.ModuleBody nested-module body-box)
+                    (set!
+                      current
+                      (build-package-tlci-collect-callables-into!
+                        (box-get body-box)
+                        (ast-decl-path-list-new)
+                        owned-path
+                        (intern-str nested-module)
+                        package-name
+                        mode
+                        owned-sources
+                        current))]
+                  [_
+                    (set!
+                      current
+                      (build-package-tlci-collect-decl-callable
+                        decl
+                        owned-path
+                        module
+                        package-name
+                        mode
+                        current))])
+                (set! decl-cursor rest)
+                (match (ast-decl-path-list-step path-cursor)
+                  [(AstDeclPathListStep.Nil) unit]
+                  [(AstDeclPathListStep.Cons _ path-rest)
+                    (set! path-cursor path-rest)])))]))
+      current)))
+
+(define (build-package-tlci-callable-collector
+  [manifest-path : String]
+  [manifest : CompilerPkgManifest]
+  [mode : CompilerBackendMode]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : BuildPackageTlciCallableCollector
+  (match (package-source-discover-for "build" manifest-path true)
+    [(ResultPackageSourceSet.Err message)
+      (BuildPackageTlciCallableCollector TlciSpmdCallableList.Nil message)]
+    [(ResultPackageSourceSet.Ok source-set)
+      (let
+        [owned-sources : build_string_i64_map.Map
+          (build-package-tlci-source-map (struct-get source-set sources))]
+        (build-package-tlci-collect-callables-into!
+          decls
+          paths
+          ""
+          ""
+          (struct-get manifest name)
+          mode
+          owned-sources
+          (BuildPackageTlciCallableCollector TlciSpmdCallableList.Nil "")))]))
+
 (define (build-package-tlci-image [metadata : TlciMetadata]) : TlciImage
   (TlciImage
     tlci-host-arch-x86-64
@@ -3220,27 +3578,39 @@
 (define (build-package-tlci-text
   [manifest-path : String]
   [manifest : CompilerPkgManifest]
+  [mode : CompilerBackendMode]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultBuildPackageTlciText
   (let
-    [metadata : TlciMetadata (build-package-tlci-metadata manifest)]
+    [collector : BuildPackageTlciCallableCollector
+      (build-package-tlci-callable-collector
+        manifest-path
+        manifest
+        mode
+        decls
+        paths)]
     [macro-names : (Array String)
       (build-package-tlci-macro-names manifest-path manifest decls paths)]
-    [emitted : ResultTlciBytes
-      (if (= (array-length macro-names) 0)
-        (tlci-emit-image (build-package-tlci-image metadata))
-        (tlci-emit-code-bearing-package-image
-          metadata
-          build-package-tlci-compiler-build-hash
-          macro-names
-          (cfg windows true false)))]
-    (match emitted
-      [(ResultTlciBytes.Err message)
-        (ResultBuildPackageTlciText.Err
-          (str_cat.str-cat "build: failed to emit package tlci: " message))]
-      [(ResultTlciBytes.Ok bytes)
-        (ResultBuildPackageTlciText.Ok
-          (tlci-bytes->string bytes 0 (array-length bytes)))])))
+    (if (> (string.string-length (struct-get collector error)) 0)
+      (ResultBuildPackageTlciText.Err (struct-get collector error))
+      (let
+        [metadata : TlciMetadata
+          (build-package-tlci-metadata manifest (struct-get collector items))]
+        [emitted : ResultTlciBytes
+          (if (= (array-length macro-names) 0)
+            (tlci-emit-image (build-package-tlci-image metadata))
+            (tlci-emit-code-bearing-package-image
+              metadata
+              build-package-tlci-compiler-build-hash
+              macro-names
+              (cfg windows true false)))]
+        (match emitted
+          [(ResultTlciBytes.Err message)
+            (ResultBuildPackageTlciText.Err
+              (str_cat.str-cat "build: failed to emit package tlci: " message))]
+          [(ResultTlciBytes.Ok bytes)
+            (ResultBuildPackageTlciText.Ok
+              (tlci-bytes->string bytes 0 (array-length bytes)))])))))
 
 (define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
   (source-tool-write-file path text "build: failed to write package tlci"))
@@ -3491,6 +3861,7 @@
     [entry-path : String
       (compiler-load-join-root-path manifest-dir (struct-get manifest entry))]
     [name : String (struct-get manifest name)]
+    [_spmd-package-name : unit (lower-spmd-set-package-name! name)]
     [kind : CompilerPkgKind (struct-get manifest kind)]
     [asm-path : String
       (build-package-asm-path-profile manifest-dir name profile)]
@@ -3597,6 +3968,7 @@
                     (match (build-package-tlci-text
                       manifest-path
                       manifest
+                      mode
                       decls
                       paths)
                       [(ResultBuildPackageTlciText.Err message)

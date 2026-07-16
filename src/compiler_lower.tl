@@ -50004,6 +50004,18 @@
     [item : NestedClone (make-nested s)]
     (__tl_string_length (struct-get (struct-get item used) name))))")
 
+;; Nominal clone helpers are declaration macros now, so clone-producing lowering
+;; fixtures must load the same implicit prelude as the compiler driver.
+(define (compiler-lower-clone-source-with-prelude [src : String]) : ResultCompilerLower
+  (begin
+    (intern-reset!)
+    (lower-reset-intern-owned-state!)
+    (cbi.compiler-builtin-reset!)
+    (match (typecheck-compiler-source-load src)
+      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+        (lower-compiler-program-with-decl-paths "" (ast-program decls) paths)]
+      [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerLower.Err diag)])))
+
 ;; `main` must lower with both element stores (bool + i64 each written into the
 ;; aggregate) and a load for the `tuple-ref`.
 (define (compiler-lower-tuple-shape-ok?) : bool
@@ -50017,200 +50029,175 @@
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-clone-shape-ok?) : bool
-  (match (parse-ast-source (compiler-lower-clone-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (let
-                [ok : bool true]
-                (begin
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-tuple"
-                      "tl_substring")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-tuple"
-                      "tl_alloc")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-fixed"
-                      "tl_substring")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-dyn"
-                      "tl_alloc")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-branch-count
-                      functions
-                      "<source>::clone-dyn")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-holder"
-                      "<source>::clone$Holder")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone-list"
-                      "<source>::clone$StringList")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone$Holder"
-                      "tl_substring")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone$Holder"
-                      "tl_alloc")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::clone$StringList$acc"
-                      "tl_substring")
-                    0)
-                    unit
-                    (set! ok false))
-                  ok))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-clone-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-tuple"
+                  "tl_substring")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-tuple"
+                  "tl_alloc")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-fixed"
+                  "tl_substring")
+                1)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-dyn"
+                  "tl_alloc")
+                1)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-branch-count functions ".::clone-dyn")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-holder"
+                  ".::clone$Holder")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::clone-list"
+                  ".::clone$StringList")
+                1)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone$Holder"
+                  "tl_substring")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone$Holder"
+                  "tl_alloc")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::clone$StringList$acc"
+                  "tl_substring")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-clone-dynarray-bulk-copy-ok?) : bool
-  (match (parse-ast-source (compiler-lower-clone-dynarray-bulk-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (let
-                [ok : bool true]
-                (begin
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::copy-i64-items"
-                      "tl_memcpy")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-branch-count
-                      functions
-                      "<source>::copy-i64-items")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::copy-word-items"
-                      "tl_memcpy")
-                    1)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-branch-count
-                      functions
-                      "<source>::copy-word-items")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (=
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::copy-string-items"
-                      "tl_memcpy")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-call-count
-                      functions
-                      "<source>::copy-string-items"
-                      "tl_substring")
-                    0)
-                    unit
-                    (set! ok false))
-                  (if (>
-                    (lower-test-function-branch-count
-                      functions
-                      "<source>::copy-string-items")
-                    0)
-                    unit
-                    (set! ok false))
-                  ok))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-clone-dynarray-bulk-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (let
+            [ok : bool true]
+            (begin
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::copy-i64-items"
+                  "tl_memcpy")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-branch-count functions ".::copy-i64-items")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::copy-word-items"
+                  "tl_memcpy")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-branch-count
+                  functions
+                  ".::copy-word-items")
+                0)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-function-call-count
+                  functions
+                  ".::copy-string-items"
+                  "tl_memcpy")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-call-count
+                  functions
+                  ".::copy-string-items"
+                  "tl_substring")
+                0)
+                unit
+                (set! ok false))
+              (if (>
+                (lower-test-function-branch-count
+                  functions
+                  ".::copy-string-items")
+                0)
+                unit
+                (set! ok false))
+              ok))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-clone-reachable-helpers-ok?) : bool
-  (match (parse-ast-source (compiler-lower-clone-reachable-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (and
-                (lower-test-function-defined?
-                  functions
-                  "<source>::clone$NestedClone")
-                (lower-test-function-defined?
-                  functions
-                  "<source>::clone$UsedClone")
-                (not
-                  (lower-test-function-defined?
-                    functions
-                    "<source>::clone$UnusedClone"))
-                (=
-                  (lower-test-function-call-count
-                    functions
-                    "<source>::clone$NestedClone"
-                    "<source>::clone$UsedClone")
-                  1))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-clone-reachable-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (lower-test-function-defined? functions ".::clone$NestedClone")
+            (lower-test-function-defined? functions ".::clone$UsedClone")
+            (not
+              (lower-test-function-defined? functions ".::clone$UnusedClone"))
+            (=
+              (lower-test-function-call-count
+                functions
+                ".::clone$NestedClone"
+                ".::clone$UsedClone")
+              1))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-struct-source) : String
   "(defstruct Packet (tag i64) (small u8) (count i64))
@@ -56053,21 +56040,16 @@
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
-  (match (parse-ast-source (compiler-lower-with-escape-owning-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (and
-                (compiler-lower-with-escape-arena-shape-ok?
-                  (compiler-lower-with-escape-owning-source))
-                (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-with-escape-owning-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (compiler-lower-with-escape-arena-shape-ok?
+              (compiler-lower-with-escape-owning-source))
+            (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-shape-ok?) : bool
   (let
@@ -56206,21 +56188,16 @@
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-scratch-owning-shape-ok?) : bool
-  (match (parse-ast-source (compiler-lower-with-scratch-owning-source))
-    [(ResultAstProgram.Ok ast)
-      (match (lower-compiler-program-with-decl-paths
-        "<source>"
-        ast
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok program _)
-          (match program
-            [(CompilerIrProgram.Program _ functions _)
-              (and
-                (compiler-lower-with-scratch-arena-shape-ok?
-                  (compiler-lower-with-scratch-owning-source))
-                (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
+  (match (compiler-lower-clone-source-with-prelude
+    (compiler-lower-with-scratch-owning-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (compiler-lower-with-scratch-arena-shape-ok?
+              (compiler-lower-with-scratch-owning-source))
+            (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
+    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-scratch-shape-ok?) : bool
   (let

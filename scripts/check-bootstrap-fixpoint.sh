@@ -261,6 +261,16 @@ check_stage1_compile_cli() {
 
 check_stage2_embedded_stdlib() {
     echo "[bootstrap] stage2 embedded stdlib smoke"
+    run_stage1_cli_capture \
+        stage2-inspect-embedded-stdlib-tlci \
+        "$STAGE2_BIN" inspect embedded:stdlib.tlci
+    assert_contains \
+        "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
+        "embedded-loader-macro-count: 91"
+    assert_contains \
+        "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
+        "package-name: stdlib"
+
     NO_ROOT_DIR="$WORKDIR/stage2-no-root-stdlib"
     mkdir -p "$NO_ROOT_DIR"
     cat > "$NO_ROOT_DIR/main.tl" <<'EOF'
@@ -357,8 +367,11 @@ if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
     check_stage1_compile_cli
 fi
 
+scripts/build-embedded-stdlib-tlci.sh \
+    "$STAGE1_BIN" target/embedded-stdlib-tlci/stdlib.tlci "$HOST_OS"
+
 echo "[bootstrap] stage1 -> stage2.s"
-run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root stdlib --stdlib-root src --opt-level 2
 
 assemble_and_link_stage2
 
@@ -366,14 +379,19 @@ if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
     check_stage2_embedded_stdlib
 fi
 
+scripts/build-embedded-stdlib-tlci.sh \
+    "$STAGE2_BIN" target/embedded-stdlib-tlci/stdlib.tlci "$HOST_OS"
+
 echo "[bootstrap] stage2 -> stage3.s"
-run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root stdlib --stdlib-root src --opt-level 2
 
 assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
 
 bootstrap_build_stage4() {
+    scripts/build-embedded-stdlib-tlci.sh \
+        "$STAGE3_BIN" target/embedded-stdlib-tlci/stdlib.tlci "$HOST_OS"
     echo "[bootstrap] stage3 -> stage4.s"
-    run_with_heartbeat "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+    run_with_heartbeat "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root stdlib --stdlib-root src --opt-level 2
     assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
 }
 

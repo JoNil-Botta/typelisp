@@ -213,6 +213,40 @@
   (Ok AstFnExport)
   (Err String))
 
+(defenum ResultAstSpmdParamClassList
+  (Ok AstSpmdParamClassList)
+  (Err String))
+
+(defenum ResultAstSpmdResultClass
+  (Ok AstSpmdResultClass)
+  (Err String))
+
+(defenum ResultAstSpmdIndexParam
+  (Ok i64)
+  (Err String))
+
+(defenum ResultAstSpmdSpecialization
+  (Ok AstSpmdSpecialization)
+  (Err String))
+
+(defenum ResultAstSpmdCallable
+  (Ok AstSpmdCallable)
+  (Err String))
+
+(defstruct AstSpmdSpecializationParseState
+  (lanes i64)
+  (args AstSpmdParamClassList)
+  (result AstSpmdResultClass)
+  (index-param i64)
+  (seen-lanes bool)
+  (seen-args bool)
+  (seen-result bool)
+  (seen-index-param bool))
+
+(defenum ResultAstSpmdSpecializationParseState
+  (Ok AstSpmdSpecializationParseState)
+  (Err String))
+
 (defenum ResultAstExternParts
   (Ok AstExternAbi String bool AstType)
   (Err String))
@@ -6459,6 +6493,366 @@
         [_ (ResultAstDecl.Err "parse: malformed value definition")])]
     [_ (ResultAstDecl.Err "parse: malformed value definition")]))
 
+(define (parse-ast-spmd-param-classes
+  [items : reader.Sexpr]
+  [out : AstSpmdParamClassList]) : ResultAstSpmdParamClassList
+  (match items
+    [(reader.Sexpr.Nil) (ResultAstSpmdParamClassList.Ok out)]
+    [(reader.Sexpr.Cons head rest)
+      (match (box-get head)
+        [(reader.Sexpr.Sym name)
+          (let
+            [next : AstSpmdParamClassList out]
+            (if (string.eq name "uniform")
+              (begin
+                (ast-spmd-param-class-list-push
+                  (&mut next)
+                  AstSpmdParamClass.Uniform)
+                (parse-ast-spmd-param-classes (box-get rest) next))
+              (if (string.eq name "varying")
+                (begin
+                  (ast-spmd-param-class-list-push
+                    (&mut next)
+                    AstSpmdParamClass.Varying)
+                  (parse-ast-spmd-param-classes (box-get rest) next))
+                (ResultAstSpmdParamClassList.Err
+                  "parse: :spmd-callable args expects only uniform or varying"))))]
+        [_
+          (ResultAstSpmdParamClassList.Err
+            "parse: :spmd-callable args expects only uniform or varying")])]
+    [_
+      (ResultAstSpmdParamClassList.Err
+        "parse: malformed :spmd-callable args field")]))
+
+(define (parse-ast-spmd-result-class [tail : reader.Sexpr]) : ResultAstSpmdResultClass
+  (match tail
+    [(reader.Sexpr.Cons head rest)
+      (match (box-get rest)
+        [(reader.Sexpr.Nil)
+          (match (box-get head)
+            [(reader.Sexpr.Sym name)
+              (cond
+                [(string.eq name "unit")
+                  (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Unit)]
+                [(string.eq name "uniform")
+                  (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Uniform)]
+                [(string.eq name "varying")
+                  (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Varying)]
+                [else
+                  (ResultAstSpmdResultClass.Err
+                    "parse: :spmd-callable result expects unit, uniform, or varying")])]
+            [_
+              (ResultAstSpmdResultClass.Err
+                "parse: :spmd-callable result expects unit, uniform, or varying")])]
+        [_
+          (ResultAstSpmdResultClass.Err
+            "parse: :spmd-callable result expects one value")])]
+    [_
+      (ResultAstSpmdResultClass.Err
+        "parse: malformed :spmd-callable result field")]))
+
+(define (parse-ast-spmd-index-param [tail : reader.Sexpr]) : ResultAstSpmdIndexParam
+  (match tail
+    [(reader.Sexpr.Cons head rest)
+      (match (box-get rest)
+        [(reader.Sexpr.Nil)
+          (match (box-get head)
+            [(reader.Sexpr.Sym name)
+              (if (string.eq name "none")
+                (ResultAstSpmdIndexParam.Ok -1)
+                (ResultAstSpmdIndexParam.Err
+                  "parse: :spmd-callable index-param expects none or a non-negative integer"))]
+            [(reader.Sexpr.Int value _)
+              (if (>= value 0)
+                (ResultAstSpmdIndexParam.Ok value)
+                (ResultAstSpmdIndexParam.Err
+                  "parse: :spmd-callable index-param expects none or a non-negative integer"))]
+            [_
+              (ResultAstSpmdIndexParam.Err
+                "parse: :spmd-callable index-param expects none or a non-negative integer")])]
+        [_
+          (ResultAstSpmdIndexParam.Err
+            "parse: :spmd-callable index-param expects one value")])]
+    [_
+      (ResultAstSpmdIndexParam.Err
+        "parse: malformed :spmd-callable index-param field")]))
+
+(define (parse-ast-spmd-specialization-fields
+  [fields : reader.Sexpr]
+  [state : AstSpmdSpecializationParseState]) : ResultAstSpmdSpecializationParseState
+  (match fields
+    [(reader.Sexpr.Nil) (ResultAstSpmdSpecializationParseState.Ok state)]
+    [(reader.Sexpr.Cons field-node rest)
+      (match (box-get field-node)
+        [(reader.Sexpr.Cons key-node value-tail)
+          (match (box-get key-node)
+            [(reader.Sexpr.Sym key)
+              (cond
+                [(string.eq key "lanes")
+                  (if (struct-get state seen-lanes)
+                    (ResultAstSpmdSpecializationParseState.Err
+                      "parse: duplicate :spmd-callable lanes field")
+                    (match (box-get value-tail)
+                      [(reader.Sexpr.Cons value-node end)
+                        (match (box-get end)
+                          [(reader.Sexpr.Nil)
+                            (match (box-get value-node)
+                              [(reader.Sexpr.Int lanes _)
+                                (if (> lanes 1)
+                                  (parse-ast-spmd-specialization-fields
+                                    (box-get rest)
+                                    (AstSpmdSpecializationParseState
+                                      lanes
+                                      (struct-get state args)
+                                      (struct-get state result)
+                                      (struct-get state index-param)
+                                      true
+                                      (struct-get state seen-args)
+                                      (struct-get state seen-result)
+                                      (struct-get state seen-index-param)))
+                                  (ResultAstSpmdSpecializationParseState.Err
+                                    "parse: :spmd-callable lanes must be greater than one"))]
+                              [_
+                                (ResultAstSpmdSpecializationParseState.Err
+                                  "parse: :spmd-callable lanes expects one integer")])]
+                          [_
+                            (ResultAstSpmdSpecializationParseState.Err
+                              "parse: :spmd-callable lanes expects one integer")])]
+                      [_
+                        (ResultAstSpmdSpecializationParseState.Err
+                          "parse: :spmd-callable lanes expects one integer")]))]
+                [(string.eq key "args")
+                  (if (struct-get state seen-args)
+                    (ResultAstSpmdSpecializationParseState.Err
+                      "parse: duplicate :spmd-callable args field")
+                    (match (parse-ast-spmd-param-classes
+                      (box-get value-tail)
+                      (ast-spmd-param-class-list-new))
+                      [(ResultAstSpmdParamClassList.Err message)
+                        (ResultAstSpmdSpecializationParseState.Err message)]
+                      [(ResultAstSpmdParamClassList.Ok args)
+                        (parse-ast-spmd-specialization-fields
+                          (box-get rest)
+                          (AstSpmdSpecializationParseState
+                            (struct-get state lanes)
+                            args
+                            (struct-get state result)
+                            (struct-get state index-param)
+                            (struct-get state seen-lanes)
+                            true
+                            (struct-get state seen-result)
+                            (struct-get state seen-index-param)))]))]
+                [(string.eq key "result")
+                  (if (struct-get state seen-result)
+                    (ResultAstSpmdSpecializationParseState.Err
+                      "parse: duplicate :spmd-callable result field")
+                    (match (parse-ast-spmd-result-class (box-get value-tail))
+                      [(ResultAstSpmdResultClass.Err message)
+                        (ResultAstSpmdSpecializationParseState.Err message)]
+                      [(ResultAstSpmdResultClass.Ok result)
+                        (parse-ast-spmd-specialization-fields
+                          (box-get rest)
+                          (AstSpmdSpecializationParseState
+                            (struct-get state lanes)
+                            (struct-get state args)
+                            result
+                            (struct-get state index-param)
+                            (struct-get state seen-lanes)
+                            (struct-get state seen-args)
+                            true
+                            (struct-get state seen-index-param)))]))]
+                [(string.eq key "index-param")
+                  (if (struct-get state seen-index-param)
+                    (ResultAstSpmdSpecializationParseState.Err
+                      "parse: duplicate :spmd-callable index-param field")
+                    (match (parse-ast-spmd-index-param (box-get value-tail))
+                      [(ResultAstSpmdIndexParam.Err message)
+                        (ResultAstSpmdSpecializationParseState.Err message)]
+                      [(ResultAstSpmdIndexParam.Ok index-param)
+                        (parse-ast-spmd-specialization-fields
+                          (box-get rest)
+                          (AstSpmdSpecializationParseState
+                            (struct-get state lanes)
+                            (struct-get state args)
+                            (struct-get state result)
+                            index-param
+                            (struct-get state seen-lanes)
+                            (struct-get state seen-args)
+                            (struct-get state seen-result)
+                            true))]))]
+                [else
+                  (ResultAstSpmdSpecializationParseState.Err
+                    (string.append
+                      "parse: unknown :spmd-callable specialization field "
+                      key))])]
+            [_
+              (ResultAstSpmdSpecializationParseState.Err
+                "parse: malformed :spmd-callable specialization field")])]
+        [_
+          (ResultAstSpmdSpecializationParseState.Err
+            "parse: malformed :spmd-callable specialization field")])]
+    [_
+      (ResultAstSpmdSpecializationParseState.Err
+        "parse: malformed :spmd-callable specialization")]))
+
+(define (parse-ast-spmd-specialization
+  [tail : reader.Sexpr]
+  [param-count : i64]) : ResultAstSpmdSpecialization
+  (match (parse-ast-spmd-specialization-fields
+    tail
+    (AstSpmdSpecializationParseState
+      0
+      (ast-spmd-param-class-list-new)
+      AstSpmdResultClass.Unit
+      -1
+      false
+      false
+      false
+      false))
+    [(ResultAstSpmdSpecializationParseState.Err message)
+      (ResultAstSpmdSpecialization.Err message)]
+    [(ResultAstSpmdSpecializationParseState.Ok state)
+      (cond
+        [(not (struct-get state seen-lanes))
+          (ResultAstSpmdSpecialization.Err
+            "parse: :spmd-callable specialization is missing lanes")]
+        [(not (struct-get state seen-args))
+          (ResultAstSpmdSpecialization.Err
+            "parse: :spmd-callable specialization is missing args")]
+        [(not (struct-get state seen-result))
+          (ResultAstSpmdSpecialization.Err
+            "parse: :spmd-callable specialization is missing result")]
+        [(not (struct-get state seen-index-param))
+          (ResultAstSpmdSpecialization.Err
+            "parse: :spmd-callable specialization is missing index-param")]
+        [(not
+            (=
+              (ast-spmd-param-class-list-len (& (struct-get state args)))
+              param-count))
+          (ResultAstSpmdSpecialization.Err
+            "parse: :spmd-callable args must contain one class per ordinary parameter")]
+        [(>= (struct-get state index-param) param-count)
+          (ResultAstSpmdSpecialization.Err
+            "parse: :spmd-callable index-param is outside the parameter list")]
+        [else
+          (ResultAstSpmdSpecialization.Ok
+            (AstSpmdSpecialization
+              (struct-get state lanes)
+              (box (struct-get state args))
+              (struct-get state result)
+              (struct-get state index-param)))])]))
+
+(define (parse-ast-spmd-param-classes-eq-at?
+  [left : (& left AstSpmdParamClassList)]
+  [right : (& right AstSpmdParamClassList)]
+  [index : i64]) : bool
+  (if (>= index (ast-spmd-param-class-list-len left))
+    (=
+      (ast-spmd-param-class-list-len left)
+      (ast-spmd-param-class-list-len right))
+    (and
+      (< index (ast-spmd-param-class-list-len right))
+      (match (ast-spmd-param-class-list-get
+        left
+        index
+        AstSpmdParamClass.Uniform)
+        [(AstSpmdParamClass.Uniform)
+          (match (ast-spmd-param-class-list-get
+            right
+            index
+            AstSpmdParamClass.Varying)
+            [(AstSpmdParamClass.Uniform)
+              (parse-ast-spmd-param-classes-eq-at? left right (+ index 1))]
+            [_ false])]
+        [(AstSpmdParamClass.Varying)
+          (match (ast-spmd-param-class-list-get
+            right
+            index
+            AstSpmdParamClass.Uniform)
+            [(AstSpmdParamClass.Varying)
+              (parse-ast-spmd-param-classes-eq-at? left right (+ index 1))]
+            [_ false])]))))
+
+(define (parse-ast-spmd-specialization-eq?
+  [left : AstSpmdSpecialization]
+  [right : AstSpmdSpecialization]) : bool
+  (and
+    (= (struct-get left lanes) (struct-get right lanes))
+    (= (struct-get left result) (struct-get right result))
+    (= (struct-get left index-param) (struct-get right index-param))
+    (parse-ast-spmd-param-classes-eq-at?
+      (& (box-get (struct-get left args)))
+      (& (box-get (struct-get right args)))
+      0)))
+
+(define (parse-ast-spmd-specialization-present-at?
+  [items : (& items AstSpmdSpecializationList)]
+  [wanted : AstSpmdSpecialization]
+  [index : i64]) : bool
+  (if (>= index (ast-spmd-specialization-list-len items))
+    false
+    (if (parse-ast-spmd-specialization-eq?
+      (ast-spmd-specialization-list-get items index wanted)
+      wanted)
+      true
+      (parse-ast-spmd-specialization-present-at? items wanted (+ index 1)))))
+
+(define (parse-ast-spmd-specializations
+  [items : reader.Sexpr]
+  [param-count : i64]
+  [out : AstSpmdSpecializationList]) : ResultAstSpmdCallable
+  (match items
+    [(reader.Sexpr.Nil)
+      (if (= (ast-spmd-specialization-list-len (& out)) 0)
+        (ResultAstSpmdCallable.Err
+          "parse: :spmd-callable expects at least one specialization")
+        (ResultAstSpmdCallable.Ok (AstSpmdCallable.Callable out)))]
+    [(reader.Sexpr.Cons item-node rest)
+      (match (box-get item-node)
+        [(reader.Sexpr.Cons name-node fields)
+          (match (box-get name-node)
+            [(reader.Sexpr.Sym name)
+              (if (string.eq name "specialization")
+                (match (parse-ast-spmd-specialization
+                  (box-get fields)
+                  param-count)
+                  [(ResultAstSpmdSpecialization.Err message)
+                    (ResultAstSpmdCallable.Err message)]
+                  [(ResultAstSpmdSpecialization.Ok specialization)
+                    (if (parse-ast-spmd-specialization-present-at?
+                      (& out)
+                      specialization
+                      0)
+                      (ResultAstSpmdCallable.Err
+                        "parse: duplicate :spmd-callable specialization")
+                      (let
+                        [next : AstSpmdSpecializationList out]
+                        (begin
+                          (ast-spmd-specialization-list-push
+                            (&mut next)
+                            specialization)
+                          (parse-ast-spmd-specializations
+                            (box-get rest)
+                            param-count
+                            next))))])
+                (ResultAstSpmdCallable.Err
+                  "parse: :spmd-callable expects specialization forms"))]
+            [_
+              (ResultAstSpmdCallable.Err
+                "parse: malformed :spmd-callable specialization")])]
+        [_
+          (ResultAstSpmdCallable.Err
+            "parse: malformed :spmd-callable specialization")])]
+    [_ (ResultAstSpmdCallable.Err "parse: malformed :spmd-callable metadata")]))
+
+(define (parse-ast-define-fn-spmd-callable-tail
+  [tail : reader.Sexpr]
+  [param-count : i64]) : ResultAstSpmdCallable
+  (parse-ast-spmd-specializations
+    tail
+    param-count
+    (ast-spmd-specialization-list-new)))
+
 (define (parse-ast-define-fn-export-tail [tail : reader.Sexpr]) : ResultAstFnExport
   (match tail
     [(reader.Sexpr.Cons value-node end)
@@ -6492,15 +6886,38 @@
   [params : AstParamList]
   [ret : AstType]
   [body : i64]
-  [export : AstFnExport]) : ResultAstDecl
-  (match export
-    [(AstFnExport.No)
-      (ResultAstDecl.Ok (ast-decl-def-fn-export name params ret body export))]
-    [(AstFnExport.Export _)
-      (if (ast-param-list-has-comptime? params)
-        (ResultAstDecl.Err
-          "parse: define :export-symbol cannot be used on functions with comptime parameters")
-        (ResultAstDecl.Ok (ast-decl-def-fn-export name params ret body export)))]))
+  [export : AstFnExport]
+  [spmd-callable : AstSpmdCallable]) : ResultAstDecl
+  (if (and
+    (match export
+      [(AstFnExport.Export _) true]
+      [_ false])
+    (match spmd-callable
+      [(AstSpmdCallable.Callable _) true]
+      [_ false]))
+    (ResultAstDecl.Err
+      "parse: define :spmd-callable cannot be combined with :export-symbol")
+    (if (ast-param-list-has-comptime? params)
+      (match export
+        [(AstFnExport.Export _)
+          (ResultAstDecl.Err
+            "parse: define :export-symbol cannot be used on functions with comptime parameters")]
+        [(AstFnExport.No)
+          (match spmd-callable
+            [(AstSpmdCallable.No)
+              (ResultAstDecl.Ok
+                (ast-decl-def-fn-metadata
+                  name
+                  params
+                  ret
+                  body
+                  export
+                  spmd-callable))]
+            [(AstSpmdCallable.Callable _)
+              (ResultAstDecl.Err
+                "parse: define :spmd-callable cannot be used on functions with comptime parameters")])])
+      (ResultAstDecl.Ok
+        (ast-decl-def-fn-metadata name params ret body export spmd-callable)))))
 
 (define (parse-ast-define-fn-rest
   [dispatch : sym_i64_env.SymI64Env]
@@ -6509,6 +6926,8 @@
   [params : AstParamList]
   [export : AstFnExport]
   [seen-export : bool]
+  [spmd-callable : AstSpmdCallable]
+  [seen-spmd-callable : bool]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match rest
     [(reader.SpannedSexpr.Cons first tail _)
@@ -6531,7 +6950,8 @@
                       params
                       parsed-ret
                       parsed-body
-                      export)]
+                      export
+                      spmd-callable)]
                   [(ResultAstExpr.Err message) (ResultAstDecl.Err message)])]
               [(ResultAstType.Err message) (ResultAstDecl.Err message)])]
           [_ (ResultAstDecl.Err "parse: malformed function definition")])
@@ -6540,28 +6960,51 @@
             [(reader.Sexpr.Cons key-node after-key)
               (match (box-get key-node)
                 [(reader.Sexpr.Sym key)
-                  (if (string.eq key ":export-symbol")
-                    (if seen-export
+                  (cond
+                    [(string.eq key ":export-symbol")
+                      (if seen-export
+                        (ResultAstDecl.Err
+                          "parse: duplicate define :export-symbol metadata")
+                        (match (parse-ast-define-fn-export-tail
+                          (box-get after-key))
+                          [(ResultAstFnExport.Ok parsed-export)
+                            (parse-ast-define-fn-rest
+                              dispatch
+                              pools
+                              name
+                              params
+                              parsed-export
+                              true
+                              spmd-callable
+                              seen-spmd-callable
+                              (reader.sp-node-get tail))]
+                          [(ResultAstFnExport.Err message)
+                            (ResultAstDecl.Err message)]))]
+                    [(string.eq key ":spmd-callable")
+                      (if seen-spmd-callable
+                        (ResultAstDecl.Err
+                          "parse: duplicate define :spmd-callable metadata")
+                        (match (parse-ast-define-fn-spmd-callable-tail
+                          (box-get after-key)
+                          (ast-param-list-len (& params)))
+                          [(ResultAstSpmdCallable.Ok parsed-callable)
+                            (parse-ast-define-fn-rest
+                              dispatch
+                              pools
+                              name
+                              params
+                              export
+                              seen-export
+                              parsed-callable
+                              true
+                              (reader.sp-node-get tail))]
+                          [(ResultAstSpmdCallable.Err message)
+                            (ResultAstDecl.Err message)]))]
+                    [(compiler-parse-metadata-key? key)
                       (ResultAstDecl.Err
-                        "parse: duplicate define :export-symbol metadata")
-                      (match (parse-ast-define-fn-export-tail
-                        (box-get after-key))
-                        [(ResultAstFnExport.Ok parsed-export)
-                          (parse-ast-define-fn-rest
-                            dispatch
-                            pools
-                            name
-                            params
-                            parsed-export
-                            true
-                            (reader.sp-node-get tail))]
-                        [(ResultAstFnExport.Err message)
-                          (ResultAstDecl.Err message)]))
-                    (if (compiler-parse-metadata-key? key)
-                      (ResultAstDecl.Err
-                        (string.append "parse: unknown define metadata " key))
-                      (ResultAstDecl.Err
-                        "parse: malformed define :export-symbol metadata")))]
+                        (string.append "parse: unknown define metadata " key))]
+                    [else
+                      (ResultAstDecl.Err "parse: malformed function metadata")])]
                 [_ (ResultAstDecl.Err "parse: malformed function definition")])]
             [_ (ResultAstDecl.Err "parse: malformed function definition")])
           (match (parse-ast-body-tail
@@ -6575,7 +7018,8 @@
                 params
                 (AstType.Unit)
                 parsed-body
-                export)]
+                export
+                spmd-callable)]
             [(ResultAstExpr.Err message) (ResultAstDecl.Err message)])))]
     [_ (ResultAstDecl.Err "parse: malformed function definition")]))
 
@@ -6596,6 +7040,8 @@
         name
         parsed-params
         AstFnExport.No
+        false
+        AstSpmdCallable.No
         false
         rest)]
     [(ResultAstParamList.Err message) (ResultAstDecl.Err message)]))
@@ -11740,6 +12186,94 @@
       "(defmacro (bad [T : type (:kind \"i64\")]) : Module unit)"
       "parse: macro type operand T constraint :kind expects unquoted kind names")))
 
+(define (compiler-parse-spmd-callable-metadata-ok?) : bool
+  (and
+    (match (parse-ast-source
+      "(define (helper [x : i64] [scale : i64])
+  (:spmd-callable
+    (specialization
+      (result varying)
+      (args varying uniform)
+      (index-param 0)
+      (lanes 8)))
+  : i64
+  (+ x scale))")
+      [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          (match (ast-decl-list-get (& decls) 0 (ast-decl-fallback))
+            [(AstDecl.DefFn _ _ _ _ metadata)
+              (match (ast-fn-metadata-spmd-callable metadata)
+                [(AstSpmdCallable.Callable specializations)
+                  (let
+                    [fallback : AstSpmdSpecialization
+                      (AstSpmdSpecialization
+                        2
+                        (box (ast-spmd-param-class-list-new))
+                        AstSpmdResultClass.Unit
+                        -1)]
+                    [specialization : AstSpmdSpecialization
+                      (ast-spmd-specialization-list-get
+                        (& specializations)
+                        0
+                        fallback)]
+                    [args : AstSpmdParamClassList
+                      (box-get (struct-get specialization args))]
+                    (and
+                      (=
+                        (ast-spmd-specialization-list-len (& specializations))
+                        1)
+                      (= (struct-get specialization lanes) 8)
+                      (= (struct-get specialization index-param) 0)
+                      (match (struct-get specialization result)
+                        [(AstSpmdResultClass.Varying) true]
+                        [_ false])
+                      (match (ast-spmd-param-class-list-get
+                        (& args)
+                        0
+                        AstSpmdParamClass.Uniform)
+                        [(AstSpmdParamClass.Varying) true]
+                        [_ false])
+                      (match (ast-spmd-param-class-list-get
+                        (& args)
+                        1
+                        AstSpmdParamClass.Varying)
+                        [(AstSpmdParamClass.Uniform) true]
+                        [_ false])))]
+                [_ false])]
+            [_ false]))]
+      [_ false])
+    (compiler-parse-error-ok?
+      "(define (f [x : i64]) (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 0)) (specialization (lanes 8) (args varying) (result varying) (index-param 0))) : i64 x)"
+      "parse: duplicate :spmd-callable specialization")
+    (compiler-parse-error-ok?
+      "(define (f [x : i64]) (:spmd-callable (specialization (lanes 8) (args uniform varying) (result varying) (index-param none))) : i64 x)"
+      "parse: :spmd-callable args must contain one class per ordinary parameter")
+    (compiler-parse-error-ok?
+      "(define (f [comptime x : i64]) (:spmd-callable (specialization (lanes 8) (args uniform) (result uniform) (index-param none))) : i64 x)"
+      "parse: define :spmd-callable cannot be used on functions with comptime parameters")
+    (compiler-parse-error-ok?
+      "(define (f [x : i64]) (:export-symbol \"f\") (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 0))) : i64 x)"
+      "parse: define :spmd-callable cannot be combined with :export-symbol")
+    (compiler-parse-error-ok?
+      "(define (f [x : i64]) (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (bogus none) (index-param 0))) : i64 x)"
+      "parse: unknown :spmd-callable specialization field bogus")
+    (compiler-parse-error-ok?
+      "(define (f [x : i64]) (:spmd-callable (specialization (lanes 1) (args varying) (result varying) (index-param 0))) : i64 x)"
+      "parse: :spmd-callable lanes must be greater than one")
+    (compiler-parse-error-ok?
+      "(define (f [x : i64]) (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 2))) : i64 x)"
+      "parse: :spmd-callable index-param is outside the parameter list")
+    (compiler-parse-error-ok?
+      "(define (f [x : i64]) (:spmd-callable (specialization (lanes 8) (args dynamic) (result varying) (index-param none))) : i64 x)"
+      "parse: :spmd-callable args expects only uniform or varying")
+    (compiler-parse-error-ok?
+      "(define (f [x : i64]) (:spmd-callable (specialization (args varying) (result varying) (index-param 0))) : i64 x)"
+      "parse: :spmd-callable specialization is missing lanes")
+    (compiler-parse-error-ok?
+      "(define (f [x : i64]) (:spmd-callable (specialization (lanes 8) (lanes 16) (args varying) (result varying) (index-param 0))) : i64 x)"
+      "parse: duplicate :spmd-callable lanes field")))
+
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))
     [(ResultAstProgram.Ok program)
@@ -11782,6 +12316,7 @@
         (compiler-parse-reference-ok?)
         (compiler-parse-borrow-ok?)
         (compiler-parse-resource-with-shape-ok?)
+        (compiler-parse-spmd-callable-metadata-ok?)
         (compiler-parse-quote-syntax-shape-ok?))
         (if (and
           (compiler-parse-error-tests-ok?)

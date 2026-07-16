@@ -198,4 +198,52 @@ run_cmd missing-row
 EOF
 run_fail missing-row 'executing CLI gate annotation `missing-row` has no inventory row' "$EMPTY_VALID_INVENTORY" "$MISSING_SOURCE"
 
-echo "CLI gate coverage checker self-tests passed"
+COUNT_SOURCE="$WORKDIR/count-source.sh"
+COUNT_INVENTORY="$WORKDIR/count.tsv"
+COUNT_CORPUS="$WORKDIR/count-corpus"
+mkdir -p "$COUNT_CORPUS"
+: > "$COUNT_CORPUS/one.case"
+: > "$COUNT_CORPUS/two.case"
+cat > "$COUNT_SOURCE" <<'EOF'
+# cli-gate-case delegated-count delegated run_corpus
+run_corpus delegated-count
+EOF
+printf '# cli-gate-coverage-schema\t1\n' > "$COUNT_INVENTORY"
+printf '# cli-gate-coverage-counts\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\ttotal\tall\trows\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\ttotal\tall\tannotations\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\ttotal\tall\tsources\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\ttotal\tall\tsource-sites\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\ttotal\tall\texpanded-cases\t0\n' >> "$COUNT_INVENTORY"
+printf '# count\tgate\tfixture-gate\trows\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\tgate\tfixture-gate\tsource-sites\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\tgate\tfixture-gate\texpanded-cases\t0\n' >> "$COUNT_INVENTORY"
+printf '# count\thost\tall\trows\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\tplatform\tlinux\trows\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\tplatform\twindows\trows\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\tkind\tdelegated\trows\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\tprocess\tchild-per-case\trows\t1\n' >> "$COUNT_INVENTORY"
+printf '# count\tduplicates\tall\tgroups\t0\n' >> "$COUNT_INVENTORY"
+printf '# count\tduplicates\tall\trows\t0\n' >> "$COUNT_INVENTORY"
+printf '# child-corpus\tdelegated-count\tall\t%s\t*.case\t-\t2\n' "$COUNT_CORPUS" >> "$COUNT_INVENTORY"
+printf '%b\n' "$HEADER" >> "$COUNT_INVENTORY"
+append_row "$COUNT_INVENTORY" 1 delegated-count fixture-gate "$COUNT_SOURCE" delegated all stage3 'run-corpus count-corpus' count-corpus none repository child-per-case none 0 summary empty none delegated-count -
+run_pass checked-counts "$COUNT_INVENTORY" "$COUNT_SOURCE"
+grep -F 'child-corpus' "$WORKDIR/checked-counts.stdout" | grep -F 'delegated-count' >/dev/null
+
+STALE_COUNT_INVENTORY="$WORKDIR/stale-count.tsv"
+sed 's/# count\ttotal\tall\trows\t1/# count\ttotal\tall\trows\t2/' "$COUNT_INVENTORY" > "$STALE_COUNT_INVENTORY"
+run_fail stale-count 'authoritative counts are stale or incomplete' "$STALE_COUNT_INVENTORY" "$COUNT_SOURCE"
+
+STALE_CHILD_INVENTORY="$WORKDIR/stale-child.tsv"
+sed 's/\t\*\.case\t-\t2$/\t*.case\t-\t3/' "$COUNT_INVENTORY" > "$STALE_CHILD_INVENTORY"
+run_fail stale-child 'child corpus count is stale for delegated-count' "$STALE_CHILD_INVENTORY" "$COUNT_SOURCE"
+
+NO_COUNT_SCHEMA_INVENTORY="$WORKDIR/no-count-schema.tsv"
+grep -v '^# cli-gate-coverage-counts' "$COUNT_INVENTORY" > "$NO_COUNT_SCHEMA_INVENTORY"
+run_fail missing-count-schema 'count directives require a version-1 count schema marker' "$NO_COUNT_SCHEMA_INVENTORY" "$COUNT_SOURCE"
+
+# The CI entry point uses --self-test: exercise the fixture diagnostics first,
+# then validate the checked-in inventory once before the expensive CLI gates.
+"$CHECKER" >/dev/null
+echo "CLI gate coverage checker self-tests and production inventory passed"

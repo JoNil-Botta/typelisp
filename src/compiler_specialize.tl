@@ -1054,6 +1054,108 @@
         [(AstFnExport.Export b-symbol) (= a-symbol b-symbol)]
         [_ false])]))
 
+(define (gen-spmd-param-class-eq?
+  [a : AstSpmdParamClass]
+  [b : AstSpmdParamClass]) : bool
+  (match a
+    [(AstSpmdParamClass.Uniform)
+      (match b
+        [(AstSpmdParamClass.Uniform) true]
+        [_ false])]
+    [(AstSpmdParamClass.Varying)
+      (match b
+        [(AstSpmdParamClass.Varying) true]
+        [_ false])]))
+
+(define (gen-spmd-result-class-eq?
+  [a : AstSpmdResultClass]
+  [b : AstSpmdResultClass]) : bool
+  (match a
+    [(AstSpmdResultClass.Unit)
+      (match b
+        [(AstSpmdResultClass.Unit) true]
+        [_ false])]
+    [(AstSpmdResultClass.Uniform)
+      (match b
+        [(AstSpmdResultClass.Uniform) true]
+        [_ false])]
+    [(AstSpmdResultClass.Varying)
+      (match b
+        [(AstSpmdResultClass.Varying) true]
+        [_ false])]))
+
+(define (gen-spmd-param-class-list-eq-at?
+  [a : (& a AstSpmdParamClassList)]
+  [b : (& b AstSpmdParamClassList)]
+  [index : i64]) : bool
+  (if (>= index (ast-spmd-param-class-list-len a))
+    (= (ast-spmd-param-class-list-len a) (ast-spmd-param-class-list-len b))
+    (and
+      (< index (ast-spmd-param-class-list-len b))
+      (gen-spmd-param-class-eq?
+        (ast-spmd-param-class-list-get a index AstSpmdParamClass.Uniform)
+        (ast-spmd-param-class-list-get b index AstSpmdParamClass.Uniform))
+      (gen-spmd-param-class-list-eq-at? a b (+ index 1)))))
+
+(define (gen-spmd-specialization-fallback) : AstSpmdSpecialization
+  (AstSpmdSpecialization
+    2
+    (box (ast-spmd-param-class-list-new))
+    AstSpmdResultClass.Unit
+    -1))
+
+(define (gen-spmd-specialization-eq?
+  [a : AstSpmdSpecialization]
+  [b : AstSpmdSpecialization]) : bool
+  (and
+    (= (struct-get a lanes) (struct-get b lanes))
+    (gen-spmd-param-class-list-eq-at?
+      (& (box-get (struct-get a args)))
+      (& (box-get (struct-get b args)))
+      0)
+    (gen-spmd-result-class-eq? (struct-get a result) (struct-get b result))
+    (= (struct-get a index-param) (struct-get b index-param))))
+
+(define (gen-spmd-specialization-list-eq-at?
+  [a : (& a AstSpmdSpecializationList)]
+  [b : (& b AstSpmdSpecializationList)]
+  [index : i64]) : bool
+  (if (>= index (ast-spmd-specialization-list-len a))
+    (=
+      (ast-spmd-specialization-list-len a)
+      (ast-spmd-specialization-list-len b))
+    (and
+      (< index (ast-spmd-specialization-list-len b))
+      (gen-spmd-specialization-eq?
+        (ast-spmd-specialization-list-get
+          a
+          index
+          (gen-spmd-specialization-fallback))
+        (ast-spmd-specialization-list-get
+          b
+          index
+          (gen-spmd-specialization-fallback)))
+      (gen-spmd-specialization-list-eq-at? a b (+ index 1)))))
+
+(define (gen-fn-metadata-eq? [a : AstFnMetadata] [b : AstFnMetadata]) : bool
+  (match a
+    [(AstFnMetadata.No)
+      (match b
+        [(AstFnMetadata.No) true]
+        [_ false])]
+    [(AstFnMetadata.Export a-symbol)
+      (match b
+        [(AstFnMetadata.Export b-symbol) (= a-symbol b-symbol)]
+        [_ false])]
+    [(AstFnMetadata.SpmdCallable a-items)
+      (match b
+        [(AstFnMetadata.SpmdCallable b-items)
+          (gen-spmd-specialization-list-eq-at?
+            (& (box-get a-items))
+            (& (box-get b-items))
+            0)]
+        [_ false])]))
+
 (define (gen-import-kind-eq? [a : AstImportKind] [b : AstImportKind]) : bool
   (match a
     [(AstImportKind.Path)
@@ -1136,11 +1238,11 @@
                 (gen-maybe-type-eq? a-ty b-ty)
                 (gen-expr-eq? a-value b-value)))]
           [_ false]))]
-    [(AstDecl.DefFn a-name a-params a-ret a-body-box a-export)
+    [(AstDecl.DefFn a-name a-params a-ret a-body-box a-metadata)
       (let
         [a-body : AstExpr (ast-node-get a-body-box)]
         (match b
-          [(AstDecl.DefFn b-name b-params b-ret b-body-box b-export)
+          [(AstDecl.DefFn b-name b-params b-ret b-body-box b-metadata)
             (let
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
@@ -1148,7 +1250,7 @@
                 (gen-param-list-eq? a-params b-params)
                 (ctfe-type-eq a-ret b-ret)
                 (gen-expr-eq? a-body b-body)
-                (gen-fn-export-eq? a-export b-export)))]
+                (gen-fn-metadata-eq? a-metadata b-metadata)))]
           [_ false]))]
     [(AstDecl.DefEnum a-name a-cleanup a-variants)
       (match b
@@ -5255,7 +5357,7 @@
               (SpecMaybeDecl.Some (ast-decl-def-id name ty rewritten))
               state2)]
           [(ResultSpecExpr.Err diag) (ResultSpecDecl.Err diag)]))]
-    [(AstDecl.DefFn name params ret body-box export)
+    [(AstDecl.DefFn name params ret body-box metadata)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (if (spec-param-list-has-comptime? params)
@@ -5267,7 +5369,12 @@
             [(ResultSpecExpr.Ok rewritten state2)
               (ResultSpecDecl.Ok
                 (SpecMaybeDecl.Some
-                  (ast-decl-def-fn-export-id name params ret rewritten export))
+                  (ast-decl-def-fn-metadata-id
+                    name
+                    params
+                    ret
+                    rewritten
+                    metadata))
                 state2)]
             [(ResultSpecExpr.Err diag) (ResultSpecDecl.Err diag)])))]
     [(AstDecl.Unsafe inner-box)
@@ -6284,6 +6391,43 @@
       [(GenMaybeEntry.Some found) (gen-decl-eq? found decl)]
       [(GenMaybeEntry.None) false])))
 
+(define (compiler-generated-decl-spmd-metadata-distinct-ok?) : bool
+  (let
+    [a-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
+    [b-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
+    [a-items : AstSpmdSpecializationList (ast-spmd-specialization-list-new)]
+    [b-items : AstSpmdSpecializationList (ast-spmd-specialization-list-new)]
+    [body : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 0)))]
+    (begin
+      (ast-spmd-param-class-list-push
+        (&mut a-classes)
+        AstSpmdParamClass.Varying)
+      (ast-spmd-param-class-list-push
+        (&mut b-classes)
+        AstSpmdParamClass.Varying)
+      (ast-spmd-specialization-list-push
+        (&mut a-items)
+        (AstSpmdSpecialization 8 (box a-classes) AstSpmdResultClass.Varying 0))
+      (ast-spmd-specialization-list-push
+        (&mut b-items)
+        (AstSpmdSpecialization 16 (box b-classes) AstSpmdResultClass.Varying 0))
+      (not
+        (gen-decl-eq?
+          (ast-decl-def-fn-metadata
+            "generated"
+            (ast-param-list-new)
+            (AstType.I64)
+            body
+            AstFnExport.No
+            (AstSpmdCallable.Callable a-items))
+          (ast-decl-def-fn-metadata
+            "generated"
+            (ast-param-list-new)
+            (AstType.I64)
+            body
+            AstFnExport.No
+            (AstSpmdCallable.Callable b-items)))))))
+
 (define (compiler-specialize-self-test) : i64
   (begin
     (unless (compiler-specialize-type-param-ok?) (return 0))
@@ -6313,4 +6457,5 @@
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     (unless (compiler-generated-registry-map-ok?) (return 0))
+    (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))
     1))

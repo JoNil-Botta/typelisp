@@ -526,9 +526,31 @@
     spans
     (ast-node-pool-context-snapshot pools)))
 
+(define (compiler-driver-runtime-prelude-cache-lookup-with-state
+  [load-state : CompilerLoadSessionState]
+  [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
+  (compiler-load-session-state-runtime-prelude-cache-lookup load-state key))
+
 (define (compiler-driver-runtime-prelude-cache-lookup
   [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
-  (compiler-load-runtime-prelude-cache-lookup key))
+  (compiler-driver-runtime-prelude-cache-lookup-with-state
+    compiler-load-active-session-state
+    key))
+
+(define (compiler-driver-runtime-prelude-cache-store-with-state
+  [load-state : CompilerLoadSessionState]
+  [key : CompilerLoadPreludeCacheKey]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]
+  [seen : sym_i64_env.SymI64Env]) : unit
+  (compiler-load-session-state-runtime-prelude-cache-store
+    load-state
+    key
+    decls
+    paths
+    modules
+    seen))
 
 (define (compiler-driver-runtime-prelude-cache-store
   [key : CompilerLoadPreludeCacheKey]
@@ -536,7 +558,30 @@
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]) : unit
-  (compiler-load-runtime-prelude-cache-store key decls paths modules seen))
+  (compiler-driver-runtime-prelude-cache-store-with-state
+    compiler-load-active-session-state
+    key
+    decls
+    paths
+    modules
+    seen))
+
+(define (compiler-driver-runtime-prelude-cache-store-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
+  [key : CompilerLoadPreludeCacheKey]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]
+  [seen : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (compiler-load-session-state-runtime-prelude-cache-store-with-pools
+    load-state
+    key
+    decls
+    paths
+    modules
+    seen
+    pools))
 
 (define (compiler-driver-runtime-prelude-cache-store-with-pools
   [key : CompilerLoadPreludeCacheKey]
@@ -545,7 +590,8 @@
   [modules : AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
-  (compiler-load-runtime-prelude-cache-store-with-pools
+  (compiler-driver-runtime-prelude-cache-store-with-state-and-pools
+    compiler-load-active-session-state
     key
     decls
     paths
@@ -2018,7 +2064,8 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
 
-(define (compiler-driver-load-runtime-prelude-cache-miss-with-pools
+(define (compiler-driver-load-runtime-prelude-cache-miss-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
   [key : CompilerLoadPreludeCacheKey]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
@@ -2040,7 +2087,8 @@
           (begin
             (match cold
               [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
-                (compiler-driver-runtime-prelude-cache-store-with-pools
+                (compiler-driver-runtime-prelude-cache-store-with-state-and-pools
+                  load-state
                   persistent-key
                   decls
                   paths
@@ -2053,19 +2101,38 @@
             cold)))]
     loaded))
 
-(define (compiler-driver-load-runtime-prelude-with-pools
+(define (compiler-driver-load-runtime-prelude-cache-miss-with-pools
+  [key : CompilerLoadPreludeCacheKey]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (if (compiler-load-session-cache-enabled?)
+  (compiler-driver-load-runtime-prelude-cache-miss-with-state-and-pools
+    compiler-load-active-session-state
+    key
+    stdlib-roots
+    cfgs
+    pools))
+
+(define (compiler-driver-load-runtime-prelude-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (if (compiler-load-session-state-cache-enabled? load-state)
     (let
       [key : CompilerLoadPreludeCacheKey
-        (compiler-load-runtime-prelude-cache-key stdlib-roots cfgs)]
-      (match (compiler-driver-runtime-prelude-cache-lookup key)
+        (compiler-load-session-state-runtime-prelude-cache-key
+          load-state
+          stdlib-roots
+          cfgs)]
+      (match (compiler-driver-runtime-prelude-cache-lookup-with-state
+        load-state
+        key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
           (ResultCompilerLoadWithPaths.Ok decls paths modules seen)]
         [(CompilerLoadPreludeCacheMiss)
-          (compiler-driver-load-runtime-prelude-cache-miss-with-pools
+          (compiler-driver-load-runtime-prelude-cache-miss-with-state-and-pools
+            load-state
             key
             stdlib-roots
             cfgs
@@ -2075,12 +2142,24 @@
       cfgs
       pools)))
 
-(define (compiler-driver-load-file-with-runtime-with-pools
+(define (compiler-driver-load-runtime-prelude-with-pools
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-driver-load-runtime-prelude-with-state-and-pools
+    compiler-load-active-session-state
+    stdlib-roots
+    cfgs
+    pools))
+
+(define (compiler-driver-load-file-with-runtime-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
   [input-path : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match (compiler-driver-load-runtime-prelude-with-pools
+  (match (compiler-driver-load-runtime-prelude-with-state-and-pools
+    load-state
     stdlib-roots
     cfgs
     pools)
@@ -2112,13 +2191,27 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
 
-(define (compiler-driver-load-source-with-runtime-with-pools
+(define (compiler-driver-load-file-with-runtime-with-pools
+  [input-path : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-driver-load-file-with-runtime-with-state-and-pools
+    compiler-load-active-session-state
+    input-path
+    stdlib-roots
+    cfgs
+    pools))
+
+(define (compiler-driver-load-source-with-runtime-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
   [input-path : String]
   [source : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match (compiler-driver-load-runtime-prelude-with-pools
+  (match (compiler-driver-load-runtime-prelude-with-state-and-pools
+    load-state
     stdlib-roots
     cfgs
     pools)
@@ -2151,6 +2244,20 @@
           (ResultCompilerLoadWithPaths.Err diag)])]
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
+
+(define (compiler-driver-load-source-with-runtime-with-pools
+  [input-path : String]
+  [source : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-driver-load-source-with-runtime-with-state-and-pools
+    compiler-load-active-session-state
+    input-path
+    source
+    stdlib-roots
+    cfgs
+    pools))
 
 (define (compiler-driver-load-file-for-pic-image-with-pools
   [input-path : String]
@@ -2306,7 +2413,8 @@
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
     [_reset-type-literal-tracking : unit
       (compiler-parse-type-literal-tracking-reset!)]
-    (match (compiler-driver-load-file-with-runtime-with-pools
+    (match (compiler-driver-load-file-with-runtime-with-state-and-pools
+      (struct-get state load-session)
       input-path
       stdlib-roots
       cfgs

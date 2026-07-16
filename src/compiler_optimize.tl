@@ -24057,7 +24057,7 @@
               (opt-cfg-entry-label blocks)))
           func))]))
 
-;; --- canonical counted-loop unrolling (x4) -----------------------------------
+;; --- canonical counted-loop unrolling (x16) ----------------------------------
 ;;
 ;; Recognizes a single-block do-while loop B of the canonical rotated shape
 ;;
@@ -24066,19 +24066,22 @@
 ;; with exactly the two CFG predecessors {P, B} (trusted from the verified phi
 ;; input labels) and a loop-invariant `bound`, then versions the loop: P is
 ;; retargeted to a fresh guard block G that either enters a fresh unrolled body
-;; U (four clones of B's straight-line body chained through the loop-carried
+;; U (sixteen clones of B's straight-line body chained through the loop-carried
 ;; phis) or falls back to B, which stays in place as the remainder loop so
 ;; EXIT's phis keep their single B input. The guard computes
 ;;
-;;   ngroup = bound - 4;  gok = (ngroup <= bound) and (seed < ngroup)
+;;   ngroup = bound - 16;  gok = (ngroup <= bound) and (seed < ngroup)
 ;;
 ;; and U keeps looping while its post-group counter stays below ngroup. The
-;; guard uses bound - 4 (not bound - 3): B is a do-while, so handing control
+;; guard uses bound - 16 (not bound - 15): B is a do-while, so handing control
 ;; back with the counter equal to `bound` would run one extra iteration;
-;; `iu < bound - 4` guarantees the four unrolled iterations AND at least one
-;; remainder iteration stay below `bound`. The `ngroup <= bound` check rejects
-;; a wrapped bound - 4, sending degenerate bounds straight to the original
-;; loop. All counter arithmetic stays in the counter's own integer type.
+;; `iu < bound - 16` guarantees the sixteen unrolled iterations AND at least
+;; one remainder iteration stay below `bound`. The `ngroup <= bound` check
+;; rejects a wrapped bound - 16, sending degenerate bounds straight to the
+;; original loop. All counter arithmetic stays in the counter's own integer
+;; type. The x16 group depth lets the affine pass fold long constant-step
+;; chains (LCG-style `acc = acc*A + K`) into one composed mul+add per group,
+;; which is what closes the arith_loop/array_sum instruction gap to clang.
 ;; A loop-carried phi other than the counter: dst, init value (from the outside
 ;; pred), back-edge value (from B), phi type.
 (defenum OptUnrollPhi
@@ -24806,7 +24809,7 @@
   [cell : (Array i64)]
   [iu : i64]
   [copy : i64]) : CompilerIrInstrList
-  (if (>= copy 4)
+  (if (>= copy 16)
     (CompilerIrInstrList.Nil)
     (let
       ;; Copy 0 reads the fresh U phis; later copies read the previous copy's
@@ -25145,7 +25148,7 @@
             cell
             iu
             0)]
-        ;; End-of-copy-3 state: the counter and chain values the next group
+        ;; End-of-copy-15 state: the counter and chain values the next group
         ;; iteration (and the remainder loop's phis) receive.
         [inext3 : CompilerIrValue
           (opt-unroll-subst-value remap (CompilerIrValue.Var inext))]
@@ -25164,7 +25167,7 @@
                 ngroup
                 (CompilerIrBinOp.Sub)
                 bound
-                (CompilerIrValue.I64 4)
+                (CompilerIrValue.I64 16)
                 ity)
               (compiler-ir-instr-cons
                 ;; false iff bound - 4 wrapped past bound.
@@ -47401,8 +47404,8 @@
       [(not (opt-verify-ok? (opt-verify-function func))) 1]
       ;; entry, guard, unrolled body, remainder loop, exit.
       [(not (= (compiler-ir-block-list-count out) 5)) 2]
-      ;; four acc adds + four counter adds.
-      [(< (opt-unroll-test-count-add-in-block out "body__unroll_body") 8) 3]
+      ;; sixteen acc adds + sixteen counter adds.
+      [(< (opt-unroll-test-count-add-in-block out "body__unroll_body") 32) 3]
       ;; a non-unit counter step is not canonical: blocks stay untouched.
       [(not (= (compiler-ir-block-list-count nonunit) 3)) 4]
       [else 42])))
@@ -48286,9 +48289,9 @@
     (CompilerIrBlockList.Nil)))
 
 ;; Full-pipeline integration fixture: `while (i < n) { acc = acc*5 + 3; i++ }`
-;; in SSA form. After optimize-function the x4 unroller versions the loop and
-;; the affine pass must collapse the four chained pairs so the unrolled body
-;; multiplies by 5^4 = 625 exactly once.
+;; in SSA form. After optimize-function the x16 unroller versions the loop and
+;; the affine pass must collapse the sixteen chained pairs so the unrolled body
+;; multiplies by 5^16 = 152587890625 exactly once.
 (define (opt-affine-lcg-loop-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -48490,8 +48493,8 @@
         (match block
           [(CompilerIrBlock.Block _ instrs)
             (cond
-              ;; the four chained *5 collapse into one *625 ...
-              [(not (opt-affine-test-seq-has-mul-by? instrs 0 625)) fail-mul]
+              ;; the sixteen chained *5 collapse into one *152587890625 ...
+              [(not (opt-affine-test-seq-has-mul-by? instrs 0 152587890625)) fail-mul]
               ;; ... and DCE drops the orphaned intermediate pairs.
               [(> (opt-affine-test-seq-count-mul instrs 0 0) 1) fail-count]
               [else 42])])])))

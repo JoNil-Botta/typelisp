@@ -67,7 +67,8 @@
 
 (defstruct CompilerLoadParseIdentity
   (source-path-id i64)
-  (module-fallback-id i64))
+  (module-fallback-id i64)
+  (decl-owner-id i64))
 
 (defenum ResultCompilerLoadAliasCheck
   (Ok)
@@ -2752,7 +2753,8 @@
   [expected : AstMaybeModuleName]) : CompilerLoadParseIdentity
   (CompilerLoadParseIdentity
     (compiler-load-source-path-id path)
-    (compiler-load-module-fallback-id-for-parse module-fallback expected)))
+    (compiler-load-module-fallback-id-for-parse module-fallback expected)
+    cbi.compiler-builtin-id-fix-empty))
 
 (define (compiler-load-seen-path-key-id
   [source-path-id : i64]
@@ -2813,6 +2815,24 @@
             (compiler-load-canonical-module-id-from-path normalized-import)
             (compiler-load-canonical-module-id-from-path resolved-path))))]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
+
+;; Linkage ownership for a moduleless import follows its path relative to the
+;; entry root. Keep this distinct from the absolute module fallback used for
+;; load deduplication and expected-module checks.
+(define (compiler-load-decl-owner-id-from-root [root : String] [path : String]) : i64
+  (let
+    [normalized-path : String (compiler-load-normalize-path path)]
+    [prefix : String (compiler-load-root-prefix root)]
+    [prefix-len : i64 (string.string-length prefix)]
+    [path-len : i64 (string.string-length normalized-path)]
+    [relative : String
+      (if (and
+        (> prefix-len 0)
+        (compiler-load-string-prefix-at? normalized-path prefix 0))
+        (string.substring normalized-path prefix-len (- path-len prefix-len))
+        normalized-path)]
+    (ci.intern-generated-canonical-name
+      (compiler-load-module-id-from-path-text relative))))
 
 (define (compiler-load-canonical-source-module-from-import
   [kind : AstImportKind]
@@ -3341,7 +3361,8 @@
     [parse-identity : CompilerLoadParseIdentity
       (CompilerLoadParseIdentity
         source-path-id
-        (compiler-load-module-fallback-id-for-parse fallback expected-module))]
+        (compiler-load-module-fallback-id-for-parse fallback expected-module)
+        cbi.compiler-builtin-id-fix-empty)]
     (match (compiler-load-surface-summary-find-source
       (struct-get parse-identity source-path-id))
       [(CompilerLoadSomeSurfaceSummary _) unit]
@@ -3368,7 +3389,8 @@
     [parse-identity : CompilerLoadParseIdentity
       (CompilerLoadParseIdentity
         source-path-id
-        (compiler-load-module-fallback-id-for-parse fallback expected-module))]
+        (compiler-load-module-fallback-id-for-parse fallback expected-module)
+        cbi.compiler-builtin-id-fix-empty)]
     (begin
       (compiler-load-surface-summary-remove-source!
         (struct-get parse-identity source-path-id))
@@ -5926,14 +5948,14 @@
 
 (define (compiler-load-alias-path-list
   [importer-path : String]
-  [importer-path-id : i64]
+  [importer-decl-owner-id : i64]
   [alias : AstMaybeImportAlias]
   [rest : AstDeclPathList]) : AstDeclPathList
   (match alias
     [(AstMaybeImportAlias.Some _)
       (ast-decl-path-list-prepend-builder-with-owner-id
         importer-path
-        importer-path-id
+        importer-decl-owner-id
         rest)]
     [(AstMaybeImportAlias.No) rest]))
 
@@ -5973,17 +5995,21 @@
 
 (define (compiler-load-paths-after-import
   [importer-path : String]
-  [importer-path-id : i64]
+  [importer-decl-owner-id : i64]
   [alias : AstMaybeImportAlias]
   [imported-decls : AstDeclList]
   [rest : AstDeclPathList]) : AstDeclPathList
   (let
     [after-alias : AstDeclPathList
-      (compiler-load-alias-path-list importer-path importer-path-id alias rest)]
+      (compiler-load-alias-path-list
+        importer-path
+        importer-decl-owner-id
+        alias
+        rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
       (ast-decl-path-list-prepend-builder-with-owner-id
         importer-path
-        importer-path-id
+        importer-decl-owner-id
         after-alias)
       after-alias)))
 
@@ -6003,6 +6029,7 @@
   [decls : AstDeclList]
   [importer-path : String]
   [importer-path-id : i64]
+  [importer-decl-owner-id : i64]
   [importer-module : String]
   [importer-module-id : i64]
   [importer-source-module : String]
@@ -6039,6 +6066,7 @@
                   body
                   importer-path
                   importer-path-id
+                  target-module-id
                   target-module
                   target-module-id
                   target-module
@@ -6057,6 +6085,7 @@
                       rest
                       importer-path
                       importer-path-id
+                      importer-decl-owner-id
                       importer-module
                       importer-module-id
                       importer-source-module
@@ -6081,19 +6110,19 @@
                                 rest-decls)))
                           (ast-decl-path-list-prepend-builder-with-owner-id
                             importer-path
-                            importer-path-id
+                            target-module-id
                             (compiler-load-decl-path-list-append-onto
                               body-paths
                               (ast-decl-path-list-prepend-builder-with-owner-id
                                 importer-path
-                                importer-path-id
+                                importer-decl-owner-id
                                 rest-paths)))
                           (ast-decl-module-list-prepend-builder-id
                             target-module-id
                             (compiler-load-decl-module-list-append-onto
                               body-modules
                               (ast-decl-module-list-prepend-builder-id
-                                importer-module-id
+                                importer-source-module-id
                                 rest-modules)))
                           rest-seen)]
                       [(ResultCompilerLoadWithPaths.Err diag)
@@ -6107,6 +6136,7 @@
                 rest
                 importer-path
                 importer-path-id
+                importer-decl-owner-id
                 importer-module
                 importer-module-id
                 importer-source-module
@@ -6128,10 +6158,10 @@
                       rest-decls)
                     (ast-decl-path-list-prepend-builder-with-owner-id
                       importer-path
-                      importer-path-id
+                      importer-decl-owner-id
                       rest-paths)
                     (ast-decl-module-list-prepend-builder-id
-                      importer-module-id
+                      importer-source-module-id
                       rest-modules)
                     rest-seen)]
                 [(ResultCompilerLoadWithPaths.Err diag)
@@ -6221,6 +6251,7 @@
                             rest
                             importer-path
                             importer-path-id
+                            importer-decl-owner-id
                             importer-module
                             importer-module-id
                             importer-source-module
@@ -6263,12 +6294,12 @@
                                         rest-decls)
                                       (compiler-load-paths-after-import
                                         importer-path
-                                        importer-path-id
+                                        importer-decl-owner-id
                                         after-import-alias
                                         (ast-decl-list-new)
                                         rest-paths)
                                       (compiler-load-modules-after-import
-                                        importer-module-id
+                                        importer-source-module-id
                                         after-import-alias
                                         (ast-decl-list-new)
                                         rest-modules)
@@ -6289,14 +6320,14 @@
                                       imported-paths
                                       (compiler-load-paths-after-import
                                         importer-path
-                                        importer-path-id
+                                        importer-decl-owner-id
                                         after-import-alias
                                         imported-decls
                                         rest-paths))
                                     (compiler-load-decl-module-list-append-onto
                                       imported-modules
                                       (compiler-load-modules-after-import
-                                        importer-module-id
+                                        importer-source-module-id
                                         after-import-alias
                                         imported-decls
                                         rest-modules))
@@ -6320,6 +6351,7 @@
                   rest
                   importer-path
                   importer-path-id
+                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6341,10 +6373,10 @@
                         rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-path-id
+                        importer-decl-owner-id
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
-                        importer-module-id
+                        importer-source-module-id
                         rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
@@ -6363,6 +6395,7 @@
                   rest
                   importer-path
                   importer-path-id
+                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6384,10 +6417,10 @@
                         rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-path-id
+                        importer-decl-owner-id
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
-                        importer-module-id
+                        importer-source-module-id
                         rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
@@ -6406,6 +6439,7 @@
                   rest
                   importer-path
                   importer-path-id
+                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6424,10 +6458,10 @@
                       (ast-decl-list-prepend-builder expanded rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-path-id
+                        importer-decl-owner-id
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
-                        importer-module-id
+                        importer-source-module-id
                         rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
@@ -6446,6 +6480,7 @@
                   rest
                   importer-path
                   importer-path-id
+                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6467,10 +6502,10 @@
                         rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-path-id
+                        importer-decl-owner-id
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
-                        importer-module-id
+                        importer-source-module-id
                         rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
@@ -6482,6 +6517,7 @@
               rest
               importer-path
               importer-path-id
+              importer-decl-owner-id
               importer-module
               importer-module-id
               importer-source-module
@@ -6503,10 +6539,10 @@
                     rest-decls)
                   (ast-decl-path-list-prepend-builder-with-owner-id
                     importer-path
-                    importer-path-id
+                    importer-decl-owner-id
                     rest-paths)
                   (ast-decl-module-list-prepend-builder-id
-                    importer-module-id
+                    importer-source-module-id
                     rest-modules)
                   rest-seen)]
               [(ResultCompilerLoadWithPaths.Err diag)
@@ -6516,6 +6552,7 @@
   [decls : AstDeclList]
   [importer-path : String]
   [importer-path-id : i64]
+  [importer-decl-owner-id : i64]
   [importer-module : String]
   [importer-module-id : i64]
   [importer-source-module : String]
@@ -6531,6 +6568,7 @@
         decls
         importer-path
         importer-path-id
+        importer-decl-owner-id
         importer-module
         importer-module-id
         importer-source-module
@@ -6695,6 +6733,7 @@
                               load-decls
                               source-path
                               source-path-id
+                              (struct-get parse-identity decl-owner-id)
                               module-id
                               module-name-id
                               source-module
@@ -7571,7 +7610,8 @@
       source-module
       (if (string.eq source-module context-module)
         context-module-id
-        -1))))
+        -1)
+      (compiler-load-decl-owner-id-from-root import-root path))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
   [path : String]
@@ -7610,7 +7650,8 @@
               source-path-id
               (compiler-load-module-fallback-id-for-parse
                 fallback
-                expected-module))]
+                expected-module)
+              cbi.compiler-builtin-id-fix-empty)]
           [parse-cfgs : sym_i64_env.SymI64Env
             (compiler-load-stdlib-private-cfgs
               path
@@ -7699,6 +7740,7 @@
       cbi.compiler-builtin-id-fix-empty
       fallback
       ""
+      cbi.compiler-builtin-id-fix-empty
       cbi.compiler-builtin-id-fix-empty)))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
@@ -7714,7 +7756,8 @@
   [context-module-id : i64]
   [module-id-fallback : String]
   [source-module-fallback : String]
-  [source-module-fallback-id-hint : i64]) : ResultCompilerLoadWithPaths
+  [source-module-fallback-id-hint : i64]
+  [decl-owner-id : i64]) : ResultCompilerLoadWithPaths
   (let
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     [path-key-id : i64
@@ -7740,7 +7783,8 @@
               source-path-id
               (compiler-load-module-fallback-id-for-parse
                 module-id-fallback
-                expected-module))]
+                expected-module)
+              decl-owner-id)]
           [module-id-fallback-id : i64
             (struct-get parse-identity module-fallback-id)]
           [source-module-fallback-id : i64
@@ -7857,7 +7901,8 @@
         source-module-fallback
         (if (= (string.string-length source-module-fallback) 0)
           cbi.compiler-builtin-id-fix-empty
-          -1))]
+          -1)
+        cbi.compiler-builtin-id-fix-empty)]
     (begin
       (ast-node-pool-context-install! pools)
       result)))
@@ -9268,7 +9313,8 @@
         source-path-id
         (compiler-load-module-fallback-id-for-parse
           module-id-fallback
-          expected-module))]
+          expected-module)
+        cbi.compiler-builtin-id-fix-empty)]
     [module-id-fallback-id : i64 (struct-get parse-identity module-fallback-id)]
     [source-module-fallback-id : i64
       (cond

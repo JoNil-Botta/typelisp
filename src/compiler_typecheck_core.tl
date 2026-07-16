@@ -13646,43 +13646,15 @@
   [ctx : TcContext]
   [_name : String]
   [name-id : i64]) : option_i64.Option
-  (if (tc-enum-qualified-variant-lookup-name-id? name-id)
-    (match ctx
-      [(TcContext _ _ registries module module-id _)
-        (let
-          [structural : bool (>= name-id (intern-capacity))]
-          [module-key-id : i64
-            (if (and
-              (not structural)
-              (> (string.string-length module) 0)
-              (not (tc-name-qualified-id? name-id)))
-              (compiler-symbol-dotted-variant-key-id-in-module-or
-                name-id
-                module-id
-                -1)
-              -1)]
-          [module-handle : i64
-            (if (< module-key-id 0)
-              -1
-              (compiler-registries-lookup-variant-key-id-or
-                registries
-                module-key-id
-                -1))]
-          [fallback-key-id : i64
-            (if structural
-              (compiler-symbol-name-id-key name-id)
-              (compiler-symbol-dotted-variant-key-id-in-module-or
-                name-id
-                (compiler-symbol-root-module-id)
-                -1))]
-          (if (>= module-handle 0)
-            (option_i64.Some module-handle)
-            (if (< fallback-key-id 0)
-              option_i64.None
-              (compiler-registries-lookup-variant-key-id
-                registries
-                fallback-key-id))))])
-    option_i64.None))
+  (match (tc-enum-qualified-variant-lookup-key-id
+    ctx
+    name-id
+    (tc-context-module-id ctx))
+    [(option_i64.Some key-id)
+      (compiler-registries-lookup-variant-key-id
+        (tc-context-registries ctx)
+        key-id)]
+    [(option_i64.None) option_i64.None]))
 
 (define (tc-enum-qualified-variant-lookup-key-id
   [ctx : TcContext]

@@ -4039,10 +4039,11 @@
     [capacity : i64 (array-length slots)]
     [hash : i64 (i64-i64-map-hash-key key)]
     [cursor : i64 (i64-i64-map-normalized-bucket-index hash capacity)]
-    [walked : i64 0]
     [first-tombstone : i64 -1]
     (begin
-      (while (< walked capacity)
+      ;; needs-grow? ran above, so the table holds at least one Empty slot:
+      ;; the probe always terminates without a walked-count bound.
+      (while true
         (match (array-ref slots cursor)
           [(I64I64MapEmpty)
             (let
@@ -4070,8 +4071,7 @@
                   cursor
                   (if (>= next capacity)
                     0
-                    next))
-                (set! walked (+ walked 1))))]
+                    next))))]
           [(I64I64MapOccupied slot-key _ slot-hash)
             (if (if (= slot-hash hash)
               (= slot-key key)
@@ -4081,13 +4081,11 @@
                 (return grown))
               (let
                 [next : i64 (+ cursor 1)]
-                (begin
-                  (set!
-                    cursor
-                    (if (>= next capacity)
-                      0
-                      next))
-                  (set! walked (+ walked 1)))))]))
+                (set!
+                  cursor
+                  (if (>= next capacity)
+                    0
+                    next))))]))
       (if (>= first-tombstone 0)
         (begin
           (array-set! slots first-tombstone (I64I64MapOccupied key value hash))

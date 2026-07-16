@@ -4193,13 +4193,15 @@ Type rules:
 Backend coverage: scalar lowering covers every supported operator/type
 combination above, and `spmd-scan` has the in-order scalar reference
 semantics in every backend mode. SIMD backend modes vectorize eligible
-contiguous array folds and otherwise keep scalar semantics rather than
-changing source behavior; per-backend matrices are specified in section 8.
+contiguous array folds and checked gather-only folds through an i64 index
+array, and otherwise keep scalar semantics rather than changing source
+behavior; per-backend matrices are specified in section 8.
 
 Purity and varying rules:
 
 - The `value` expression may use the varying index, `(program-index)`,
-  `(program-count)`, compatibility dynamic-array reads,
+  `(program-count)`, compatibility dynamic-array reads (including pure
+  gather-only reads such as `values[indexes[i]]`),
   arithmetic/comparison/boolean operators over supported types,
   `spmd-broadcast`, `spmd-shuffle`, and local `let` bindings whose values
   satisfy the same rules.

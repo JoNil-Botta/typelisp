@@ -118,6 +118,7 @@ tests/integration/spmd_foreach.tl
 tests/integration/spmd_gather_read.tl
 tests/integration/spmd_reduce_scalar.tl
 tests/integration/spmd_scan_scalar.tl
+benchmarks/ispc/perfbench_gathers/bench.tl
 EOF
 }
 
@@ -235,6 +236,25 @@ verify_gather_opcodes() {
     done
 }
 
+verify_gather_reduce_opcodes() {
+    _mode=$1
+    compile_spmd_mode benchmarks/ispc/perfbench_gathers/bench.tl "$_mode"
+    _tag=benchmarks_ispc_perfbench_gathers_bench_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] gather-reduce opcode compile failed in $_mode:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "benchmarks/ispc/perfbench_gathers/bench.tl $_mode (opcode compile)" >> "$FAILURES"
+        return
+    fi
+    for opcode in vgatherqps vaddps; do
+        if ! grep -F -- "$opcode" "$_asm" > /dev/null; then
+            echo "[spmd-simd] gather-reduce $_mode assembly missing $opcode" >&2
+            echo "benchmarks/ispc/perfbench_gathers/bench.tl $_mode (missing $opcode)" >> "$FAILURES"
+        fi
+    done
+}
+
 verify_avx2_varying_while_shape() {
     compile_spmd_mode tests/spmd/varying_while_i64.tl avx2
     _tag=tests_spmd_varying_while_i64_tl
@@ -316,6 +336,7 @@ for mode in avx2 avx512; do
     # Code-shape checks do not execute SIMD instructions, so run them on every
     # host even when that ISA is unavailable for the execution corpus below.
     verify_gather_opcodes "$mode"
+    verify_gather_reduce_opcodes "$mode"
 done
 
 verify_avx2_varying_while_shape

@@ -3823,19 +3823,51 @@
 ;: Generated concrete hashmap family helper.
 (define (i64-i64-map-get [map : I64I64Map] [key : i64]) : I64I64MapLookup
   (let
-    [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
-    (match (i64-i64-map-probe
-      slots
-      (i64-i64-map-capacity map)
-      key
-      (i64-i64-map-hash-key key))
-      [(I64I64MapProbeFound index)
-        (match (array-ref slots index)
-          [(I64I64MapOccupied _ value _) (I64I64MapFound value)]
-          [(I64I64MapEmpty) (I64I64MapMissing)]
-          [(I64I64MapTombstone) (I64I64MapMissing)])]
-      [(I64I64MapProbeAbsent _) (I64I64MapMissing)]
-      [(I64I64MapProbeFull) (I64I64MapMissing)])))
+    [slots : (Array I64I64MapSlot) (struct-get map slots)]
+    [capacity : i64 (array-length slots)]
+    [hash : i64 (i64-i64-map-hash-key key)]
+    [cursor : i64 (i64-i64-map-normalized-bucket-index hash capacity)]
+    [walked : i64 0]
+    (begin
+      ;; The walk bound must stay: a capacity-1 full table is reachable, and
+      ;; lookups do not grow first the way put does.
+      (while (< walked capacity)
+        (match (array-ref slots cursor)
+          [(I64I64MapEmpty)
+            (return (I64I64MapMissing))]
+          [(I64I64MapTombstone)
+            (let
+              [next : i64 (+ cursor 1)]
+              (begin
+                (set!
+                  cursor
+                  (if (>= next capacity)
+                    0
+                    next))
+                (set! walked (+ walked 1))))]
+          [(I64I64MapOccupied slot-key value slot-hash)
+            (if (= slot-hash hash)
+              (if (= slot-key key)
+                (return (I64I64MapFound value))
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1)))))
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1)))))]))
+      (I64I64MapMissing))))
 
 ;: Generated concrete hashmap family helper.
 (define (i64-i64-map-get-value-borrowed [map : (& map I64I64Map)] [key : i64]) : (I64I64MapBorrowedValueLookup

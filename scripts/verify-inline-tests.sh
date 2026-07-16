@@ -98,6 +98,32 @@ if [ ! -s "$DISCOVERED" ]; then
 fi
 
 discovered_file_count=$(wc -l < "$DISCOVERED" | tr -d ' ')
+
+# #5122: fixed-array `(init)` once expanded the profile-summary tables into
+# thousands of initializer AST nodes and made this single inline test peak above
+# 5 GiB. Keep a focused Linux hard-cap probe ahead of the aggregate batch so the
+# regression fails deterministically without asking an uncapped runner to OOM.
+if [ "$HOST_OS" = linux ]; then
+    profile_summary_stdout="$WORKDIR/profile-summary.stdout"
+    profile_summary_stderr="$WORKDIR/profile-summary.stderr"
+    echo "[inline-tests] profile-summary memory cap (1 GiB)"
+    if (
+        ulimit -v 1048576
+        "$COMPILER" test "$ROOT/src/compiler_profile_summary.tl" \
+            --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib" \
+            > "$profile_summary_stdout" 2> "$profile_summary_stderr"
+    ); then
+        profile_summary_status=0
+    else
+        profile_summary_status=$?
+    fi
+    if [ "$profile_summary_status" -ne 0 ]; then
+        echo "compiler_profile_summary inline test exceeded 1 GiB or failed" >&2
+        show_streams "$profile_summary_stdout" "$profile_summary_stderr"
+        exit 1
+    fi
+fi
+
 batch_run_stdout="$WORKDIR/run.batch.stdout"
 batch_run_stderr="$WORKDIR/run.batch.stderr"
 run_counts="$WORKDIR/run.counts.txt"

@@ -405,11 +405,11 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   public APIs can take vector/slice views.
 - Scalar lowering supports `spmd-reduce` `sum`/`min`/`max`/`all`/`any` and
   inclusive `spmd-scan` over the SPEC-supported types.
-- Masked varying `if` (including nested masks and value-producing selects)
-  runs in scalar, AVX2, and AVX-512 subsets. AVX2 still reports explicit
-  diagnostics for varying `while`, varying `match` (enum tags and lane payload
-  bindings), and early exits instead of silently scalarizing unsupported
-  control flow.
+- Masked varying `if` (including nested masks and value-producing selects) and
+  varying `while` with loop-carried active masks run in scalar, AVX2, and
+  AVX-512 subsets. AVX2 still reports explicit diagnostics for varying `match`
+  (enum tags and lane payload bindings), early exits, and other unsupported
+  control-flow shapes instead of silently scalarizing them.
 - `(program-index)` and `(program-count)` are lane identity forms inside
   SPMD scopes; programs using them intentionally observe backend gang
   width.
@@ -634,10 +634,10 @@ reflection, packages with lockfiles, inline tests, doctests, fmt, lint, doc
 generation, a docs site, and an LSP diagnostics server.
 
 Not yet (see [SPEC.md §8](SPEC.md) for the authoritative matrix): general
-GC/`free` (deferred by design in favor of arenas), vectorized varying
-`while`/`match` control flow, vectorized SPMD scans/shuffles and public
-vector/mask values, native emission for out-of-line varying helper calls,
-reference captures in escaping closures
+GC/`free` (deferred by design in favor of arenas), vectorized varying `match`
+control flow, vectorized SPMD scans/shuffles and public vector/mask values,
+native emission for out-of-line varying helper calls, reference captures in
+escaping closures
 (rejected by design), package registry and workspaces, and richer IDE
 features. Codegen quality versus `clang -O2` is an active work stream
 tracked by the committed benchmark baselines.

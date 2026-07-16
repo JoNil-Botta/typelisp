@@ -20478,12 +20478,35 @@
 (define (compiler-reg-scratch-aggregate-constraint
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
-  [dst : i64]) : CompilerRegScratchConstraint
+  [dst : i64]
+  [extra-excluded : CompilerRegStringList]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
     (CompilerRegScratchClass.Gp)
     (struct-get policy gp-allowed)
-    (compiler-reg-scratch-location-registers assignments dst)
+    (compiler-reg-string-list-append
+      (compiler-reg-scratch-location-registers assignments dst)
+      extra-excluded)
     ""))
+
+(define (compiler-reg-scratch-pack-word-registers
+  [assignments : CompilerRegAssignmentList]
+  [words : CompilerIrValueList]
+  [index : i64]) : CompilerRegStringList
+  (match words
+    [(CompilerIrValueList.Nil) CompilerRegStringList.Nil]
+    [(CompilerIrValueList.Cons word rest)
+      (if (= index 0)
+        (compiler-reg-scratch-value-registers assignments word)
+        (compiler-reg-scratch-pack-word-registers
+          assignments
+          (box-get rest)
+          (- index 1)))]
+    [(CompilerIrValueList.Array seq)
+      (if (and (>= index 0) (< index (struct-get seq len)))
+        (compiler-reg-scratch-value-registers
+          assignments
+          (array-ref (struct-get seq slots) index))
+        CompilerRegStringList.Nil)]))
 
 (define (compiler-reg-scratch-phi-constraint
   [policy : CompilerRegScratchPolicy]) : CompilerRegScratchConstraint
@@ -20698,12 +20721,20 @@
         point
         (+ point 1)
         var)]
-    [(CompilerIrInstr.Pack dst _ _)
+    [(CompilerIrInstr.Pack dst words _)
       (CompilerRegScratchRequirement
         point
         ordinal
         (CompilerRegScratchRole.AggregateWord)
-        (compiler-reg-scratch-aggregate-constraint policy assignments dst)
+        (compiler-reg-scratch-aggregate-constraint
+          policy
+          assignments
+          dst
+          ;; Word 0 is staged before word 1. Its scratch register must not
+          ;; overwrite word 1's source before that second load occurs.
+          (if (= ordinal 0)
+            (compiler-reg-scratch-pack-word-registers assignments words 1)
+            CompilerRegStringList.Nil))
         point
         (+ point 1)
         var)]
@@ -20712,7 +20743,11 @@
         point
         ordinal
         (CompilerRegScratchRole.AggregateWord)
-        (compiler-reg-scratch-aggregate-constraint policy assignments dst)
+        (compiler-reg-scratch-aggregate-constraint
+          policy
+          assignments
+          dst
+          CompilerRegStringList.Nil)
         point
         (+ point 1)
         var)]

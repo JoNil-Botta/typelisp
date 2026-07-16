@@ -21740,7 +21740,7 @@
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r10"))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r11"))
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
@@ -21993,6 +21993,7 @@
         (not (string.eq reg0 ""))
         (not (string.eq reg1 ""))
         (not (string.eq reg0 reg1))
+        (not (string.eq reg0 "%r8"))
         (not (string.eq reg0 "%r10"))
         (not (string.eq reg0 "%r11"))
         (not (string.eq reg0 "%r12"))

@@ -15812,7 +15812,13 @@
   (match loops
     [(OptNaturalLoopList.Nil) (OptLicmLoopApplyResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-licm-apply-loop index sources types direct-call-clean blocks loop)
+      (match (opt-licm-apply-loop
+        index
+        sources
+        types
+        direct-call-clean
+        blocks
+        loop)
         [(OptLicmLoopApplyResult.Result loop-blocks loop-changed)
           (match (opt-licm-apply-loops
             index
@@ -15883,7 +15889,9 @@
                     ;; post-pass verify, and hand it back for the next pass.
                     [hoisted-context : OptCfgContext
                       (opt-cfg-context-build hoisted-blocks)]
-                    (match (opt-verify-function-with-context hoisted hoisted-context)
+                    (match (opt-verify-function-with-context
+                      hoisted
+                      hoisted-context)
                       [(ResultCompilerOptimizeVerify.Ok)
                         (OptFunctionCtxResult.Result hoisted hoisted-context)]
                       [(ResultCompilerOptimizeVerify.Err _)
@@ -26748,9 +26756,7 @@
                         (if (and
                           run-heavy?
                           (opt-verify-ok?
-                            (opt-verify-function-with-context
-                              ssa
-                              ssa-context)))
+                            (opt-verify-function-with-context ssa ssa-context)))
                           (opt-bounds-dom-blocks-with-context
                             ssa-context
                             params

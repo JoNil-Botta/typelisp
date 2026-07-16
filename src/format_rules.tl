@@ -41,6 +41,20 @@
         [_ false])]
     [_ false]))
 
+(define (format-rules-node-spmd-callable? [node : FormatCst]) : bool
+  (match node
+    [(FormatCst.List items)
+      (match (fmt-cst-list-step (box-get items))
+        [(FormatCstListStep.Item colon rest)
+          (and
+            (format-rules-node-colon? colon)
+            (match (fmt-cst-list-step rest)
+              [(FormatCstListStep.Item key _)
+                (string.eq (format-rules-node-symbol-name key) "spmd-callable")]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
 (define (format-rules-define-value-rest? [rest : FormatCstList]) : bool
   (match (fmt-cst-list-step rest)
     [(FormatCstListStep.Item target _)
@@ -375,6 +389,39 @@
       colon
       typ
       false
+      width
+      indent
+      col
+      flat
+      limit
+      buf)))
+
+(define (format-rules-layout-metadata-return-type-tail
+  [metadata : FormatCst]
+  [colon : FormatCst]
+  [typ : FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : FmtRenderBuf]) : i64
+  (if (format-rules-node-spmd-callable? metadata)
+    (format-rules-layout-colon-pair
+      colon
+      typ
+      emit
+      width
+      indent
+      (format-rules-layout-hard-line emit width indent col flat limit buf)
+      flat
+      limit
+      buf)
+    (format-rules-layout-return-type-breakable-tail
+      colon
+      typ
+      emit
       width
       indent
       col
@@ -1855,7 +1902,8 @@
       emit
       width
       (+ indent 2)
-      (format-rules-layout-return-type-breakable-tail
+      (format-rules-layout-metadata-return-type-tail
+        metadata
         colon
         typ
         emit
@@ -2400,6 +2448,17 @@
           flat
           limit
           buf)]
+      [(string.eq head-name "specialization")
+        (format-rules-layout-line-form
+          "specialization"
+          rest
+          emit
+          width
+          indent
+          col
+          flat
+          limit
+          buf)]
       [else
         (format-rules-layout-delimited
           "("
@@ -2427,16 +2486,27 @@
       (let
         [name : String (format-rules-node-symbol-name key)]
         (if (> (string.string-length name) 0)
-          (format-rules-layout-inline-form
-            (string.append ":" name)
-            tail
-            emit
-            width
-            indent
-            col
-            flat
-            limit
-            buf)
+          (if (string.eq name "spmd-callable")
+            (format-rules-layout-line-form
+              ":spmd-callable"
+              tail
+              emit
+              width
+              indent
+              col
+              flat
+              limit
+              buf)
+            (format-rules-layout-inline-form
+              (string.append ":" name)
+              tail
+              emit
+              width
+              indent
+              col
+              flat
+              limit
+              buf))
           (format-rules-layout-delimited
             "("
             (FormatCstList.Cons (FormatCst.Atom (FormatToken.Colon)) (box rest))
@@ -2931,6 +3001,20 @@
   : (Tuple i64 i64 i64 i64 i64 i64 i64 i64)
   unit)")
 
+(define (format-rules-spmd-callable-source) : String
+  "(define (helper [x : i64] [scale : i64]) (:spmd-callable (specialization (lanes 8) (args varying uniform) (result varying) (index-param 0))) : i64 (+ x scale))")
+
+(define (format-rules-spmd-callable-expected) : String
+  "(define (helper [x : i64] [scale : i64])
+  (:spmd-callable
+    (specialization
+      (lanes 8)
+      (args varying uniform)
+      (result varying)
+      (index-param 0)))
+  : i64
+  (+ x scale))")
+
 (define (format-rules-variadic-macro-source) : String
   "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
 
@@ -2990,6 +3074,8 @@
       (format-rules-render-source-width
         (format-rules-define-metadata-long-source)
         48)]
+    [spmd-callable : String
+      (format-rules-render-source-width (format-rules-spmd-callable-source) 80)]
     [variadic : String
       (format-rules-render-source-width (format-rules-variadic-macro-source) 80)]
     (begin
@@ -3005,7 +3091,10 @@
         (string.eq metadata-long (format-rules-define-metadata-long-expected))
         (return 7))
       (unless
-        (string.eq variadic (format-rules-variadic-macro-expected))
+        (string.eq spmd-callable (format-rules-spmd-callable-expected))
         (return 8))
-      (unless (format-rules-overlay-dense-tail-preserved?) (return 9))
+      (unless
+        (string.eq variadic (format-rules-variadic-macro-expected))
+        (return 9))
+      (unless (format-rules-overlay-dense-tail-preserved?) (return 10))
       42)))

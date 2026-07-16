@@ -157,6 +157,11 @@ required_gate_unavailable() {
 # fetch-stage0.sh is unrelated — it rides out a genuinely transient mutable-asset
 # race, not a compiler crash.)
 
+# Validate the complete CLI gate inventory before the bootstrap and all of its
+# expensive owners. --self-test exercises fail-closed diagnostics, then checks
+# production annotations, counts, duplicates, and delegated fixture counts.
+run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh --self-test
+
 # Generated payload freshness must fail before the expensive bootstrap. The
 # exact-source verifier uses only stage0-supported language/runtime surfaces.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
@@ -396,6 +401,9 @@ run_with_compiler "$STAGE2_BIN" "stage2 PIC relocation verifier" scripts/verify-
 run_with_compiler "$STAGE2_BIN" "stage2 safety corpus" scripts/verify-safety-corpus.sh
 run_gate "integration manifest validator self-tests" scripts/verify-integration-manifest-validator.sh
 run_with_compiler "$STAGE2_BIN" "integration compile-failure diagnostics" scripts/verify-integration.sh --self-test-empty-compile-diagnostic
+if [ "$HOST_OS" = linux ]; then
+    run_gate "integration signal notice capture" scripts/verify-integration.sh --self-test-signal-notice-capture
+fi
 run_with_compiler "$STAGE2_BIN" "stage2 native integration corpus" scripts/verify-integration.sh
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 regalloc/backend asm shape gates" scripts/verify-asm-shape-gates.sh

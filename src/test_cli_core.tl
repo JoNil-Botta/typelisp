@@ -1691,10 +1691,10 @@
         (if (tltest-reachable-name-marked? names (intern-str name))
           (tltest-reach-mark-expr expr names)
           names))]
-    [(AstDecl.DefFn name _ _ body-box export)
+    [(AstDecl.DefFn name _ _ body-box metadata)
       (let
         [body : AstExpr (ast-node-get body-box)]
-        (match export
+        (match (ast-fn-metadata-export metadata)
           [(AstFnExport.Export _)
             (tltest-reach-mark-expr
               body
@@ -1795,11 +1795,11 @@
         [name-str : String (intern-str name)]
         [marked : bool (tltest-reachable-name-marked? names name-str)]
         marked)]
-    [(AstDecl.DefFn name _ _ _ export)
+    [(AstDecl.DefFn name _ _ _ metadata)
       (let
         [name-str : String (intern-str name)]
         [marked : bool (tltest-reachable-name-marked? names name-str)]
-        (match export
+        (match (ast-fn-metadata-export metadata)
           [(AstFnExport.Export _) true]
           [(AstFnExport.No) marked]))]
     [(AstDecl.Extern name _ _ _)

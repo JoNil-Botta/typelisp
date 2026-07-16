@@ -505,6 +505,42 @@
       (not (string.contains (& rendered) (& hidden)))
       (not (string.contains (& rendered) (& hidden-in-string))))))
 
+(define (lsp-document-highlight-smoke-ok?) : bool
+  (let
+    [source : String
+      "(define foo : i64 1)\n(define foo-bar : i64 foo)\n(define qualified : i64 mod.foo)\n(define another : i64 mod.foo)\n; foo mod.foo\n(define text : String \"foo mod.foo\")\n(define f : char 'f')\n(define punct : i64 foo?)"]
+    [foo : String
+      (json.stringify
+        (lsp-json-array (lsp-document-highlights-in-text source "foo")))]
+    [qualified : String
+      (json.stringify
+        (lsp-json-array (lsp-document-highlights-in-text source "mod.foo")))]
+    [letter : String
+      (json.stringify
+        (lsp-json-array (lsp-document-highlights-in-text source "f")))]
+    [capabilities : String (json.stringify (lsp-initialize-result))]
+    [foo-want : String
+      "[{\"range\":{\"start\":{\"line\":0,\"character\":8},\"end\":{\"line\":0,\"character\":11}},\"kind\":1},{\"range\":{\"start\":{\"line\":1,\"character\":22},\"end\":{\"line\":1,\"character\":25}},\"kind\":1}]"]
+    [qualified-want : String
+      "[{\"range\":{\"start\":{\"line\":2,\"character\":24},\"end\":{\"line\":2,\"character\":31}},\"kind\":1},{\"range\":{\"start\":{\"line\":3,\"character\":22},\"end\":{\"line\":3,\"character\":29}},\"kind\":1}]"]
+    [letter-want : String
+      "[{\"range\":{\"start\":{\"line\":6,\"character\":8},\"end\":{\"line\":6,\"character\":9}},\"kind\":1}]"]
+    [capability : String "\"documentHighlightProvider\":true"]
+    (and
+      (string.contains (& capabilities) (& capability))
+      (string.eq foo foo-want)
+      (string.eq qualified qualified-want)
+      (string.eq letter letter-want)
+      (string.eq
+        (lsp-code-symbol-at-offset source (lsp-offset-at-position source 2 25))
+        "mod.foo")
+      (string.eq
+        (lsp-code-symbol-at-offset source (lsp-offset-at-position source 4 3))
+        "")
+      (string.eq
+        (lsp-code-symbol-at-offset source (lsp-offset-at-position source 5 24))
+        ""))))
+
 (define (main) : i64
   (let
     [base-result : i64 (lsp-diagnostic-metadata-smoke)]
@@ -523,6 +559,7 @@
         (unless (lsp-edit-save-doc-smoke-ok?) (return 16))
         (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 13))
         (unless (lsp-document-symbol-smoke-ok?) (return 17))
+        (unless (lsp-document-highlight-smoke-ok?) (return 22))
         (unless (lsp-transcript-framing-smoke-ok?) (return 18))
         (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
         (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))

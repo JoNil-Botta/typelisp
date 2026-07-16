@@ -6304,7 +6304,8 @@ in documentation passes.
   doctests, `fmt`, `lint`, `doc` generation, the published docs site, a
   stdio LSP server with diagnostics, definition, completion, inlay hints,
   formatting, hover, document links, flat top-level document-symbol outlines,
-  and TypeLisp structural-edit/query extensions, plus a REPL that evaluates
+  lexical document highlights, and TypeLisp structural-edit/query extensions,
+  plus a REPL that evaluates
   through the real compile/link/run pipeline.
 
 ### 8.2 Not yet implemented, in migration, or deferred
@@ -6327,7 +6328,7 @@ in documentation passes.
 | Removal of legacy `comptime-decl` forms | Stdlib well-known declarations now use plain declarations; legacy syntax remains accepted as parser/typechecker compatibility pending final removal. |
 | Compiled comptime execution from embedded/package `tlci` images | In progress: CTFE is the executing path today, with byte-identical expansion required between the two paths. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
-| Richer LSP/IDE features | Hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, references/rename through standard methods, and workspace indexing remain pending. |
+| Richer LSP/IDE features | Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, references/rename through standard methods, and workspace indexing remain pending. |
 
 ---
 

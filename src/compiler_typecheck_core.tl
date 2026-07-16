@@ -3978,11 +3978,6 @@
     (struct-get slot flags)
     tc-type-env-scoped-flag-c-abi-fnptr))
 
-(define (tc-type-env-scoped-slot-marker? [slot : TcTypeEnvScopedSlot]) : bool
-  (tc-type-env-scoped-flag?
-    (struct-get slot flags)
-    tc-type-env-scoped-flag-marker))
-
 ;; One dense latest-slot table is shared by every scoped stack. Each stack has
 ;; a unique epoch, so nested carriers can overwrite entries safely; restoring
 ;; an older carrier lazily repairs only the names it queries.
@@ -4579,12 +4574,6 @@
         ty)
       next)))
 
-(define (tc-type-env-scoped-sidecar-bind
-  [sidecar : TcTypeEnvScopedSidecar]
-  [name : String]
-  [ty : AstType]) : TcTypeEnvScopedSidecar
-  (tc-type-env-scoped-sidecar-bind-id sidecar (tc-name-id name) ty))
-
 (define (tc-type-env-scoped-sidecar-bind-marker-id
   [sidecar : TcTypeEnvScopedSidecar]
   [name-id : i64]
@@ -4599,17 +4588,6 @@
         ty
         marker-kind)
       next)))
-
-(define (tc-type-env-scoped-sidecar-bind-marker
-  [sidecar : TcTypeEnvScopedSidecar]
-  [name : String]
-  [ty : AstType]
-  [marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedSidecar
-  (tc-type-env-scoped-sidecar-bind-marker-id
-    sidecar
-    (tc-name-id name)
-    ty
-    marker-kind))
 
 (define (tc-type-env-scoped-sidecar-enter-unsafe
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
@@ -4626,22 +4604,6 @@
     sidecar
     (tc-return-type-id)
     ty
-    TcTypeEnvScopedMarkerKind.Other))
-
-(define (tc-type-env-scoped-sidecar-enter-loop-target
-  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
-  (tc-type-env-scoped-sidecar-bind-marker-id
-    sidecar
-    (tc-loop-target-id)
-    (AstType.Unit)
-    TcTypeEnvScopedMarkerKind.Other))
-
-(define (tc-type-env-scoped-sidecar-clear-loop-target
-  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedSidecar
-  (tc-type-env-scoped-sidecar-bind-marker-id
-    sidecar
-    (tc-loop-target-id)
-    (AstType.Never)
     TcTypeEnvScopedMarkerKind.Other))
 
 (define (tc-type-env-scoped-sidecar-bind-default-boundary
@@ -4687,44 +4649,6 @@
     (tc-atomic-arena-owner-marker-id)
     (AstType.Var (intern name))
     TcTypeEnvScopedMarkerKind.AtomicArenaOwner))
-
-(define (tc-type-env-scoped-sidecar-bind-unsafe-id
-  [sidecar : TcTypeEnvScopedSidecar]
-  [name-id : i64]
-  [ty : AstType]) : TcTypeEnvScopedSidecar
-  (let
-    [next : TcTypeEnvScopedSidecar sidecar]
-    (begin
-      (tc-type-env-scoped-stack-bind-marker-id!
-        (&mut (struct-get next stack))
-        (tc-unsafe-decl-marker-id name-id)
-        (AstType.Unit)
-        TcTypeEnvScopedMarkerKind.UnsafeDecl)
-      (tc-type-env-scoped-stack-bind-flags-id!
-        (&mut (struct-get next stack))
-        name-id
-        ty
-        tc-type-env-scoped-flag-unsafe)
-      next)))
-
-(define (tc-type-env-scoped-sidecar-bind-c-abi-fnptr-id
-  [sidecar : TcTypeEnvScopedSidecar]
-  [name-id : i64]
-  [ty : AstType]) : TcTypeEnvScopedSidecar
-  (let
-    [next : TcTypeEnvScopedSidecar sidecar]
-    (begin
-      (tc-type-env-scoped-stack-bind-marker-id!
-        (&mut (struct-get next stack))
-        (tc-c-abi-fnptr-marker-id name-id)
-        (AstType.Unit)
-        TcTypeEnvScopedMarkerKind.CAbiFnptr)
-      (tc-type-env-scoped-stack-bind-flags-id!
-        (&mut (struct-get next stack))
-        name-id
-        ty
-        tc-type-env-scoped-flag-c-abi-fnptr)
-      next)))
 
 (define (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
   [sidecar : TcTypeEnvScopedSidecar]
@@ -4837,26 +4761,6 @@
         (tc-type-env-scoped-sidecar-mark sidecar stack-mark)
         (struct-get carrier dirty)))))
 
-(define (tc-type-env-scoped-carrier-snapshot [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierSave
-  (let
-    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
-    [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [stack-mark : TcTypeEnvScopedMark
-      (TcTypeEnvScopedMark
-        (struct-get stack slot-count)
-        (struct-get stack mark-count)
-        (struct-get stack scope-depth)
-        (struct-get stack cache-generation))]
-    (TcTypeEnvScopedCarrierSave
-      (TcTypeEnvScopedCarrier
-        (struct-get carrier env)
-        sidecar
-        (struct-get carrier dirty))
-      (TcTypeEnvScopedCarrierMark
-        (struct-get carrier env)
-        (tc-type-env-scoped-sidecar-mark sidecar stack-mark)
-        (struct-get carrier dirty)))))
-
 (define (tc-type-env-scoped-carrier-snapshot-mark
   [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierMark
   (let
@@ -4901,19 +4805,6 @@
   [ty : AstType]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-bind-id carrier (tc-name-id name) ty))
 
-(define (tc-type-env-scoped-carrier-bind-marker-id
-  [carrier : TcTypeEnvScopedCarrier]
-  [name-id : i64]
-  [ty : AstType]
-  [marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnvScopedCarrier
-  (tc-type-env-scoped-carrier-with-sidecar
-    carrier
-    (tc-type-env-scoped-sidecar-bind-marker-id
-      (struct-get carrier sidecar)
-      name-id
-      ty
-      marker-kind)))
-
 (define (tc-type-env-scoped-carrier-enter-unsafe
   [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-with-sidecar
@@ -4928,18 +4819,6 @@
     (tc-type-env-scoped-sidecar-bind-return-type
       (struct-get carrier sidecar)
       ty)))
-
-(define (tc-type-env-scoped-carrier-enter-loop-target
-  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
-  (tc-type-env-scoped-carrier-with-sidecar
-    carrier
-    (tc-type-env-scoped-sidecar-enter-loop-target (struct-get carrier sidecar))))
-
-(define (tc-type-env-scoped-carrier-clear-loop-target
-  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
-  (tc-type-env-scoped-carrier-with-sidecar
-    carrier
-    (tc-type-env-scoped-sidecar-clear-loop-target (struct-get carrier sidecar))))
 
 (define (tc-type-env-scoped-carrier-bind-default-boundary
   [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrier
@@ -4981,28 +4860,6 @@
     (tc-type-env-scoped-sidecar-bind-atomic-arena-owner
       (struct-get carrier sidecar)
       name)))
-
-(define (tc-type-env-scoped-carrier-bind-unsafe-id
-  [carrier : TcTypeEnvScopedCarrier]
-  [name-id : i64]
-  [ty : AstType]) : TcTypeEnvScopedCarrier
-  (tc-type-env-scoped-carrier-with-sidecar
-    carrier
-    (tc-type-env-scoped-sidecar-bind-unsafe-id
-      (struct-get carrier sidecar)
-      name-id
-      ty)))
-
-(define (tc-type-env-scoped-carrier-bind-c-abi-fnptr-id
-  [carrier : TcTypeEnvScopedCarrier]
-  [name-id : i64]
-  [ty : AstType]) : TcTypeEnvScopedCarrier
-  (tc-type-env-scoped-carrier-with-sidecar
-    carrier
-    (tc-type-env-scoped-sidecar-bind-c-abi-fnptr-id
-      (struct-get carrier sidecar)
-      name-id
-      ty)))
 
 (define (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
   [carrier : TcTypeEnvScopedCarrier]
@@ -5053,11 +4910,6 @@
         (tc-name-bound-persistent-id?
           (tc-type-env-scoped-sidecar-persistent sidecar)
           name-id)))))
-
-(define (tc-type-env-scoped-carrier-name-bound?
-  [carrier : TcTypeEnvScopedCarrier]
-  [name : String]) : bool
-  (tc-type-env-scoped-carrier-name-bound-id? carrier (tc-name-id name)))
 
 (define (tc-type-env-scoped-carrier-bind-alias-id-if-free
   [carrier : TcTypeEnvScopedCarrier]
@@ -5123,31 +4975,6 @@
         (tc-binding-c-abi-fnptr-persistent-id?
           (tc-type-env-scoped-sidecar-persistent sidecar)
           name-id)))))
-
-(define (tc-type-env-scoped-carrier-default-builtin-unshadowed-id?
-  [carrier : TcTypeEnvScopedCarrier]
-  [name-id : i64]) : bool
-  (let
-    [stack : TcTypeEnvScopedStack
-      (struct-get (struct-get carrier sidecar) stack)]
-    [name-index : i64
-      (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
-    [boundary-index : i64
-      (tc-type-env-scoped-stack-lookup-index
-        (&mut stack)
-        (tc-default-boundary-id))]
-    (cond
-      [(>= name-index 0)
-        (and (>= boundary-index 0) (> boundary-index name-index))]
-      [(>= boundary-index 0) true]
-      [else
-        (begin
-          (cfg
-            compile-profile
-            (compiler-tc-env-profile-note-scoped-tail-fallback))
-          (tc-default-builtin-unshadowed-scan-id?
-            (tc-type-env-scoped-sidecar-persistent (struct-get carrier sidecar))
-            name-id))])))
 
 (define (tc-type-env-scoped-carrier-marker-type
   [carrier : TcTypeEnvScopedCarrier]
@@ -5723,9 +5550,6 @@
     [(TcTypeEnv.Bind key _ _) (tc-unsafe-decl-marker-key-id? key name-id)]
     [_ false]))
 
-(define (tc-binding-unsafe-marker-head? [env : TcTypeEnv] [name : String]) : bool
-  (tc-binding-unsafe-marker-head-id? env (tc-name-id name)))
-
 (define (tc-binding-unsafe-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeEnv.Nil) false]
@@ -6122,11 +5946,6 @@
 (define (tc-env-with-local-cache [env : TcTypeEnv]) : TcTypeEnv
   (tc-env-with-partial-local-cache env))
 
-(define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (if (tc-name-bound-id? env (tc-name-id name))
-    env
-    (tc-bind env name ty)))
-
 (define (tc-name-bound-id-with-top-env-membership?
   [env : TcTypeEnv]
   [name-id : i64]) : bool
@@ -6166,15 +5985,6 @@
     name-id
     (tc-name-id (compiler-symbol-module-key module (intern-str name-id)))))
 
-(define (tc-bind-module-name
-  [env : TcTypeEnv]
-  [module : String]
-  [name : String]
-  [ty : AstType]) : TcTypeEnv
-  (if (string.eq module "")
-    (tc-bind env name ty)
-    (tc-bind env (compiler-symbol-module-key module name) ty)))
-
 (define (tc-bind-module-name-id
   [env : TcTypeEnv]
   [module : String]
@@ -6183,15 +5993,6 @@
   (if (string.eq module "")
     (tc-bind-id env name ty)
     (tc-bind env (compiler-symbol-module-key module (intern-str name)) ty)))
-
-(define (tc-bind-module-name-unsafe
-  [env : TcTypeEnv]
-  [module : String]
-  [name : String]
-  [ty : AstType]) : TcTypeEnv
-  (if (string.eq module "")
-    (tc-bind-unsafe env name ty)
-    (tc-bind-unsafe env (compiler-symbol-module-key module name) ty)))
 
 (define (tc-bind-module-name-unsafe-id
   [env : TcTypeEnv]
@@ -6391,60 +6192,6 @@
 (define (tc-enum-cleanup-function-type [enum-ty : AstType]) : AstType
   (tc-fn1 enum-ty (AstType.Unit)))
 
-(define (tc-cleanup-value-handle? [handle : i64]) : bool
-  (let
-    [kind : i64 (compiler-symbol-handle-kind handle)]
-    (or
-      (= kind (compiler-symbol-kind-struct-cleanup))
-      (= kind (compiler-symbol-kind-enum-cleanup)))))
-
-(define (tc-struct-cleanup-decl-type [module : String] [decl : AstDecl]) : ResultTcType
-  (match decl
-    [(AstDecl.DefStruct name _ _ _)
-      (ResultTcType.Ok
-        (tc-struct-cleanup-function-type
-          (AstType.Struct
-            (intern (compiler-symbol-module-key module (intern-str name))))))]
-    [(AstDecl.DefStructLifetimes name lifetimes _ _ _)
-      (ResultTcType.Ok
-        (tc-struct-cleanup-function-type
-          (ast-ty-struct-args
-            (intern (compiler-symbol-module-key module (intern-str name)))
-            lifetimes)))]
-    [_
-      (ResultTcType.Err
-        "typecheck: exported struct cleanup has no struct declaration")]))
-
-(define (tc-enum-cleanup-decl-type [module : String] [decl : AstDecl]) : ResultTcType
-  (match decl
-    [(AstDecl.DefEnum name _ _)
-      (ResultTcType.Ok
-        (tc-enum-cleanup-function-type
-          (AstType.Enum
-            (intern (compiler-symbol-module-key module (intern-str name))))))]
-    [(AstDecl.DefEnumLifetimes name lifetimes _ _)
-      (ResultTcType.Ok
-        (tc-enum-cleanup-function-type
-          (ast-ty-enum-args
-            (intern (compiler-symbol-module-key module (intern-str name)))
-            lifetimes)))]
-    [_
-      (ResultTcType.Err
-        "typecheck: exported enum cleanup has no enum declaration")]))
-
-(define (tc-cleanup-value-handle-type
-  [module : String]
-  [handle : i64]
-  [decl : AstDecl]) : ResultTcType
-  (let
-    [kind : i64 (compiler-symbol-handle-kind handle)]
-    (cond
-      [(= kind (compiler-symbol-kind-struct-cleanup))
-        (tc-struct-cleanup-decl-type module decl)]
-      [(= kind (compiler-symbol-kind-enum-cleanup))
-        (tc-enum-cleanup-decl-type module decl)]
-      [else (ResultTcType.Err "typecheck: value is not a generated cleanup")])))
-
 (define (tc-bind-struct-cleanup-module-name
   [env : TcTypeEnv]
   [module : String]
@@ -6490,32 +6237,6 @@
     [(AstEnumCleanup.No) env]
     [(AstEnumCleanup.Fn cleanup-name)
       (tc-bind-id env cleanup-name (tc-enum-cleanup-function-type enum-ty))]))
-
-(define (tc-bind-struct-cleanup-alias
-  [env : TcTypeEnv]
-  [alias : String]
-  [cleanup : AstStructCleanup]
-  [struct-ty : AstType]) : TcTypeEnv
-  (match cleanup
-    [(AstStructCleanup.No) env]
-    [(AstStructCleanup.Fn cleanup-name)
-      (tc-bind
-        env
-        (compiler-symbol-module-key alias (intern-str cleanup-name))
-        (tc-struct-cleanup-function-type struct-ty))]))
-
-(define (tc-bind-enum-cleanup-alias
-  [env : TcTypeEnv]
-  [alias : String]
-  [cleanup : AstEnumCleanup]
-  [enum-ty : AstType]) : TcTypeEnv
-  (match cleanup
-    [(AstEnumCleanup.No) env]
-    [(AstEnumCleanup.Fn cleanup-name)
-      (tc-bind
-        env
-        (compiler-symbol-module-key alias (intern-str cleanup-name))
-        (tc-enum-cleanup-function-type enum-ty))]))
 
 (define (tc-bind-struct-cleanup-import-alias
   [ctx : TcContext]
@@ -6908,18 +6629,6 @@
         (tc-env-marker-type-scan (box-get rest) name-id))]
     [_ (tc-env-marker-type-scan env name-id)]))
 
-(define (tc-in-unsafe-scan? [env : TcTypeEnv]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-in-unsafe-scan? (box-get rest))
-        false)]
-    [(TcTypeEnv.Bind key _ rest)
-      (if (= key (tc-unsafe-marker-id))
-        true
-        (tc-in-unsafe-scan? (box-get rest)))]))
-
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (if tc-type-env-scoped-runtime-active
     (tc-type-env-scoped-carrier-in-unsafe? (tc-type-env-scoped-runtime-current))
@@ -7142,21 +6851,6 @@
     ty
     TcTypeEnvScopedMarkerKind.Other))
 
-(define (tc-current-return-type-scan [env : TcTypeEnv]) : ResultTcType
-  (match env
-    [(TcTypeEnv.Nil)
-      (ResultTcType.Err
-        "typecheck: try requires enclosing Result-like function")]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-current-return-type-scan (box-get rest))
-        (ResultTcType.Err
-          "typecheck: try requires enclosing Result-like function"))]
-    [(TcTypeEnv.Bind key ty rest)
-      (if (= key (tc-return-type-id))
-        (ResultTcType.Ok ty)
-        (tc-current-return-type-scan (box-get rest)))]))
-
 (define (tc-current-return-type [env : TcTypeEnv]) : ResultTcType
   (if tc-type-env-scoped-runtime-active
     (tc-type-env-scoped-carrier-current-return-type
@@ -7204,27 +6898,6 @@
 
 (define (tc-type-list3 [a : AstType] [b : AstType] [c : AstType]) : AstTypeList
   (ast-type-cons a (ast-type-cons b (ast-type-cons c (ast-type-list-new)))))
-
-(define (tc-type-list1-with-pools [pools : AstNodePoolContext] [a : AstType]) : AstTypeList
-  (ast-type-cons-with-pools pools a (ast-type-list-new)))
-
-(define (tc-type-list2-with-pools
-  [pools : AstNodePoolContext]
-  [a : AstType]
-  [b : AstType]) : AstTypeList
-  (let
-    [rest : AstTypeList (ast-type-cons-with-pools pools b (ast-type-list-new))]
-    (ast-type-cons-with-pools pools a rest)))
-
-(define (tc-type-list3-with-pools
-  [pools : AstNodePoolContext]
-  [a : AstType]
-  [b : AstType]
-  [c : AstType]) : AstTypeList
-  (let
-    [tail : AstTypeList (ast-type-cons-with-pools pools c (ast-type-list-new))]
-    [rest : AstTypeList (ast-type-cons-with-pools pools b tail)]
-    (ast-type-cons-with-pools pools a rest)))
 
 (define (tc-fn0 [ret : AstType]) : AstType
   (ast-ty-func (ast-type-list-new) ret))
@@ -9355,9 +9028,6 @@
           [(TcMaybeString.Some message) (ResultTcType.Err message)])]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
-(define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
-  (tc-lookup-visible-id ctx env (tc-name-id name)))
-
 (define (tc-lookup-hygiene-global-scan
   [root : TcTypeEnv]
   [env : TcTypeEnv]
@@ -9384,12 +9054,6 @@
   (match (tc-lookup-hygiene-global-id env name-id)
     [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
-
-(define (tc-lookup-hygiene-global-visible
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : String]) : ResultTcType
-  (tc-lookup-hygiene-global-visible-id ctx env (tc-name-id name)))
 
 (define (tc-lookup-dotted-source-visible
   [ctx : TcContext]
@@ -9981,24 +9645,6 @@
 (define (tc-lifetime-list-eq [a : AstLifetimeList] [b : AstLifetimeList]) : bool
   (ast-lifetime-list-eq? a b))
 
-(define (tc-lifetime-list-all-in?
-  [items : AstLifetimeList]
-  [allowed : AstLifetimeList]) : bool
-  (tc-lifetime-list-all-in-at? (& items) allowed 0))
-
-(define (tc-lifetime-list-all-in-at?
-  [items : (& items AstLifetimeList)]
-  [allowed : AstLifetimeList]
-  [index : i64]) : bool
-  (if (>= index (ast-lifetime-list-len items))
-    true
-    (let
-      [item : String
-        (ast-lifetime-list-get items index (ast-lifetime-fallback))]
-      (and
-        (or (string.eq item "program") (tc-lifetime-list-contains allowed item))
-        (tc-lifetime-list-all-in-at? items allowed (+ index 1))))))
-
 (define (tc-lifetime-list-to-string-list-into
   [items : AstLifetimeList]
   [out : TcStringList]) : TcStringList
@@ -10129,12 +9775,6 @@
 
 (define (tc-ordinary-binding-rank [env : TcTypeEnv] [name : String]) : i64
   (tc-ordinary-binding-rank-id-from env (tc-name-id name) 0))
-
-(define (tc-env-binding-matches-lifetime?
-  [key : i64]
-  [ty : AstType]
-  [lifetime : String]) : bool
-  (tc-env-binding-matches-lifetime-id? key ty lifetime (tc-name-id lifetime)))
 
 (define (tc-lifetime-visible-scan-id?
   [env : TcTypeEnv]
@@ -11162,20 +10802,6 @@
   (match maybe-ty
     [(AstMaybeType.No) false]
     [(AstMaybeType.Some ty) (tc-type-contains-reference? ty)]))
-
-(define (tc-param-list-contains-reference? [params : AstParamList]) : bool
-  (tc-param-list-contains-reference-at? (& params) 0))
-
-(define (tc-param-list-contains-reference-at?
-  [params : (& params AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast-param-list-len params))
-    false
-    (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _ _)
-        (or
-          (tc-type-contains-reference? ty)
-          (tc-param-list-contains-reference-at? params (+ index 1)))])))
 
 (define (tc-param-list-reference-return-lifetimes-into
   [ctx : TcContext]
@@ -18411,10 +18037,10 @@
         0)
       (match (tc-type-env-scoped-carrier-current-return-type carrier)
         [(ResultTcType.Ok stack-ret)
-          (match (tc-current-return-type-scan persistent)
-            [(ResultTcType.Ok persistent-ret)
+          (match (tc-env-marker-type persistent (tc-return-type-id))
+            [(AstMaybeType.Some persistent-ret)
               (tc-type-eq stack-ret persistent-ret)]
-            [(ResultTcType.Err _) false])]
+            [(AstMaybeType.No) false])]
         [(ResultTcType.Err _) false]))))
 
 (define (tc-bind-macro-params

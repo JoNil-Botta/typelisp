@@ -25,7 +25,7 @@
 
 (define (main) : i64
   (begin
-    (cbi.compiler-builtin-refresh!)
+    (cbi.compiler-builtin-initialize-for-parse!)
     (if (and
       (= (compiler-diagnostic-self-test) 42)
       (compiler-parse-member-origin-boundary-ok?))

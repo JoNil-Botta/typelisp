@@ -12779,8 +12779,6 @@
   (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-values : (Array i64)
   (array.make-array i64 8192))
-(define tc-source-qualified-variant-handle-cache-values : (Array i64)
-  (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-generation : i64
   -1)
 (define tc-source-qualified-variant-key-cache-ready : bool
@@ -12925,28 +12923,6 @@
         (array-ref tc-source-qualified-variant-key-cache-values cursor)
         -2))))
 
-;; Returns the cached registry handle, -1 for no variant, or -2 when the key
-;; was cached without its handle.
-(define (tc-source-qualified-variant-handle-cache-get
-  [module-id : i64]
-  [name-id : i64]) : i64
-  (begin
-    (tc-source-qualified-variant-key-cache-ensure!)
-    (let
-      [cursor : i64
-        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
-      [module-key : i64 (+ module-id 1)]
-      [name-key : i64 (+ name-id 1)]
-      (if (and
-        (=
-          (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
-          module-key)
-        (=
-          (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
-          name-key))
-        (array-ref tc-source-qualified-variant-handle-cache-values cursor)
-        -2))))
-
 (define (tc-source-dotted-alias-key-cache-put!
   [module-id : i64]
   [name-id : i64]
@@ -13004,20 +12980,7 @@
           tc-source-qualified-variant-key-cache-name-keys
           cursor
           (+ name-id 1))
-        (array-set! tc-source-qualified-variant-key-cache-values cursor value)
-        (array-set! tc-source-qualified-variant-handle-cache-values cursor -2)))))
-
-(define (tc-source-qualified-variant-key-handle-cache-put!
-  [module-id : i64]
-  [name-id : i64]
-  [key-id : i64]
-  [handle : i64]) : unit
-  (begin
-    (tc-source-qualified-variant-key-cache-put! module-id name-id key-id)
-    (array-set!
-      tc-source-qualified-variant-handle-cache-values
-      (tc-source-qualified-variant-key-cache-bucket module-id name-id)
-      handle)))
+        (array-set! tc-source-qualified-variant-key-cache-values cursor value)))))
 
 (define tc-lazy-import-stubs : TcLazyImportStubList
   (TcLazyImportStubList.Nil))
@@ -13683,41 +13646,43 @@
   [ctx : TcContext]
   [_name : String]
   [name-id : i64]) : option_i64.Option
-  (let
-    [module-id : i64 (tc-context-module-id ctx)]
-    [cached-handle : i64
-      (tc-source-qualified-variant-handle-cache-get module-id name-id)]
-    (if (>= cached-handle 0)
-      (option_i64.Some cached-handle)
-      (if (= cached-handle -1)
-        option_i64.None
-        (match (tc-enum-qualified-variant-lookup-key-id ctx name-id module-id)
-          [(option_i64.Some key-id)
-            (let
-              [resolved-handle : i64
-                (tc-source-qualified-variant-handle-cache-get module-id name-id)]
-              (if (>= resolved-handle 0)
-                (option_i64.Some resolved-handle)
-                (match (compiler-registries-lookup-variant-key-id
-                  (tc-context-registries ctx)
-                  key-id)
-                  [(option_i64.Some handle)
-                    (begin
-                      (tc-source-qualified-variant-key-handle-cache-put!
-                        module-id
-                        name-id
-                        key-id
-                        handle)
-                      (option_i64.Some handle))]
-                  [(option_i64.None)
-                    (begin
-                      (tc-source-qualified-variant-key-handle-cache-put!
-                        module-id
-                        name-id
-                        -1
-                        -1)
-                      option_i64.None)])))]
-          [(option_i64.None) option_i64.None])))))
+  (if (tc-enum-qualified-variant-lookup-name-id? name-id)
+    (match ctx
+      [(TcContext _ _ registries module module-id _)
+        (let
+          [structural : bool (>= name-id (intern-capacity))]
+          [module-key-id : i64
+            (if (and
+              (not structural)
+              (> (string.string-length module) 0)
+              (not (tc-name-qualified-id? name-id)))
+              (compiler-symbol-dotted-variant-key-id-in-module-or
+                name-id
+                module-id
+                -1)
+              -1)]
+          [module-handle : i64
+            (if (< module-key-id 0)
+              -1
+              (compiler-registries-lookup-variant-key-id-or
+                registries
+                module-key-id
+                -1))]
+          [fallback-key-id : i64
+            (if structural
+              (compiler-symbol-name-id-key name-id)
+              (compiler-symbol-dotted-variant-key-id-in-module-or
+                name-id
+                (compiler-symbol-root-module-id)
+                -1))]
+          (if (>= module-handle 0)
+            (option_i64.Some module-handle)
+            (if (< fallback-key-id 0)
+              option_i64.None
+              (compiler-registries-lookup-variant-key-id
+                registries
+                fallback-key-id))))])
+    option_i64.None))
 
 (define (tc-enum-qualified-variant-lookup-key-id
   [ctx : TcContext]
@@ -13771,16 +13736,11 @@
                   (if (>= fallback-handle 0)
                     fallback-key-id
                     -1))]
-              [resolved-handle : i64
-                (if (>= module-handle 0)
-                  module-handle
-                  fallback-handle)]
               (begin
-                (tc-source-qualified-variant-key-handle-cache-put!
+                (tc-source-qualified-variant-key-cache-put!
                   module-id
                   name-id
-                  resolved
-                  resolved-handle)
+                  resolved)
                 (if (< resolved 0)
                   option_i64.None
                   (option_i64.Some resolved))))
@@ -59227,7 +59187,7 @@
   [type-kinds : AstMacroTypeKindList]) : String
   (str_cat.str-cat
     "typecheck: macro "
-    macro-name
+    (tc-name-slashes-to-dots macro-name)
     " type operand "
     (intern-str param-name)
     " rejects "

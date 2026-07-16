@@ -12209,16 +12209,19 @@
         (ast-decl-cons
           helper-decl
           (ast-decl-cons main-decl (ast-decl-list-new))))]
-    [_runtime-path-id : i64
+    [runtime-path-id : i64
       (compiler-load-source-path-id "C:/repo/stdlib/runtime.tl")]
-    [_main-path-id : i64 (compiler-load-source-path-id "C:/pkg/src/main.tl")]
+    [main-path-id : i64 (compiler-load-source-path-id "C:/pkg/src/main.tl")]
     [paths : AstDeclPathList
-      (ast-decl-root-path-cons
+      (ast-decl-path-cons-with-owner-id
         "C:/repo/stdlib/runtime.tl"
-        (ast-decl-root-path-cons
+        runtime-path-id
+        (ast-decl-path-cons-with-owner-id
           "C:/pkg/src/main.tl"
-          (ast-decl-root-path-cons
+          main-path-id
+          (ast-decl-path-cons-with-owner-id
             "C:/pkg/src/main.tl"
+            main-path-id
             (ast-decl-path-list-new))))]
     [owned : AstDeclPathList
       (compiler-load-package-owned-paths-for-decls

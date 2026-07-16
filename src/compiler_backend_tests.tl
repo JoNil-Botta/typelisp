@@ -20767,8 +20767,8 @@
         (=
           (ci.intern-compat-state-table-id state-a)
           (ci.intern-compat-state-table-id state-b)))
-      (string.eq symbol-a "_tl_first-state-name")
-      (string.eq symbol-b "_tl_second-state-name"))))
+      (string.eq symbol-a "_tl_first_state_name")
+      (string.eq symbol-b "_tl_second_state_name"))))
 
 (define (compiler-backend-user-symbol-cache-scratch-source) : String
   "(define (shared [x : i64]) : i64 (+ x 1))

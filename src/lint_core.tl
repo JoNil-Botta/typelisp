@@ -10551,12 +10551,10 @@
             ladder3)
           (ast-let-binding-list-new))
         vx)]
+    [nested-a-id : i64 (ci.intern-generated-name "a")]
     [outer-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding-id
-          (ci.intern-generated-name "a")
-          (AstMaybeType.No)
-          one)
+        (ast-let-binding-id nested-a-id (AstMaybeType.No) one)
         (ast-let-binding-list-new))]
     [inner-let-bindings : AstLetBindingList
       (ast-let-binding-cons
@@ -10564,10 +10562,7 @@
         (ast-let-binding-list-new))]
     [shadowing-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding-id
-          (ci.intern-generated-name "a")
-          (AstMaybeType.No)
-          one)
+        (ast-let-binding-id nested-a-id (AstMaybeType.No) one)
         (ast-let-binding-list-new))]
     [nested-let : i64
       (ast-expr-let outer-let-bindings (ast-expr-let inner-let-bindings vx))]

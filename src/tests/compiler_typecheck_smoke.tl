@@ -3948,6 +3948,7 @@
 
 (define (main) : i64
   (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
     (compiler-typecheck-self-test)
     (unless
       (compiler-typecheck-scoped-marker-queries-ok?)

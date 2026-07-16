@@ -4,6 +4,7 @@
 (import stdlib.text_buf)
 (import stdlib.vector)
 (import (vector String) as svec)
+(import compiler_builtin_ids as cbi)
 (import "../compiler_driver_core.tl")
 (import sym_i64_env)
 
@@ -812,6 +813,7 @@
 
 (define (main) : i64
   (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
     (compiler-lower-smoke-self-test)
     (unless
       (compiler-lower-smoke-issue3494-ok?)

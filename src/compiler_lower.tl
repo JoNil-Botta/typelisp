@@ -7654,6 +7654,7 @@
   [entry-path : String]
   [decl-path : String]
   [module : String]
+  [module-id : i64]
   [names : LowerNameCache]
   [state : LowerReachState]
   [fields : AstFieldDefList]) : LowerReachState
@@ -7662,6 +7663,7 @@
     entry-path
     decl-path
     module
+    module-id
     names
     state
     (& fields)
@@ -7672,6 +7674,7 @@
   [entry-path : String]
   [decl-path : String]
   [module : String]
+  [module-id : i64]
   [names : LowerNameCache]
   [state : LowerReachState]
   [fields : (& fields AstFieldDefList)]
@@ -7693,9 +7696,7 @@
                           cleanup-name
                           cleanup-name)
                         -1)
-                      (lower-module-name-key-id-by-id
-                        (struct-get names module-id)
-                        cleanup-name))]
+                      (lower-module-name-key-id-by-id module-id cleanup-name))]
                   (lower-reach-add-logical all-functions state logical-id))]
               [_ state])])]
       (lower-reach-struct-field-cleanup-roots-at
@@ -7703,6 +7704,7 @@
         entry-path
         decl-path
         module
+        module-id
         names
         next
         fields
@@ -7713,6 +7715,7 @@
   [entry-path : String]
   [decl-path : String]
   [module : String]
+  [module-id : i64]
   [names : LowerNameCache]
   [state : LowerReachState]
   [variants : AstVariantDefList]) : LowerReachState
@@ -7721,6 +7724,7 @@
     entry-path
     decl-path
     module
+    module-id
     names
     state
     (& variants)
@@ -7732,6 +7736,7 @@
   [entry-path : String]
   [decl-path : String]
   [module : String]
+  [module-id : i64]
   [names : LowerNameCache]
   [state : LowerReachState]
   [variants : (& variants AstVariantDefList)]
@@ -7752,6 +7757,7 @@
             entry-path
             decl-path
             module
+            module-id
             names
             state
             variants
@@ -7773,9 +7779,7 @@
                             cleanup-name
                             cleanup-name)
                           -1)
-                        (lower-module-name-key-id-by-id
-                          (struct-get names module-id)
-                          cleanup-name))]
+                        (lower-module-name-key-id-by-id module-id cleanup-name))]
                     (lower-reach-add-logical all-functions state logical-id))]
                 [_ state])]
             (lower-reach-enum-payload-cleanup-roots-at
@@ -7783,6 +7787,7 @@
               entry-path
               decl-path
               module
+              module-id
               names
               next
               variants
@@ -7795,6 +7800,7 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
+  [module-id : i64]
   [names : LowerNameCache]
   [state : LowerReachState]) : LowerReachState
   (match (ast-decl-list-step decls)
@@ -7810,6 +7816,15 @@
           (match (ast-decl-path-list-step paths)
             [(AstDeclPathListStep.Cons _ path-rest) path-rest]
             [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
+        [logical-module-id : i64
+          (lower-decl-owner-module-id
+            (& paths)
+            0
+            entry-path
+            decl-path
+            module-id)]
+        [logical-module : String
+          (lower-decl-owner-module-name module-id logical-module-id)]
         [next : LowerReachState
           (match decl
             [(AstDecl.DefStruct _ _ cleanup fields)
@@ -7818,7 +7833,8 @@
                   all-functions
                   entry-path
                   decl-path
-                  module
+                  logical-module
+                  logical-module-id
                   names
                   state
                   fields)
@@ -7829,7 +7845,8 @@
                   all-functions
                   entry-path
                   decl-path
-                  module
+                  logical-module
+                  logical-module-id
                   names
                   state
                   fields)
@@ -7840,7 +7857,8 @@
                   all-functions
                   entry-path
                   decl-path
-                  module
+                  logical-module
+                  logical-module-id
                   names
                   state
                   variants)
@@ -7851,7 +7869,8 @@
                   all-functions
                   entry-path
                   decl-path
-                  module
+                  logical-module
+                  logical-module-id
                   names
                   state
                   variants)
@@ -7866,7 +7885,8 @@
                         all-functions
                         entry-path
                         decl-path
-                        module
+                        logical-module
+                        logical-module-id
                         names
                         state
                         fields)
@@ -7877,7 +7897,8 @@
                         all-functions
                         entry-path
                         decl-path
-                        module
+                        logical-module
+                        logical-module-id
                         names
                         state
                         fields)
@@ -7888,7 +7909,8 @@
                         all-functions
                         entry-path
                         decl-path
-                        module
+                        logical-module
+                        logical-module-id
                         names
                         state
                         variants)
@@ -7899,7 +7921,8 @@
                         all-functions
                         entry-path
                         decl-path
-                        module
+                        logical-module
+                        logical-module-id
                         names
                         state
                         variants)
@@ -7912,6 +7935,7 @@
                 rest-paths
                 entry-path
                 (intern-str next-module)
+                next-module
                 names
                 state)]
             [_ state])]
@@ -7924,6 +7948,7 @@
               rest-paths
               entry-path
               module
+              module-id
               names
               next)]))]))
 
@@ -10222,6 +10247,7 @@
                         paths
                         entry-path
                         ""
+                        cbi.compiler-builtin-id-fix-empty
                         name-cache
                         export-state)]
                     [clone-state : LowerReachState
@@ -18251,7 +18277,7 @@
   (if (= (struct-get (& args) len) 0)
     (lower-runtime-call-values
       state
-      (lower-ir-symbol -1 "tl_tls_current_arena_load")
+      cbi.compiler-builtin-id-tl-tls-current-arena-load
       CompilerIrValueList.Nil
       result-ty)
     (ResultLowerExpr.Err
@@ -18276,7 +18302,7 @@
                 [(LowerExpr.Expr cast-state cast-value _)
                   (lower-runtime-call-values
                     cast-state
-                    (lower-ir-symbol -1 "tl_tls_current_arena_store")
+                    cbi.compiler-builtin-id-tl-tls-current-arena-store
                     (compiler-ir-value-cons cast-value CompilerIrValueList.Nil)
                     result-ty)])])]
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
@@ -58616,8 +58642,8 @@
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-branch-count functions ".::main") 1)
-            (> (lower-test-function-return-count functions ".::main") 2))])]
+            (> (lower-test-function-branch-count functions "main") 1)
+            (> (lower-test-function-return-count functions "main") 2))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-return-shape-ok?) : bool
@@ -58646,8 +58672,8 @@
           (and
             (= (lower-test-functions-call-count functions ".::close-a") 3)
             (= (lower-test-functions-call-count functions ".::close-b") 2)
-            (> (lower-test-function-return-count functions ".::main") 2)
-            (> (lower-test-function-branch-count functions ".::main") 2))])]
+            (> (lower-test-function-return-count functions "main") 2)
+            (> (lower-test-function-branch-count functions "main") 2))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-resource-with-nested-shape-ok?) : bool
@@ -58675,10 +58701,10 @@
             (>
               (lower-test-function-direct-call-count
                 functions
-                ".::main"
+                "main"
                 ".::cleanup-file-handle")
               1)
-            (> (lower-test-function-return-count functions ".::main") 1))])]
+            (> (lower-test-function-return-count functions "main") 1))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-cleanup-struct-nested-shape-ok?) : bool
@@ -59722,18 +59748,20 @@
               items
               (box (string.int->string 4)))))))))"))
 
+(define (compiler-lower-with-escape-arena-functions-shape-ok?
+  [functions : CompilerIrFunctionList]) : bool
+  (and
+    (>= (lower-test-functions-call-count functions "tl_arena_current") 3)
+    (>= (lower-test-functions-call-count functions "tl_arena_set") 4)
+    (> (lower-test-functions-call-count functions "tl_region_mark") 0)
+    (> (lower-test-functions-call-count functions "tl_region_reset") 0)))
+
 (define (compiler-lower-with-escape-arena-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
-          (and
-            (>=
-              (lower-test-functions-call-count functions "tl_arena_current")
-              3)
-            (>= (lower-test-functions-call-count functions "tl_arena_set") 4)
-            (> (lower-test-functions-call-count functions "tl_region_mark") 0)
-            (> (lower-test-functions-call-count functions "tl_region_reset") 0))])]
+          (compiler-lower-with-escape-arena-functions-shape-ok? functions)])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-escape-array-shape-ok?) : bool
@@ -59767,8 +59795,7 @@
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
-            (compiler-lower-with-escape-arena-shape-ok?
-              (compiler-lower-with-escape-owning-source))
+            (compiler-lower-with-escape-arena-functions-shape-ok? functions)
             (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -59890,22 +59917,22 @@
             items
             (box (string.int->string 4))))))))"))
 
+(define (compiler-lower-with-scratch-arena-functions-shape-ok?
+  [functions : CompilerIrFunctionList]) : bool
+  (and
+    (>= (lower-test-functions-call-count functions "tl_arena_current") 3)
+    (>= (lower-test-functions-call-count functions "tl_arena_set") 3)
+    (>= (lower-test-functions-call-count functions "tl_arena_make") 1)
+    (>= (lower-test-functions-call-count functions "tl_arena_destroy") 1)
+    (= (lower-test-functions-call-count functions "tl_region_mark") 0)
+    (= (lower-test-functions-call-count functions "tl_region_reset") 0)))
+
 (define (compiler-lower-with-scratch-arena-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
-          (and
-            (>=
-              (lower-test-functions-call-count functions "tl_arena_current")
-              3)
-            (>= (lower-test-functions-call-count functions "tl_arena_set") 3)
-            (>= (lower-test-functions-call-count functions "tl_arena_make") 1)
-            (>=
-              (lower-test-functions-call-count functions "tl_arena_destroy")
-              1)
-            (= (lower-test-functions-call-count functions "tl_region_mark") 0)
-            (= (lower-test-functions-call-count functions "tl_region_reset") 0))])]
+          (compiler-lower-with-scratch-arena-functions-shape-ok? functions)])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-with-scratch-owning-shape-ok?) : bool
@@ -59915,8 +59942,7 @@
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
-            (compiler-lower-with-scratch-arena-shape-ok?
-              (compiler-lower-with-scratch-owning-source))
+            (compiler-lower-with-scratch-arena-functions-shape-ok? functions)
             (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -61965,40 +61991,45 @@
           [_ (lower-test-decl-list-defines? rest name)]))]))
 
 (define (compiler-lower-ast-dce-program) : AstProgram
-  (ast-program
-    (ast-decl-cons
-      (ast-decl-def-id
-        (lower-test-generated-name-id "callback")
-        AstMaybeType.No
-        (ast-node-push
-          (AstExpr.Var cbi.compiler-builtin-id-fix-callback_target)))
+  (let
+    [callback-id : i64 (lower-test-generated-name-id "callback")]
+    [callback-target-id : i64 cbi.compiler-builtin-id-fix-callback_target]
+    [main-id : i64 cbi.compiler-builtin-id-fix-main]
+    [helper-id : i64 cbi.compiler-builtin-id-fix-helper]
+    [dead-id : i64 (lower-test-generated-name-id "dead")]
+    (ast-program
       (ast-decl-cons
-        (ast-decl-def-fn-id
-          (lower-test-generated-name-id "main")
-          (ast-param-list-new)
-          (AstType.I64)
-          (ast-expr-call
-            (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-helper))
-            (ast-expr-list-new)))
+        (ast-decl-def-id
+          callback-id
+          AstMaybeType.No
+          (ast-node-push (AstExpr.Var callback-target-id)))
         (ast-decl-cons
           (ast-decl-def-fn-id
-            (lower-test-generated-name-id "helper")
+            main-id
             (ast-param-list-new)
             (AstType.I64)
-            (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
+            (ast-expr-call
+              (ast-node-push (AstExpr.Var helper-id))
+              (ast-expr-list-new)))
           (ast-decl-cons
             (ast-decl-def-fn-id
-              (lower-test-generated-name-id "callback-target")
+              helper-id
               (ast-param-list-new)
               (AstType.I64)
-              (ast-node-push (AstExpr.Literal (ast-lit-int 11))))
+              (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
             (ast-decl-cons
               (ast-decl-def-fn-id
-                (lower-test-generated-name-id "dead")
+                callback-target-id
                 (ast-param-list-new)
                 (AstType.I64)
-                (ast-node-push (AstExpr.Literal (ast-lit-int 9))))
-              (ast-decl-list-new))))))))
+                (ast-node-push (AstExpr.Literal (ast-lit-int 11))))
+              (ast-decl-cons
+                (ast-decl-def-fn-id
+                  dead-id
+                  (ast-param-list-new)
+                  (AstType.I64)
+                  (ast-node-push (AstExpr.Literal (ast-lit-int 9))))
+                (ast-decl-list-new)))))))))
 
 (define (compiler-lower-dce-test-symbols-ready?) : bool
   (match (parse-ast-source
@@ -62214,112 +62245,136 @@
 (unsafe (define (dead-unsafe) : i64 (dead-helper)))")
 
 (define (compiler-lower-type-decl-dce-program) : AstProgram
-  (ast-program
-    (ast-decl-cons
-      (ast-decl-def-enum-id
-        (lower-test-generated-name-id "UsedEnum")
-        AstEnumCleanup.No
-        (ast-variant-def-cons
-          (ast-variant-def-id
-            (lower-test-generated-name-id "UsedA")
-            (ast-type-list-new)
-            (ast-variant-payload-cleanup-list-new))
-          (ast-variant-def-list-new)))
+  (let
+    [used-enum-id : i64 cbi.compiler-builtin-id-fix-UsedEnum]
+    [used-box-id : i64 cbi.compiler-builtin-id-fix-UsedBox]
+    (ast-program
       (ast-decl-cons
         (ast-decl-def-enum-id
-          (lower-test-generated-name-id "DeadEnum")
+          used-enum-id
           AstEnumCleanup.No
           (ast-variant-def-cons
             (ast-variant-def-id
-              (lower-test-generated-name-id "DeadA")
+              (lower-test-generated-name-id "UsedA")
               (ast-type-list-new)
               (ast-variant-payload-cleanup-list-new))
             (ast-variant-def-list-new)))
         (ast-decl-cons
-          (ast-decl-def-struct-id
-            (lower-test-generated-name-id "UsedBox")
-            AstStructRepr.Default
-            AstStructCleanup.No
-            (ast-field-def-cons
-              (ast-field-def-id
-                (lower-test-generated-name-id "value")
-                (AstType.Enum cbi.compiler-builtin-id-fix-UsedEnum)
-                AstFieldCleanup.No)
-              (ast-field-def-list-new)))
+          (ast-decl-def-enum-id
+            (lower-test-generated-name-id "DeadEnum")
+            AstEnumCleanup.No
+            (ast-variant-def-cons
+              (ast-variant-def-id
+                (lower-test-generated-name-id "DeadA")
+                (ast-type-list-new)
+                (ast-variant-payload-cleanup-list-new))
+              (ast-variant-def-list-new)))
           (ast-decl-cons
             (ast-decl-def-struct-id
-              (lower-test-generated-name-id "DeadBox")
+              used-box-id
               AstStructRepr.Default
               AstStructCleanup.No
               (ast-field-def-cons
                 (ast-field-def-id
                   (lower-test-generated-name-id "value")
-                  (AstType.I64)
+                  (AstType.Enum used-enum-id)
                   AstFieldCleanup.No)
                 (ast-field-def-list-new)))
             (ast-decl-cons
-              (ast-decl-def-fn-id
-                (lower-test-generated-name-id "main")
-                (ast-param-list-new)
-                (AstType.Struct cbi.compiler-builtin-id-fix-UsedBox)
-                (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
-              (ast-decl-list-new))))))))
+              (ast-decl-def-struct-id
+                (lower-test-generated-name-id "DeadBox")
+                AstStructRepr.Default
+                AstStructCleanup.No
+                (ast-field-def-cons
+                  (ast-field-def-id
+                    (lower-test-generated-name-id "value")
+                    (AstType.I64)
+                    AstFieldCleanup.No)
+                  (ast-field-def-list-new)))
+              (ast-decl-cons
+                (ast-decl-def-fn-id
+                  cbi.compiler-builtin-id-fix-main
+                  (ast-param-list-new)
+                  (AstType.Struct used-box-id)
+                  (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
+                (ast-decl-list-new)))))))))
 
 (define (compiler-lower-type-decl-dce-paths) : AstDeclPathList
-  (ast-decl-root-path-cons
-    "types.tl"
-    (ast-decl-root-path-cons
+  (let
+    [types-id : i64 (compiler-load-source-path-id "types.tl")]
+    [entry-id : i64 (compiler-load-source-path-id "entry.tl")]
+    (ast-decl-path-cons-with-owner-id
       "types.tl"
-      (ast-decl-root-path-cons
+      types-id
+      (ast-decl-path-cons-with-owner-id
         "types.tl"
-        (ast-decl-root-path-cons
+        types-id
+        (ast-decl-path-cons-with-owner-id
           "types.tl"
-          (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new)))))))
+          types-id
+          (ast-decl-path-cons-with-owner-id
+            "types.tl"
+            types-id
+            (ast-decl-path-cons-with-owner-id
+              "entry.tl"
+              entry-id
+              (ast-decl-path-list-new))))))))
 
 (define (compiler-lower-type-decl-dce-qualified-base-program) : AstProgram
-  (ast-program
-    (ast-decl-cons
-      (ast-decl-def-enum-id
-        (lower-test-generated-name-id "io.ResultIoString")
-        AstEnumCleanup.No
-        (ast-variant-def-cons
-          (ast-variant-def-id
-            (lower-test-generated-name-id "OkIoString")
-            (ast-type-list-new)
-            (ast-variant-payload-cleanup-list-new))
-          (ast-variant-def-list-new)))
+  (let
+    [result-id : i64 (compiler-load-parse-context-name-id "io.ResultIoString")]
+    [dead-result-id : i64 (compiler-load-parse-context-name-id "io.DeadResult")]
+    (ast-program
       (ast-decl-cons
         (ast-decl-def-enum-id
-          (lower-test-generated-name-id "io.DeadResult")
+          result-id
           AstEnumCleanup.No
           (ast-variant-def-cons
             (ast-variant-def-id
-              (lower-test-generated-name-id "DeadResultA")
+              (lower-test-generated-name-id "OkIoString")
               (ast-type-list-new)
               (ast-variant-payload-cleanup-list-new))
             (ast-variant-def-list-new)))
         (ast-decl-cons
-          (ast-decl-def-fn-id
-            (lower-test-generated-name-id "main")
-            (ast-param-list-new)
-            (AstType.Enum cbi.compiler-builtin-id-fix-ResultIoString)
-            (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
-          (ast-decl-list-new))))))
+          (ast-decl-def-enum-id
+            dead-result-id
+            AstEnumCleanup.No
+            (ast-variant-def-cons
+              (ast-variant-def-id
+                (lower-test-generated-name-id "DeadResultA")
+                (ast-type-list-new)
+                (ast-variant-payload-cleanup-list-new))
+              (ast-variant-def-list-new)))
+          (ast-decl-cons
+            (ast-decl-def-fn-id
+              cbi.compiler-builtin-id-fix-main
+              (ast-param-list-new)
+              (AstType.Enum result-id)
+              (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
+            (ast-decl-list-new)))))))
 
 (define (compiler-lower-type-decl-dce-qualified-base-paths) : AstDeclPathList
-  (ast-decl-root-path-cons
-    "types.tl"
-    (ast-decl-root-path-cons
+  (let
+    [types-id : i64 (compiler-load-source-path-id "types.tl")]
+    [entry-id : i64 (compiler-load-source-path-id "entry.tl")]
+    (ast-decl-path-cons-with-owner-id
       "types.tl"
-      (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new)))))
+      types-id
+      (ast-decl-path-cons-with-owner-id
+        "types.tl"
+        types-id
+        (ast-decl-path-cons-with-owner-id
+          "entry.tl"
+          entry-id
+          (ast-decl-path-list-new))))))
 
 (define (compiler-lower-type-decl-dce-arena-support-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (ast-decl-module-id (lower-test-generated-name-id "stdlib.arena"))
+      (ast-decl-module-id (compiler-load-parse-context-name-id "stdlib.arena"))
       (ast-decl-cons
         (ast-decl-def-struct-id
-          (lower-test-generated-name-id "Arena")
+          (intern-dotted-tail-id cbi.compiler-builtin-id-fix-arena_dot_Arena)
           AstStructRepr.Default
           AstStructCleanup.No
           (ast-field-def-cons
@@ -62330,7 +62385,7 @@
             (ast-field-def-list-new)))
         (ast-decl-cons
           (ast-decl-def-struct-id
-            (lower-test-generated-name-id "ArenaMark")
+            cbi.compiler-builtin-id-fix-ArenaMark
             AstStructRepr.Default
             AstStructCleanup.No
             (ast-field-def-cons
@@ -62351,10 +62406,10 @@
                   AstFieldCleanup.No)
                 (ast-field-def-list-new)))
             (ast-decl-cons
-              (ast-decl-module-id (lower-test-generated-name-id "main"))
+              (ast-decl-module-id cbi.compiler-builtin-id-fix-main)
               (ast-decl-cons
                 (ast-decl-def-struct-id
-                  (lower-test-generated-name-id "ThreadBox")
+                  cbi.compiler-builtin-id-fix-ThreadBox
                   AstStructRepr.Default
                   AstStructCleanup.No
                   (ast-field-def-cons
@@ -62366,26 +62421,39 @@
                     (ast-field-def-list-new)))
                 (ast-decl-cons
                   (ast-decl-def-fn-id
-                    (lower-test-generated-name-id "main")
+                    cbi.compiler-builtin-id-fix-main
                     (ast-param-list-new)
                     (AstType.Struct cbi.compiler-builtin-id-fix-ThreadBox)
                     (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
                   (ast-decl-list-new))))))))))
 
 (define (compiler-lower-type-decl-dce-arena-support-paths) : AstDeclPathList
-  (ast-decl-root-path-cons
-    "arena.tl"
-    (ast-decl-root-path-cons
+  (let
+    [arena-id : i64 (compiler-load-source-path-id "arena.tl")]
+    [entry-id : i64 (compiler-load-source-path-id "entry.tl")]
+    [thread-id : i64 (compiler-load-source-path-id "thread.tl")]
+    (ast-decl-path-cons-with-owner-id
       "arena.tl"
-      (ast-decl-root-path-cons
+      arena-id
+      (ast-decl-path-cons-with-owner-id
         "arena.tl"
-        (ast-decl-root-path-cons
+        arena-id
+        (ast-decl-path-cons-with-owner-id
           "arena.tl"
-          (ast-decl-root-path-cons
-            "entry.tl"
-            (ast-decl-root-path-cons
-              "thread.tl"
-              (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new)))))))))
+          arena-id
+          (ast-decl-path-cons-with-owner-id
+            "arena.tl"
+            arena-id
+            (ast-decl-path-cons-with-owner-id
+              "entry.tl"
+              entry-id
+              (ast-decl-path-cons-with-owner-id
+                "thread.tl"
+                thread-id
+                (ast-decl-path-cons-with-owner-id
+                  "entry.tl"
+                  entry-id
+                  (ast-decl-path-list-new))))))))))
 
 (define (compiler-lower-type-decl-dce-test-body-program) : AstProgram
   (let
@@ -62403,7 +62471,7 @@
     (ast-program
       (ast-decl-cons
         (ast-decl-def-struct-id
-          (lower-test-generated-name-id "ImportedMark")
+          cbi.compiler-builtin-id-fix-ImportedMark
           AstStructRepr.Default
           AstStructCleanup.No
           (ast-field-def-list-new))
@@ -62420,28 +62488,38 @@
               (ast-source-span 1 1 1 1))
             (ast-decl-cons
               (ast-decl-def-fn-id
-                (lower-test-generated-name-id "main")
+                cbi.compiler-builtin-id-fix-main
                 (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
               (ast-decl-list-new))))))))
 
 (define (compiler-lower-type-decl-dce-test-body-paths) : AstDeclPathList
-  (ast-decl-root-path-cons
-    "types.tl"
-    (ast-decl-root-path-cons
+  (let
+    [types-id : i64 (compiler-load-source-path-id "types.tl")]
+    [entry-id : i64 (compiler-load-source-path-id "entry.tl")]
+    (ast-decl-path-cons-with-owner-id
       "types.tl"
-      (ast-decl-root-path-cons
-        "entry.tl"
-        (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new))))))
+      types-id
+      (ast-decl-path-cons-with-owner-id
+        "types.tl"
+        types-id
+        (ast-decl-path-cons-with-owner-id
+          "entry.tl"
+          entry-id
+          (ast-decl-path-cons-with-owner-id
+            "entry.tl"
+            entry-id
+            (ast-decl-path-list-new)))))))
 
 (define (compiler-lower-type-decl-dce-body-pattern-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (ast-decl-module-id (lower-test-generated-name-id "struct.match.geom"))
+      (ast-decl-module-id
+        (compiler-load-parse-context-name-id "struct.match.geom"))
       (ast-decl-cons
         (ast-decl-def-struct-id
-          (lower-test-generated-name-id "QPoint")
+          (compiler-load-parse-context-name-id "QPoint")
           AstStructRepr.Default
           AstStructCleanup.No
           (ast-field-def-cons
@@ -62467,10 +62545,10 @@
                 AstFieldCleanup.No)
               (ast-field-def-list-new)))
           (ast-decl-cons
-            (ast-decl-module-id (lower-test-generated-name-id "main"))
+            (ast-decl-module-id cbi.compiler-builtin-id-fix-main)
             (ast-decl-cons
               (ast-decl-def-fn-id
-                (lower-test-generated-name-id "main")
+                cbi.compiler-builtin-id-fix-main
                 (ast-param-list-new)
                 (AstType.I64)
                 (ast-expr-match
@@ -62478,7 +62556,7 @@
                   (ast-match-arm-cons
                     (ast-match-arm
                       (ast-pat-variant-id
-                        (lower-test-generated-name-id "geom.QPoint")
+                        (compiler-load-parse-context-name-id "geom.QPoint")
                         (ast-pattern-cons
                           (ast-pat-binding-id
                             (lower-test-generated-name-id "x"))
@@ -62491,15 +62569,25 @@
               (ast-decl-list-new))))))))
 
 (define (compiler-lower-type-decl-dce-body-pattern-paths) : AstDeclPathList
-  (ast-decl-root-path-cons
-    "geom.tl"
-    (ast-decl-root-path-cons
+  (let
+    [geom-id : i64 (compiler-load-source-path-id "geom.tl")]
+    [entry-id : i64 (compiler-load-source-path-id "entry.tl")]
+    (ast-decl-path-cons-with-owner-id
       "geom.tl"
-      (ast-decl-root-path-cons
+      geom-id
+      (ast-decl-path-cons-with-owner-id
         "geom.tl"
-        (ast-decl-root-path-cons
-          "entry.tl"
-          (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new)))))))
+        geom-id
+        (ast-decl-path-cons-with-owner-id
+          "geom.tl"
+          geom-id
+          (ast-decl-path-cons-with-owner-id
+            "entry.tl"
+            entry-id
+            (ast-decl-path-cons-with-owner-id
+              "entry.tl"
+              entry-id
+              (ast-decl-path-list-new))))))))
 
 (define (compiler-lower-ast-dce-ok?) : bool
   (let

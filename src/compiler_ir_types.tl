@@ -67,7 +67,7 @@
   symbol)
 
 (define (compiler-ir-test-symbol [name : String]) : i64
-  (ci.intern-generated-name name))
+  (ci.intern-generated-canonical-name name))
 
 (defenum CompilerIrValue
   (Var i64)

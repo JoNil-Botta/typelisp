@@ -56275,7 +56275,7 @@ tl_tlci_call_macro_entry:
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        (compiler-backend-test-symbol "main")
+        cbi.compiler-builtin-id-fix-main
         CompilerIrParamList.Nil
         (AstType.I64)
         4
@@ -56285,13 +56285,13 @@ tl_tlci_call_macro_entry:
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 0
-                (compiler-backend-test-symbol "tl_alloc")
+                cbi.compiler-builtin-id-tl-alloc
                 (CompilerIrCallArgs.One (CompilerIrValue.I64 8))
                 (AstType.I64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   1
-                  (compiler-backend-test-symbol "tl_substring")
+                  cbi.compiler-builtin-id-tl-substring
                   (compiler-ir-call-args-from-list
                     (compiler-ir-value-cons
                       (CompilerIrValue.I64 0)
@@ -56304,7 +56304,7 @@ tl_tlci_call_macro_entry:
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Call
                     2
-                    (compiler-backend-test-symbol "tl_string_concat")
+                    cbi.compiler-builtin-id-tl-string-concat
                     (compiler-ir-call-args-from-list
                       (compiler-ir-value-cons
                         (CompilerIrValue.I64 0)
@@ -56516,7 +56516,7 @@ tl_tlci_call_macro_entry:
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          (compiler-backend-test-symbol "main")
+          cbi.compiler-builtin-id-fix-main
           CompilerIrParamList.Nil
           (AstType.I64)
           0
@@ -56706,7 +56706,7 @@ tl_tlci_call_macro_entry:
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          (compiler-backend-test-symbol "main")
+          cbi.compiler-builtin-id-fix-main
           CompilerIrParamList.Nil
           (AstType.I64)
           1
@@ -56760,7 +56760,7 @@ tl_tlci_call_macro_entry:
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          (compiler-backend-test-symbol "main")
+          cbi.compiler-builtin-id-fix-main
           CompilerIrParamList.Nil
           (AstType.I64)
           2
@@ -56776,7 +56776,7 @@ tl_tlci_call_macro_entry:
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Call
                     1
-                    (compiler-backend-test-symbol "tl_substring")
+                    cbi.compiler-builtin-id-tl-substring
                     (compiler-ir-call-args-from-list
                       (compiler-ir-value-cons
                         (CompilerIrValue.I64 0)
@@ -56836,7 +56836,7 @@ tl_tlci_call_macro_entry:
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          (compiler-backend-test-symbol "main")
+          cbi.compiler-builtin-id-fix-main
           CompilerIrParamList.Nil
           (AstType.I64)
           1

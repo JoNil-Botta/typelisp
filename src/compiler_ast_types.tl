@@ -359,6 +359,43 @@
   (No)
   (Export i64))
 
+(defenum AstSpmdParamClass
+  (Uniform)
+  (Varying))
+
+(defstruct AstSpmdParamClassList
+  (slots (Array AstSpmdParamClass))
+  (len i64))
+
+(defenum AstSpmdResultClass
+  (Unit)
+  (Uniform)
+  (Varying))
+
+;; `index-param` is -1 for `none`, otherwise it is the zero-based source
+;; parameter index named by the declaration.
+(defstruct AstSpmdSpecialization
+  (lanes i64)
+  (args (Box AstSpmdParamClassList))
+  (result AstSpmdResultClass)
+  (index-param i64))
+
+(defstruct AstSpmdSpecializationList
+  (slots (Array AstSpmdSpecialization))
+  (len i64))
+
+(defenum AstSpmdCallable
+  (No)
+  (Callable AstSpmdSpecializationList))
+
+;; Export and callable metadata are mutually exclusive. Keep the common `No`
+;; and export cases inline at the old `AstFnExport` footprint, while boxing the
+;; rare specialization list so every ordinary function remains allocation-free.
+(defenum AstFnMetadata
+  (No)
+  (Export i64)
+  (SpmdCallable (Box AstSpmdSpecializationList)))
+
 (defenum AstExternMetadata
   (Metadata AstExternAbi i64 AstExternLinkInputList bool))
 
@@ -2120,7 +2157,7 @@
   (Module i64)
   (ModuleBody i64 (Box AstDeclList))
   (Def i64 AstMaybeType i64)
-  (DefFn i64 AstParamList AstType i64 AstFnExport)
+  (DefFn i64 AstParamList AstType i64 AstFnMetadata)
   (DefMacro i64 AstMacroParamList AstType i64)
   (Extern i64 AstExternKind (Box AstExternMetadata) AstType)
   (DefEnum i64 AstEnumCleanup AstVariantDefList)
@@ -2855,6 +2892,218 @@
 
 (define (ast-fn-export-id [name : i64]) : AstFnExport
   (AstFnExport.Export name))
+
+(define (ast-spmd-param-class-list-with-capacity [capacity : i64]) : AstSpmdParamClassList
+  (AstSpmdParamClassList
+    (array.make-array
+      AstSpmdParamClass
+      (if (< capacity 1)
+        1
+        capacity))
+    0))
+
+(define (ast-spmd-param-class-list-new) : AstSpmdParamClassList
+  (ast-spmd-param-class-list-with-capacity 4))
+
+(define (ast-spmd-param-class-list-len
+  [items : (& items AstSpmdParamClassList)]) : i64
+  (struct-get items len))
+
+(define (ast-spmd-param-class-list-get
+  [items : (& items AstSpmdParamClassList)]
+  [index : i64]
+  [fallback : AstSpmdParamClass]) : AstSpmdParamClass
+  (if (and (>= index 0) (< index (struct-get items len)))
+    (array-ref (struct-get items slots) index)
+    fallback))
+
+(define (ast-spmd-param-class-list-copy-range
+  [dst : (&mut dst (Array AstSpmdParamClass))]
+  [src : (& src (Array AstSpmdParamClass))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (ast-spmd-param-class-list-copy-range dst src (+ index 1) count))))
+
+(define (ast-spmd-param-class-list-grow
+  [items : (&mut items AstSpmdParamClassList)]) : unit
+  (let
+    [len : i64 (struct-get items len)]
+    [old-cap : i64 (array-length (struct-get items slots))]
+    [next : (Array AstSpmdParamClass)
+      (array.make-array
+        AstSpmdParamClass
+        (if (< old-cap 1)
+          1
+          (* old-cap 2)))]
+    (begin
+      (ast-spmd-param-class-list-copy-range
+        (&mut next)
+        (& (struct-get items slots))
+        0
+        len)
+      (set! (struct-get items slots) next))))
+
+(define (ast-spmd-param-class-list-push
+  [items : (&mut items AstSpmdParamClassList)]
+  [value : AstSpmdParamClass]) : unit
+  (begin
+    (if (< (struct-get items len) (array-length (struct-get items slots)))
+      unit
+      (ast-spmd-param-class-list-grow items))
+    (let
+      [index : i64 (struct-get items len)]
+      (begin
+        (array-set! (struct-get items slots) index value)
+        (set! (struct-get items len) (+ index 1))))))
+
+(define (ast-spmd-specialization-list-with-capacity [capacity : i64]) : AstSpmdSpecializationList
+  (AstSpmdSpecializationList
+    (array.make-array
+      AstSpmdSpecialization
+      (if (< capacity 1)
+        1
+        capacity))
+    0))
+
+(define (ast-spmd-specialization-list-new) : AstSpmdSpecializationList
+  (ast-spmd-specialization-list-with-capacity 2))
+
+(define (ast-spmd-specialization-list-len
+  [items : (& items AstSpmdSpecializationList)]) : i64
+  (struct-get items len))
+
+(define (ast-spmd-specialization-list-get
+  [items : (& items AstSpmdSpecializationList)]
+  [index : i64]
+  [fallback : AstSpmdSpecialization]) : AstSpmdSpecialization
+  (if (and (>= index 0) (< index (struct-get items len)))
+    (array-ref (struct-get items slots) index)
+    fallback))
+
+(define (ast-spmd-specialization-list-copy-range
+  [dst : (&mut dst (Array AstSpmdSpecialization))]
+  [src : (& src (Array AstSpmdSpecialization))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (ast-spmd-specialization-list-copy-range dst src (+ index 1) count))))
+
+(define (ast-spmd-specialization-list-grow
+  [items : (&mut items AstSpmdSpecializationList)]) : unit
+  (let
+    [len : i64 (struct-get items len)]
+    [old-cap : i64 (array-length (struct-get items slots))]
+    [next : (Array AstSpmdSpecialization)
+      (array.make-array
+        AstSpmdSpecialization
+        (if (< old-cap 1)
+          1
+          (* old-cap 2)))]
+    (begin
+      (ast-spmd-specialization-list-copy-range
+        (&mut next)
+        (& (struct-get items slots))
+        0
+        len)
+      (set! (struct-get items slots) next))))
+
+(define (ast-spmd-specialization-list-push
+  [items : (&mut items AstSpmdSpecializationList)]
+  [value : AstSpmdSpecialization]) : unit
+  (begin
+    (if (< (struct-get items len) (array-length (struct-get items slots)))
+      unit
+      (ast-spmd-specialization-list-grow items))
+    (let
+      [index : i64 (struct-get items len)]
+      (begin
+        (array-set! (struct-get items slots) index value)
+        (set! (struct-get items len) (+ index 1))))))
+
+(define (ast-spmd-param-class-list-clone [items : AstSpmdParamClassList]) : AstSpmdParamClassList
+  (let
+    [count : i64 (ast-spmd-param-class-list-len (& items))]
+    [out : AstSpmdParamClassList
+      (ast-spmd-param-class-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (ast-spmd-param-class-list-push
+            (&mut out)
+            (ast-spmd-param-class-list-get
+              (& items)
+              index
+              AstSpmdParamClass.Uniform))
+          (set! index (+ index 1))))
+      out)))
+
+(define (ast-spmd-specialization-clone [item : AstSpmdSpecialization]) : AstSpmdSpecialization
+  (AstSpmdSpecialization
+    (struct-get item lanes)
+    (box (ast-spmd-param-class-list-clone (box-get (struct-get item args))))
+    (struct-get item result)
+    (struct-get item index-param)))
+
+(define (ast-spmd-specialization-list-clone [items : AstSpmdSpecializationList]) : AstSpmdSpecializationList
+  (let
+    [count : i64 (ast-spmd-specialization-list-len (& items))]
+    [out : AstSpmdSpecializationList
+      (ast-spmd-specialization-list-with-capacity count)]
+    [fallback : AstSpmdSpecialization
+      (AstSpmdSpecialization
+        2
+        (box (ast-spmd-param-class-list-new))
+        AstSpmdResultClass.Unit
+        -1)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (ast-spmd-specialization-list-push
+            (&mut out)
+            (ast-spmd-specialization-clone
+              (ast-spmd-specialization-list-get (& items) index fallback)))
+          (set! index (+ index 1))))
+      out)))
+
+(define (ast-fn-metadata-clone [metadata : AstFnMetadata]) : AstFnMetadata
+  (match metadata
+    [(AstFnMetadata.No) AstFnMetadata.No]
+    [(AstFnMetadata.Export symbol) (AstFnMetadata.Export symbol)]
+    [(AstFnMetadata.SpmdCallable items)
+      (AstFnMetadata.SpmdCallable
+        (box (ast-spmd-specialization-list-clone (box-get items))))]))
+
+(define (ast-fn-metadata [export : AstFnExport]) : AstFnMetadata
+  (match export
+    [(AstFnExport.No) AstFnMetadata.No]
+    [(AstFnExport.Export symbol) (AstFnMetadata.Export symbol)]))
+
+(define (ast-fn-metadata-full
+  [export : AstFnExport]
+  [spmd-callable : AstSpmdCallable]) : AstFnMetadata
+  (match spmd-callable
+    [(AstSpmdCallable.No) (ast-fn-metadata export)]
+    [(AstSpmdCallable.Callable items) (AstFnMetadata.SpmdCallable (box items))]))
+
+(define (ast-fn-metadata-export [metadata : AstFnMetadata]) : AstFnExport
+  (match metadata
+    [(AstFnMetadata.Export symbol) (AstFnExport.Export symbol)]
+    [_ AstFnExport.No]))
+
+(define (ast-fn-metadata-spmd-callable [metadata : AstFnMetadata]) : AstSpmdCallable
+  (match metadata
+    [(AstFnMetadata.SpmdCallable items)
+      (AstSpmdCallable.Callable (box-get items))]
+    [_ AstSpmdCallable.No]))
 
 (define (ast-struct-cleanup-fn-id [name : i64]) : AstStructCleanup
   (AstStructCleanup.Fn name))
@@ -4628,7 +4877,7 @@
   [params : AstParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDecl.DefFn name params ret body AstFnExport.No))
+  (AstDecl.DefFn name params ret body (ast-fn-metadata AstFnExport.No)))
 
 (define (ast-decl-def-fn-export-id
   [name : i64]
@@ -4636,7 +4885,15 @@
   [ret : AstType]
   [body : i64]
   [export : AstFnExport]) : AstDecl
-  (AstDecl.DefFn name params ret body export))
+  (AstDecl.DefFn name params ret body (ast-fn-metadata export)))
+
+(define (ast-decl-def-fn-metadata-id
+  [name : i64]
+  [params : AstParamList]
+  [ret : AstType]
+  [body : i64]
+  [metadata : AstFnMetadata]) : AstDecl
+  (AstDecl.DefFn name params ret body (ast-fn-metadata-clone metadata)))
 
 (define (ast-decl-def-macro-id
   [name : i64]
@@ -6138,13 +6395,13 @@
         name
         (ast-compaction-remap-maybe-type remap maybe-ty)
         (ast-compaction-remap-expr-id remap value))]
-    [(AstDecl.DefFn name params ret body export)
+    [(AstDecl.DefFn name params ret body metadata)
       (AstDecl.DefFn
         name
         (ast-compaction-remap-param-list remap params)
         (ast-compaction-remap-type remap ret)
         (ast-compaction-remap-expr-id remap body)
-        export)]
+        (ast-fn-metadata-clone metadata))]
     [(AstDecl.DefMacro name params ret body)
       (AstDecl.DefMacro
         name
@@ -7101,6 +7358,55 @@
         (ty-node-pool-reset!)
         ok))))
 
+(define (compiler-ast-spmd-metadata-clone-smoke?) : bool
+  (let
+    [classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
+    [specializations : AstSpmdSpecializationList
+      (ast-spmd-specialization-list-new)]
+    (begin
+      (ast-spmd-param-class-list-push (&mut classes) AstSpmdParamClass.Varying)
+      (ast-spmd-param-class-list-push (&mut classes) AstSpmdParamClass.Uniform)
+      (ast-spmd-specialization-list-push
+        (&mut specializations)
+        (AstSpmdSpecialization 8 (box classes) AstSpmdResultClass.Varying 0))
+      (let
+        [copied : AstFnMetadata
+          (ast-fn-metadata-clone
+            (AstFnMetadata.SpmdCallable (box specializations)))]
+        (match (ast-fn-metadata-spmd-callable copied)
+          [(AstSpmdCallable.Callable copied-items)
+            (let
+              [fallback : AstSpmdSpecialization
+                (AstSpmdSpecialization
+                  2
+                  (box (ast-spmd-param-class-list-new))
+                  AstSpmdResultClass.Unit
+                  -1)]
+              [item : AstSpmdSpecialization
+                (ast-spmd-specialization-list-get (& copied-items) 0 fallback)]
+              [copied-classes : AstSpmdParamClassList
+                (box-get (struct-get item args))]
+              (and
+                (= (ast-spmd-specialization-list-len (& copied-items)) 1)
+                (= (struct-get item lanes) 8)
+                (= (struct-get item index-param) 0)
+                (match (struct-get item result)
+                  [(AstSpmdResultClass.Varying) true]
+                  [_ false])
+                (match (ast-spmd-param-class-list-get
+                  (& copied-classes)
+                  0
+                  AstSpmdParamClass.Uniform)
+                  [(AstSpmdParamClass.Varying) true]
+                  [_ false])
+                (match (ast-spmd-param-class-list-get
+                  (& copied-classes)
+                  1
+                  AstSpmdParamClass.Varying)
+                  [(AstSpmdParamClass.Uniform) true]
+                  [_ false])))]
+          [_ false])))))
+
 (define (compiler-ast-smoke) : i64
   (let
     [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
@@ -7141,6 +7447,7 @@
     [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
     [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]
     [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
+    [spmd-metadata-clone-ok? : bool (compiler-ast-spmd-metadata-clone-smoke?)]
     [param : AstParam (ast-param-id cbi.compiler-builtin-id-fix-x i64-ty false)]
     [params : AstParamList (ast-param-cons param (ast-param-list-new))]
     [decl : AstDecl
@@ -7154,7 +7461,8 @@
           nested-expr-pattern-ok?
           decl-program-ok?
           type-dedup-ok?
-          pool-exhaustion-ok?)
+          pool-exhaustion-ok?
+          spmd-metadata-clone-ok?)
           (+
             (ast-type-tag fn-ty)
             (+ (ast-expr-tag (ast-node-get expr)) (ast-decl-tag decl)))

@@ -4519,9 +4519,10 @@
         false
         generated
         false)]
-    [(AstDecl.DefFn name params ret _ export)
+    [(AstDecl.DefFn name params ret _ metadata)
       (let
-        [has-export : bool (compiler-load-surface-fn-export? export)]
+        [has-export : bool
+          (compiler-load-surface-fn-export? (ast-fn-metadata-export metadata))]
         (compiler-load-surface-build-add-decl
           build
           (CompilerLoadSurfaceDecl

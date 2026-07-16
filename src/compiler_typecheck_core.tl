@@ -61638,7 +61638,7 @@
             [(ResultMacroExpr.Ok nexpr)
               (ResultMacroDecl.Ok (ast-decl-def-id name maybe-ty nexpr))]
             [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
-      [(AstDecl.DefFn name params ret body-box export)
+      [(AstDecl.DefFn name params ret body-box metadata)
         (let
           [body : AstExpr (ast-node-get body-box)]
           [params-env : TcTypeEnv (tc-bind-params ctx global-env params)]
@@ -61647,7 +61647,7 @@
           (match (macro-expand-expr ctx body-env decls 0 body)
             [(ResultMacroExpr.Ok nbody)
               (ResultMacroDecl.Ok
-                (ast-decl-def-fn-export-id name params ret nbody export))]
+                (ast-decl-def-fn-metadata-id name params ret nbody metadata))]
             [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
       [(AstDecl.Test _ _ _) (ResultMacroDecl.Ok decl)]
       [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))

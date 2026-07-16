@@ -1820,10 +1820,10 @@
         (if (tltest-reachable-name-marked? names name)
           (tltest-reach-mark-expr expr names)
           names))]
-    [(AstDecl.DefFn name _ _ body-box export)
+    [(AstDecl.DefFn name _ _ body-box metadata)
       (let
         [body : AstExpr (ast-node-get body-box)]
-        (match export
+        (match (ast-fn-metadata-export metadata)
           [(AstFnExport.Export _)
             (tltest-reach-mark-expr body (tltest-reach-mark-name-id names name))]
           [(AstFnExport.No)
@@ -1918,10 +1918,10 @@
   [names : tltest_name_map.Map]) : bool
   (match decl
     [(AstDecl.Def name _ _) (tltest-reachable-name-marked? names name)]
-    [(AstDecl.DefFn name _ _ _ export)
+    [(AstDecl.DefFn name _ _ _ metadata)
       (let
         [marked : bool (tltest-reachable-name-marked? names name)]
-        (match export
+        (match (ast-fn-metadata-export metadata)
           [(AstFnExport.Export _) true]
           [(AstFnExport.No) marked]))]
     [(AstDecl.Extern name _ _ _) (tltest-reachable-name-marked? names name)]

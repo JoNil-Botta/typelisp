@@ -19350,10 +19350,18 @@
       (array-ref buckets (opt-gvn-bucket-index buckets key))
       key)))
 
-(define (opt-gvn-rewrite-instr
+;; Rewriting an instruction allocates only when the rewrite fires: scanning a
+;; sequence for changes is allocation-free, so unchanged blocks keep their
+;; original instruction arrays instead of paying for a cons-list rebuild and
+;; an Array->List->Array representation round trip per GVN call.
+(defenum OptMaybeInstr
+  (No)
+  (Some CompilerIrInstr))
+
+(define (opt-gvn-rewrite-instr-maybe
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
-  [instr : CompilerIrInstr]) : CompilerIrInstr
+  [instr : CompilerIrInstr]) : OptMaybeInstr
   (match instr
     [(CompilerIrInstr.BinOp dst op l r ty)
       (if (and
@@ -19362,17 +19370,19 @@
         (let
           [earlier : i64 (opt-gvn-lookup table (OptExprKey.BinKey op l r ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty)
-            instr))
-        instr)]
+            (OptMaybeInstr.Some
+              (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
     [(CompilerIrInstr.UnOp dst op v ty)
       (if (opt-gvn-value-stable? sources v)
         (let
           [earlier : i64 (opt-gvn-lookup table (OptExprKey.UnKey op v ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty)
-            instr))
-        instr)]
+            (OptMaybeInstr.Some
+              (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
     [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
       (if (and
         (opt-gvn-value-stable? sources leaf)
@@ -19381,24 +19391,41 @@
           [earlier : i64
             (opt-gvn-lookup table (OptExprKey.CpuIdKey leaf subleaf reg-index))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (CompilerIrInstr.Mov
-              dst
-              (CompilerIrValue.Var earlier)
-              (AstType.I64))
-            instr))
-        instr)]
+            (OptMaybeInstr.Some
+              (CompilerIrInstr.Mov
+                dst
+                (CompilerIrValue.Var earlier)
+                (AstType.I64)))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
     [(CompilerIrInstr.Xgetbv dst index)
       (if (opt-gvn-value-stable? sources index)
         (let
           [earlier : i64 (opt-gvn-lookup table (OptExprKey.XgetbvKey index))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (CompilerIrInstr.Mov
-              dst
-              (CompilerIrValue.Var earlier)
-              (AstType.I64))
-            instr))
-        instr)]
-    [_ instr]))
+            (OptMaybeInstr.Some
+              (CompilerIrInstr.Mov
+                dst
+                (CompilerIrValue.Var earlier)
+                (AstType.I64)))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
+    [_ (OptMaybeInstr.No)]))
+
+(define (opt-gvn-seq-rewrite-changed?
+  [table : OptGvnMap]
+  [sources : opt_i64_i64_map.Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (< index 0)
+    false
+    (match (opt-gvn-rewrite-instr-maybe
+      table
+      sources
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptMaybeInstr.Some _) true]
+      [(OptMaybeInstr.No)
+        (opt-gvn-seq-rewrite-changed? table sources instrs (- index 1))])))
 
 (define (opt-gvn-rewrite-instr-seq-from
   [table : OptGvnMap]
@@ -19414,10 +19441,12 @@
       instrs
       (- index 1)
       (compiler-ir-instr-cons
-        (opt-gvn-rewrite-instr
+        (match (opt-gvn-rewrite-instr-maybe
           table
           sources
           (compiler-ir-instr-seq-ref instrs index))
+          [(OptMaybeInstr.Some rewritten) rewritten]
+          [(OptMaybeInstr.No) (compiler-ir-instr-seq-ref instrs index)])
         out))))
 
 (define (opt-gvn-rewrite-instr-seq
@@ -19431,13 +19460,29 @@
     (- (compiler-ir-instr-seq-count instrs) 1)
     CompilerIrInstrList.Nil))
 
+;; A rewritten block carries the changed flag up to the dominator walk: when
+;; no instruction in the block changed, the original block (and its original
+;; instruction array) is reused untouched.
+(defenum OptGvnRewriteResult
+  (Result CompilerIrBlock bool))
+
 (define (opt-gvn-rewrite-block
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
-  [block : CompilerIrBlock]) : CompilerIrBlock
+  [block : CompilerIrBlock]) : OptGvnRewriteResult
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-gvn-rewrite-instr-seq table sources instrs))]))
+      (if (opt-gvn-seq-rewrite-changed?
+        table
+        sources
+        instrs
+        (- (compiler-ir-instr-seq-count instrs) 1))
+        (OptGvnRewriteResult.Result
+          (compiler-ir-block
+            label
+            (opt-gvn-rewrite-instr-seq table sources instrs))
+          true)
+        (OptGvnRewriteResult.Result block false))]))
 
 (define (opt-gvn-dom-children [doms : OptDomInfo]) : OptCfgCsr
   (let
@@ -19488,7 +19533,7 @@
   [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
-  [id : i64]) : unit
+  [id : i64]) : i64
   (let
     [index : OptCfgIndex (struct-get context index)]
     [count : i64 (opt-cfg-index-block-count index)]
@@ -19496,35 +19541,43 @@
       (let
         [label : String (array-ref (struct-get index labels) id)]
         (match (opt-cfg-find-block blocks label)
-          [(OptMaybeBlock.No) unit]
+          [(OptMaybeBlock.No) 0]
           [(OptMaybeBlock.Some block)
             (match block
               [(CompilerIrBlock.Block _ instrs)
-                (let
-                  [rewritten : CompilerIrBlock
-                    (opt-gvn-rewrite-block table sources block)]
-                  (begin
-                    (array-set! out id (OptGvnBlockResult.SomeBlock rewritten))
-                    (let
-                      [changes : OptGvnScopeChanges
-                        (opt-gvn-record-scope-instr-seq-from
-                          sources
-                          id
-                          instrs
-                          0
-                          table
-                          (OptGvnScopeChanges.Nil))]
-                      (begin
-                        (opt-gvn-rewrite-children
-                          context
-                          children
-                          table
-                          sources
-                          blocks
+                (match (opt-gvn-rewrite-block table sources block)
+                  [(OptGvnRewriteResult.Result rewritten block-changed)
+                    (begin
+                      (if block-changed
+                        (array-set!
                           out
-                          id)
-                        (opt-gvn-table-restore! table changes)))))])]))
-      unit)))
+                          id
+                          (OptGvnBlockResult.SomeBlock rewritten))
+                        unit)
+                      (let
+                        [changes : OptGvnScopeChanges
+                          (opt-gvn-record-scope-instr-seq-from
+                            sources
+                            id
+                            instrs
+                            0
+                            table
+                            (OptGvnScopeChanges.Nil))]
+                        [children-changed : i64
+                          (opt-gvn-rewrite-children
+                            context
+                            children
+                            table
+                            sources
+                            blocks
+                            out
+                            id)]
+                        (begin
+                          (opt-gvn-table-restore! table changes)
+                          (if (or block-changed (= children-changed 1))
+                            1
+                            0))))])])]))
+      0)))
 
 (define (opt-gvn-rewrite-children
   [context : OptCfgContext]
@@ -19533,25 +19586,30 @@
   [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
-  [parent-id : i64]) : unit
+  [parent-id : i64]) : i64
   (let
     [offsets : (Array i64) (struct-get children offsets)]
     [edges : (Array i64) (struct-get children edges)]
     [edge : i64 (array-ref offsets parent-id)]
     [end : i64 (array-ref offsets (+ parent-id 1))]
+    [changed : i64 0]
     (begin
       (while (< edge end)
         (begin
-          (opt-gvn-rewrite-id
-            context
-            children
-            table
-            sources
-            blocks
-            out
-            (array-ref edges edge))
+          (if (=
+            (opt-gvn-rewrite-id
+              context
+              children
+              table
+              sources
+              blocks
+              out
+              (array-ref edges edge))
+            1)
+            (set! changed 1)
+            unit)
           (set! edge (+ edge 1))))
-      unit)))
+      changed)))
 
 (define (opt-gvn-rewrite-dom
   [context : OptCfgContext]
@@ -19566,22 +19624,26 @@
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
       (opt-gvn-block-results-fill-empty! out 0)
-      (match (opt-cfg-index-id index (struct-get context entry-label))
-        [(option_i64.Some entry-id)
-          (if (and
-            (>= entry-id 0)
-            (array-ref (struct-get index reachable) entry-id))
-            (opt-gvn-rewrite-id
-              context
-              children
-              table
-              sources
-              blocks
-              out
-              entry-id)
-            unit)]
-        [(option_i64.None) unit])
-      (opt-gvn-materialize-blocks doms out blocks))))
+      (let
+        [changed : i64
+          (match (opt-cfg-index-id index (struct-get context entry-label))
+            [(option_i64.Some entry-id)
+              (if (and
+                (>= entry-id 0)
+                (array-ref (struct-get index reachable) entry-id))
+                (opt-gvn-rewrite-id
+                  context
+                  children
+                  table
+                  sources
+                  blocks
+                  out
+                  entry-id)
+                0)]
+            [(option_i64.None) 0])]
+        (if (= changed 0)
+          blocks
+          (opt-gvn-materialize-blocks doms out blocks))))))
 
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
 ;; dominating value; existing copy propagation and DCE remove the dead copies.

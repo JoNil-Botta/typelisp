@@ -12781,8 +12781,6 @@
   (array.make-array i64 8192))
 (define tc-source-qualified-variant-handle-cache-values : (Array i64)
   (array.make-array i64 8192))
-(define tc-source-qualified-variant-key-cache-generation : i64
-  -1)
 (define tc-source-qualified-variant-key-cache-registry-id : i64
   -1)
 (define tc-source-qualified-variant-key-cache-ready : bool
@@ -12832,9 +12830,7 @@
 (define (tc-source-qualified-variant-key-cache-ensure! [registry-id : i64]) : unit
   (if (and
     tc-source-qualified-variant-key-cache-ready
-    (and
-      (= tc-source-qualified-variant-key-cache-generation (intern-generation))
-      (= tc-source-qualified-variant-key-cache-registry-id registry-id)))
+    (= tc-source-qualified-variant-key-cache-registry-id registry-id))
     unit
     (let
       [i : i64 0]
@@ -12843,9 +12839,6 @@
           (begin
             (array-set! tc-source-qualified-variant-key-cache-name-keys i 0)
             (set! i (+ i 1))))
-        (set!
-          tc-source-qualified-variant-key-cache-generation
-          (intern-generation))
         (set! tc-source-qualified-variant-key-cache-registry-id registry-id)
         (set! tc-source-qualified-variant-key-cache-ready true)))))
 

@@ -21600,6 +21600,46 @@
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
       CompilerRegAssignmentList.Nil)))
 
+(define (compiler-backend-scratch-vreg-float-load-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 0 (CompilerIrValue.Var 1) (AstType.F64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-float-store-ptr-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.F64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-float-store-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Store
+          "scratch_float_global"
+          (CompilerIrValue.Var 0)
+          (AstType.F64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-float-memory-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -16))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -8))
+      CompilerRegAssignmentList.Nil)))
+
 (define (compiler-backend-scratch-vreg-splat-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -22389,6 +22429,127 @@
         (not (string.eq src "%r10"))
         (not (string.eq value "%r9"))
         (not (string.eq value "%r10"))))
+    true))
+
+(define (compiler-backend-scratch-vreg-float-memory-result-ok?
+  [result : CompilerRegScratchPlanResult]
+  [expected : i64]
+  [value-ordinal : i64]) : bool
+  (match result
+    [(CompilerRegScratchPlanResult.Result _ plan)
+      (let
+        [value-reg : String
+          (compiler-reg-scratch-plan-register plan 0 value-ordinal)]
+        [items : (Array CompilerRegScratchAssignment) (struct-get plan items)]
+        [value-item : CompilerRegScratchAssignment
+          (array-ref items value-ordinal)]
+        [requirement : CompilerRegScratchRequirement
+          (struct-get value-item requirement)]
+        (and
+          (= (compiler-backend-scratch-test-plan-count result) expected)
+          (= (compiler-backend-scratch-test-success-count result) expected)
+          (compiler-backend-string-prefix-at? value-reg "%xmm" 0)
+          (match (struct-get requirement role)
+            [(CompilerRegScratchRole.FloatMemoryValueXmm) true]
+            [_ false])
+          (match (struct-get (struct-get requirement constraint) register-class)
+            [(CompilerRegScratchClass.Xmm) true]
+            [_ false])))]))
+
+(define (compiler-backend-scratch-vreg-float-memory-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-float-memory-test-assignments)]
+      [load-linux : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Linux)
+          "scratch_vreg_float_load"
+          (compiler-backend-scratch-vreg-float-load-test-blocks)
+          2
+          assignments)]
+      [load-windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Windows)
+          "scratch_vreg_float_load_windows"
+          (compiler-backend-scratch-vreg-float-load-test-blocks)
+          2
+          assignments)]
+      [store-ptr : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_float_store_ptr"
+          (compiler-backend-scratch-vreg-float-store-ptr-test-blocks)
+          2
+          assignments)]
+      [store : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_float_store"
+          (compiler-backend-scratch-vreg-float-store-test-blocks)
+          2
+          assignments)]
+      (and
+        (compiler-backend-scratch-vreg-float-memory-result-ok? load-linux 2 1)
+        (compiler-backend-scratch-vreg-float-memory-result-ok? load-windows 2 1)
+        (compiler-backend-scratch-vreg-float-memory-result-ok? store-ptr 2 1)
+        (compiler-backend-scratch-vreg-float-memory-result-ok? store 1 0)))
+    true))
+
+(define (compiler-backend-scratch-vreg-float-memory-emission-uses-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-float-memory-test-assignments)]
+      [index : CompilerBackendProgramIndex
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)]
+      (match (compiler-backend-emit-load-instr
+        assignments
+        0
+        (CompilerIrValue.Var 1)
+        (AstType.F64)
+        "%r14"
+        "%xmm14")
+        [(ResultCompilerBackend.Ok load)
+          (match (compiler-backend-emit-store-ptr
+            assignments
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.F64)
+            index
+            "%r15"
+            "%xmm15")
+            [(ResultCompilerBackend.Ok store-ptr)
+              (match (compiler-backend-emit-store-value-to-address
+                assignments
+                (CompilerIrValue.Var 0)
+                (AstType.F64)
+                "scratch_float_global(%rip)"
+                index
+                (array.make-array String 0)
+                0
+                "%xmm13")
+                [(ResultCompilerBackend.Ok store)
+                  (let
+                    [fused-load : String
+                      (compiler-backend-emit-load-float-address-to-var
+                        assignments
+                        0
+                        "8(%r12)"
+                        (AstType.F64)
+                        "%xmm12")]
+                    (and
+                      (compiler-backend-string-contains? load "%r14")
+                      (compiler-backend-string-contains? load "%xmm14")
+                      (compiler-backend-string-contains? store-ptr "%r15")
+                      (compiler-backend-string-contains? store-ptr "%xmm15")
+                      (compiler-backend-string-contains? store "%xmm13")
+                      (compiler-backend-string-contains? fused-load "%xmm12")))]
+                [(ResultCompilerBackend.Err _) false])]
+            [(ResultCompilerBackend.Err _) false])]
+        [(ResultCompilerBackend.Err _) false]))
     true))
 
 (define (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?) : bool
@@ -23322,6 +23483,8 @@
         (compiler-backend-scratch-vreg-c-abi-return-plan-ok?)
         (compiler-backend-scratch-vreg-bounds-plan-ok?)
         (compiler-backend-scratch-vreg-memory-plan-ok?)
+        (compiler-backend-scratch-vreg-float-memory-plan-ok?)
+        (compiler-backend-scratch-vreg-float-memory-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
         (compiler-backend-scratch-vreg-simd-plan-ok?)
         (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)

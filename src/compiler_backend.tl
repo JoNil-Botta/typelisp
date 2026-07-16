@@ -17864,13 +17864,16 @@
                   (compiler-backend-var-register-home assignments dst)]
                 [load-reg : String
                   (if (string.eq dst-home "")
-                    (let
-                      [no-exclude : (Array String) (array.make-array String 0)]
-                      (compiler-backend-scavenge-xmm-reg
-                        dst
-                        no-exclude
-                        0
-                        "%xmm2"))
+                    (if (string.eq planned-value "")
+                      (let
+                        [no-exclude : (Array String)
+                          (array.make-array String 0)]
+                        (compiler-backend-scavenge-xmm-reg
+                          dst
+                          no-exclude
+                          0
+                          "%xmm2"))
+                      planned-value)
                     dst-home)]
                 [store-asm : String
                   (if (string.eq dst-home "")
@@ -17905,14 +17908,17 @@
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [addr : String]
-  [ty : AstType]) : String
+  [ty : AstType]
+  [planned-value : String]) : String
   (let
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
     [load-reg : String
       (if (string.eq dst-home "")
-        (let
-          [no-exclude : (Array String) (make-array String 0)]
-          (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2"))
+        (if (string.eq planned-value "")
+          (let
+            [no-exclude : (Array String) (make-array String 0)]
+            (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2"))
+          planned-value)
         dst-home)]
     (str_cat.str-cat
       (compiler-backend-emit-load-float-memory addr load-reg ty)
@@ -18967,7 +18973,8 @@
                     assignments
                     dst
                     addr
-                    load-ty))
+                    load-ty
+                    planned-value))
                 (string.append
                   base-asm
                   (compiler-backend-emit-load-scalar-address-to-var
@@ -19071,7 +19078,8 @@
                             assignments
                             dst
                             load-addr
-                            load-ty))))
+                            load-ty
+                            planned-value))))
                     (string.append
                       base-asm
                       (string.append
@@ -19118,7 +19126,8 @@
                     assignments
                     dst
                     addr
-                    load-ty))
+                    load-ty
+                    ""))
                 (string.append
                   base-asm
                   ;; The pair head's emergency restore runs after both loads; if
@@ -19165,7 +19174,8 @@
               assignments
               dst
               addr
-              load-ty)
+              load-ty
+              "")
             ;; M-D clobber fix (companion to emit-load-from-gep-pair's base guard):
             ;; a SPILLED 2nd-load dst stages through a scavenged scratch, and this
             ;; whole gep-pair is ONE emergency-wrap head. `sibling-home` is the 1st
@@ -19374,7 +19384,8 @@
                     assignments
                     second-dst
                     base-mem
-                    second-ty)
+                    second-ty
+                    second-value)
                   (compiler-backend-emit-load-scalar-address-to-var
                     assignments
                     second-dst
@@ -19412,7 +19423,9 @@
             (compiler-backend-float-value-register assignments src)]
           [store-reg : String
             (if (string.eq src-home "")
-              (compiler-backend-scavenge-xmm-reg -1 exclude exclude-n "%xmm2")
+              (if (string.eq planned-value "")
+                (compiler-backend-scavenge-xmm-reg -1 exclude exclude-n "%xmm2")
+                planned-value)
               src-home)]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-typed-value-to-reg-with-plan
@@ -37915,7 +37928,8 @@
                         assignments
                         var-id
                         addr
-                        ty)
+                        ty
+                        "")
                       (compiler-backend-emit-load-scalar-address-to-var
                         assignments
                         var-id
@@ -38159,7 +38173,8 @@
                               assignments
                               var-id
                               addr
-                              ty)
+                              ty
+                              "")
                             (compiler-backend-emit-load-scalar-address-to-var
                               assignments
                               var-id

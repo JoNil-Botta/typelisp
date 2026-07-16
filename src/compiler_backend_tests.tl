@@ -19991,6 +19991,9 @@
       (and
         (compiler-backend-string-contains?
           asm
+          "    testq $1, 48(%r8)\n    jnz .Lf0_allocentry_v0_slow\n")
+        (compiler-backend-string-contains?
+          asm
           "    movq 16(%r8), %rax\n    leaq 16(%rax), %r10\n")
         (not
           (compiler-backend-string-contains?

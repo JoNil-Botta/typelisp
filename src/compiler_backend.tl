@@ -20662,6 +20662,8 @@
         (if (compiler-backend-target-windows? target)
           "%r10"
           "%rcx"))]
+    ;; The inline path advances the bump pointer with a plain store. Shared
+    ;; arenas must use the runtime helper, whose atomic path reserves with CAS.
     (string.append
       (string.append
         (compiler-backend-current-arena-load target scav)
@@ -20671,6 +20673,10 @@
           ", "
           scav
           "\n    jz "
+          slow-label
+          "\n    testq $1, 48("
+          scav
+          ")\n    jnz "
           slow-label
           "\n    movq 16("
           scav

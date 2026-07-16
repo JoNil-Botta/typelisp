@@ -11,12 +11,12 @@ benchmark/typelisp/hashmap_grow	7774569
 benchmark/c/hashmap_grow	1934687
 benchmark/typelisp/hashmap_insert	148503779
 benchmark/c/hashmap_insert	65952384
-benchmark/typelisp/opt_bytecode_vm	1708001512
+benchmark/typelisp/opt_bytecode_vm	1708001496
 benchmark/c/opt_bytecode_vm	716006209
-benchmark/typelisp/opt_crc32	618461175
+benchmark/typelisp/opt_crc32	618461153
 benchmark/c/opt_crc32	400698944
-benchmark/typelisp/opt_quicksort	868269254
+benchmark/typelisp/opt_quicksort	868269236
 benchmark/c/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	4622152465
 benchmark/c/spmd_reduce	1693815306
-self_compile/compile_cli_opt1	66849983436
+self_compile/compile_cli_opt1	65494536052

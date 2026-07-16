@@ -109,12 +109,12 @@
 (define compiler-driver-compile-load-expr-pool-initial-capacity : i64
   3670016)
 
-;; Reachability compaction retains about 1.412M nodes for the selfhost CLI,
-;; including clone augmentation. A 1.625M initial pool leaves more than 290K
+;; Reachability compaction retains about 1.464M nodes for the selfhost CLI,
+;; including clone augmentation. A 1.5M initial pool leaves more than 100K
 ;; slots of headroom and keeps the backing array above the allocator's 64 MiB
 ;; dedicated-segment threshold; larger programs still grow the pool normally.
 (define compiler-driver-checked-lower-expr-pool-initial-capacity : i64
-  1703936)
+  1572864)
 
 ;; Type nodes are hash-consed. The selfhost CLI retains roughly 5K unique type
 ;; nodes even after macro expansion, so the former 262K-node reserve and its
@@ -225,6 +225,11 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
+        "compiler-entry"
+        (allocation_profile.compiler-allocation-profile-entry-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
         "source-pools"
         (compiler-driver-node-pool-base-arena))
       (allocation_profile.compiler-allocation-profile-control!
@@ -281,11 +286,23 @@
 
 (define (compiler-driver-state-new-checked-lower-pools) : AstNodePoolContext
   (let
+    [prev-arena : i64 (arena.tl_arena_current)]
     [pool-arena : i64 (arena.tl_arena_make)]
-    (ast-node-pool-context-new-with-capacities-in-arena
-      compiler-driver-checked-lower-expr-pool-initial-capacity
-      compiler-driver-compile-type-pool-initial-capacity
-      pool-arena)))
+    [_set-pool-arena : unit
+      (unsafe
+        (arena.tl_arena_set pool-arena))]
+    [pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        compiler-driver-checked-lower-expr-pool-initial-capacity
+        compiler-driver-compile-type-pool-initial-capacity
+        pool-arena)]
+    (begin
+      ;; Keep the context's wrapper cells with its backing arrays. Early source
+      ;; retirement can otherwise unmap wrapper cells allocated in the frontend
+      ;; arena before an error path gets a chance to release this pool.
+      (unsafe
+        (arena.tl_arena_set prev-arena))
+      pools)))
 
 (define (compiler-driver-state-destroy-uncommitted-pools!
   [pools : AstNodePoolContext]) : unit
@@ -1418,11 +1435,14 @@
           ;; Macro compaction already relocated the prefix needed to retire the
           ;; frontend. Promote only names added by typecheck/lower, then rebuild
           ;; direct String entries in the dedup map before checked storage dies.
-          (ci.intern-persist-range! persisted-count intern-count)
-          (ci.intern-reset-to! intern-count)
-          (if (> (array-length compiler-driver-pending-intern-state) 0)
-            (ci.intern-compat-state-capture-from-globals!
-              (array-ref compiler-driver-pending-intern-state 0))
+          (if (< persisted-count intern-count)
+            (begin
+              (ci.intern-persist-range! persisted-count intern-count)
+              (ci.intern-reset-to! intern-count)
+              (if (> (array-length compiler-driver-pending-intern-state) 0)
+                (ci.intern-compat-state-capture-from-globals!
+                  (array-ref compiler-driver-pending-intern-state 0))
+                unit))
             unit)
           ;; Optimizer/backend names are discovered after checked storage is
           ;; retired, so preserve the established persistent tail policy here.
@@ -1449,6 +1469,25 @@
             ;; early checked-arena release.
             (ci.intern-persistent-storage-enable!)
             persistent-before))))))
+
+;; A lowered result may outlive an unrelated driver-state reset. Promote the
+;; typecheck/lower tail while its marker-name arena is still live, then advance
+;; the handoff floor so the emission boundary only handles names added later.
+(define (compiler-driver-persist-lowered-intern-tail!
+  [state : CompilerDriverState]) : unit
+  (if (compiler-lower-checked-frontend-interns-prepared?)
+    (let
+      [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
+      [intern-count : i64 (ci.intern-pool-len)]
+      (if (< persisted-count intern-count)
+        (begin
+          (ci.intern-persist-range! persisted-count intern-count)
+          (ci.intern-reset-to! intern-count)
+          (ci.intern-compat-state-capture-from-globals!
+            (array-ref (struct-get state intern-state) 0))
+          (compiler-lower-checked-frontend-intern-count-advance! intern-count))
+        unit))
+    unit))
 
 (define (compiler-driver-abort-early-intern-preparation!) : unit
   (if (compiler-lower-checked-frontend-interns-prepared?)
@@ -2358,7 +2397,9 @@
                 unit)]
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
-                (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                (begin
+                  (compiler-lower-checked-dest-pools-abort-uncommitted!)
+                  (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
                 unit)]
             [_destroy-deferred-source : unit
               (if (and defer-source-destroy? dest-committed?)
@@ -2383,6 +2424,7 @@
             (match lowered
               [(ResultCompilerLower.Ok program spans)
                 (begin
+                  (compiler-driver-persist-lowered-intern-tail! state)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
@@ -2528,7 +2570,9 @@
                 unit)]
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
-                (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                (begin
+                  (compiler-lower-checked-dest-pools-abort-uncommitted!)
+                  (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
                 unit)]
             [_destroy-deferred-source : unit
               (if (and defer-source-destroy? dest-committed?)
@@ -2549,6 +2593,7 @@
             (match lowered
               [(ResultCompilerLower.Ok program spans)
                 (begin
+                  (compiler-driver-persist-lowered-intern-tail! state)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))

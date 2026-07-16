@@ -17270,6 +17270,83 @@
 (define (compiler-backend-bool-not-source) : String
   "(define (f [a : bool]) : bool (not a))")
 
+(define (compiler-backend-negated-compare-branch-source) : String
+  "(define (f [a : i64] [b : i64]) : i64
+  (if (not (= a b)) 1 2))")
+
+(define (compiler-backend-not-branch-source) : String
+  "(define (f [a : bool]) : i64
+  (if (not a) 1 2))")
+
+(define (compiler-backend-multi-not-branch-source) : String
+  "(defenum Items
+  (Nil)
+  (Cons i64 (Box Items)))
+(define (contains [items : Items] [needle : i64]) : bool
+  (if (< needle 0)
+    (contains items (+ needle 1))
+    (let
+      [cursor : Items items]
+      [found : bool false]
+      (begin
+        (while (not found)
+          (match cursor
+            [(Items.Nil) (return false)]
+            [(Items.Cons head rest)
+              (if (= head needle)
+                (set! found true)
+                (set! cursor (box-get rest)))]))
+        true))))")
+
+(define (compiler-backend-negated-compare-branch-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-negated-compare-branch-source))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_f")]
+        (and
+          (not (string.eq body ""))
+          (compiler-backend-string-contains? body "    cmpq ")
+          (or
+            (compiler-backend-string-contains? body "    je ")
+            (compiler-backend-string-contains? body "    jne "))
+          (not (compiler-backend-string-contains? body "    sete "))
+          (not (compiler-backend-string-contains? body "    setne "))
+          (not (compiler-backend-string-contains? body "    xorq $1, "))
+          (not (compiler-backend-string-contains? body "    testq "))))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-not-branch-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-not-branch-source))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_f")]
+        (and
+          (not (string.eq body ""))
+          (or
+            (compiler-backend-string-contains? body "    cmpq $0, ")
+            (compiler-backend-string-contains? body "    testq "))
+          (or
+            (compiler-backend-string-contains? body "    je ")
+            (compiler-backend-string-contains? body "    jne "))
+          (not (compiler-backend-string-contains? body "    xorq $1, "))))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-multi-not-branch-ok?) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (compiler-backend-multi-not-branch-source)
+    (CompilerBackendTarget.Linux))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_contains")]
+        (and
+          (not (string.eq body ""))
+          (or
+            (compiler-backend-string-contains? body "    cmpq $0, ")
+            (compiler-backend-string-contains? body "    testq "))
+          (not (compiler-backend-string-contains? body "    xorq $1, "))))]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-direct-condition-branch-ok?) : bool
   (match (compiler-backend-emit-branch
     (compiler-reg-assignment-cons
@@ -17405,7 +17482,10 @@
           (compiler-backend-bool-not-source)
           (compiler-backend-todo-marker))
         (compiler-backend-direct-condition-branch-ok?)
-        (compiler-backend-direct-compare-branch-ok?)))))
+        (compiler-backend-direct-compare-branch-ok?)
+        (compiler-backend-negated-compare-branch-ok?)
+        (compiler-backend-not-branch-ok?)
+        (compiler-backend-multi-not-branch-ok?)))))
 
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
 ;; forms.
@@ -18939,8 +19019,16 @@
       ""
       (let
         [body-start : i64 (+ start (string.string-length label))]
-        [next : i64
+        [plain-next : i64
           (compiler-backend-string-find-from asm "\n.globl " body-start)]
+        [indented-next : i64
+          (compiler-backend-string-find-from asm "\n    .globl " body-start)]
+        [next : i64
+          (if (< plain-next 0)
+            indented-next
+            (if (and (>= indented-next 0) (< indented-next plain-next))
+              indented-next
+              plain-next))]
         [body-end : i64
           (if (< next 0)
             (string.string-length asm)

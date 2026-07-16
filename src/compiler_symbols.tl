@@ -231,25 +231,25 @@
   [key : i64]) : i64
   (let
     [keys : (& map (Array i64)) (& (struct-get map keys))]
+    [values : (& map (Array i64)) (& (struct-get map values))]
     [capacity : i64 (array-length keys)]
     (if (<= capacity 0)
       (compiler-symbol-map-missing-handle)
       (let
         [encoded : i64 (+ key 1)]
         [slot : i64 (compiler-symbol-map-first-slot key capacity)]
-        [walked : i64 0]
+        [mask : i64 (- capacity 1)]
         (begin
-          (while (< walked capacity)
+          ;; Put grows before occupied+tombstone slots reach 75%, so every
+          ;; table always contains an empty slot. Probing therefore terminates
+          ;; on zero without a redundant full-capacity counter in this hot loop.
+          (while true
             (let
               [present : i64 (array-ref keys slot)]
               (cond
                 [(= present 0) (return (compiler-symbol-map-missing-handle))]
-                [(= present encoded)
-                  (return (array-ref (struct-get map values) slot))]
-                [else
-                  (begin
-                    (set! slot (bit-and (+ slot 1) (- capacity 1)))
-                    (set! walked (+ walked 1)))])))
+                [(= present encoded) (return (array-ref values slot))]
+                [else (set! slot (bit-and (+ slot 1) mask))])))
           (compiler-symbol-map-missing-handle))))))
 
 (define (compiler-symbol-map-store-new!

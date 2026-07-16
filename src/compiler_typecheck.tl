@@ -5,6 +5,8 @@
 (import "compiler_load.tl")
 (import stdlib.string)
 (import sym_i64_env)
+(import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (string.append
@@ -221,9 +223,9 @@
           ok)))))
 
 (define (compiler-typecheck-prefix-cache-paths [entry-path : String]) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "stdlib/tc_prefix_shared.tl"
-    (ast-decl-path-cons entry-path (ast-decl-path-list-new))))
+    (ast-decl-root-path-cons entry-path (ast-decl-path-list-new))))
 
 (define (compiler-typecheck-prefix-cache-source-a) : String
   "(define (shared-helper [x : i64]) : i64 (+ x 1))
@@ -978,6 +980,7 @@
 
 (define (compiler-typecheck-generated-fallback-diagnostic-ok?) : bool
   (let
+    [generated-name-id : i64 (tc-generated-name-id "GeneratedStruct")]
     [meta : AstGeneratedDeclMeta
       (AstGeneratedDeclMeta.Some
         "policy-family"
@@ -987,8 +990,8 @@
     [decl : AstDecl
       (ast-decl-comptime-decl-with-meta
         meta
-        (ast-decl-def-struct
-          "GeneratedStruct"
+        (ast-decl-def-struct-id
+          generated-name-id
           (AstStructRepr.Default)
           (AstStructCleanup.No)
           (ast-field-def-list-new)))]
@@ -1327,6 +1330,42 @@
     [v : Vec2 (Vec2 1.5 2.5 7)]
     (struct-get v x)))")
 
+(define (compiler-typecheck-fixture-nominal-id
+  [program : AstProgram]
+  [name : String]) : i64
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [index : i64 0]
+        [name-id : i64 -1]
+        (begin
+          (while (and (< name-id 0) (< index (struct-get (& decls) len)))
+            (let
+              [decl : AstDecl
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              (begin
+                (match decl
+                  [(AstDecl.DefStruct candidate _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefStructLifetimes candidate _ _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefEnum candidate _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefEnumLifetimes candidate _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [_ unit])
+                (set! index (+ index 1)))))
+          name-id))]))
+
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
   (begin
     (tc-agg-caches-reset!)
@@ -1343,10 +1382,17 @@
                       symbols
                       registries
                       ""
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
-                  (match (tc-repr-c-struct-layout ctx "Packet")
+                  (match (tc-repr-c-struct-layout-id
+                    ctx
+                    "Packet"
+                    (compiler-typecheck-fixture-nominal-id program "Packet"))
                     [(ResultTcReprCLayout.Ok packet)
-                      (match (tc-repr-c-struct-layout ctx "Outer")
+                      (match (tc-repr-c-struct-layout-id
+                        ctx
+                        "Outer"
+                        (compiler-typecheck-fixture-nominal-id program "Outer"))
                         [(ResultTcReprCLayout.Ok outer)
                           (and
                             (= (tc-repr-c-layout-size packet) 24)
@@ -1400,8 +1446,12 @@
                       symbols
                       registries
                       ""
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
-                  (match (tc-repr-c-struct-layout ctx "Vec2")
+                  (match (tc-repr-c-struct-layout-id
+                    ctx
+                    "Vec2"
+                    (compiler-typecheck-fixture-nominal-id program "Vec2"))
                     [(ResultTcReprCLayout.Ok layout)
                       (and
                         (= (tc-repr-c-layout-size layout) 16)
@@ -1491,8 +1541,12 @@
                       symbols
                       registries
                       ""
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
-                  (match (tc-repr-c-struct-layout ctx name)
+                  (match (tc-repr-c-struct-layout-id
+                    ctx
+                    name
+                    (compiler-typecheck-fixture-nominal-id program name))
                     [(ResultTcReprCLayout.Ok _) false]
                     [(ResultTcReprCLayout.Err message) (string.eq message want)]))]
               [(ResultCompilerRegistries.Err _) false])]
@@ -1515,8 +1569,12 @@
                       symbols
                       registries
                       ""
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
-                  (match (tc-repr-c-struct-layout ctx "Mixed")
+                  (match (tc-repr-c-struct-layout-id
+                    ctx
+                    "Mixed"
+                    (compiler-typecheck-fixture-nominal-id program "Mixed"))
                     [(ResultTcReprCLayout.Ok layout)
                       (and
                         (= (tc-repr-c-layout-size layout) 48)
@@ -1579,8 +1637,12 @@
                     symbols
                     registries
                     ""
+                    cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
-                (tc-inline-aggregate-layout-finite-ok ctx name))]
+                (tc-inline-aggregate-layout-finite-ok
+                  ctx
+                  name
+                  (compiler-typecheck-fixture-nominal-id program name)))]
             [(ResultCompilerRegistries.Err message) (ResultTcUnit.Err message)])]
         [(ResultCompilerSymbols.Err message) (ResultTcUnit.Err message)])]
     [(ResultAstProgram.Err message) (ResultTcUnit.Err message)]))
@@ -1607,8 +1669,11 @@
                     symbols
                     registries
                     ""
+                    cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
-                (match (tc-inline-aggregate-layout-for ctx name)
+                (match (tc-inline-aggregate-layout-for-id
+                  ctx
+                  (compiler-typecheck-fixture-nominal-id program name))
                   [(ResultTcInlineAggregateLayout.Ok layout)
                     (= (tc-inline-aggregate-layout-size layout) want)]
                   [(ResultTcInlineAggregateLayout.Err _) false]))]
@@ -1642,6 +1707,28 @@
   (Leaf i64)
   (Node (Box Tree) (Box Tree)))")
 
+(define (compiler-typecheck-inline-field-id-at
+  [fields : TcInlineFieldLayoutList]
+  [index : i64]) : i64
+  (match fields
+    [(TcInlineFieldLayoutList.Nil) -1]
+    [(TcInlineFieldLayoutList.Cons field rest)
+      (if (= index 0)
+        (match field
+          [(TcInlineFieldLayout.Field name-id _ _) name-id])
+        (compiler-typecheck-inline-field-id-at (box-get rest) (- index 1)))]))
+
+(define (compiler-typecheck-inline-variant-id-at
+  [variants : TcInlineVariantLayoutList]
+  [index : i64]) : i64
+  (match variants
+    [(TcInlineVariantLayoutList.Nil) -1]
+    [(TcInlineVariantLayoutList.Cons variant rest)
+      (if (= index 0)
+        (match variant
+          [(TcInlineVariantLayout.Variant name-id _ _ _) name-id])
+        (compiler-typecheck-inline-variant-id-at (box-get rest) (- index 1)))]))
+
 (define (compiler-typecheck-inline-layout-query-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-inline-layout-query-source))
     [(ResultAstProgram.Ok program)
@@ -1656,107 +1743,157 @@
                     symbols
                     registries
                     ""
+                    cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
                 [ok : bool true]
                 (begin
-                  (match (tc-inline-aggregate-layout-for ctx "InlinePacket")
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id
+                      program
+                      "InlinePacket"))
                     [(ResultTcInlineAggregateLayout.Ok layout)
-                      (begin
-                        (if (= (tc-inline-aggregate-layout-size layout) 24)
-                          unit
-                          (set! ok false))
-                        (if (= (tc-inline-aggregate-layout-align layout) 8)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-field-offset layout "tag")
-                          0)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-field-offset
-                            layout
-                            "count")
-                          8)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-field-offset
-                            layout
-                            "flag")
-                          16)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-field-offset
-                            layout
-                            "small")
-                          18)
-                          unit
-                          (set! ok false)))]
+                      (let
+                        [small-id : i64
+                          (match layout
+                            [(TcInlineAggregateLayout.Struct _ _ fields)
+                              (compiler-typecheck-inline-field-id-at fields 3)]
+                            [_ -1])]
+                        (begin
+                          (if (= (tc-inline-aggregate-layout-size layout) 24)
+                            unit
+                            (set! ok false))
+                          (if (= (tc-inline-aggregate-layout-align layout) 8)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-field-offset-id
+                              layout
+                              cbi.compiler-builtin-id-fix-tag)
+                            0)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-field-offset-id
+                              layout
+                              cbi.compiler-builtin-id-fix-count)
+                            8)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-field-offset-id
+                              layout
+                              cbi.compiler-builtin-id-fix-flag)
+                            16)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-field-offset-id
+                              layout
+                              small-id)
+                            18)
+                            unit
+                            (set! ok false))))]
                     [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
-                  (match (tc-inline-aggregate-layout-for ctx "InlineChoice")
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id
+                      program
+                      "InlineChoice"))
                     [(ResultTcInlineAggregateLayout.Ok layout)
-                      (begin
-                        (if (= (tc-inline-aggregate-layout-size layout) 24)
-                          unit
-                          (set! ok false))
-                        (if (= (tc-inline-aggregate-layout-align layout) 8)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-size
-                            layout
-                            "Empty")
-                          8)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-size
-                            layout
-                            "Byte")
-                          16)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-size
-                            layout
-                            "Wide")
-                          24)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-payload-offset
-                            layout
-                            "Wide"
-                            0)
-                          8)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-payload-offset
-                            layout
-                            "Wide"
-                            1)
-                          16)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-payload-offset
-                            layout
-                            "Pair"
-                            0)
-                          8)
-                          unit
-                          (set! ok false)))]
+                      (let
+                        [empty-id : i64
+                          (match layout
+                            [(TcInlineAggregateLayout.Enum _ _ variants)
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                0)]
+                            [_ -1])]
+                        [byte-id : i64
+                          (match layout
+                            [(TcInlineAggregateLayout.Enum _ _ variants)
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                1)]
+                            [_ -1])]
+                        [wide-id : i64
+                          (match layout
+                            [(TcInlineAggregateLayout.Enum _ _ variants)
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                2)]
+                            [_ -1])]
+                        [pair-id : i64
+                          (match layout
+                            [(TcInlineAggregateLayout.Enum _ _ variants)
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                3)]
+                            [_ -1])]
+                        (begin
+                          (if (= (tc-inline-aggregate-layout-size layout) 24)
+                            unit
+                            (set! ok false))
+                          (if (= (tc-inline-aggregate-layout-align layout) 8)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-size-id
+                              layout
+                              empty-id)
+                            8)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-size-id
+                              layout
+                              byte-id)
+                            16)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-size-id
+                              layout
+                              wide-id)
+                            24)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-payload-offset-id
+                              layout
+                              wide-id
+                              0)
+                            8)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-payload-offset-id
+                              layout
+                              wide-id
+                              1)
+                            16)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-payload-offset-id
+                              layout
+                              pair-id
+                              0)
+                            8)
+                            unit
+                            (set! ok false))))]
                     [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
-                  (match (tc-inline-aggregate-layout-for ctx "ListI64")
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id program "ListI64"))
                     [(ResultTcInlineAggregateLayout.Ok layout)
                       (if (= (tc-inline-aggregate-layout-size layout) 24)
                         unit
                         (set! ok false))]
                     [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
-                  (match (tc-inline-aggregate-layout-for ctx "Tree")
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id program "Tree"))
                     [(ResultTcInlineAggregateLayout.Ok layout)
                       (if (= (tc-inline-aggregate-layout-size layout) 24)
                         unit
@@ -2558,11 +2695,12 @@
   (and
     (string.eq (tc-type-render (ast-ty-box (AstType.I64))) "(Box i64)")
     (tc-type-eq
-      (ast-ty-box (ast-ty-region "r" (AstType.I64)))
+      (ast-ty-box (ast-ty-region cbi.compiler-builtin-id-fix-n (AstType.I64)))
       (ast-ty-box (AstType.I64)))
     (tc-type-contains-region
-      (ast-ty-box (ast-ty-region "r" (AstType.String)))
-      "r")
+      (ast-ty-box
+        (ast-ty-region cbi.compiler-builtin-id-fix-n (AstType.String)))
+      cbi.compiler-builtin-id-fix-n)
     (tc-type-move-only? (ast-ty-box (AstType.I64)))))
 
 (define (compiler-typecheck-box-tests-ok?) : bool
@@ -2985,24 +3123,30 @@
 (define (compiler-typecheck-cleanup-struct-repr-c-ast-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (ast-decl-def-struct
-        "Bad"
+      (ast-decl-def-struct-id
+        (ci.intern-generated-name "Bad")
         (AstStructRepr.C)
-        (ast-struct-cleanup-fn "cleanup-bad")
+        (ast-struct-cleanup-fn-id (ci.intern-generated-name "cleanup-bad"))
         (ast-field-def-cons
-          (ast-field-def "fd" (AstType.I64) (AstFieldCleanup.No))
+          (ast-field-def-id
+            (ci.intern-generated-name "fd")
+            (AstType.I64)
+            (AstFieldCleanup.No))
           (ast-field-def-list-new)))
       (ast-decl-list-new))))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (ast-decl-def-struct
-        "Bad"
+      (ast-decl-def-struct-id
+        (ci.intern-generated-name "Bad")
         (AstStructRepr.Default)
         (AstStructCleanup.No)
         (ast-field-def-cons
-          (ast-field-def "fd" (AstType.I64) (ast-field-cleanup-fn "close-fd"))
+          (ast-field-def-id
+            (ci.intern-generated-name "fd")
+            (AstType.I64)
+            (ast-field-cleanup-fn-id (ci.intern-generated-name "close-fd")))
           (ast-field-def-list-new)))
       (ast-decl-list-new))))
 
@@ -3099,15 +3243,16 @@
 (define (compiler-typecheck-cleanup-enum-payload-outside-ast-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (ast-decl-def-enum
-        "Bad"
+      (ast-decl-def-enum-id
+        (ci.intern-generated-name "Bad")
         (AstEnumCleanup.No)
         (ast-variant-def-cons
-          (ast-variant-def
-            "A"
+          (ast-variant-def-id
+            (ci.intern-generated-name "A")
             (ast-type-cons (AstType.I64) (ast-type-list-new))
             (ast-variant-payload-cleanup-cons
-              (ast-variant-payload-cleanup-fn "close-fd")
+              (ast-variant-payload-cleanup-fn-id
+                (ci.intern-generated-name "close-fd"))
               (ast-variant-payload-cleanup-list-new)))
           (ast-variant-def-list-new)))
       (ast-decl-list-new))))
@@ -3182,9 +3327,12 @@
     (tc-type-copyable? (AstType.Unit))
     (tc-type-copyable? (AstType.Never))
     (tc-type-copyable? (ast-ty-func (ast-type-list-new) (AstType.I64)))
-    (tc-type-copyable? (ast-ty-ptr (ast-ty-region "inner" (AstType.String))))
+    (tc-type-copyable?
+      (ast-ty-ptr
+        (ast-ty-region cbi.compiler-builtin-id-fix-value (AstType.String))))
     (tc-type-copyable? (ast-ty-mut-ptr (ast-ty-dyn-array (AstType.I64))))
-    (tc-type-copyable? (ast-ty-ref "r" (AstType.String)))))
+    (tc-type-copyable?
+      (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.String)))))
 
 (define (compiler-typecheck-move-kind-move-only-tests-ok?) : bool
   (and
@@ -3199,7 +3347,8 @@
     (tc-type-move-only? (AstType.Struct (intern "Box")))
     (tc-type-move-only? (ast-ty-box (AstType.I64)))
     (tc-type-move-only? (AstType.Enum (intern "MoveOnlyEnum")))
-    (tc-type-move-only? (ast-ty-mut-ref "phase" (AstType.I64)))
+    (tc-type-move-only?
+      (ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (AstType.I64)))
     (tc-type-move-only?
       (ast-ty-tuple
         (ast-type-cons
@@ -3208,16 +3357,22 @@
 
 (define (compiler-typecheck-move-kind-region-tests-ok?) : bool
   (and
-    (tc-type-copyable? (ast-ty-region "r" (AstType.I64)))
     (tc-type-copyable?
-      (ast-ty-region "r" (ast-ty-ref "inner" (AstType.String))))
-    (tc-type-move-only? (ast-ty-region "r" (AstType.String)))
+      (ast-ty-region cbi.compiler-builtin-id-fix-n (AstType.I64)))
+    (tc-type-copyable?
+      (ast-ty-region
+        cbi.compiler-builtin-id-fix-n
+        (ast-ty-ref cbi.compiler-builtin-id-fix-value (AstType.String))))
+    (tc-type-move-only?
+      (ast-ty-region cbi.compiler-builtin-id-fix-n (AstType.String)))
     (tc-type-move-only?
       (ast-ty-region
-        "r"
+        cbi.compiler-builtin-id-fix-n
         (ast-ty-tuple (ast-type-cons (AstType.I64) (ast-type-list-new)))))
     (tc-type-move-only?
-      (ast-ty-region "r" (ast-ty-mut-ref "phase" (AstType.I64))))))
+      (ast-ty-region
+        cbi.compiler-builtin-id-fix-n
+        (ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (AstType.I64))))))
 
 (define (compiler-typecheck-move-kind-tests-ok?) : bool
   (and
@@ -3240,7 +3395,7 @@
     (tc-type-eq (ast-ty-ptr (AstType.I64)) (ast-ty-ptr (AstType.I64)))
     (not (tc-type-eq (ast-ty-ptr (AstType.I64)) (ast-ty-mut-ptr (AstType.I64))))
     (tc-type-eq
-      (ast-ty-ptr (ast-ty-region "r" (AstType.I64)))
+      (ast-ty-ptr (ast-ty-region cbi.compiler-builtin-id-fix-n (AstType.I64)))
       (ast-ty-ptr (AstType.I64)))))
 
 (define (compiler-typecheck-raw-pointer-ops-source) : String
@@ -4080,29 +4235,39 @@
   (let
     [string-ref-render-ok : bool
       (string.eq
-        (tc-type-render (ast-ty-ref "r" (AstType.String)))
-        "(& r String)")]
+        (tc-type-render
+          (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.String)))
+        "(& n String)")]
     [str-ref-render-ok : bool
-      (string.eq (tc-type-render (ast-ty-ref "r" (AstType.Str))) "(& r str)")]
+      (string.eq
+        (tc-type-render
+          (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.Str)))
+        "(& n str)")]
     [bytes-ref-render-ok : bool
       (string.eq
-        (tc-type-render (ast-ty-ref "r" (AstType.Bytes)))
-        "(& r bytes)")]
+        (tc-type-render
+          (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.Bytes)))
+        "(& n bytes)")]
     [bytes-mut-ref-render-ok : bool
       (string.eq
-        (tc-type-render (ast-ty-mut-ref "r" (AstType.Bytes)))
-        "(&mut r bytes)")]
+        (tc-type-render
+          (ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (AstType.Bytes)))
+        "(&mut n bytes)")]
     [mut-ref-render-ok : bool
       (string.eq
         (tc-type-render
-          (ast-ty-mut-ref "phase" (ast-ty-dyn-array (AstType.I64))))
-        "(&mut phase (Array i64))")]
+          (ast-ty-mut-ref
+            cbi.compiler-builtin-id-fix-value
+            (ast-ty-dyn-array (AstType.I64))))
+        "(&mut value (Array i64))")]
     [nominal-lifetime-render-ok : bool
       (string.eq
         (tc-type-render
           (ast-ty-struct-args
             (intern "RefBox")
-            (ast-lifetime-cons "n" (ast-lifetime-list-new))))
+            (ast-lifetime-cons
+              cbi.compiler-builtin-id-fix-n
+              (ast-lifetime-list-new))))
         "(RefBox n)")]
     [str-eq-ok : bool (tc-type-eq (AstType.Str) (AstType.Str))]
     [str-distinct-ok : bool (not (tc-type-eq (AstType.Str) (AstType.String)))]
@@ -4113,36 +4278,48 @@
         (tc-type-eq
           (ast-ty-struct-args
             (intern "RefBox")
-            (ast-lifetime-cons "n" (ast-lifetime-list-new)))
+            (ast-lifetime-cons
+              cbi.compiler-builtin-id-fix-n
+              (ast-lifetime-list-new)))
           (ast-ty-struct-args
             (intern "RefBox")
-            (ast-lifetime-cons "m" (ast-lifetime-list-new)))))]
+            (ast-lifetime-cons
+              cbi.compiler-builtin-id-fix-m
+              (ast-lifetime-list-new)))))]
     [str-move-kind-ok : bool (tc-type-move-only? (AstType.Str))]
     [bytes-move-kind-ok : bool (tc-type-move-only? (AstType.Bytes))]
     [str-ref-move-kind-ok : bool
-      (tc-type-copyable? (ast-ty-ref "r" (AstType.Str)))]
+      (tc-type-copyable?
+        (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.Str)))]
     [bytes-ref-move-kind-ok : bool
-      (tc-type-copyable? (ast-ty-ref "r" (AstType.Bytes)))]
+      (tc-type-copyable?
+        (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.Bytes)))]
     [region-erased-eq-ok : bool
       (tc-type-eq
-        (ast-ty-ref "r" (ast-ty-region "inner" (AstType.I64)))
-        (ast-ty-ref "r" (AstType.I64)))]
+        (ast-ty-ref
+          cbi.compiler-builtin-id-fix-n
+          (ast-ty-region cbi.compiler-builtin-id-fix-value (AstType.I64)))
+        (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.I64)))]
     [region-distinct-ok : bool
       (not
         (tc-type-eq
-          (ast-ty-ref "r" (AstType.I64))
-          (ast-ty-ref "s" (AstType.I64))))]
+          (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.I64))
+          (ast-ty-ref cbi.compiler-builtin-id-fix-m (AstType.I64))))]
     [mut-distinct-ok : bool
       (not
         (tc-type-eq
-          (ast-ty-ref "r" (AstType.I64))
-          (ast-ty-mut-ref "r" (AstType.I64))))]
+          (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.I64))
+          (ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (AstType.I64))))]
     [region-contains-ok : bool
-      (tc-type-contains-region (ast-ty-ref "r" (AstType.I64)) "r")]
+      (tc-type-contains-region
+        (ast-ty-ref cbi.compiler-builtin-id-fix-n (AstType.I64))
+        cbi.compiler-builtin-id-fix-n)]
     [inner-region-contains-ok : bool
       (tc-type-contains-region
-        (ast-ty-mut-ref "phase" (ast-ty-region "inner" (AstType.String)))
-        "inner")]
+        (ast-ty-mut-ref
+          cbi.compiler-builtin-id-fix-value
+          (ast-ty-region cbi.compiler-builtin-id-fix-m (AstType.String)))
+        cbi.compiler-builtin-id-fix-m)]
     (and
       string-ref-render-ok
       str-ref-render-ok
@@ -7997,6 +8174,7 @@
     (if (intern-qualified-metadata-tests-ok?)
       unit
       (io.panic "typecheck: intern qualified metadata tests failed"))
+    (cbi.compiler-builtin-initialize-for-parse!)
     (if (tc-type-env-box-smoke?)
       unit
       (io.panic "typecheck: boxed type env smoke mismatch"))
@@ -9142,17 +9320,33 @@
 
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
+    [alpha-id : i64 (intern "alpha")]
+    [beta-id : i64 (intern "beta")]
+    [origin-root-id : i64 (intern "origin-root")]
+    [items-id : i64 (intern "items")]
+    [shadowed-id : i64 (intern "shadowed")]
+    [shared-id : i64 (intern "shared")]
+    [items0 : TcMovePath
+      (TcMovePath
+        items-id
+        (TcMovePathSegments.ArrayIndex 0 (box TcMovePathSegments.Nil)))]
+    [items1 : TcMovePath
+      (TcMovePath
+        items-id
+        (TcMovePathSegments.ArrayIndex 1 (box TcMovePathSegments.Nil)))]
+    [items-root : TcMovePath (TcMovePath items-id TcMovePathSegments.Nil)]
+    [shadowed-root : TcMovePath (TcMovePath shadowed-id TcMovePathSegments.Nil)]
     [origin-a : AstExpr (AstExpr.Var (intern "origin-a"))]
     [origin-b : AstExpr (AstExpr.Var (intern "origin-b"))]
     [empty : TcMovedSet (tc-moved-empty)]
-    [one : TcMovedSet (tc-moved-add empty "alpha")]
-    [dupe : TcMovedSet (tc-moved-add (tc-moved-clone one) "alpha")]
-    [two : TcMovedSet (tc-moved-add (tc-moved-clone dupe) "beta")]
-    [removed : TcMovedSet (tc-moved-remove (tc-moved-clone two) "alpha")]
+    [one : TcMovedSet (tc-moved-add empty alpha-id)]
+    [dupe : TcMovedSet (tc-moved-add (tc-moved-clone one) alpha-id)]
+    [two : TcMovedSet (tc-moved-add (tc-moved-clone dupe) beta-id)]
+    [removed : TcMovedSet (tc-moved-remove (tc-moved-clone two) alpha-id)]
     [origin-whole : TcMovedSet
-      (tc-moved-add-origin (tc-moved-empty) "origin-root" origin-a)]
+      (tc-moved-add-origin (tc-moved-empty) origin-root-id origin-a)]
     [origin-whole-id : i64
-      (match (tc-moved-conflict origin-whole "origin-root")
+      (match (tc-moved-conflict origin-whole origin-root-id)
         [(TcMoveConflict.Some key origin-id)
           (if (string.eq key "origin-root")
             origin-id
@@ -9160,67 +9354,68 @@
         [TcMoveConflict.No (tc-moved-no-origin-id)])]
     [origin-whole-ok : bool (not (= origin-whole-id (tc-moved-no-origin-id)))]
     [origin-clone-ok : bool
-      (match (tc-moved-conflict (tc-moved-clone origin-whole) "origin-root")
+      (match (tc-moved-conflict (tc-moved-clone origin-whole) origin-root-id)
         [(TcMoveConflict.Some _ origin-id) (= origin-id origin-whole-id)]
         [TcMoveConflict.No false])]
     [partial : TcMovedSet
       (tc-moved-add-projection-path
-        (tc-moved-add-projection-path
-          (tc-moved-empty)
-          "items"
-          "items.#array.0"
-          origin-a)
-        "items"
-        "items.#array.1"
+        (tc-moved-add-projection-path (tc-moved-empty) items-id items0 origin-a)
+        items-id
+        items1
         origin-b)]
     [partial-exact-conflict : bool
-      (match (tc-moved-path-conflict partial "items.#array.0")
+      (match (tc-moved-path-conflict partial items0)
         [(TcMoveConflict.Some key origin-id)
           (and
-            (string.eq key (tc-moved-path-key "items.#array.0"))
+            (string.eq key "items.#array.0")
             (not (= origin-id (tc-moved-no-origin-id))))]
         [TcMoveConflict.No false])]
     [partial-parent-conflict : bool
-      (match (tc-moved-path-conflict partial "items")
+      (match (tc-moved-path-conflict partial items-root)
         [(TcMoveConflict.Some _ origin-id)
           (not (= origin-id (tc-moved-no-origin-id)))]
         [TcMoveConflict.No false])]
     [partial-root-conflict : bool
-      (match (tc-moved-root-conflict partial "items")
+      (match (tc-moved-root-conflict partial items-id)
         [(TcMoveConflict.Some _ origin-id)
           (not (= origin-id (tc-moved-no-origin-id)))]
         [TcMoveConflict.No false])]
     [partial-one : TcMovedSet
-      (tc-moved-remove-exact-path
-        (tc-moved-clone partial)
-        "items"
-        "items.#array.0")]
+      (tc-moved-remove-exact-path (tc-moved-clone partial) items-id items0)]
     [partial-clear : TcMovedSet
-      (tc-moved-remove-exact-path
-        (tc-moved-clone partial-one)
-        "items"
-        "items.#array.1")]
+      (tc-moved-remove-exact-path (tc-moved-clone partial-one) items-id items1)]
     [partial-keeps-sibling : bool
-      (tc-moved-contains? partial-one (tc-moved-path-key "items.#array.1"))]
-    [partial-keeps-marker : bool (tc-moved-partial? partial-one "items")]
+      (match (tc-moved-path-exact-conflict partial-one items1)
+        [(TcMoveConflict.Some _ _) true]
+        [TcMoveConflict.No false])]
+    [partial-keeps-marker : bool (tc-moved-partial? partial-one items-id)]
     [partial-clears-sibling : bool
       (not
-        (tc-moved-contains? partial-clear (tc-moved-path-key "items.#array.1")))]
+        (match (tc-moved-path-exact-conflict partial-clear items1)
+          [(TcMoveConflict.Some _ _) true]
+          [TcMoveConflict.No false]))]
     [partial-clears-marker : bool
-      (not (tc-moved-partial? partial-clear "items"))]
+      (not (tc-moved-partial? partial-clear items-id))]
     [root-path : TcMovedSet
-      (tc-moved-add (tc-moved-empty) (tc-moved-path-key "shadowed"))]
+      (tc-moved-add-path-fact
+        (tc-moved-empty)
+        shadowed-root
+        (TcMovedPathKind.Move)
+        (tc-moved-no-origin-id))]
     [root-path-clear : TcMovedSet
-      (tc-moved-remove-root-state root-path "shadowed")]
+      (tc-moved-remove-root-state root-path shadowed-id)]
     [root-path-clears : bool
-      (not (tc-moved-contains? root-path-clear (tc-moved-path-key "shadowed")))]
-    [union-left : TcMovedSet (tc-moved-add-value (tc-moved-empty) "shared" 101)]
+      (match (tc-moved-path-exact-conflict root-path-clear shadowed-root)
+        [(TcMoveConflict.Some _ _) false]
+        [TcMoveConflict.No true])]
+    [union-left : TcMovedSet
+      (tc-moved-add-value (tc-moved-empty) shared-id 101)]
     [union-right : TcMovedSet
-      (tc-moved-add-value (tc-moved-empty) "shared" 202)]
+      (tc-moved-add-value (tc-moved-empty) shared-id 202)]
     [union-origin-left : bool
       (match (tc-moved-conflict
         (tc-moved-union union-left union-right)
-        "shared")
+        shared-id)
         [(TcMoveConflict.Some _ origin-id) (= origin-id 101)]
         [TcMoveConflict.No false])]
     (and
@@ -9228,7 +9423,7 @@
       (= (tc-moved-len dupe) 1)
       (= (tc-moved-len two) 2)
       (>= (tc-moved-capacity two) 8)
-      (not (tc-moved-contains? removed "alpha"))
+      (not (tc-moved-contains? removed alpha-id))
       origin-whole-ok
       origin-clone-ok
       partial-exact-conflict
@@ -9694,11 +9889,11 @@
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-dup-extern-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "src/main.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "src/assets.tl"
-      (ast-decl-path-cons "src/main.tl" (ast-decl-path-list-new)))))
+      (ast-decl-root-path-cons "src/main.tl" (ast-decl-path-list-new)))))
 
 (define (compiler-typecheck-dup-extern-paths-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-dup-extern-source))

@@ -1782,7 +1782,7 @@
         (selfhost-lint-dead-dispatch-variant-list-refs-from
           variants
           (+ index 1)
-          (selfhost-lint-dead-ref-add refs name))])))
+          (selfhost-lint-dead-ref-add-id refs name))])))
 
 (define (selfhost-lint-dead-dispatch-variant-list-refs
   [variants : AstDispatchVariantList]
@@ -2736,6 +2736,7 @@
                   importer-path
                   kind
                   import-path
+                  expected-module
                   stdlib-roots
                   manifest-dir
                   (struct-get manifest deps))
@@ -2744,18 +2745,21 @@
                   import-root
                   kind
                   import-path
+                  expected-module
                   stdlib-roots))
                 [(ResultPkgResolve.Err message)
                   (ResultSelfhostLintDeadImportList.Err
                     (box (compiler-diagnostic-at-start importer-path message)))]
                 [(ResultPkgResolve.Ok resolved)
                   (let
+                    [resolved-id : i64 (compiler-load-source-path-id resolved)]
                     [package-externs : bool
                       (and
                         package-imports
                         (compiler-load-package-import-externs?
                           kind
                           import-path
+                          expected-module
                           (struct-get manifest deps)))]
                     [preload-candidate : bool
                       (and
@@ -2781,6 +2785,7 @@
                       (if preload-summary-needed
                         (compiler-load-lazy-import-preload-summary-with-pools
                           resolved
+                          resolved-id
                           stdlib-roots
                           expected-module
                           manifest-dir
@@ -2793,8 +2798,8 @@
                         (compiler-load-lazy-import-skip?
                           importer-path
                           kind
-                          import-path
-                          resolved
+                          resolved-id
+                          expected-module
                           alias
                           rest
                           pools

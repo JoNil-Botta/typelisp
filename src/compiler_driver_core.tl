@@ -174,8 +174,6 @@
   (begin
     (compiler-load-session-state-program-cache-disable!
       (struct-get state load-session))
-    (ci.intern-compat-state-persistent-storage-disable!
-      (array-ref (struct-get state intern-state) 0))
     state))
 
 (define (compiler-driver-state-apply-session-flags!
@@ -322,9 +320,6 @@
           (arena.tl_arena_set (ast-node-pool-context-base-arena retained)))
         unit)
       (ast-node-pool-reader-use! retained)
-      (set!
-        compiler-driver-pending-intern-state
-        (struct-get state intern-state))
       (set! compiler-driver-pending-retired-source-arena old-arena)
       (compiler-driver-lowered-from-pools program spans retained))))
 
@@ -456,9 +451,8 @@
 (define (compiler-driver-state-owned-interns [state : CompilerDriverState]) : ci.InternCompatState
   (array-ref (struct-get state intern-state) 0))
 
-(define (compiler-driver-state-intern-pool-data-addr
-  [state : CompilerDriverState]) : i64
-  (ci.intern-compat-state-pool-data-addr
+(define (compiler-driver-state-intern-table-id [state : CompilerDriverState]) : i64
+  (ci.intern-compat-state-table-id
     (array-ref (struct-get state intern-state) 0)))
 
 (define (compiler-driver-state-intern-persistent-arena
@@ -532,11 +526,12 @@
     spans
     (ast-node-pool-context-snapshot pools)))
 
-(define (compiler-driver-runtime-prelude-cache-lookup [key : String]) : CompilerLoadPreludeCacheLookup
+(define (compiler-driver-runtime-prelude-cache-lookup
+  [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
   (compiler-load-runtime-prelude-cache-lookup key))
 
 (define (compiler-driver-runtime-prelude-cache-store
-  [key : String]
+  [key : CompilerLoadPreludeCacheKey]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
@@ -544,7 +539,7 @@
   (compiler-load-runtime-prelude-cache-store key decls paths modules seen))
 
 (define (compiler-driver-runtime-prelude-cache-store-with-pools
-  [key : String]
+  [key : CompilerLoadPreludeCacheKey]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
@@ -566,6 +561,7 @@
   (begin
     ;; Compatibility reset for serial standalone helpers. Driver-state callers
     ;; install their active state before this and capture it again afterward.
+    (compiler-load-default-session-use!)
     (compiler-load-session-reset-pools!)
     (compiler-load-session-reset-interns!)
     (compiler-typecheck-reset-intern-owned-state!)
@@ -695,6 +691,30 @@
 (cfg
   compile-profile
   (define compiler-driver-profile-phase-start-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-intern : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-intern-slice : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-intern-generated : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-intern-lookup : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-intern-pool-len : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-best-peak : i64
     0))
 (cfg
   compile-profile
@@ -834,6 +854,21 @@
       (set! compiler-driver-profile-phase-start-ms (profile.now-ms))
       (set! compiler-driver-profile-phase-start-total (profile.alloc-total))
       (set! compiler-driver-profile-phase-start-live (profile.alloc-live))
+      (set!
+        compiler-driver-profile-phase-start-intern
+        (ci.intern-profile-intern-value))
+      (set!
+        compiler-driver-profile-phase-start-intern-slice
+        (ci.intern-profile-slice-value))
+      (set!
+        compiler-driver-profile-phase-start-intern-generated
+        (ci.intern-profile-generated-value))
+      (set!
+        compiler-driver-profile-phase-start-intern-lookup
+        (ci.intern-profile-lookup-value))
+      (set!
+        compiler-driver-profile-phase-start-intern-pool-len
+        (ci.intern-pool-len))
       (profile.alloc-reset-peak))))
 
 (cfg
@@ -844,6 +879,11 @@
       [end-total : i64 (profile.alloc-total)]
       [end-live : i64 (profile.alloc-live)]
       [end-peak : i64 (profile.alloc-peak)]
+      [end-intern : i64 (ci.intern-profile-intern-value)]
+      [end-intern-slice : i64 (ci.intern-profile-slice-value)]
+      [end-intern-generated : i64 (ci.intern-profile-generated-value)]
+      [end-intern-lookup : i64 (ci.intern-profile-lookup-value)]
+      [end-intern-pool-len : i64 (ci.intern-pool-len)]
       [peak-delta : i64
         (compiler-driver-profile-nonnegative
           (- end-peak compiler-driver-profile-phase-start-live))]
@@ -859,7 +899,98 @@
             (- end-ms compiler-driver-profile-phase-start-ms)
             (- end-total compiler-driver-profile-phase-start-total)
             (- end-live compiler-driver-profile-phase-start-live)
-            peak-delta))))))
+            peak-delta))
+        (cfg
+          compile-profile-summary
+          unit
+          (io.print-error
+            (string.append
+              "compile-profile-detail|intern.phase|"
+              (string.append
+                phase
+                (string.append
+                  "|"
+                  (string.append
+                    (string.int->string
+                      (- end-intern compiler-driver-profile-phase-start-intern))
+                    "\n"))))))
+        (cfg
+          compile-profile-summary
+          unit
+          (io.print-error
+            (string.append
+              "compile-profile-detail|intern.phase.slice|"
+              (string.append
+                phase
+                (string.append
+                  "|"
+                  (string.append
+                    (string.int->string
+                      (-
+                        end-intern-slice
+                        compiler-driver-profile-phase-start-intern-slice))
+                    "\n"))))))
+        (cfg
+          compile-profile-summary
+          unit
+          (io.print-error
+            (string.append
+              "compile-profile-detail|intern.phase.generated|"
+              (string.append
+                phase
+                (string.append
+                  "|"
+                  (string.append
+                    (string.int->string
+                      (-
+                        end-intern-generated
+                        compiler-driver-profile-phase-start-intern-generated))
+                    "\n"))))))
+        (cfg
+          compile-profile-summary
+          unit
+          (io.print-error
+            (string.append
+              "compile-profile-detail|intern.phase.lookup|"
+              (string.append
+                phase
+                (string.append
+                  "|"
+                  (string.append
+                    (string.int->string
+                      (-
+                        end-intern-lookup
+                        compiler-driver-profile-phase-start-intern-lookup))
+                    "\n"))))))
+        (cfg
+          compile-profile-summary
+          unit
+          (io.print-error
+            (string.append
+              "compile-profile-detail|intern.phase.pool|"
+              (string.append
+                phase
+                (string.append
+                  "|"
+                  (string.append
+                    (string.int->string
+                      (-
+                        end-intern-pool-len
+                        compiler-driver-profile-phase-start-intern-pool-len))
+                    "\n"))))))
+        (cfg
+          compile-profile-summary
+          unit
+          (io.print-error
+            (string.append
+              "compile-profile-detail|intern.phase.invalid_str_ids|"
+              (string.append
+                phase
+                (string.append
+                  "|"
+                  (string.append
+                    (string.int->string (ci.intern-profile-invalid-str-value))
+                    "\n"))))))))))
 
 (cfg
   compile-profile
@@ -918,8 +1049,29 @@
           "slice_calls"
           (ci.intern-profile-slice-value))
         (compiler-driver-profile-intern-line
+          "generated_allocations"
+          (ci.intern-profile-generated-value))
+        (compiler-driver-profile-intern-line
           "lookup_calls"
-          (ci.intern-profile-lookup-value))))))
+          (ci.intern-profile-lookup-value))
+        (compiler-driver-profile-intern-line
+          "source_bytes"
+          (ci.intern-profile-source-bytes-value))
+        (compiler-driver-profile-intern-line
+          "source_symbols"
+          (ci.intern-profile-source-symbol-value))
+        (compiler-driver-profile-intern-line
+          "source_symbol_bytes"
+          (ci.intern-profile-source-symbol-bytes-value))
+        (compiler-driver-profile-intern-line
+          "slice_bytes"
+          (ci.intern-profile-slice-bytes-value))
+        (compiler-driver-profile-intern-line
+          "slice_hits"
+          (ci.intern-profile-slice-hit-value))
+        (compiler-driver-profile-intern-line
+          "slice_misses"
+          (ci.intern-profile-slice-miss-value))))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : CompilerBackendTarget]
@@ -976,25 +1128,7 @@
     intern-state))
 
 (define (compiler-driver-enable-language-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable
-    (compiler-cfg-enable
-      (compiler-cfg-enable
-        (compiler-cfg-enable
-          (compiler-cfg-enable
-            (compiler-cfg-enable
-              (compiler-cfg-enable
-                (compiler-cfg-enable
-                  (compiler-cfg-enable
-                    (compiler-cfg-enable cfgs "feature-ptr-addr-of")
-                    "feature-str-view")
-                  "feature-runtime-str-view-extern")
-                "feature-private-string-intrinsics")
-              "feature-compiler-private-string-intrinsics")
-            "array-helper-intrinsics")
-          "feature-tl-memchr")
-        "feature-plain-comptime-well-known")
-      "feature-comptime-public-fields")
-    "feature-cleanup-owner-reflection"))
+  (compiler-cfg-enable-compiler-language-features cfgs))
 
 (define (compiler-driver-enable-language-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
@@ -1416,97 +1550,6 @@
                             (box-get diag)
                             input-path))))]))))]))))
 
-(define (compiler-driver-prepare-lowered-source-retirement!) : bool
-  (let
-    [early-prepared? : bool (compiler-lower-checked-frontend-interns-prepared?)]
-    [persistent-before : bool
-      (if early-prepared?
-        (compiler-lower-checked-frontend-intern-persistence-before?)
-        (ci.intern-persistent-storage-on?))]
-    (if early-prepared?
-      (let
-        [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
-        [intern-count : i64 (ci.intern-pool-len)]
-        (begin
-          ;; Macro compaction already relocated the prefix needed to retire the
-          ;; frontend. Promote only names added by typecheck/lower, then rebuild
-          ;; direct String entries in the dedup map before checked storage dies.
-          (if (< persisted-count intern-count)
-            (begin
-              (ci.intern-persist-range! persisted-count intern-count)
-              (ci.intern-reset-to! intern-count)
-              (if (> (array-length compiler-driver-pending-intern-state) 0)
-                (ci.intern-compat-state-capture-from-globals!
-                  (array-ref compiler-driver-pending-intern-state 0))
-                unit))
-            unit)
-          ;; Optimizer/backend names are discovered after checked storage is
-          ;; retired, so preserve the established persistent tail policy here.
-          (ci.intern-persistent-storage-enable!)
-          (compiler-lower-checked-frontend-intern-preparation-clear!)
-          persistent-before))
-      (if (= compiler-driver-pending-retired-source-arena 0)
-        persistent-before
-        (let
-          [intern-count : i64 (ci.intern-pool-len)]
-          (begin
-            ;; Do this before optimizer/backend reset any producer-owned scratch
-            ;; arenas. The dedup map stores each interned String value directly.
-            (ci.intern-persist-range! 0 intern-count)
-            (ci.intern-reset-to! intern-count)
-            ;; Batch state owns the arrays updated above but snapshots scalar
-            ;; count/generation/map flags separately. Refresh those scalars while
-            ;; the original persistence policy is still active.
-            (if (> (array-length compiler-driver-pending-intern-state) 0)
-              (ci.intern-compat-state-capture-from-globals!
-                (array-ref compiler-driver-pending-intern-state 0))
-              unit)
-            ;; Names first discovered after this boundary must also survive an
-            ;; early checked-arena release.
-            (ci.intern-persistent-storage-enable!)
-            persistent-before))))))
-
-;; A lowered result may outlive an unrelated driver-state reset. Promote the
-;; typecheck/lower tail while its marker-name arena is still live, then advance
-;; the handoff floor so the emission boundary only handles names added later.
-(define (compiler-driver-persist-lowered-intern-tail!
-  [state : CompilerDriverState]) : unit
-  (if (compiler-lower-checked-frontend-interns-prepared?)
-    (let
-      [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
-      [intern-count : i64 (ci.intern-pool-len)]
-      (if (< persisted-count intern-count)
-        (begin
-          (ci.intern-persist-range! persisted-count intern-count)
-          (ci.intern-reset-to! intern-count)
-          (ci.intern-compat-state-capture-from-globals!
-            (array-ref (struct-get state intern-state) 0))
-          (compiler-lower-checked-frontend-intern-count-advance! intern-count))
-        unit))
-    unit))
-
-(define (compiler-driver-abort-early-intern-preparation!) : unit
-  (if (compiler-lower-checked-frontend-interns-prepared?)
-    (let
-      [persistent-before : bool
-        (compiler-lower-checked-frontend-intern-persistence-before?)]
-      [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
-      [intern-count : i64 (ci.intern-pool-len)]
-      (begin
-        ;; Diagnostics and the process-global dedup map can retain names added
-        ;; after macro compaction even when lowering fails. Promote that tail
-        ;; before the error adapter releases checked storage.
-        (ci.intern-persist-range! persisted-count intern-count)
-        (ci.intern-reset-to! intern-count)
-        (compiler-driver-restore-intern-persistence! persistent-before)
-        (compiler-lower-checked-frontend-intern-preparation-clear!)))
-    unit))
-
-(define (compiler-driver-restore-intern-persistence! [persistent-before : bool]) : unit
-  (if persistent-before
-    unit
-    (ci.intern-persistent-storage-disable!)))
-
 (define (compiler-driver-restore-frontend-return-arena!) : unit
   (if (= compiler-driver-pending-frontend-return-arena 0)
     unit
@@ -1585,15 +1628,6 @@
             compile-profile
             (compiler-driver-profile-finish-phase "retain.spans")
             unit)]
-        [_profile-interns-start : unit
-          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
-        [intern-persistent-before : bool
-          (compiler-driver-prepare-lowered-source-retirement!)]
-        [_profile-interns-finish : unit
-          (cfg
-            compile-profile
-            (compiler-driver-profile-finish-phase "retain.interns")
-            unit)]
         [out : ResultCompilerDriver
           (begin
             (ast-node-pool-reader-use! pools)
@@ -1618,13 +1652,11 @@
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
             unit)
-          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriver.Err diag))]))
 
@@ -1661,15 +1693,6 @@
             compile-profile
             (compiler-driver-profile-finish-phase "retain.spans")
             unit)]
-        [_profile-interns-start : unit
-          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
-        [intern-persistent-before : bool
-          (compiler-driver-prepare-lowered-source-retirement!)]
-        [_profile-interns-finish : unit
-          (cfg
-            compile-profile
-            (compiler-driver-profile-finish-phase "retain.interns")
-            unit)]
         [out : ResultCompilerDriverBuffer
           (begin
             (ast-node-pool-reader-use! pools)
@@ -1693,13 +1716,11 @@
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
             unit)
-          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverBuffer.Err diag))]))
 
@@ -1723,8 +1744,6 @@
           (if (compiler-driver-retirement-clone-shells? opt-level)
             (clone spans)
             spans)]
-        [intern-persistent-before : bool
-          (compiler-driver-prepare-lowered-source-retirement!)]
         [out : ResultCompilerDriverObject
           (begin
             (ast-node-pool-reader-use! pools)
@@ -1745,13 +1764,11 @@
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
             unit)
-          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverObject.Err diag))]))
 
@@ -1775,8 +1792,6 @@
           (if (compiler-driver-retirement-clone-shells? opt-level)
             (clone spans)
             spans)]
-        [intern-persistent-before : bool
-          (compiler-driver-prepare-lowered-source-retirement!)]
         [out : ResultCompilerDriverPic
           (begin
             (ast-node-pool-reader-use! pools)
@@ -1797,13 +1812,11 @@
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
             unit)
-          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverPic.Err diag))]))
 
@@ -1854,7 +1867,7 @@
       (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-runtime-prelude-cache-miss
-  [key : String]
+  [key : CompilerLoadPreludeCacheKey]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
@@ -1864,7 +1877,8 @@
         (unsafe
           (arena.tl_arena_set node-pool-base-arena))
         (let
-          [persistent-key : String (string.copy (& key))]
+          [persistent-key : CompilerLoadPreludeCacheKey
+            (compiler-load-prelude-cache-key-copy key)]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
           (begin
@@ -1887,8 +1901,8 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-session-cache-enabled?)
     (let
-      [key : String
-        (compiler-load-prelude-cache-key "runtime-prelude" stdlib-roots cfgs)]
+      [key : CompilerLoadPreludeCacheKey
+        (compiler-load-runtime-prelude-cache-key stdlib-roots cfgs)]
       (match (compiler-driver-runtime-prelude-cache-lookup key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
           (ResultCompilerLoadWithPaths.Ok decls paths modules seen)]
@@ -2005,7 +2019,7 @@
       (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-runtime-prelude-cache-miss-with-pools
-  [key : String]
+  [key : CompilerLoadPreludeCacheKey]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
@@ -2016,7 +2030,8 @@
         (unsafe
           (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))
         (let
-          [persistent-key : String (string.copy (& key))]
+          [persistent-key : CompilerLoadPreludeCacheKey
+            (compiler-load-prelude-cache-key-copy key)]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold-with-pools
               stdlib-roots
@@ -2044,8 +2059,8 @@
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (if (compiler-load-session-cache-enabled?)
     (let
-      [key : String
-        (compiler-load-prelude-cache-key "runtime-prelude" stdlib-roots cfgs)]
+      [key : CompilerLoadPreludeCacheKey
+        (compiler-load-runtime-prelude-cache-key stdlib-roots cfgs)]
       (match (compiler-driver-runtime-prelude-cache-lookup key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
           (ResultCompilerLoadWithPaths.Ok decls paths modules seen)]
@@ -2182,14 +2197,14 @@
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-with-runtime input-path stdlib-roots cfgs)
-    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (cfg compile-profile (compiler-driver-profile-start-phase))
         (match (lower-compiler-program-with-decl-paths-mode-cache
           input-path
           (ast-program decls)
-          paths
+          (ast-decl-path-list-with-modules paths modules)
           (compiler-driver-lower-mode-for-target target mode)
           stdlib-roots
           (compiler-load-prelude-cache-key
@@ -2225,14 +2240,14 @@
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-for-pic-image input-path stdlib-roots cfgs)
-    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (cfg compile-profile (compiler-driver-profile-start-phase))
         (match (lower-compiler-program-with-decl-paths-mode-cache
           input-path
           (ast-program decls)
-          paths
+          (ast-decl-path-list-with-modules paths modules)
           (compiler-driver-lower-mode-for-target target mode)
           stdlib-roots
           (compiler-load-prelude-cache-key
@@ -2296,12 +2311,16 @@
       stdlib-roots
       cfgs
       pools)
-      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (compiler-driver-allocation-profile-snapshot! "load")
           (cfg compile-profile (compiler-driver-profile-start-phase))
-          (compiler-driver-state-install-transients! state)
+          ;; Parsing initialized builtin IDs for this state's active intern
+          ;; table. Preserve that snapshot instead of reinstalling the stale
+          ;; pre-parse builtin state; only lowerer arenas need restoration here.
+          (compiler-driver-state-capture-active-builtins! state)
+          (compiler-driver-state-install-lower-arenas! state)
           (compiler-driver-state-install-pools! state)
           (let
             [defer-source-destroy? : bool
@@ -2343,7 +2362,7 @@
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
                 input-path
                 (ast-program decls)
-                paths
+                (ast-decl-path-list-with-modules paths modules)
                 (compiler-driver-lower-mode-for-target target mode)
                 stdlib-roots
                 (compiler-load-prelude-cache-key
@@ -2392,7 +2411,6 @@
             (match lowered
               [(ResultCompilerLower.Ok program spans)
                 (begin
-                  (compiler-driver-persist-lowered-intern-tail! state)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
@@ -2477,11 +2495,12 @@
       stdlib-roots
       cfgs
       pools)
-      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
-          (compiler-driver-state-install-transients! state)
+          (compiler-driver-state-capture-active-builtins! state)
+          (compiler-driver-state-install-lower-arenas! state)
           (compiler-driver-state-install-pools! state)
           (let
             [release-source-pools? : bool
@@ -2522,7 +2541,7 @@
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
                 input-path
                 (ast-program decls)
-                paths
+                (ast-decl-path-list-with-modules paths modules)
                 (compiler-driver-lower-mode-for-target target mode)
                 stdlib-roots
                 (compiler-load-prelude-cache-key
@@ -2565,7 +2584,6 @@
             (match lowered
               [(ResultCompilerLower.Ok program spans)
                 (begin
-                  (compiler-driver-persist-lowered-intern-tail! state)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
@@ -2726,21 +2744,26 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
-      input-path
-      (compiler-driver-load-and-lower-escaping-with-state-and-retirement
-        state
-        input-path
-        target
-        stdlib-roots
-        mode
-        (compiler-driver-state-target-cfgs state target cfgs)
-        (>= opt-level 1))
-      target
-      has-target
-      mode
-      opt-level
-      true)))
+    (let
+      [lowered : ResultCompilerDriverLowered
+        (compiler-driver-load-and-lower-escaping-with-state-and-retirement
+          state
+          input-path
+          target
+          stdlib-roots
+          mode
+          (compiler-driver-state-target-cfgs state target cfgs)
+          (>= opt-level 1))]
+      (begin
+        (compiler-driver-state-install-builtins! state)
+        (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
+          input-path
+          lowered
+          target
+          has-target
+          mode
+          opt-level
+          true)))))
 
 (define (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]
@@ -2753,22 +2776,27 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
-      input-path
-      (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
-        state
-        input-path
-        target
-        stdlib-roots
-        mode
-        (compiler-driver-state-target-cfgs state target cfgs)
-        (>= opt-level 1))
-      target
-      has-target
-      mode
-      opt-level
-      false
-      false)))
+    (let
+      [lowered : ResultCompilerDriverLowered
+        (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
+          state
+          input-path
+          target
+          stdlib-roots
+          mode
+          (compiler-driver-state-target-cfgs state target cfgs)
+          (>= opt-level 1))]
+      (begin
+        (compiler-driver-state-install-builtins! state)
+        (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
+          input-path
+          lowered
+          target
+          has-target
+          mode
+          opt-level
+          false
+          false)))))
 
 (define (compiler-driver-emit-package-loaded
   [input-path : String]
@@ -3024,8 +3052,6 @@
           (if (compiler-driver-retirement-clone-shells? opt-level)
             (clone spans)
             spans)]
-        [intern-persistent-before : bool
-          (compiler-driver-prepare-lowered-source-retirement!)]
         [out : ResultCompilerDriver
           (begin
             (ast-node-pool-reader-use! pools)
@@ -3040,13 +3066,11 @@
           (if (= opt-level 0)
             (compiler-driver-retire-lowered-source-arena!)
             unit)
-          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           (compiler-driver-restore-frontend-return-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriver.Err diag))]))
 

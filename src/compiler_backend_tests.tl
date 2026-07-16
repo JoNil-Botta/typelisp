@@ -83,7 +83,12 @@
         0)
       (let
         [func : CompilerIrFunction
-          (CompilerIrFunction.Function name params ret-ty slot-vars emit-blocks)]
+          (CompilerIrFunction.Function
+            (ci.intern name)
+            params
+            ret-ty
+            slot-vars
+            emit-blocks)]
         [liveness : CompilerFunctionLiveness
           (compiler-live-analyze-function func)]
         [starts : (Array i64) (make-array i64 slot-vars)]
@@ -3214,7 +3219,7 @@
       (compiler-ir-instr-cons
         (ir-instr-call-cabi-store-result
           (CompilerIrValue.Var 0)
-          "cabi_return_shape"
+          (ci.intern "cabi_return_shape")
           (CompilerIrCallArgs.Nil)
           slots)
         CompilerIrInstrList.Nil)]
@@ -3873,47 +3878,74 @@
       (set!
         globals
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global "g5c" (AstType.I64) (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global
+            (ci.intern "g5c")
+            (AstType.I64)
+            (CompilerIrValue.I64 0))
           globals))
       (set!
         globals
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global "g5b" (AstType.I64) (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global
+            (ci.intern "g5b")
+            (AstType.I64)
+            (CompilerIrValue.I64 0))
           globals))
       (set!
         globals
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global "g6" (AstType.I64) (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global
+            (ci.intern "g6")
+            (AstType.I64)
+            (CompilerIrValue.I64 0))
           globals))
       (set!
         globals
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global "g5" (AstType.I64) (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global
+            (ci.intern "g5")
+            (AstType.I64)
+            (CompilerIrValue.I64 0))
           globals))
       (set!
         globals
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global "g4" (AstType.I64) (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global
+            (ci.intern "g4")
+            (AstType.I64)
+            (CompilerIrValue.I64 0))
           globals))
       (set!
         globals
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global "g3" (AstType.I64) (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global
+            (ci.intern "g3")
+            (AstType.I64)
+            (CompilerIrValue.I64 0))
           globals))
       (set!
         globals
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global "g2" (AstType.I64) (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global
+            (ci.intern "g2")
+            (AstType.I64)
+            (CompilerIrValue.I64 0))
           globals))
       (set!
         globals
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global "g1" (AstType.I64) (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global
+            (ci.intern "g1")
+            (AstType.I64)
+            (CompilerIrValue.I64 0))
           globals))
       (set!
         globals
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global "g0" (AstType.I64) (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global
+            (ci.intern "g0")
+            (AstType.I64)
+            (CompilerIrValue.I64 0))
           globals))
       globals)))
 
@@ -3930,54 +3962,81 @@
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g5c" (CompilerIrValue.Var 5) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g5c")
+            (CompilerIrValue.Var 5)
+            (AstType.I64))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g5b" (CompilerIrValue.Var 5) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g5b")
+            (CompilerIrValue.Var 5)
+            (AstType.I64))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g6" (CompilerIrValue.Var 6) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g6")
+            (CompilerIrValue.Var 6)
+            (AstType.I64))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g5" (CompilerIrValue.Var 5) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g5")
+            (CompilerIrValue.Var 5)
+            (AstType.I64))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g4" (CompilerIrValue.Var 4) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g4")
+            (CompilerIrValue.Var 4)
+            (AstType.I64))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g3" (CompilerIrValue.Var 3) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g3")
+            (CompilerIrValue.Var 3)
+            (AstType.I64))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g2" (CompilerIrValue.Var 2) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g2")
+            (CompilerIrValue.Var 2)
+            (AstType.I64))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g1" (CompilerIrValue.Var 1) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g1")
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g0" (CompilerIrValue.Var 0) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g0")
+            (CompilerIrValue.Var 0)
+            (AstType.I64))
           instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             7
-            "side_effect"
+            (ci.intern "side_effect")
             (CompilerIrCallArgs.Nil)
             (AstType.Unit))
           instrs))
@@ -4023,7 +4082,7 @@
     (compiler-backend-call-save-test-globals)
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "side_effect"
+        (ci.intern "side_effect")
         CompilerIrParamList.Nil
         (AstType.Unit)
         0
@@ -4036,7 +4095,7 @@
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "main"
+          (ci.intern "main")
           CompilerIrParamList.Nil
           (AstType.I64)
           8
@@ -4370,7 +4429,7 @@
       (compiler-backend-callee-save-assignments5)]
     [shared : String
       (compiler-backend-return-epilogue
-        "pop_shared"
+        (ci.intern "pop_shared")
         five
         1
         (compiler-backend-callee-save-double-return-blocks))]
@@ -4564,7 +4623,7 @@
       (compiler-backend-tail-jump-tail sparse 3 "_tl_xmm_target")]
     [shared-tail : String
       (compiler-backend-return-epilogue
-        "xmm_shared"
+        (ci.intern "xmm_shared")
         sparse
         3
         (compiler-backend-callee-save-double-return-blocks))]
@@ -4839,7 +4898,7 @@
     (compiler-backend-program-index-build
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "main"
+          (ci.intern "main")
           CompilerIrParamList.Nil
           (AstType.I64)
           3
@@ -4869,7 +4928,7 @@
     (compiler-backend-program-index-build
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "main"
+          (ci.intern "main")
           CompilerIrParamList.Nil
           (AstType.I64)
           3
@@ -4954,7 +5013,7 @@
 
 (define (compiler-backend-descriptor-pair-consumer) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "descriptor_pair_consume"
+    (ci.intern "descriptor_pair_consume")
     (compiler-ir-param-cons
       (CompilerIrParam.Param "handle" (AstType.String) 0)
       CompilerIrParamList.Nil)
@@ -4982,7 +5041,7 @@
     [kind : CompilerIrDescriptorPairKind
       (CompilerIrDescriptorPairKind.OwnedString)]
     (CompilerIrFunction.Function
-      "main"
+      (ci.intern "main")
       CompilerIrParamList.Nil
       (AstType.I64)
       18
@@ -5083,7 +5142,8 @@
                                                     (compiler-ir-instr-cons
                                                       (CompilerIrInstr.Call
                                                         17
-                                                        "descriptor_pair_consume"
+                                                        (ci.intern
+                                                          "descriptor_pair_consume")
                                                         (CompilerIrCallArgs.One
                                                           (CompilerIrValue.Var
                                                             16))
@@ -5294,7 +5354,7 @@
     [kind : CompilerIrDescriptorPairKind
       (CompilerIrDescriptorPairKind.OwnedString)]
     (CompilerIrFunction.Function
-      "main"
+      (ci.intern "main")
       CompilerIrParamList.Nil
       (AstType.I64)
       4
@@ -5521,7 +5581,7 @@
       (compiler-backend-count-instr-uses
         counts
         (CompilerIrInstr.TailCall
-          "tail"
+          (ci.intern "tail")
           (CompilerIrCallArgs.Two
             (CompilerIrValue.Var 6)
             (CompilerIrValue.Var 7))
@@ -5552,7 +5612,7 @@
     [ty : AstType (compiler-backend-register-group-test-type)]
     [values : CompilerIrValueList
       (compiler-ir-value-cons
-        (CompilerIrValue.Function "walked_fn")
+        (CompilerIrValue.Function (ci.intern "walked_fn"))
         (compiler-ir-value-cons
           (CompilerIrValue.String "walked-string")
           (compiler-ir-value-cons
@@ -5567,9 +5627,9 @@
         packed
         (CompilerIrInstr.Word 1 (CompilerIrValue.String "word-string") 0 ty))]
     (and
-      (compiler-backend-string-list-contains?
+      (compiler-backend-symbol-list-contains-id?
         (compiler-backend-program-collections-functions worded)
-        "walked_fn")
+        (ci.intern "walked_fn"))
       (compiler-backend-string-list-contains?
         (compiler-backend-program-collections-strings worded)
         "walked-string")
@@ -5596,15 +5656,15 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 0
-                "direct"
+                (ci.intern "direct")
                 (CompilerIrCallArgs.Two
-                  (CompilerIrValue.Function "call_fn")
+                  (CompilerIrValue.Function (ci.intern "call_fn"))
                   (CompilerIrValue.String "call-string"))
                 (AstType.I64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.CallIndirect
                   1
-                  (CompilerIrValue.Function "indirect_fn")
+                  (CompilerIrValue.Function (ci.intern "indirect_fn"))
                   (CompilerIrCallArgs.Array call-array)
                   (AstType.I64))
                 (compiler-ir-instr-cons
@@ -5631,7 +5691,7 @@
             (compiler-ir-function-seq-from-list
               (compiler-ir-function-cons
                 (CompilerIrFunction.Function
-                  "main"
+                  (ci.intern "main")
                   CompilerIrParamList.Nil
                   (AstType.I64)
                   3
@@ -5640,7 +5700,7 @@
         [globals : CompilerIrGlobalList
           (compiler-ir-global-cons
             (CompilerIrGlobal.Global
-              "global_text"
+              (ci.intern "global_text")
               (AstType.String)
               (CompilerIrValue.String "global-string"))
             CompilerIrGlobalList.Nil)]
@@ -5651,12 +5711,12 @@
               functions
               CompilerIrExternList.Nil))]
         (and
-          (compiler-backend-string-list-contains?
+          (compiler-backend-symbol-list-contains-id?
             (compiler-backend-program-collections-functions collections)
-            "call_fn")
-          (compiler-backend-string-list-contains?
+            (ci.intern "call_fn"))
+          (compiler-backend-symbol-list-contains-id?
             (compiler-backend-program-collections-functions collections)
-            "indirect_fn")
+            (ci.intern "indirect_fn"))
           (compiler-backend-string-list-contains?
             (compiler-backend-program-collections-strings collections)
             "global-string")
@@ -5703,7 +5763,7 @@
         (compiler-ir-function-seq-from-list
           (compiler-ir-function-cons
             (CompilerIrFunction.Function
-              "main"
+              (ci.intern "main")
               CompilerIrParamList.Nil
               (AstType.I64)
               1
@@ -5756,7 +5816,11 @@
         "main"
         "main"
         "entry"
-        (CompilerIrInstr.Word 1 (CompilerIrValue.Function "word_target") 0 ty)
+        (CompilerIrInstr.Word
+          1
+          (CompilerIrValue.Function (ci.intern "word_target"))
+          0
+          ty)
         plan
         index)]
     [relocs : cobj.CompilerObjectRelocationList
@@ -6313,11 +6377,15 @@
 
 (define (compiler-backend-call-arg-rax-forward-direct-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Call 0 "producer" (CompilerIrCallArgs.Nil) (AstType.I64))
+    (CompilerIrInstr.Call
+      0
+      (ci.intern "producer")
+      (CompilerIrCallArgs.Nil)
+      (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
-        "consume"
+        (ci.intern "consume")
         (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -6327,11 +6395,15 @@
 
 (define (compiler-backend-call-arg-rax-forward-indirect-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Call 0 "producer" (CompilerIrCallArgs.Nil) (AstType.I64))
+    (CompilerIrInstr.Call
+      0
+      (ci.intern "producer")
+      (CompilerIrCallArgs.Nil)
+      (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.CallIndirect
         1
-        (CompilerIrValue.Function "consume")
+        (CompilerIrValue.Function (ci.intern "consume"))
         (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -6341,11 +6413,15 @@
 
 (define (compiler-backend-call-arg-rax-nonleading-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Call 0 "producer" (CompilerIrCallArgs.Nil) (AstType.I64))
+    (CompilerIrInstr.Call
+      0
+      (ci.intern "producer")
+      (CompilerIrCallArgs.Nil)
+      (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
-        "consume2"
+        (ci.intern "consume2")
         (CompilerIrCallArgs.Two (CompilerIrValue.I64 7) (CompilerIrValue.Var 0))
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -6355,11 +6431,15 @@
 
 (define (compiler-backend-call-arg-rax-group-consumer-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Call 0 "producer" (CompilerIrCallArgs.Nil) (AstType.I64))
+    (CompilerIrInstr.Call
+      0
+      (ci.intern "producer")
+      (CompilerIrCallArgs.Nil)
+      (AstType.I64))
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
-        "consume_group"
+        (ci.intern "consume_group")
         (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
         (AstType.I64))
       (compiler-ir-instr-cons
@@ -6373,7 +6453,7 @@
     (compiler-backend-program-index-build
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "group_seed"
+          (ci.intern "group_seed")
           CompilerIrParamList.Nil
           (AstType.Unit)
           3
@@ -6393,7 +6473,7 @@
             CompilerIrBlockList.Nil))
         (compiler-ir-function-cons
           (CompilerIrFunction.Function
-            "consume_group"
+            (ci.intern "consume_group")
             (compiler-ir-param-cons
               (CompilerIrParam.Param "value" ty 0)
               CompilerIrParamList.Nil)
@@ -6428,7 +6508,7 @@
     (compiler-backend-emit-instrs
       (CompilerBackendTarget.Linux)
       "_tl_test"
-      "test"
+      (ci.intern "test")
       blocks
       "entry"
       (CompilerBackendMaybeLabel.No)
@@ -6576,7 +6656,7 @@
     (match (compiler-backend-emit-instrs
       (CompilerBackendTarget.Linux)
       "_tl_test"
-      "test"
+      (ci.intern "test")
       blocks
       "entry"
       (CompilerBackendMaybeLabel.No)
@@ -7005,7 +7085,7 @@
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "main"
+        (ci.intern "main")
         CompilerIrParamList.Nil
         (AstType.I64)
         0
@@ -7101,7 +7181,10 @@
 
 (define (compiler-backend-global-immediate-store-ok?) : bool
   (compiler-backend-instr-contains?
-    (CompilerIrInstr.Store "g" (CompilerIrValue.I64 7) (AstType.I64))
+    (CompilerIrInstr.Store
+      (ci.intern "g")
+      (CompilerIrValue.I64 7)
+      (AstType.I64))
     "    movq $7, _tl_g(%rip)\n"))
 
 (define (compiler-backend-word-scratch-staging-ok?) : bool
@@ -7205,7 +7288,7 @@
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "callee"
+        (ci.intern "callee")
         CompilerIrParamList.Nil
         (AstType.I64)
         0
@@ -7219,7 +7302,7 @@
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "main"
+          (ci.intern "main")
           CompilerIrParamList.Nil
           (AstType.I64)
           1
@@ -7229,7 +7312,7 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   0
-                  "callee"
+                  (ci.intern "callee")
                   (CompilerIrCallArgs.Nil)
                   (AstType.I64))
                 (compiler-ir-instr-cons
@@ -7597,7 +7680,7 @@
     (compiler-backend-emit-instrs
       (CompilerBackendTarget.Linux)
       "_tl_test"
-      "test"
+      (ci.intern "test")
       blocks
       "entry"
       (CompilerBackendMaybeLabel.No)
@@ -7850,7 +7933,7 @@
     (match (compiler-backend-emit-instrs
       (CompilerBackendTarget.Linux)
       "_tl_test"
-      "test"
+      (ci.intern "test")
       blocks
       "entry"
       (CompilerBackendMaybeLabel.No)
@@ -8662,7 +8745,7 @@
         CompilerIrGlobalList.Nil
         (compiler-ir-function-cons
           (CompilerIrFunction.Function
-            "main"
+            (ci.intern "main")
             CompilerIrParamList.Nil
             (AstType.I64)
             4
@@ -8699,7 +8782,7 @@
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "main"
+        (ci.intern "main")
         CompilerIrParamList.Nil
         (AstType.I64)
         1
@@ -8770,7 +8853,7 @@
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "main"
+        (ci.intern "main")
         CompilerIrParamList.Nil
         (AstType.I64)
         1
@@ -8837,7 +8920,7 @@
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "main"
+        (ci.intern "main")
         CompilerIrParamList.Nil
         (AstType.I64)
         1
@@ -8875,7 +8958,7 @@
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "main"
+        (ci.intern "main")
         CompilerIrParamList.Nil
         (AstType.I64)
         2
@@ -10668,7 +10751,7 @@
 
 (define (compiler-backend-vector-call-lifetime-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "vector_call_lifetime"
+    (ci.intern "vector_call_lifetime")
     CompilerIrParamList.Nil
     (AstType.Unit)
     3
@@ -10685,7 +10768,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
-              "side_effect"
+              (ci.intern "side_effect")
               (CompilerIrCallArgs.Nil)
               (AstType.Unit))
             (compiler-ir-instr-cons
@@ -11190,7 +11273,7 @@
 
 (define (compiler-backend-avx512-mask-spill-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "mask_spill"
+    (ci.intern "mask_spill")
     CompilerIrParamList.Nil
     (AstType.I64)
     20
@@ -11285,7 +11368,7 @@
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 1))]
     (CompilerIrFunction.Function
-      name
+      (ci.intern name)
       CompilerIrParamList.Nil
       (AstType.Unit)
       3
@@ -11647,7 +11730,7 @@
         CompilerIrGlobalList.Nil
         (compiler-ir-function-cons
           (CompilerIrFunction.Function
-            "main"
+            (ci.intern "main")
             CompilerIrParamList.Nil
             (AstType.I64)
             4
@@ -11738,7 +11821,7 @@
     (match (compiler-backend-emit-instr
       (CompilerBackendTarget.Linux)
       "_tl_test"
-      "test"
+      (ci.intern "test")
       CompilerIrBlockList.Nil
       "entry"
       (CompilerBackendMaybeLabel.No)
@@ -11900,7 +11983,7 @@
     (match (compiler-backend-emit-instrs
       (CompilerBackendTarget.Linux)
       "_tl_test"
-      "test"
+      (ci.intern "test")
       blocks
       "entry"
       (CompilerBackendMaybeLabel.No)
@@ -12061,15 +12144,50 @@
     true
     (CompilerBackendRuntimeTailPlan true true true)))
 
+;; Test fixtures start from readable spellings, then exercise only the backend's
+;; ID-native runtime inventory. Production never performs this conversion.
+(define (compiler-backend-test-runtime-name-id [name : String]) : i64
+  (ci.intern name))
+
+(define (compiler-backend-test-runtime-helper-owner [name : String]) : CompilerBackendRuntimeHelperOwner
+  (cond
+    [(string.eq name "tl_memcpy") (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_memchr") (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_tlci_call_image_entry")
+      (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_tlci_call_macro_entry")
+      (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "__chkstk") (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_setup_argv") (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "_tl_start") (CompilerBackendRuntimeHelperOwner.Core)]
+    [else
+      (compiler-backend-runtime-helper-owner-id
+        (compiler-backend-test-runtime-name-id name))]))
+
+(define (compiler-backend-test-runtime-helper-known? [name : String]) : bool
+  (match (compiler-backend-test-runtime-helper-owner name)
+    [(CompilerBackendRuntimeHelperOwner.Unknown) false]
+    [_ true]))
+
+(define (compiler-backend-test-plan-provides?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (if (string.eq name "tl_tlci_call_macro_entry")
+    (compiler-backend-runtime-tail-tlci-macro-entry?
+      (compiler-backend-runtime-plan-tail plan))
+    (compiler-backend-plan-provides-id?
+      plan
+      (compiler-backend-test-runtime-name-id name))))
+
 (define (compiler-backend-runtime-helper-inventory-symbol-ok?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (and
-    (compiler-backend-runtime-helper-known? name)
-    (compiler-backend-plan-provides? plan name)))
+    (compiler-backend-test-runtime-helper-known? name)
+    (compiler-backend-test-plan-provides? plan name)))
 
 (define (compiler-backend-runtime-helper-owner-core-ok? [name : String]) : bool
-  (match (compiler-backend-runtime-helper-owner name)
+  (match (compiler-backend-test-runtime-helper-owner name)
     [(CompilerBackendRuntimeHelperOwner.Core) true]
     [_ false]))
 
@@ -12085,7 +12203,7 @@
   [name : String]) : bool
   (and
     (compiler-backend-runtime-helper-inventory-symbol-ok? plan name)
-    (match (compiler-backend-runtime-helper-owner name)
+    (match (compiler-backend-test-runtime-helper-owner name)
       [(CompilerBackendRuntimeHelperOwner.StdlibFfi) true]
       [_ false])))
 
@@ -12094,7 +12212,7 @@
   [name : String]) : bool
   (and
     (compiler-backend-runtime-helper-inventory-symbol-ok? plan name)
-    (match (compiler-backend-runtime-helper-owner name)
+    (match (compiler-backend-test-runtime-helper-owner name)
       [(CompilerBackendRuntimeHelperOwner.StdlibTypeLisp) true]
       [_ false])))
 
@@ -12102,8 +12220,8 @@
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (and
-    (compiler-backend-plan-provides? plan name)
-    (match (compiler-backend-runtime-helper-owner name)
+    (compiler-backend-test-plan-provides? plan name)
+    (match (compiler-backend-test-runtime-helper-owner name)
       [(CompilerBackendRuntimeHelperOwner.CompatibilityAlias) true]
       [_ false])))
 
@@ -12114,9 +12232,9 @@
       (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
         "tl_alloc")
-      (not (compiler-backend-runtime-helper-known? "tl_oob_abort"))
-      (not (compiler-backend-runtime-helper-known? "tl_div_abort"))
-      (not (compiler-backend-runtime-helper-known? "tl_shift_abort"))
+      (not (compiler-backend-test-runtime-helper-known? "tl_oob_abort"))
+      (not (compiler-backend-test-runtime-helper-known? "tl_div_abort"))
+      (not (compiler-backend-test-runtime-helper-known? "tl_shift_abort"))
       (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
         plan
         ".L_tl_abort")
@@ -12255,15 +12373,15 @@
     (compiler-backend-runtime-helper-inventory-compat-alias-ok?
       plan
       "tl_env_var_value")
-    (compiler-backend-plan-provides? plan "path-separator")
+    (compiler-backend-test-plan-provides? plan "path-separator")
     true))
 
 (define (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (and
-    (not (compiler-backend-runtime-helper-known? name))
-    (not (compiler-backend-plan-provides? plan name))))
+    (not (compiler-backend-test-runtime-helper-known? name))
+    (not (compiler-backend-test-plan-provides? plan name))))
 
 (define (compiler-backend-runtime-helper-inventory-retired-file-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -12400,27 +12518,28 @@
 (define (compiler-backend-runtime-helper-inventory-negative-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (and
-    (not (compiler-backend-runtime-helper-known? "tl_profile_now_ms"))
-    (not (compiler-backend-plan-provides? plan "tl_profile_now_ms"))
-    (not (compiler-backend-runtime-helper-known? "tl_random_system_seed"))
-    (not (compiler-backend-plan-provides? plan "tl_random_system_seed"))
-    (not (compiler-backend-runtime-helper-known? "tl_cpuid_eax"))
-    (not (compiler-backend-plan-provides? plan "tl_cpuid_eax"))
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_mkdir_status"))
-    (not (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status"))))
+    (not (compiler-backend-test-runtime-helper-known? "tl_profile_now_ms"))
+    (not (compiler-backend-test-plan-provides? plan "tl_profile_now_ms"))
+    (not (compiler-backend-test-runtime-helper-known? "tl_random_system_seed"))
+    (not (compiler-backend-test-plan-provides? plan "tl_random_system_seed"))
+    (not (compiler-backend-test-runtime-helper-known? "tl_cpuid_eax"))
+    (not (compiler-backend-test-plan-provides? plan "tl_cpuid_eax"))
+    (not (compiler-backend-test-runtime-helper-known? ".L_tl_fs_mkdir_status"))
+    (not (compiler-backend-test-plan-provides? plan ".L_tl_fs_mkdir_status"))))
 
 (define (compiler-backend-runtime-helper-owner-id-ok?) : bool
   (begin
     (cbi.compiler-builtin-refresh!)
     (let
-      [core-id : i64 (compiler-backend-runtime-name-id "tl_alloc")]
+      [core-id : i64 (compiler-backend-test-runtime-name-id "tl_alloc")]
       [profile-id : i64
-        (compiler-backend-runtime-name-id "tl_profile_alloc_total")]
-      [stdlib-id : i64 (compiler-backend-runtime-name-id "tl_string_concat")]
+        (compiler-backend-test-runtime-name-id "tl_profile_alloc_total")]
+      [stdlib-id : i64
+        (compiler-backend-test-runtime-name-id "tl_string_concat")]
       [atomic-id : i64
-        (compiler-backend-runtime-name-id "tl_atomic_i64_cas_ptr")]
-      [compat-id : i64 (compiler-backend-runtime-name-id "path-separator")]
-      [retired-id : i64 (compiler-backend-runtime-name-id "tl_oob_abort")]
+        (compiler-backend-test-runtime-name-id "tl_atomic_i64_cas_ptr")]
+      [compat-id : i64 (compiler-backend-test-runtime-name-id "path-separator")]
+      [retired-id : i64 (compiler-backend-test-runtime-name-id "tl_oob_abort")]
       (and
         (backend-and4
           (compiler-backend-runtime-helper-core-id? core-id)
@@ -12432,11 +12551,6 @@
         (cbi.compiler-builtin-backend-runtime-concat-id? stdlib-id)
         (cbi.compiler-builtin-backend-runtime-profile-id? profile-id)))))
 
-(define (compiler-backend-intern-missing? [name : String]) : bool
-  (match (ci.intern-lookup name)
-    [(InternLookupMissing) true]
-    [(InternLookupFound _) false]))
-
 (define (compiler-backend-runtime-plan-id-lookup-only-ok?) : bool
   (let
     [plan : CompilerBackendRuntimePlan
@@ -12445,35 +12559,46 @@
       (cbi.compiler-builtin-refresh!)
       (let
         [generation : i64 (ci.intern-generation)]
-        [unknown : String "tl_issue_2464_unknown_runtime_probe"]
+        [unknown-id : i64
+          (ci.intern-generated-name "tl_issue_2464_unknown_runtime_probe")]
         (and
-          (compiler-backend-intern-missing? unknown)
-          (compiler-backend-plan-provides? plan "tl_alloc")
-          (compiler-backend-plan-provides? plan "tl_profile_alloc_total")
-          (compiler-backend-plan-provides? plan "path-separator")
-          (not (compiler-backend-runtime-helper-known? unknown))
-          (match (compiler-backend-runtime-helper-owner unknown)
+          (compiler-backend-plan-provides-id?
+            plan
+            cbi.compiler-builtin-id-tl-alloc)
+          (compiler-backend-plan-provides-id?
+            plan
+            cbi.compiler-builtin-id-tl-profile-alloc-total)
+          (compiler-backend-plan-provides-id?
+            plan
+            cbi.compiler-builtin-id-env-path-separator)
+          (not (compiler-backend-runtime-helper-known-id? unknown-id))
+          (match (compiler-backend-runtime-helper-owner-id unknown-id)
             [(CompilerBackendRuntimeHelperOwner.Unknown) true]
             [_ false])
-          (not (compiler-backend-plan-provides? plan unknown))
-          (= (ci.intern-generation) generation)
-          (compiler-backend-intern-missing? unknown))))))
+          (not (compiler-backend-plan-provides-id? plan unknown-id))
+          (= (ci.intern-generation) generation))))))
 
 (define (compiler-backend-region-extern-runtime-plan-ok?) : bool
   (let
     [externs : CompilerIrExternList
       (compiler-ir-extern-cons
-        (compiler-ir-extern-default "tl_region_mark" (AstType.I64))
+        (compiler-ir-extern-default-id
+          cbi.compiler-builtin-id-tl-region-mark
+          "tl_region_mark"
+          (AstType.I64))
         (compiler-ir-extern-cons
-          (compiler-ir-extern-default "tl_region_reset" (AstType.Unit))
+          (compiler-ir-extern-default-id
+            cbi.compiler-builtin-id-tl-region-reset
+            "tl_region_reset"
+            (AstType.Unit))
           CompilerIrExternList.Nil))]
     (match (compiler-backend-runtime-plan-for
       CompilerIrFunctionList.Nil
       externs)
       [(ResultBackendRuntimePlan.Ok plan)
         (and
-          (compiler-backend-plan-provides? plan "tl_region_mark")
-          (compiler-backend-plan-provides? plan "tl_region_reset"))]
+          (compiler-backend-test-plan-provides? plan "tl_region_mark")
+          (compiler-backend-test-plan-provides? plan "tl_region_reset"))]
       [(ResultBackendRuntimePlan.Err _) false])))
 
 (define (compiler-backend-runtime-helper-inventory-ok?) : bool
@@ -14318,7 +14443,10 @@
     (and
       (match (compiler-backend-emit-test-instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g" (CompilerIrValue.Var 0) (AstType.I32))
+          (CompilerIrInstr.Store
+            (ci.intern "g")
+            (CompilerIrValue.Var 0)
+            (AstType.I32))
           CompilerIrInstrList.Nil)
         assignments
         2)
@@ -14336,7 +14464,10 @@
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-test-instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g" (CompilerIrValue.Var 0) (AstType.I64))
+          (CompilerIrInstr.Store
+            (ci.intern "g")
+            (CompilerIrValue.Var 0)
+            (AstType.I64))
           CompilerIrInstrList.Nil)
         CompilerRegAssignmentList.Nil
         2)
@@ -14350,7 +14481,10 @@
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-test-instrs
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "g" (CompilerIrValue.Var 0) (AstType.F64))
+          (CompilerIrInstr.Store
+            (ci.intern "g")
+            (CompilerIrValue.Var 0)
+            (AstType.F64))
           CompilerIrInstrList.Nil)
         CompilerRegAssignmentList.Nil
         2)
@@ -16366,14 +16500,17 @@
 
 (define (compiler-backend-fs-read-dir-runtime-removed-ok?) : bool
   (and
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_read_dir_status"))
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_read_dir"))))
+    (not
+      (compiler-backend-test-runtime-helper-known? ".L_tl_fs_read_dir_status"))
+    (not (compiler-backend-test-runtime-helper-known? ".L_tl_fs_read_dir"))))
 
 (define (compiler-backend-fs-metadata-runtime-removed-ok?) : bool
   (backend-and4
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_file_kind_status"))
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_file_size_status"))
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_file_size"))
+    (not
+      (compiler-backend-test-runtime-helper-known? ".L_tl_fs_file_kind_status"))
+    (not
+      (compiler-backend-test-runtime-helper-known? ".L_tl_fs_file_size_status"))
+    (not (compiler-backend-test-runtime-helper-known? ".L_tl_fs_file_size"))
     true))
 
 (define (compiler-backend-windows-private-fs-no-crt? [asm : String]) : bool
@@ -17034,7 +17171,7 @@
   [lhs-home : String]
   [rhs-home : String]) : ResultCompilerBackend
   (compiler-backend-emit-binop-return
-    "ret_float"
+    (ci.intern "ret_float")
     CompilerIrBlockList.Nil
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 (AstType.F64))
@@ -17088,7 +17225,7 @@
 
 (define (compiler-backend-float-return-compare-home-asm) : ResultCompilerBackend
   (compiler-backend-emit-binop-return
-    "ret_float_cmp"
+    (ci.intern "ret_float_cmp")
     CompilerIrBlockList.Nil
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 (AstType.F64))
@@ -17113,7 +17250,7 @@
 
 (define (compiler-backend-float-return-compare-spill-asm) : ResultCompilerBackend
   (compiler-backend-emit-binop-return
-    "ret_float_cmp"
+    (ci.intern "ret_float_cmp")
     CompilerIrBlockList.Nil
     (compiler-reg-var-type-cons
       (CompilerRegVarType.Type 0 (AstType.F64))
@@ -17195,7 +17332,7 @@
         (set! compiler-backend-emit-current-count 1))]
     [result : ResultCompilerBackend
       (compiler-backend-emit-binop-return
-        "ret_int"
+        (ci.intern "ret_int")
         CompilerIrBlockList.Nil
         CompilerRegVarTypeList.Nil
         (CompilerBackendGlobalTypeList.Nil)
@@ -18162,7 +18299,7 @@
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         1
-        "tl_div_abort"
+        (ci.intern "tl_div_abort")
         (CompilerIrCallArgs.Nil)
         (AstType.Unit))
       (compiler-ir-instr-cons
@@ -18206,7 +18343,7 @@
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         5
-        "tl_shift_abort"
+        (ci.intern "tl_shift_abort")
         (CompilerIrCallArgs.Nil)
         (AstType.Unit))
       (compiler-ir-instr-cons
@@ -18246,7 +18383,7 @@
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "main"
+        (ci.intern "main")
         CompilerIrParamList.Nil
         (AstType.I64)
         8
@@ -18432,11 +18569,11 @@
 
 (define (compiler-backend-global-compare-types) : CompilerBackendGlobalTypeList
   (CompilerBackendGlobalTypeList.Cons
-    "g_next"
+    (ci.intern "g_next")
     (AstType.I64)
     (box
       (CompilerBackendGlobalTypeList.Cons
-        "g_cap"
+        (ci.intern "g_cap")
         (AstType.I64)
         (box CompilerBackendGlobalTypeList.Nil)))))
 
@@ -18447,8 +18584,8 @@
     CompilerRegAssignmentList.Nil
     0
     (CompilerIrBinOp.Ge)
-    (CompilerIrValue.Global "g_next")
-    (CompilerIrValue.Global "g_cap")
+    (CompilerIrValue.Global (ci.intern "g_next"))
+    (CompilerIrValue.Global (ci.intern "g_cap"))
     (AstType.Bool))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -18461,16 +18598,19 @@
 (define (compiler-backend-global-compare-program) : CompilerIrProgram
   (CompilerIrProgram.Program
     (compiler-ir-global-cons
-      (CompilerIrGlobal.Global "g_next" (AstType.I64) (CompilerIrValue.I64 1))
+      (CompilerIrGlobal.Global
+        (ci.intern "g_next")
+        (AstType.I64)
+        (CompilerIrValue.I64 1))
       (compiler-ir-global-cons
         (CompilerIrGlobal.Global
-          "g_cap"
+          (ci.intern "g_cap")
           (AstType.I64)
           (CompilerIrValue.I64 1024))
         CompilerIrGlobalList.Nil))
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "main"
+        (ci.intern "main")
         CompilerIrParamList.Nil
         (AstType.I64)
         1
@@ -18481,8 +18621,8 @@
               (CompilerIrInstr.BinOp
                 0
                 (CompilerIrBinOp.Ge)
-                (CompilerIrValue.Global "g_next")
-                (CompilerIrValue.Global "g_cap")
+                (CompilerIrValue.Global (ci.intern "g_next"))
+                (CompilerIrValue.Global (ci.intern "g_cap"))
                 (AstType.Bool))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "full" "ok")
@@ -19360,7 +19500,7 @@
     [result : ResultCompilerBackend
       (compiler-backend-emit-tail-indirect-call
         target
-        "indirect_tail_call_r11_callee_shape"
+        (ci.intern "indirect_tail_call_r11_callee_shape")
         blocks
         (CompilerIrValue.Var 0)
         (CompilerIrCallArgs.Nil)
@@ -19408,16 +19548,19 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-non-direct-tail-call-extern
+  [name-id : i64]
   [name : String]
-  [symbol : String]
+  [symbol-id : i64]
   [params : AstTypeList]
   [ret : AstType]
   [abi : AstExternAbi]) : CompilerIrExtern
   (CompilerIrExtern.Extern
+    name-id
+    name-id
     name
     (ast-ty-func params ret)
     abi
-    symbol
+    symbol-id
     (ast-extern-link-input-list-new)
     false))
 
@@ -19430,11 +19573,13 @@
   [abi : AstExternAbi]
   [args : CompilerIrCallArgs]) : ResultCompilerBackend
   (let
+    [name-id : i64 (ci.intern name)]
     [externs : CompilerIrExternList
       (compiler-ir-extern-cons
         (compiler-backend-non-direct-tail-call-extern
+          name-id
           name
-          symbol
+          (ci.intern symbol)
           params
           ret
           abi)
@@ -19447,9 +19592,9 @@
       [(ResultBackendRuntimePlan.Ok plan)
         (compiler-backend-emit-tail-call
           target
-          "caller"
+          (ci.intern "caller")
           CompilerIrBlockList.Nil
-          name
+          name-id
           args
           ret
           CompilerRegAssignmentList.Nil
@@ -19630,7 +19775,7 @@
 (define (compiler-backend-known-function-call-functions) : CompilerIrFunctionList
   (compiler-ir-function-cons
     (CompilerIrFunction.Function
-      "known_target"
+      (ci.intern "known_target")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "x" (AstType.I64) 0)
         CompilerIrParamList.Nil)
@@ -19660,7 +19805,7 @@
     (compiler-backend-emit-indirect-call
       target
       0
-      (CompilerIrValue.Function "known_target")
+      (CompilerIrValue.Function (ci.intern "known_target"))
       (CompilerIrCallArgs.One (CompilerIrValue.I64 41))
       (AstType.I64)
       CompilerRegAssignmentList.Nil
@@ -19861,7 +20006,7 @@
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "pkg/a.tl::helper"
+        (ci.intern "pkg/a.tl::helper")
         CompilerIrParamList.Nil
         (AstType.I64)
         0
@@ -19875,7 +20020,7 @@
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "pkg_a.tl::helper"
+          (ci.intern "pkg_a.tl::helper")
           CompilerIrParamList.Nil
           (AstType.I64)
           0
@@ -20145,7 +20290,7 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.Call
           20
-          "tl_alloc"
+          (ci.intern "tl_alloc")
           (CompilerIrCallArgs.One (CompilerIrValue.I64 8))
           (AstType.U64))
         instrs))))
@@ -20518,7 +20663,7 @@
 (define (compiler-backend-program-index-test-functions) : CompilerIrFunctionList
   (compiler-ir-function-cons
     (CompilerIrFunction.Function
-      "pkg/really-long-backend-index-function"
+      (ci.intern "pkg/really-long-backend-index-function")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "x" (AstType.I64) 0)
         CompilerIrParamList.Nil)
@@ -20527,30 +20672,38 @@
       CompilerIrBlockList.Nil)
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "short_fn"
+        (ci.intern "short_fn")
         CompilerIrParamList.Nil
         (AstType.Unit)
         0
         CompilerIrBlockList.Nil)
       CompilerIrFunctionList.Nil)))
 
-(define (compiler-backend-program-index-test-externs) : CompilerIrExternList
+(define (compiler-backend-program-index-test-externs
+  [provided-id : i64]
+  [provided-link-id : i64]
+  [referenced-id : i64]
+  [referenced-link-id : i64]) : CompilerIrExternList
   (compiler-ir-extern-cons
     (CompilerIrExtern.Extern
+      provided-id
+      provided-id
       "provided_decl"
       (ast-ty-func (ast-type-list-new) (AstType.I64))
       (AstExternAbi.C)
-      "provided_link"
+      provided-link-id
       (ast-extern-link-input-list-new)
       true)
     (compiler-ir-extern-cons
       (CompilerIrExtern.Extern
+        referenced-id
+        referenced-id
         "referenced_decl"
         (ast-ty-func
           (ast-type-cons (AstType.I64) (ast-type-list-new))
           (AstType.I64))
         (AstExternAbi.C)
-        "referenced_link"
+        referenced-link-id
         (ast-extern-link-input-list-new)
         false)
       CompilerIrExternList.Nil)))
@@ -20571,8 +20724,8 @@
       [count-after-main-first : i64 (compiler-backend-user-symbol-cache-count)]
       [main-symbol-second : String (compiler-backend-user-symbol-id main-id)]
       [count-after-main-second : i64 (compiler-backend-user-symbol-cache-count)]
-      [wrapper-symbol : String (compiler-backend-user-symbol path-name)]
-      [count-after-wrapper : i64 (compiler-backend-user-symbol-cache-count)]
+      [third-symbol : String (compiler-backend-user-symbol-id path-id)]
+      [count-after-third : i64 (compiler-backend-user-symbol-cache-count)]
       (backend-and8
         (string.eq path-symbol-first "_tl_pkg_nested_module_some_value")
         (string.eq path-symbol-second path-symbol-first)
@@ -20582,8 +20735,43 @@
         (string.eq main-symbol-second "main")
         (= count-after-main-second count-after-main-first)
         (and
-          (string.eq wrapper-symbol path-symbol-first)
-          (= count-after-wrapper count-after-main-second))))))
+          (string.eq third-symbol path-symbol-first)
+          (= count-after-third count-after-main-second))))))
+
+(define (compiler-backend-user-symbol-cache-compat-state-ok?) : bool
+  (let
+    [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [id-a : i64
+      (begin
+        (ci.intern-compat-state-install! state-a)
+        (ci.intern-reset!)
+        (ci.intern "first-state-name"))]
+    [symbol-a : String
+      (begin
+        (ci.intern-compat-state-capture-from-globals! state-a)
+        (compiler-backend-user-symbol-id id-a))]
+    [id-b : i64
+      (begin
+        (ci.intern-compat-state-install! state-b)
+        (ci.intern-reset!)
+        (ci.intern "second-state-name"))]
+    [symbol-b : String
+      (begin
+        (ci.intern-compat-state-capture-from-globals! state-b)
+        (compiler-backend-user-symbol-id id-b))]
+    (and
+      (= id-a id-b)
+      (not
+        (=
+          (ci.intern-compat-state-generation state-a)
+          (ci.intern-compat-state-generation state-b)))
+      (not
+        (=
+          (ci.intern-compat-state-table-id state-a)
+          (ci.intern-compat-state-table-id state-b)))
+      (string.eq symbol-a "_tl_first_state_name")
+      (string.eq symbol-b "_tl_second_state_name"))))
 
 (define (compiler-backend-user-symbol-cache-scratch-source) : String
   "(define (shared [x : i64]) : i64 (+ x 1))
@@ -20600,11 +20788,12 @@
 (define (compiler-backend-runtime-leaf-user-symbol-ok?) : bool
   (let
     [fn-name : String "pkg/substring"]
+    [fn-id : i64 (ci.intern fn-name)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         (compiler-ir-function-cons
           (CompilerIrFunction.Function
-            fn-name
+            fn-id
             CompilerIrParamList.Nil
             (AstType.I64)
             0
@@ -20616,13 +20805,14 @@
         (compiler-backend-runtime-prelude-string-helper-symbol fn-name)
         "")
       (string.eq
-        (compiler-backend-function-symbol-index index fn-name)
+        (compiler-backend-function-symbol-index index fn-id)
         "_tl_pkg_substring"))))
 
 (define (compiler-backend-program-index-id-maps-ok?) : bool
   (let
     [fn-name : String "pkg/really-long-backend-index-function"]
     [fn-id : i64 (ci.intern fn-name)]
+    [short-fn-id : i64 (ci.intern "short_fn")]
     [provided-name : String "provided_decl"]
     [provided-id : i64 (ci.intern provided-name)]
     [provided-link-id : i64 (ci.intern "provided_link")]
@@ -20634,62 +20824,79 @@
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         (compiler-backend-program-index-test-functions)
-        (compiler-backend-program-index-test-externs))]
+        (compiler-backend-program-index-test-externs
+          provided-id
+          provided-link-id
+          referenced-id
+          referenced-link-id))]
     (and
+      (compiler-backend-index-function-defines-id? index short-fn-id)
       (backend-and8
         (compiler-backend-index-function-defines-id? index fn-id)
-        (compiler-backend-index-function-defines? index fn-name)
+        (compiler-backend-index-function-defines? index fn-id)
         (not (compiler-backend-index-function-defines-id? index missing-id))
         (compiler-backend-signature-i64-to-i64?
           (compiler-backend-index-function-signature-id index fn-id))
         (compiler-backend-signature-i64-to-i64?
-          (compiler-backend-index-function-signature index fn-name))
+          (compiler-backend-index-function-signature index fn-id))
         (string.eq
-          (compiler-backend-function-symbol-index index fn-name)
+          (compiler-backend-function-symbol-index index fn-id)
           "_tl_f0")
-        (string.eq (compiler-backend-function-label-scope index fn-name) "f0")
+        (string.eq (compiler-backend-function-label-scope index fn-id) "f0")
         (compiler-backend-signature-unit-to-i64?
           (compiler-backend-index-extern-signature-id index provided-id)))
       (backend-and8
         (compiler-backend-index-extern-provided-id? index provided-id)
-        (compiler-backend-index-extern-provided? index provided-name)
+        (compiler-backend-index-extern-provided? index provided-id)
         (not
           (compiler-backend-index-extern-provided-id? index provided-link-id))
         (compiler-backend-index-extern-references-id? index referenced-id)
-        (compiler-backend-index-extern-references-id? index referenced-link-id)
-        (string.eq
+        (not
+          (compiler-backend-index-extern-references-id?
+            index
+            referenced-link-id))
+        (=
           (compiler-backend-index-extern-link-symbol-id index referenced-id)
-          referenced-link)
-        (string.eq
+          referenced-link-id)
+        (=
           (compiler-backend-index-extern-link-symbol-id
             index
             referenced-link-id)
-          referenced-link)
-        (string.eq
+          referenced-link-id)
+        (=
           (compiler-backend-index-extern-link-symbol-id index missing-id)
-          "missing_backend_index_name"))
+          missing-id))
       (backend-and4
         (string.eq
-          (compiler-backend-function-symbol-map-comment index fn-name)
+          (compiler-backend-function-symbol-map-comment index fn-id)
           "#t _tl_f0 _tl_really_long_backend_index_function\n")
         (string.eq
-          (compiler-backend-function-symbol-index index provided-name)
+          (compiler-backend-function-symbol-index index provided-id)
           "provided_link")
-        true
-        true))))
+        (compiler-backend-index-extern-references? index referenced-link-id)
+        (string.eq
+          (compiler-backend-index-extern-link-symbol index referenced-link-id)
+          referenced-link)))))
 
-(define (compiler-backend-program-index-interns-bound-names-ok?) : bool
+(define (compiler-backend-program-index-explicit-extern-ids-ok?) : bool
   (begin
     (ci.intern-reset!)
     (let
       [fn-name : String "late_backend_index_fn"]
+      [fn-id : i64 (ci.intern fn-name)]
       [extern-name : String "late_backend_index_ext"]
+      [extern-id : i64 (ci.intern-generated-name extern-name)]
+      [same-name-id : i64 (ci.intern-generated-name extern-name)]
       [extern-link : String "late_backend_index_link"]
+      [extern-link-id : i64 (ci.intern-generated-name extern-link)]
+      [same-name-link : String "late_backend_index_link_2"]
+      [same-name-link-id : i64 (ci.intern-generated-name same-name-link)]
+      [source-count-before : i64 (ci.intern-pool-len)]
       [index : CompilerBackendProgramIndex
         (compiler-backend-program-index-build
           (compiler-ir-function-cons
             (CompilerIrFunction.Function
-              fn-name
+              fn-id
               CompilerIrParamList.Nil
               (AstType.Unit)
               0
@@ -20697,30 +20904,51 @@
             CompilerIrFunctionList.Nil)
           (compiler-ir-extern-cons
             (CompilerIrExtern.Extern
+              extern-id
+              extern-id
               extern-name
               (ast-ty-func (ast-type-list-new) (AstType.I64))
               (AstExternAbi.C)
-              extern-link
+              extern-link-id
               (ast-extern-link-input-list-new)
               false)
-            CompilerIrExternList.Nil))]
-      [fn-id : i64 (ci.intern fn-name)]
-      [extern-id : i64 (ci.intern extern-name)]
-      [extern-link-id : i64 (ci.intern extern-link)]
-      (backend-and8
-        (compiler-backend-index-function-defines-id? index fn-id)
-        (compiler-backend-index-function-defines? index fn-name)
-        (compiler-backend-signature-unit-to-i64?
-          (compiler-backend-index-extern-signature-id index extern-id))
-        (compiler-backend-index-extern-references-id? index extern-id)
-        (compiler-backend-index-extern-references-id? index extern-link-id)
-        (string.eq
-          (compiler-backend-index-extern-link-symbol-id index extern-id)
-          extern-link)
-        (string.eq
-          (compiler-backend-index-extern-link-symbol-id index extern-link-id)
-          extern-link)
-        (compiler-backend-index-extern-references? index extern-link)))))
+            (compiler-ir-extern-cons
+              (CompilerIrExtern.Extern
+                same-name-id
+                same-name-id
+                extern-name
+                (ast-ty-func
+                  (ast-type-cons (AstType.I64) (ast-type-list-new))
+                  (AstType.I64))
+                (AstExternAbi.C)
+                same-name-link-id
+                (ast-extern-link-input-list-new)
+                false)
+              CompilerIrExternList.Nil)))]
+      (and
+        (= source-count-before (ci.intern-pool-len))
+        (backend-and8
+          (compiler-backend-index-function-defines-id? index fn-id)
+          (compiler-backend-index-function-defines? index fn-id)
+          (compiler-backend-signature-unit-to-i64?
+            (compiler-backend-index-extern-signature-id index extern-id))
+          (compiler-backend-signature-i64-to-i64?
+            (compiler-backend-index-extern-signature-id index same-name-id))
+          (compiler-backend-index-extern-references-id? index extern-id)
+          (compiler-backend-index-extern-references-id? index same-name-id)
+          (=
+            (compiler-backend-index-extern-link-symbol-id index extern-id)
+            extern-link-id)
+          (=
+            (compiler-backend-index-extern-link-symbol-id index same-name-id)
+            same-name-link-id))
+        (backend-and4
+          (compiler-backend-index-extern-references? index extern-link-id)
+          (compiler-backend-index-extern-references? index same-name-link-id)
+          (match (ci.intern-lookup extern-name)
+            [(InternLookupFound _) false]
+            [(InternLookupMissing) true])
+          (not (= extern-id same-name-id)))))))
 
 (define (compiler-backend-profile-runtime-source) : String
   "(extern (tl_profile_alloc_total) : i64)
@@ -21322,7 +21550,7 @@
           (box
             (CompilerIrInstrCallCAbiStoreResultPayload.Payload
               (CompilerIrValue.Var 0)
-              "foreign"
+              (ci.intern "foreign")
               (CompilerIrCallArgs.Nil)
               (compiler-ir-c-abi-return-slot-cons
                 (CompilerIrCAbiReturnSlot.Slot (AstType.I64) 0)
@@ -21515,7 +21743,7 @@
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r10"))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r11"))
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
@@ -21585,7 +21813,7 @@
   (compiler-reg-plan-with-scratch-vreg-result
     abi
     (CompilerIrFunction.Function
-      name
+      (ci.intern name)
       CompilerIrParamList.Nil
       (AstType.I64)
       vars
@@ -21768,6 +21996,7 @@
         (not (string.eq reg0 ""))
         (not (string.eq reg1 ""))
         (not (string.eq reg0 reg1))
+        (not (string.eq reg0 "%r8"))
         (not (string.eq reg0 "%r10"))
         (not (string.eq reg0 "%r11"))
         (not (string.eq reg0 "%r12"))
@@ -23293,9 +23522,10 @@
         (compiler-backend-simd-vector-ok?)
         (compiler-backend-dispatch-variant-mode-ok?)
         (compiler-backend-user-symbol-cache-ok?)
+        (compiler-backend-user-symbol-cache-compat-state-ok?)
         (compiler-backend-user-symbol-cache-scratch-ok?)
         (compiler-backend-runtime-leaf-user-symbol-ok?)
         (compiler-backend-program-index-id-maps-ok?)
-        (compiler-backend-program-index-interns-bound-names-ok?))))
+        (compiler-backend-program-index-explicit-extern-ids-ok?))))
     42
     (panic "backend: smoke output mismatch")))

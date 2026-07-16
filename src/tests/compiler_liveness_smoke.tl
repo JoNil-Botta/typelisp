@@ -1,6 +1,7 @@
 ;; compiler_liveness_smoke.tl - Runnable smoke for compiler_liveness.tl.
 (import "../compiler_ir_types.tl")
 (import "../compiler_liveness.tl")
+(import compiler_intern as ci)
 
 (define (compiler-live-smoke-spmd-call-use-def-ok?) : bool
   (let
@@ -18,7 +19,7 @@
           CompilerIrSpmdCallArgList.Nil))]
     [instr : CompilerIrInstr
       (ir-instr-spmd-call
-        "helper"
+        (ci.intern-generated-canonical-name "helper")
         (CompilerIrSpmdBackend.Avx512)
         8
         (CompilerIrValue.Var 20)

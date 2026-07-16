@@ -6,6 +6,7 @@
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_load.tl")
 (import "compiler_typecheck_api.tl")
+(import compiler_builtin_ids as cbi)
 (import sym_i64_env)
 
 (defenum ResultCompilerCheck
@@ -42,27 +43,7 @@
               "|0|0|0\n")))))))
 
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable
-    (compiler-cfg-enable
-      (compiler-cfg-enable
-        (compiler-cfg-enable
-          (compiler-cfg-enable
-            (compiler-cfg-enable
-              (compiler-cfg-enable
-                (compiler-cfg-enable
-                  (compiler-cfg-enable
-                    (compiler-cfg-enable
-                      (compiler-cfg-empty)
-                      "feature-ptr-addr-of")
-                    "feature-str-view")
-                  "feature-runtime-str-view-extern")
-                "feature-private-string-intrinsics")
-              "feature-compiler-private-string-intrinsics")
-            "array-helper-intrinsics")
-          "feature-tl-memchr")
-        "feature-plain-comptime-well-known")
-      "feature-comptime-public-fields")
-    "feature-cleanup-owner-reflection"))
+  (compiler-cfg-enable-compiler-language-features (compiler-cfg-empty)))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]
@@ -287,33 +268,40 @@
           prelude-paths
           _
           prelude-seen)
-        (match (compiler-load-parse-source-diagnostic-escaping
-          path
-          source
-          (compiler-check-language-cfgs))
-          [(ResultAstProgramDiagnostic.Ok program)
-            (compiler-check-loaded-with-prelude-cache
+        (let
+          [parse-identity : CompilerLoadParseIdentity
+            (compiler-load-parse-identity
               path
-              prelude-decls
-              prelude-paths
-              (compiler-load-package-program-with-paths-and-roots-expect
+              (compiler-load-canonical-module-id-from-path path)
+              AstMaybeModuleName.No)]
+          (match (compiler-load-parse-source-diagnostic-escaping
+            path
+            source
+            (compiler-check-language-cfgs))
+            [(ResultAstProgramDiagnostic.Ok program)
+              (compiler-check-loaded-with-prelude-cache
                 path
-                program
-                prelude-seen
+                prelude-decls
+                prelude-paths
+                (compiler-load-package-program-with-paths-and-roots-expect
+                  path
+                  program
+                  prelude-seen
+                  stdlib-roots
+                  AstMaybeModuleName.No
+                  manifest-dir
+                  deps
+                  (compiler-check-language-cfgs)
+                  parse-identity)
                 stdlib-roots
-                AstMaybeModuleName.No
-                manifest-dir
-                deps
-                (compiler-check-language-cfgs))
-              stdlib-roots
-              (compiler-typecheck-prefix-cache-scope
-                "typecheck-prefix-check"
-                stdlib-roots
-                (compiler-check-language-cfgs)))]
-          [(ResultAstProgramDiagnostic.Err diag)
-            (begin
-              (cfg compile-profile (compiler-check-profile-finish "load"))
-              (ResultCompilerCheck.Err diag))])]
+                (compiler-typecheck-prefix-cache-scope
+                  "typecheck-prefix-check"
+                  stdlib-roots
+                  (compiler-check-language-cfgs)))]
+            [(ResultAstProgramDiagnostic.Err diag)
+              (begin
+                (cfg compile-profile (compiler-check-profile-finish "load"))
+                (ResultCompilerCheck.Err diag))]))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -570,9 +558,42 @@
 (define (compiler-check-inline-layout-name-ok?
   [ctx : TcContext]
   [name : String]) : bool
-  (match (tc-inline-aggregate-layout-finite-ok ctx name)
-    [(ResultTcUnit.Ok) true]
-    [(ResultTcUnit.Err _) false]))
+  (match (tc-context-program ctx)
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [index : i64 0]
+        [name-id : i64 -1]
+        (begin
+          (while (and (< name-id 0) (< index (struct-get (& decls) len)))
+            (let
+              [decl : AstDecl
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              (begin
+                (match decl
+                  [(AstDecl.DefStruct candidate _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefStructLifetimes candidate _ _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefEnum candidate _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefEnumLifetimes candidate _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [_ unit])
+                (set! index (+ index 1)))))
+          (if (< name-id 0)
+            false
+            (match (tc-inline-aggregate-layout-finite-ok ctx name name-id)
+              [(ResultTcUnit.Ok) true]
+              [(ResultTcUnit.Err _) false]))))]))
 
 (define (compiler-check-virtual-import-inline-layout-ok?) : bool
   (match (compiler-load-source-with-paths
@@ -593,6 +614,7 @@
                       symbols
                       registries
                       ""
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
                   (and
                     (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
@@ -726,18 +748,18 @@
     (compiler-check-implicit-core-prelude-source)))
 
 (define (compiler-check-seen-root-ok?) : bool
-  (match (compiler-load-source
-    "src/already_loaded.tl"
-    "(define answer : i64 1)"
-    (sym_i64_env.sym-i64-bind
-      (sym_i64_env.sym-i64-empty)
-      "src.already_loaded"
-      1))
-    [(ResultCompilerLoad.Ok decls _)
-      (match (ast-decl-list-step decls)
-        [(AstDeclListStep.Nil) true]
-        [_ false])]
-    [(ResultCompilerLoad.Err _) false]))
+  (let
+    [path : String "src/already_loaded.tl"]
+    [source : String "(define answer : i64 1)"]
+    (match (compiler-load-source path source (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoad.Ok _ seen)
+        (match (compiler-load-source path source seen)
+          [(ResultCompilerLoad.Ok decls _)
+            (match (ast-decl-list-step decls)
+              [(AstDeclListStep.Nil) true]
+              [_ false])]
+          [(ResultCompilerLoad.Err _) false])]
+      [(ResultCompilerLoad.Err _) false])))
 
 (define (compiler-check-pool-reset-ok?) : bool
   (let

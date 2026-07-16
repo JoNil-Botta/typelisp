@@ -120,13 +120,17 @@
                                 [nil-name : comptime.Expr
                                   (comptime.expr-var
                                     (comptime.string-append
-                                      (comptime.string-append type-name ".")
-                                      (enum-variant-name T nil-index)))]
+                                      type-name
+                                      (comptime.string-append
+                                        "."
+                                        (enum-variant-name T nil-index))))]
                                 [cons-name : comptime.Expr
                                   (comptime.expr-var
                                     (comptime.string-append
-                                      (comptime.string-append type-name ".")
-                                      (enum-variant-name T cons-index)))]
+                                      type-name
+                                      (comptime.string-append
+                                        "."
+                                        (enum-variant-name T cons-index))))]
                                 [nil-pattern : comptime.Pattern
                                   (comptime.pattern-variant
                                     (match nil-name
@@ -232,8 +236,10 @@
                                         (enum-variant-name T variant-index)]
                                       [qualified-variant : String
                                         (comptime.string-append
-                                          (comptime.string-append type-name ".")
-                                          variant-name)]
+                                          type-name
+                                          (comptime.string-append
+                                            "."
+                                            variant-name))]
                                       [payload-count : i64
                                         (enum-variant-payload-count
                                           T

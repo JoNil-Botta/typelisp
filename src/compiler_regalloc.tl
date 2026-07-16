@@ -13416,10 +13416,10 @@
 ;; compiler-backend-aggregate-type-name); empty for non-aggregate types.
 (define (compiler-reg-aggregate-type-name [ty : AstType]) : String
   (match ty
-    [(AstType.Struct name) (intern-str name)]
-    [(AstType.StructArgs name _) (intern-str name)]
-    [(AstType.Enum name) (intern-str name)]
-    [(AstType.EnumArgs name _) (intern-str name)]
+    [(AstType.Struct name) (ast-nominal-name-id-display name)]
+    [(AstType.StructArgs name _) (ast-nominal-name-id-display name)]
+    [(AstType.Enum name) (ast-nominal-name-id-display name)]
+    [(AstType.EnumArgs name _) (ast-nominal-name-id-display name)]
     [(AstType.Region _ inner)
       (compiler-reg-aggregate-type-name (ast-node-pool-reader-type-get inner))]
     [_ ""]))
@@ -18915,7 +18915,7 @@
     [(CompilerIrInstr.Syscall _ args)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
     [(CompilerIrInstr.Call _ name args _)
-      (if (string.eq name "tl_memcpy")
+      (if (string.eq (compiler-ir-symbol-text name) "tl_memcpy")
         unit
         (compiler-reg-color-invalidate-call-args! roots invalid args))]
     [(CompilerIrInstr.CallIndirect _ callee args _)
@@ -21196,12 +21196,35 @@
 (define (compiler-reg-scratch-aggregate-constraint
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
-  [dst : i64]) : CompilerRegScratchConstraint
+  [dst : i64]
+  [extra-excluded : CompilerRegStringList]) : CompilerRegScratchConstraint
   (CompilerRegScratchConstraint
     (CompilerRegScratchClass.Gp)
     (struct-get policy gp-allowed)
-    (compiler-reg-scratch-location-registers assignments dst)
+    (compiler-reg-string-list-append
+      (compiler-reg-scratch-location-registers assignments dst)
+      extra-excluded)
     ""))
+
+(define (compiler-reg-scratch-pack-word-registers
+  [assignments : CompilerRegAssignmentList]
+  [words : CompilerIrValueList]
+  [index : i64]) : CompilerRegStringList
+  (match words
+    [(CompilerIrValueList.Nil) CompilerRegStringList.Nil]
+    [(CompilerIrValueList.Cons word rest)
+      (if (= index 0)
+        (compiler-reg-scratch-value-registers assignments word)
+        (compiler-reg-scratch-pack-word-registers
+          assignments
+          (box-get rest)
+          (- index 1)))]
+    [(CompilerIrValueList.Array seq)
+      (if (and (>= index 0) (< index (struct-get seq len)))
+        (compiler-reg-scratch-value-registers
+          assignments
+          (array-ref (struct-get seq slots) index))
+        CompilerRegStringList.Nil)]))
 
 (define (compiler-reg-scratch-phi-constraint
   [policy : CompilerRegScratchPolicy]) : CompilerRegScratchConstraint
@@ -21416,12 +21439,20 @@
         point
         (+ point 1)
         var)]
-    [(CompilerIrInstr.Pack dst _ _)
+    [(CompilerIrInstr.Pack dst words _)
       (CompilerRegScratchRequirement
         point
         ordinal
         (CompilerRegScratchRole.AggregateWord)
-        (compiler-reg-scratch-aggregate-constraint policy assignments dst)
+        (compiler-reg-scratch-aggregate-constraint
+          policy
+          assignments
+          dst
+          ;; Word 0 is staged before word 1. Its scratch register must not
+          ;; overwrite word 1's source before that second load occurs.
+          (if (= ordinal 0)
+            (compiler-reg-scratch-pack-word-registers assignments words 1)
+            CompilerRegStringList.Nil))
         point
         (+ point 1)
         var)]
@@ -21430,7 +21461,11 @@
         point
         ordinal
         (CompilerRegScratchRole.AggregateWord)
-        (compiler-reg-scratch-aggregate-constraint policy assignments dst)
+        (compiler-reg-scratch-aggregate-constraint
+          policy
+          assignments
+          dst
+          CompilerRegStringList.Nil)
         point
         (+ point 1)
         var)]
@@ -23439,7 +23474,7 @@
 
 (define (compiler-reg-switch-scratch-test-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "switch_scratch_vregs"
+    (compiler-ir-test-symbol "switch_scratch_vregs")
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -23509,7 +23544,7 @@
 
 (define (compiler-reg-bounds-scratch-test-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "bounds_scratch_vregs"
+    (compiler-ir-test-symbol "bounds_scratch_vregs")
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -23567,7 +23602,7 @@
 
 (define (compiler-reg-memory-scratch-test-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "memory_scratch_vregs"
+    (intern "memory_scratch_vregs")
     CompilerIrParamList.Nil
     (AstType.Unit)
     2
@@ -23619,7 +23654,7 @@
 
 (define (compiler-reg-reuse-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "reuse"
+    (compiler-ir-test-symbol "reuse")
     CompilerIrParamList.Nil
     (AstType.Unit)
     2
@@ -23630,7 +23665,7 @@
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g0"
+              (compiler-ir-test-symbol "g0")
               (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
@@ -23646,7 +23681,7 @@
 
 (define (compiler-reg-f64-reuse-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "f64_reuse"
+    (compiler-ir-test-symbol "f64_reuse")
     CompilerIrParamList.Nil
     (compiler-reg-f64-ty)
     2
@@ -23660,7 +23695,7 @@
             (compiler-reg-f64-ty))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g0"
+              (compiler-ir-test-symbol "g0")
               (CompilerIrValue.Var 0)
               (compiler-reg-f64-ty))
             (compiler-ir-instr-cons
@@ -23676,7 +23711,7 @@
 
 (define (compiler-reg-overlap-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "overlap"
+    (compiler-ir-test-symbol "overlap")
     CompilerIrParamList.Nil
     (AstType.Unit)
     8
@@ -23717,37 +23752,37 @@
                         (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
                         (CompilerIrInstr.Store
-                          "g0"
+                          (compiler-ir-test-symbol "g0")
                           (CompilerIrValue.Var 0)
                           (compiler-reg-i64-ty))
                         (compiler-ir-instr-cons
                           (CompilerIrInstr.Store
-                            "g1"
+                            (compiler-ir-test-symbol "g1")
                             (CompilerIrValue.Var 1)
                             (compiler-reg-i64-ty))
                           (compiler-ir-instr-cons
                             (CompilerIrInstr.Store
-                              "g2"
+                              (compiler-ir-test-symbol "g2")
                               (CompilerIrValue.Var 2)
                               (compiler-reg-i64-ty))
                             (compiler-ir-instr-cons
                               (CompilerIrInstr.Store
-                                "g3"
+                                (compiler-ir-test-symbol "g3")
                                 (CompilerIrValue.Var 3)
                                 (compiler-reg-i64-ty))
                               (compiler-ir-instr-cons
                                 (CompilerIrInstr.Store
-                                  "g4"
+                                  (compiler-ir-test-symbol "g4")
                                   (CompilerIrValue.Var 4)
                                   (compiler-reg-i64-ty))
                                 (compiler-ir-instr-cons
                                   (CompilerIrInstr.Store
-                                    "g5"
+                                    (compiler-ir-test-symbol "g5")
                                     (CompilerIrValue.Var 5)
                                     (compiler-reg-i64-ty))
                                   (compiler-ir-instr-cons
                                     (CompilerIrInstr.Store
-                                      "g6"
+                                      (compiler-ir-test-symbol "g6")
                                       (CompilerIrValue.Var 6)
                                       (compiler-reg-i64-ty))
                                     (compiler-ir-instr-cons
@@ -23758,7 +23793,7 @@
 
 (define (compiler-reg-f64-overlap-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "f64_overlap"
+    (compiler-ir-test-symbol "f64_overlap")
     CompilerIrParamList.Nil
     (AstType.Unit)
     5
@@ -23792,27 +23827,27 @@
                     (compiler-reg-f64-ty))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Store
-                      "g0"
+                      (compiler-ir-test-symbol "g0")
                       (CompilerIrValue.Var 0)
                       (compiler-reg-f64-ty))
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Store
-                        "g1"
+                        (compiler-ir-test-symbol "g1")
                         (CompilerIrValue.Var 1)
                         (compiler-reg-f64-ty))
                       (compiler-ir-instr-cons
                         (CompilerIrInstr.Store
-                          "g2"
+                          (compiler-ir-test-symbol "g2")
                           (CompilerIrValue.Var 2)
                           (compiler-reg-f64-ty))
                         (compiler-ir-instr-cons
                           (CompilerIrInstr.Store
-                            "g3"
+                            (compiler-ir-test-symbol "g3")
                             (CompilerIrValue.Var 3)
                             (compiler-reg-f64-ty))
                           (compiler-ir-instr-cons
                             (CompilerIrInstr.Store
-                              "g4"
+                              (compiler-ir-test-symbol "g4")
                               (CompilerIrValue.Var 4)
                               (compiler-reg-f64-ty))
                             (compiler-ir-instr-cons
@@ -23822,7 +23857,7 @@
 
 (define (compiler-reg-call-live-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "call_live"
+    (compiler-ir-test-symbol "call_live")
     CompilerIrParamList.Nil
     (AstType.Unit)
     3
@@ -23834,7 +23869,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
-              "side_effect"
+              (compiler-ir-test-symbol "side_effect")
               (CompilerIrCallArgs.Nil)
               (AstType.Unit))
             (compiler-ir-instr-cons
@@ -23850,7 +23885,7 @@
 
 (define (compiler-reg-f64-call-live-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "f64_call_live"
+    (compiler-ir-test-symbol "f64_call_live")
     CompilerIrParamList.Nil
     (compiler-reg-f64-ty)
     3
@@ -23865,7 +23900,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
-              "side_effect"
+              (compiler-ir-test-symbol "side_effect")
               (CompilerIrCallArgs.Nil)
               (AstType.Unit))
             (compiler-ir-instr-cons
@@ -23881,7 +23916,7 @@
 
 (define (compiler-reg-call-arg-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "call_arg"
+    (compiler-ir-test-symbol "call_arg")
     CompilerIrParamList.Nil
     (AstType.Unit)
     4
@@ -23898,7 +23933,7 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 2
-                "use_args"
+                (compiler-ir-test-symbol "use_args")
                 (CompilerIrCallArgs.Two
                   (CompilerIrValue.Var 0)
                   (CompilerIrValue.Var 1))
@@ -23916,7 +23951,7 @@
 
 (define (compiler-reg-f64-call-arg-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "f64_call_arg"
+    (compiler-ir-test-symbol "f64_call_arg")
     CompilerIrParamList.Nil
     (compiler-reg-f64-ty)
     3
@@ -23931,7 +23966,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
-              "takes_f64"
+              (compiler-ir-test-symbol "takes_f64")
               (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
               (AstType.Unit))
             (compiler-ir-instr-cons
@@ -23951,7 +23986,7 @@
 ;; used again after the call, so it spans the call point.
 (define (compiler-reg-handle-call-arg-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "handle_call_arg"
+    (compiler-ir-test-symbol "handle_call_arg")
     CompilerIrParamList.Nil
     (AstType.Unit)
     4
@@ -23961,7 +23996,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             0
-            "make_handle"
+            (compiler-ir-test-symbol "make_handle")
             (CompilerIrCallArgs.Nil)
             (ast-ty-dyn-array (AstType.I64)))
           (compiler-ir-instr-cons
@@ -23972,7 +24007,7 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 2
-                "use_args"
+                (compiler-ir-test-symbol "use_args")
                 (CompilerIrCallArgs.Two
                   (CompilerIrValue.Var 0)
                   (CompilerIrValue.Var 1))
@@ -24007,7 +24042,7 @@
 
 (define (compiler-reg-indirect-call-arg-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "indirect_call_arg"
+    (compiler-ir-test-symbol "indirect_call_arg")
     (compiler-ir-param-cons
       (CompilerIrParam.Param "callee" (compiler-reg-func2-ty) 0)
       (compiler-ir-param-cons
@@ -24043,7 +24078,7 @@
       (array-set! args 2 (CompilerIrValue.Var 3))
       (array-set! args 3 (CompilerIrValue.Var 4))
       (CompilerIrFunction.Function
-        "indirect_call_arg4"
+        (compiler-ir-test-symbol "indirect_call_arg4")
         (compiler-ir-param-cons
           (CompilerIrParam.Param "callee" (compiler-reg-func4-ty) 0)
           (compiler-ir-param-cons
@@ -24074,7 +24109,7 @@
 
 (define (compiler-reg-c-abi-store-result-arg-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "c_abi_store_result_arg"
+    (compiler-ir-test-symbol "c_abi_store_result_arg")
     (compiler-ir-param-cons
       (CompilerIrParam.Param "base" (compiler-reg-i64-ty) 0)
       (compiler-ir-param-cons
@@ -24090,7 +24125,7 @@
         (compiler-ir-instr-cons
           (ir-instr-call-cabi-store-result
             (CompilerIrValue.Var 0)
-            "c_ret_pair"
+            (compiler-ir-test-symbol "c_ret_pair")
             (CompilerIrCallArgs.Two
               (CompilerIrValue.Var 1)
               (CompilerIrValue.Var 2))
@@ -24102,7 +24137,7 @@
 
 (define (compiler-reg-ineligible-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "ineligible"
+    (compiler-ir-test-symbol "ineligible")
     (compiler-ir-param-cons
       (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
       CompilerIrParamList.Nil)
@@ -24152,7 +24187,7 @@
 
 (define (compiler-reg-param-livein-gap-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "param_livein_gap"
+    (compiler-ir-test-symbol "param_livein_gap")
     (compiler-ir-param-cons
       (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
       CompilerIrParamList.Nil)
@@ -24180,7 +24215,7 @@
 
 (define (compiler-reg-single-block-livein-gap-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "single_block_livein_gap"
+    (compiler-ir-test-symbol "single_block_livein_gap")
     (compiler-ir-param-cons
       (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
       CompilerIrParamList.Nil)
@@ -24201,7 +24236,7 @@
   test
   (define (compiler-reg-param-register-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "param_registers"
+      (compiler-ir-test-symbol "param_registers")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
@@ -24216,17 +24251,17 @@
           "entry"
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "pa"
+              (compiler-ir-test-symbol "pa")
               (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "pb"
+                (compiler-ir-test-symbol "pb")
                 (CompilerIrValue.Var 1)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "pc"
+                  (compiler-ir-test-symbol "pc")
                   (CompilerIrValue.Var 2)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
@@ -24238,7 +24273,7 @@
   test
   (define (compiler-reg-float-param-register-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "float_param_registers"
+      (compiler-ir-test-symbol "float_param_registers")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "a" (compiler-reg-f64-ty) 0)
         (compiler-ir-param-cons
@@ -24253,17 +24288,17 @@
           "entry"
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "fa"
+              (compiler-ir-test-symbol "fa")
               (CompilerIrValue.Var 0)
               (compiler-reg-f64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "fb"
+                (compiler-ir-test-symbol "fb")
                 (CompilerIrValue.Var 1)
                 (compiler-reg-f64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "fc"
+                  (compiler-ir-test-symbol "fc")
                   (CompilerIrValue.Var 2)
                   (compiler-reg-f64-ty))
                 (compiler-ir-instr-cons
@@ -24282,7 +24317,7 @@
         (array-set! args 2 (CompilerIrValue.Var 2))
         (array-set! args 3 (CompilerIrValue.Var 3))
         (CompilerIrFunction.Function
-          "mixed_float_call_args"
+          (compiler-ir-test-symbol "mixed_float_call_args")
           (compiler-ir-param-cons
             (CompilerIrParam.Param "i" (compiler-reg-i64-ty) 0)
             (compiler-ir-param-cons
@@ -24300,7 +24335,7 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   4
-                  "mixed_float_callee"
+                  (compiler-ir-test-symbol "mixed_float_callee")
                   (CompilerIrCallArgs.Array args)
                   (AstType.Unit))
                 (compiler-ir-instr-cons
@@ -24327,7 +24362,7 @@
               instrs
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "g"
+                  (compiler-ir-test-symbol "g")
                   (CompilerIrValue.Var i)
                   (compiler-reg-i64-ty))
                 instrs))
@@ -24337,7 +24372,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               7
-              "side_effect"
+              (compiler-ir-test-symbol "side_effect")
               (CompilerIrCallArgs.Nil)
               (AstType.Unit))
             instrs))
@@ -24354,7 +24389,7 @@
                 params))
             (set! i (- i 1))))
         (CompilerIrFunction.Function
-          "win64_rsi_rdi_pressure"
+          (compiler-ir-test-symbol "win64_rsi_rdi_pressure")
           params
           (AstType.Unit)
           8
@@ -24377,7 +24412,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "p5"
+              (compiler-ir-test-symbol "p5")
               (CompilerIrValue.Var 5)
               (compiler-reg-i64-ty))
             instrs))
@@ -24385,7 +24420,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g12"
+              (compiler-ir-test-symbol "g12")
               (CompilerIrValue.Var 12)
               (compiler-reg-i64-ty))
             instrs))
@@ -24393,7 +24428,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g11"
+              (compiler-ir-test-symbol "g11")
               (CompilerIrValue.Var 11)
               (compiler-reg-i64-ty))
             instrs))
@@ -24401,7 +24436,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g10"
+              (compiler-ir-test-symbol "g10")
               (CompilerIrValue.Var 10)
               (compiler-reg-i64-ty))
             instrs))
@@ -24409,7 +24444,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g9"
+              (compiler-ir-test-symbol "g9")
               (CompilerIrValue.Var 9)
               (compiler-reg-i64-ty))
             instrs))
@@ -24417,7 +24452,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g8"
+              (compiler-ir-test-symbol "g8")
               (CompilerIrValue.Var 8)
               (compiler-reg-i64-ty))
             instrs))
@@ -24425,7 +24460,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g7"
+              (compiler-ir-test-symbol "g7")
               (CompilerIrValue.Var 7)
               (compiler-reg-i64-ty))
             instrs))
@@ -24433,7 +24468,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g6"
+              (compiler-ir-test-symbol "g6")
               (CompilerIrValue.Var 6)
               (compiler-reg-i64-ty))
             instrs))
@@ -24494,7 +24529,7 @@
               (compiler-reg-i64-ty))
             instrs))
         (CompilerIrFunction.Function
-          "zero_call_param_conflict"
+          (compiler-ir-test-symbol "zero_call_param_conflict")
           (compiler-ir-param-cons
             (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
             (compiler-ir-param-cons
@@ -24518,7 +24553,7 @@
   test
   (define (compiler-reg-param-clobber-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "param_clobber"
+      (compiler-ir-test-symbol "param_clobber")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "arg" (compiler-reg-i64-ty) 0)
         CompilerIrParamList.Nil)
@@ -24530,7 +24565,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
-              "side_effect"
+              (compiler-ir-test-symbol "side_effect")
               (CompilerIrCallArgs.Nil)
               (AstType.Unit))
             (compiler-ir-instr-cons
@@ -24545,7 +24580,7 @@
     (let
       [ty : AstType (AstType.Struct (intern "ParamAggregate"))]
       (CompilerIrFunction.Function
-        "param_aggregate"
+        (compiler-ir-test-symbol "param_aggregate")
         (compiler-ir-param-cons
           (CompilerIrParam.Param "state" ty 0)
           CompilerIrParamList.Nil)
@@ -24568,7 +24603,7 @@
   ;; their ABI pins.
   (define (compiler-reg-param-const-shift-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "param_const_shift"
+      (compiler-ir-test-symbol "param_const_shift")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
@@ -24606,7 +24641,7 @@
   ;; across the shift: t = a >> n; return t + a.
   (define (compiler-reg-param-var-shift-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "param_var_shift"
+      (compiler-ir-test-symbol "param_var_shift")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
@@ -24688,7 +24723,7 @@
   ;; pinned while the call-spanning t (var 1) takes a callee-saved home.
   (define (compiler-reg-param-dead-before-call-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "param_dead_before_call"
+      (compiler-ir-test-symbol "param_dead_before_call")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         CompilerIrParamList.Nil)
@@ -24707,7 +24742,7 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 2
-                "side_effect"
+                (compiler-ir-test-symbol "side_effect")
                 (CompilerIrCallArgs.Nil)
                 (AstType.Unit))
               (compiler-ir-instr-cons
@@ -24749,7 +24784,7 @@
   ;; the div = read before the clobber) keep theirs.
   (define (compiler-reg-param-rdx-div-span-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "param_rdx_div_span"
+      (compiler-ir-test-symbol "param_rdx_div_span")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
@@ -24818,7 +24853,7 @@
   ;; the shift and keep theirs.
   (define (compiler-reg-param-rcx-shift-span-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "param_rcx_shift_span"
+      (compiler-ir-test-symbol "param_rcx_shift_span")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         (compiler-ir-param-cons
@@ -24900,7 +24935,7 @@
   ;; the class must land on ONE callee-saved home instead.
   (define (compiler-reg-param-pin-coalesce-demote-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "param_pin_coalesce_demote"
+      (compiler-ir-test-symbol "param_pin_coalesce_demote")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 0)
         CompilerIrParamList.Nil)
@@ -24924,12 +24959,12 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   2
-                  "side_effect"
+                  (compiler-ir-test-symbol "side_effect")
                   (CompilerIrCallArgs.Nil)
                   (AstType.Unit))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "g"
+                    (compiler-ir-test-symbol "g")
                     (CompilerIrValue.Var 1)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
@@ -24955,7 +24990,7 @@
 
 (define (compiler-reg-move-chain-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "move_chain"
+    (compiler-ir-test-symbol "move_chain")
     CompilerIrParamList.Nil
     (AstType.I64)
     3
@@ -24982,7 +25017,7 @@
 
 (define (compiler-reg-same-value-multi-def-census-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "same_value_multi_def_census"
+    (compiler-ir-test-symbol "same_value_multi_def_census")
     CompilerIrParamList.Nil
     (AstType.I64)
     2
@@ -25009,7 +25044,7 @@
 
 (define (compiler-reg-phi-join-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "phi_join"
+    (compiler-ir-test-symbol "phi_join")
     CompilerIrParamList.Nil
     (AstType.I64)
     2
@@ -25040,7 +25075,7 @@
 
 (define (compiler-reg-loop-backedge-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "loop_backedge"
+    (compiler-ir-test-symbol "loop_backedge")
     CompilerIrParamList.Nil
     (AstType.I64)
     3
@@ -25094,7 +25129,7 @@
 
 (define (compiler-reg-same-value-clobber-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "same_value_clobber"
+    (compiler-ir-test-symbol "same_value_clobber")
     CompilerIrParamList.Nil
     (AstType.I64)
     3
@@ -25106,7 +25141,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               1
-              "side_effect"
+              (compiler-ir-test-symbol "side_effect")
               CompilerIrCallArgs.Nil
               (AstType.Unit))
             (compiler-ir-instr-cons
@@ -25127,7 +25162,7 @@
 ;; (the transitive hazard). `cast`: the width-64 int cast counts as a copy.
 (define (compiler-reg-sv-multi-safe-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "sv_multi_safe"
+    (compiler-ir-test-symbol "sv_multi_safe")
     CompilerIrParamList.Nil
     (AstType.I64)
     2
@@ -25143,7 +25178,7 @@
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "g"
+                (compiler-ir-test-symbol "g")
                 (CompilerIrValue.Var 1)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
@@ -25159,7 +25194,7 @@
 
 (define (compiler-reg-sv-multi-reject-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "sv_multi_reject"
+    (compiler-ir-test-symbol "sv_multi_reject")
     CompilerIrParamList.Nil
     (AstType.I64)
     2
@@ -25180,7 +25215,7 @@
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "g"
+                  (compiler-ir-test-symbol "g")
                   (CompilerIrValue.Var 1)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
@@ -25191,7 +25226,7 @@
 
 (define (compiler-reg-sv-multi-chain-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "sv_multi_chain"
+    (compiler-ir-test-symbol "sv_multi_chain")
     CompilerIrParamList.Nil
     (AstType.I64)
     4
@@ -25217,7 +25252,7 @@
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "g"
+                    (compiler-ir-test-symbol "g")
                     (CompilerIrValue.Var 3)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
@@ -25228,7 +25263,7 @@
 
 (define (compiler-reg-sv-multi-cast-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "sv_multi_cast"
+    (compiler-ir-test-symbol "sv_multi_cast")
     CompilerIrParamList.Nil
     (AstType.I64)
     2
@@ -25244,7 +25279,10 @@
               (AstType.I64)
               (AstType.U64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Store "g" (CompilerIrValue.Var 1) (AstType.U64))
+              (CompilerIrInstr.Store
+                (compiler-ir-test-symbol "g")
+                (CompilerIrValue.Var 1)
+                (AstType.U64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Mov
                   0
@@ -25258,7 +25296,7 @@
 
 (define (compiler-reg-interference-blocks-coalesce-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "interference_blocks_coalesce"
+    (compiler-ir-test-symbol "interference_blocks_coalesce")
     CompilerIrParamList.Nil
     (AstType.I64)
     2
@@ -25274,7 +25312,7 @@
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "keep"
+                (compiler-ir-test-symbol "keep")
                 (CompilerIrValue.Var 0)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
@@ -25285,7 +25323,7 @@
 
 (define (compiler-reg-spill-coalesce-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "spill_coalesce"
+    (compiler-ir-test-symbol "spill_coalesce")
     CompilerIrParamList.Nil
     (AstType.I64)
     6
@@ -25316,22 +25354,22 @@
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Store
-                      "g0"
+                      (compiler-ir-test-symbol "g0")
                       (CompilerIrValue.Var 0)
                       (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Store
-                        "g1"
+                        (compiler-ir-test-symbol "g1")
                         (CompilerIrValue.Var 1)
                         (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
                         (CompilerIrInstr.Store
-                          "g2"
+                          (compiler-ir-test-symbol "g2")
                           (CompilerIrValue.Var 2)
                           (compiler-reg-i64-ty))
                         (compiler-ir-instr-cons
                           (CompilerIrInstr.Store
-                            "g3"
+                            (compiler-ir-test-symbol "g3")
                             (CompilerIrValue.Var 3)
                             (compiler-reg-i64-ty))
                           (compiler-ir-instr-cons
@@ -25348,7 +25386,7 @@
 
 (define (compiler-reg-vector-home-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "vector_home"
+    (compiler-ir-test-symbol "vector_home")
     CompilerIrParamList.Nil
     (AstType.Unit)
     4
@@ -25401,7 +25439,7 @@
 ;; across it must therefore keep an ordinary volatile vector home on SysV.
 (define (compiler-reg-vector-gp-clobber-home-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "vector_gp_clobber_home"
+    (compiler-ir-test-symbol "vector_gp_clobber_home")
     CompilerIrParamList.Nil
     (AstType.Unit)
     2
@@ -25435,7 +25473,7 @@
 
 (define (compiler-reg-vector-select-false-home-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "vector_select_false_home"
+    (compiler-ir-test-symbol "vector_select_false_home")
     CompilerIrParamList.Nil
     (AstType.Unit)
     5
@@ -25485,7 +25523,7 @@
 
 (define (compiler-reg-mask-home-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "mask_home"
+    (compiler-ir-test-symbol "mask_home")
     CompilerIrParamList.Nil
     (AstType.Unit)
     5
@@ -25967,7 +26005,7 @@
         (array-set! args 3 (CompilerIrValue.Var 3))
         (array-set! args 4 (CompilerIrValue.Var 4))
         (CompilerIrFunction.Function
-          "win64_arg_result_pref"
+          (compiler-ir-test-symbol "win64_arg_result_pref")
           CompilerIrParamList.Nil
           (AstType.I64)
           6
@@ -25977,7 +26015,7 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   5
-                  "callee"
+                  (compiler-ir-test-symbol "callee")
                   (CompilerIrCallArgs.Array args)
                   (AstType.I64))
                 (compiler-ir-instr-cons
@@ -26075,7 +26113,7 @@
 
 (define (compiler-reg-syscall-clobber-overlap-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "syscall_clobber_overlap"
+    (compiler-ir-test-symbol "syscall_clobber_overlap")
     CompilerIrParamList.Nil
     (AstType.Unit)
     7
@@ -26115,32 +26153,32 @@
                         (CompilerIrCallArgs.One (CompilerIrValue.I64 39)))
                       (compiler-ir-instr-cons
                         (CompilerIrInstr.Store
-                          "g0"
+                          (compiler-ir-test-symbol "g0")
                           (CompilerIrValue.Var 0)
                           (compiler-reg-i64-ty))
                         (compiler-ir-instr-cons
                           (CompilerIrInstr.Store
-                            "g1"
+                            (compiler-ir-test-symbol "g1")
                             (CompilerIrValue.Var 1)
                             (compiler-reg-i64-ty))
                           (compiler-ir-instr-cons
                             (CompilerIrInstr.Store
-                              "g2"
+                              (compiler-ir-test-symbol "g2")
                               (CompilerIrValue.Var 2)
                               (compiler-reg-i64-ty))
                             (compiler-ir-instr-cons
                               (CompilerIrInstr.Store
-                                "g3"
+                                (compiler-ir-test-symbol "g3")
                                 (CompilerIrValue.Var 3)
                                 (compiler-reg-i64-ty))
                               (compiler-ir-instr-cons
                                 (CompilerIrInstr.Store
-                                  "g4"
+                                  (compiler-ir-test-symbol "g4")
                                   (CompilerIrValue.Var 4)
                                   (compiler-reg-i64-ty))
                                 (compiler-ir-instr-cons
                                   (CompilerIrInstr.Store
-                                    "g5"
+                                    (compiler-ir-test-symbol "g5")
                                     (CompilerIrValue.Var 5)
                                     (compiler-reg-i64-ty))
                                   (compiler-ir-instr-cons
@@ -26162,7 +26200,7 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g5c"
+            (compiler-ir-test-symbol "g5c")
             (CompilerIrValue.Var 5)
             (compiler-reg-i64-ty))
           instrs))
@@ -26170,7 +26208,7 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g5b"
+            (compiler-ir-test-symbol "g5b")
             (CompilerIrValue.Var 5)
             (compiler-reg-i64-ty))
           instrs))
@@ -26178,7 +26216,7 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g6"
+            (compiler-ir-test-symbol "g6")
             (CompilerIrValue.Var 6)
             (compiler-reg-i64-ty))
           instrs))
@@ -26186,7 +26224,7 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g5"
+            (compiler-ir-test-symbol "g5")
             (CompilerIrValue.Var 5)
             (compiler-reg-i64-ty))
           instrs))
@@ -26194,7 +26232,7 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g4"
+            (compiler-ir-test-symbol "g4")
             (CompilerIrValue.Var 4)
             (compiler-reg-i64-ty))
           instrs))
@@ -26202,7 +26240,7 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g3"
+            (compiler-ir-test-symbol "g3")
             (CompilerIrValue.Var 3)
             (compiler-reg-i64-ty))
           instrs))
@@ -26210,7 +26248,7 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g2"
+            (compiler-ir-test-symbol "g2")
             (CompilerIrValue.Var 2)
             (compiler-reg-i64-ty))
           instrs))
@@ -26218,7 +26256,7 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g1"
+            (compiler-ir-test-symbol "g1")
             (CompilerIrValue.Var 1)
             (compiler-reg-i64-ty))
           instrs))
@@ -26226,7 +26264,7 @@
         instrs
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g0"
+            (compiler-ir-test-symbol "g0")
             (CompilerIrValue.Var 0)
             (compiler-reg-i64-ty))
           instrs))
@@ -26235,7 +26273,7 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Call
             7
-            "side_effect"
+            (compiler-ir-test-symbol "side_effect")
             (CompilerIrCallArgs.Nil)
             (AstType.Unit))
           instrs))
@@ -26275,7 +26313,7 @@
           (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (compiler-reg-i64-ty))
           instrs))
       (CompilerIrFunction.Function
-        "call_spanning_caller_saved"
+        (compiler-ir-test-symbol "call_spanning_caller_saved")
         CompilerIrParamList.Nil
         (AstType.Unit)
         8
@@ -26346,7 +26384,7 @@
   test
   (define (compiler-reg-remat-weight-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_weight"
+      (compiler-ir-test-symbol "remat_weight")
       CompilerIrParamList.Nil
       (AstType.Unit)
       2
@@ -26367,17 +26405,17 @@
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "use1"
+                  (compiler-ir-test-symbol "use1")
                   (CompilerIrValue.Var 1)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "use0a"
+                    (compiler-ir-test-symbol "use0a")
                     (CompilerIrValue.Var 0)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Store
-                      "use0b"
+                      (compiler-ir-test-symbol "use0b")
                       (CompilerIrValue.Var 0)
                       (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
@@ -26389,7 +26427,7 @@
   test
   (define (compiler-reg-remat-multi-def-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_multi_def"
+      (compiler-ir-test-symbol "remat_multi_def")
       CompilerIrParamList.Nil
       (AstType.Unit)
       1
@@ -26431,31 +26469,31 @@
       (compiler-reg-remat-defn?
         (CompilerIrInstr.Mov
           14
-          (CompilerIrValue.GlobalAddr "global")
+          (CompilerIrValue.GlobalAddr (compiler-ir-test-symbol "global"))
           (AstType.U64)))
       (not
         (compiler-reg-remat-defn?
           (CompilerIrInstr.Mov
             15
-            (CompilerIrValue.Global "global")
+            (CompilerIrValue.Global (compiler-ir-test-symbol "global"))
             (compiler-reg-i64-ty))))
       (compiler-reg-remat-defn-with-invariant-loads?
         (CompilerIrInstr.Mov
           16
-          (CompilerIrValue.Global "global")
+          (CompilerIrValue.Global (compiler-ir-test-symbol "global"))
           (compiler-reg-i64-ty))
         true)
       (compiler-reg-remat-defn?
         (CompilerIrInstr.Gep
           17
-          (CompilerIrValue.GlobalAddr "global")
+          (CompilerIrValue.GlobalAddr (compiler-ir-test-symbol "global"))
           (CompilerIrValue.I64 2)
           (compiler-reg-i64-ty)))
       (not
         (compiler-reg-remat-defn?
           (CompilerIrInstr.Gep
             18
-            (CompilerIrValue.GlobalAddr "global")
+            (CompilerIrValue.GlobalAddr (compiler-ir-test-symbol "global"))
             (CompilerIrValue.Var 0)
             (compiler-reg-i64-ty))))
       (not
@@ -26469,12 +26507,12 @@
         (compiler-reg-remat-defn?
           (CompilerIrInstr.Load
             20
-            (CompilerIrValue.GlobalAddr "global")
+            (CompilerIrValue.GlobalAddr (compiler-ir-test-symbol "global"))
             (compiler-reg-i64-ty))))
       (compiler-reg-remat-defn-with-invariant-loads?
         (CompilerIrInstr.Load
           21
-          (CompilerIrValue.GlobalAddr "global")
+          (CompilerIrValue.GlobalAddr (compiler-ir-test-symbol "global"))
           (compiler-reg-i64-ty))
         true)
       (not
@@ -26553,7 +26591,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "hot0b"
+              (compiler-ir-test-symbol "hot0b")
               (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             instrs))
@@ -26561,7 +26599,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "hot0a"
+              (compiler-ir-test-symbol "hot0a")
               (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             instrs))
@@ -26569,7 +26607,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "cold1"
+              (compiler-ir-test-symbol "cold1")
               (CompilerIrValue.Var 1)
               (compiler-reg-i64-ty))
             instrs))
@@ -26577,7 +26615,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use5"
+              (compiler-ir-test-symbol "use5")
               (CompilerIrValue.Var 5)
               (compiler-reg-i64-ty))
             instrs))
@@ -26585,7 +26623,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use4"
+              (compiler-ir-test-symbol "use4")
               (CompilerIrValue.Var 4)
               (compiler-reg-i64-ty))
             instrs))
@@ -26593,7 +26631,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use3"
+              (compiler-ir-test-symbol "use3")
               (CompilerIrValue.Var 3)
               (compiler-reg-i64-ty))
             instrs))
@@ -26601,7 +26639,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use2"
+              (compiler-ir-test-symbol "use2")
               (CompilerIrValue.Var 2)
               (compiler-reg-i64-ty))
             instrs))
@@ -26669,7 +26707,7 @@
               (compiler-reg-i64-ty))
             instrs))
         (CompilerIrFunction.Function
-          "remat_spill_weight_eviction"
+          (compiler-ir-test-symbol "remat_spill_weight_eviction")
           CompilerIrParamList.Nil
           (AstType.Unit)
           7
@@ -26730,7 +26768,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "hot0c"
+              (compiler-ir-test-symbol "hot0c")
               (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             instrs))
@@ -26738,7 +26776,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "hot0b"
+              (compiler-ir-test-symbol "hot0b")
               (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             instrs))
@@ -26746,7 +26784,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "hot0a"
+              (compiler-ir-test-symbol "hot0a")
               (CompilerIrValue.Var 0)
               (compiler-reg-i64-ty))
             instrs))
@@ -26754,7 +26792,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "cold1"
+              (compiler-ir-test-symbol "cold1")
               (CompilerIrValue.Var 1)
               (compiler-reg-i64-ty))
             instrs))
@@ -26762,7 +26800,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use5b"
+              (compiler-ir-test-symbol "use5b")
               (CompilerIrValue.Var 5)
               (compiler-reg-i64-ty))
             instrs))
@@ -26770,7 +26808,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use5a"
+              (compiler-ir-test-symbol "use5a")
               (CompilerIrValue.Var 5)
               (compiler-reg-i64-ty))
             instrs))
@@ -26778,7 +26816,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use4b"
+              (compiler-ir-test-symbol "use4b")
               (CompilerIrValue.Var 4)
               (compiler-reg-i64-ty))
             instrs))
@@ -26786,7 +26824,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use4a"
+              (compiler-ir-test-symbol "use4a")
               (CompilerIrValue.Var 4)
               (compiler-reg-i64-ty))
             instrs))
@@ -26794,7 +26832,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use3b"
+              (compiler-ir-test-symbol "use3b")
               (CompilerIrValue.Var 3)
               (compiler-reg-i64-ty))
             instrs))
@@ -26802,7 +26840,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use3a"
+              (compiler-ir-test-symbol "use3a")
               (CompilerIrValue.Var 3)
               (compiler-reg-i64-ty))
             instrs))
@@ -26810,7 +26848,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use2b"
+              (compiler-ir-test-symbol "use2b")
               (CompilerIrValue.Var 2)
               (compiler-reg-i64-ty))
             instrs))
@@ -26818,7 +26856,7 @@
           instrs
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "use2a"
+              (compiler-ir-test-symbol "use2a")
               (CompilerIrValue.Var 2)
               (compiler-reg-i64-ty))
             instrs))
@@ -26878,7 +26916,7 @@
               (compiler-reg-i64-ty))
             instrs))
         (CompilerIrFunction.Function
-          "spill_weight_eviction"
+          (compiler-ir-test-symbol "spill_weight_eviction")
           CompilerIrParamList.Nil
           (AstType.Unit)
           7
@@ -26909,7 +26947,7 @@
     ;; weighted) while var1 is the single cold exit value -- the unique
     ;; spill-weight eviction victim despite var0/var1 sharing one static use each.
     (CompilerIrFunction.Function
-      "loop_spill_weight_eviction"
+      (compiler-ir-test-symbol "loop_spill_weight_eviction")
       CompilerIrParamList.Nil
       (AstType.Unit)
       7
@@ -26958,27 +26996,27 @@
             "loop"
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "hot0"
+                (compiler-ir-test-symbol "hot0")
                 (CompilerIrValue.Var 0)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "hot2"
+                  (compiler-ir-test-symbol "hot2")
                   (CompilerIrValue.Var 2)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "hot3"
+                    (compiler-ir-test-symbol "hot3")
                     (CompilerIrValue.Var 3)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Store
-                      "hot4"
+                      (compiler-ir-test-symbol "hot4")
                       (CompilerIrValue.Var 4)
                       (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Store
-                        "hot5"
+                        (compiler-ir-test-symbol "hot5")
                         (CompilerIrValue.Var 5)
                         (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
@@ -26998,7 +27036,7 @@
                 "exit"
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "cold1"
+                    (compiler-ir-test-symbol "cold1")
                     (CompilerIrValue.Var 1)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
@@ -27082,7 +27120,9 @@
           [(CompilerIrInstr.Mov found-dst found-value _)
             (match found-value
               [(CompilerIrValue.Global found-name)
-                (if (and (= found-dst dst) (string.eq found-name name))
+                (if (and
+                  (= found-dst dst)
+                  (string.eq (compiler-ir-symbol-text found-name) name))
                   true
                   (compiler-reg-instr-list-has-mov-global?
                     (box-get rest)
@@ -27108,7 +27148,9 @@
           [(CompilerIrInstr.Load found-dst found-src _)
             (match found-src
               [(CompilerIrValue.GlobalAddr found-name)
-                (if (and (= found-dst dst) (string.eq found-name name))
+                (if (and
+                  (= found-dst dst)
+                  (string.eq (compiler-ir-symbol-text found-name) name))
                   true
                   (compiler-reg-instr-list-has-load-global-addr?
                     (box-get rest)
@@ -27145,7 +27187,7 @@
                     (if (and
                       (= found-dst dst)
                       (and
-                        (string.eq found-name name)
+                        (string.eq (compiler-ir-symbol-text found-name) name)
                         (and
                           (= found-offset-value offset)
                           (ast-type-eq? found-ty ty))))
@@ -27191,7 +27233,9 @@
           [(CompilerIrInstr.Store found-name found-value _)
             (match found-value
               [(CompilerIrValue.Var found-src)
-                (if (and (string.eq found-name name) (= found-src src))
+                (if (and
+                  (string.eq (compiler-ir-symbol-text found-name) name)
+                  (= found-src src))
                   true
                   (compiler-reg-instr-list-has-store-var?
                     (box-get rest)
@@ -27319,7 +27363,7 @@
   test
   (define (compiler-reg-remat-rewrite-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_rewrite"
+      (compiler-ir-test-symbol "remat_rewrite")
       CompilerIrParamList.Nil
       (AstType.Unit)
       1
@@ -27333,12 +27377,12 @@
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "use0a"
+                (compiler-ir-test-symbol "use0a")
                 (CompilerIrValue.Var 0)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "use0b"
+                  (compiler-ir-test-symbol "use0b")
                   (CompilerIrValue.Var 0)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
@@ -27350,7 +27394,7 @@
   test
   (define (compiler-reg-remat-conflict-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_conflict"
+      (compiler-ir-test-symbol "remat_conflict")
       CompilerIrParamList.Nil
       (AstType.Unit)
       2
@@ -27369,12 +27413,12 @@
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "use0"
+                  (compiler-ir-test-symbol "use0")
                   (CompilerIrValue.Var 0)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "keep1"
+                    (compiler-ir-test-symbol "keep1")
                     (CompilerIrValue.Var 1)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
@@ -27386,7 +27430,7 @@
   test
   (define (compiler-reg-remat-caller-clobber-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_caller_clobber"
+      (compiler-ir-test-symbol "remat_caller_clobber")
       CompilerIrParamList.Nil
       (AstType.Unit)
       2
@@ -27396,7 +27440,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
-              (CompilerIrValue.GlobalAddr "callee")
+              (CompilerIrValue.GlobalAddr (compiler-ir-test-symbol "callee"))
               (AstType.U64))
             (compiler-ir-instr-cons
               (CompilerIrInstr.CallIndirect
@@ -27413,7 +27457,7 @@
   test
   (define (compiler-reg-remat-addr-of-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_addr_of"
+      (compiler-ir-test-symbol "remat_addr_of")
       CompilerIrParamList.Nil
       (AstType.Unit)
       2
@@ -27429,7 +27473,7 @@
               (CompilerIrInstr.AddrOf 1 0)
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "addr"
+                  (compiler-ir-test-symbol "addr")
                   (CompilerIrValue.Var 1)
                   (compiler-reg-addr-of-result-type))
                 (compiler-ir-instr-cons
@@ -27441,7 +27485,7 @@
   test
   (define (compiler-reg-remat-global-mov-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_global_mov"
+      (compiler-ir-test-symbol "remat_global_mov")
       CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       1
@@ -27451,7 +27495,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
-              (CompilerIrValue.Global "global_value")
+              (CompilerIrValue.Global (compiler-ir-test-symbol "global_value"))
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
@@ -27463,7 +27507,7 @@
   test
   (define (compiler-reg-remat-global-load-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_global_load"
+      (compiler-ir-test-symbol "remat_global_load")
       CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       1
@@ -27473,7 +27517,8 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Load
               0
-              (CompilerIrValue.GlobalAddr "global_value")
+              (CompilerIrValue.GlobalAddr
+                (compiler-ir-test-symbol "global_value"))
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
@@ -27485,7 +27530,7 @@
   test
   (define (compiler-reg-remat-global-gep-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_global_gep"
+      (compiler-ir-test-symbol "remat_global_gep")
       CompilerIrParamList.Nil
       (compiler-reg-addr-of-result-type)
       1
@@ -27495,7 +27540,8 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Gep
               0
-              (CompilerIrValue.GlobalAddr "global_value")
+              (CompilerIrValue.GlobalAddr
+                (compiler-ir-test-symbol "global_value"))
               (CompilerIrValue.I64 3)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
@@ -27508,7 +27554,7 @@
   test
   (define (compiler-reg-remat-global-mutating-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "remat_global_mutating"
+      (compiler-ir-test-symbol "remat_global_mutating")
       CompilerIrParamList.Nil
       (compiler-reg-i64-ty)
       1
@@ -27518,11 +27564,11 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov
               0
-              (CompilerIrValue.Global "global_value")
+              (CompilerIrValue.Global (compiler-ir-test-symbol "global_value"))
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "global_value"
+                (compiler-ir-test-symbol "global_value")
                 (CompilerIrValue.I64 1)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
@@ -27932,45 +27978,48 @@
   (define (compiler-reg-call-spanning-post-call-stores
     [tail : CompilerIrInstrList]) : CompilerIrInstrList
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Store "g0" (CompilerIrValue.Var 0) (compiler-reg-i64-ty))
+      (CompilerIrInstr.Store
+        (compiler-ir-test-symbol "g0")
+        (CompilerIrValue.Var 0)
+        (compiler-reg-i64-ty))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Store
-          "g1"
+          (compiler-ir-test-symbol "g1")
           (CompilerIrValue.Var 1)
           (compiler-reg-i64-ty))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Store
-            "g2"
+            (compiler-ir-test-symbol "g2")
             (CompilerIrValue.Var 2)
             (compiler-reg-i64-ty))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "g3"
+              (compiler-ir-test-symbol "g3")
               (CompilerIrValue.Var 3)
               (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "g4"
+                (compiler-ir-test-symbol "g4")
                 (CompilerIrValue.Var 4)
                 (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "g5"
+                  (compiler-ir-test-symbol "g5")
                   (CompilerIrValue.Var 5)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "g6"
+                    (compiler-ir-test-symbol "g6")
                     (CompilerIrValue.Var 6)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Store
-                      "g5b"
+                      (compiler-ir-test-symbol "g5b")
                       (CompilerIrValue.Var 5)
                       (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Store
-                        "g5c"
+                        (compiler-ir-test-symbol "g5c")
                         (CompilerIrValue.Var 5)
                         (compiler-reg-i64-ty))
                       tail)))))))))))
@@ -28012,7 +28061,7 @@
     (compiler-ir-instr-cons
       (CompilerIrInstr.Call
         7
-        "side_effect"
+        (compiler-ir-test-symbol "side_effect")
         (CompilerIrCallArgs.Nil)
         (AstType.Unit))
       tail)))
@@ -28030,7 +28079,7 @@
           (compiler-reg-call-spanning-call-before
             (compiler-reg-call-spanning-post-call-stores body-tail)))]
       (CompilerIrFunction.Function
-        "call_spanning_multiblock_local"
+        (compiler-ir-test-symbol "call_spanning_multiblock_local")
         CompilerIrParamList.Nil
         (AstType.Unit)
         8
@@ -28067,7 +28116,7 @@
         (compiler-reg-call-spanning-call-before
           (compiler-reg-call-spanning-post-call-stores body-tail))]
       (CompilerIrFunction.Function
-        "call_spanning_multiblock_boundary"
+        (compiler-ir-test-symbol "call_spanning_multiblock_boundary")
         CompilerIrParamList.Nil
         (AstType.Unit)
         8
@@ -28171,7 +28220,7 @@
   test
   (define (compiler-reg-edge-copy-linear-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "edge_copy_linear"
+      (compiler-ir-test-symbol "edge_copy_linear")
       CompilerIrParamList.Nil
       (AstType.I64)
       1
@@ -28227,7 +28276,7 @@
   test
   (define (compiler-reg-edge-copy-backedge-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "edge_copy_backedge"
+      (compiler-ir-test-symbol "edge_copy_backedge")
       CompilerIrParamList.Nil
       (AstType.I64)
       1
@@ -28256,7 +28305,7 @@
               "body"
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "sink"
+                  (compiler-ir-test-symbol "sink")
                   (CompilerIrValue.Var 0)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
@@ -28306,7 +28355,7 @@
   test
   (define (compiler-reg-edge-copy-critical-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "edge_copy_critical"
+      (compiler-ir-test-symbol "edge_copy_critical")
       CompilerIrParamList.Nil
       (AstType.I64)
       1
@@ -28408,7 +28457,7 @@
   test
   (define (compiler-reg-loop-split-rewrite-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "loop_split_rewrite"
+      (compiler-ir-test-symbol "loop_split_rewrite")
       CompilerIrParamList.Nil
       (AstType.I64)
       1
@@ -28437,12 +28486,12 @@
               "body"
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "hot0"
+                  (compiler-ir-test-symbol "hot0")
                   (CompilerIrValue.Var 0)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "hot1"
+                    (compiler-ir-test-symbol "hot1")
                     (CompilerIrValue.Var 0)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
@@ -28461,7 +28510,7 @@
   test
   (define (compiler-reg-loop-split-two-rewrite-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "loop_split_two_rewrite"
+      (compiler-ir-test-symbol "loop_split_two_rewrite")
       CompilerIrParamList.Nil
       (AstType.I64)
       2
@@ -28495,22 +28544,22 @@
               "body"
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "hot0"
+                  (compiler-ir-test-symbol "hot0")
                   (CompilerIrValue.Var 0)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "hot1"
+                    (compiler-ir-test-symbol "hot1")
                     (CompilerIrValue.Var 1)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Store
-                      "hot2"
+                      (compiler-ir-test-symbol "hot2")
                       (CompilerIrValue.Var 0)
                       (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Store
-                        "hot3"
+                        (compiler-ir-test-symbol "hot3")
                         (CompilerIrValue.Var 1)
                         (compiler-reg-i64-ty))
                       (compiler-ir-instr-cons
@@ -28529,7 +28578,7 @@
   test
   (define (compiler-reg-loop-split-low-benefit-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "loop_split_low_benefit"
+      (compiler-ir-test-symbol "loop_split_low_benefit")
       CompilerIrParamList.Nil
       (AstType.I64)
       1
@@ -28558,7 +28607,7 @@
               "body"
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "hot0"
+                  (compiler-ir-test-symbol "hot0")
                   (CompilerIrValue.Var 0)
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
@@ -28577,7 +28626,7 @@
   test
   (define (compiler-reg-loop-split-phi-region-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "loop_split_phi_region"
+      (compiler-ir-test-symbol "loop_split_phi_region")
       CompilerIrParamList.Nil
       (AstType.I64)
       2
@@ -28614,12 +28663,12 @@
                   (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Store
-                    "hot0"
+                    (compiler-ir-test-symbol "hot0")
                     (CompilerIrValue.Var 0)
                     (compiler-reg-i64-ty))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Store
-                      "hot1"
+                      (compiler-ir-test-symbol "hot1")
                       (CompilerIrValue.Var 0)
                       (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
@@ -28801,7 +28850,7 @@
   test
   (define (compiler-reg-loop-split-clobber-scan-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "loop_split_clobber_scan"
+      (compiler-ir-test-symbol "loop_split_clobber_scan")
       CompilerIrParamList.Nil
       (AstType.I64)
       5
@@ -28893,7 +28942,7 @@
   test
   (define (compiler-reg-many-call-live-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "many_call_live"
+      (compiler-ir-test-symbol "many_call_live")
       CompilerIrParamList.Nil
       (AstType.Unit)
       6
@@ -28908,25 +28957,25 @@
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 1
-                "side_effect_a"
+                (compiler-ir-test-symbol "side_effect_a")
                 (CompilerIrCallArgs.Nil)
                 (AstType.Unit))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   2
-                  "side_effect_b"
+                  (compiler-ir-test-symbol "side_effect_b")
                   (CompilerIrCallArgs.Nil)
                   (AstType.Unit))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Call
                     3
-                    "side_effect_c"
+                    (compiler-ir-test-symbol "side_effect_c")
                     (CompilerIrCallArgs.Nil)
                     (AstType.Unit))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Call
                       4
-                      "side_effect_d"
+                      (compiler-ir-test-symbol "side_effect_d")
                       (CompilerIrCallArgs.Nil)
                       (AstType.Unit))
                     (compiler-ir-instr-cons
@@ -30353,7 +30402,7 @@
   (let
     [big : AstType (AstType.Struct (intern "BigStorage"))]
     (CompilerIrFunction.Function
-      "storage_ranges"
+      (compiler-ir-test-symbol "storage_ranges")
       CompilerIrParamList.Nil
       (AstType.Unit)
       6
@@ -30513,7 +30562,7 @@
 
 (define (compiler-reg-color-vector-stack-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "vector_stack_slots"
+    (compiler-ir-test-symbol "vector_stack_slots")
     CompilerIrParamList.Nil
     (AstType.Unit)
     2
@@ -30775,7 +30824,7 @@
               (compiler-live-set-empty)
               (CompilerIrInstr.Call
                 1
-                "callee"
+                (compiler-ir-test-symbol "callee")
                 (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
                 (AstType.I64)))]
           [indirect-call-caller-unsafe : CompilerLiveI64Set

@@ -4,6 +4,7 @@
 (import stdlib.text_buf)
 (import stdlib.vector)
 (import (vector String) as svec)
+(import compiler_builtin_ids as cbi)
 (import "../compiler_driver_core.tl")
 (import sym_i64_env)
 
@@ -159,16 +160,18 @@
         (begin
           (svec.push (&mut items) "stdlib")
           items))]
-    (match (compiler-driver-load-and-lower-escaping
-      "stdlib/args.tl"
-      (CompilerBackendTarget.Linux)
-      roots
-      (CompilerBackendMode.Scalar)
-      (compiler-driver-target-cfgs
+    (begin
+      (compiler-driver-reset-file-state!)
+      (match (compiler-driver-load-and-lower-escaping
+        "stdlib/args.tl"
         (CompilerBackendTarget.Linux)
-        (compiler-cfg-empty)))
-      [(ResultCompilerDriverLowered.Ok _ _ _) true]
-      [(ResultCompilerDriverLowered.Err _) false])))
+        roots
+        (CompilerBackendMode.Scalar)
+        (compiler-driver-target-cfgs
+          (CompilerBackendTarget.Linux)
+          (compiler-cfg-empty)))
+        [(ResultCompilerDriverLowered.Ok _ _ _) true]
+        [(ResultCompilerDriverLowered.Err _) false]))))
 
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source) : String
   "(defmacro (vector-user) : Module
@@ -416,15 +419,15 @@
   (substring \"abc\" 0 1))")
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "stdlib/runtime.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "stdlib/runtime.tl"
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "stdlib/string.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "stdlib/string.tl"
-          (ast-decl-path-cons "stdlib/string.tl" (ast-decl-path-list-new)))))))
+          (ast-decl-root-path-cons "stdlib/string.tl" (ast-decl-path-list-new)))))))
 
 (define (compiler-lower-smoke-stdlib-runtime-substring-defined?
   [functions : CompilerIrFunctionList]) : bool
@@ -810,6 +813,7 @@
 
 (define (main) : i64
   (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
     (compiler-lower-smoke-self-test)
     (unless
       (compiler-lower-smoke-issue3494-ok?)

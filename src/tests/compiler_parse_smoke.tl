@@ -1,5 +1,7 @@
 ;; compiler_parse_smoke.tl - Runnable structural smoke for compiler_parse_core.
 (import "../compiler_parse_core.tl")
+(import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
 
 (define (compiler-parse-test-decl-origin-start-ok?
   [origin : CompilerParseMaybeDeclSpan]
@@ -120,6 +122,11 @@
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-parse-test-name-id? [name-id : i64] [text : String]) : bool
+  (match (ci.intern-lookup text)
+    [(ci.InternLookupFound expected-id) (= name-id expected-id)]
+    [(ci.InternLookupMissing) false]))
+
 (define (compiler-parse-name-id-provenance-ok?) : bool
   ;; Keep the inline-test discovery marker split: this source is parser input,
   ;; not an inline test declaration in this file.
@@ -137,49 +144,49 @@
         (and
           (match (ast-decl-list-get (& decls) 0 (ast-decl-fallback))
             [(AstDecl.Module name)
-              (and
-                (string.eq (intern-str name) "parsed.module")
-                (= (intern "parsed.module") name))]
+              (compiler-parse-test-name-id? name "parsed.module")]
             [_ false])
           (match (ast-decl-list-get (& decls) 1 (ast-decl-fallback))
             [(AstDecl.DefStruct name _ _ fields)
               (and
-                (string.eq (intern-str name) "ParsedType")
+                (compiler-parse-test-name-id? name "ParsedType")
                 (match (ast-field-def-list-get
                   (& fields)
                   0
                   (ast-field-def-fallback))
                   [(AstFieldDef.Def field _ _)
-                    (string.eq (intern-str field) "parsed-field")]))]
+                    (compiler-parse-test-name-id? field "parsed-field")]))]
             [_ false])
           (match (ast-decl-list-get (& decls) 2 (ast-decl-fallback))
             [(AstDecl.DefFn name params ret _ _)
               (and
-                (string.eq (intern-str name) "parsed-fn")
+                (compiler-parse-test-name-id? name "parsed-fn")
                 (match (ast-param-list-get (& params) 0 (ast-param-fallback))
                   [(AstParam.Param param ty _ _)
                     (and
-                      (string.eq (intern-str param) "parsed-param")
+                      (compiler-parse-test-name-id? param "parsed-param")
                       (match ty
                         [(AstType.Var type-name)
-                          (string.eq (intern-str type-name) "ParsedType")]
+                          (compiler-parse-test-name-id? type-name "ParsedType")]
                         [_ false]))])
                 (match ret
                   [(AstType.Var type-name)
-                    (string.eq (intern-str type-name) "ParsedType")]
+                    (compiler-parse-test-name-id? type-name "ParsedType")]
                   [_ false]))]
             [_ false])
           (match (ast-decl-list-get (& decls) 3 (ast-decl-fallback))
             [(AstDecl.Test name _ _)
-              (string.eq (intern-str name) "parsed-test")]
+              (compiler-parse-test-name-id? name "parsed-test")]
             [_ false])))]
     [(ResultAstProgram.Err _) false]))
 
 (define (main) : i64
-  (if (and
-    (= (compiler-diagnostic-self-test) 42)
-    (compiler-parse-test-decl-origin-records-ok?)
-    (compiler-parse-member-origin-boundary-ok?)
-    (compiler-parse-name-id-provenance-ok?))
-    (compiler-parse-smoke)
-    1))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (if (and
+      (= (compiler-diagnostic-self-test) 42)
+      (compiler-parse-test-decl-origin-records-ok?)
+      (compiler-parse-member-origin-boundary-ok?)
+      (compiler-parse-name-id-provenance-ok?))
+      (compiler-parse-smoke)
+      1)))

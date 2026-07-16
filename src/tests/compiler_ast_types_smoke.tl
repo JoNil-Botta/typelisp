@@ -1,6 +1,8 @@
 ;; compiler_ast_types_smoke.tl - Runnable AST data-shape smoke.
 (import compiler_ast_types as ast)
+(import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
+(import stdlib.arena)
 (import stdlib.string)
 
 (define (compiler-ast-state-expr-int-lit?
@@ -462,17 +464,26 @@
       (ast.ast-node-pool-context-expr-push
         source-pools
         (ast.AstExpr.MakeArray (ast.AstType.Ptr source-i64-ty) source-body))]
+    [value-name-id : i64 (ci.intern-generated-name "value")]
+    [same-name-id : i64 (ci.intern-generated-name "same")]
+    [array-name-id : i64 (ci.intern-generated-name "array")]
     [program : ast.AstProgram
       (ast.ast-program
         (ast.ast-decl-cons
-          (ast.ast-decl-def
-            "value"
+          (ast.ast-decl-def-id
+            value-name-id
             (ast.AstMaybeType.Some array-ty)
             source-body)
           (ast.ast-decl-cons
-            (ast.ast-decl-test "same" source-body (ast.ast-source-span 5 6 7 8))
+            (ast.ast-decl-test-id
+              same-name-id
+              source-body
+              (ast.ast-source-span 5 6 7 8))
             (ast.ast-decl-cons
-              (ast.ast-decl-def "array" ast.AstMaybeType.No source-make)
+              (ast.ast-decl-def-id
+                array-name-id
+                ast.AstMaybeType.No
+                source-make)
               (ast.ast-decl-list-new)))))]
     [dest-decoy-expr : i64
       (ast.ast-node-pool-context-expr-push
@@ -544,11 +555,12 @@
         (ast.AstExpr.Literal (ast.ast-lit-int 222)))]
     [source-type : i64
       (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
+    [appended-name-id : i64 (ci.intern-generated-name "appended")]
     [program : ast.AstProgram
       (ast.ast-program
         (ast.ast-decl-cons
-          (ast.ast-decl-def
-            "appended"
+          (ast.ast-decl-def-id
+            appended-name-id
             (ast.AstMaybeType.Some (ast.AstType.Ptr source-type))
             source-expr)
           (ast.ast-decl-list-new)))]
@@ -578,6 +590,59 @@
                     [_ false])]
                 [_ false])]))])))
 
+(define (compiler-ast-compaction-borrow-child-smoke?) : bool
+  (let
+    [source-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 1)]
+    [dest-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 1)]
+    [name : i64 (ci.intern-generated-name "borrow-child")]
+    [var-id : i64
+      (ast.ast-node-pool-context-expr-push source-pools (ast.AstExpr.Var name))]
+    [spanned-id : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Spanned var-id (ast.ast-source-span 1 1 1 2)))]
+    [borrow-id : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Borrow false ast.AstBorrowLifetime.Inferred spanned-id))]
+    [program : ast.AstProgram
+      (ast.ast-program
+        (ast.ast-decl-cons
+          (ast.ast-decl-def-id name ast.AstMaybeType.No borrow-id)
+          (ast.ast-decl-list-new)))]
+    [compacted : ast.AstProgramCompaction
+      (ast.ast-program-compact-with-pools source-pools dest-pools program)]
+    (match compacted
+      [(ast.AstProgramCompaction out-program out-pools)
+        (match out-program
+          [(ast.AstProgram.Program decls-box)
+            (match (ast.ast-decl-list-step (box-get decls-box))
+              [(ast.AstDeclListStep.Cons decl _)
+                (match decl
+                  [(ast.AstDecl.Def _ _ body)
+                    (match (ast.ast-node-pool-context-expr-get out-pools body)
+                      [(ast.AstExpr.Borrow mutable lifetime inner)
+                        (and
+                          (not mutable)
+                          (match lifetime
+                            [(ast.AstBorrowLifetime.Inferred) true]
+                            [_ false])
+                          (match (ast.ast-node-pool-context-expr-get
+                            out-pools
+                            inner)
+                            [(ast.AstExpr.Spanned var _)
+                              (match (ast.ast-node-pool-context-expr-get
+                                out-pools
+                                var)
+                                [(ast.AstExpr.Var got-name) (= got-name name)]
+                                [_ false])]
+                            [_ false]))]
+                      [_ false])]
+                  [_ false])]
+              [_ false])])])))
+
 (define (compiler-ast-compaction-string-def-ok?
   [pools : ast.AstNodePoolContext]
   [decl : ast.AstDecl]) : bool
@@ -589,15 +654,15 @@
             (match ty
               [(ast.AstType.Ref region inner)
                 (and
-                  (string.eq region "borrowed")
+                  (= region cbi.compiler-builtin-id-fix-value)
                   (match (ast.ast-node-pool-context-type-get pools inner)
                     [(ast.AstType.I64) true]
                     [_ false]))]
               [_ false])]
           [_ false])
         (match (ast.ast-node-pool-context-expr-get pools value)
-          [(ast.AstExpr.Literal (ast.AstLiteral.String text))
-            (string.eq text "hello")]
+          [(ast.AstExpr.Literal (ast.AstLiteral.String string-id))
+            (string.eq (ast.ast-lit-string-text string-id) "hello")]
           [_ false]))]
     [_ false]))
 
@@ -623,10 +688,12 @@
       (and
         (string.eq path "pkg/path")
         (match module-name
-          [(ast.AstMaybeModuleName.Some name) (string.eq name "pkg.module")]
+          [(ast.AstMaybeModuleName.Some name)
+            (string.eq (ci.intern-str name) "pkg.module")]
           [_ false])
         (match alias
-          [(ast.AstMaybeImportAlias.Some name) (string.eq name "pkg")]
+          [(ast.AstMaybeImportAlias.Some name)
+            (string.eq (ci.intern-str name) "pkg")]
           [_ false]))]
     [_ false]))
 
@@ -664,7 +731,7 @@
       (match (box-get metadata)
         [(ast.AstExternMetadata.Metadata (ast.AstExternAbi.C) symbol links true)
           (and
-            (string.eq symbol "native_symbol")
+            (string.eq (ci.intern-str symbol) "native_symbol")
             (match (ast.ast-extern-link-input-list-get
               (& links)
               0
@@ -682,24 +749,28 @@
         0
         (ast.ast-dispatch-variant-fallback))
         [(ast.AstDispatchVariant.Variant (ast.AstDispatchIsa.Avx2) name)
-          (string.eq name "fast")]
+          (string.eq (ci.intern-str name) "fast")]
         [_ false])]
     [_ false]))
 
 (define (compiler-ast-compaction-lifetimes-ok? [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.DefStructLifetimes _ lifetimes _ _ _)
-      (string.eq (ast.ast-lifetime-list-get (& lifetimes) 0 "") "owner")]
+      (=
+        (ast.ast-lifetime-list-get (& lifetimes) 0 (ast.ast-lifetime-fallback))
+        cbi.compiler-builtin-id-fix-n)]
     [_ false]))
 
 (define (compiler-ast-compaction-include-ok? [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.IncludeStr name path)
-      (and (string.eq name "inc") (string.eq path "data.txt"))]
+      (and (string.eq (ci.intern-str name) "inc") (string.eq path "data.txt"))]
     [_ false]))
 
 (define (compiler-ast-program-compaction-string-payloads-smoke?) : bool
   (let
+    [include-name-id : i64 (ci.intern-generated-name "inc")]
+    [macro-func-name-id : i64 (ci.intern-generated-name "emit")]
     [source-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new
         (ast.ast-expr-node-pool-state-create 8)
@@ -717,7 +788,7 @@
     [text-expr : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
-        (ast.AstExpr.Literal (ast.AstLiteral.String "hello")))]
+        (ast.AstExpr.Literal (ast.ast-lit-generated-string "hello")))]
     [binary-expr : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
@@ -725,7 +796,7 @@
     [macro-func : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
-        (ast.AstExpr.Var (ci.intern "emit")))]
+        (ast.AstExpr.Var macro-func-name-id))]
     [macro-call : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
@@ -747,38 +818,49 @@
         (begin
           (ast.ast-dispatch-variant-list-push
             (&mut items)
-            (ast.AstDispatchVariant.Variant (ast.AstDispatchIsa.Avx2) "fast"))
+            (ast.AstDispatchVariant.Variant
+              (ast.AstDispatchIsa.Avx2)
+              (ci.intern-generated-name "fast")))
           items))]
     [lifetimes : ast.AstLifetimeList
       (let
         [items : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
         (begin
-          (ast.ast-lifetime-list-push (&mut items) "owner")
+          (ast.ast-lifetime-list-push
+            (&mut items)
+            cbi.compiler-builtin-id-fix-n)
           items))]
+    [text-name-id : i64 (ci.intern-generated-name "text")]
+    [bin-name-id : i64 (ci.intern-generated-name "bin")]
+    [native-name-id : i64 (ci.intern-generated-name "native")]
+    [dispatch-name-id : i64 (ci.intern-generated-name "dispatch")]
     [program : ast.AstProgram
       (ast.ast-program
         (ast.ast-decl-cons
-          (ast.ast-decl-def
-            "text"
-            (ast.AstMaybeType.Some (ast.AstType.Ref "borrowed" source-i64-ty))
+          (ast.ast-decl-def-id
+            text-name-id
+            (ast.AstMaybeType.Some
+              (ast.AstType.Ref cbi.compiler-builtin-id-fix-value source-i64-ty))
             text-expr)
           (ast.ast-decl-cons
-            (ast.ast-decl-def "bin" ast.AstMaybeType.No binary-expr)
+            (ast.ast-decl-def-id bin-name-id ast.AstMaybeType.No binary-expr)
             (ast.ast-decl-cons
               (ast.AstDecl.Import
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Path)
                   "pkg/path"
-                  (ast.AstMaybeModuleName.Some "pkg.module")
-                  (ast.AstMaybeImportAlias.Some "pkg")
+                  (ast.AstMaybeModuleName.Some
+                    (ci.intern-generated-name "pkg.module"))
+                  (ast.AstMaybeImportAlias.Some
+                    (ci.intern-generated-name "pkg"))
                   (box (ast.ast-source-span 1 1 1 1))))
               (ast.ast-decl-cons
-                (ast.ast-decl-extern
-                  "native"
+                (ast.ast-decl-extern-id
+                  native-name-id
                   (ast.AstExternKind.Function)
                   (ast.AstExternMetadata.Metadata
                     (ast.AstExternAbi.C)
-                    "native_symbol"
+                    (ci.intern-generated-name "native_symbol")
                     links
                     true)
                   (ast.AstType.I64))
@@ -803,7 +885,7 @@
                         ast.AstMaybeImportAlias.No
                         (box (ast.ast-source-span 3 1 3 1))))
                     (ast.ast-decl-cons
-                      (ast.ast-decl-def-dispatch "dispatch" variants)
+                      (ast.ast-decl-def-dispatch-id dispatch-name-id variants)
                       (ast.ast-decl-cons
                         (ast.AstDecl.DefStructLifetimes
                           0
@@ -812,7 +894,7 @@
                           (ast.AstStructCleanup.No)
                           (ast.ast-field-def-list-new))
                         (ast.ast-decl-cons
-                          (ast.AstDecl.IncludeStr "inc" "data.txt")
+                          (ast.AstDecl.IncludeStr include-name-id "data.txt")
                           (ast.ast-decl-list-new)))))))))))]
     [compacted : ast.AstProgramCompaction
       (ast.ast-program-compact-with-pools source-pools dest-pools program)]
@@ -867,11 +949,16 @@
         (let
           [suffix : String (string.int->string i)]
           [module : String (string.append "m" suffix)]
+          [module-id : i64 (ci.intern-generated-name module)]
           [path : String (string.append "p" suffix)]
           (begin
-            (set! decls (ast.ast-decl-cons (ast.ast-decl-module module) decls))
-            (set! paths (ast.ast-decl-path-cons path paths))
-            (set! modules (ast.ast-decl-module-cons module modules))
+            (set!
+              decls
+              (ast.ast-decl-cons (ast.ast-decl-module-id module-id) decls))
+            (set! paths (ast.ast-decl-root-path-cons path paths))
+            (set!
+              modules
+              (ast.ast-decl-module-list-prepend-builder-id module-id modules))
             (set! i (- i 1)))))
       (let
         [tail : ast.AstDeclList (ast.ast-decl-list-tail decls)]
@@ -890,12 +977,17 @@
 
 (define (compiler-ast-decl-cons-pure-smoke?) : bool
   (let
+    [tail-id : i64 (ci.intern-generated-name "tail")]
+    [left-id : i64 (ci.intern-generated-name "left")]
+    [right-id : i64 (ci.intern-generated-name "right")]
     [tail : ast.AstDeclList
-      (ast.ast-decl-cons (ast.ast-decl-module "tail") (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons
+        (ast.ast-decl-module-id tail-id)
+        (ast.ast-decl-list-new))]
     [left : ast.AstDeclList
-      (ast.ast-decl-cons (ast.ast-decl-module "left") tail)]
+      (ast.ast-decl-cons (ast.ast-decl-module-id left-id) tail)]
     [right : ast.AstDeclList
-      (ast.ast-decl-cons (ast.ast-decl-module "right") tail)]
+      (ast.ast-decl-cons (ast.ast-decl-module-id right-id) tail)]
     (and
       (compiler-ast-decl-list-module-name? left 0 "left")
       (compiler-ast-decl-list-module-name? left 1 "tail")
@@ -958,6 +1050,19 @@
           (= (struct-get first-binding name) 11)
           (= (struct-get first-binding init) 101))))))
 
+(define (compiler-ast-generated-path-owner-smoke?) : bool
+  (let
+    [path : String "<generated ast smoke path>"]
+    [path-id : i64 (ci.intern-generated-canonical-name path)]
+    [paths : ast.AstDeclPathList
+      (ast.ast-decl-path-list-prepend-builder-with-owner-id
+        path
+        path-id
+        (ast.ast-decl-path-list-new))]
+    [with-modules : ast.AstDeclPathList
+      (ast.ast-decl-path-list-with-modules paths (ast.ast-decl-module-list-new))]
+    (= (ast.ast-decl-path-list-owner-id (& with-modules) 0 -1) path-id)))
+
 ;; Rewriters select an owned AST-pool context while the process-global active
 ;; pool may hold an unrelated compilation. `ast-node-set!` must update that
 ;; selected context just like `ast-node-get` and `ast-node-push` do.
@@ -974,73 +1079,52 @@
           (ast.ast-node-pool-compat-context-clear!)
           (and (= id 0) (compiler-ast-context-expr-int-lit? pools id 42)))))))
 
-(define (compiler-ast-name-provenance-smoke?) : bool
-  (begin
-    (ci.intern-reset!)
-    (let
-      ;; This is the historical parser-only assertion in executable form: a
-      ;; compatibility constructor must accept synthesis whose spelling was not
-      ;; already present as a parser token.
-      [empty-was-not-parsed : bool
-        (match (ci.intern-lookup "")
-          [(ci.InternLookupMissing) true]
-          [(ci.InternLookupFound _) false])]
-      [empty-decl : ast.AstDecl (ast.ast-decl-def "" (ast.AstMaybeType.No) 0)]
-      [generated-id : i64 (ci.intern "generated.module/helper")]
-      [generated-decl : ast.AstDecl
-        (ast.ast-decl-module-body-id generated-id (ast.ast-decl-list-new))]
-      [hygiene-id : i64 (ci.intern "__macro_hygiene_42")]
-      [hygiene-expr : ast.AstExpr (ast.AstExpr.Var hygiene-id)]
-      [builtin-decl : ast.AstDecl
-        (ast.ast-decl-extern
-          "tl_alloc"
-          (ast.AstExternKind.Function)
-          (ast.AstExternMetadata.Metadata
-            (ast.AstExternAbi.C)
-            "tl_alloc"
-            (ast.ast-extern-link-input-list-new)
-            false)
-          (ast.AstType.I64))]
-      [fallback-param : ast.AstParam (ast.ast-param-fallback)]
-      [sentinel-type : ast.AstType (ast.AstType.Struct -1)]
-      [structural-type : ast.AstType
-        (ast.AstType.Enum (+ (ci.intern-capacity) 7))]
-      (and
-        empty-was-not-parsed
-        (match empty-decl
-          [(ast.AstDecl.Def name _ _) (string.eq (ci.intern-str name) "")]
-          [_ false])
-        (match generated-decl
-          [(ast.AstDecl.ModuleBody name _)
+;; Creating a retained pool while a source arena is active must not allocate the
+;; context's mutable cells in that source arena. The compiler destroys the
+;; source immediately after AST compaction, then continues using this context.
+(define (compiler-ast-context-owned-arena-smoke?) : bool
+  (let
+    [home : arena.Arena (arena.current)]
+    [source : arena.Arena (arena.make)]
+    [dest : arena.Arena (arena.make)]
+    [_set-source : unit
+      (unsafe
+        (arena.set! source))]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
+        4
+        4
+        (arena.raw-handle dest))]
+    [_set-dest : unit
+      (unsafe
+        (arena.set! dest))]
+    [child : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 73)))]
+    [body : ast.AstExprList (ast.ast-expr-list-new)]
+    [_push-child : unit (ast.ast-expr-list-push (&mut body) child)]
+    [unsafe-id : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Unsafe body))]
+    [_restore-home : unit
+      (unsafe
+        (arena.set! home))]
+    [_destroy-source : unit
+      (unsafe
+        (arena.destroy source))]
+    [ok : bool
+      (match (ast.ast-node-pool-context-expr-get pools unsafe-id)
+        [(ast.AstExpr.Unsafe exprs)
+          (let
+            [retained-child : i64 (ast.ast-expr-list-get (& exprs) 0 -1)]
             (and
-              (= name generated-id)
-              (string.eq (ci.intern-str name) "generated.module/helper"))]
-          [_ false])
-        (match hygiene-expr
-          [(ast.AstExpr.Var name)
-            (and
-              (= name hygiene-id)
-              (string.eq (ci.intern-str name) "__macro_hygiene_42"))]
-          [_ false])
-        (match builtin-decl
-          [(ast.AstDecl.Extern name _ _ _)
-            (string.eq (ci.intern-str name) "tl_alloc")]
-          [_ false])
-        ;; Fallback payload ids are shape sentinels and are never rendered.
-        (match fallback-param
-          [(ast.AstParam.Param name _ _ _) (= name 0)])
-        (match sentinel-type
-          [(ast.AstType.Struct name)
-            (string.eq
-              (ast.ast-nominal-name-display name)
-              "<structural-nominal>")]
-          [_ false])
-        (match structural-type
-          [(ast.AstType.Enum name)
-            (string.eq
-              (ast.ast-nominal-name-display name)
-              "<structural-nominal>")]
-          [_ false])))))
+              (= retained-child child)
+              (compiler-ast-context-expr-int-lit? pools retained-child 73)))]
+        [_ false])]
+    (begin
+      (unsafe
+        (arena.destroy dest))
+      ok)))
 
 (define (main) : i64
   (begin
@@ -1055,5 +1139,7 @@
     (unless (compiler-ast-compat-context-set-smoke?) (return 9))
     (unless (compiler-ast-context-clone-types-only-smoke?) (return 10))
     (unless (compiler-ast-clause-list-tail-smoke?) (return 11))
-    (unless (compiler-ast-name-provenance-smoke?) (return 12))
+    (unless (compiler-ast-generated-path-owner-smoke?) (return 12))
+    (unless (compiler-ast-context-owned-arena-smoke?) (return 13))
+    (unless (compiler-ast-compaction-borrow-child-smoke?) (return 14))
     42))

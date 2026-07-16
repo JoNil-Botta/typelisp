@@ -29,22 +29,24 @@
       (+
         (match function
           [(CompilerIrFunction.Function name _ _ _ _)
-            (if (or
-              (lower-string-prefix-at? name "__tl_spmd_pkg_" 0)
-              (lower-string-prefix-at?
-                name
-                "__tl_spmd_ret_uniform___tl_spmd_pkg_"
-                0)
-              (lower-string-prefix-at?
-                name
-                "__tl_spmd_ret_varying___tl_spmd_pkg_"
-                0)
-              (lower-string-prefix-at?
-                name
-                "__tl_spmd_ret_mask___tl_spmd_pkg_"
-                0))
-              1
-              0)])
+            (let
+              [name-text : String (compiler-ir-symbol-text name)]
+              (if (or
+                (lower-string-prefix-at? name-text "__tl_spmd_pkg_" 0)
+                (lower-string-prefix-at?
+                  name-text
+                  "__tl_spmd_ret_uniform___tl_spmd_pkg_"
+                  0)
+                (lower-string-prefix-at?
+                  name-text
+                  "__tl_spmd_ret_varying___tl_spmd_pkg_"
+                  0)
+                (lower-string-prefix-at?
+                  name-text
+                  "__tl_spmd_ret_mask___tl_spmd_pkg_"
+                  0))
+                1
+                0))])
         (compiler-lower-spmd-package-helper-count (box-get rest)))]))
 
 (define (compiler-lower-spmd-package-helper-count-ok?
@@ -89,12 +91,13 @@
 (define (compiler-lower-spmd-package-symbol-collision-ok?) : bool
   (let
     [_package : unit (lower-spmd-set-package-name! "collision_fixture")]
+    [symbol : i64 (compiler-ir-test-symbol "__collision")]
     [first : LowerSpmdPackageSymbolRegistration
-      (lower-spmd-package-symbol-register "__collision" "identity-a")]
+      (lower-spmd-package-symbol-register symbol "identity-a")]
     [repeat : LowerSpmdPackageSymbolRegistration
-      (lower-spmd-package-symbol-register "__collision" "identity-a")]
+      (lower-spmd-package-symbol-register symbol "identity-a")]
     [collision : LowerSpmdPackageSymbolRegistration
-      (lower-spmd-package-symbol-register "__collision" "identity-b")]
+      (lower-spmd-package-symbol-register symbol "identity-b")]
     (begin
       (lower-spmd-clear-package-name!)
       (and

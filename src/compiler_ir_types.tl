@@ -5,6 +5,7 @@
 ;; contain typed instructions, and instructions use explicit vars/values.
 (import stdlib.string)
 (import stdlib.array)
+(import compiler_intern as ci)
 (import "compiler_ast_types.tl")
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -48,17 +49,39 @@
   (All)
   (Any))
 
+;; Parsed symbols use their parser ID directly; synthesized/structural symbols
+;; receive one generated ID whose pool entry owns the display spelling. IR
+;; stores that raw i64, avoiding a heap object for every name occurrence.
+(define (compiler-ir-symbol-id [symbol : i64]) : i64
+  symbol)
+
+(define (compiler-ir-symbol-text [symbol : i64]) : String
+  (if (< symbol 0)
+    ""
+    (ci.intern-str symbol)))
+
+(define (compiler-ir-symbol-eq? [left : i64] [right : i64]) : bool
+  (= left right))
+
+(define (compiler-ir-symbol-clone [symbol : i64]) : i64
+  symbol)
+
+(define (compiler-ir-test-symbol [name : String]) : i64
+  (ci.intern-generated-canonical-name name))
+
 (defenum CompilerIrValue
   (Var i64)
-  (Global String)
-  (GlobalAddr String)
-  (Function String)
+  (Global i64)
+  (GlobalAddr i64)
+  (Function i64)
   (I64 i64)
   (F64 u64)
   (Bool bool)
   (Char char)
   (String String)
   (Bytes String)
+  ;; Runtime-initialized globals name their hidden initializer explicitly.
+  (RuntimeGlobal i64)
   (Unit))
 
 (defenum CompilerIrMaybeValue
@@ -177,11 +200,7 @@
   (Payload i64 CompilerIrValue CompilerIrValue CompilerIrValue bool i64 AstType))
 
 (defenum CompilerIrInstrCallCAbiStoreResultPayload
-  (Payload
-    CompilerIrValue
-    String
-    CompilerIrCallArgs
-    CompilerIrCAbiReturnSlotList))
+  (Payload CompilerIrValue i64 CompilerIrCallArgs CompilerIrCAbiReturnSlotList))
 
 (defenum CompilerIrInstrCallIndirectCAbiStoreResultPayload
   (Payload
@@ -192,7 +211,7 @@
 
 (defenum CompilerIrInstrSpmdCallPayload
   (Payload
-    String
+    i64
     CompilerIrSpmdBackend
     i64
     CompilerIrValue
@@ -250,7 +269,7 @@
   ;; Raw Linux x86_64 syscall: dst var plus the operands (number then up to six
   ;; arguments) carried as call-args. Lowers to a `syscall` instruction.
   (Syscall i64 CompilerIrCallArgs)
-  (Call i64 String CompilerIrCallArgs AstType)
+  (Call i64 i64 CompilerIrCallArgs AstType)
   (CallIndirect i64 CompilerIrValue CompilerIrCallArgs AstType)
   (CallIndirectC i64 CompilerIrValue CompilerIrCallArgs AstType)
   ;; System V C aggregate returns can arrive in two ABI result registers. These
@@ -260,8 +279,8 @@
   (CallIndirectCAbiStoreResult
     (Box CompilerIrInstrCallIndirectCAbiStoreResultPayload))
   (SpmdCall (Box CompilerIrInstrSpmdCallPayload))
-  (TailCall String CompilerIrCallArgs AstType)
-  (Store String CompilerIrValue AstType)
+  (TailCall i64 CompilerIrCallArgs AstType)
+  (Store i64 CompilerIrValue AstType)
   (Jump String)
   (Branch CompilerIrValue String String)
   (Return CompilerIrMaybeValue)
@@ -408,7 +427,7 @@
 
 (define (ir-instr-call-cabi-store-result
   [base : CompilerIrValue]
-  [name : String]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrInstr
   (CompilerIrInstr.CallCAbiStoreResult
@@ -434,7 +453,7 @@
   (CompilerIrSpmdCallArgList.Cons arg (box rest)))
 
 (define (ir-instr-spmd-call
-  [callee : String]
+  [callee : i64]
   [backend : CompilerIrSpmdBackend]
   [lanes : i64]
   [active-mask : CompilerIrValue]
@@ -483,7 +502,7 @@
   (Array CompilerIrParamSeq))
 
 (defenum CompilerIrFunction
-  (Function String CompilerIrParamList AstType i64 CompilerIrBlockList))
+  (Function i64 CompilerIrParamList AstType i64 CompilerIrBlockList))
 
 (defstruct CompilerIrFunctionSeq
   (slots (Array CompilerIrFunction))
@@ -495,7 +514,7 @@
   (Array CompilerIrFunctionSeq))
 
 (defenum CompilerIrGlobal
-  (Global String AstType CompilerIrValue))
+  (Global i64 AstType CompilerIrValue))
 
 (defstruct CompilerIrGlobalSeq
   (slots (Array CompilerIrGlobal))
@@ -507,7 +526,10 @@
   (Array CompilerIrGlobalSeq))
 
 (defenum CompilerIrExtern
-  (Extern String AstType AstExternAbi String AstExternLinkInputList bool))
+  ;; `name-id` is the resolved language-level identity and `source-name-id` is
+  ;; its parser identity. `symbol-id` is the exact ABI/linker spelling interned
+  ;; by the parser or generated-symbol owner.
+  (Extern i64 i64 String AstType AstExternAbi i64 AstExternLinkInputList bool))
 
 (defstruct CompilerIrExternSeq
   (slots (Array CompilerIrExtern))
@@ -1788,28 +1810,37 @@
       (compiler-ir-extern-list-fill-array-reversed externs slots (- count 1))
       (CompilerIrExternList.Array (CompilerIrExternSeq slots count)))))
 
-(define (compiler-ir-extern-default [name : String] [ty : AstType]) : CompilerIrExtern
+(define (compiler-ir-extern-default-id
+  [name-id : i64]
+  [name : String]
+  [ty : AstType]) : CompilerIrExtern
   (CompilerIrExtern.Extern
+    name-id
+    name-id
     name
     ty
     (AstExternAbi.C)
-    name
+    name-id
     (ast-extern-link-input-list-new)
     false))
 
 (define (compiler-ir-clone-value [value : CompilerIrValue]) : CompilerIrValue
   (match value
     [(CompilerIrValue.Var id) (CompilerIrValue.Var id)]
-    [(CompilerIrValue.Global name) (CompilerIrValue.Global (clone name))]
+    [(CompilerIrValue.Global name)
+      (CompilerIrValue.Global (compiler-ir-symbol-clone name))]
     [(CompilerIrValue.GlobalAddr name)
-      (CompilerIrValue.GlobalAddr (clone name))]
-    [(CompilerIrValue.Function name) (CompilerIrValue.Function (clone name))]
+      (CompilerIrValue.GlobalAddr (compiler-ir-symbol-clone name))]
+    [(CompilerIrValue.Function name)
+      (CompilerIrValue.Function (compiler-ir-symbol-clone name))]
     [(CompilerIrValue.I64 n) (CompilerIrValue.I64 n)]
     [(CompilerIrValue.F64 n) (CompilerIrValue.F64 n)]
     [(CompilerIrValue.Bool b) (CompilerIrValue.Bool b)]
     [(CompilerIrValue.Char c) (CompilerIrValue.Char c)]
     [(CompilerIrValue.String s) (CompilerIrValue.String (clone s))]
     [(CompilerIrValue.Bytes s) (CompilerIrValue.Bytes (clone s))]
+    [(CompilerIrValue.RuntimeGlobal init)
+      (CompilerIrValue.RuntimeGlobal (compiler-ir-symbol-clone init))]
     [(CompilerIrValue.Unit) (CompilerIrValue.Unit)]))
 
 (define (compiler-ir-clone-maybe-value [value : CompilerIrMaybeValue]) : CompilerIrMaybeValue
@@ -2353,7 +2384,7 @@
     [(CompilerIrInstr.Call dst name args ty)
       (CompilerIrInstr.Call
         dst
-        (clone name)
+        (compiler-ir-symbol-clone name)
         (compiler-ir-clone-call-args args)
         (compiler-ir-clone-type ty))]
     [(CompilerIrInstr.CallIndirect dst callee args ty)
@@ -2377,7 +2408,7 @@
             slots)
           (ir-instr-call-cabi-store-result
             (compiler-ir-clone-value base)
-            (clone name)
+            (compiler-ir-symbol-clone name)
             (compiler-ir-clone-call-args args)
             (compiler-ir-clone-c-abi-return-slots slots))])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
@@ -2402,7 +2433,7 @@
             args
             result)
           (ir-instr-spmd-call
-            (clone callee)
+            (compiler-ir-symbol-clone callee)
             (compiler-ir-clone-spmd-backend backend)
             lanes
             (compiler-ir-clone-value active-mask)
@@ -2410,12 +2441,12 @@
             (compiler-ir-clone-spmd-call-result result))])]
     [(CompilerIrInstr.TailCall name args ty)
       (CompilerIrInstr.TailCall
-        (clone name)
+        (compiler-ir-symbol-clone name)
         (compiler-ir-clone-call-args args)
         (compiler-ir-clone-type ty))]
     [(CompilerIrInstr.Store name value ty)
       (CompilerIrInstr.Store
-        (clone name)
+        (compiler-ir-symbol-clone name)
         (compiler-ir-clone-value value)
         (compiler-ir-clone-type ty))]
     [(CompilerIrInstr.Jump label) (CompilerIrInstr.Jump (clone label))]
@@ -2581,7 +2612,7 @@
   (match func
     [(CompilerIrFunction.Function name params ret vars blocks)
       (CompilerIrFunction.Function
-        (clone name)
+        (compiler-ir-symbol-clone name)
         (compiler-ir-clone-param-list params)
         (compiler-ir-clone-type ret)
         vars
@@ -2625,7 +2656,7 @@
   (match global
     [(CompilerIrGlobal.Global name ty value)
       (CompilerIrGlobal.Global
-        (clone name)
+        (compiler-ir-symbol-clone name)
         (compiler-ir-clone-type ty)
         (compiler-ir-clone-value value))]))
 
@@ -2664,12 +2695,22 @@
 
 (define (compiler-ir-clone-extern [extern : CompilerIrExtern]) : CompilerIrExtern
   (match extern
-    [(CompilerIrExtern.Extern name ty abi symbol links provided)
+    [(CompilerIrExtern.Extern
+        name-id
+        source-name-id
+        name
+        ty
+        abi
+        symbol-id
+        links
+        provided)
       (CompilerIrExtern.Extern
+        name-id
+        source-name-id
         (clone name)
         (compiler-ir-clone-type ty)
         (clone abi)
-        (clone symbol)
+        symbol-id
         (clone links)
         provided)]))
 
@@ -2769,7 +2810,8 @@
   (if (>= index (ast-lifetime-list-len lifetimes))
     ""
     (str_cat.str-cat
-      (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))
+      (ci.intern-str
+        (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback)))
       (if (>= (+ index 1) (ast-lifetime-list-len lifetimes))
         ""
         (str_cat.str-cat
@@ -2842,33 +2884,33 @@
     [(AstType.Region region inner)
       (str_cat.str-cat
         "(Region "
-        region
+        (ci.intern-str region)
         " "
         (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstType.Ref region inner)
       (str_cat.str-cat
         "(& "
-        region
+        (ci.intern-str region)
         " "
         (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstType.MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        region
+        (ci.intern-str region)
         " "
         (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstType.Enum name) (intern-str name)]
+    [(AstType.Enum name) (ast-nominal-name-id-display name)]
     [(AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
-        (intern-str name)
+        (ast-nominal-name-id-display name)
         (box-get lifetimes))]
-    [(AstType.Struct name) (intern-str name)]
+    [(AstType.Struct name) (ast-nominal-name-id-display name)]
     [(AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
-        (intern-str name)
+        (ast-nominal-name-id-display name)
         (box-get lifetimes))]
     [(AstType.Var name) (intern-str name)]
     [(AstType.VarArgs name lifetimes)
@@ -2894,9 +2936,12 @@
 (define (compiler-ir-value-render [value : CompilerIrValue]) : String
   (match value
     [(CompilerIrValue.Var id) (string.append "%" (string.int->string id))]
-    [(CompilerIrValue.Global name) (string.append "@" name)]
-    [(CompilerIrValue.GlobalAddr name) (string.append "&@" name)]
-    [(CompilerIrValue.Function name) (string.append "fn@" name)]
+    [(CompilerIrValue.Global name)
+      (string.append "@" (compiler-ir-symbol-text name))]
+    [(CompilerIrValue.GlobalAddr name)
+      (string.append "&@" (compiler-ir-symbol-text name))]
+    [(CompilerIrValue.Function name)
+      (string.append "fn@" (compiler-ir-symbol-text name))]
     [(CompilerIrValue.I64 value) (string.int->string value)]
     [(CompilerIrValue.F64 value)
       (str_cat.str-cat "float-bits:" (compiler-ir-u64-payload-render value))]
@@ -2911,6 +2956,8 @@
         "<bytes:"
         (string.int->string (string.string-length value))
         ">")]
+    [(CompilerIrValue.RuntimeGlobal init)
+      (string.append "runtime-init@" (compiler-ir-symbol-text init))]
     [(CompilerIrValue.Unit) "unit"]))
 
 (define (compiler-ir-value-list-render [values : CompilerIrValueList]) : String
@@ -3170,19 +3217,19 @@
         (compiler-ir-type-render ty))]))
 
 (define (compiler-ir-tail-call-render
-  [name : String]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [ty : AstType]) : String
   (str_cat.str-cat
     "  tailcall "
-    name
+    (compiler-ir-symbol-text name)
     "("
     (compiler-ir-call-args-render args)
     ") : "
     (compiler-ir-type-render ty)))
 
 (define (compiler-ir-spmd-call-render
-  [callee : String]
+  [callee : i64]
   [backend : CompilerIrSpmdBackend]
   [lanes : i64]
   [active-mask : CompilerIrValue]
@@ -3190,7 +3237,7 @@
   [result : CompilerIrSpmdCallResult]) : String
   (str_cat.str-cat
     "  spmd_call "
-    callee
+    (compiler-ir-symbol-text callee)
     " backend "
     (compiler-ir-spmd-backend-render backend)
     " lanes "
@@ -3382,7 +3429,8 @@
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedStorePayload.Payload _ _ _ _ _ _)
           CompilerIrEffect.MemoryWrite])]
-    [(CompilerIrInstr.Call _ name _ _) (compiler-ir-direct-call-effect name)]
+    [(CompilerIrInstr.Call _ name _ _)
+      (compiler-ir-direct-call-effect (compiler-ir-symbol-text name))]
     [(CompilerIrInstr.CallIndirect _ _ _ _) CompilerIrEffect.Unknown]
     [(CompilerIrInstr.CallIndirectC _ _ _ _) CompilerIrEffect.Unknown]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
@@ -3845,7 +3893,9 @@
     [(CompilerIrInstr.Store name _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-store-key function name)
+        (compiler-source-spans-store-key
+          function
+          (compiler-ir-symbol-text name))
         span)]
     [(CompilerIrInstr.Phi dst _ _)
       (compiler-source-spans-insert-instr-entry
@@ -4025,7 +4075,9 @@
         [(CompilerIrInstr.Store name _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
-            (compiler-source-spans-store-key function name))]
+            (compiler-source-spans-store-key
+              function
+              (compiler-ir-symbol-text name)))]
         [(CompilerIrInstr.Phi dst _ _)
           (compiler-source-spans-entry-list-lookup
             instr-entries
@@ -4645,33 +4697,33 @@
     [(AstType.Region region inner)
       (str_cat.str-cat
         "(in "
-        region
+        (ci.intern-str region)
         " "
         (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstType.Ref region inner)
       (str_cat.str-cat
         "(& "
-        region
+        (ci.intern-str region)
         " "
         (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstType.MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        region
+        (ci.intern-str region)
         " "
         (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstType.Enum name) (intern-str name)]
+    [(AstType.Enum name) (ast-nominal-name-id-display name)]
     [(AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
-        (intern-str name)
+        (ast-nominal-name-id-display name)
         (box-get lifetimes))]
-    [(AstType.Struct name) (intern-str name)]
+    [(AstType.Struct name) (ast-nominal-name-id-display name)]
     [(AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
-        (intern-str name)
+        (ast-nominal-name-id-display name)
         (box-get lifetimes))]
     [(AstType.Var name) (str_cat.str-cat "'" (intern-str name) "'")]
     [(AstType.VarArgs name lifetimes)
@@ -4705,9 +4757,12 @@
 (define (compiler-ir-value-describe [value : CompilerIrValue]) : String
   (match value
     [(CompilerIrValue.Var id) (str_cat.str-cat "%" (string.int->string id) "")]
-    [(CompilerIrValue.Global name) (str_cat.str-cat "@" name "")]
-    [(CompilerIrValue.GlobalAddr name) (str_cat.str-cat "&@" name "")]
-    [(CompilerIrValue.Function name) (str_cat.str-cat "fn@" name "")]
+    [(CompilerIrValue.Global name)
+      (str_cat.str-cat "@" (compiler-ir-symbol-text name) "")]
+    [(CompilerIrValue.GlobalAddr name)
+      (str_cat.str-cat "&@" (compiler-ir-symbol-text name) "")]
+    [(CompilerIrValue.Function name)
+      (str_cat.str-cat "fn@" (compiler-ir-symbol-text name) "")]
     [(CompilerIrValue.I64 n) (string.int->string n)]
     [(CompilerIrValue.F64 n)
       (str_cat.str-cat "float-bits:" (compiler-ir-u64-payload-render n))]
@@ -4722,6 +4777,8 @@
         "<bytes:"
         (string.int->string (string.string-length s))
         ">")]
+    [(CompilerIrValue.RuntimeGlobal init)
+      (str_cat.str-cat "runtime-init@" (compiler-ir-symbol-text init) "")]
     [(CompilerIrValue.Unit) "unit"]))
 
 (define (compiler-ir-value-list-describe [values : CompilerIrValueList]) : String
@@ -5065,7 +5122,7 @@
             result)
           (str_cat.str-cat
             "  spmd_call "
-            callee
+            (compiler-ir-symbol-text callee)
             " backend "
             (compiler-ir-spmd-backend-render backend)
             " lanes "
@@ -5161,12 +5218,15 @@
         16)
       CompilerIrEffect.MemoryWrite)
     (compiler-ir-effect-is?
-      (CompilerIrInstr.Store "global" (CompilerIrValue.I64 3) (AstType.I64))
+      (CompilerIrInstr.Store
+        (compiler-ir-test-symbol "global")
+        (CompilerIrValue.I64 3)
+        (AstType.I64))
       CompilerIrEffect.MemoryWrite)
     (compiler-ir-effect-is?
       (CompilerIrInstr.Call
         9
-        "tl_region_mark"
+        (compiler-ir-test-symbol "tl_region_mark")
         (CompilerIrCallArgs.Nil)
         (AstType.I64))
       CompilerIrEffect.MemoryRead)
@@ -5188,7 +5248,7 @@
       CompilerIrEffect.ControlFlow)
     (compiler-ir-effect-is?
       (CompilerIrInstr.TailCall
-        "fact_loop"
+        (compiler-ir-test-symbol "fact_loop")
         (CompilerIrCallArgs.Two (CompilerIrValue.Var 3) (CompilerIrValue.I64 1))
         (AstType.I64))
       CompilerIrEffect.ControlFlow)
@@ -5559,7 +5619,7 @@
   (string.eq
     (compiler-ir-instr-render
       (CompilerIrInstr.TailCall
-        "fact_loop"
+        (compiler-ir-test-symbol "fact_loop")
         (CompilerIrCallArgs.Two (CompilerIrValue.Var 3) (CompilerIrValue.I64 1))
         (AstType.I64)))
     "  tailcall fact_loop(%3, 1) : i64"))
@@ -5768,7 +5828,8 @@
     [(CompilerIrFunctionList.Cons func rest)
       (if (= index 0)
         (match func
-          [(CompilerIrFunction.Function name _ _ _ _) (string.eq name want)])
+          [(CompilerIrFunction.Function name _ _ _ _)
+            (string.eq (compiler-ir-symbol-text name) want)])
         (compiler-ir-function-list-name-at-cons?
           (box-get rest)
           (- index 1)
@@ -5786,7 +5847,7 @@
 
 (define (compiler-ir-test-function [name : String]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    name
+    (compiler-ir-test-symbol name)
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -5895,7 +5956,7 @@
       (compiler-ir-param-list-reverse-onto params CompilerIrParamList.Nil)]
     [func : CompilerIrFunction
       (CompilerIrFunction.Function
-        "dense_params"
+        (compiler-ir-test-symbol "dense_params")
         params
         (AstType.Unit)
         8

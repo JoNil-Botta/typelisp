@@ -12,6 +12,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
 (import stdlib.vector)
+(import compiler_builtin_ids as cbi)
 (import (hashmap String i64) as build_string_i64_map)
 (import (vector.vector String) as cli_svec)
 (import "host_plan.tl")
@@ -2700,7 +2701,10 @@
       (build-package-direct-object-test-paths
         (- count 1)
         path
-        (ast-decl-path-list-prepend-builder path out)))))
+        (ast-decl-path-list-prepend-builder-with-owner-id
+          path
+          cbi.compiler-builtin-id-fix-empty
+          out)))))
 
 (cfg
   test
@@ -2718,9 +2722,9 @@
           "pkg.tl"
           (ast-decl-path-list-new))]
       [mixed : AstDeclPathList
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           ""
-          (ast-decl-path-cons "pkg.tl" (ast-decl-path-list-new)))]
+          (ast-decl-root-path-cons "pkg.tl" (ast-decl-path-list-new)))]
       (and
         (= (build-package-direct-object-owned-path-count mixed) 1)
         (build-package-direct-object-within-budget? within)
@@ -3139,6 +3143,8 @@
           args
           result
           index-param)]
+      [logical-symbol-id : i64
+        (ci.intern-generated-canonical-name logical-symbol)]
       [item : TlciSpmdSpecialization
         (tlci-make-spmd-specialization
           "spmd-call-v1"
@@ -3147,7 +3153,7 @@
           args
           result
           index-param
-          (compiler-backend-user-symbol logical-symbol))]
+          (compiler-backend-user-symbol-id logical-symbol-id))]
       (build-package-tlci-specializations-at
         package-name
         canonical-name
@@ -3199,6 +3205,9 @@
       [second-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
       [specializations : AstSpmdSpecializationList
         (ast-spmd-specialization-list-new)]
+      [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
+      [x-id : i64 (ci.intern-generated-canonical-name "x")]
+      [scale-id : i64 (ci.intern-generated-canonical-name "scale")]
       (begin
         (ast-spmd-param-class-list-push
           (&mut first-classes)
@@ -3231,11 +3240,11 @@
             (build-package-tlci-callable
               "pkg"
               "pkg"
-              (intern "helper")
+              helper-id
               (ast-param-cons
-                (ast-param "x" (AstType.I64) false)
+                (ast-param-id x-id (AstType.I64) false)
                 (ast-param-cons
-                  (ast-param "scale" (AstType.I64) false)
+                  (ast-param-id scale-id (AstType.I64) false)
                   (ast-param-list-new)))
               (AstType.I64)
               specializations
@@ -3262,17 +3271,18 @@
                   (= (struct-get item index-param) 1)
                   (string.eq
                     (struct-get item symbol)
-                    (compiler-backend-user-symbol
-                      (lower-spmd-package-symbol
-                        "pkg"
-                        "pkg/helper"
-                        "(-> i64 i64 i64)"
-                        (AstType.I64)
-                        CompilerIrSpmdBackend.Scalar
-                        1
-                        "uv"
-                        "v"
-                        1)))
+                    (compiler-backend-user-symbol-id
+                      (ci.intern-generated-canonical-name
+                        (lower-spmd-package-symbol
+                          "pkg"
+                          "pkg/helper"
+                          "(-> i64 i64 i64)"
+                          (AstType.I64)
+                          CompilerIrSpmdBackend.Scalar
+                          1
+                          "uv"
+                          "v"
+                          1))))
                   (match (box-get rest)
                     [(TlciSpmdSpecializationList.Cons next tail)
                       (and
@@ -3292,6 +3302,8 @@
       [second-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
       [specializations : AstSpmdSpecializationList
         (ast-spmd-specialization-list-new)]
+      [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
+      [x-id : i64 (ci.intern-generated-canonical-name "x")]
       (begin
         (ast-spmd-param-class-list-push
           (&mut first-classes)
@@ -3317,9 +3329,9 @@
           (build-package-tlci-callable
             "pkg"
             "pkg"
-            (intern "helper")
+            helper-id
             (ast-param-cons
-              (ast-param "x" (AstType.I64) false)
+              (ast-param-id x-id (AstType.I64) false)
               (ast-param-list-new))
             (AstType.I64)
             specializations
@@ -3860,14 +3872,23 @@
         (build-package-write-assembly asm-path asm target))]))
 
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
-  (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
-    [(AstDeclPathListStep.Cons path rest)
-      (let
-        [tail : AstDeclPathList (build-package-doctest-paths owner rest)]
-        (if (build-package-tlci-stdlib-path? owner path)
-          tail
-          (ast-decl-path-list-prepend-builder path tail)))]))
+  (let
+    [owner-id : i64
+      (ast-decl-path-list-owner-id
+        (& paths)
+        0
+        cbi.compiler-builtin-id-fix-empty)]
+    (match (ast-decl-path-list-step paths)
+      [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
+      [(AstDeclPathListStep.Cons path rest)
+        (let
+          [tail : AstDeclPathList (build-package-doctest-paths owner rest)]
+          (if (build-package-tlci-stdlib-path? owner path)
+            tail
+            (ast-decl-path-list-prepend-builder-with-owner-id
+              path
+              owner-id
+              tail)))])))
 
 (define (build-package-closure-doctest-status
   [owner : String]

@@ -29,7 +29,7 @@
 ;; The token kinds TypeLisp's s-expression surface needs: an opening paren, a
 ;; closing paren, an integer or float literal, a symbol (any operator / keyword / name -
 ;; carries an interned lexeme id), a string literal (`"..."`, carries the
-;; sliced inner text), a character literal (`'x'`, carries the char),
+;; parser-assigned id of its unescaped inner text), a character literal (`'x'`, carries the char),
 ;; and an end-of-stream sentinel. `Token.Str`, `Token.Char`, and `Token.Float`
 ;; are appended last so the existing variants/tags keep their stable ordering
 ;; for every importer.
@@ -41,7 +41,7 @@
   (Int i64 String)
   (Sym i64)
   (End)
-  (Str String)
+  (Str i64)
   (Char char)
   (Float String)
   (LBracket)
@@ -216,7 +216,7 @@
     [(Token.Int _ _) ""]
     [(Token.Sym _) ""]
     [(Token.End) ""]
-    [(Token.Str s) s]
+    [(Token.Str id) (ci.intern-str id)]
     [(Token.Char _) ""]
     [(Token.Float _) ""]
     [(Token.LBracket) ""]
@@ -225,6 +225,12 @@
     [(Token.Backtick) ""]
     [(Token.Comma) ""]
     [(Token.CommaAt) ""]))
+
+;; Parser-assigned identity of a string literal (-1 for any other token).
+(define (str-id [t : Token]) : i64
+  (match t
+    [(Token.Str id) id]
+    [_ -1]))
 
 ;; Float literal text of `Token.Float` (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it

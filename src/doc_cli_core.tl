@@ -17,6 +17,8 @@
 (import "doc_expand.tl")
 (import "compiler_load.tl")
 (import "package_source_core.tl")
+(import stdlib.hashmap)
+(import (hashmap String i64) as doc_path_map)
 (import stdlib.string)
 (import sym_i64_env)
 
@@ -98,40 +100,39 @@
       (doc-modules-from-package-sources-from paths 0 (&mut modules))
       modules)))
 
+(define (doc-path-set-new) : doc_path_map.Map
+  (doc_path_map.with-capacity 64))
+
 (define (doc-modules-from-paths-into
   [paths : AstDeclPathList]
-  [seen : sym_i64_env.SymI64Env]
+  [seen : (&mut seen doc_path_map.Map)]
   [modules : (&mut modules doc_render.DocModuleList)]) : unit
   (match (ast-decl-path-list-step paths)
     [(AstDeclPathListStep.Nil) unit]
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
-        (if (sym_i64_env.sym-i64-contains seen path)
-          (doc-modules-from-paths-into rest seen modules)
+        (if (doc_path_map.insert-if-absent-ref! seen path 1)
           (begin
             (doc_render.doc-module-list-push
               modules
               (doc_render.DocModule.Module
                 path
                 (doc_extract.doc-extract-file path)))
-            (doc-modules-from-paths-into
-              rest
-              (sym_i64_env.sym-i64-bind seen path 1)
-              modules))))]))
+            (doc-modules-from-paths-into rest seen modules))
+          (doc-modules-from-paths-into rest seen modules)))]))
 
-(define (doc-modules-from-paths
-  [paths : AstDeclPathList]
-  [seen : sym_i64_env.SymI64Env]) : doc_render.DocModuleList
+(define (doc-modules-from-paths [paths : AstDeclPathList]) : doc_render.DocModuleList
   (let
     [modules : doc_render.DocModuleList (doc_render.doc-module-list-new)]
+    [seen : doc_path_map.Map (doc-path-set-new)]
     (begin
-      (doc-modules-from-paths-into paths seen (&mut modules))
+      (doc-modules-from-paths-into paths (&mut seen) (&mut modules))
       modules)))
 
-(define (doc-generated-modules-from-source-paths
+(define (doc-generated-modules-from-source-paths-into
   [paths : AstDeclPathList]
-  [seen : sym_i64_env.SymI64Env]
+  [seen : (&mut seen doc_path_map.Map)]
   [stdlib-roots : doc_svec.Vec]) : ResultDocExpandedModules
   (match (ast-decl-path-list-step paths)
     [(AstDeclPathListStep.Nil)
@@ -139,11 +140,8 @@
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
-        (if (sym_i64_env.sym-i64-contains seen path)
-          (doc-generated-modules-from-source-paths rest seen stdlib-roots)
+        (if (doc_path_map.insert-if-absent-ref! seen path 1)
           (let
-            [next-seen : sym_i64_env.SymI64Env
-              (sym_i64_env.sym-i64-bind seen path 1)]
             [docs : doc_extract.DocExtraction
               (doc_extract.doc-extract-file path)]
             (match (doc-expanded-generated-modules-from-source-docs
@@ -151,9 +149,9 @@
               docs
               stdlib-roots)
               [(ResultDocExpandedModules.Ok head-modules)
-                (match (doc-generated-modules-from-source-paths
+                (match (doc-generated-modules-from-source-paths-into
                   rest
-                  next-seen
+                  seen
                   stdlib-roots)
                   [(ResultDocExpandedModules.Ok tail-modules)
                     (ResultDocExpandedModules.Ok
@@ -163,7 +161,18 @@
                   [(ResultDocExpandedModules.Err message)
                     (ResultDocExpandedModules.Err message)])]
               [(ResultDocExpandedModules.Err message)
-                (ResultDocExpandedModules.Err message)]))))]))
+                (ResultDocExpandedModules.Err message)]))
+          (doc-generated-modules-from-source-paths-into rest seen stdlib-roots)))]))
+
+(define (doc-generated-modules-from-source-paths
+  [paths : AstDeclPathList]
+  [stdlib-roots : doc_svec.Vec]) : ResultDocExpandedModules
+  (let
+    [seen : doc_path_map.Map (doc-path-set-new)]
+    (doc-generated-modules-from-source-paths-into
+      paths
+      (&mut seen)
+      stdlib-roots)))
 
 (define (doc-render-loaded-markdown
   [input-path : String]
@@ -171,9 +180,7 @@
   [generated-modules : doc_render.DocModuleList]) : String
   (let
     [modules : doc_render.DocModuleList
-      (doc-modules-from-paths
-        (ast-decl-path-cons input-path paths)
-        (sym_i64_env.sym-i64-empty))]
+      (doc-modules-from-paths (ast-decl-root-path-cons input-path paths))]
     [all-modules : doc_render.DocModuleList
       (doc_render.doc-module-list-append modules generated-modules)]
     (if (> (doc_render.doc-module-list-count all-modules) 1)
@@ -190,8 +197,7 @@
     stdlib-roots)
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match (doc-generated-modules-from-source-paths
-        (ast-decl-path-cons input-path paths)
-        (sym_i64_env.sym-i64-empty)
+        (ast-decl-root-path-cons input-path paths)
         stdlib-roots)
         [(ResultDocExpandedModules.Ok source-generated-modules)
           (let

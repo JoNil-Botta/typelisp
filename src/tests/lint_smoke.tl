@@ -1,5 +1,6 @@
 ;; lint_smoke.tl - Runnable smoke for lint_core.tl.
 (import stdlib.string)
+(import compiler_builtin_ids as cbi)
 (import "../lint_core.tl")
 
 (define (lint-smoke-string-append-source) : String
@@ -149,10 +150,12 @@
         (panic "lint: flat str-cat should not be flagged")))))
 
 (define (main) : i64
-  (let
-    [core-result : i64 (compiler-lint-self-test)]
-    (if (= core-result 42)
-      (if (= (lint-smoke-deprecated-string-concat-self-test) 42)
-        (lint-smoke-nested-str-cat-self-test)
-        1)
-      core-result)))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [core-result : i64 (compiler-lint-self-test)]
+      (if (= core-result 42)
+        (if (= (lint-smoke-deprecated-string-concat-self-test) 42)
+          (lint-smoke-nested-str-cat-self-test)
+          1)
+        core-result))))

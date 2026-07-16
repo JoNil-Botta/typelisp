@@ -24273,7 +24273,7 @@
   test
   (define (compiler-reg-float-param-register-function) : CompilerIrFunction
     (CompilerIrFunction.Function
-      "float_param_registers"
+      (compiler-ir-test-symbol "float_param_registers")
       (compiler-ir-param-cons
         (CompilerIrParam.Param "a" (compiler-reg-f64-ty) 0)
         (compiler-ir-param-cons
@@ -24288,17 +24288,17 @@
           "entry"
           (compiler-ir-instr-cons
             (CompilerIrInstr.Store
-              "fa"
+              (compiler-ir-test-symbol "fa")
               (CompilerIrValue.Var 0)
               (compiler-reg-f64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "fb"
+                (compiler-ir-test-symbol "fb")
                 (CompilerIrValue.Var 1)
                 (compiler-reg-f64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Store
-                  "fc"
+                  (compiler-ir-test-symbol "fc")
                   (CompilerIrValue.Var 2)
                   (compiler-reg-f64-ty))
                 (compiler-ir-instr-cons
@@ -24317,7 +24317,7 @@
         (array-set! args 2 (CompilerIrValue.Var 2))
         (array-set! args 3 (CompilerIrValue.Var 3))
         (CompilerIrFunction.Function
-          "mixed_float_call_args"
+          (compiler-ir-test-symbol "mixed_float_call_args")
           (compiler-ir-param-cons
             (CompilerIrParam.Param "i" (compiler-reg-i64-ty) 0)
             (compiler-ir-param-cons
@@ -24335,7 +24335,7 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   4
-                  "mixed_float_callee"
+                  (compiler-ir-test-symbol "mixed_float_callee")
                   (CompilerIrCallArgs.Array args)
                   (AstType.Unit))
                 (compiler-ir-instr-cons

@@ -67,6 +67,11 @@
 (define lower-spmd-package-symbol-identities : lower_string_string_map.Map
   (lower_string_string_map.with-capacity 8))
 
+(defenum LowerSpmdPackageSymbolRegistration
+  (New)
+  (Existing)
+  (Collision String))
+
 (define (lower-spmd-set-package-name! [name : String]) : unit
   (begin
     (set! lower-spmd-package-name name)
@@ -40299,23 +40304,27 @@
 
 (define (lower-spmd-package-symbol-register
   [symbol : String]
-  [identity : String]) : String
+  [identity : String]) : LowerSpmdPackageSymbolRegistration
   (match (lower_string_string_map.get-borrowed
     (& lower-spmd-package-symbol-identities)
     (& symbol))
     [(lower_string_string_map.LookupFound previous)
       (if (string.eq previous identity)
-        ""
-        (string.append
-          "lower: :spmd-callable stable symbol collision for "
-          symbol))]
+        LowerSpmdPackageSymbolRegistration.Existing
+        (LowerSpmdPackageSymbolRegistration.Collision
+          (string.append
+            "lower: :spmd-callable stable symbol collision for "
+            symbol)))]
     [(lower_string_string_map.LookupMissing)
       (begin
         (lower_string_string_map.insert-ref!
           (&mut lower-spmd-package-symbol-identities)
           symbol
           identity)
-        "")]))
+        LowerSpmdPackageSymbolRegistration.New)]))
+
+(define (lower-spmd-package-lane-width-supported? [lanes : i64]) : bool
+  (or (= lanes 8) (= lanes 16) (= lanes 32) (= lanes 64)))
 
 (define (lower-spmd-package-call-args-at
   [ctx : TcContext]
@@ -40350,6 +40359,16 @@
     ""
     (match (ast-param-list-get params index (ast-param-fallback))
       [(AstParam.Param name _ _ _) (intern-str name)])))
+
+(define (lower-spmd-package-index-param-i64?
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [index : i64]) : bool
+  (if (< index 0)
+    true
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _ _)
+        (lower-type-i64? (tc-type-without-regions (tc-resolve-type ctx ty)))])))
 
 (define (lower-spmd-package-abi-type-supported? [ty : AstType]) : bool
   (match (tc-type-without-regions ty)
@@ -40448,6 +40467,10 @@
           (struct-get specialization lanes))
         body)]
     (cond
+      [(not
+          (lower-spmd-package-lane-width-supported?
+            (struct-get specialization lanes)))
+        "lower: :spmd-callable lane width is not supported by private ABI v1"]
       [(not (string.eq param-error "")) param-error]
       [(not (lower-spmd-package-abi-type-supported? ret-ty))
         "lower: :spmd-callable return type is not supported by private ABI v1"]
@@ -40470,6 +40493,8 @@
             [(AstSpmdParamClass.Varying) false]
             [_ true]))
         "lower: :spmd-callable index-param must name a varying argument"]
+      [(not (lower-spmd-package-index-param-i64? ctx (& params) index-param))
+        "lower: :spmd-callable index-param must name an i64 parameter"]
       [lower-spmd-inline-recursion-detected
         (lower-spmd-inline-recursive-message)]
       [(< body-lanes 0)
@@ -40901,41 +40926,45 @@
             args-code
             result-code
             index-param)]
-        [collision-error : String
+        [registration : LowerSpmdPackageSymbolRegistration
           (lower-spmd-package-symbol-register hidden-name symbol-identity)]
         [call-args : CompilerIrSpmdCallArgList
           (lower-spmd-package-call-args-at ctx (& params) (& classes) 0)]
         [index-name : String
           (lower-spmd-package-index-name (& params) index-param)]
-        (if (string.eq collision-error "")
-          (let
-            [previous : LowerStringSet lower-spmd-inline-helper-stack]
-            (begin
-              (set!
-                lower-spmd-inline-helper-stack
-                (lower-string-set-insert previous canonical-name))
-              (let
-                [result : ResultLowerFunction
-                  (lower-spmd-specialized-helper-function
-                    ctx
-                    top-env
-                    type-cache
-                    hidden-name
-                    params
-                    ret
-                    body
-                    backend
-                    call-args
-                    lanes
-                    index-name
-                    index-param
-                    spans
-                    names
-                    mode)]
-                (begin
-                  (set! lower-spmd-inline-helper-stack previous)
-                  result))))
-          (ResultLowerFunction.Err (box (lower-diagnostic collision-error))))))))
+        (match registration
+          [(LowerSpmdPackageSymbolRegistration.Existing)
+            (ResultLowerFunction.Ok CompilerIrFunctionList.Nil spans)]
+          [(LowerSpmdPackageSymbolRegistration.Collision collision-error)
+            (ResultLowerFunction.Err (box (lower-diagnostic collision-error)))]
+          [(LowerSpmdPackageSymbolRegistration.New)
+            (let
+              [previous : LowerStringSet lower-spmd-inline-helper-stack]
+              (begin
+                (set!
+                  lower-spmd-inline-helper-stack
+                  (lower-string-set-insert previous canonical-name))
+                (let
+                  [result : ResultLowerFunction
+                    (lower-spmd-specialized-helper-function
+                      ctx
+                      top-env
+                      type-cache
+                      hidden-name
+                      params
+                      ret
+                      body
+                      backend
+                      call-args
+                      lanes
+                      index-name
+                      index-param
+                      spans
+                      names
+                      mode)]
+                  (begin
+                    (set! lower-spmd-inline-helper-stack previous)
+                    result))))])))))
 
 (define (lower-spmd-package-specialization-function
   [ctx : TcContext]
@@ -41088,12 +41117,7 @@
               body
               (& specializations)
               0
-              (match backend
-                [(CompilerIrSpmdBackend.Scalar)
-                  (if (> count 0)
-                    1
-                    0)]
-                [_ count])
+              count
               backend
               spans
               names

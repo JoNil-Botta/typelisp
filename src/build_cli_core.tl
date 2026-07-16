@@ -3069,11 +3069,15 @@
     [(TlciSpmdSpecializationList.Nil)
       (tlci-spmd-specialization-list-cons item items)]
     [(TlciSpmdSpecializationList.Cons head rest)
-      (if (< (tlci-spmd-specialization-compare item head) 0)
-        (tlci-spmd-specialization-list-cons item items)
-        (tlci-spmd-specialization-list-cons
-          head
-          (build-package-tlci-specialization-insert item (box-get rest))))]))
+      (let
+        [order : i64 (tlci-spmd-specialization-compare item head)]
+        (cond
+          [(< order 0) (tlci-spmd-specialization-list-cons item items)]
+          [(= order 0) items]
+          [else
+            (tlci-spmd-specialization-list-cons
+              head
+              (build-package-tlci-specialization-insert item (box-get rest)))]))]))
 
 (define (build-package-tlci-callable-insert
   [item : TlciSpmdCallable]
@@ -3173,13 +3177,6 @@
     [signature : String (lower-spmd-source-signature params ret)]
     [backend : CompilerIrSpmdBackend (build-package-tlci-backend mode)]
     [count : i64 (ast-spmd-specialization-list-len (& specializations))]
-    [emitted-count : i64
-      (match backend
-        [(CompilerIrSpmdBackend.Scalar)
-          (if (> count 0)
-            1
-            0)]
-        [_ count])]
     (tlci-make-spmd-callable
       canonical-name
       signature
@@ -3190,7 +3187,7 @@
         ret
         (& specializations)
         0
-        emitted-count
+        count
         backend
         TlciSpmdSpecializationList.Nil))))
 
@@ -3198,19 +3195,37 @@
   test
   (define (build-package-tlci-callable-smoke-ok?) : bool
     (let
-      [classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
+      [first-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
+      [second-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
       [specializations : AstSpmdSpecializationList
         (ast-spmd-specialization-list-new)]
       (begin
         (ast-spmd-param-class-list-push
-          (&mut classes)
+          (&mut first-classes)
           AstSpmdParamClass.Varying)
         (ast-spmd-param-class-list-push
-          (&mut classes)
+          (&mut first-classes)
           AstSpmdParamClass.Uniform)
+        (ast-spmd-param-class-list-push
+          (&mut second-classes)
+          AstSpmdParamClass.Uniform)
+        (ast-spmd-param-class-list-push
+          (&mut second-classes)
+          AstSpmdParamClass.Varying)
         (ast-spmd-specialization-list-push
           (&mut specializations)
-          (AstSpmdSpecialization 8 (box classes) AstSpmdResultClass.Varying 0))
+          (AstSpmdSpecialization
+            8
+            (box first-classes)
+            AstSpmdResultClass.Varying
+            0))
+        (ast-spmd-specialization-list-push
+          (&mut specializations)
+          (AstSpmdSpecialization
+            8
+            (box second-classes)
+            AstSpmdResultClass.Varying
+            1))
         (let
           [callable : TlciSpmdCallable
             (build-package-tlci-callable
@@ -3242,9 +3257,9 @@
                   (string.eq (struct-get item abi) "spmd-call-v1")
                   (string.eq (struct-get item backend) "scalar")
                   (= (struct-get item lanes) 1)
-                  (string.eq (struct-get item args) "vu")
+                  (string.eq (struct-get item args) "uv")
                   (string.eq (struct-get item result) "v")
-                  (= (struct-get item index-param) 0)
+                  (= (struct-get item index-param) 1)
                   (string.eq
                     (struct-get item symbol)
                     (compiler-backend-user-symbol
@@ -3255,20 +3270,80 @@
                         (AstType.I64)
                         CompilerIrSpmdBackend.Scalar
                         1
-                        "vu"
+                        "uv"
                         "v"
-                        0)))
+                        1)))
                   (match (box-get rest)
-                    [(TlciSpmdSpecializationList.Nil) true]
+                    [(TlciSpmdSpecializationList.Cons next tail)
+                      (and
+                        (string.eq (struct-get next args) "vu")
+                        (= (struct-get next index-param) 0)
+                        (match (box-get tail)
+                          [(TlciSpmdSpecializationList.Nil) true]
+                          [_ false]))]
                     [_ false]))]
               [_ false])))))))
+
+(cfg
+  test
+  (define (build-package-tlci-scalar-collapse-smoke-ok?) : bool
+    (let
+      [first-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
+      [second-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
+      [specializations : AstSpmdSpecializationList
+        (ast-spmd-specialization-list-new)]
+      (begin
+        (ast-spmd-param-class-list-push
+          (&mut first-classes)
+          AstSpmdParamClass.Uniform)
+        (ast-spmd-param-class-list-push
+          (&mut second-classes)
+          AstSpmdParamClass.Uniform)
+        (ast-spmd-specialization-list-push
+          (&mut specializations)
+          (AstSpmdSpecialization
+            8
+            (box first-classes)
+            AstSpmdResultClass.Uniform
+            -1))
+        (ast-spmd-specialization-list-push
+          (&mut specializations)
+          (AstSpmdSpecialization
+            16
+            (box second-classes)
+            AstSpmdResultClass.Uniform
+            -1))
+        (match (struct-get
+          (build-package-tlci-callable
+            "pkg"
+            "pkg"
+            (intern "helper")
+            (ast-param-cons
+              (ast-param "x" (AstType.I64) false)
+              (ast-param-list-new))
+            (AstType.I64)
+            specializations
+            (CompilerBackendMode.Scalar))
+          specializations)
+          [(TlciSpmdSpecializationList.Cons item rest)
+            (and
+              (= (struct-get item lanes) 1)
+              (string.eq (struct-get item args) "u")
+              (string.eq (struct-get item result) "u")
+              (= (struct-get item index-param) -1)
+              (match (box-get rest)
+                [(TlciSpmdSpecializationList.Nil) true]
+                [_ false]))]
+          [_ false])))))
 
 (cfg
   test
   (test
     build-package-tlci-callable-smoke
     (unless
-      (build-package-tlci-callable-smoke-ok?)
+      (and
+        (build-package-tlci-callable-smoke-ok?)
+        (build-package-tlci-scalar-collapse-smoke-ok?))
       (io.panic "build package TLCI callable smoke failed"))))
 
 (define (build-package-tlci-collect-decl-callable

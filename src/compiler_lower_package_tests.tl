@@ -9,7 +9,12 @@
       (lanes 8)
       (args varying uniform)
       (result varying)
-      (index-param 0)))
+      (index-param 0))
+    (specialization
+      (lanes 8)
+      (args uniform varying)
+      (result varying)
+      (index-param 1)))
   : i64
   (+ x scale))")
 
@@ -42,22 +47,30 @@
               0)])
         (compiler-lower-spmd-package-helper-count (box-get rest)))]))
 
-(define (compiler-lower-spmd-package-callable-mode-ok?
-  [mode : CompilerLowerMode]) : bool
+(define (compiler-lower-spmd-package-helper-count-ok?
+  [source : String]
+  [mode : CompilerLowerMode]
+  [wanted : i64]) : bool
   (let
     [_package : unit (lower-spmd-set-package-name! "spmd_fixture")]
-    [result : ResultCompilerLower
-      (lower-compiler-source-with-mode
-        (compiler-lower-spmd-package-callable-source)
-        mode)]
+    [result : ResultCompilerLower (lower-compiler-source-with-mode source mode)]
     (begin
       (lower-spmd-clear-package-name!)
       (match result
         [(ResultCompilerLower.Ok program _)
           (match program
             [(CompilerIrProgram.Program _ functions _)
-              (= (compiler-lower-spmd-package-helper-count functions) 1)])]
+              (= (compiler-lower-spmd-package-helper-count functions) wanted)])]
         [(ResultCompilerLower.Err _) false]))))
+
+(define (compiler-lower-spmd-package-scalar-collapse-source) : String
+  "(module spmd_fixture)
+(define (helper [x : i64])
+  (:spmd-callable
+    (specialization (lanes 8) (args uniform) (result uniform) (index-param none))
+    (specialization (lanes 16) (args uniform) (result uniform) (index-param none)))
+  : i64
+  x)")
 
 (define (compiler-lower-spmd-package-callable-error-ok?
   [source : String]
@@ -76,20 +89,27 @@
 (define (compiler-lower-spmd-package-symbol-collision-ok?) : bool
   (let
     [_package : unit (lower-spmd-set-package-name! "collision_fixture")]
-    [first : String
+    [first : LowerSpmdPackageSymbolRegistration
       (lower-spmd-package-symbol-register "__collision" "identity-a")]
-    [repeat : String
+    [repeat : LowerSpmdPackageSymbolRegistration
       (lower-spmd-package-symbol-register "__collision" "identity-a")]
-    [collision : String
+    [collision : LowerSpmdPackageSymbolRegistration
       (lower-spmd-package-symbol-register "__collision" "identity-b")]
     (begin
       (lower-spmd-clear-package-name!)
       (and
-        (string.eq first "")
-        (string.eq repeat "")
-        (string.eq
-          collision
-          "lower: :spmd-callable stable symbol collision for __collision")))))
+        (match first
+          [(LowerSpmdPackageSymbolRegistration.New) true]
+          [_ false])
+        (match repeat
+          [(LowerSpmdPackageSymbolRegistration.Existing) true]
+          [_ false])
+        (match collision
+          [(LowerSpmdPackageSymbolRegistration.Collision message)
+            (string.eq
+              message
+              "lower: :spmd-callable stable symbol collision for __collision")]
+          [_ false])))))
 
 (define (compiler-lower-spmd-package-callable-validation-errors-ok?) : bool
   (and
@@ -160,9 +180,39 @@
   x)"
       (CompilerLowerMode.Avx512)
       "lower: :spmd-callable lane width does not match varying parameter type")
+    (compiler-lower-spmd-package-callable-error-ok?
+      "(module spmd_fixture)
+(define (helper [x : i64])
+  (:spmd-callable (specialization (lanes 2) (args uniform) (result uniform) (index-param none)))
+  : i64
+  x)"
+      (CompilerLowerMode.Avx512)
+      "lower: :spmd-callable lane width is not supported by private ABI v1")
+    (compiler-lower-spmd-package-callable-error-ok?
+      "(module spmd_fixture)
+(define (helper [x : f64])
+  (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 0)))
+  : f64
+  x)"
+      (CompilerLowerMode.Avx512)
+      "lower: :spmd-callable index-param must name an i64 parameter")
     (compiler-lower-spmd-package-symbol-collision-ok?)))
 
 (define (compiler-lower-spmd-package-callable-tests-ok?) : bool
   (and
-    (compiler-lower-spmd-package-callable-mode-ok? (CompilerLowerMode.Scalar))
-    (compiler-lower-spmd-package-callable-mode-ok? (CompilerLowerMode.Avx512))))
+    (compiler-lower-spmd-package-helper-count-ok?
+      (compiler-lower-spmd-package-callable-source)
+      (CompilerLowerMode.Scalar)
+      2)
+    (compiler-lower-spmd-package-helper-count-ok?
+      (compiler-lower-spmd-package-callable-source)
+      (CompilerLowerMode.Avx512)
+      2)
+    (compiler-lower-spmd-package-helper-count-ok?
+      (compiler-lower-spmd-package-scalar-collapse-source)
+      (CompilerLowerMode.Scalar)
+      1)
+    (compiler-lower-spmd-package-helper-count-ok?
+      (compiler-lower-spmd-package-scalar-collapse-source)
+      (CompilerLowerMode.Avx512)
+      2)))

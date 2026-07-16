@@ -254,7 +254,14 @@ check_stage1_compile_cli() {
     run_stage1_cli_capture stage1-check "$STAGE1_BIN" check "$STAGE1_CLI_SRC" --stdlib-root "$ROOT/stdlib"
     assert_contains "$WORKDIR/stage1-check.stdout" "Type checking passed!"
 
-    NO_ROOT_DIR="$WORKDIR/stage1-no-root-stdlib"
+    run_stage1_cli_expect_failure stage1-unknown-command "$STAGE1_BIN" definitely-not-a-command
+    assert_contains "$WORKDIR/stage1-unknown-command.stderr" "typelisp: unknown subcommand definitely-not-a-command"
+    assert_contains "$WORKDIR/stage1-unknown-command.stderr" "Usage:"
+}
+
+check_stage2_embedded_stdlib() {
+    echo "[bootstrap] stage2 embedded stdlib smoke"
+    NO_ROOT_DIR="$WORKDIR/stage2-no-root-stdlib"
     mkdir -p "$NO_ROOT_DIR"
     cat > "$NO_ROOT_DIR/main.tl" <<'EOF'
 (import "stdlib/string.tl")
@@ -263,11 +270,11 @@ EOF
     (
         cd "$NO_ROOT_DIR"
         unset TYPELISP_STDLIB_ROOT
-        run_stage1_cli_capture stage1-check-embedded-stdlib "$STAGE1_BIN" check main.tl
+        run_stage1_cli_capture stage2-check-embedded-stdlib "$STAGE2_BIN" check main.tl
     )
-    assert_contains "$WORKDIR/stage1-check-embedded-stdlib.stdout" "Type checking passed!"
+    assert_contains "$WORKDIR/stage2-check-embedded-stdlib.stdout" "Type checking passed!"
 
-    ENV_ROOT="$WORKDIR/stage1-env-stdlib"
+    ENV_ROOT="$WORKDIR/stage2-env-stdlib"
     mkdir -p "$ENV_ROOT"
     cat > "$ENV_ROOT/string.tl" <<'EOF'
 (define (custom-root-sentinel) : i64 7)
@@ -280,11 +287,11 @@ EOF
         cd "$NO_ROOT_DIR"
         TYPELISP_STDLIB_ROOT="$ENV_ROOT"
         export TYPELISP_STDLIB_ROOT
-        run_stage1_cli_capture stage1-check-env-stdlib-root "$STAGE1_BIN" check env-root.tl
+        run_stage1_cli_capture stage2-check-env-stdlib-root "$STAGE2_BIN" check env-root.tl
     )
-    assert_contains "$WORKDIR/stage1-check-env-stdlib-root.stdout" "Type checking passed!"
+    assert_contains "$WORKDIR/stage2-check-env-stdlib-root.stdout" "Type checking passed!"
 
-    CLI_ROOT="$WORKDIR/stage1-cli-stdlib"
+    CLI_ROOT="$WORKDIR/stage2-cli-stdlib"
     mkdir -p "$CLI_ROOT"
     cat > "$CLI_ROOT/string.tl" <<'EOF'
 (define (cli-root-sentinel) : i64 11)
@@ -298,12 +305,12 @@ EOF
         TYPELISP_STDLIB_ROOT="$ENV_ROOT"
         export TYPELISP_STDLIB_ROOT
         run_stage1_cli_capture \
-            stage1-check-cli-stdlib-root-over-env \
-            "$STAGE1_BIN" check cli-over-env.tl --stdlib-root "$CLI_ROOT"
+            stage2-check-cli-stdlib-root-over-env \
+            "$STAGE2_BIN" check cli-over-env.tl --stdlib-root "$CLI_ROOT"
     )
-    assert_contains "$WORKDIR/stage1-check-cli-stdlib-root-over-env.stdout" "Type checking passed!"
+    assert_contains "$WORKDIR/stage2-check-cli-stdlib-root-over-env.stdout" "Type checking passed!"
 
-    LOCAL_SHADOW_DIR="$WORKDIR/stage1-local-stdlib-shadow"
+    LOCAL_SHADOW_DIR="$WORKDIR/stage2-local-stdlib-shadow"
     mkdir -p "$LOCAL_SHADOW_DIR/stdlib"
     cat > "$LOCAL_SHADOW_DIR/stdlib/string.tl" <<'EOF'
 (define (local-root-sentinel) : i64 13)
@@ -317,14 +324,10 @@ EOF
         TYPELISP_STDLIB_ROOT="$ENV_ROOT"
         export TYPELISP_STDLIB_ROOT
         run_stage1_cli_capture \
-            stage1-check-local-stdlib-shadow \
-            "$STAGE1_BIN" check main.tl --stdlib-root "$CLI_ROOT"
+            stage2-check-local-stdlib-shadow \
+            "$STAGE2_BIN" check main.tl --stdlib-root "$CLI_ROOT"
     )
-    assert_contains "$WORKDIR/stage1-check-local-stdlib-shadow.stdout" "Type checking passed!"
-
-    run_stage1_cli_expect_failure stage1-unknown-command "$STAGE1_BIN" definitely-not-a-command
-    assert_contains "$WORKDIR/stage1-unknown-command.stderr" "typelisp: unknown subcommand definitely-not-a-command"
-    assert_contains "$WORKDIR/stage1-unknown-command.stderr" "Usage:"
+    assert_contains "$WORKDIR/stage2-check-local-stdlib-shadow.stdout" "Type checking passed!"
 }
 
 # Bootstrap the full toolchain entry with the same flags as the stage0
@@ -342,10 +345,10 @@ if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
     mkdir -p "$SEED_BOOTSTRAP_CWD"
     (
         cd "$SEED_BOOTSTRAP_CWD"
-        run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$ROOT/$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2
+        run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$ROOT/$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg stage0-seed-bootstrap --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2
     )
 else
-    run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+    run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg stage0-seed-bootstrap --stdlib-root stdlib --stdlib-root src --opt-level 2
 fi
 
 assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
@@ -358,6 +361,10 @@ echo "[bootstrap] stage1 -> stage2.s"
 run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
 
 assemble_and_link_stage2
+
+if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
+    check_stage2_embedded_stdlib
+fi
 
 echo "[bootstrap] stage2 -> stage3.s"
 run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2

@@ -72,6 +72,13 @@ esac
 printf '%s' "$BUILD_GIT_HASH" > "$BUILD_GIT_HASH_FILE"
 printf '%s' "$BUILD_DATE" > "$BUILD_DATE_FILE"
 
+stage_seed_bootstrap_cfg_args() {
+    stage_number=$1
+    if [ "$stage_number" -eq 1 ]; then
+        printf '%s\n' --cfg stage0-seed-bootstrap
+    fi
+}
+
 # Iterate to the converged stage and publish that. The seed is the previously
 # published stage0, so a backend codegen fix can take two self-host rounds to
 # propagate; the published binary is stage4 -- byte-identical to the converged
@@ -100,7 +107,7 @@ while [ "$i" -le "$STAGES" ]; do
                 --target "$NL_BOOTSTRAP_TARGET" \
                 $(native_target_cfg_args) \
                 --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2 \
-                --cfg stage0-build-version
+                --cfg stage0-build-version $(stage_seed_bootstrap_cfg_args "$i")
         ); then
             stage_compile_failed=1
         fi
@@ -110,7 +117,7 @@ while [ "$i" -le "$STAGES" ]; do
             --target "$NL_BOOTSTRAP_TARGET" \
             $(native_target_cfg_args) \
             --stdlib-root stdlib --stdlib-root src --opt-level 2 \
-            --cfg stage0-build-version; then
+            --cfg stage0-build-version $(stage_seed_bootstrap_cfg_args "$i"); then
             stage_compile_failed=1
         fi
     fi

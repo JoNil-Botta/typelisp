@@ -2700,6 +2700,16 @@ and emit the result with `comptime.expr-binary-data`.
 `(Array u8)` from a compile-time `String`. It lowers directly to static binary
 data; the bytes are not represented as source syntax or an array literal.
 
+The compiler-build sibling
+`(include-str-comptime-lzss name "path")` uses the same explicit input and
+path-resolution rules, but deterministically LZSS-compresses the text at the
+loader boundary and defines an opaque static `name : (Array u8)`. The bounded
+binary-data payload starts
+with the compiler-owned `__typelisp_embedded_stdlib_lzss_v1__` marker, the
+decimal uncompressed byte length and a newline, followed by the token stream.
+This form exists for compiler-owned source payload tables; ordinary macros
+should use `include-str-comptime` and `comptime.expr-binary-data` directly.
+
 #### 4.4.9 `(cfg predicate declaration)` - conditional compilation
 
 `cfg` conditionally includes source forms before normal declaration parsing and
@@ -6873,6 +6883,7 @@ top-level     ::= define-var
                 | import-decl
                 | include-str-decl
                 | include-str-comptime-decl
+                | include-str-comptime-lzss-decl
                 | include-bin-decl
                 | defenum
                 | defstruct
@@ -6887,6 +6898,7 @@ cfg-predicate ::= ident
 define-var    ::= "(" "define" ident [":" type] expr ")"
 include-str-decl ::= "(" "include-str" ident string ")"
 include-str-comptime-decl ::= "(" "include-str-comptime" ident string ")"
+include-str-comptime-lzss-decl ::= "(" "include-str-comptime-lzss" ident string ")"
 include-bin-decl ::= "(" "include-bin" ident string ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr+ ")"
 unsafe-decl   ::= "(" "unsafe" unsafe-decl-payload ")"

@@ -222,7 +222,7 @@ measurement tool, not a CI size gate.
 
 Use [`../scripts/analyze-stage0-size.sh`](../scripts/analyze-stage0-size.sh)
 for linked stage0 binary size comparisons. It reports total file bytes, section
-raw sizes from `llvm-readobj`, `readelf`, or `objdump`, plus encoded compressed,
+raw sizes from `llvm-readobj`, `readelf`, or `objdump`, plus bounded static,
 compressed-token, and expanded exact-source embedded stdlib payload bytes:
 
 ```sh
@@ -237,11 +237,12 @@ seed (`target/stage0/typelisp.exe`) and use a `.exe` output path. The stage0
 publication smoke also prints this report when a section reader is available,
 but it remains a measurement report rather than a size budget gate.
 
-The embedded payload is generated from
-`tools/embedded-stdlib-payload/modules.txt`. Run
-`scripts/generate-embedded-stdlib-payload.sh` after changing an embedded module
-and `scripts/verify-embedded-stdlib-payload.sh` to check deterministic output
-and byte-for-byte decoding before bootstrap work.
+The six `src/compiler_embedded_stdlib_payload_[a-f].tl` shards are the canonical
+explicit build-input list. Editing a listed stdlib source changes the next
+compiler build directly; there is no generated source to refresh. Run
+`scripts/verify-embedded-stdlib-payload.sh` to check declaration completeness,
+deterministic output, one-byte source mutation propagation, and byte-for-byte
+decoding with a branch-built compiler.
 
 Use [`../scripts/analyze-move-traffic.sh`](../scripts/analyze-move-traffic.sh)
 for adjacent `movq` traffic counts in selfhost assembly. It reports exact

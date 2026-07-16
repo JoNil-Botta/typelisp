@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Regenerate/diff the compressed payload and prove every module decodes exactly.
+# Validate the explicit build inputs and prove every payload decodes exactly.
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
@@ -18,14 +18,39 @@ else
 fi
 
 WORKDIR=target/embedded-stdlib-payload-verify
-GENERATED="$WORKDIR/compiler_embedded_stdlib_payload.tl"
-MANIFEST=tools/embedded-stdlib-payload/modules.txt
 NORMALIZED_MANIFEST="$WORKDIR/modules.txt"
 mkdir -p "$WORKDIR"
-tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
+awk '
+function emit_input() {
+    path = declaration
+    sub(/^[^"]*"\.\.\/stdlib\//, "", path)
+    sub(/".*$/, "", path)
+    print path
+    declaration = ""
+    collecting = 0
+}
+/^\(include-str-comptime-lzss([ \t]|$)/ {
+    declaration = $0
+    collecting = 1
+    if ($0 ~ /\)[ \t]*$/) {
+        emit_input()
+    }
+    next
+}
+collecting {
+    declaration = declaration " " $0
+    if ($0 ~ /\)[ \t]*$/) {
+        emit_input()
+    }
+}
+' src/compiler_embedded_stdlib_payload_[a-f].tl > "$NORMALIZED_MANIFEST"
 
 if [ ! -s "$NORMALIZED_MANIFEST" ]; then
-    echo "embedded stdlib payload manifest is empty" >&2
+    echo "embedded stdlib payload has no build inputs" >&2
+    exit 1
+fi
+if [ "$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')" -ne 42 ]; then
+    echo "embedded stdlib payload must declare exactly 42 build inputs" >&2
     exit 1
 fi
 if grep -n -v '^[A-Za-z0-9_][A-Za-z0-9_]*\.tl$' "$NORMALIZED_MANIFEST" \
@@ -47,18 +72,11 @@ while IFS= read -r suffix; do
     fi
 done < "$NORMALIZED_MANIFEST"
 
-TYPELISP_BIN=$COMPILER scripts/generate-embedded-stdlib-payload.sh "$GENERATED"
-if ! cmp -s src/compiler_embedded_stdlib_payload.tl "$GENERATED"; then
-    echo "generated embedded stdlib payload is stale" >&2
-    diff -u src/compiler_embedded_stdlib_payload.tl "$GENERATED" >&2 || true
-    exit 1
-fi
-
 "$COMPILER" check src/compiler_embedded_stdlib_payload.tl \
     --stdlib-root stdlib --stdlib-root src
 set +e
 "$COMPILER" run tools/embedded-stdlib-payload/verify.tl \
-    --stdlib-root stdlib --stdlib-root src
+    --stdlib-root stdlib --stdlib-root src -- "$NORMALIZED_MANIFEST"
 status=$?
 set -e
 if [ "$status" -ne 42 ]; then
@@ -66,4 +84,29 @@ if [ "$status" -ne 42 ]; then
     exit 1
 fi
 
-echo "embedded stdlib payload is deterministic and exact"
+# Compile the same explicit build input twice, then change one source byte and
+# require the emitted assembly to change without touching any checked-in file.
+MUTATION_DIR="$WORKDIR/source-mutation"
+mkdir -p "$MUTATION_DIR"
+cat > "$MUTATION_DIR/main.tl" <<'EOF'
+(include-str-comptime-lzss payload "payload.txt")
+(define (main) : i64 (array-length payload))
+EOF
+printf 'payload-A\n' > "$MUTATION_DIR/payload.txt"
+"$COMPILER" compile "$MUTATION_DIR/main.tl" -o "$MUTATION_DIR/a.s" \
+    --stdlib-root stdlib --opt-level 0
+"$COMPILER" compile "$MUTATION_DIR/main.tl" -o "$MUTATION_DIR/a-repeat.s" \
+    --stdlib-root stdlib --opt-level 0
+if ! cmp -s "$MUTATION_DIR/a.s" "$MUTATION_DIR/a-repeat.s"; then
+    echo "embedded stdlib build payload is not deterministic" >&2
+    exit 1
+fi
+printf 'payload-B\n' > "$MUTATION_DIR/payload.txt"
+"$COMPILER" compile "$MUTATION_DIR/main.tl" -o "$MUTATION_DIR/b.s" \
+    --stdlib-root stdlib --opt-level 0
+if cmp -s "$MUTATION_DIR/a.s" "$MUTATION_DIR/b.s"; then
+    echo "embedded stdlib build input mutation did not change compiler output" >&2
+    exit 1
+fi
+
+echo "embedded stdlib build payload is complete and exact"

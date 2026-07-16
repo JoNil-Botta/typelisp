@@ -1062,6 +1062,9 @@
 (define (compiler-parse-tag-decl-include-str-comptime) : i64
   414)
 
+(define (compiler-parse-tag-decl-include-str-comptime-lzss) : i64
+  415)
+
 (define (compiler-parse-tag-decl-include-bin) : i64
   413)
 
@@ -1775,10 +1778,15 @@
     [e14 : sym_i64_env.SymI64Env
       (sym_i64_env.sym-i64-bind
         e13
+        "include-str-comptime-lzss"
+        (compiler-parse-tag-decl-include-str-comptime-lzss))]
+    [e15 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e14
         "include-bin"
         (compiler-parse-tag-decl-include-bin))]
     (sym_i64_env.sym-i64-bind
-      e14
+      e15
       "defdispatch"
       (compiler-parse-tag-decl-defdispatch))))
 
@@ -8404,6 +8412,39 @@
             "parse: include-str-comptime name must be a symbol")])]
     [_ (ResultAstDecl.Err "parse: malformed include-str-comptime")]))
 
+(define (parse-ast-include-str-comptime-lzss [rest : reader.SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(reader.SpannedSexpr.Nil _)
+      (ResultAstDecl.Err
+        "parse: include-str-comptime-lzss expects name and string path")]
+    [(reader.SpannedSexpr.Cons name-node tail _)
+      (match (reader.sp-node-get name-node)
+        [(reader.SpannedSexpr.Sym name _)
+          (match (reader.sp-node-get tail)
+            [(reader.SpannedSexpr.Cons path-node end _)
+              (match (reader.sp-node-get path-node)
+                [(reader.SpannedSexpr.Str path _)
+                  (match (reader.sp-node-get end)
+                    [(reader.SpannedSexpr.Nil _)
+                      (ResultAstDecl.Ok
+                        (AstDecl.IncludeStrComptimeLzss name path))]
+                    [_
+                      (ResultAstDecl.Err
+                        "parse: include-str-comptime-lzss expects exactly two operands")])]
+                [_
+                  (ResultAstDecl.Err
+                    "parse: include-str-comptime-lzss path must be a string")])]
+            [(reader.SpannedSexpr.Nil _)
+              (ResultAstDecl.Err
+                "parse: include-str-comptime-lzss expects name and string path")]
+            [_
+              (ResultAstDecl.Err
+                "parse: include-str-comptime-lzss expects exactly two operands")])]
+        [_
+          (ResultAstDecl.Err
+            "parse: include-str-comptime-lzss name must be a symbol")])]
+    [_ (ResultAstDecl.Err "parse: malformed include-str-comptime-lzss")]))
+
 (define (parse-ast-include-bin [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match rest
     [(reader.SpannedSexpr.Nil _)
@@ -8687,6 +8728,9 @@
                     (parse-ast-include-str (reader.sp-node-get rest))]
                   [(= tag (compiler-parse-tag-decl-include-str-comptime))
                     (parse-ast-include-str-comptime (reader.sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-include-str-comptime-lzss))
+                    (parse-ast-include-str-comptime-lzss
+                      (reader.sp-node-get rest))]
                   [(= tag (compiler-parse-tag-decl-include-bin))
                     (parse-ast-include-bin (reader.sp-node-get rest))]
                   [(= tag (compiler-parse-tag-decl-module))
@@ -9336,6 +9380,12 @@
       (and (string.eq name "payload") (string.eq path "data.txt"))]
     [_ false]))
 
+(define (ast-first-include-str-comptime-lzss-ok? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons (AstDecl.IncludeStrComptimeLzss name path) _)
+      (and (string.eq name "payload") (string.eq path "data.txt"))]
+    [_ false]))
+
 (define (ast-first-include-bin-ok? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons (AstDecl.IncludeBin name path) _)
@@ -9598,6 +9648,27 @@
     (compiler-parse-error-ok?
       "(include-str-comptime payload \"data.txt\" extra)"
       "parse: include-str-comptime expects exactly two operands")))
+
+(define (compiler-parse-include-str-comptime-lzss-ok?) : bool
+  (match (parse-ast-source "(include-str-comptime-lzss payload \"data.txt\")")
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (ast-first-include-str-comptime-lzss-ok? (box-get decls-box))]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-include-str-comptime-lzss-errors-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(include-str-comptime-lzss)"
+      "parse: include-str-comptime-lzss expects name and string path")
+    (compiler-parse-error-ok?
+      "(include-str-comptime-lzss \"name\" \"data.txt\")"
+      "parse: include-str-comptime-lzss name must be a symbol")
+    (compiler-parse-error-ok?
+      "(include-str-comptime-lzss payload data.txt)"
+      "parse: include-str-comptime-lzss path must be a string")
+    (compiler-parse-error-ok?
+      "(include-str-comptime-lzss payload \"data.txt\" extra)"
+      "parse: include-str-comptime-lzss expects exactly two operands")))
 
 (define (compiler-parse-include-bin-ok?) : bool
   (match (parse-ast-source "(include-bin payload \"data.bin\")")
@@ -11620,6 +11691,8 @@
     (compiler-parse-include-str-errors-ok?)
     (compiler-parse-include-str-comptime-ok?)
     (compiler-parse-include-str-comptime-errors-ok?)
+    (compiler-parse-include-str-comptime-lzss-ok?)
+    (compiler-parse-include-str-comptime-lzss-errors-ok?)
     (compiler-parse-include-bin-ok?)
     (compiler-parse-include-bin-errors-ok?)
     (compiler-parse-error-ok?

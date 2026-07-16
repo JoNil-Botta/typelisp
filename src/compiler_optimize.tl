@@ -23153,7 +23153,7 @@
 ;; Collapse chained affine 64-bit integer arithmetic. With wrapping semantics
 ;; (SPEC: i64/u64 `+`/`-`/`*` wrap modulo 2^64),
 ;;   (x*C1 + K1)*C2 + K2  ==  x*(C1*C2) + (K1*C2 + K2)
-;; so the x4 unroller's chained `acc = acc*A + K` copies fold back into ONE
+;; so the x16 unroller's chained `acc = acc*A + K` copies fold back into ONE
 ;; mul+add per group, and chained counter increments `((i+1)+1)+1` fold into
 ;; parallel `i+2`/`i+3` offsets off the group counter. The pass is one forward
 ;; walk per block over the freshly rebuilt post-fold instruction sequence,
@@ -23199,8 +23199,10 @@
   (No)
   (Some i64 i64))
 
+;; Raised from 64 so a fully-folded x16 unrolled body (~64 affine records)
+;; composes into a single mul+add group instead of splitting mid-chain.
 (define (opt-affine-env-cap) : i64
-  64)
+  512)
 
 (define (opt-affine-64bit-type? [ty : AstType]) : bool
   (match ty

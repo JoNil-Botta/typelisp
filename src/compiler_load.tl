@@ -315,14 +315,16 @@
   (surface-summaries (Array CompilerLoadSurfaceSummaryList))
   (surface-summary-load-depth (Array i64))
   (lazy-import-skip-record-count (Array i64))
-  ;; True once this session has parsed a stdlib module from the compiler's
-  ;; embedded source payload. Macro dispatch combines this provenance with the
-  ;; explicit-root configuration before selecting the TLCI catalog route.
-  (embedded-stdlib-source-used (Array bool))
   (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState))
 
 (define (compiler-load-session-state-bool-cell [value : bool]) : (Array bool)
   (make-array value))
+
+(define (compiler-load-session-state-flags-new) : (Array bool)
+  ;; Slot 0 is cache-enabled; slot 1 records embedded-stdlib source use. Keep
+  ;; both session flags in one allocation so the published seed backend does
+  ;; not cross its per-function aggregate-allocation label limit here.
+  (array.make-array bool 2))
 
 (define (compiler-load-session-state-i64-cell [value : i64]) : (Array i64)
   (make-array value))
@@ -362,7 +364,7 @@
     [lazy-qualified-observer : CompilerLoadLazyQualifiedObserverState
       (compiler-load-lazy-qualified-observer-state-new)]
     (CompilerLoadSessionState
-      (compiler-load-session-state-bool-cell false)
+      (compiler-load-session-state-flags-new)
       (compiler-load-session-state-bool-cell true)
       (compiler-load-session-state-i64-cell 0)
       (compiler-load-session-state-i64-cell 0)
@@ -383,7 +385,6 @@
       surface-summaries
       surface-summary-load-depth
       lazy-import-skip-record-count
-      (compiler-load-session-state-bool-cell false)
       lazy-qualified-observer)))
 
 (define compiler-load-default-session-state : (Array CompilerLoadSessionState)
@@ -1068,14 +1069,12 @@
   (array-ref (struct-get compiler-load-active-session-state cache-enabled) 0))
 
 (define (compiler-load-session-embedded-stdlib-source-used?) : bool
-  (array-ref
-    (struct-get compiler-load-active-session-state embedded-stdlib-source-used)
-    0))
+  (array-ref (struct-get compiler-load-active-session-state cache-enabled) 1))
 
 (define (compiler-load-session-note-embedded-stdlib-source!) : unit
   (array-set!
-    (struct-get compiler-load-active-session-state embedded-stdlib-source-used)
-    0
+    (struct-get compiler-load-active-session-state cache-enabled)
+    1
     true))
 
 (define (compiler-load-session-reset-pools!) : unit

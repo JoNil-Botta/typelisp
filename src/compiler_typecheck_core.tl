@@ -59214,6 +59214,16 @@
             [(AstMacroTypeKindList.Nil) ""]
             [_ (str_cat.str-cat ", " (macro-type-kind-list-render tail))])))]))
 
+(define (macro-type-kind-list-contains-text?
+  [kinds : AstMacroTypeKindList]
+  [kind : String]) : bool
+  (match kinds
+    [(AstMacroTypeKindList.Nil) false]
+    [(AstMacroTypeKindList.Cons head rest)
+      (if (string.eq (intern-str head) kind)
+        true
+        (macro-type-kind-list-contains-text? (box-get rest) kind))]))
+
 (define (macro-type-kind-constraint-message
   [macro-name : String]
   [param-name : i64]
@@ -59221,7 +59231,7 @@
   [type-kinds : AstMacroTypeKindList]) : String
   (str_cat.str-cat
     "typecheck: macro "
-    (macro-output-source-name macro-name)
+    macro-name
     " type operand "
     (intern-str param-name)
     " rejects "
@@ -59240,13 +59250,12 @@
     [(AstMacroTypeKindList.Nil) ResultMacroCheck.Ok]
     [_
       (let
-        [actual-kind : i64
-          (intern
-            (ctfe-type-kind-with-reflections-and-pools
-              (tc-context-pools ctx)
-              (ctfe-reflect-info-list-empty)
-              resolved-ty))]
-        (if (ast-macro-type-kind-list-contains-id? type-kinds actual-kind)
+        [actual-kind : String
+          (ctfe-type-kind-with-reflections-and-pools
+            (tc-context-pools ctx)
+            (ctfe-reflect-info-list-empty)
+            resolved-ty)]
+        (if (macro-type-kind-list-contains-text? type-kinds actual-kind)
           ResultMacroCheck.Ok
           (ResultMacroCheck.Err
             (box
@@ -59780,7 +59789,9 @@
             [(ResultMacroCheck.Ok)
               (ResultMacroEnv.Ok
                 (ctfe-env-extend-id
-                  env name (CompilerCtfeValue.Type resolved-ty)))]
+                  env
+                  name
+                  (CompilerCtfeValue.Type resolved-ty)))]
             [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]
         [(ResultMacroTypeArg.Err diag) (ResultMacroEnv.Err diag)])]
     [(tc-macro-module-param-kind? ty)

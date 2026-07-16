@@ -2118,6 +2118,7 @@
     AstFieldDefList)
   (Import AstImportSpec)
   (IncludeStr String String)
+  (IncludeStrComptime String String)
   (IncludeBin String String)
   (DefDispatch i64 AstDispatchVariantList)
   (Test i64 i64 AstSourceSpan)
@@ -6248,6 +6249,10 @@
       (AstDecl.IncludeStr
         (ast-compaction-copy-string name)
         (ast-compaction-copy-string path))]
+    [(AstDecl.IncludeStrComptime name path)
+      (AstDecl.IncludeStrComptime
+        (ast-compaction-copy-string name)
+        (ast-compaction-copy-string path))]
     [(AstDecl.IncludeBin name path)
       (AstDecl.IncludeBin
         (ast-compaction-copy-string name)
@@ -6529,6 +6534,7 @@
     [(AstDecl.Module _) 9]
     [(AstDecl.ModuleBody _ _) 18]
     [(AstDecl.IncludeStr _ _) 12]
+    [(AstDecl.IncludeStrComptime _ _) 19]
     [(AstDecl.Unsafe _) 13]
     [(AstDecl.DefEnumLifetimes _ _ _ _) 14]
     [(AstDecl.DefStructLifetimes _ _ _ _ _) 15]

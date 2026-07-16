@@ -2863,6 +2863,7 @@
       (lint-expr-uses-import? (ast-node-get call-expr) alias module-name)]
     [(AstDecl.Import _) false]
     [(AstDecl.IncludeStr _ _) false]
+    [(AstDecl.IncludeStrComptime _ _) false]
     [(AstDecl.IncludeBin _ _) false]
     [(AstDecl.DefDispatch _ variants)
       (lint-dispatch-variant-list-uses-import? variants alias module-name)]
@@ -10384,6 +10385,7 @@
     [(AstDecl.DefStructLifetimes _ _ _ _ _) acc]
     [(AstDecl.DefDispatch _ _) acc]
     [(AstDecl.IncludeStr _ _) acc]
+    [(AstDecl.IncludeStrComptime _ _) acc]
     [(AstDecl.IncludeBin _ _) acc]
     [(AstDecl.Import _) acc]))
 

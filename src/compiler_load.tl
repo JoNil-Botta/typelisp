@@ -134,6 +134,7 @@
   (CompilerLoadSurfaceDispatch)
   (CompilerLoadSurfaceTest)
   (CompilerLoadSurfaceIncludeStr)
+  (CompilerLoadSurfaceIncludeStrComptime)
   (CompilerLoadSurfaceIncludeBin))
 
 (defenum CompilerLoadSurfaceSignature
@@ -1859,6 +1860,33 @@
       pools
       (AstExpr.Literal (AstLiteral.String contents)))))
 
+;; A comptime include becomes a zero-argument macro whose expansion is a string
+;; literal. The file bytes therefore exist only while the transformer runs;
+;; unlike `include-str`, no runtime definition or static string is emitted.
+(define (compiler-load-include-str-comptime-def-with-pools
+  [pools : AstNodePoolContext]
+  [name : String]
+  [contents : String]) : AstDecl
+  (let
+    [args : AstExprList (ast-expr-list-with-capacity 1)]
+    [literal : i64
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Literal (AstLiteral.String contents)))]
+    (begin
+      (ast-expr-list-push (&mut args) literal)
+      (ast-decl-def-macro
+        name
+        (ast-macro-param-list-new)
+        (AstType.String)
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Call
+            (ast-node-pool-context-expr-push
+              pools
+              (AstExpr.Var (intern "expr-string")))
+            args))))))
+
 (define (compiler-load-include-bin-def [name : String] [contents : String]) : AstDecl
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
@@ -1931,6 +1959,31 @@
           source)
         (ResultCompilerLoadInclude.Ok
           (compiler-load-include-str-def-with-pools pools name source))]
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+        (ResultCompilerLoadInclude.Err
+          (box
+            (compiler-load-include-str-read-error
+              importer-path
+              include-path
+              resolved)))])))
+
+(define (compiler-load-include-str-comptime-from-resolved-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]
+  [name : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (if (io.file-exists? resolved)
+    (ResultCompilerLoadInclude.Ok
+      (compiler-load-include-str-comptime-def-with-pools
+        pools
+        name
+        (io.read-file resolved)))
+    (match (compiler-load-embedded-stdlib-source-for-path resolved)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+          source)
+        (ResultCompilerLoadInclude.Ok
+          (compiler-load-include-str-comptime-def-with-pools pools name source))]
       [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
         (ResultCompilerLoadInclude.Err
           (box
@@ -2031,6 +2084,27 @@
     stdlib-roots)
     [(ResultPkgResolve.Ok resolved)
       (compiler-load-include-str-from-resolved-with-pools
+        importer-path
+        include-path
+        resolved
+        name
+        pools)]
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
+        (box (compiler-diagnostic-at-start importer-path message)))]))
+
+(define (compiler-load-expand-include-str-comptime-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : svec.Vec]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (match (compiler-load-resolve-import-result-with-roots
+    importer-path
+    include-path
+    stdlib-roots)
+    [(ResultPkgResolve.Ok resolved)
+      (compiler-load-include-str-comptime-from-resolved-with-pools
         importer-path
         include-path
         resolved
@@ -4619,6 +4693,7 @@
         (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.DefDispatch _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
+    [(AstDecl.IncludeStrComptime _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
     ;; A future declaration shape might hide references. Keep it conservative.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
@@ -5256,6 +5331,24 @@
         false
         generated
         false)]
+    [(AstDecl.IncludeStrComptime name _)
+      (compiler-load-surface-build-add-decl
+        build
+        (CompilerLoadSurfaceDecl
+          (CompilerLoadSurfaceIncludeStrComptime)
+          name
+          module-id
+          (CompilerLoadSurfaceNoSignature)
+          (CompilerLoadSurfaceMacroExpr)
+          false
+          false
+          generated
+          was-unsafe
+          (compiler-load-surface-zero-span))
+        false
+        false
+        generated
+        false)]
     [(AstDecl.IncludeBin name _)
       (compiler-load-surface-build-add-decl
         build
@@ -5831,6 +5924,42 @@
                     (box (compiler-diagnostic-at-start importer-path message)))]))]
           [(AstDecl.IncludeStr name include-path)
             (match (compiler-load-expand-include-str-with-pools
+              importer-path
+              include-path
+              name
+              stdlib-roots
+              pools)
+              [(ResultCompilerLoadInclude.Ok expanded)
+                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  rest
+                  importer-path
+                  importer-module
+                  importer-source-module
+                  seen
+                  stdlib-roots
+                  import-root
+                  cfgs
+                  pools)
+                  [(ResultCompilerLoadWithPaths.Ok
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (ResultCompilerLoadWithPaths.Ok
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder
+                        importer-path
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder
+                        importer-module
+                        rest-modules)
+                      rest-seen)]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(AstDecl.IncludeStrComptime name include-path)
+            (match (compiler-load-expand-include-str-comptime-with-pools
               importer-path
               include-path
               name
@@ -7890,6 +8019,30 @@
       (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
+(define (compiler-load-package-expand-include-str-comptime
+  [importer-path : String]
+  [include-path : String]
+  [name : String]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
+  (match (if (compiler-load-pkg-import? include-path)
+    (compiler-load-resolve-pkg-import include-path manifest-dir deps)
+    (compiler-load-resolve-import-result-with-roots
+      importer-path
+      include-path
+      stdlib-roots))
+    [(ResultPkgResolve.Ok resolved)
+      (compiler-load-include-str-comptime-from-resolved-with-pools
+        importer-path
+        include-path
+        resolved
+        name
+        (ast-node-pool-context-capture-active))]
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
+        (box (compiler-diagnostic-at-start importer-path message)))]))
+
 (define (compiler-load-package-expand-include-bin
   [importer-path : String]
   [include-path : String]
@@ -8156,6 +8309,43 @@
                     (box (compiler-diagnostic-at-start importer-path message)))]))]
           [(AstDecl.IncludeStr name include-path)
             (match (compiler-load-package-expand-include-str
+              importer-path
+              include-path
+              name
+              stdlib-roots
+              manifest-dir
+              deps)
+              [(ResultCompilerLoadInclude.Ok expanded)
+                (match (compiler-load-package-decls-with-module-and-roots
+                  rest
+                  importer-path
+                  importer-module
+                  importer-source-module
+                  seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)
+                  [(ResultCompilerLoadWithPaths.Ok
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (ResultCompilerLoadWithPaths.Ok
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder
+                        importer-path
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder
+                        importer-module
+                        rest-modules)
+                      rest-seen)]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(AstDecl.IncludeStrComptime name include-path)
+            (match (compiler-load-package-expand-include-str-comptime
               importer-path
               include-path
               name
@@ -8648,6 +8838,30 @@
           [_ false]))]
     [_ false]))
 
+(define (compiler-load-first-string-macro?
+  [decls : AstDeclList]
+  [name : String]
+  [want : String]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons
+        (AstDecl.DefMacro got params (AstType.String) body-box)
+        _)
+      (match (ast-node-get body-box)
+        [(AstExpr.Call callee-box args)
+          (and
+            (string.eq (intern-str got) name)
+            (= (ast-macro-param-list-len (& params)) 0)
+            (match (ast-node-get callee-box)
+              [(AstExpr.Var callee)
+                (string.eq (intern-str callee) "expr-string")]
+              [_ false])
+            (= (ast-expr-list-len (& args)) 1)
+            (match (ast-node-get (ast-expr-list-get (& args) 0 0))
+              [(AstExpr.Literal (AstLiteral.String text)) (string.eq text want)]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-load-binary-payload-ok? [text : String]) : bool
   (and
     (= (string.string-length text) 6)
@@ -8824,7 +9038,8 @@
     [(CompilerLoadSurfaceDispatch) 7]
     [(CompilerLoadSurfaceTest) 8]
     [(CompilerLoadSurfaceIncludeStr) 9]
-    [(CompilerLoadSurfaceIncludeBin) 10]))
+    [(CompilerLoadSurfaceIncludeBin) 10]
+    [(CompilerLoadSurfaceIncludeStrComptime) 11]))
 
 (define (compiler-load-surface-macro-result-kind-code
   [kind : CompilerLoadSurfaceMacroResultKind]) : i64
@@ -10173,6 +10388,22 @@
         (and
           (= (compiler-load-decl-list-count decls) 2)
           (compiler-load-first-string-def? decls "embedded" "hello from root"))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (compiler-load-include-str-comptime-relative-ok?) : bool
+  (begin
+    (io.write-file "target/cl_include_comptime_payload.txt" "only at comptime")
+    (io.write-file
+      "target/cl_include_comptime_entry.tl"
+      "(include-str-comptime payload \"cl_include_comptime_payload.txt\")
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/cl_include_comptime_entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
+        (and
+          (= (compiler-load-decl-list-count decls) 2)
+          (compiler-load-first-string-macro? decls "payload" "only at comptime"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-missing-include-str-ok?) : bool
@@ -12674,6 +12905,10 @@
       (compiler-load-include-str-stdlib-root-ok?)
       (return
         (io.panic "compiler-load: include-str stdlib root smoke mismatch")))
+    (unless
+      (compiler-load-include-str-comptime-relative-ok?)
+      (return
+        (io.panic "compiler-load: include-str-comptime relative smoke mismatch")))
     (unless
       (compiler-load-missing-include-str-ok?)
       (return (io.panic "compiler-load: missing include-str smoke mismatch")))

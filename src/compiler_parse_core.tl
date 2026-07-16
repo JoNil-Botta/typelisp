@@ -1025,6 +1025,9 @@
 (define (compiler-parse-tag-decl-include-str) : i64
   410)
 
+(define (compiler-parse-tag-decl-include-str-comptime) : i64
+  414)
+
 (define (compiler-parse-tag-decl-include-bin) : i64
   413)
 
@@ -1733,10 +1736,15 @@
     [e13 : sym_i64_env.SymI64Env
       (sym_i64_env.sym-i64-bind
         e12
+        "include-str-comptime"
+        (compiler-parse-tag-decl-include-str-comptime))]
+    [e14 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e13
         "include-bin"
         (compiler-parse-tag-decl-include-bin))]
     (sym_i64_env.sym-i64-bind
-      e13
+      e14
       "defdispatch"
       (compiler-parse-tag-decl-defdispatch))))
 
@@ -1984,6 +1992,28 @@
 
 (define (parse-internal-resolved-enum-type-marker) : String
   "__typelisp internal resolved enum type")
+
+;; Declaration-macro output uses this non-lexer-spellable form to carry opaque
+;; bytes through the in-memory syntax round trip without array-literal parsing.
+(define (parse-internal-binary-data-marker) : String
+  "__typelisp internal binary data")
+
+(define (parse-ast-internal-binary-data
+  [pools : AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(reader.SpannedSexpr.Cons bytes-node tail _)
+      (match (reader.sp-node-get bytes-node)
+        [(reader.SpannedSexpr.Str bytes _)
+          (match (reader.sp-node-get tail)
+            [(reader.SpannedSexpr.Nil _)
+              (ResultAstExpr.Ok
+                (ast-node-pool-context-expr-push
+                  pools
+                  (AstExpr.BinaryData bytes)))]
+            [_ (ResultAstExpr.Err "parse: malformed internal binary data")])]
+        [_ (ResultAstExpr.Err "parse: malformed internal binary data")])]
+    [_ (ResultAstExpr.Err "parse: malformed internal binary data")]))
 
 (define (parse-ast-resolved-nominal-type
   [dispatch : sym_i64_env.SymI64Env]
@@ -6216,47 +6246,53 @@
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match head
     [(reader.SpannedSexpr.Sym op _)
-      (if (string.eq op "init")
-        (match rest
-          [(reader.SpannedSexpr.Cons first _ _)
-            (if (sexpr-colon?
-              (reader.spanned-sexpr-form (reader.sp-node-get first)))
-              (parse-ast-init dispatch pools rest)
-              (parse-ast-call dispatch pools head rest))]
-          [(reader.SpannedSexpr.Nil _) (parse-ast-init dispatch pools rest)]
-          [_ (parse-ast-call dispatch pools head rest)])
-        (let
-          [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
-          (cond
-            [(= tag (compiler-parse-tag-expr-ptr-addr-of))
-              (parse-ast-ptr-addr-of dispatch pools rest)]
-            [(= tag (compiler-parse-tag-expr-ptr-read))
-              (parse-ast-ptr-read dispatch pools rest)]
-            [(= tag (compiler-parse-tag-expr-ptr-write))
-              (parse-ast-ptr-write dispatch pools rest)]
-            [(= tag (compiler-parse-tag-expr-ptr-offset))
-              (parse-ast-ptr-offset dispatch pools rest)]
-            [(= tag (compiler-parse-tag-expr-ptr-cast))
-              (parse-ast-ptr-cast-like dispatch pools false rest)]
-            [(= tag (compiler-parse-tag-expr-ptr-to-int))
-              (parse-ast-ptr-to-int dispatch pools rest)]
-            [(= tag (compiler-parse-tag-expr-int-to-ptr))
-              (parse-ast-ptr-cast-like dispatch pools true rest)]
-            [(ast-unop-tag? tag)
-              (parse-ast-unary dispatch pools (ast-unop-from-tag tag) rest)]
-            [(ast-binop-tag? tag)
-              (if (ast-left-fold-binop-tag? tag)
-                (parse-ast-binary-left-fold
-                  dispatch
-                  pools
-                  (ast-binop-from-tag tag)
-                  rest)
-                (parse-ast-binary dispatch pools (ast-binop-from-tag tag) rest))]
-            [(= tag (compiler-parse-tag-ty-ref))
-              (parse-ast-borrow dispatch pools false rest)]
-            [(= tag (compiler-parse-tag-ty-mut-ref))
-              (parse-ast-borrow dispatch pools true rest)]
-            [else (parse-ast-list-expr-tag dispatch pools tag head rest)])))]
+      (if (string.eq op (parse-internal-binary-data-marker))
+        (parse-ast-internal-binary-data pools rest)
+        (if (string.eq op "init")
+          (match rest
+            [(reader.SpannedSexpr.Cons first _ _)
+              (if (sexpr-colon?
+                (reader.spanned-sexpr-form (reader.sp-node-get first)))
+                (parse-ast-init dispatch pools rest)
+                (parse-ast-call dispatch pools head rest))]
+            [(reader.SpannedSexpr.Nil _) (parse-ast-init dispatch pools rest)]
+            [_ (parse-ast-call dispatch pools head rest)])
+          (let
+            [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
+            (cond
+              [(= tag (compiler-parse-tag-expr-ptr-addr-of))
+                (parse-ast-ptr-addr-of dispatch pools rest)]
+              [(= tag (compiler-parse-tag-expr-ptr-read))
+                (parse-ast-ptr-read dispatch pools rest)]
+              [(= tag (compiler-parse-tag-expr-ptr-write))
+                (parse-ast-ptr-write dispatch pools rest)]
+              [(= tag (compiler-parse-tag-expr-ptr-offset))
+                (parse-ast-ptr-offset dispatch pools rest)]
+              [(= tag (compiler-parse-tag-expr-ptr-cast))
+                (parse-ast-ptr-cast-like dispatch pools false rest)]
+              [(= tag (compiler-parse-tag-expr-ptr-to-int))
+                (parse-ast-ptr-to-int dispatch pools rest)]
+              [(= tag (compiler-parse-tag-expr-int-to-ptr))
+                (parse-ast-ptr-cast-like dispatch pools true rest)]
+              [(ast-unop-tag? tag)
+                (parse-ast-unary dispatch pools (ast-unop-from-tag tag) rest)]
+              [(ast-binop-tag? tag)
+                (if (ast-left-fold-binop-tag? tag)
+                  (parse-ast-binary-left-fold
+                    dispatch
+                    pools
+                    (ast-binop-from-tag tag)
+                    rest)
+                  (parse-ast-binary
+                    dispatch
+                    pools
+                    (ast-binop-from-tag tag)
+                    rest))]
+              [(= tag (compiler-parse-tag-ty-ref))
+                (parse-ast-borrow dispatch pools false rest)]
+              [(= tag (compiler-parse-tag-ty-mut-ref))
+                (parse-ast-borrow dispatch pools true rest)]
+              [else (parse-ast-list-expr-tag dispatch pools tag head rest)]))))]
     [_ (parse-ast-call dispatch pools head rest)]))
 
 (define (parse-ast-expr-with-pools
@@ -7890,6 +7926,38 @@
         [_ (ResultAstDecl.Err "parse: include-str name must be a symbol")])]
     [_ (ResultAstDecl.Err "parse: malformed include-str")]))
 
+(define (parse-ast-include-str-comptime [rest : reader.SpannedSexpr]) : ResultAstDecl
+  (match rest
+    [(reader.SpannedSexpr.Nil _)
+      (ResultAstDecl.Err
+        "parse: include-str-comptime expects name and string path")]
+    [(reader.SpannedSexpr.Cons name-node tail _)
+      (match (reader.sp-node-get name-node)
+        [(reader.SpannedSexpr.Sym name _)
+          (match (reader.sp-node-get tail)
+            [(reader.SpannedSexpr.Cons path-node after-path _)
+              (match (reader.sp-node-get path-node)
+                [(reader.SpannedSexpr.Str path _)
+                  (match (reader.sp-node-get after-path)
+                    [(reader.SpannedSexpr.Nil _)
+                      (ResultAstDecl.Ok (AstDecl.IncludeStrComptime name path))]
+                    [_
+                      (ResultAstDecl.Err
+                        "parse: include-str-comptime expects exactly two operands")])]
+                [_
+                  (ResultAstDecl.Err
+                    "parse: include-str-comptime path must be a string")])]
+            [(reader.SpannedSexpr.Nil _)
+              (ResultAstDecl.Err
+                "parse: include-str-comptime expects name and string path")]
+            [_
+              (ResultAstDecl.Err
+                "parse: include-str-comptime expects exactly two operands")])]
+        [_
+          (ResultAstDecl.Err
+            "parse: include-str-comptime name must be a symbol")])]
+    [_ (ResultAstDecl.Err "parse: malformed include-str-comptime")]))
+
 (define (parse-ast-include-bin [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match rest
     [(reader.SpannedSexpr.Nil _)
@@ -8171,6 +8239,8 @@
                         (reader.spanned-sexpr-span s)))]
                   [(= tag (compiler-parse-tag-decl-include-str))
                     (parse-ast-include-str (reader.sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-include-str-comptime))
+                    (parse-ast-include-str-comptime (reader.sp-node-get rest))]
                   [(= tag (compiler-parse-tag-decl-include-bin))
                     (parse-ast-include-bin (reader.sp-node-get rest))]
                   [(= tag (compiler-parse-tag-decl-module))
@@ -8814,6 +8884,12 @@
       (and (string.eq name "payload") (string.eq path "data.txt"))]
     [_ false]))
 
+(define (ast-first-include-str-comptime-ok? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons (AstDecl.IncludeStrComptime name path) _)
+      (and (string.eq name "payload") (string.eq path "data.txt"))]
+    [_ false]))
+
 (define (ast-first-include-bin-ok? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons (AstDecl.IncludeBin name path) _)
@@ -9055,6 +9131,27 @@
     (compiler-parse-error-ok?
       "(include-str payload)"
       "parse: include-str expects name and string path")))
+
+(define (compiler-parse-include-str-comptime-ok?) : bool
+  (match (parse-ast-source "(include-str-comptime payload \"data.txt\")")
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (ast-first-include-str-comptime-ok? (box-get decls-box))]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-include-str-comptime-errors-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(include-str-comptime)"
+      "parse: include-str-comptime expects name and string path")
+    (compiler-parse-error-ok?
+      "(include-str-comptime \"name\" \"data.txt\")"
+      "parse: include-str-comptime name must be a symbol")
+    (compiler-parse-error-ok?
+      "(include-str-comptime payload data.txt)"
+      "parse: include-str-comptime path must be a string")
+    (compiler-parse-error-ok?
+      "(include-str-comptime payload \"data.txt\" extra)"
+      "parse: include-str-comptime expects exactly two operands")))
 
 (define (compiler-parse-include-bin-ok?) : bool
   (match (parse-ast-source "(include-bin payload \"data.bin\")")
@@ -11075,6 +11172,8 @@
     (compiler-parse-ok? "(import \"stdlib/tl\")")
     (compiler-parse-include-str-ok?)
     (compiler-parse-include-str-errors-ok?)
+    (compiler-parse-include-str-comptime-ok?)
+    (compiler-parse-include-str-comptime-errors-ok?)
     (compiler-parse-include-bin-ok?)
     (compiler-parse-include-bin-errors-ok?)
     (compiler-parse-error-ok?

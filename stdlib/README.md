@@ -53,7 +53,8 @@ use.
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
   `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,
   `MatchArm`, `MatchArmList`, `TypeInfo`, and dense sequence wrappers), plus
-  exported compile-time helper signatures such as `expr-int`, `expr-string?`,
+  exported compile-time helper signatures such as `expr-int`,
+  `expr-binary-data`, `expr-string?`,
   `expr-string-value`, `string-slice`,
   `expr-list-nth`, `expr-list-fold-if`, `expr-clause-list-fold-if`,
   `expr-clause-list->expr-list`, `pattern-variant`,

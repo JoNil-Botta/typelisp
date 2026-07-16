@@ -671,7 +671,9 @@ remaining operand must be a binding clause and the macro body receives an
 `ExprBindingClauseList`.
 
 Macro bodies can build expression literals with `expr-bool`, `expr-int`,
-`expr-string`, and `expr-var`; `expr-struct-get` builds a field access whose
+`expr-string`, and `expr-var`. `expr-binary-data` builds an opaque `(Array u8)`
+static payload from a compile-time string, without materializing array-literal
+syntax. `expr-struct-get` builds a field access whose
 field token is computed during macro CTFE, `expr-tuple-ref` builds a tuple
 element access whose index is computed during macro CTFE, and
 `expr-struct-set` builds the matching field assignment expression.
@@ -2680,7 +2682,23 @@ definition before typechecking, lowering, and codegen.
   is mutable, writes mutate the global static payload for the process; treat
   included payloads as read-only unless that shared mutation is intended.
 
-#### 4.4.8 `(cfg predicate declaration)` - conditional compilation
+#### 4.4.8 `(include-str-comptime name "path")` - compile-time text input
+
+Reads the exact text contents of `path` and defines a zero-argument macro
+`name`. Calling `(name)` expands to a string literal containing those bytes.
+The text is available to macro CTFE but has no runtime global and is not
+embedded in generated code unless a macro explicitly emits it.
+
+Path resolution, raw-text handling, and diagnostics are the same as
+`include-str`. A common declaration-macro pattern is to inspect the expanded
+literal with `comptime.expr-string-value`, transform its bytes at compile time,
+and emit the result with `comptime.expr-binary-data`.
+
+`comptime.expr-binary-data(bytes)` constructs an opaque expression of type
+`(Array u8)` from a compile-time `String`. It lowers directly to static binary
+data; the bytes are not represented as source syntax or an array literal.
+
+#### 4.4.9 `(cfg predicate declaration)` - conditional compilation
 
 `cfg` conditionally includes source forms before normal declaration parsing and
 import resolution. A top-level declaration may be wrapped as
@@ -4851,6 +4869,7 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 169 | `pattern-list-bindings` |
 | 170 | `type-cleanup-owning?` |
 | 171 | `type-cleanup-function` |
+| 172 | `expr-binary-data` |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned
@@ -6846,6 +6865,7 @@ top-level     ::= define-var
                 | module-decl
                 | import-decl
                 | include-str-decl
+                | include-str-comptime-decl
                 | include-bin-decl
                 | defenum
                 | defstruct
@@ -6859,6 +6879,7 @@ cfg-predicate ::= ident
                 | "(" "not" cfg-predicate ")"
 define-var    ::= "(" "define" ident [":" type] expr ")"
 include-str-decl ::= "(" "include-str" ident string ")"
+include-str-comptime-decl ::= "(" "include-str-comptime" ident string ")"
 include-bin-decl ::= "(" "include-bin" ident string ")"
 define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr+ ")"
 unsafe-decl   ::= "(" "unsafe" unsafe-decl-payload ")"

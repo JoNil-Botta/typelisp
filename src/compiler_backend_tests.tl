@@ -21627,7 +21627,7 @@
       "entry"
       (compiler-ir-instr-cons
         (CompilerIrInstr.Store
-          "scratch_float_global"
+          (ci.intern "scratch_float_global")
           (CompilerIrValue.Var 0)
           (AstType.F64))
         CompilerIrInstrList.Nil))

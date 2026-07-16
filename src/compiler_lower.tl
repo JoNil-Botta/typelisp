@@ -2511,12 +2511,11 @@
   [module-id : i64]
   [_ : String]
   [source-id : i64]
-  [logical-name : String]) : LowerNameEnv
-  (let
-    [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
-    (if (compiler-symbol-root-module-id? module-id)
-      (lower-name-env-bind-logical-id source-id logical-name logical-id names)
-      (lower-name-env-bind-logical-id logical-id logical-name logical-id names))))
+  [logical-name : String]
+  [logical-id : i64]) : LowerNameEnv
+  (if (compiler-symbol-root-module-id? module-id)
+    (lower-name-env-bind-logical-id source-id logical-name logical-id names)
+    (lower-name-env-bind-logical-id logical-id logical-name logical-id names)))
 
 (define (lower-name-env-add-module-extern-binding-id
   [names : LowerNameEnv]
@@ -2561,6 +2560,13 @@
             module
             module-id
             cleanup-name
+            cleanup-str)
+          (lower-decl-logical-id
+            entry-path
+            decl-path
+            module
+            module-id
+            cleanup-name
             cleanup-str)))]))
 
 (define (lower-name-env-add-enum-cleanup-in-module
@@ -2582,6 +2588,13 @@
           cleanup-str
           cleanup-name
           (lower-decl-logical-name-id
+            entry-path
+            decl-path
+            module
+            module-id
+            cleanup-name
+            cleanup-str)
+          (lower-decl-logical-id
             entry-path
             decl-path
             module
@@ -3085,6 +3098,17 @@
       (lower-normalize-path decl-path)
       (lower-normalize-path entry-path))))
 
+(define (lower-decl-logical-id
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [module-id : i64]
+  [source-id : i64]
+  [source-name : String]) : i64
+  (if (lower-decl-entry-main? entry-path decl-path module source-name)
+    cbi.compiler-builtin-id-fix-main
+    (lower-module-name-key-id-by-id module-id source-id)))
+
 (define (lower-decl-entry-path? [entry-path : String] [decl-path : String]) : bool
   (or
     (string.eq entry-path decl-path)
@@ -3263,23 +3287,11 @@
     (set! lower-entry-main-module-id module-id)))
 
 (define (lower-entry-main-logical-id [all-functions : lower_i64_i64_map.Map]) : i64
-  (let
-    [selected : i64
-      (if lower-entry-main-module-active
-        (lower-module-name-key-id-by-id
-          lower-entry-main-module-id
-          cbi.compiler-builtin-id-fix-main)
-        cbi.compiler-builtin-id-fix-main)]
-    (if (lower_i64_i64_map.contains? (& all-functions) selected)
-      selected
-      (let
-        [module-main : i64
-          (lower-module-name-key-id-by-id
-            cbi.compiler-builtin-id-fix-main
-            cbi.compiler-builtin-id-fix-main)]
-        (if (lower_i64_i64_map.contains? (& all-functions) module-main)
-          module-main
-          -1)))))
+  (if (lower_i64_i64_map.contains?
+    (& all-functions)
+    cbi.compiler-builtin-id-fix-main)
+    cbi.compiler-builtin-id-fix-main
+    -1))
 
 (define (lower-decl-logical-name-id
   [entry-path : String]
@@ -3288,16 +3300,25 @@
   [module-id : i64]
   [source-id : i64]
   [source-name : String]) : String
-  (lower-logical-display-name
-    (if (lower-decl-entry-main? entry-path decl-path module source-name)
-      "main"
-      (if (string.eq module "")
-        (lower-module-logical-name entry-path decl-path source-name)
-        (lower-module-logical-name
-          entry-path
-          decl-path
-          (compiler-symbol-module-key module source-name))))
-    (lower-module-name-key-id-by-id module-id source-id)))
+  (let
+    [logical-id : i64
+      (lower-decl-logical-id
+        entry-path
+        decl-path
+        module
+        module-id
+        source-id
+        source-name)]
+    (lower-logical-display-name
+      (if (= logical-id cbi.compiler-builtin-id-fix-main)
+        "main"
+        (if (string.eq module "")
+          (lower-module-logical-name entry-path decl-path source-name)
+          (lower-module-logical-name
+            entry-path
+            decl-path
+            (compiler-symbol-module-key module source-name))))
+      logical-id)))
 
 (define (lower-current-decl-logical-name-id
   [names : LowerNameEnv]
@@ -3365,6 +3386,13 @@
             module
             module-id
             name
+            name-str)
+          (lower-decl-logical-id
+            entry-path
+            decl-path
+            module
+            module-id
+            name
             name-str)))]
     [(AstDecl.DefFn name _ _ _ _)
       (let
@@ -3381,6 +3409,13 @@
             module
             module-id
             name
+            name-str)
+          (lower-decl-logical-id
+            entry-path
+            decl-path
+            module
+            module-id
+            name
             name-str)))]
     [(AstDecl.DefDispatch name _)
       (let
@@ -3392,6 +3427,13 @@
           name-str
           name
           (lower-decl-logical-name-id
+            entry-path
+            decl-path
+            module
+            module-id
+            name
+            name-str)
+          (lower-decl-logical-id
             entry-path
             decl-path
             module
@@ -3600,6 +3642,13 @@
             name-str
             name
             (lower-decl-logical-name-id
+              entry-path
+              decl-path
+              module
+              module-id
+              name
+              name-str)
+            (lower-decl-logical-id
               entry-path
               decl-path
               module
@@ -5908,15 +5957,36 @@
           [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
     [_ (ResultLowerAstExpr.Ok expr)]))
 
-(define (lower-function-logical-id-from-decl [module-id : i64] [decl : AstDecl]) : LowerNameCacheMaybeId
+(define (lower-function-logical-id-from-decl
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [module-id : i64]
+  [decl : AstDecl]) : LowerNameCacheMaybeId
   (match decl
     [(AstDecl.DefFn name _ _ _ _)
       (LowerNameCacheMaybeId.Some
-        (lower-module-name-key-id-by-id module-id name))]
+        (lower-decl-logical-id
+          entry-path
+          decl-path
+          module
+          module-id
+          name
+          (tc-env-key-name-text name)))]
     [(AstDecl.ComptimeDecl _ template-box)
-      (lower-function-logical-id-from-decl module-id (box-get template-box))]
+      (lower-function-logical-id-from-decl
+        entry-path
+        decl-path
+        module
+        module-id
+        (box-get template-box))]
     [(AstDecl.Unsafe inner-box)
-      (lower-function-logical-id-from-decl module-id (box-get inner-box))]
+      (lower-function-logical-id-from-decl
+        entry-path
+        decl-path
+        module
+        module-id
+        (box-get inner-box))]
     [_ (LowerNameCacheMaybeId.No)]))
 
 (define (lower-function-set-from-decls-in-module
@@ -5952,6 +6022,9 @@
               [(AstDecl.Module next-module) (set! cur-module-id next-module)]
               [_
                 (match (lower-function-logical-id-from-decl
+                  entry-path
+                  decl-path
+                  (lower-decl-owner-module-name cur-module-id logical-module-id)
                   logical-module-id
                   decl)
                   ;; Assign each distinct function name a dense slot
@@ -7968,7 +8041,13 @@
                 module-name-cache
                 (lower-function-body-index-add
                   index
-                  (lower-module-name-key-id-by-id logical-module-id name)
+                  (lower-decl-logical-id
+                    entry-path
+                    decl-path
+                    (lower-decl-owner-module-name module-id logical-module-id)
+                    logical-module-id
+                    name
+                    (tc-env-key-name-text name))
                   decl-name-cache
                   body
                   (ast-decl-path-list-owner-id (& paths) 0 logical-module-id))))]
@@ -9206,9 +9285,9 @@
     [_ false]))
 
 (define (lower-runtime-decl-kept-by-reach-or-dispatch?
-  [_entry-path : String]
-  [_decl-path : String]
-  [_module : String]
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
   [module-id : i64]
   [all-functions : lower_i64_i64_map.Map]
   [reachable : lower_i64_i64_map.Map]
@@ -9218,7 +9297,12 @@
     ;; P4/C4.2: clone-augment (see lower-compiler-expanded-program-...) emits
     ;; exactly the clone$<T> closure the reachable code needs, so keep them all.
     true
-    (match (lower-function-logical-id-from-decl module-id decl)
+    (match (lower-function-logical-id-from-decl
+      entry-path
+      decl-path
+      module
+      module-id
+      decl)
       [(LowerNameCacheMaybeId.Some logical-id)
         (lower-function-kept-by-reach-or-dispatch?
           all-functions
@@ -49955,14 +50039,22 @@
                     [decl-ctx : TcContext
                       (tc-context-with-module-id ctx cur-module cur-module-id)]
                     [body : AstExpr (lower-context-expr-get decl-ctx body-box)]
-                    [logical-name : String
-                      (lower-current-decl-logical-name-cache-id
-                        decl-name-cache
-                        logical-module
-                        (tc-env-key-name-text name)
-                        name)]
                     [logical-id : i64
-                      (lower-module-name-key-id-by-id logical-module-id name)]
+                      (lower-decl-logical-id
+                        entry-path
+                        decl-path
+                        logical-module
+                        logical-module-id
+                        name
+                        (tc-env-key-name-text name))]
+                    [logical-name : String
+                      (if (= logical-id cbi.compiler-builtin-id-fix-main)
+                        "main"
+                        (lower-current-decl-logical-name-cache-id
+                          decl-name-cache
+                          logical-module
+                          (tc-env-key-name-text name)
+                          name))]
                     [function-symbol : i64
                       (lower-ir-symbol logical-id logical-name)]
                     (if (lower_i64_i64_map.contains?

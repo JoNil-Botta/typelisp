@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Cold, serial measurements for the six build-invariance compiler closures.
+# Cold, serial measurements for the five build-invariance compiler closures.
 # Set TYPELISP_PROFILE_INSTRUCTIONS=1 for deterministic Callgrind counts.
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -12,8 +12,7 @@ if [ "${1:-}" = --list ]; then
         'compiler_lower_smoke|src/tests/compiler_lower_smoke.tl' \
         'compiler_backend_smoke|src/tests/compiler_backend_smoke.tl' \
         'doc_test_smoke|src/tests/doc_test_smoke.tl' \
-        'compiler_driver_pic_smoke|src/tests/compiler_driver_pic_smoke.tl' \
-        'compiler_driver_state_smoke|src/tests/compiler_driver_state_smoke.tl'
+        'compiler_driver_pic_smoke|src/tests/compiler_driver_pic_smoke.tl'
     exit 0
 fi
 
@@ -69,5 +68,4 @@ compiler_lower_smoke|src/tests/compiler_lower_smoke.tl
 compiler_backend_smoke|src/tests/compiler_backend_smoke.tl
 doc_test_smoke|src/tests/doc_test_smoke.tl
 compiler_driver_pic_smoke|src/tests/compiler_driver_pic_smoke.tl
-compiler_driver_state_smoke|src/tests/compiler_driver_state_smoke.tl
 EOF

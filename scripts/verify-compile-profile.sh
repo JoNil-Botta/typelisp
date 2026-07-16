@@ -512,8 +512,7 @@ expected_heavy_sources='compiler_typecheck_smoke|src/tests/compiler_typecheck_sm
 compiler_lower_smoke|src/tests/compiler_lower_smoke.tl
 compiler_backend_smoke|src/tests/compiler_backend_smoke.tl
 doc_test_smoke|src/tests/doc_test_smoke.tl
-compiler_driver_pic_smoke|src/tests/compiler_driver_pic_smoke.tl
-compiler_driver_state_smoke|src/tests/compiler_driver_state_smoke.tl'
+compiler_driver_pic_smoke|src/tests/compiler_driver_pic_smoke.tl'
 actual_heavy_sources=$(scripts/measure-heavy-closure-profile.sh --list)
 if [ "$actual_heavy_sources" != "$expected_heavy_sources" ]; then
     fail "heavy-closure harness source list changed"

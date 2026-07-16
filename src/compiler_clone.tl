@@ -787,48 +787,6 @@
                 (set! cur (box-get rest))))]))
       out)))
 
-;; Preserve the resolved nominal kind in the compiler-generated type literal
-;; passed to the stdlib declaration macro. This is semantic type metadata, not
-;; helper-family AST construction.
-(define (clone-root-ast-type-in-module
-  [decls : AstDeclList]
-  [root : String]
-  [module : String]) : AstType
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (AstType.Var (intern root))]
-    [(AstDeclListStep.Cons decl rest)
-      (match (ast-decl-unwrapped decl)
-        [(AstDecl.Module next-module)
-          (clone-root-ast-type-in-module rest root (intern-str next-module))]
-        [(AstDecl.DefStruct name _ _ _)
-          (if (string.eq
-            (clone-type-name-canonical module (intern-str name))
-            root)
-            (AstType.Struct (intern root))
-            (clone-root-ast-type-in-module rest root module))]
-        [(AstDecl.DefStructLifetimes name lifetimes _ _ _)
-          (if (string.eq
-            (clone-type-name-canonical module (intern-str name))
-            root)
-            (AstType.StructArgs (intern root) (box lifetimes))
-            (clone-root-ast-type-in-module rest root module))]
-        [(AstDecl.DefEnum name _ _)
-          (if (string.eq
-            (clone-type-name-canonical module (intern-str name))
-            root)
-            (AstType.Enum (intern root))
-            (clone-root-ast-type-in-module rest root module))]
-        [(AstDecl.DefEnumLifetimes name lifetimes _ _)
-          (if (string.eq
-            (clone-type-name-canonical module (intern-str name))
-            root)
-            (AstType.EnumArgs (intern root) (box lifetimes))
-            (clone-root-ast-type-in-module rest root module))]
-        [_ (clone-root-ast-type-in-module rest root module)])]))
-
-(define (clone-root-ast-type [decls : AstDeclList] [root : String]) : AstType
-  (clone-root-ast-type-in-module decls root ""))
-
 (define (clone-stdlib-handoff-roots
   [pools : AstNodePoolContext]
   [decls : AstDeclList]

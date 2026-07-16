@@ -17,6 +17,15 @@
 (defmacro (stdlib-comptime-arg-count [args : comptime.Expr ...]) : i64
   (comptime.expr-int (comptime.expr-list-length args)))
 
+(defmacro (stdlib-comptime-type-list-item [args : comptime.Expr ...]) : i64
+  (if (= (comptime.expr-list-length args) 0)
+    (comptime.expr-int 0)
+    (let
+      [T : comptime.Expr (comptime.expr-list-type-nth args 0)]
+      (if (string.eq (type-key T) "i64")
+        (comptime.expr-int 42)
+        (comptime.expr-int 0)))))
+
 (cfg
   feature-comptime-public-fields
   (defmacro (stdlib-comptime-public-field-count [args : comptime.Expr ...]) : i64
@@ -151,6 +160,9 @@
     (stdlib-comptime-arg-count 1 2 3)
     (+ (stdlib-comptime-clause-count [false 0] [true 0] [false 0]) 36)))
 
+(define (stdlib-comptime-type-list-item-shape) : i64
+  (stdlib-comptime-type-list-item (type i64)))
+
 (cfg
   feature-comptime-public-fields
   (define (stdlib-comptime-public-field-shape) : i64
@@ -214,6 +226,14 @@
 (test
   comptime-qualified-helper-shape
   (if (= (stdlib-comptime-qualified-helper-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-type-list-item-shape
+  (if (= (stdlib-comptime-type-list-item-shape) 42)
     unit
     (begin
       (/ 1 0)

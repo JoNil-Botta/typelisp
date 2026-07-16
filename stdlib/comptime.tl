@@ -380,6 +380,10 @@
       (comptime-error "expr-list-nth index out of range")
       (__tl_array-ref (struct-get items items) index))))
 
+;: Resolve a captured type-literal expression list item as a type operand.
+(define (expr-list-type-nth [items : ExprList] [index : i64]) : Expr
+  (expr-list-nth items index))
+
 ;: Return the first expression from a clause.
 (define (expr-clause-first [clause : ExprClause]) : Expr
   (match clause

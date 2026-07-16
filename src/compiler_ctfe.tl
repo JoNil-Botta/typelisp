@@ -512,6 +512,17 @@
             (ctfe-generated-string-value text)))]
       [else (ctfe-generated-string-value text)])))
 
+;; Public String-to-syntax constructors must resolve parsed names by spelling.
+;; This is a read-only lookup at the language API boundary, not interning or an
+;; internal generated-ID recovery path. Names absent from the parsed source keep
+;; their generated identity.
+(define (ctfe-string-syntax-name-id [text : String] [string-id : i64]) : i64
+  (if (ci.intern-generated-id-active? string-id)
+    (match (ci.intern-lookup text)
+      [(ci.InternLookupFound source-id) source-id]
+      [(ci.InternLookupMissing) string-id])
+    string-id))
+
 (define (ctfe-value-name-id [value : CompilerCtfeValue]) : i64
   (match value
     [(CompilerCtfeValue.Name _ name-id) name-id]
@@ -4966,11 +4977,11 @@
       (match (compiler-ctfe-eval arg env fuel)
         [(ResultCtfe.Ok value arg-fuel)
           (match value
-            [(CompilerCtfeValue.String _ string-id)
+            [(CompilerCtfeValue.String name string-id)
               (ResultCtfe.Ok
                 (ctfe-syntax-expr-push
                   env
-                  (AstExpr.Var string-id)
+                  (AstExpr.Var (ctfe-string-syntax-name-id name string-id))
                   (ctfe-untyped-expr-type))
                 arg-fuel)]
             [(CompilerCtfeValue.Name _ name-id)
@@ -5109,13 +5120,13 @@
               (match (compiler-ctfe-eval field-arg env target-fuel)
                 [(ResultCtfe.Ok field-val field-fuel)
                   (match field-val
-                    [(CompilerCtfeValue.String _ field-id)
+                    [(CompilerCtfeValue.String field field-id)
                       (ResultCtfe.Ok
                         (CompilerCtfeValue.Expr
                           (ast-expr-struct-get-id-with-pools
                             (ctfe-env-pools env)
                             target-node
-                            field-id)
+                            (ctfe-string-syntax-name-id field field-id))
                           (ctfe-untyped-expr-type))
                         field-fuel)]
                     [(CompilerCtfeValue.Name _ field-id)
@@ -5212,7 +5223,7 @@
               (match (compiler-ctfe-eval field-arg env target-fuel)
                 [(ResultCtfe.Ok field-val field-fuel)
                   (match field-val
-                    [(CompilerCtfeValue.String _ field-id)
+                    [(CompilerCtfeValue.String field field-id)
                       (match (compiler-ctfe-eval value-arg env field-fuel)
                         [(ResultCtfe.Ok value-val value-fuel)
                           (match value-val
@@ -5222,7 +5233,7 @@
                                   (ast-expr-struct-set-id-with-pools
                                     (ctfe-env-pools env)
                                     target-node
-                                    field-id
+                                    (ctfe-string-syntax-name-id field field-id)
                                     value-node)
                                   (AstType.Unit))
                                 value-fuel)]
@@ -6420,9 +6431,10 @@
     (let
       [name-arg : AstExpr (ctfe-expr-arg args 0 env)]
       (match (ctfe-eval-string-arg name-arg expr env fuel "pattern-binding")
-        [(ResultCtfeStringArg.Ok _ name-id next-fuel)
+        [(ResultCtfeStringArg.Ok name name-id next-fuel)
           (ResultCtfe.Ok
-            (CompilerCtfeValue.Pattern (ctfe-pat-binding-id name-id))
+            (CompilerCtfeValue.Pattern
+              (ctfe-pat-binding-id (ctfe-string-syntax-name-id name name-id)))
             next-fuel)]
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err
@@ -6439,14 +6451,16 @@
       [name-arg : AstExpr (ctfe-expr-arg args 0 env)]
       [payloads-arg : AstExpr (ctfe-expr-arg args 1 env)]
       (match (ctfe-eval-string-arg name-arg expr env fuel "pattern-variant")
-        [(ResultCtfeStringArg.Ok _ name-id name-fuel)
+        [(ResultCtfeStringArg.Ok name name-id name-fuel)
           (match (compiler-ctfe-eval payloads-arg env name-fuel)
             [(ResultCtfe.Ok payloads-val payloads-fuel)
               (match payloads-val
                 [(CompilerCtfeValue.PatternList payloads)
                   (ResultCtfe.Ok
                     (CompilerCtfeValue.Pattern
-                      (ctfe-pat-variant-id name-id payloads))
+                      (ctfe-pat-variant-id
+                        (ctfe-string-syntax-name-id name name-id)
+                        payloads))
                     payloads-fuel)]
                 [_
                   (ResultCtfe.Err
@@ -6526,7 +6540,10 @@
             (&mut patterns)
             (let
               [name : String (string.append prefix (string.int->string index))]
-              (ctfe-pat-binding-id (ctfe-materialize-generated-name-id name))))
+              (let
+                [name-id : i64 (ctfe-materialize-generated-name-id name)]
+                (ctfe-pat-binding-id
+                  (ctfe-string-syntax-name-id name name-id)))))
           (set! index (+ index 1))))
       patterns)))
 
@@ -13745,9 +13762,10 @@
     [x-id : i64 (ctfe-materialize-generated-name-id "x")]
     [point-id : i64 (ctfe-materialize-generated-name-id "point")]
     [helper-id : i64 (ctfe-materialize-generated-name-id "counter.push-ref")]
-    [x-syntax-id : i64 x-id]
-    [point-syntax-id : i64 point-id]
-    [helper-syntax-id : i64 helper-id]
+    [x-syntax-id : i64 (ctfe-string-syntax-name-id "x" x-id)]
+    [point-syntax-id : i64 (ctfe-string-syntax-name-id "point" point-id)]
+    [helper-syntax-id : i64
+      (ctfe-string-syntax-name-id "counter.push-ref" helper-id)]
     [true-lit : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true)))]
     [false-lit : i64

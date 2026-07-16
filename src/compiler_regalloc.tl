@@ -3278,19 +3278,19 @@
     (not (compiler-reg-float-type? ty))
     (not (compiler-reg-type-register-group? ty))))
 
-;; M-A (RC1): a non-group, non-float, register-eligible param that did NOT get
+;; M-A (RC1): a non-group register-eligible param that did NOT get
 ;; an ABI pin stays OUT of the ineligible/blocked sets and becomes an ordinary
 ;; greedy candidate. Its greedy home is restricted to the CALLEE-SAVED pool
 ;; (compiler-reg-greedy-alloc-one! `is-param`): the backend's entry copy writes
 ;; the home register in the prologue (after the callee-saved saves), and a
 ;; callee-saved home can neither clobber another param's incoming arg register
 ;; nor be clobbered by a call. Handle types (Array/String/enum/struct -- 8-byte
-;; descriptors) qualify exactly like scalars; floats keep the XMM exclusion and
-;; two-word register groups keep the legacy stack home.
+;; descriptors) qualify exactly like scalars. Floats use the same rule over the
+;; ABI XMM bank: SysV has no nonvolatile suffix, while Win64 may keep an unpinned
+;; parameter in XMM6-XMM15. Two-word register groups keep the legacy stack home.
 (define (compiler-reg-param-greedy-eligible? [ty : AstType]) : bool
   (and
     (compiler-reg-register-eligible-type? ty)
-    (not (compiler-reg-float-type? ty))
     (not (compiler-reg-type-register-group? ty))))
 
 (define (compiler-reg-param-int-reg
@@ -3305,6 +3305,25 @@
     [reg : String (compiler-abi-gp-arg-register abi idx)]
     ;; %r8 is the backend's integer scratch register on both ABIs.
     (if (or (string.eq reg "") (string.eq reg "%r8"))
+      CompilerRegMaybeString.No
+      (CompilerRegMaybeString.Some reg))))
+
+(define (compiler-reg-param-float-reg
+  [abi : CompilerRegTargetAbi]
+  [float-idx : i64]
+  [position : i64]) : CompilerRegMaybeString
+  (let
+    [idx : i64
+      (if (compiler-abi-arg-banks-independent? abi)
+        float-idx
+        position)]
+    [reg : String (compiler-abi-float-arg-register abi idx)]
+    (if (or
+      (string.eq reg "")
+      (not
+        (compiler-reg-string-list-contains?
+          (compiler-reg-xmm-registers-for-abi abi)
+          reg)))
       CompilerRegMaybeString.No
       (CompilerRegMaybeString.Some reg))))
 
@@ -3453,6 +3472,7 @@
   [ineligible : CompilerLiveI64Set]
   [blocked : CompilerLiveI64Set]
   [int-idx : i64]
+  [float-idx : i64]
   [position : i64]
   [pins-ok? : bool]
   [call-points : CompilerLiveI64Set]
@@ -3470,6 +3490,7 @@
         ineligible
         blocked
         int-idx
+        float-idx
         position
         pins-ok?
         call-points
@@ -3485,17 +3506,22 @@
               (if is-float
                 int-idx
                 (+ int-idx 1))]
+            [next-float : i64
+              (if is-float
+                (+ float-idx 1)
+                float-idx)]
             [next-position : i64 (+ position 1)]
             ;; A register-group param occupies TWO ABI slots; this walk's
             ;; int-idx accounting does not model that, so every pin PAST a
             ;; group param is disabled (the group itself never pins).
             [tail-pins-ok? : bool (and pins-ok? (not is-group))]
             [reg : CompilerRegMaybeString
-              (if (and
-                pins-ok?
-                (not is-group)
-                (compiler-reg-integer-param-type? ty))
-                (compiler-reg-param-int-reg abi int-idx position)
+              (if (and pins-ok? (not is-group))
+                (if is-float
+                  (compiler-reg-param-float-reg abi float-idx position)
+                  (if (compiler-reg-integer-param-type? ty)
+                    (compiler-reg-param-int-reg abi int-idx position)
+                    CompilerRegMaybeString.No))
                 CompilerRegMaybeString.No)]
             (match reg
               [(CompilerRegMaybeString.Some home)
@@ -3533,13 +3559,14 @@
                     ineligible
                     blocked
                     next-int
+                    next-float
                     next-position
                     tail-pins-ok?
                     call-points
                     div-points
                     shift-points)
-                  ;; Pin-unsafe param: reached only for integer-param types,
-                  ;; which are always greedy-eligible -- leave it out of
+                  ;; Pin-unsafe scalar param: integer and float scalar params
+                  ;; are greedy-eligible -- leave it out of
                   ;; ineligible/blocked so the greedy may home it callee-saved.
                   (compiler-reg-param-assign-walk
                     abi
@@ -3549,6 +3576,7 @@
                     ineligible
                     blocked
                     next-int
+                    next-float
                     next-position
                     tail-pins-ok?
                     call-points
@@ -3558,7 +3586,7 @@
                 ;; No ABI pin available (skipped arg register, stack-passed
                 ;; position, post-group position, or non-pinnable type). A
                 ;; greedy-eligible param stays unblocked (M-A candidate);
-                ;; group/float/otherwise-ineligible params keep the legacy
+                ;; group/otherwise-ineligible params keep the legacy
                 ;; stack home. base-ineligible members (address-taken, stack
                 ;; call args, ...) are already in both sets and stay excluded.
                 (if (compiler-reg-param-greedy-eligible? ty)
@@ -3570,6 +3598,7 @@
                     ineligible
                     blocked
                     next-int
+                    next-float
                     next-position
                     tail-pins-ok?
                     call-points
@@ -3583,6 +3612,7 @@
                     (compiler-live-set-insert ineligible var-id)
                     (compiler-live-set-insert blocked var-id)
                     next-int
+                    next-float
                     next-position
                     tail-pins-ok?
                     call-points
@@ -3616,6 +3646,7 @@
               base-ineligible
               0
               0
+              0
               true
               (compiler-reg-clobber-kind-points func 0)
               (compiler-reg-clobber-kind-points func 1)
@@ -3645,6 +3676,7 @@
               assignments
               base-ineligible
               base-ineligible
+              0
               0
               0
               true
@@ -3980,21 +4012,182 @@
       (<= (+ start count) limit)
       (compiler-reg-call-args-gp-class? args types))))
 
+(define (compiler-reg-call-arg-float?
+  [value : CompilerIrValue]
+  [types : CompilerRegVarTypeList]) : bool
+  (match value
+    [(CompilerIrValue.Var id)
+      (match (compiler-reg-var-type-lookup types id)
+        [(CompilerRegMaybeType.Some ty) (compiler-reg-float-type? ty)]
+        [(CompilerRegMaybeType.No) false])]
+    [(CompilerIrValue.F64 _) true]
+    [_ false]))
+
+(define (compiler-reg-call-arg-group?
+  [value : CompilerIrValue]
+  [types : CompilerRegVarTypeList]) : bool
+  (match value
+    [(CompilerIrValue.Var id)
+      (match (compiler-reg-var-type-lookup types id)
+        [(CompilerRegMaybeType.Some ty) (compiler-reg-type-register-group? ty)]
+        [(CompilerRegMaybeType.No) true])]
+    [_ false]))
+
+(define (compiler-reg-call-args-array-has-group?
+  [values : (Array CompilerIrValue)]
+  [types : CompilerRegVarTypeList]
+  [i : i64]) : bool
+  (if (>= i (array-length values))
+    false
+    (or
+      (compiler-reg-call-arg-group? (array-ref values i) types)
+      (compiler-reg-call-args-array-has-group? values types (+ i 1)))))
+
+(define (compiler-reg-call-args-have-group?
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]) : bool
+  (match args
+    [(CompilerIrCallArgs.Nil) false]
+    [(CompilerIrCallArgs.One a) (compiler-reg-call-arg-group? a types)]
+    [(CompilerIrCallArgs.Two a b)
+      (or
+        (compiler-reg-call-arg-group? a types)
+        (compiler-reg-call-arg-group? b types))]
+    [(CompilerIrCallArgs.Array values)
+      (compiler-reg-call-args-array-has-group? values types 0)]))
+
+;; The backend's current float marshaller is ordered rather than a parallel-move
+;; solver. A register-passed float may nevertheless enter the greedy: after
+;; allocation we retain its home only when it is exactly the ABI destination
+;; register and demote every other home to a memory source. GP args on a mixed
+;; call and stack-passed floats remain structurally blocked here. Register groups
+;; use the old all-memory rule because their multi-slot ABI accounting is separate.
+(define (compiler-reg-call-arg-vars-selective-value
+  [out : CompilerLiveI64Set]
+  [value : CompilerIrValue]
+  [types : CompilerRegVarTypeList]
+  [abi : CompilerRegTargetAbi]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]) : CompilerLiveI64Set
+  (match value
+    [(CompilerIrValue.Var id)
+      (let
+        [is-float : bool (compiler-reg-call-arg-float? value types)]
+        (if (and
+          is-float
+          (not
+            (compiler-abi-stack-call-arg-for-banks?
+              abi
+              is-float
+              int-idx
+              float-idx
+              position)))
+          out
+          (compiler-live-set-insert out id)))]
+    [_ out]))
+
+(define (compiler-reg-call-arg-vars-selective-array
+  [out : CompilerLiveI64Set]
+  [values : (Array CompilerIrValue)]
+  [types : CompilerRegVarTypeList]
+  [abi : CompilerRegTargetAbi]
+  [i : i64]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]) : CompilerLiveI64Set
+  (if (>= i (array-length values))
+    out
+    (let
+      [value : CompilerIrValue (array-ref values i)]
+      [is-float : bool (compiler-reg-call-arg-float? value types)]
+      (compiler-reg-call-arg-vars-selective-array
+        (compiler-reg-call-arg-vars-selective-value
+          out
+          value
+          types
+          abi
+          int-idx
+          float-idx
+          position)
+        values
+        types
+        abi
+        (+ i 1)
+        (if is-float
+          int-idx
+          (+ int-idx 1))
+        (if is-float
+          (+ float-idx 1)
+          float-idx)
+        (+ position 1)))))
+
+(define (compiler-reg-call-arg-vars-selective
+  [out : CompilerLiveI64Set]
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]
+  [abi : CompilerRegTargetAbi]
+  [start : i64]) : CompilerLiveI64Set
+  (match args
+    [(CompilerIrCallArgs.Nil) out]
+    [(CompilerIrCallArgs.One a)
+      (compiler-reg-call-arg-vars-selective-value out a types abi start 0 start)]
+    [(CompilerIrCallArgs.Two a b)
+      (let
+        [a-float : bool (compiler-reg-call-arg-float? a types)]
+        [after-a : CompilerLiveI64Set
+          (compiler-reg-call-arg-vars-selective-value
+            out
+            a
+            types
+            abi
+            start
+            0
+            start)]
+        (compiler-reg-call-arg-vars-selective-value
+          after-a
+          b
+          types
+          abi
+          (if a-float
+            start
+            (+ start 1))
+          (if a-float
+            1
+            0)
+          (+ start 1)))]
+    [(CompilerIrCallArgs.Array values)
+      (compiler-reg-call-arg-vars-selective-array
+        out
+        values
+        types
+        abi
+        0
+        start
+        0
+        start)]))
+
 (define (compiler-reg-call-arg-vars-unless-gp-parallel
   [out : CompilerLiveI64Set]
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]
   [start : i64]
-  [limit : i64]) : CompilerLiveI64Set
-  (if (compiler-reg-call-gp-parallel-from? args types start limit)
+  [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
+  (if (compiler-reg-call-gp-parallel-from?
+    args
+    types
+    start
+    (compiler-reg-arg-reg-limit-for-abi abi))
     out
-    (compiler-live-set-union out (compiler-live-call-args-vars args))))
+    (if (compiler-reg-call-args-have-group? args types)
+      (compiler-live-set-union out (compiler-live-call-args-vars args))
+      (compiler-reg-call-arg-vars-selective out args types abi start))))
 
 (define (compiler-reg-call-arg-vars-instr-seq-scalar
   [instrs : CompilerIrInstrSeq]
   [set : CompilerLiveI64Set]
   [types : CompilerRegVarTypeList]
-  [limit : i64]) : CompilerLiveI64Set
+  [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
@@ -4013,16 +4206,16 @@
                 ;; every register source/dest conflict with the sound parallel
                 ;; move (compiler-backend-emit-call-args), so ALL arg vars --
                 ;; handle args included -- may stay register-homed. Zero-arg
-                ;; calls have no arg vars to disqualify. Float / register-group /
-                ;; over-arity calls are marshalled by the naive ascending path,
-                ;; which is correct only when every arg var is memory-sourced,
-                ;; so keep those calls' arg vars ineligible.
+                ;; calls have no arg vars to disqualify. Register groups retain
+                ;; the all-memory rule. A register-passed float may reach the
+                ;; XMM greedy, but its final home is retained only when it equals
+                ;; the ABI target; every other float home is demoted later.
                 (compiler-reg-call-arg-vars-unless-gp-parallel
                   out
                   args
                   types
                   0
-                  limit)]
+                  abi)]
               [(CompilerIrInstr.CallCAbiStoreResult payload-box)
                 (match (box-get payload-box)
                   [(CompilerIrInstrCallCAbiStoreResultPayload.Payload
@@ -4035,7 +4228,7 @@
                       args
                       types
                       0
-                      limit)])]
+                      abi)])]
               [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
                 (match (box-get payload-box)
                   [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
@@ -4050,7 +4243,7 @@
                       args
                       types
                       0
-                      limit)])]
+                      abi)])]
               ;; Tail calls (M-G2a): the true tail-jump path marshals args FIRST
               ;; (compiler-backend-emit-tail-call routes a gp-parallel shape --
               ;; tail-stack-count 0, target always an in-program function, so
@@ -4063,16 +4256,15 @@
               ;; marshalled args; register-only marshalling writes no frame
               ;; slot the restores read. So a gp-parallel tail call
               ;; disqualifies NO arg vars, exactly like a gp-parallel direct
-              ;; call. Float / register-group / over-arity tail calls keep the
-              ;; naive ascending (frame-staged) marshalling -> args stay
-              ;; ineligible.
+              ;; call. Register groups retain the all-memory rule; eligible float
+              ;; args use the same exact-target-or-demote contract as direct calls.
               [(CompilerIrInstr.TailCall _ args _)
                 (compiler-reg-call-arg-vars-unless-gp-parallel
                   out
                   args
                   types
                   0
-                  limit)]
+                  abi)]
               ;; Indirect tail calls marshal at base 1 (closure env reserved in
               ;; ABI arg-register 0). The backend's base-aware parallel move can
               ;; safely marshal register-homed GP user args, but the closure
@@ -4084,7 +4276,7 @@
                   args
                   types
                   1
-                  limit)]
+                  abi)]
               ;; Closure/indirect calls reserve ABI arg-register 0 for the env and
               ;; marshal user args at base 1. Register-homed GP user args are safe
               ;; through the same base-aware backend parallel move; the closure
@@ -4096,14 +4288,14 @@
                   args
                   types
                   1
-                  limit)]
+                  abi)]
               [(CompilerIrInstr.CallIndirectC _ func args _)
                 (compiler-reg-call-arg-vars-unless-gp-parallel
                   (compiler-live-value-vars-into out func)
                   args
                   types
                   0
-                  limit)]
+                  abi)]
               [_ out]))
           (set! index (+ index 1))))
       out)))
@@ -4112,7 +4304,7 @@
   [blocks : CompilerIrBlockList]
   [set : CompilerLiveI64Set]
   [types : CompilerRegVarTypeList]
-  [limit : i64]) : CompilerLiveI64Set
+  [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
   (match blocks
     [(CompilerIrBlockList.Nil) set]
     [(CompilerIrBlockList.Cons block rest)
@@ -4120,9 +4312,9 @@
         [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-call-arg-vars-blocks-scalar
             (box-get rest)
-            (compiler-reg-call-arg-vars-instr-seq-scalar instrs set types limit)
+            (compiler-reg-call-arg-vars-instr-seq-scalar instrs set types abi)
             types
-            limit)])]
+            abi)])]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -4139,7 +4331,7 @@
                       instrs
                       out
                       types
-                      limit))])
+                      abi))])
               (set! i (+ i 1))))
           out))]))
 
@@ -4153,7 +4345,7 @@
 (define (compiler-reg-ineligible-vars-non-params
   [func : CompilerIrFunction]
   [types : CompilerRegVarTypeList]
-  [limit : i64]) : CompilerLiveI64Set
+  [abi : CompilerRegTargetAbi]) : CompilerLiveI64Set
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-ineligible-memory
@@ -4165,7 +4357,7 @@
             (compiler-live-set-empty)
             true)
           types
-          limit))]))
+          abi))]))
 
 ;; SIMD/AVX register planning shares the integer GP allocation quality of the
 ;; scalar path: a value live across a call is NOT force-spilled. The SIMD integer
@@ -15219,6 +15411,510 @@
               parents))])
       prefs)))
 
+;; Float call arguments use independent XMM ordinals on SysV and shared argument
+;; positions on Win64. Record only preferences that exist in the allocator's XMM
+;; pool (currently XMM2+); XMM0/XMM1 remain unavailable until the backend scratch
+;; migration tracked by #4919 lands.
+(define (compiler-reg-float-arg-pref-value!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
+  [value : CompilerIrValue]
+  [types : CompilerRegVarTypeList]
+  [float-idx : i64]
+  [position : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match value
+    [(CompilerIrValue.Var v)
+      (if (compiler-reg-call-arg-float? value types)
+        (let
+          [abi-idx : i64
+            (if (compiler-abi-arg-banks-independent? abi)
+              float-idx
+              position)]
+          [reg : String (compiler-abi-float-arg-register abi abi-idx)]
+          [idx : i64 (compiler-reg-string-list-index-of pool reg 0)]
+          [root : i64
+            (if (if (>= v 0)
+              (< v (array-length parents))
+              false)
+              (array-ref parents v)
+              v)]
+          (if (and
+            (>= idx 0)
+            (if (>= root 0)
+              (< root (array-length prefs))
+              false)
+            (< (array-ref prefs root) 0))
+            (begin
+              (array-set! prefs root idx)
+              unit)
+            unit))
+        unit)]
+    [_ unit]))
+
+(define (compiler-reg-float-arg-pref-array!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
+  [values : (Array CompilerIrValue)]
+  [types : CompilerRegVarTypeList]
+  [i : i64]
+  [float-idx : i64]
+  [position : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (if (>= i (array-length values))
+    unit
+    (let
+      [value : CompilerIrValue (array-ref values i)]
+      [is-float : bool (compiler-reg-call-arg-float? value types)]
+      (begin
+        (compiler-reg-float-arg-pref-value!
+          abi
+          pool
+          value
+          types
+          float-idx
+          position
+          prefs
+          parents)
+        (compiler-reg-float-arg-pref-array!
+          abi
+          pool
+          values
+          types
+          (+ i 1)
+          (if is-float
+            (+ float-idx 1)
+            float-idx)
+          (+ position 1)
+          prefs
+          parents)))))
+
+(define (compiler-reg-float-arg-pref-args-at!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]
+  [position : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match args
+    [(CompilerIrCallArgs.Nil) unit]
+    [(CompilerIrCallArgs.One a)
+      (compiler-reg-float-arg-pref-value!
+        abi
+        pool
+        a
+        types
+        0
+        position
+        prefs
+        parents)]
+    [(CompilerIrCallArgs.Two a b)
+      (let
+        [a-float : bool (compiler-reg-call-arg-float? a types)]
+        (begin
+          (compiler-reg-float-arg-pref-value!
+            abi
+            pool
+            a
+            types
+            0
+            position
+            prefs
+            parents)
+          (compiler-reg-float-arg-pref-value!
+            abi
+            pool
+            b
+            types
+            (if a-float
+              1
+              0)
+            (+ position 1)
+            prefs
+            parents)))]
+    [(CompilerIrCallArgs.Array values)
+      (compiler-reg-float-arg-pref-array!
+        abi
+        pool
+        values
+        types
+        0
+        0
+        position
+        prefs
+        parents)]))
+
+(define (compiler-reg-float-arg-pref-instr!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
+  [instr : CompilerIrInstr]
+  [types : CompilerRegVarTypeList]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match instr
+    [(CompilerIrInstr.Call _ _ args _)
+      (compiler-reg-float-arg-pref-args-at! abi pool args types 0 prefs parents)]
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ args _)
+          (compiler-reg-float-arg-pref-args-at!
+            abi
+            pool
+            args
+            types
+            0
+            prefs
+            parents)])]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ args _)
+          (compiler-reg-float-arg-pref-args-at!
+            abi
+            pool
+            args
+            types
+            0
+            prefs
+            parents)])]
+    [(CompilerIrInstr.TailCall _ args _)
+      (compiler-reg-float-arg-pref-args-at! abi pool args types 0 prefs parents)]
+    [(CompilerIrInstr.TailCallIndirect _ args _)
+      (compiler-reg-float-arg-pref-args-at! abi pool args types 1 prefs parents)]
+    [(CompilerIrInstr.CallIndirect _ _ args _)
+      (compiler-reg-float-arg-pref-args-at! abi pool args types 1 prefs parents)]
+    [(CompilerIrInstr.CallIndirectC _ _ args _)
+      (compiler-reg-float-arg-pref-args-at! abi pool args types 0 prefs parents)]
+    [_ unit]))
+
+(define (compiler-reg-float-arg-pref-seq!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
+  [instrs : CompilerIrInstrSeq]
+  [types : CompilerRegVarTypeList]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (compiler-reg-float-arg-pref-instr!
+          abi
+          pool
+          (array-ref slots i)
+          types
+          prefs
+          parents)
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-float-arg-pref-blocks!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
+  [blocks : CompilerIrBlockList]
+  [types : CompilerRegVarTypeList]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (compiler-reg-float-arg-pref-seq!
+              abi
+              pool
+              instrs
+              types
+              prefs
+              parents)])
+        (compiler-reg-float-arg-pref-blocks!
+          abi
+          pool
+          (box-get rest)
+          types
+          prefs
+          parents))]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        (while (< i count)
+          (begin
+            (match (compiler-ir-block-seq-ref seq i)
+              [(CompilerIrBlock.Block _ instrs)
+                (compiler-reg-float-arg-pref-seq!
+                  abi
+                  pool
+                  instrs
+                  types
+                  prefs
+                  parents)])
+            (set! i (+ i 1)))))]))
+
+(define (compiler-reg-function-float-arg-prefs
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [types : CompilerRegVarTypeList]
+  [coalesce : CompilerRegCoalesceMap]
+  [n : i64]) : (Array i64)
+  (let
+    [prefs : (Array i64) (array.make-array i64 n)]
+    [parents : (Array i64) (struct-get coalesce parents)]
+    [pool : CompilerRegStringList (compiler-reg-xmm-registers-for-abi abi)]
+    (begin
+      (compiler-reg-fill-i64-array prefs -1)
+      (match func
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
+          (compiler-reg-float-arg-pref-blocks!
+            abi
+            pool
+            blocks
+            types
+            prefs
+            parents)])
+      prefs)))
+
+;; Enforce the contract required by the ordered backend float marshaller: every
+;; register-homed float call arg must already be in its ABI destination. A greedy
+;; fallback register, XMM0/XMM1 target, stack target, or conflicting preference
+;; therefore becomes unassigned and is materialised from its normal stack home.
+(define (compiler-reg-float-arg-demote-value!
+  [abi : CompilerRegTargetAbi]
+  [value : CompilerIrValue]
+  [types : CompilerRegVarTypeList]
+  [float-idx : i64]
+  [position : i64]
+  [parents : (Array i64)]
+  [assignments : CompilerRegAssignmentTable]) : unit
+  (match value
+    [(CompilerIrValue.Var v)
+      (if (compiler-reg-call-arg-float? value types)
+        (let
+          [abi-idx : i64
+            (if (compiler-abi-arg-banks-independent? abi)
+              float-idx
+              position)]
+          [target : String (compiler-abi-float-arg-register abi abi-idx)]
+          [root : i64
+            (if (if (>= v 0)
+              (< v (array-length parents))
+              false)
+              (array-ref parents v)
+              v)]
+          (if (compiler-reg-location-register?
+            (compiler-reg-assignment-table-lookup assignments root)
+            target)
+            unit
+            (begin
+              (compiler-reg-assignment-table-unassign assignments root)
+              unit)))
+        unit)]
+    [_ unit]))
+
+(define (compiler-reg-float-arg-demote-array!
+  [abi : CompilerRegTargetAbi]
+  [values : (Array CompilerIrValue)]
+  [types : CompilerRegVarTypeList]
+  [i : i64]
+  [float-idx : i64]
+  [position : i64]
+  [parents : (Array i64)]
+  [assignments : CompilerRegAssignmentTable]) : unit
+  (if (>= i (array-length values))
+    unit
+    (let
+      [value : CompilerIrValue (array-ref values i)]
+      [is-float : bool (compiler-reg-call-arg-float? value types)]
+      (begin
+        (compiler-reg-float-arg-demote-value!
+          abi
+          value
+          types
+          float-idx
+          position
+          parents
+          assignments)
+        (compiler-reg-float-arg-demote-array!
+          abi
+          values
+          types
+          (+ i 1)
+          (if is-float
+            (+ float-idx 1)
+            float-idx)
+          (+ position 1)
+          parents
+          assignments)))))
+
+(define (compiler-reg-float-arg-demote-args!
+  [abi : CompilerRegTargetAbi]
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]
+  [position : i64]
+  [parents : (Array i64)]
+  [assignments : CompilerRegAssignmentTable]) : unit
+  (match args
+    [(CompilerIrCallArgs.Nil) unit]
+    [(CompilerIrCallArgs.One a)
+      (compiler-reg-float-arg-demote-value!
+        abi
+        a
+        types
+        0
+        position
+        parents
+        assignments)]
+    [(CompilerIrCallArgs.Two a b)
+      (let
+        [a-float : bool (compiler-reg-call-arg-float? a types)]
+        (begin
+          (compiler-reg-float-arg-demote-value!
+            abi
+            a
+            types
+            0
+            position
+            parents
+            assignments)
+          (compiler-reg-float-arg-demote-value!
+            abi
+            b
+            types
+            (if a-float
+              1
+              0)
+            (+ position 1)
+            parents
+            assignments)))]
+    [(CompilerIrCallArgs.Array values)
+      (compiler-reg-float-arg-demote-array!
+        abi
+        values
+        types
+        0
+        0
+        position
+        parents
+        assignments)]))
+
+(define (compiler-reg-float-arg-demote-instr!
+  [abi : CompilerRegTargetAbi]
+  [instr : CompilerIrInstr]
+  [types : CompilerRegVarTypeList]
+  [parents : (Array i64)]
+  [assignments : CompilerRegAssignmentTable]) : unit
+  (match instr
+    [(CompilerIrInstr.Call _ _ args _)
+      (compiler-reg-float-arg-demote-args! abi args types 0 parents assignments)]
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ args _)
+          (compiler-reg-float-arg-demote-args!
+            abi
+            args
+            types
+            0
+            parents
+            assignments)])]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ args _)
+          (compiler-reg-float-arg-demote-args!
+            abi
+            args
+            types
+            0
+            parents
+            assignments)])]
+    [(CompilerIrInstr.TailCall _ args _)
+      (compiler-reg-float-arg-demote-args! abi args types 0 parents assignments)]
+    [(CompilerIrInstr.TailCallIndirect _ args _)
+      (compiler-reg-float-arg-demote-args! abi args types 1 parents assignments)]
+    [(CompilerIrInstr.CallIndirect _ _ args _)
+      (compiler-reg-float-arg-demote-args! abi args types 1 parents assignments)]
+    [(CompilerIrInstr.CallIndirectC _ _ args _)
+      (compiler-reg-float-arg-demote-args! abi args types 0 parents assignments)]
+    [_ unit]))
+
+(define (compiler-reg-float-arg-demote-seq!
+  [abi : CompilerRegTargetAbi]
+  [instrs : CompilerIrInstrSeq]
+  [types : CompilerRegVarTypeList]
+  [parents : (Array i64)]
+  [assignments : CompilerRegAssignmentTable]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (compiler-reg-float-arg-demote-instr!
+          abi
+          (array-ref slots i)
+          types
+          parents
+          assignments)
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-float-arg-demote-blocks!
+  [abi : CompilerRegTargetAbi]
+  [blocks : CompilerIrBlockList]
+  [types : CompilerRegVarTypeList]
+  [parents : (Array i64)]
+  [assignments : CompilerRegAssignmentTable]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (compiler-reg-float-arg-demote-seq!
+              abi
+              instrs
+              types
+              parents
+              assignments)])
+        (compiler-reg-float-arg-demote-blocks!
+          abi
+          (box-get rest)
+          types
+          parents
+          assignments))]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        (while (< i count)
+          (begin
+            (match (compiler-ir-block-seq-ref seq i)
+              [(CompilerIrBlock.Block _ instrs)
+                (compiler-reg-float-arg-demote-seq!
+                  abi
+                  instrs
+                  types
+                  parents
+                  assignments)])
+            (set! i (+ i 1)))))]))
+
+(define (compiler-reg-float-call-args-demote!
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [types : CompilerRegVarTypeList]
+  [coalesce : CompilerRegCoalesceMap]
+  [assignments : CompilerRegAssignmentTable]) : unit
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (compiler-reg-float-arg-demote-blocks!
+        abi
+        blocks
+        types
+        (struct-get coalesce parents)
+        assignments)]))
+
 (define (compiler-reg-greedy-state
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
@@ -16554,8 +17250,8 @@
       ;; too: with the empty false-path coalesce, copy-hints-add-move! falls back to
       ;; identity roots, so this yields direct var->move-neighbour hints -- letting
       ;; the SIMD-integer greedy bias a copy's dst onto its src register (LLVM-style
-      ;; copy hint for every class), which the old linear-scan did via `moves`. The
-      ;; float->XMM call passes its own empty copy-hints, so floats are unaffected.
+      ;; copy hint for every class), which the old linear-scan did via `moves`.
+      ;; The scalar float->XMM greedy consumes the same hints over its XMM pool.
       (compiler-reg-function-copy-hints
         moves
         coalesce
@@ -16564,14 +17260,20 @@
     ;; arg-var -> ABI-arg-register physical preference: each outgoing call-argument
     ;; var biased toward the target register it will be marshalled into, so the
     ;; backend's `movq <home>, <arg-reg>` becomes an elided self-move. Indexed by
-    ;; coalesce root, like copy-hints. Only the scalar-opt2 integer greedy consumes
-    ;; it; the SIMD-integer and float->XMM greedy calls pass an empty array (their
-    ;; pools are not the ABI-specific scalar integer pool, so a pool-index
-    ;; preference is moot).
+    ;; coalesce root, like copy-hints. The scalar-opt2 integer greedy consumes
+    ;; this GP-pool array; the float greedy consumes the separate XMM-pool array
+    ;; below. SIMD-integer uses a different pool and ignores both.
     [arg-prefs : (Array i64)
       (compiler-reg-function-arg-prefs
         abi
         func
+        coalesce
+        (array-length (struct-get interval-index starts)))]
+    [float-arg-prefs : (Array i64)
+      (compiler-reg-function-float-arg-prefs
+        abi
+        func
+        types
         coalesce
         (array-length (struct-get interval-index starts)))]
     ;; The effective scalar allocation pass sees only coalesced
@@ -16584,13 +17286,13 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-root-set-from-vars coalesce blocked)
         blocked)]
-    ;; M-A (RC1): param var ids mapped to their coalesce ROOTS -- the greedy
+    ;; M-A (RC1): param var ids mapped to their coalesce ROOTS -- each greedy
     ;; allocates class roots, and a class containing a param must be restricted
     ;; to callee-saved homes (alloc-one! `is-param`; the entry copy writes the
     ;; home in the prologue). Reuses the ineligible-params walk as a plain
     ;; param-id collector. Scalar-opt2 only: the SIMD path stack-homes every
-    ;; param (ineligible-vars-simd) and floats are excluded pre-allocation, so
-    ;; those greedy calls get an empty set (byte-identical behavior there).
+    ;; param (ineligible-vars-simd). Integer and float candidates consume the
+    ;; same root set over their respective callee-saved banks.
     [param-roots : CompilerLiveI64Set
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-root-set-from-vars
@@ -16728,18 +17430,19 @@
       ;; float -> XMM allocation: the unified greedy over the ABI XMM bank.
       ;; A clobber-spanning float starts at the ABI callee-saved suffix: none on
       ;; SysV (so it spills), XMM6-XMM15 on Win64. Non-spanning floats may use the
-      ;; whole XMM2-XMM15 pool. group-vars / ref-counts / copy-hints empty ->
-      ;; bounds-guarded var-id order, no hint.
+      ;; whole XMM2-XMM15 pool. Reuse the coalesced-class spill weights and copy
+      ;; hints so float pressure is ordered by actual use density and moves bias
+      ;; toward an already assigned neighbour, matching the integer greedy.
       (compiler-reg-greedy-state
         (compiler-reg-candidates eff-intervals type-info eff-blocked true)
         (compiler-reg-xmm-registers-for-abi abi)
         integer-call-assignments
         eff-index
-        (compiler-live-set-empty)
-        (compiler-live-set-empty)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
-        (array.make-array i64 0)
+        group-vars
+        param-roots
+        eviction-ref-counts
+        copy-hints
+        float-arg-prefs
         xmm-call-points
         div-points
         shift-points
@@ -16748,6 +17451,15 @@
     [scalar-assignments : CompilerRegAssignmentTable
       (match scalar-state
         [(CompilerRegAssignState.State _ assignments) assignments])]
+    [_float-call-arg-demote : unit
+      (if allow-caller-saved-zero-call
+        (compiler-reg-float-call-args-demote!
+          abi
+          func
+          types
+          coalesce
+          scalar-assignments)
+        unit)]
     [vector-vars : CompilerLiveI64Set
       (match vector-mask-defs
         [(CompilerLiveUseDef.Def vars _) vars])]
@@ -17094,10 +17806,7 @@
               (- vars 1)
               CompilerRegIntervalList.Nil)]
           [base-ineligible : CompilerLiveI64Set
-            (compiler-reg-ineligible-vars-non-params
-              func
-              types
-              (compiler-reg-arg-reg-limit-for-abi abi))]
+            (compiler-reg-ineligible-vars-non-params func types abi)]
           [param-plan : CompilerRegParamAssignPlan
             (compiler-reg-param-assign-plan
               abi
@@ -23562,6 +24271,80 @@
 
 (cfg
   test
+  (define (compiler-reg-float-param-register-function) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      "float_param_registers"
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "a" (compiler-reg-f64-ty) 0)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "b" (compiler-reg-f64-ty) 1)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "c" (compiler-reg-f64-ty) 2)
+            CompilerIrParamList.Nil)))
+      (AstType.Unit)
+      3
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Store
+              "fa"
+              (CompilerIrValue.Var 0)
+              (compiler-reg-f64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Store
+                "fb"
+                (CompilerIrValue.Var 1)
+                (compiler-reg-f64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Store
+                  "fc"
+                  (CompilerIrValue.Var 2)
+                  (compiler-reg-f64-ty))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil)))))
+        CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-mixed-float-call-arg-function) : CompilerIrFunction
+    (let
+      [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
+      (begin
+        (array-set! args 0 (CompilerIrValue.Var 0))
+        (array-set! args 1 (CompilerIrValue.Var 1))
+        (array-set! args 2 (CompilerIrValue.Var 2))
+        (array-set! args 3 (CompilerIrValue.Var 3))
+        (CompilerIrFunction.Function
+          "mixed_float_call_args"
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "i" (compiler-reg-i64-ty) 0)
+            (compiler-ir-param-cons
+              (CompilerIrParam.Param "a" (compiler-reg-f64-ty) 1)
+              (compiler-ir-param-cons
+                (CompilerIrParam.Param "b" (compiler-reg-f64-ty) 2)
+                (compiler-ir-param-cons
+                  (CompilerIrParam.Param "c" (compiler-reg-f64-ty) 3)
+                  CompilerIrParamList.Nil))))
+          (AstType.Unit)
+          5
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Call
+                  4
+                  "mixed_float_callee"
+                  (CompilerIrCallArgs.Array args)
+                  (AstType.Unit))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil)))
+            CompilerIrBlockList.Nil))))))
+
+(cfg
+  test
   (define (compiler-reg-win64-rsi-rdi-pressure-function) : CompilerIrFunction
     (let
       [instrs : CompilerIrInstrList CompilerIrInstrList.Nil]
@@ -25104,6 +25887,88 @@
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
             "%r12"))])))
+
+(cfg
+  test
+  (define (compiler-reg-scalar-float-param-registers-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegTargetAbi.Linux
+      (compiler-reg-float-param-register-function))
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 0))
+          (not (compiler-live-set-contains? ineligible 1))
+          (not (compiler-live-set-contains? ineligible 2))
+          (not
+            (compiler-reg-location-any-register?
+              (compiler-reg-assignment-lookup assignments 0)))
+          (not
+            (compiler-reg-location-any-register?
+              (compiler-reg-assignment-lookup assignments 1)))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 2)
+            "%xmm2"))])))
+
+(cfg
+  test
+  (define (compiler-reg-scalar-win64-float-param-registers-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegTargetAbi.Windows
+      (compiler-reg-float-param-register-function))
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 0))
+          (not (compiler-live-set-contains? ineligible 1))
+          (not (compiler-live-set-contains? ineligible 2))
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 0)
+            "%xmm6")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 1)
+            "%xmm7")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 2)
+            "%xmm2"))])))
+
+(cfg
+  test
+  (define (compiler-reg-scalar-mixed-float-call-args-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegTargetAbi.Linux
+      (compiler-reg-mixed-float-call-arg-function))
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
+        (and
+          (compiler-live-set-contains? ineligible 0)
+          (not (compiler-live-set-contains? ineligible 1))
+          (not (compiler-live-set-contains? ineligible 2))
+          (not (compiler-live-set-contains? ineligible 3))
+          (compiler-reg-unassigned? assignments 0)
+          (compiler-reg-unassigned? assignments 1)
+          (compiler-reg-unassigned? assignments 2)
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 3)
+            "%xmm2"))])))
+
+(cfg
+  test
+  (define (compiler-reg-scalar-win64-mixed-float-call-args-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegTargetAbi.Windows
+      (compiler-reg-mixed-float-call-arg-function))
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
+        (and
+          (compiler-live-set-contains? ineligible 0)
+          (not (compiler-live-set-contains? ineligible 1))
+          (not (compiler-live-set-contains? ineligible 2))
+          (not (compiler-live-set-contains? ineligible 3))
+          (compiler-reg-unassigned? assignments 0)
+          (compiler-reg-unassigned? assignments 1)
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 2)
+            "%xmm2")
+          (compiler-reg-location-register?
+            (compiler-reg-assignment-lookup assignments 3)
+            "%xmm3"))])))
 
 (cfg
   test
@@ -30207,6 +31072,10 @@
     (compiler-reg-scalar-win64-indirect-call-arg-cap-ok?)
     (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
+    (cfg test (compiler-reg-scalar-float-param-registers-ok?) true)
+    (cfg test (compiler-reg-scalar-win64-float-param-registers-ok?) true)
+    (cfg test (compiler-reg-scalar-mixed-float-call-args-ok?) true)
+    (cfg test (compiler-reg-scalar-win64-mixed-float-call-args-ok?) true)
     (cfg test (compiler-reg-scalar-windows-rsi-rdi-pool-ok?) true)
     (cfg test (compiler-reg-win64-arg-result-prefs-ok?) true)
     (cfg test (compiler-reg-indirect-call-arg-prefs-ok?) true)

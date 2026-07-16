@@ -2,11 +2,12 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(cfg embedded-stdlib-tlci (import "compiler_embedded_stdlib_tlci.tl"))
 (import "tlci_core.tl")
 
 (define (tlci-inspect-help-text) : String
   "Usage:
-    typelisp inspect <file.tlci>
+    typelisp inspect <file.tlci|embedded:stdlib.tlci>
 
 Summary:
     Inspect a TypeLisp comptime image.
@@ -157,6 +158,46 @@ Summary:
 (define (tlci-inspect-error [path : String] [message : String]) : String
   (str_cat.str-cat "inspect: " path ": " message "\n"))
 
+(define (tlci-inspect-render-bytes [path : String] [bytes : (Array u8)]) : i64
+  (match (tlci-parse-image bytes)
+    [(ResultTlciImage.Err message)
+      (begin
+        (io.print-error (tlci-inspect-error path message))
+        1)]
+    [(ResultTlciImage.Ok image)
+      (begin
+        (io.print-string (tlci-inspect-render bytes image))
+        0)]))
+
+(cfg
+  (not embedded-stdlib-tlci)
+  (define (tlci-inspect-embedded-stdlib) : i64
+    (begin
+      (io.print-error
+        (tlci-inspect-error
+          "embedded:stdlib.tlci"
+          "embedded stdlib tlci is unavailable in this compiler build"))
+      1)))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (tlci-inspect-embedded-stdlib) : i64
+    (match (compiler-embedded-stdlib-tlci-validate)
+      [(CompilerEmbeddedStdlibTlciValidation.Err message)
+        (begin
+          (io.print-error (tlci-inspect-error "embedded:stdlib.tlci" message))
+          1)]
+      [(CompilerEmbeddedStdlibTlciValidation.Ok count)
+        (begin
+          (io.print-string
+            (str_cat.str-cat
+              "embedded-loader-macro-count: "
+              (string.int->string count)
+              "\n"))
+          (tlci-inspect-render-bytes
+            "embedded:stdlib.tlci"
+            (compiler-embedded-stdlib-tlci-copy)))])))
+
 (cfg
   test
   (test
@@ -210,20 +251,13 @@ Summary:
       1)
     (let
       [path : String (io.arg idx)]
-      (match (io.try-read-file (& path))
-        [(io.ErrIoString error)
-          (begin
-            (io.print-error (tlci-inspect-error path (io.error-message error)))
-            1)]
-        [(io.OkIoString contents)
-          (let
-            [bytes : (Array u8) (tlci-string->bytes contents)]
-            (match (tlci-parse-image bytes)
-              [(ResultTlciImage.Err message)
-                (begin
-                  (io.print-error (tlci-inspect-error path message))
-                  1)]
-              [(ResultTlciImage.Ok image)
-                (begin
-                  (io.print-string (tlci-inspect-render bytes image))
-                  0)]))]))))
+      (if (string.eq path "embedded:stdlib.tlci")
+        (tlci-inspect-embedded-stdlib)
+        (match (io.try-read-file (& path))
+          [(io.ErrIoString error)
+            (begin
+              (io.print-error
+                (tlci-inspect-error path (io.error-message error)))
+              1)]
+          [(io.OkIoString contents)
+            (tlci-inspect-render-bytes path (tlci-string->bytes contents))])))))

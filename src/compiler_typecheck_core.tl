@@ -12777,7 +12777,11 @@
   (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-name-keys : (Array i64)
   (array.make-array i64 8192))
+(define tc-source-qualified-variant-key-cache-registry-keys : (Array i64)
+  (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-values : (Array i64)
+  (array.make-array i64 8192))
+(define tc-source-qualified-variant-handle-cache-values : (Array i64)
   (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-generation : i64
   -1)
@@ -12835,7 +12839,7 @@
       (begin
         (while (< i tc-source-qualified-variant-key-cache-capacity)
           (begin
-            (array-set! tc-source-qualified-variant-key-cache-module-keys i 0)
+            (array-set! tc-source-qualified-variant-key-cache-registry-keys i 0)
             (set! i (+ i 1))))
         (set!
           tc-source-qualified-variant-key-cache-generation
@@ -12904,6 +12908,7 @@
 
 ;; Returns the cached lookup-name id, -1 for no variant, or -2 when absent.
 (define (tc-source-qualified-variant-key-cache-get
+  [registry-id : i64]
   [module-id : i64]
   [name-id : i64]) : i64
   (begin
@@ -12915,12 +12920,42 @@
       [name-key : i64 (+ name-id 1)]
       (if (and
         (=
-          (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
-          module-key)
-        (=
-          (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
-          name-key))
+          (array-ref tc-source-qualified-variant-key-cache-registry-keys cursor)
+          registry-id)
+        (and
+          (=
+            (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
+            module-key)
+          (=
+            (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
+            name-key)))
         (array-ref tc-source-qualified-variant-key-cache-values cursor)
+        -2))))
+
+;; Returns the cached registry handle, -1 for no variant, or -2 when absent.
+(define (tc-source-qualified-variant-handle-cache-get
+  [registry-id : i64]
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (begin
+    (tc-source-qualified-variant-key-cache-ensure!)
+    (let
+      [cursor : i64
+        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
+      [module-key : i64 (+ module-id 1)]
+      [name-key : i64 (+ name-id 1)]
+      (if (and
+        (=
+          (array-ref tc-source-qualified-variant-key-cache-registry-keys cursor)
+          registry-id)
+        (and
+          (=
+            (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
+            module-key)
+          (=
+            (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
+            name-key)))
+        (array-ref tc-source-qualified-variant-handle-cache-values cursor)
         -2))))
 
 (define (tc-source-dotted-alias-key-cache-put!
@@ -12963,15 +12998,21 @@
         (array-set! tc-source-dotted-full-path-key-cache-values cursor value)))))
 
 (define (tc-source-qualified-variant-key-cache-put!
+  [registry-id : i64]
   [module-id : i64]
   [name-id : i64]
-  [value : i64]) : unit
+  [value : i64]
+  [handle : i64]) : unit
   (begin
     (tc-source-qualified-variant-key-cache-ensure!)
     (let
       [cursor : i64
         (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
       (begin
+        (array-set!
+          tc-source-qualified-variant-key-cache-registry-keys
+          cursor
+          registry-id)
         (array-set!
           tc-source-qualified-variant-key-cache-module-keys
           cursor
@@ -12980,7 +13021,11 @@
           tc-source-qualified-variant-key-cache-name-keys
           cursor
           (+ name-id 1))
-        (array-set! tc-source-qualified-variant-key-cache-values cursor value)))))
+        (array-set! tc-source-qualified-variant-key-cache-values cursor value)
+        (array-set!
+          tc-source-qualified-variant-handle-cache-values
+          cursor
+          handle)))))
 
 (define tc-lazy-import-stubs : TcLazyImportStubList
   (TcLazyImportStubList.Nil))
@@ -13646,15 +13691,36 @@
   [ctx : TcContext]
   [_name : String]
   [name-id : i64]) : option_i64.Option
-  (match (tc-enum-qualified-variant-lookup-key-id
-    ctx
-    name-id
-    (tc-context-module-id ctx))
-    [(option_i64.Some key-id)
-      (compiler-registries-lookup-variant-key-id
-        (tc-context-registries ctx)
-        key-id)]
-    [(option_i64.None) option_i64.None]))
+  (match ctx
+    [(TcContext _ _ registries _ module-id _)
+      (let
+        [registry-id : i64 (compiler-registries-identity registries)]
+        [cached-handle : i64
+          (tc-source-qualified-variant-handle-cache-get
+            registry-id
+            module-id
+            name-id)]
+        (if (>= cached-handle 0)
+          (option_i64.Some cached-handle)
+          (if (= cached-handle -1)
+            option_i64.None
+            (match (tc-enum-qualified-variant-lookup-key-id
+              ctx
+              name-id
+              module-id)
+              [(option_i64.Some key-id)
+                (let
+                  [resolved-handle : i64
+                    (tc-source-qualified-variant-handle-cache-get
+                      registry-id
+                      module-id
+                      name-id)]
+                  (if (>= resolved-handle 0)
+                    (option_i64.Some resolved-handle)
+                    (compiler-registries-lookup-variant-key-id
+                      registries
+                      key-id)))]
+              [(option_i64.None) option_i64.None]))))]))
 
 (define (tc-enum-qualified-variant-lookup-key-id
   [ctx : TcContext]
@@ -13664,8 +13730,12 @@
     (match ctx
       [(TcContext _ _ registries module _ _)
         (let
+          [registry-id : i64 (compiler-registries-identity registries)]
           [cached : i64
-            (tc-source-qualified-variant-key-cache-get module-id name-id)]
+            (tc-source-qualified-variant-key-cache-get
+              registry-id
+              module-id
+              name-id)]
           (if (= cached -2)
             (let
               [structural : bool (>= name-id (intern-capacity))]
@@ -13708,11 +13778,17 @@
                   (if (>= fallback-handle 0)
                     fallback-key-id
                     -1))]
+              [resolved-handle : i64
+                (if (>= module-handle 0)
+                  module-handle
+                  fallback-handle)]
               (begin
                 (tc-source-qualified-variant-key-cache-put!
+                  registry-id
                   module-id
                   name-id
-                  resolved)
+                  resolved
+                  resolved-handle)
                 (if (< resolved 0)
                   option_i64.None
                   (option_i64.Some resolved))))
@@ -22501,26 +22577,32 @@
               [(option_i64.Some _) true]
               [(option_i64.None) false])
             (let
+              [registry-id : i64 (compiler-registries-identity registries)]
               [cached : i64
                 (tc-source-qualified-variant-key-cache-get
+                  registry-id
                   ctx-module-id
                   name-id)]
               (if (= cached -2)
                 (match (compiler-registries-lookup-variant-key-id
                   registries
                   (compiler-symbol-name-id-key variant-key))
-                  [(option_i64.Some _)
+                  [(option_i64.Some variant-handle)
                     (begin
                       (tc-source-qualified-variant-key-cache-put!
+                        registry-id
                         ctx-module-id
                         name-id
-                        variant-key)
+                        variant-key
+                        variant-handle)
                       true)]
                   [(option_i64.None)
                     (begin
                       (tc-source-qualified-variant-key-cache-put!
+                        registry-id
                         ctx-module-id
                         name-id
+                        -1
                         -1)
                       false)])
                 (>= cached 0))))]

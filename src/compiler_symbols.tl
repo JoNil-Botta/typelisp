@@ -52,7 +52,7 @@
   (CompilerSomeString String))
 
 (defenum CompilerRegistries
-  (CompilerRegistries CompilerSymbolMap CompilerSymbolMap))
+  (CompilerRegistries CompilerSymbolMap CompilerSymbolMap i64))
 
 (defenum ResultCompilerRegistries
   (Ok CompilerRegistries)
@@ -457,8 +457,25 @@
 (define (compiler-symbols-empty) : CompilerSymbols
   (compiler-symbols-empty-with-decls 0))
 
+(define compiler-registries-next-identity : i64
+  0)
+
+(define (compiler-registries-fresh-identity!) : i64
+  (begin
+    (set!
+      compiler-registries-next-identity
+      (+ compiler-registries-next-identity 1))
+    compiler-registries-next-identity))
+
 (define (compiler-registries-empty) : CompilerRegistries
-  (CompilerRegistries (compiler-symbol-map-empty) (compiler-symbol-map-empty)))
+  (CompilerRegistries
+    (compiler-symbol-map-empty)
+    (compiler-symbol-map-empty)
+    (compiler-registries-fresh-identity!)))
+
+(define (compiler-registries-identity [registries : CompilerRegistries]) : i64
+  (match registries
+    [(CompilerRegistries _ _ identity) identity]))
 
 (define (compiler-symbols-lookup-value-id
   [symbols : CompilerSymbols]
@@ -803,12 +820,12 @@
   [key-id : i64]
   [handle : i64]) : CompilerRegistries
   (match registries
-    [(CompilerRegistries variants fields)
+    [(CompilerRegistries variants fields identity)
       (if (compiler-symbol-map-contains-id? (& variants) key-id)
         registries
         (begin
           (compiler-symbol-map-bind-id! (&mut variants) key-id handle)
-          (CompilerRegistries variants fields)))]))
+          (CompilerRegistries variants fields identity)))]))
 
 (define (compiler-symbols-add-value-id
   [symbols : CompilerSymbols]
@@ -1195,7 +1212,7 @@
   [type-name-id : i64]
   [field-name-id : i64]) : option_i64.Option
   (match registries
-    [(CompilerRegistries _ fields)
+    [(CompilerRegistries _ fields _)
       (compiler-symbol-map-lookup-id
         (& fields)
         (compiler-struct-field-key-id-in-module-by-id
@@ -2516,7 +2533,7 @@
   [registries : CompilerRegistries]
   [name-id : i64]) : option_i64.Option
   (match registries
-    [(CompilerRegistries variants _)
+    [(CompilerRegistries variants _ _)
       (match (compiler-symbol-map-lookup-id
         (& variants)
         (compiler-symbol-name-id-key name-id))
@@ -2531,7 +2548,7 @@
   [registries : CompilerRegistries]
   [key-id : i64]) : option_i64.Option
   (match registries
-    [(CompilerRegistries variants _)
+    [(CompilerRegistries variants _ _)
       (compiler-symbol-map-lookup-id (& variants) key-id)]))
 
 (define (compiler-registries-lookup-struct-field-id
@@ -2539,7 +2556,7 @@
   [struct-name-id : i64]
   [field-name-id : i64]) : option_i64.Option
   (match registries
-    [(CompilerRegistries _ fields)
+    [(CompilerRegistries _ fields _)
       (compiler-symbol-map-lookup-id
         (& fields)
         (compiler-struct-field-key-id-by-id struct-name-id field-name-id))]))
@@ -2595,7 +2612,7 @@
         enum-index
         variant-index)]
     (match registries
-      [(CompilerRegistries variants fields)
+      [(CompilerRegistries variants fields identity)
         (if (compiler-symbol-map-contains-id? (& variants) qualified-key-id)
           (ResultCompilerRegistries.Err
             (compiler-registries-duplicate-variant-message
@@ -2608,9 +2625,9 @@
             (let
               [aliases1 : CompilerRegistries
                 (if (= module-name-key-id qualified-key-id)
-                  (CompilerRegistries variants fields)
+                  (CompilerRegistries variants fields identity)
                   (compiler-registries-add-variant-alias-key-id
-                    (CompilerRegistries variants fields)
+                    (CompilerRegistries variants fields identity)
                     module-name-key-id
                     handle))]
               [aliases2 : CompilerRegistries
@@ -2633,7 +2650,7 @@
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
   (match registries
-    [(CompilerRegistries variants fields)
+    [(CompilerRegistries variants fields identity)
       (let
         [key-id : i64
           (compiler-struct-field-key-id-by-id struct-name-id field-name-id)]
@@ -2648,7 +2665,8 @@
                 (compiler-symbol-kind-struct-field)
                 struct-index
                 field-index))
-            (ResultCompilerRegistries.Ok (CompilerRegistries variants fields)))))]))
+            (ResultCompilerRegistries.Ok
+              (CompilerRegistries variants fields identity)))))]))
 
 (define (compiler-registries-add-field-in-module-id
   [registries : CompilerRegistries]
@@ -2658,7 +2676,7 @@
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
   (match registries
-    [(CompilerRegistries variants fields)
+    [(CompilerRegistries variants fields identity)
       (let
         [key-id : i64
           (compiler-struct-field-key-id-in-module-by-id
@@ -2678,7 +2696,8 @@
                 (compiler-symbol-kind-struct-field)
                 struct-index
                 field-index))
-            (ResultCompilerRegistries.Ok (CompilerRegistries variants fields)))))]))
+            (ResultCompilerRegistries.Ok
+              (CompilerRegistries variants fields identity)))))]))
 
 (define (compiler-registries-add-field-alias
   [registries : CompilerRegistries]
@@ -2687,7 +2706,7 @@
   [field-name-id : i64]
   [handle : i64]) : CompilerRegistries
   (match registries
-    [(CompilerRegistries variants fields)
+    [(CompilerRegistries variants fields identity)
       (let
         [key-id : i64
           (compiler-struct-field-key-id-in-module-by-id
@@ -2698,7 +2717,7 @@
           registries
           (begin
             (compiler-symbol-map-bind-id! (&mut fields) key-id handle)
-            (CompilerRegistries variants fields))))]))
+            (CompilerRegistries variants fields identity))))]))
 
 (define (compiler-registries-add-variant-aliases-list
   [registries : CompilerRegistries]
@@ -3306,7 +3325,7 @@
   [insertion-index : i64]
   [delta : i64]) : CompilerRegistries
   (match registries
-    [(CompilerRegistries variants fields)
+    [(CompilerRegistries variants fields identity)
       (begin
         (compiler-registry-shift-map-owner-indices!
           (&mut variants)
@@ -3316,7 +3335,7 @@
           (&mut fields)
           insertion-index
           delta)
-        (CompilerRegistries variants fields))]))
+        (CompilerRegistries variants fields identity))]))
 
 ;; Extend an existing registry across an additive declaration splice. Callers
 ;; must conservatively reject imports and other surfaces that can alter alias

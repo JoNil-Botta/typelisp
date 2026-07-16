@@ -205,6 +205,7 @@ shl_neg_count_trap|tests/integration/shl_neg_count_trap.tl|129|-|-|-|expected-st
 spmd_foreach|tests/integration/spmd_foreach.tl|42|-|-|-
 spmd_gather_read|tests/integration/spmd_gather_read.tl|42|-|-|-
 spmd_gather_oob|tests/integration/spmd_gather_oob.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+spmd_gather_lane_offset_oob|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
 spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|-

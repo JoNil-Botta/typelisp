@@ -4055,12 +4055,66 @@
       (if (i64-i64-map-needs-grow? map)
         (i64-i64-map-grow map)
         map)]
-    (match (i64-i64-map-insert grown key value)
-      [(I64I64MapInsertOk updated) updated]
-      [(I64I64MapInsertFull full)
-        (match (i64-i64-map-insert (i64-i64-map-grow full) key value)
-          [(I64I64MapInsertOk u) u]
-          [(I64I64MapInsertFull u) u])])))
+    [slots : (Array I64I64MapSlot) (struct-get grown slots)]
+    [capacity : i64 (array-length slots)]
+    [hash : i64 (i64-i64-map-hash-key key)]
+    [cursor : i64 (i64-i64-map-normalized-bucket-index hash capacity)]
+    [walked : i64 0]
+    [first-tombstone : i64 -1]
+    (begin
+      (while (< walked capacity)
+        (match (array-ref slots cursor)
+          [(I64I64MapEmpty)
+            (let
+              [index : i64
+                (if (>= first-tombstone 0)
+                  first-tombstone
+                  cursor)]
+              (begin
+                (array-set! slots index (I64I64MapOccupied key value hash))
+                (set! (struct-get grown len) (+ (struct-get grown len) 1))
+                (if (>= first-tombstone 0)
+                  (set!
+                    (struct-get grown deleted)
+                    (- (struct-get grown deleted) 1))
+                  unit)
+                (return grown)))]
+          [(I64I64MapTombstone)
+            (let
+              [next : i64 (+ cursor 1)]
+              (begin
+                (if (< first-tombstone 0)
+                  (set! first-tombstone cursor)
+                  unit)
+                (set!
+                  cursor
+                  (if (>= next capacity)
+                    0
+                    next))
+                (set! walked (+ walked 1))))]
+          [(I64I64MapOccupied slot-key _ slot-hash)
+            (if (if (= slot-hash hash)
+              (= slot-key key)
+              false)
+              (begin
+                (array-set! slots cursor (I64I64MapOccupied key value hash))
+                (return grown))
+              (let
+                [next : i64 (+ cursor 1)]
+                (begin
+                  (set!
+                    cursor
+                    (if (>= next capacity)
+                      0
+                      next))
+                  (set! walked (+ walked 1)))))]))
+      (if (>= first-tombstone 0)
+        (begin
+          (array-set! slots first-tombstone (I64I64MapOccupied key value hash))
+          (set! (struct-get grown len) (+ (struct-get grown len) 1))
+          (set! (struct-get grown deleted) (- (struct-get grown deleted) 1))
+          grown)
+        (i64-i64-map-put (i64-i64-map-grow grown) key value)))))
 
 ;: Generated concrete hashmap family helper.
 (define (i64-i64-map-insert-or-update

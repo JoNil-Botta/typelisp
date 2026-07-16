@@ -12777,13 +12777,13 @@
   (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-name-keys : (Array i64)
   (array.make-array i64 8192))
-(define tc-source-qualified-variant-key-cache-registry-keys : (Array i64)
-  (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-values : (Array i64)
   (array.make-array i64 8192))
 (define tc-source-qualified-variant-handle-cache-values : (Array i64)
   (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-generation : i64
+  -1)
+(define tc-source-qualified-variant-key-cache-registry-id : i64
   -1)
 (define tc-source-qualified-variant-key-cache-ready : bool
   false)
@@ -12829,21 +12829,24 @@
           (intern-generation))
         (set! tc-source-dotted-full-path-key-cache-ready true)))))
 
-(define (tc-source-qualified-variant-key-cache-ensure!) : unit
+(define (tc-source-qualified-variant-key-cache-ensure! [registry-id : i64]) : unit
   (if (and
     tc-source-qualified-variant-key-cache-ready
-    (= tc-source-qualified-variant-key-cache-generation (intern-generation)))
+    (and
+      (= tc-source-qualified-variant-key-cache-generation (intern-generation))
+      (= tc-source-qualified-variant-key-cache-registry-id registry-id)))
     unit
     (let
       [i : i64 0]
       (begin
         (while (< i tc-source-qualified-variant-key-cache-capacity)
           (begin
-            (array-set! tc-source-qualified-variant-key-cache-registry-keys i 0)
+            (array-set! tc-source-qualified-variant-key-cache-name-keys i 0)
             (set! i (+ i 1))))
         (set!
           tc-source-qualified-variant-key-cache-generation
           (intern-generation))
+        (set! tc-source-qualified-variant-key-cache-registry-id registry-id)
         (set! tc-source-qualified-variant-key-cache-ready true)))))
 
 (define (tc-source-dotted-alias-key-cache-bucket
@@ -12912,7 +12915,7 @@
   [module-id : i64]
   [name-id : i64]) : i64
   (begin
-    (tc-source-qualified-variant-key-cache-ensure!)
+    (tc-source-qualified-variant-key-cache-ensure! registry-id)
     (let
       [cursor : i64
         (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
@@ -12920,15 +12923,11 @@
       [name-key : i64 (+ name-id 1)]
       (if (and
         (=
-          (array-ref tc-source-qualified-variant-key-cache-registry-keys cursor)
-          registry-id)
-        (and
-          (=
-            (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
-            module-key)
-          (=
-            (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
-            name-key)))
+          (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
+          module-key)
+        (=
+          (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
+          name-key))
         (array-ref tc-source-qualified-variant-key-cache-values cursor)
         -2))))
 
@@ -12938,7 +12937,7 @@
   [module-id : i64]
   [name-id : i64]) : i64
   (begin
-    (tc-source-qualified-variant-key-cache-ensure!)
+    (tc-source-qualified-variant-key-cache-ensure! registry-id)
     (let
       [cursor : i64
         (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
@@ -12946,15 +12945,11 @@
       [name-key : i64 (+ name-id 1)]
       (if (and
         (=
-          (array-ref tc-source-qualified-variant-key-cache-registry-keys cursor)
-          registry-id)
-        (and
-          (=
-            (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
-            module-key)
-          (=
-            (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
-            name-key)))
+          (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
+          module-key)
+        (=
+          (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
+          name-key))
         (array-ref tc-source-qualified-variant-handle-cache-values cursor)
         -2))))
 
@@ -13004,15 +12999,11 @@
   [value : i64]
   [handle : i64]) : unit
   (begin
-    (tc-source-qualified-variant-key-cache-ensure!)
+    (tc-source-qualified-variant-key-cache-ensure! registry-id)
     (let
       [cursor : i64
         (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
       (begin
-        (array-set!
-          tc-source-qualified-variant-key-cache-registry-keys
-          cursor
-          registry-id)
         (array-set!
           tc-source-qualified-variant-key-cache-module-keys
           cursor

@@ -31403,6 +31403,22 @@
       [(AstType.Unit) true]
       [_ false])))
 
+(define (opt-inline-multiblock-callee-body-ok?
+  [cparams : CompilerIrParamList]
+  [ret : AstType]
+  [cvars : i64]
+  [cblocks : CompilerIrBlockList]) : bool
+  (let
+    [np : i64 (opt-inline-param-count cparams)]
+    (and
+      (opt-inline-multiblock-return-type-ok? cparams ret)
+      (opt-inline-params-sequential? cparams 0)
+      (>= cvars np)
+      (> (compiler-ir-block-list-count cblocks) 1)
+      (> (opt-inline-return-count-blocks cblocks) 0)
+      (opt-inline-structure-ok-reclaiming? cblocks)
+      (opt-inline-multiblock-blocks-ok? cblocks np))))
+
 (define (opt-inline-multiblock-callee-ok?
   [callee : CompilerIrFunction]
   [caller-name : i64]) : bool
@@ -31410,16 +31426,67 @@
     [(CompilerIrFunction.Function cname cparams ret cvars cblocks)
       (if (compiler-ir-symbol-eq? cname caller-name)
         false
-        (let
-          [np : i64 (opt-inline-param-count cparams)]
-          (and
-            (opt-inline-multiblock-return-type-ok? cparams ret)
-            (opt-inline-params-sequential? cparams 0)
-            (>= cvars np)
-            (> (compiler-ir-block-list-count cblocks) 1)
-            (> (opt-inline-return-count-blocks cblocks) 0)
-            (opt-inline-structure-ok-reclaiming? cblocks)
-            (opt-inline-multiblock-blocks-ok? cblocks np))))]))
+        (opt-inline-multiblock-callee-body-ok? cparams ret cvars cblocks))]))
+
+;; Per-callee memo for the multiblock admission verdict, keyed by dense index
+;; slot. SCC processing is bottom-up (Tarjan pops a callee's component before
+;; any caller's), and same-SCC calls are rejected before this lookup runs, so
+;; whenever a caller examines a callee here the callee's body is final for the
+;; rest of the pass and the cached verdict cannot go stale. A -1 slot means
+;; "not yet computed". The verdict cached here is caller-independent; the
+;; self-call check stays outside in opt-inline-multiblock-callee-ok-cached?.
+(define opt-inline-multiblock-ok-memo : (Array i64)
+  (array.make-array i64 0))
+
+(define (opt-inline-multiblock-ok-memo-install! [index : OptFunctionIndex]) : unit
+  (let
+    [count : i64 (opt-function-index-count index)]
+    [memo : (Array i64) (array.make-array i64 count)]
+    (begin
+      (opt-cfg-fill-i64! memo count (- 0 1))
+      (set! opt-inline-multiblock-ok-memo memo))))
+
+(define (opt-inline-multiblock-ok-memo-reset!) : unit
+  (set! opt-inline-multiblock-ok-memo (array.make-array i64 0)))
+
+(define (opt-inline-multiblock-callee-ok-cached?
+  [callee-slot : i64]
+  [callee : CompilerIrFunction]
+  [caller-name : i64]) : bool
+  (match callee
+    [(CompilerIrFunction.Function cname cparams ret cvars cblocks)
+      (if (compiler-ir-symbol-eq? cname caller-name)
+        false
+        (if (or
+          (< callee-slot 0)
+          (>= callee-slot (array-length opt-inline-multiblock-ok-memo)))
+          (opt-inline-multiblock-callee-body-ok? cparams ret cvars cblocks)
+          (let
+            [cached : i64 (array-ref opt-inline-multiblock-ok-memo callee-slot)]
+            (if (>= cached 0)
+              (= cached 1)
+              (let
+                [ok : bool
+                  (opt-inline-multiblock-callee-body-ok?
+                    cparams
+                    ret
+                    cvars
+                    cblocks)]
+                (begin
+                  (array-set!
+                    opt-inline-multiblock-ok-memo
+                    callee-slot
+                    (if ok
+                      1
+                      0))
+                  ok))))))]))
+
+;; Admitted inline sites in the caller currently being rewritten, bumped once
+;; per single-block expansion and per multiblock rewrite. When it is still zero
+;; after the walk, the caller's IR and spans are exactly the input ones, so the
+;; structural re-verify and SSA reconstruction have nothing new to check.
+(define opt-inline-caller-site-count : i64
+  0)
 
 (define (opt-inline-callee-ok?
   [callee : CompilerIrFunction]
@@ -32439,7 +32506,10 @@
         (let
           [callee : CompilerIrFunction
             (array-ref (struct-get index values) callee-slot)]
-          (if (opt-inline-multiblock-callee-ok? callee caller-name)
+          (if (opt-inline-multiblock-callee-ok-cached?
+            callee-slot
+            callee
+            caller-name)
             (OptMaybeFunction.Some callee)
             (OptMaybeFunction.No))))]
     [(option_i64.None) (OptMaybeFunction.No)]))
@@ -32544,21 +32614,25 @@
                           added-blocks
                           caller-blocks
                           added-so-far)))
-                      (OptInlineState.State
-                        (opt-inline-expand-instrs
-                          body-instrs
-                          dst
-                          cret
-                          cargs
-                          np
-                          vars
-                          (opt-inline-site-prefix
-                            func-name
-                            block-label
-                            site-pos
-                            callee-name))
-                        (+ vars (opt-inline-frame-growth cvars np))
-                        (+ added-so-far added-blocks))
+                      (begin
+                        (set!
+                          opt-inline-caller-site-count
+                          (+ opt-inline-caller-site-count 1))
+                        (OptInlineState.State
+                          (opt-inline-expand-instrs
+                            body-instrs
+                            dst
+                            cret
+                            cargs
+                            np
+                            vars
+                            (opt-inline-site-prefix
+                              func-name
+                              block-label
+                              site-pos
+                              callee-name))
+                          (+ vars (opt-inline-frame-growth cvars np))
+                          (+ added-so-far added-blocks)))
                       (OptInlineState.State
                         (compiler-ir-instr-cons
                           (CompilerIrInstr.Call dst cname cargs cret)
@@ -32655,29 +32729,33 @@
                           added-blocks
                           caller-blocks
                           added-so-far)))
-                      (match (opt-inline-expand-instrs-with-spans
-                        body-instrs
-                        dst
-                        cret
-                        cargs
-                        np
-                        vars
-                        (opt-inline-site-prefix
-                          func-name
-                          block-label
-                          site-pos
-                          callee-name)
-                        source-spans
-                        out-spans
-                        (compiler-ir-symbol-text func-name)
-                        instr
-                        (compiler-ir-symbol-text cname))
-                        [(OptInlineSpanState.State expanded _ _ next-spans)
-                          (OptInlineSpanState.State
-                            expanded
-                            (+ vars (opt-inline-frame-growth cvars np))
-                            (+ added-so-far added-blocks)
-                            next-spans)])
+                      (begin
+                        (set!
+                          opt-inline-caller-site-count
+                          (+ opt-inline-caller-site-count 1))
+                        (match (opt-inline-expand-instrs-with-spans
+                          body-instrs
+                          dst
+                          cret
+                          cargs
+                          np
+                          vars
+                          (opt-inline-site-prefix
+                            func-name
+                            block-label
+                            site-pos
+                            callee-name)
+                          source-spans
+                          out-spans
+                          (compiler-ir-symbol-text func-name)
+                          instr
+                          (compiler-ir-symbol-text cname))
+                          [(OptInlineSpanState.State expanded _ _ next-spans)
+                            (OptInlineSpanState.State
+                              expanded
+                              (+ vars (opt-inline-frame-growth cvars np))
+                              (+ added-so-far added-blocks)
+                              next-spans)]))
                       (OptInlineSpanState.State
                         (compiler-ir-instr-cons
                           (CompilerIrInstr.Call dst cname cargs cret)
@@ -32961,6 +33039,10 @@
                         prefix-vars
                         prefix-added)
                       (let
+                        [_site-bump : unit
+                          (set!
+                            opt-inline-caller-site-count
+                            (+ opt-inline-caller-site-count 1))]
                         [prefix : String
                           (opt-inline-site-prefix
                             func-name
@@ -33171,6 +33253,22 @@
             scc-result
             caller-scc)]))))
 
+;; A block with no direct call instruction contains no inline site: both the
+;; single-block walk and the multiblock rewrite only fire on
+;; CompilerIrInstr.Call. Returning the original block skips the
+;; per-instruction rebuild walk without changing the result.
+(define (opt-inline-instr-seq-has-call-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Call _ _ _ _) true]
+      [_ (opt-inline-instr-seq-has-call-from? instrs (+ index 1))])))
+
+(define (opt-inline-instr-seq-has-call? [instrs : CompilerIrInstrSeq]) : bool
+  (opt-inline-instr-seq-has-call-from? instrs 0))
+
 (define (opt-inline-rewrite-block
   [block : CompilerIrBlock]
   [all-blocks : CompilerIrBlockList]
@@ -33184,33 +33282,38 @@
   [caller-scc : i64]) : OptInlineMaybeBlockRewrite
   (match block
     [(CompilerIrBlock.Block label seq)
-      (if (opt-inline-blocks-phi-label? all-blocks label)
-        (opt-inline-rewrite-single-block-seq
-          label
-          seq
-          index
-          census
-          func-name
+      (if (not (opt-inline-instr-seq-has-call? seq))
+        (OptInlineMaybeBlockRewrite.SomeBlockRewrite
+          (compiler-ir-block-cons block CompilerIrBlockList.Nil)
           vars
-          caller-blocks
-          added-so-far
-          scc-result
-          caller-scc)
-        (opt-inline-try-multiblock-rewrite-seq-from
-          seq
-          0
-          (compiler-ir-instr-seq-count seq)
-          label
-          0
-          all-blocks
-          index
-          census
-          func-name
-          vars
-          caller-blocks
-          added-so-far
-          scc-result
-          caller-scc))]))
+          added-so-far)
+        (if (opt-inline-blocks-phi-label? all-blocks label)
+          (opt-inline-rewrite-single-block-seq
+            label
+            seq
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc)
+          (opt-inline-try-multiblock-rewrite-seq-from
+            seq
+            0
+            (compiler-ir-instr-seq-count seq)
+            label
+            0
+            all-blocks
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc)))]))
 
 (define (opt-inline-clone-multiblock-instr-seq-with-spans-from
   [instrs : CompilerIrInstrSeq]
@@ -33553,6 +33656,10 @@
                         prefix-added
                         spans2)
                       (let
+                        [_site-bump : unit
+                          (set!
+                            opt-inline-caller-site-count
+                            (+ opt-inline-caller-site-count 1))]
                         [prefix : String
                           (opt-inline-site-prefix
                             func-name
@@ -33812,37 +33919,43 @@
   [out-spans : CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (match block
     [(CompilerIrBlock.Block label seq)
-      (if (opt-inline-blocks-phi-label? all-blocks label)
-        (opt-inline-rewrite-single-block-seq-with-spans
-          label
-          seq
-          index
-          census
-          func-name
+      (if (not (opt-inline-instr-seq-has-call? seq))
+        (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
+          (compiler-ir-block-cons block CompilerIrBlockList.Nil)
           vars
-          caller-blocks
           added-so-far
-          scc-result
-          caller-scc
-          source-spans
           out-spans)
-        (opt-inline-try-multiblock-span-rewrite-seq-from
-          seq
-          0
-          (compiler-ir-instr-seq-count seq)
-          label
-          0
-          all-blocks
-          index
-          census
-          func-name
-          vars
-          caller-blocks
-          added-so-far
-          scc-result
-          caller-scc
-          source-spans
-          out-spans))]))
+        (if (opt-inline-blocks-phi-label? all-blocks label)
+          (opt-inline-rewrite-single-block-seq-with-spans
+            label
+            seq
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc
+            source-spans
+            out-spans)
+          (opt-inline-try-multiblock-span-rewrite-seq-from
+            seq
+            0
+            (compiler-ir-instr-seq-count seq)
+            label
+            0
+            all-blocks
+            index
+            census
+            func-name
+            vars
+            caller-blocks
+            added-so-far
+            scc-result
+            caller-scc
+            source-spans
+            out-spans)))]))
 
 (define (opt-inline-blocks
   [blocks : CompilerIrBlockList]
@@ -34108,6 +34221,7 @@
     [(CompilerIrFunction.Function name params ret vars blocks)
       (let
         [caller-blocks : i64 (compiler-ir-block-list-count blocks)]
+        [_reset-sites : unit (set! opt-inline-caller-site-count 0)]
         (match (opt-inline-blocks
           blocks
           index
@@ -34119,10 +34233,17 @@
           scc-result
           caller-scc)
           [(OptInlineBlocks.Blocks new-blocks new-vars added)
-            (opt-inline-repair-or-keep
+            (if (= opt-inline-caller-site-count 0)
               func
-              (CompilerIrFunction.Function name params ret new-vars new-blocks)
-              (> added 0))]))]))
+              (opt-inline-repair-or-keep
+                func
+                (CompilerIrFunction.Function
+                  name
+                  params
+                  ret
+                  new-vars
+                  new-blocks)
+                (> added 0)))]))]))
 
 (define (opt-inline-function-with-spans
   [func : CompilerIrFunction]
@@ -34136,6 +34257,7 @@
     [(CompilerIrFunction.Function name params ret vars blocks)
       (let
         [caller-blocks : i64 (compiler-ir-block-list-count blocks)]
+        [_reset-sites : unit (set! opt-inline-caller-site-count 0)]
         (match (opt-inline-blocks-with-spans
           blocks
           index
@@ -34149,25 +34271,29 @@
           source-spans
           out-spans)
           [(OptInlineSpanBlocks.Blocks new-blocks new-vars added next-spans)
-            (let
-              [next : CompilerIrFunction
-                (CompilerIrFunction.Function
-                  name
-                  params
-                  ret
-                  new-vars
-                  new-blocks)]
-              (if (opt-inline-structure-ok-reclaiming? new-blocks)
-                (OptInlineSpanProgram.Program
-                  (compiler-ir-function-cons
-                    (if (> added 0)
-                      (opt-ssa-construct-function next)
-                      next)
-                    CompilerIrFunctionList.Nil)
-                  next-spans)
-                (OptInlineSpanProgram.Program
-                  (compiler-ir-function-cons func CompilerIrFunctionList.Nil)
-                  out-spans)))]))]))
+            (if (= opt-inline-caller-site-count 0)
+              (OptInlineSpanProgram.Program
+                (compiler-ir-function-cons func CompilerIrFunctionList.Nil)
+                out-spans)
+              (let
+                [next : CompilerIrFunction
+                  (CompilerIrFunction.Function
+                    name
+                    params
+                    ret
+                    new-vars
+                    new-blocks)]
+                (if (opt-inline-structure-ok-reclaiming? new-blocks)
+                  (OptInlineSpanProgram.Program
+                    (compiler-ir-function-cons
+                      (if (> added 0)
+                        (opt-ssa-construct-function next)
+                        next)
+                      CompilerIrFunctionList.Nil)
+                    next-spans)
+                  (OptInlineSpanProgram.Program
+                    (compiler-ir-function-cons func CompilerIrFunctionList.Nil)
+                    out-spans))))]))]))
 
 (define (opt-function-index-to-list [index : OptFunctionIndex]) : CompilerIrFunctionList
   (CompilerIrFunctionList.Array
@@ -34301,12 +34427,14 @@
       [verify-scratch : i64 (arena.tl_arena_make)]
       (begin
         (set! opt-inline-verify-scratch-arena verify-scratch)
+        (opt-inline-multiblock-ok-memo-install! index)
         (opt-inline-process-scc-order! index census scc-result)
         (let
           [out : CompilerIrFunctionList (opt-function-index-to-list index)]
           [scratch-head : i64 opt-inline-verify-scratch-arena]
           (begin
             (set! opt-inline-verify-scratch-arena 0)
+            (opt-inline-multiblock-ok-memo-reset!)
             (unsafe
               (arena.tl_arena_destroy scratch-head))
             out))))))
@@ -34327,6 +34455,8 @@
       [verify-scratch : i64 (arena.tl_arena_make)]
       [_install-verify-scratch : unit
         (set! opt-inline-verify-scratch-arena verify-scratch)]
+      [_install-multiblock-memo : unit
+        (opt-inline-multiblock-ok-memo-install! index)]
       [next-spans : CompilerSourceSpans
         (opt-inline-process-scc-order-with-spans index census scc-result spans)]
       [out : OptInlineSpanProgram
@@ -34336,6 +34466,7 @@
       [scratch-head : i64 opt-inline-verify-scratch-arena]
       (begin
         (set! opt-inline-verify-scratch-arena 0)
+        (opt-inline-multiblock-ok-memo-reset!)
         (unsafe
           (arena.tl_arena_destroy scratch-head))
         out))))

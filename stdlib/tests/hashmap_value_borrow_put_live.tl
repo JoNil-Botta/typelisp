@@ -1,28 +1,28 @@
 (import stdlib.hashmap)
+(import (hashmap String String) as map_string_string)
 
 ;; lint-allow: unused-import
 (import stdlib.string)
 
 (define (hashmap-borrowed-value-len
-  [lookup : (hashmap.StringStringMapBorrowedValueLookup map)]) : i64
+  [lookup : (map_string_string.BorrowedValueLookup map)]) : i64
   (match lookup
-    [(hashmap.StringStringMapBorrowedValueFound value) (string-length value)]
-    [(hashmap.StringStringMapBorrowedValueMissing) 0]))
+    [(map_string_string.BorrowedValueFound value) (string-length value)]
+    [(map_string_string.BorrowedValueMissing) 0]))
 
 ; Must fail: put may overwrite, insert, resize, or move buckets while a value
 ; reference into the map is still live.
 (define (main) : i64
   (let
     [key : String "alpha"]
-    [m : hashmap.StringStringMap
-      (hashmap.string-string-map-put
-        (hashmap.string-string-map-with-capacity 1)
-        "alpha"
-        "red")]
-    [borrowed : (hashmap.StringStringMapBorrowedValueLookup m)
-      (hashmap.string-string-map-get-value-borrowed (& m) (& key))]
-    [updated : hashmap.StringStringMap
-      (hashmap.string-string-map-put m "beta" "amber")]
-    (+
-      (hashmap-borrowed-value-len borrowed)
-      (hashmap.string-string-map-len updated))))
+    [m : map_string_string.Map (map_string_string.with-capacity 1)]
+    (begin
+      (map_string_string.insert! m "alpha" "red")
+      (let
+        [borrowed : (map_string_string.BorrowedValueLookup m)
+          (map_string_string.get-value-borrowed (& m) (& key))]
+        (begin
+          (map_string_string.insert-or-update! m "beta" "amber")
+          (+
+            (hashmap-borrowed-value-len borrowed)
+            (map_string_string.len (& m))))))))

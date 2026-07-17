@@ -49,9 +49,9 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
 - `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.
-- `stdlib/hashmap.tl` inline tests cover the compatibility `StringI64Map`,
-  generated `StringStringMap`, `I64I64Map`, and aggregate key/value map
-  families, key descriptor identities, borrowed string-key wrappers,
+- `stdlib/hashmap.tl` inline tests cover generated String/i64, String/String,
+  i64/i64, and aggregate key/value hashmap modules, key descriptor identities,
+  borrowed string-key wrappers,
   update-only, entry-or-insert, live mutable-entry helpers, tombstone reuse,
   growth/rehash, and deterministic bucket-order iteration. The
   `hashmap_mut_borrow_insert_or_update_live.tl` fixture verifies that a live
@@ -151,8 +151,9 @@ Inline stdlib coverage:
   helpers, replacement paths, prefix checks, borrowed/owned substring helpers,
   and legacy `string->int` / `int->string` edge cases.
 - `str_cat.tl` owns inline tests for empty, single, two-operand, many-operand,
-  variable-operand, nested `str-cat` expansion, generated helper hygiene, and
-  declaration-family ordering beside macro expansion.
+  variable-operand, nested `str-cat` expansion, and generated helper hygiene.
+  `tests/inline/str_cat_hashmap_declaration_ordering.tl` keeps the declaration-
+  family ordering check beside a generated hashmap module.
 - `format_api.tl` covers literal placeholders, escaped braces, and String,
   integer, boolean, char, and float formatting; `comptime_string_literal_reject.tl`
   keeps non-literal syntax inspection rejected at macro expansion. The

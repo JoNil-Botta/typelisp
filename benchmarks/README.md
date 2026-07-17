@@ -40,10 +40,10 @@ space-separated command-line arguments used by
 | `arith_loop` | Scalar LCG recurrence over wrapping 64-bit arithmetic. |
 | `array_sum` | `(Array i64)` fill + repeated sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
 | `string_scan` | Polynomial rolling hash (`acc = acc * 131 + byte`) over a fixed ASCII string scanned many rounds, carrying the hash across rounds (refs #1098). |
-| `hashmap_get` | `I64I64Map` hit/miss lookups on a fixed map, focused on the generated read probe path (refs #2166). |
-| `hashmap_insert` | Repeatedly build and populate a fresh power-of-two `I64I64Map`, focused on the generated insert probe path (refs #2165). |
+| `hashmap_get` | Generated i64/i64 hashmap hit/miss lookups on a fixed map, focused on the read probe path (refs #2166). |
+| `hashmap_insert` | Repeatedly build and populate a fresh generated i64/i64 hashmap, focused on the insert probe path (refs #2165). |
 | `hashmap_grow` | Repeated insertions that force map growth and rehashing. |
-| `hashmap_churn` | `I64I64Map` insert/remove churn with tombstone cleanup on the `put` path (refs #2167). |
+| `hashmap_churn` | Generated i64/i64 hashmap insert/remove churn with tombstone cleanup on the insert path (refs #2167). |
 | `spmd_map` | Data-parallel elementwise map (`out[i] = a[i] + b[i] + r`) via `foreach`, establishing the SPMD/SIMD-vs-clang baseline (refs #1125). |
 | `spmd_zip` | Data-parallel three-input fused multiply-add (`out[i] = a[i] * b[i] + c[i] + r`) via `foreach` (refs #1125). |
 | `spmd_mask` | Data-parallel masked conditional (`out[i] = (a[i] odd) ? a[i]+r : a[i]-r`) via `foreach`, exercising a divergent lane body (refs #1125). |

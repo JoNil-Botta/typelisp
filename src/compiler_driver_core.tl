@@ -533,6 +533,8 @@
   [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
   (compiler-load-session-state-runtime-prelude-cache-lookup load-state key))
 
+;; Helpers in this section that omit `load-state` are serial/test compatibility
+;; adapters. Driver-owned compile paths call the explicit state-taking forms.
 (define (compiler-driver-runtime-prelude-cache-lookup
   [key : CompilerLoadPreludeCacheKey]) : CompilerLoadPreludeCacheLookup
   (compiler-driver-runtime-prelude-cache-lookup-with-state
@@ -2033,10 +2035,12 @@
       (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-runtime-prelude-cold-with-pools
+  [load-state : CompilerLoadSessionState]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-file-with-paths-and-roots-cfg-with-pools
+    load-state
     "stdlib/runtime.tl"
     (sym_i64_env.sym-i64-empty)
     stdlib-roots
@@ -2048,6 +2052,7 @@
         runtime-modules
         runtime-seen)
       (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+        load-state
         runtime-seen
         stdlib-roots
         cfgs
@@ -2086,6 +2091,7 @@
             (compiler-load-prelude-cache-key-copy key)]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold-with-pools
+              load-state
               stdlib-roots
               cfgs
               pools)]
@@ -2143,6 +2149,7 @@
             cfgs
             pools)]))
     (compiler-driver-load-runtime-prelude-cold-with-pools
+      load-state
       stdlib-roots
       cfgs
       pools)))
@@ -2174,6 +2181,7 @@
         prelude-modules
         prelude-seen)
       (match (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+        load-state
         input-path
         prelude-seen
         stdlib-roots
@@ -2226,6 +2234,7 @@
         prelude-modules
         prelude-seen)
       (match (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+        load-state
         input-path
         source
         prelude-seen
@@ -2265,11 +2274,13 @@
     pools))
 
 (define (compiler-driver-load-file-for-pic-image-with-pools
+  [load-state : CompilerLoadSessionState]
   [input-path : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+    load-state
     (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs
@@ -2280,6 +2291,7 @@
         prelude-modules
         prelude-seen)
       (match (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+        load-state
         input-path
         prelude-seen
         stdlib-roots
@@ -2610,6 +2622,7 @@
     [parse-cfgs : sym_i64_env.SymI64Env
       (compiler-parse-state-cfgs parser-state cfgs)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
+      (struct-get state load-session)
       input-path
       stdlib-roots
       parse-cfgs

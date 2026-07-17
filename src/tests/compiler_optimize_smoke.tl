@@ -1418,6 +1418,9 @@
     [(not (= (compiler-optimize-dead-store-self-test) 42)) 49]
     [(not (= (compiler-optimize-scratch-region-self-test) 42)) 50]
     [(not (= (smoke-function-index-leaf-starts-self-test) 42)) 51]
+    [(not (= (compiler-optimize-bce-version-mb-self-test) 42)) 52]
+    [(not (= (compiler-optimize-bce-version-mb-negative-self-test) 42)) 53]
+    [(not (= (compiler-optimize-bce-version-mb-pipeline-self-test) 42)) 54]
     [else 42]))
 
 (define (main) : i64
@@ -1451,3 +1454,24 @@
     (compiler-optimize-dead-store-self-test)
     42
     "dead-store overwrite"))
+
+(test
+  bce-version-multiblock-quicksort-shape
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-self-test)
+    42
+    "multi-block counted-loop bounds-check versioning"))
+
+(test
+  bce-version-multiblock-rejections
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-negative-self-test)
+    42
+    "multi-block versioning rejections"))
+
+(test
+  bce-version-multiblock-pipeline
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-pipeline-self-test)
+    42
+    "multi-block versioning full pipeline"))

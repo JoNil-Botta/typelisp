@@ -7677,6 +7677,7 @@
 ;; the last register.
 (define compiler-backend-emergency-pending : bool
   false)
+
 ;; When true, switch dispatches may use the absolute indexed form
 ;; `jmp *table(,%idx,8)`: it needs no table register, so it skips the
 ;; emergency borrow/stash/restore dance entirely. Valid only for non-PIC
@@ -7684,8 +7685,10 @@
 ;; keep the RIP-relative forms. Initialized per program emission.
 (define compiler-backend-absolute-switch-ok : bool
   false)
+
 (define (compiler-backend-set-absolute-switch-ok! [ok : bool]) : unit
   (set! compiler-backend-absolute-switch-ok ok))
+
 (define compiler-backend-emergency-reg : String
   "")
 (define compiler-backend-emergency-used : bool
@@ -50486,9 +50489,7 @@ tl_tlci_call_macro_entry:
     (compiler-backend-user-symbol-cache-reset!)
     (compiler-backend-peephole-carry-safe-reset!)
     (compiler-backend-set-absolute-switch-ok!
-      (and
-        (not pic-emit?)
-        (not (compiler-backend-target-windows? target))))
+      (and (not pic-emit?) (not (compiler-backend-target-windows? target))))
     (set! compiler-backend-rsp-rebase-ok-count 0)
     (set! compiler-backend-rsp-rebase-keep-count 0)
     (set! compiler-backend-fpo-count 0)

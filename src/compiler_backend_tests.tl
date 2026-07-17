@@ -8833,10 +8833,10 @@
         (compiler-backend-string-contains? asm "    movq 8(%rsp), %r8\n")
         (compiler-backend-string-contains? asm "    cmpq $2, %r8\n")
         (compiler-backend-string-contains? asm "    ja .Lf0_other\n")
+        ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
         (compiler-backend-string-contains?
           asm
-          "    leaq .Lf0_entry_switch_table(%rip), %r9\n")
-        (compiler-backend-string-contains? asm "    jmp *(%r9,%r8,8)\n")
+          "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
         (not (compiler-backend-string-contains? asm "    jmp *(%r11,%rax,8)\n"))
         (compiler-backend-string-contains?
           asm
@@ -8908,10 +8908,10 @@
         (compiler-backend-string-contains? asm "    subq $4, %r8\n")
         (compiler-backend-string-contains? asm "    cmpq $1, %r8\n")
         (compiler-backend-string-contains? asm "    ja .Lf0_other\n")
+        ;; Non-PIC Linux emits the absolute indexed dispatch (no table reg).
         (compiler-backend-string-contains?
           asm
-          "    leaq .Lf0_entry_switch_table(%rip), %r9\n")
-        (compiler-backend-string-contains? asm "    jmp *(%r9,%r8,8)\n")
+          "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
         (not (compiler-backend-string-contains? asm "    jmp *(%r11,%rax,8)\n")))]
     [(ResultCompilerBackend.Err _) false]))
 

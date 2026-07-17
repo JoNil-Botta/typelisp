@@ -165,6 +165,67 @@
         (CompilerIrMaybeValue.Some (CompilerIrValue.I64 value)))
       (CompilerIrInstrList.Nil))))
 
+;; Head block whose compare+branch trails an unconditional prefix instruction:
+;; the chain pass must keep the prefix ahead of the emitted Switch.
+(define (opt-switch-test-prefix-compare-block
+  [label : String]
+  [tag : i64]
+  [eq-var : i64]
+  [arm-label : String]
+  [next-label : String]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Mov 9 (CompilerIrValue.Var 0) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          eq-var
+          CompilerIrBinOp.Eq
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 tag)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var eq-var)
+            arm-label
+            next-label)
+          (CompilerIrInstrList.Nil))))))
+
+(define (opt-switch-test-block-tail-base [block : CompilerIrBlock]) : i64
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (match (compiler-ir-instr-seq-ref
+        instrs
+        (- (compiler-ir-instr-seq-count instrs) 1))
+        [(CompilerIrInstr.Switch _ base _ _) base]
+        [_ (- 0 1)])]))
+
+(define (opt-switch-test-block-tail-case-count [block : CompilerIrBlock]) : i64
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (match (compiler-ir-instr-seq-ref
+        instrs
+        (- (compiler-ir-instr-seq-count instrs) 1))
+        [(CompilerIrInstr.Switch _ _ cases _)
+          (opt-switch-case-list-count cases)]
+        [_ 0])]))
+
+(define (opt-switch-test-block-tail-default [block : CompilerIrBlock]) : String
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (match (compiler-ir-instr-seq-ref
+        instrs
+        (- (compiler-ir-instr-seq-count instrs) 1))
+        [(CompilerIrInstr.Switch _ _ _ default-label) default-label]
+        [_ ""])]))
+
+(define (opt-switch-test-block-starts-with-mov? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (match (compiler-ir-instr-seq-ref instrs 0)
+        [(CompilerIrInstr.Mov _ _ _) true]
+        [_ false])]))
+
 (define (opt-switch-test-chain-blocks
   [tag0 : i64]
   [tag1 : i64]
@@ -234,6 +295,140 @@
                     (opt-switch-test-return-block "fallback" 99)
                     (CompilerIrBlockList.Nil)))))))))))
 
+(define (opt-switch-test-prefix-blocks
+  [tag0 : i64]
+  [tag1 : i64]
+  [tag2 : i64]
+  [tag3 : i64]
+  [default-label : String]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-switch-test-prefix-compare-block "entry" tag0 1 "case0" "cmp1")
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block "case0" 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-compare-block "cmp1" tag1 2 "case1" "cmp2")
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block "case1" 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-compare-block "cmp2" tag2 3 "case2" "cmp3")
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block "case2" 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-compare-block
+                  "cmp3"
+                  tag3
+                  4
+                  "case3"
+                  default-label)
+                (compiler-ir-block-cons
+                  (opt-switch-test-return-block "case3" 13)
+                  (compiler-ir-block-cons
+                    (opt-switch-test-return-block default-label 99)
+                    (CompilerIrBlockList.Nil)))))))))))
+
+;; Head block whose dispatch is a bare zero-test branch (`Eq tag, 0` folded
+;; onto the tag var), again trailing an unconditional prefix instruction.
+(define (opt-switch-test-bare-branch-block
+  [label : String]
+  [arm-label : String]
+  [next-label : String]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Mov 9 (CompilerIrValue.Var 0) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) next-label arm-label)
+        (CompilerIrInstrList.Nil)))))
+
+(define (opt-switch-test-bare-blocks [default-label : String]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-switch-test-bare-branch-block "entry" "case0" "cmp1")
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block "case0" 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-compare-block "cmp1" 1 2 "case1" "cmp2")
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block "case1" 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-compare-block "cmp2" 2 3 "case2" "cmp3")
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block "case2" 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-compare-block "cmp3" 3 4 "case3" default-label)
+                (compiler-ir-block-cons
+                  (opt-switch-test-return-block "case3" 13)
+                  (compiler-ir-block-cons
+                    (opt-switch-test-return-block default-label 99)
+                    (CompilerIrBlockList.Nil)))))))))))
+
+;; Compare block testing an explicit compare var (for copy-resolution tests).
+(define (opt-switch-test-compare-block-var
+  [label : String]
+  [cmp-var : i64]
+  [tag : i64]
+  [eq-var : i64]
+  [arm-label : String]
+  [next-label : String]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        eq-var
+        CompilerIrBinOp.Eq
+        (CompilerIrValue.Var cmp-var)
+        (CompilerIrValue.I64 tag)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var eq-var)
+          arm-label
+          next-label)
+        (CompilerIrInstrList.Nil)))))
+
+;; The vm_run dispatch shape: the head compare reads the RAW tag var while the
+;; middle compares read the match-scrutinee COPY (block-local copy propagation
+;; rewrites same-block operands only). The chain must resolve both through the
+;; head prefix's Mov to one logical index var.
+(define (opt-switch-test-copy-head-blocks [default-label : String]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 9 (CompilerIrValue.Var 0) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            1
+            CompilerIrBinOp.Eq
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 0)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 1) "case0" "cmp1")
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (opt-switch-test-return-block "case0" 10)
+      (compiler-ir-block-cons
+        (opt-switch-test-compare-block-var "cmp1" 9 1 2 "case1" "cmp2")
+        (compiler-ir-block-cons
+          (opt-switch-test-return-block "case1" 11)
+          (compiler-ir-block-cons
+            (opt-switch-test-compare-block-var "cmp2" 9 2 3 "case2" "cmp3")
+            (compiler-ir-block-cons
+              (opt-switch-test-return-block "case2" 12)
+              (compiler-ir-block-cons
+                (opt-switch-test-compare-block-var
+                  "cmp3"
+                  9
+                  3
+                  4
+                  "case3"
+                  default-label)
+                (compiler-ir-block-cons
+                  (opt-switch-test-return-block "case3" 13)
+                  (compiler-ir-block-cons
+                    (opt-switch-test-return-block default-label 99)
+                    (CompilerIrBlockList.Nil)))))))))))
+
 (define (compiler-optimize-switch-form-self-test) : i64
   (let
     [dense-source : CompilerIrBlockList
@@ -255,6 +450,32 @@
     [extra : CompilerIrFunction
       (opt-switch-form-function
         (opt-switch-test-function (opt-switch-test-extra-blocks)))]
+    [prefix : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-prefix-blocks 2 0 1 3 "fallback")))]
+    [prefix-blocks : CompilerIrBlockList (opt-function-blocks prefix)]
+    [prefix-twice : CompilerIrFunction (opt-switch-form-function prefix)]
+    [prefix-entry : CompilerIrBlock
+      (match (opt-cfg-find-block prefix-blocks "entry")
+        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+        [(OptMaybeBlock.Some block) block])]
+    [bare : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-bare-blocks "fallback")))]
+    [bare-blocks : CompilerIrBlockList (opt-function-blocks bare)]
+    [bare-entry : CompilerIrBlock
+      (match (opt-cfg-find-block bare-blocks "entry")
+        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+        [(OptMaybeBlock.Some block) block])]
+    [copy-head : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function (opt-switch-test-copy-head-blocks "fallback")))]
+    [copy-head-blocks : CompilerIrBlockList (opt-function-blocks copy-head)]
+    [copy-head-entry : CompilerIrBlock
+      (match (opt-cfg-find-block copy-head-blocks "entry")
+        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+        [(OptMaybeBlock.Some block) block])]
     [level1 : CompilerIrFunction
       (optimize-function-with-level (opt-switch-test-function dense-source) 1)]
     [level2 : CompilerIrFunction
@@ -276,6 +497,45 @@
       [(not (= (opt-count-switch-blocks (opt-function-blocks extra)) 0)) 12]
       [(not (= (opt-count-switch-blocks (opt-function-blocks level1)) 0)) 13]
       [(not (= (opt-count-switch-blocks (opt-function-blocks level2)) 1)) 14]
+      ;; A prefix head keeps its unconditional instructions ahead of the
+      ;; Switch; the consumed middle compare blocks still disappear.
+      [(not (= (opt-count-switch-blocks prefix-blocks) 1)) 15]
+      [(not (= (opt-switch-test-block-tail-base prefix-entry) 0)) 16]
+      [(not (= (opt-switch-test-block-tail-case-count prefix-entry) 4)) 17]
+      [(not
+          (string.eq
+            (opt-switch-test-block-tail-default prefix-entry)
+            "fallback"))
+        18]
+      [(not (opt-switch-test-block-starts-with-mov? prefix-entry)) 19]
+      [(opt-block-list-has-label? prefix-blocks "cmp1") 20]
+      [(opt-block-list-has-label? prefix-blocks "cmp2") 21]
+      [(not (opt-verify-ok? (opt-verify-function prefix))) 22]
+      ;; Idempotence: rerunning the pass must not rewrite the rewritten head.
+      [(not (= (opt-count-switch-blocks (opt-function-blocks prefix-twice)) 1))
+        23]
+      ;; A bare zero-test head (`Branch(tag, next, arm)`) is the folded
+      ;; `Eq tag, 0` form and must join the chain as the tag-0 candidate.
+      [(not (= (opt-count-switch-blocks bare-blocks) 1)) 24]
+      [(not (= (opt-switch-test-block-tail-base bare-entry) 0)) 25]
+      [(not (= (opt-switch-test-block-tail-case-count bare-entry) 4)) 26]
+      [(not
+          (string.eq (opt-switch-test-block-tail-default bare-entry) "fallback"))
+        27]
+      [(not (opt-switch-test-block-starts-with-mov? bare-entry)) 28]
+      [(not (opt-verify-ok? (opt-verify-function bare))) 29]
+      ;; The vm_run shape: head compare on the raw var, middle compares on
+      ;; the prefix Mov's copy; resolution unifies them and the chain forms.
+      [(not (= (opt-count-switch-blocks copy-head-blocks) 1)) 30]
+      [(not (= (opt-switch-test-block-tail-base copy-head-entry) 0)) 31]
+      [(not (= (opt-switch-test-block-tail-case-count copy-head-entry) 4)) 32]
+      [(not
+          (string.eq
+            (opt-switch-test-block-tail-default copy-head-entry)
+            "fallback"))
+        33]
+      [(not (opt-switch-test-block-starts-with-mov? copy-head-entry)) 34]
+      [(not (opt-verify-ok? (opt-verify-function copy-head))) 35]
       [else 42])))
 
 (define (smoke-mov-dst-var-type?

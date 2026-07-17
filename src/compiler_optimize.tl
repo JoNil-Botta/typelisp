@@ -18797,9 +18797,13 @@
   (NoLabel)
   (SomeLabel String))
 
+;; The trailing i64 is the chain head's prefix instruction count: a head block
+;; whose compare+branch merely TRAIL other instructions (e.g. a dispatch fetch)
+;; keeps those instructions ahead of the emitted Switch. Zero is the classic
+;; pure compare+branch head.
 (defenum OptMaybeSwitchChain
   (No)
-  (Some i64 i64 i64 String OptSwitchCandidateList))
+  (Some i64 i64 i64 String OptSwitchCandidateList i64))
 
 (defenum OptSwitchRewriteResult
   (Result CompilerIrBlockList OptLabelSet bool))
@@ -18856,6 +18860,134 @@
               (OptSwitchCompare.No))]
           [_ (OptSwitchCompare.No)])
         (OptSwitchCompare.No))]))
+
+;; Head-block-only variant: the dispatch compare may TRAIL a non-empty prefix
+;; of instructions that execute unconditionally before the branch (a bytecode
+;; fetch, a length load, ...). Two head forms are recognized:
+;;   * `Eq index, tag` + `Branch(eq, arm, next)` -- the general compare;
+;;   * `Branch(index, next, arm)` -- a bare zero-test, which is how an
+;;     `Eq index, 0` compare surfaces after earlier branch folding: the false
+;;     edge is the tag-0 arm, the true edge continues the chain.
+;; The chain rewrite keeps the prefix ahead of the Switch, so semantics are
+;; unchanged; the same Eq/use-count checks apply to the compare form. A bare
+;; zero-test head only completes a chain when the middle blocks compare the
+;; SAME var against further literals, which confirms it is a dispatch index.
+;; Middle blocks must stay pure compare+branch because they are consumed
+;; wholesale by the rewrite. The trailing i64 in Some is the head prefix
+;; instruction count kept ahead of the Switch.
+(defenum OptSwitchCompareTail
+  (No)
+  (Some i64 i64 i64 String String i64))
+
+(define (opt-switch-parse-compare-block-tail
+  [block : CompilerIrBlock]
+  [uses : (Array i64)]) : OptSwitchCompareTail
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (= count 0)
+          (OptSwitchCompareTail.No)
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch
+                (CompilerIrValue.Var cond-var)
+                true-label
+                false-label)
+              (if (>= count 2)
+                (match (compiler-ir-instr-seq-ref instrs (- count 2))
+                  [(CompilerIrInstr.BinOp eq-var op lhs rhs _)
+                    (if (and
+                      (opt-binop-eq op CompilerIrBinOp.Eq)
+                      (= cond-var eq-var)
+                      (= (opt-switch-use-count uses eq-var) 1))
+                      (match (opt-switch-index-tag-from-values lhs rhs)
+                        [(OptSwitchIndexTag.Some index-var tag)
+                          (OptSwitchCompareTail.Some
+                            index-var
+                            tag
+                            eq-var
+                            true-label
+                            false-label
+                            (- count 2))]
+                        [(OptSwitchIndexTag.No) (OptSwitchCompareTail.No)])
+                      (OptSwitchCompareTail.No))]
+                  [_
+                    (OptSwitchCompareTail.Some
+                      cond-var
+                      0
+                      (- 0 1)
+                      false-label
+                      true-label
+                      (- count 1))])
+                (OptSwitchCompareTail.Some
+                  cond-var
+                  0
+                  (- 0 1)
+                  false-label
+                  true-label
+                  0))]
+            [_ (OptSwitchCompareTail.No)])))]))
+
+;; Chain-head prefix copy facts: a `Mov dst, src` in the head block's prefix
+;; means dst and src hold the same value from that point to the dispatch.
+;; Block-local copy propagation rewrites same-block compare operands to a
+;; copy's source, so the head compare and the middle-block compares may name
+;; different vars for the one dispatch value; resolving every candidate var
+;; through these facts unifies them onto one logical index var. A pair is
+;; dropped as soon as its src is redefined (the copy no longer tracks it),
+;; and a redefined dst simply shadows its earlier pair (newest-first lookup).
+(defenum OptSwitchCopyEnv
+  (Nil)
+  (Cons i64 i64 (Box OptSwitchCopyEnv)))
+
+(define (opt-switch-copy-env-resolve [env : OptSwitchCopyEnv] [var : i64]) : i64
+  (match env
+    [(OptSwitchCopyEnv.Nil) var]
+    [(OptSwitchCopyEnv.Cons dst src rest)
+      (if (= dst var)
+        src
+        (opt-switch-copy-env-resolve (box-get rest) var))]))
+
+(define (opt-switch-copy-env-drop-src [env : OptSwitchCopyEnv] [var : i64]) : OptSwitchCopyEnv
+  (match env
+    [(OptSwitchCopyEnv.Nil) env]
+    [(OptSwitchCopyEnv.Cons dst src rest)
+      (if (= src var)
+        (opt-switch-copy-env-drop-src (box-get rest) var)
+        (OptSwitchCopyEnv.Cons
+          dst
+          src
+          (box (opt-switch-copy-env-drop-src (box-get rest) var))))]))
+
+;; Fold one prefix instruction into the copy facts: any definition of var D
+;; invalidates pairs whose src is D; a `Mov dst, src` then records dst as a
+;; fresh copy of src.
+(define (opt-switch-copy-env-note
+  [env : OptSwitchCopyEnv]
+  [instr : CompilerIrInstr]) : OptSwitchCopyEnv
+  (match (opt-instr-def-var instr)
+    [(option_i64.Some dst)
+      (match instr
+        [(CompilerIrInstr.Mov _ (CompilerIrValue.Var src) _)
+          (OptSwitchCopyEnv.Cons
+            dst
+            src
+            (box (opt-switch-copy-env-drop-src env dst)))]
+        [_ (opt-switch-copy-env-drop-src env dst)])]
+    [(option_i64.None) env]))
+
+(define (opt-switch-prefix-copies-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [env : OptSwitchCopyEnv]) : OptSwitchCopyEnv
+  (if (>= index last)
+    env
+    (opt-switch-prefix-copies-from
+      instrs
+      (+ index 1)
+      last
+      (opt-switch-copy-env-note env (compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-switch-candidate-empty? [items : OptSwitchCandidateList]) : bool
   (match items
@@ -19014,7 +19146,8 @@
   [blocks : CompilerIrBlockList]
   [index-var : i64]
   [items : OptSwitchCandidateList]
-  [default-label : String]) : OptMaybeSwitchChain
+  [default-label : String]
+  [head-prefix : i64]) : OptMaybeSwitchChain
   (if (or (= index-var (- 0 1)) (opt-switch-candidate-empty? items))
     (OptMaybeSwitchChain.No)
     (let
@@ -19025,7 +19158,13 @@
         (>= count 4)
         (= (+ (- max-tag min-tag) 1) count)
         (opt-switch-targets-safe? blocks items default-label))
-        (OptMaybeSwitchChain.Some index-var min-tag max-tag default-label items)
+        (OptMaybeSwitchChain.Some
+          index-var
+          min-tag
+          max-tag
+          default-label
+          items
+          head-prefix)
         (OptMaybeSwitchChain.No)))))
 
 (define (opt-switch-collect-parsed
@@ -19041,36 +19180,45 @@
   [tag : i64]
   [eq-var : i64]
   [arm-label : String]
-  [next-label : String]) : OptMaybeSwitchChain
-  (if (and (!= index-var (- 0 1)) (!= candidate-index index-var))
-    (opt-switch-finalize-chain blocks index-var items label)
-    (let
-      [first? : bool (= index-var (- 0 1))]
-      [chain-index : i64
-        (if first?
-          candidate-index
-          index-var)]
-      (if (or
-        (opt-switch-candidate-has-tag? items tag)
-        (and
-          (not first?)
-          (not (opt-switch-single-pred-from? index label prev-label))))
-        (OptMaybeSwitchChain.No)
-        (opt-switch-collect-chain
-          blocks
-          index
-          uses
-          next-label
-          chain-index
-          label
-          (opt-label-add seen label)
-          (OptSwitchCandidateList.Cons
-            label
-            tag
-            eq-var
-            arm-label
+  [next-label : String]
+  [head-prefix : i64]
+  [copies : OptSwitchCopyEnv]) : OptMaybeSwitchChain
+  ;; Candidate vars read through the head prefix's copy Movs: block-local copy
+  ;; propagation rewrites same-block compare operands to a copy's source, so
+  ;; the head and middle compares may name different vars for one value.
+  (let
+    [resolved-index : i64 (opt-switch-copy-env-resolve copies candidate-index)]
+    (if (and (!= index-var (- 0 1)) (!= resolved-index index-var))
+      (opt-switch-finalize-chain blocks index-var items label head-prefix)
+      (let
+        [first? : bool (= index-var (- 0 1))]
+        [chain-index : i64
+          (if first?
+            resolved-index
+            index-var)]
+        (if (or
+          (opt-switch-candidate-has-tag? items tag)
+          (and
+            (not first?)
+            (not (opt-switch-single-pred-from? index label prev-label))))
+          (OptMaybeSwitchChain.No)
+          (opt-switch-collect-chain
+            blocks
+            index
+            uses
             next-label
-            (box items)))))))
+            chain-index
+            label
+            (opt-label-add seen label)
+            (OptSwitchCandidateList.Cons
+              label
+              tag
+              eq-var
+              arm-label
+              next-label
+              (box items))
+            head-prefix
+            copies))))))
 
 (define (opt-switch-collect-chain
   [blocks : CompilerIrBlockList]
@@ -19080,16 +19228,59 @@
   [index-var : i64]
   [prev-label : String]
   [seen : OptLabelSet]
-  [items : OptSwitchCandidateList]) : OptMaybeSwitchChain
+  [items : OptSwitchCandidateList]
+  [head-prefix : i64]
+  [copies : OptSwitchCopyEnv]) : OptMaybeSwitchChain
   (if (opt-label-contains seen label)
     (OptMaybeSwitchChain.No)
     (match (opt-cfg-find-block blocks label)
       [(OptMaybeBlock.No)
-        (opt-switch-finalize-chain blocks index-var items label)]
+        (opt-switch-finalize-chain blocks index-var items label head-prefix)]
       [(OptMaybeBlock.Some block)
         (match (opt-switch-parse-compare-block block uses)
           [(OptSwitchCompare.No)
-            (opt-switch-finalize-chain blocks index-var items label)]
+            ;; A chain may still START here: the head block's compare+branch
+            ;; may trail an unconditional prefix (fetch/addressing work) that
+            ;; the rewrite preserves ahead of the Switch.
+            (if (= index-var (- 0 1))
+              (match (opt-switch-parse-compare-block-tail block uses)
+                [(OptSwitchCompareTail.No)
+                  (opt-switch-finalize-chain blocks index-var items label 0)]
+                [(OptSwitchCompareTail.Some
+                    candidate-index
+                    tag
+                    eq-var
+                    arm-label
+                    next-label
+                    prefix)
+                  (match block
+                    [(CompilerIrBlock.Block _ head-instrs)
+                      (opt-switch-collect-parsed
+                        blocks
+                        index
+                        uses
+                        label
+                        index-var
+                        prev-label
+                        seen
+                        items
+                        candidate-index
+                        tag
+                        eq-var
+                        arm-label
+                        next-label
+                        prefix
+                        (opt-switch-prefix-copies-from
+                          head-instrs
+                          0
+                          prefix
+                          (OptSwitchCopyEnv.Nil)))])])
+              (opt-switch-finalize-chain
+                blocks
+                index-var
+                items
+                label
+                head-prefix))]
           [(OptSwitchCompare.Some
               candidate-index
               tag
@@ -19109,7 +19300,9 @@
               tag
               eq-var
               arm-label
-              next-label)])])))
+              next-label
+              head-prefix
+              copies)])])))
 
 (define (opt-switch-skip-candidate-labels
   [items : OptSwitchCandidateList]
@@ -19125,27 +19318,43 @@
           skip
           (opt-label-add skip label)))]))
 
+;; Rebuilt head block body: the kept unconditional prefix instructions
+;; (usually none) followed by the Switch terminator.
+(define (opt-switch-head-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [prefix : i64]
+  [terminator : CompilerIrInstr]) : CompilerIrInstrList
+  (if (>= index prefix)
+    (compiler-ir-instr-cons terminator (CompilerIrInstrList.Nil))
+    (compiler-ir-instr-cons
+      (compiler-ir-instr-seq-ref instrs index)
+      (opt-switch-head-instrs instrs (+ index 1) prefix terminator))))
+
 (define (opt-switch-rewrite-block
   [block : CompilerIrBlock]
   [chain : OptMaybeSwitchChain]) : CompilerIrBlock
   (match block
-    [(CompilerIrBlock.Block label _)
+    [(CompilerIrBlock.Block label instrs)
       (match chain
         [(OptMaybeSwitchChain.Some
             index-var
             min-tag
             max-tag
             default-label
-            items)
+            items
+            head-prefix)
           (compiler-ir-block
             label
-            (compiler-ir-instr-cons
+            (opt-switch-head-instrs
+              instrs
+              0
+              head-prefix
               (CompilerIrInstr.Switch
                 (CompilerIrValue.Var index-var)
                 min-tag
                 (opt-switch-build-cases items min-tag max-tag)
-                default-label)
-              (CompilerIrInstrList.Nil)))]
+                default-label)))]
         [(OptMaybeSwitchChain.No) block])]))
 
 (define (opt-switch-rewrite-blocks-from
@@ -19177,13 +19386,16 @@
               (- 0 1)
               ""
               (OptLabelSet.Nil)
-              (OptSwitchCandidateList.Nil))
+              (OptSwitchCandidateList.Nil)
+              0
+              (OptSwitchCopyEnv.Nil))
               [(OptMaybeSwitchChain.Some
                   index-var
                   min-tag
                   max-tag
                   default-label
-                  items)
+                  items
+                  head-prefix)
                 (let
                   [next-skip : OptLabelSet
                     (opt-switch-skip-candidate-labels items label skip)]
@@ -19203,7 +19415,8 @@
                               min-tag
                               max-tag
                               default-label
-                              items))
+                              items
+                              head-prefix))
                           tail)
                         final-skip
                         true)]))]

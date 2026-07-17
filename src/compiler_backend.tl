@@ -10545,19 +10545,19 @@
         [scratch0-exclude : (Array String)
           (compiler-backend-three-exclude src1-home dst0-reg dst1-reg)]
         [scratch0 : String
-          (if sse0?
-            (compiler-backend-scavenge-xmm-reg -1 scratch0-exclude 3 "%xmm2")
-            (if (string.eq planned0 "")
-              (compiler-backend-scavenge-reg-here scratch0-exclude 3 "%r8")
-              planned0))]
+          (if (string.eq planned0 "")
+            (if sse0?
+              (compiler-backend-scavenge-xmm-reg -1 scratch0-exclude 3 "%xmm2")
+              (compiler-backend-scavenge-reg-here scratch0-exclude 3 "%r8"))
+            planned0)]
         [scratch1-exclude : (Array String)
           (compiler-backend-three-exclude scratch0 dst0-reg dst1-reg)]
         [scratch1 : String
-          (if sse1?
-            (compiler-backend-scavenge-xmm-reg -1 scratch1-exclude 3 "%xmm3")
-            (if (string.eq planned1 "")
-              (compiler-backend-scavenge-reg-here scratch1-exclude 3 "%r9")
-              planned1))]
+          (if (string.eq planned1 "")
+            (if sse1?
+              (compiler-backend-scavenge-xmm-reg -1 scratch1-exclude 3 "%xmm3")
+              (compiler-backend-scavenge-reg-here scratch1-exclude 3 "%r9"))
+            planned1)]
         [store0 : CompilerBackendMaybeAsm
           (compiler-backend-emit-pack-word-immediate-store w0 dst0 sse0?)]
         [store1 : CompilerBackendMaybeAsm
@@ -10808,19 +10808,19 @@
                     (let
                       [no-exclude : (Array String) (array.make-array String 0)]
                       [scratch : String
-                        (if is-float
-                          (compiler-backend-scavenge-xmm-reg
-                            dst
-                            no-exclude
-                            0
-                            "%xmm2")
-                          (if (string.eq planned "")
+                        (if (string.eq planned "")
+                          (if is-float
+                            (compiler-backend-scavenge-xmm-reg
+                              dst
+                              no-exclude
+                              0
+                              "%xmm2")
                             (compiler-backend-scavenge-reg
                               dst
                               no-exclude
                               0
-                              "%r8")
-                            planned))]
+                              "%r8"))
+                          planned)]
                       (string.append
                         (compiler-backend-emit-group-word-move
                           operand
@@ -18680,11 +18680,13 @@
     [(= chunk 2) (AstType.U16)]
     [else (AstType.U8)]))
 
-(define (compiler-backend-copy-xmm-scratch [size : i64]) : String
+(define (compiler-backend-copy-xmm-scratch [size : i64] [planned : String]) : String
   (if (>= size 16)
-    (let
-      [no-exclude : (Array String) (make-array String 0)]
-      (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2"))
+    (if (string.eq planned "")
+      (let
+        [no-exclude : (Array String) (make-array String 0)]
+        (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2"))
+      planned)
     ""))
 
 (define (compiler-backend-copy-needs-gp-scratch?
@@ -18847,7 +18849,8 @@
   [protect-n : i64]
   [planned-dst : String]
   [planned-src : String]
-  [planned-value : String]) : ResultCompilerBackend
+  [planned-value : String]
+  [planned-xmm : String]) : ResultCompilerBackend
   (if (<= size 0)
     (ResultCompilerBackend.Ok "")
     (let
@@ -18887,7 +18890,8 @@
                     "%r9")
                   planned-src)
                 src-home)]
-            [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
+            [copy-xmm : String
+              (compiler-backend-copy-xmm-scratch size planned-xmm)]
             [copy-gp-exclude-base : (Array String)
               (compiler-backend-two-exclude dst-reg src-reg)]
             [copy-gp-exclude : (Array String)
@@ -18937,7 +18941,8 @@
   [size : i64]
   [planned-dst : String]
   [planned-src : String]
-  [planned-value : String]) : ResultCompilerBackend
+  [planned-value : String]
+  [planned-xmm : String]) : ResultCompilerBackend
   (let
     [no-protect : (Array String) (make-array String 0)]
     (compiler-backend-emit-copy-bytes-avoid
@@ -18949,7 +18954,8 @@
       0
       planned-dst
       planned-src
-      planned-value)))
+      planned-value
+      planned-xmm)))
 
 (define (compiler-backend-copy-run-protect-value-count
   [assignments : CompilerRegAssignmentList]
@@ -19088,7 +19094,8 @@
   [planned-dst : String]
   [planned-index : String]
   [planned-src : String]
-  [planned-value : String]) : ResultCompilerBackend
+  [planned-value : String]
+  [planned-xmm : String]) : ResultCompilerBackend
   (if (<= size 0)
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-value-as-i64 offset)
@@ -19105,7 +19112,8 @@
           protect-n
           planned-dst
           planned-src
-          planned-value)]
+          planned-value
+          planned-xmm)]
       [(option_i64.None)
         (compiler-backend-emit-copy-bytes-from-gep-dyn
           assignments
@@ -19120,7 +19128,8 @@
           planned-dst
           planned-index
           planned-src
-          planned-value)])))
+          planned-value
+          planned-xmm)])))
 
 ;; Constant-offset fused Gep+CopyBytes. When every chunk address (disp ..
 ;; disp+size) fits imm32 the gep displacement folds into the chunk DST
@@ -19138,7 +19147,8 @@
   [protect-n : i64]
   [planned-dst : String]
   [planned-src : String]
-  [planned-value : String]) : ResultCompilerBackend
+  [planned-value : String]
+  [planned-xmm : String]) : ResultCompilerBackend
   (let
     [near? : bool
       (and
@@ -19200,7 +19210,8 @@
                   "%r9")
                 planned-src)
               src-home)]
-          [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
+          [copy-xmm : String
+            (compiler-backend-copy-xmm-scratch size planned-xmm)]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
               (if (string.eq planned-value "")
@@ -19257,7 +19268,8 @@
   [planned-dst : String]
   [planned-index : String]
   [planned-src : String]
-  [planned-value : String]) : ResultCompilerBackend
+  [planned-value : String]
+  [planned-xmm : String]) : ResultCompilerBackend
   (let
     [scale : i64 (compiler-backend-type-size elem-ty)]
     [base-home : String
@@ -19307,7 +19319,8 @@
                   "%r9")
                 planned-src)
               src-home)]
-          [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
+          [copy-xmm : String
+            (compiler-backend-copy-xmm-scratch size planned-xmm)]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
               (if (string.eq planned-value "")
@@ -19424,6 +19437,11 @@
                 (ResultCompilerBackend.Err message)])))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
+;; Call-argument recursion is shared by direct/indirect emitters; the owning IR
+;; instruction installs its allocator assignment here for that dynamic extent.
+(define compiler-backend-current-c-memory-planned-xmm : String
+  "")
+
 (define (compiler-backend-emit-c-memory-stack-arg
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
@@ -19441,9 +19459,12 @@
           compiler-backend-c-abi-stage-exclude-count
           "%r10")
         planned-stage)]
-    [no-exclude : (Array String) (array.make-array String 0)]
     [copy-xmm : String
-      (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2")]
+      (if (string.eq compiler-backend-current-c-memory-planned-xmm "")
+        (let
+          [no-exclude : (Array String) (array.make-array String 0)]
+          (compiler-backend-scavenge-xmm-reg -1 no-exclude 0 "%xmm2"))
+        compiler-backend-current-c-memory-planned-xmm)]
     (match (compiler-backend-emit-load-value-with-plan
       assignments
       value
@@ -21585,27 +21606,33 @@
             _
             _
             _)
-          (begin
-            (array-set! names index extern-name)
-            (array-set!
-              signatures
-              index
-              (compiler-backend-program-index-extern-signature ty))
-            (array-set!
-              call-infos
-              index
-              (compiler-backend-program-index-extern-call-info ty abi))
-            (compiler-backend-program-index-extern-signatures-into
-              (box-get rest)
-              (compiler-backend-program-index-bind-extern-ids
-                signature-ids
-                extern-name-id
-                source-name-id
-                index)
-              names
-              signatures
-              call-infos
-              (+ index 1)))])]
+          (let
+            [call-info : i64
+              (compiler-backend-program-index-extern-call-info ty abi)]
+            (begin
+              (array-set! names index extern-name)
+              (array-set!
+                signatures
+                index
+                (compiler-backend-program-index-extern-signature ty))
+              (array-set! call-infos index call-info)
+              (if (compiler-backend-extern-call-info-aggregate-params?
+                call-info)
+                (begin
+                  (compiler-reg-add-c-memory-call-name! extern-name-id)
+                  (compiler-reg-add-c-memory-call-name! source-name-id))
+                unit)
+              (compiler-backend-program-index-extern-signatures-into
+                (box-get rest)
+                (compiler-backend-program-index-bind-extern-ids
+                  signature-ids
+                  extern-name-id
+                  source-name-id
+                  index)
+                names
+                signatures
+                call-infos
+                (+ index 1))))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-program-index-extern-signatures-into
         (compiler-ir-extern-seq-to-list seq)
@@ -21924,6 +21951,7 @@
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : CompilerBackendProgramIndex
   (let
+    [_clear-c-memory-calls : unit (compiler-reg-clear-c-memory-call-names!)]
     [function-count : i64 (compiler-backend-function-list-count functions)]
     [extern-count : i64 (compiler-backend-extern-list-count externs)]
     [function-names : (Array String) (array.make-array String function-count)]
@@ -30550,6 +30578,15 @@
         scratch-vreg
         (compiler-backend-scratch-plan-register-here _scratch-plan 4)
         "")]
+    [_c-memory-planned-xmm : unit
+      (set!
+        compiler-backend-current-c-memory-planned-xmm
+        (match instr
+          [(CompilerIrInstr.Call _ _ _ _) planned-scratch1]
+          [(CompilerIrInstr.CallIndirectC _ _ _ _) planned-scratch2]
+          [(CompilerIrInstr.CallCAbiStoreResult _) planned-scratch2]
+          [(CompilerIrInstr.CallIndirectCAbiStoreResult _) planned-scratch2]
+          [_ ""]))]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
     [_reserved-mask : i64
@@ -30645,7 +30682,12 @@
           size
           planned-scratch0
           planned-scratch1
-          planned-scratch2)
+          (if (>= size 16)
+            planned-scratch3
+            planned-scratch2)
+          (if (>= size 16)
+            planned-scratch2
+            ""))
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -36508,7 +36550,15 @@
                                 (compiler-backend-scratch-plan-register-ahead
                                   (compiler-backend-runtime-plan-scratch plan)
                                   1
-                                  2))
+                                  (if (>= copy-size 16)
+                                    3
+                                    2))
+                                (if (>= copy-size 16)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch plan)
+                                    1
+                                    2)
+                                  ""))
                               (box-get after-load)
                               assignments
                               vars
@@ -36916,7 +36966,15 @@
                                 (compiler-backend-scratch-plan-register-ahead
                                   (compiler-backend-runtime-plan-scratch plan)
                                   1
-                                  2))
+                                  (if (>= copy-size 16)
+                                    3
+                                    2))
+                                (if (>= copy-size 16)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch plan)
+                                    1
+                                    2)
+                                  ""))
                               (box-get after-gep)
                               assignments
                               vars
@@ -37056,7 +37114,15 @@
                 (compiler-backend-scratch-plan-register-ahead
                   (compiler-backend-runtime-plan-scratch plan)
                   0
-                  2))
+                  (if (>= size 16)
+                    3
+                    2))
+                (if (>= size 16)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch plan)
+                    0
+                    2)
+                  ""))
               (box-get rest)
               assignments
               vars

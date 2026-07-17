@@ -21847,6 +21847,24 @@
       CompilerRegAssignmentList.Nil)))
 
 (define (compiler-backend-scratch-vreg-aggregate-test-blocks) : CompilerIrBlockList
+  (let
+    [ty : AstType (AstType.Struct (ci.intern "ScratchMixedAggregate"))]
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Pack
+            2
+            (compiler-ir-value-cons
+              (CompilerIrValue.Var 0)
+              (compiler-ir-value-cons
+                (CompilerIrValue.Var 1)
+                CompilerIrValueList.Nil))
+            ty)
+          CompilerIrInstrList.Nil))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-scratch-vreg-aggregate-gp-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
       "entry"
@@ -21866,16 +21884,104 @@
         CompilerIrInstrList.Nil))
     CompilerIrBlockList.Nil))
 
+(define (compiler-backend-scratch-vreg-aggregate-test-index) : CompilerBackendProgramIndex
+  (let
+    [ty : AstType (AstType.Struct (ci.intern "ScratchMixedAggregate"))]
+    (compiler-backend-program-index-build
+      (compiler-ir-function-cons
+        (CompilerIrFunction.Function
+          (ci.intern "scratch_mixed_aggregate_index")
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          1
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Pack
+                  0
+                  (compiler-ir-value-cons
+                    (CompilerIrValue.F64 (compiler-backend-test-f64-bits "1.0"))
+                    (compiler-ir-value-cons
+                      (CompilerIrValue.I64 2)
+                      CompilerIrValueList.Nil))
+                  ty)
+                CompilerIrInstrList.Nil))
+            CompilerIrBlockList.Nil))
+        CompilerIrFunctionList.Nil)
+      CompilerIrExternList.Nil)))
+
 (define (compiler-backend-scratch-vreg-aggregate-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r10"))
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm4"))
     (compiler-reg-assignment-cons
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
           2
-          (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+          (CompilerRegLocation.RegisterPair "%xmm6" "%r13"))
         CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-scratch-vreg-copy-xmm-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.CopyBytes
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          24)
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-copy-xmm-exact-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.CopyBytes
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          16)
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-c-memory-test-blocks [name : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Call
+          1
+          name
+          (CompilerIrCallArgs.Array
+            (make-array
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 24)
+              (CompilerIrValue.Unit)))
+          (AstType.Unit))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-c-memory-indirect-test-blocks
+  [with-marker : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.CallIndirectC
+          1
+          (CompilerIrValue.Var 2)
+          (if with-marker
+            (CompilerIrCallArgs.Array
+              (make-array
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.I64 24)
+                (CompilerIrValue.Unit)))
+            (CompilerIrCallArgs.One (CompilerIrValue.Var 0)))
+          (AstType.Unit))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
 
 (define (compiler-backend-scratch-vreg-phi-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -22109,29 +22215,49 @@
   (cfg
     scratch-vreg
     (let
+      [index : CompilerBackendProgramIndex
+        (compiler-backend-scratch-vreg-aggregate-test-index)]
+      [_counts : unit
+        (compiler-reg-set-group-counts! (struct-get index group-word-counts))]
+      [_masks : unit
+        (compiler-reg-set-group-class-masks!
+          (struct-get index group-word-class-masks))]
       [result : CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
           "scratch_vreg_aggregate"
           (compiler-backend-scratch-vreg-aggregate-test-blocks)
           3
           (compiler-backend-scratch-vreg-aggregate-test-assignments))]
+      [gp-result : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_aggregate_gp"
+          (compiler-backend-scratch-vreg-aggregate-gp-test-blocks)
+          3
+          (compiler-backend-scratch-vreg-aggregate-test-assignments))]
       [reg0 : String (compiler-backend-scratch-test-register result 0)]
       [reg1 : String (compiler-backend-scratch-test-register result 1)]
+      [gp0 : String (compiler-backend-scratch-test-register gp-result 0)]
+      [gp1 : String (compiler-backend-scratch-test-register gp-result 1)]
       (and
         (= (compiler-backend-scratch-test-plan-count result) 2)
         (= (compiler-backend-scratch-test-success-count result) 2)
-        (not (string.eq reg0 ""))
+        (compiler-backend-string-prefix-at? reg0 "%xmm" 0)
         (not (string.eq reg1 ""))
         (not (string.eq reg0 reg1))
         (not (string.eq reg0 "%r8"))
-        (not (string.eq reg0 "%r10"))
-        (not (string.eq reg0 "%r11"))
-        (not (string.eq reg0 "%r12"))
-        (not (string.eq reg0 "%r13"))
+        (not (string.eq reg0 "%xmm4"))
+        (not (string.eq reg0 "%xmm6"))
+        (not (string.eq reg1 "%r8"))
         (not (string.eq reg1 "%r10"))
         (not (string.eq reg1 "%r11"))
-        (not (string.eq reg1 "%r12"))
         (not (string.eq reg1 "%r13"))
+        (= (compiler-backend-scratch-test-plan-count gp-result) 2)
+        (= (compiler-backend-scratch-test-success-count gp-result) 2)
+        (not (string.eq gp0 ""))
+        (not (string.eq gp1 ""))
+        (not (string.eq gp0 gp1))
+        (not (compiler-backend-string-prefix-at? gp0 "%xmm" 0))
+        (not (compiler-backend-string-prefix-at? gp1 "%xmm" 0))
         (match result
           [(CompilerRegScratchPlanResult.Result _ plan)
             (and
@@ -22141,9 +22267,23 @@
                 [(CompilerRegScratchRole.AggregateWord) true]
                 [_ false])
               (match (struct-get
+                (struct-get
+                  (struct-get (array-ref (struct-get plan items) 0) requirement)
+                  constraint)
+                register-class)
+                [(CompilerRegScratchClass.Xmm) true]
+                [_ false])
+              (match (struct-get
                 (struct-get (array-ref (struct-get plan items) 1) requirement)
                 role)
                 [(CompilerRegScratchRole.AggregateWord) true]
+                [_ false])
+              (match (struct-get
+                (struct-get
+                  (struct-get (array-ref (struct-get plan items) 1) requirement)
+                  constraint)
+                register-class)
+                [(CompilerRegScratchClass.Gp) true]
                 [_ false]))])))
     true))
 
@@ -22358,7 +22498,8 @@
                         7
                         "%r12"
                         "%r13"
-                        "%r14")
+                        "%r14"
+                        "")
                         [(ResultCompilerBackend.Ok copy)
                           (match (compiler-backend-emit-bounds-check
                             (CompilerBackendTarget.Linux)
@@ -22400,6 +22541,89 @@
                 [(ResultCompilerBackend.Err _) false])]
             [(ResultCompilerBackend.Err _) false])]
         [(ResultCompilerBackend.Err _) false]))
+    true))
+
+(define (compiler-backend-scratch-vreg-aggregate-copy-c-emission-uses-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                2
+                (CompilerRegLocation.Spill -24))
+              CompilerRegAssignmentList.Nil)))]
+      [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+      [pack : ResultCompilerBackend
+        (compiler-backend-emit-pack-words
+          assignments
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          "-24(%rbp)"
+          "-32(%rbp)"
+          true
+          false
+          "%xmm14"
+          "%r15"
+          diag)]
+      [word : ResultCompilerBackend
+        (compiler-backend-emit-word
+          assignments
+          2
+          (CompilerIrValue.Var 0)
+          0
+          (AstType.F64)
+          3
+          "%xmm13"
+          diag)]
+      [copy : ResultCompilerBackend
+        (compiler-backend-emit-copy-bytes
+          assignments
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          24
+          "%r12"
+          "%r13"
+          "%r14"
+          "%xmm12")]
+      [c-memory : ResultCompilerBackend
+        (begin
+          (set! compiler-backend-current-c-memory-planned-xmm "%xmm11")
+          (compiler-backend-emit-c-memory-stack-arg
+            (CompilerBackendTarget.Linux)
+            assignments
+            (CompilerIrValue.Var 0)
+            0
+            24
+            "%r14"))]
+      [_reset-c-memory : unit
+        (set! compiler-backend-current-c-memory-planned-xmm "")]
+      (and
+        (compiler-backend-scratch-vreg-result-contains?
+          pack
+          "    movsd -8(%rbp), %xmm14\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          pack
+          "    movq -16(%rbp), %r15\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          word
+          "    movsd -8(%rbp), %xmm13\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          copy
+          "    movups (%r13), %xmm12\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          copy
+          "    movups %xmm12, (%r12)\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          c-memory
+          "    movups (%r14), %xmm11\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          c-memory
+          "    movups %xmm11, 0(%rsp)\n")))
     true))
 
 (define (compiler-backend-scratch-vreg-future-window-ok?) : bool
@@ -22517,6 +22741,168 @@
         (not (string.eq src "%r10"))
         (not (string.eq value "%r9"))
         (not (string.eq value "%r10"))))
+    true))
+
+(define (compiler-backend-scratch-vreg-copy-xmm-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-memory-test-assignments)]
+      [linux : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Linux)
+          "scratch_vreg_copy_xmm_linux"
+          (compiler-backend-scratch-vreg-copy-xmm-test-blocks)
+          2
+          assignments)]
+      [windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Windows)
+          "scratch_vreg_copy_xmm_windows"
+          (compiler-backend-scratch-vreg-copy-xmm-test-blocks)
+          2
+          assignments)]
+      [exact : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_copy_xmm_exact"
+          (compiler-backend-scratch-vreg-copy-xmm-exact-test-blocks)
+          2
+          assignments)]
+      (and
+        (= (compiler-backend-scratch-test-plan-count linux) 4)
+        (= (compiler-backend-scratch-test-success-count linux) 4)
+        (= (compiler-backend-scratch-test-plan-count windows) 4)
+        (= (compiler-backend-scratch-test-success-count windows) 4)
+        (= (compiler-backend-scratch-test-plan-count exact) 3)
+        (= (compiler-backend-scratch-test-success-count exact) 3)
+        (compiler-backend-string-prefix-at?
+          (compiler-backend-scratch-test-register linux 2)
+          "%xmm"
+          0)
+        (compiler-backend-string-prefix-at?
+          (compiler-backend-scratch-test-register windows 2)
+          "%xmm"
+          0)
+        (compiler-backend-string-prefix-at?
+          (compiler-backend-scratch-test-register exact 2)
+          "%xmm"
+          0)
+        (match linux
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (let
+              [requirement : CompilerRegScratchRequirement
+                (struct-get (array-ref (struct-get plan items) 2) requirement)]
+              (and
+                (match (struct-get requirement role)
+                  [(CompilerRegScratchRole.CopyValueXmm) true]
+                  [_ false])
+                (match (struct-get
+                  (struct-get requirement constraint)
+                  register-class)
+                  [(CompilerRegScratchClass.Xmm) true]
+                  [_ false])))])))
+    true))
+
+(define (compiler-backend-scratch-vreg-c-memory-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [name : i64 (ci.intern "scratch_c_memory_arg")]
+      [aggregate-ty : AstType
+        (AstType.Struct (ci.intern "ScratchCMemoryAggregate"))]
+      [externs : CompilerIrExternList
+        (compiler-ir-extern-cons
+          (compiler-backend-non-direct-tail-call-extern
+            name
+            "scratch_c_memory_arg"
+            name
+            (ast-type-cons aggregate-ty (ast-type-list-new))
+            (AstType.Unit)
+            (AstExternAbi.C))
+          CompilerIrExternList.Nil)]
+      [_index : CompilerBackendProgramIndex
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          externs)]
+      [assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%r11"))
+            CompilerRegAssignmentList.Nil))]
+      [blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-c-memory-test-blocks name)]
+      [linux : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Linux)
+          "scratch_c_memory_linux"
+          blocks
+          3
+          assignments)]
+      [windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Windows)
+          "scratch_c_memory_windows"
+          blocks
+          3
+          assignments)]
+      [indirect-linux : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Linux)
+          "scratch_c_memory_indirect_linux"
+          (compiler-backend-scratch-vreg-c-memory-indirect-test-blocks true)
+          3
+          assignments)]
+      [indirect-windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Windows)
+          "scratch_c_memory_indirect_windows"
+          (compiler-backend-scratch-vreg-c-memory-indirect-test-blocks true)
+          3
+          assignments)]
+      [indirect-no-marker : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Linux)
+          "scratch_c_memory_indirect_no_marker"
+          (compiler-backend-scratch-vreg-c-memory-indirect-test-blocks false)
+          3
+          assignments)]
+      (and
+        (= (compiler-backend-scratch-test-plan-count linux) 2)
+        (= (compiler-backend-scratch-test-success-count linux) 2)
+        (= (compiler-backend-scratch-test-plan-count windows) 1)
+        (= (compiler-backend-scratch-test-success-count windows) 1)
+        (= (compiler-backend-scratch-test-plan-count indirect-linux) 3)
+        (= (compiler-backend-scratch-test-success-count indirect-linux) 3)
+        (= (compiler-backend-scratch-test-plan-count indirect-windows) 2)
+        (= (compiler-backend-scratch-test-success-count indirect-windows) 2)
+        (= (compiler-backend-scratch-test-plan-count indirect-no-marker) 2)
+        (= (compiler-backend-scratch-test-success-count indirect-no-marker) 2)
+        (compiler-backend-string-prefix-at?
+          (compiler-backend-scratch-test-register linux 1)
+          "%xmm"
+          0)
+        (compiler-backend-string-prefix-at?
+          (compiler-backend-scratch-test-register indirect-linux 2)
+          "%xmm"
+          0)
+        (match linux
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (let
+              [requirement : CompilerRegScratchRequirement
+                (struct-get (array-ref (struct-get plan items) 1) requirement)]
+              (and
+                (match (struct-get requirement role)
+                  [(CompilerRegScratchRole.CallMemoryXmm) true]
+                  [_ false])
+                (match (struct-get
+                  (struct-get requirement constraint)
+                  register-class)
+                  [(CompilerRegScratchClass.Xmm) true]
+                  [_ false])))])))
     true))
 
 (define (compiler-backend-scratch-vreg-float-memory-result-ok?
@@ -24029,10 +24415,13 @@
         (compiler-backend-scratch-vreg-phi-plan-ok?)
         (compiler-backend-scratch-vreg-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-memory-emission-uses-plan-ok?)
+        (compiler-backend-scratch-vreg-aggregate-copy-c-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-future-window-ok?)
         (compiler-backend-scratch-vreg-c-abi-return-plan-ok?)
         (compiler-backend-scratch-vreg-bounds-plan-ok?)
         (compiler-backend-scratch-vreg-memory-plan-ok?)
+        (compiler-backend-scratch-vreg-copy-xmm-plan-ok?)
+        (compiler-backend-scratch-vreg-c-memory-plan-ok?)
         (compiler-backend-scratch-vreg-float-memory-plan-ok?)
         (compiler-backend-scratch-vreg-float-memory-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)

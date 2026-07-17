@@ -14,6 +14,7 @@
 ;# ```
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.text_buf)
 
 ;: Assert that `condition` is true, panicking with `message` when it is false.
 (define (assert-true [condition : bool] [message : String]) : unit
@@ -25,28 +26,64 @@
 (define (assert-false [condition : bool] [message : String]) : unit
   (assert-true (not condition) message))
 
+;: Panic with a consistently rendered equality failure.
+(define (assert-eq-failure
+  [actual : String]
+  [expected : String]
+  [message : String]) : never
+  (io.panic (string.concat5 message ": expected " expected ", found " actual)))
+
 ;: Assert that two bool values are equal.
 ;:
 ;: Successful assertions do not allocate. Failures call `panic` with the
-;: caller-provided message.
+;: caller-provided message plus the expected and actual values.
 (define (assert-bool-eq [actual : bool] [expected : bool] [message : String]) : unit
-  (assert-true (= actual expected) message))
+  (if (= actual expected)
+    unit
+    (assert-eq-failure
+      (if actual
+        "true"
+        "false")
+      (if expected
+        "true"
+        "false")
+      message)))
 
 ;: Assert that two i64 values are equal.
 (define (assert-i64-eq [actual : i64] [expected : i64] [message : String]) : unit
-  (assert-true (= actual expected) message))
+  (if (= actual expected)
+    unit
+    (assert-eq-failure
+      (string.int->string actual)
+      (string.int->string expected)
+      message)))
 
 ;: Assert that two i32 values are equal.
 (define (assert-i32-eq [actual : i32] [expected : i32] [message : String]) : unit
-  (assert-true (= actual expected) message))
+  (if (= actual expected)
+    unit
+    (assert-eq-failure
+      (string.int->string (cast actual : i64))
+      (string.int->string (cast expected : i64))
+      message)))
 
 ;: Assert that two f64 values are equal.
 (define (assert-f64-eq [actual : f64] [expected : f64] [message : String]) : unit
-  (assert-true (= actual expected) message))
+  (if (= actual expected)
+    unit
+    (assert-eq-failure
+      (io.format-float-core actual)
+      (io.format-float-core expected)
+      message)))
 
 ;: Assert that two char values have the same scalar code.
 (define (assert-char-eq [actual : char] [expected : char] [message : String]) : unit
-  (assert-true (= (cast actual : i64) (cast expected : i64)) message))
+  (if (= (cast actual : i64) (cast expected : i64))
+    unit
+    (assert-eq-failure
+      (string.concat3 "'" (text_buf.char-string actual) "'")
+      (string.concat3 "'" (text_buf.char-string expected) "'")
+      message)))
 
 ;: Assert that two borrowed text values compare equal without allocating on success.
 ;:
@@ -65,7 +102,12 @@
   [actual : (& actual str)]
   [expected : (& expected str)]
   [message : String]) : unit
-  (assert-true (string.eq actual expected) message))
+  (if (string.eq actual expected)
+    unit
+    (assert-eq-failure
+      (string.concat3 "\"" (string.copy actual) "\"")
+      (string.concat3 "\"" (string.copy expected) "\"")
+      message)))
 
 (test
   test-assert-success

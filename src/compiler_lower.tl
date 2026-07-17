@@ -355,6 +355,14 @@
   (Array i64 CompilerIrVectorReduceOp AstType i64)
   (Value LowerVectorMapValue CompilerIrVectorReduceOp AstType i64))
 
+;; Reduction addend split plan for scalar `sum` lowering: `Split x-id u-id`
+;; accumulates only the varying addend `x-id` (an expr-pool id) per iteration
+;; and adds `(* trip-count u)` once after the loop, where `u-id` is the
+;; reduction-invariant addend's variable id.
+(defenum LowerMaybeReduceSplit
+  (No)
+  (Split i64 i64))
+
 (defstruct LowerArrayVarSet
   (vars (Array i64))
   (offsets (Array i64))
@@ -17236,6 +17244,12 @@
 (define (lower-spmd-reduce-current-id) : i64
   (lower-private-name-id 6 0))
 
+(define (lower-spmd-reduce-start-id) : i64
+  (lower-private-name-id 15 0))
+
+(define (lower-spmd-reduce-uniform-id) : i64
+  (lower-private-name-id 16 0))
+
 (define (lower-spmd-scan-acc-id) : i64
   (lower-private-name-id 7 0))
 
@@ -33252,6 +33266,274 @@
     [(AstReduceOp.Max)
       (spmd-reduce-acc-select-update pools (AstBinOp.Gt) value)]))
 
+;; Conservative scan used by the reduction addend split: does `expr` write
+;; `name` (`set!`) anywhere, or rebind `name` with a `let` binding? Either one
+;; means a `Var name` read at the top of the reduce value cannot be hoisted out
+;; of the loop as-is. Variants that are not explicitly walked (match, nested
+;; loops/comprehensions, quotes, region/escape blocks, ...) bail out with
+;; `true` so the split simply does not fire on exotic value expressions.
+(define (lower-spmd-reduce-expr-writes-id?
+  [ctx : TcContext]
+  [name : i64]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
+    [(AstExpr.Ann inner-box _)
+      (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
+    [(AstExpr.Cast inner-box _)
+      (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
+    [(AstExpr.Borrow _ _ inner-box)
+      (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
+    [(AstExpr.Unary _ inner-box)
+      (lower-spmd-reduce-node-writes-id? ctx name inner-box)]
+    [(AstExpr.Binary _ left-box right-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name left-box)
+        (lower-spmd-reduce-node-writes-id? ctx name right-box))]
+    [(AstExpr.Call func-box args)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name func-box)
+        (lower-spmd-reduce-expr-list-writes-id? ctx name args))]
+    [(AstExpr.BracketClause items)
+      (lower-spmd-reduce-expr-list-writes-id? ctx name items)]
+    [(AstExpr.If cond-box then-box else-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name cond-box)
+        (lower-spmd-reduce-node-writes-id? ctx name then-box)
+        (lower-spmd-reduce-node-writes-id? ctx name else-box))]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body-box)
+          (or
+            (lower-spmd-reduce-let-bindings-write-id? ctx name bindings)
+            (lower-spmd-reduce-node-writes-id? ctx name body-box))])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda _ _ body-box)
+          (lower-spmd-reduce-node-writes-id? ctx name body-box)])]
+    [(AstExpr.Tuple exprs)
+      (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
+    [(AstExpr.Array exprs)
+      (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
+    [(AstExpr.DynArray exprs)
+      (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
+    [(AstExpr.TupleRef tuple-box index-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name tuple-box)
+        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
+    [(AstExpr.MakeArray _ len-box)
+      (lower-spmd-reduce-node-writes-id? ctx name len-box)]
+    [(AstExpr.ArrayRef array-box index-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name array-box)
+        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
+    [(AstExpr.ArraySet array-box index-box value-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name array-box)
+        (lower-spmd-reduce-node-writes-id? ctx name index-box)
+        (lower-spmd-reduce-node-writes-id? ctx name value-box))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name array-box)
+        (lower-spmd-reduce-node-writes-id? ctx name live-box)
+        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
+    [(AstExpr.ArrayPush array-box value-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name array-box)
+        (lower-spmd-reduce-node-writes-id? ctx name value-box))]
+    [(AstExpr.StringRef string-box index-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name string-box)
+        (lower-spmd-reduce-node-writes-id? ctx name index-box))]
+    [(AstExpr.While cond-box body-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name cond-box)
+        (lower-spmd-reduce-node-writes-id? ctx name body-box))]
+    [(AstExpr.Begin exprs)
+      (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
+    [(AstExpr.Unsafe exprs)
+      (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
+    [(AstExpr.Set set-name value-box)
+      (or
+        (= set-name name)
+        (lower-spmd-reduce-node-writes-id? ctx name value-box))]
+    [(AstExpr.StructGet target-box _)
+      (lower-spmd-reduce-node-writes-id? ctx name target-box)]
+    [(AstExpr.StructSet target-box _ value-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name target-box)
+        (lower-spmd-reduce-node-writes-id? ctx name value-box))]
+    [(AstExpr.Box value-box)
+      (lower-spmd-reduce-node-writes-id? ctx name value-box)]
+    [(AstExpr.BoxGet value-box)
+      (lower-spmd-reduce-node-writes-id? ctx name value-box)]
+    [(AstExpr.BoxTake value-box)
+      (lower-spmd-reduce-node-writes-id? ctx name value-box)]
+    [(AstExpr.BoxSet target-box value-box)
+      (or
+        (lower-spmd-reduce-node-writes-id? ctx name target-box)
+        (lower-spmd-reduce-node-writes-id? ctx name value-box))]
+    [(AstExpr.Literal _) false]
+    [(AstExpr.Var _) false]
+    [_ true]))
+
+(define (lower-spmd-reduce-node-writes-id?
+  [ctx : TcContext]
+  [name : i64]
+  [id : i64]) : bool
+  (lower-spmd-reduce-expr-writes-id? ctx name (lower-context-expr-get ctx id)))
+
+(define (lower-spmd-reduce-expr-list-writes-id?
+  [ctx : TcContext]
+  [name : i64]
+  [exprs : AstExprList]) : bool
+  (lower-spmd-reduce-expr-list-writes-id-at? ctx name (& exprs) 0))
+
+(define (lower-spmd-reduce-expr-list-writes-id-at?
+  [ctx : TcContext]
+  [name : i64]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]) : bool
+  (if (>= expr-index (struct-get exprs len))
+    false
+    (or
+      (lower-spmd-reduce-node-writes-id?
+        ctx
+        name
+        (ast-expr-list-get exprs expr-index 0))
+      (lower-spmd-reduce-expr-list-writes-id-at?
+        ctx
+        name
+        exprs
+        (+ expr-index 1)))))
+
+;; A `let` binding list blocks the split when it rebinds `name` (a `Var name`
+;; read inside would no longer mean the outer variable) or when any binding
+;; init writes `name`.
+(define (lower-spmd-reduce-let-bindings-write-id?
+  [ctx : TcContext]
+  [name : i64]
+  [bindings : AstLetBindingList]) : bool
+  (lower-spmd-reduce-let-bindings-write-id-at? ctx name (& bindings) 0))
+
+(define (lower-spmd-reduce-let-bindings-write-id-at?
+  [ctx : TcContext]
+  [name : i64]
+  [bindings : (& bindings AstLetBindingList)]
+  [binding-index : i64]) : bool
+  (if (>= binding-index (ast-let-binding-list-len bindings))
+    false
+    (or
+      (match (ast-let-binding-list-get
+        bindings
+        binding-index
+        (ast-let-binding-fallback))
+        [(AstLetBinding.Binding bind-name _ init-box)
+          (or
+            (= bind-name name)
+            (lower-spmd-reduce-node-writes-id? ctx name init-box))])
+      (lower-spmd-reduce-let-bindings-write-id-at?
+        ctx
+        name
+        bindings
+        (+ binding-index 1)))))
+
+;; Strip `Spanned`/`Ann` wrappers to see the syntactic head of an expression
+;; (mirrors the unwrapping in `lower-simple-vector-reduce`).
+(define (lower-spmd-reduce-split-unwrap [ctx : TcContext] [expr : AstExpr]) : AstExpr
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-spmd-reduce-split-unwrap
+        ctx
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Ann inner-box _)
+      (lower-spmd-reduce-split-unwrap
+        ctx
+        (lower-context-expr-get ctx inner-box))]
+    [_ expr]))
+
+;; If `operand` (an expr-pool id) is a plain variable reference that is
+;; invariant across the reduction, return its id; otherwise -1. Invariant
+;; here means: not the loop index, never `set!` inside the whole value
+;; expression, and never rebound by a `let` inside it. A `Var` read is pure,
+;; so hoisting it out of the loop is then unobservable.
+(define (lower-spmd-reduce-split-uniform-var
+  [ctx : TcContext]
+  [index-id : i64]
+  [value : AstExpr]
+  [operand : i64]) : i64
+  (match (lower-spmd-reduce-split-unwrap
+    ctx
+    (lower-context-expr-get ctx operand))
+    [(AstExpr.Var u-id)
+      (if (and
+        (not (= u-id index-id))
+        (not (lower-spmd-reduce-expr-writes-id? ctx u-id value)))
+        u-id
+        (- 0 1))]
+    [_ (- 0 1)]))
+
+;; Reduction addend split matcher: recognize a scalar `sum` reduce whose value
+;; is `(+ X U)` (either operand order) with `U` a reduction-invariant variable
+;; and an i64/u64 accumulator whose type matches the loop index type (the exit
+;; trip count is computed in the index type, so the split stays within one
+;; wrapping integer type). Returns `Split x-id u-id` with the varying addend's
+;; expr-pool id and the uniform addend's variable id.
+(define (lower-spmd-reduce-split-addend
+  [ctx : TcContext]
+  [op : AstReduceOp]
+  [acc-ty : AstType]
+  [index-id : i64]
+  [index-ty : AstType]
+  [value : AstExpr]) : LowerMaybeReduceSplit
+  (match op
+    [(AstReduceOp.Sum)
+      (match acc-ty
+        [(AstType.I64)
+          (lower-spmd-reduce-split-addend-typed
+            ctx
+            acc-ty
+            index-id
+            index-ty
+            value)]
+        [(AstType.U64)
+          (lower-spmd-reduce-split-addend-typed
+            ctx
+            acc-ty
+            index-id
+            index-ty
+            value)]
+        [_ (LowerMaybeReduceSplit.No)])]
+    [_ (LowerMaybeReduceSplit.No)]))
+
+(define (lower-spmd-reduce-split-addend-typed
+  [ctx : TcContext]
+  [acc-ty : AstType]
+  [index-id : i64]
+  [index-ty : AstType]
+  [value : AstExpr]) : LowerMaybeReduceSplit
+  (if (not (tc-type-eq (tc-type-without-regions index-ty) acc-ty))
+    (LowerMaybeReduceSplit.No)
+    (match (lower-spmd-reduce-split-unwrap ctx value)
+      [(AstExpr.Binary (AstBinOp.Add) left-box right-box)
+        (let
+          [left-uniform : i64
+            (lower-spmd-reduce-split-uniform-var ctx index-id value left-box)]
+          (if (>= left-uniform 0)
+            (LowerMaybeReduceSplit.Split right-box left-uniform)
+            (let
+              [right-uniform : i64
+                (lower-spmd-reduce-split-uniform-var
+                  ctx
+                  index-id
+                  value
+                  right-box)]
+              (if (>= right-uniform 0)
+                (LowerMaybeReduceSplit.Split left-box right-uniform)
+                (LowerMaybeReduceSplit.No)))))]
+      [_ (LowerMaybeReduceSplit.No)])))
+
 ;; Scalar `spmd-reduce` loop scaffold: desugar to an accumulator loop and
 ;; reuse the let/while/set lowering. `acc`/`end`/index are bound once before the
 ;; loop (so `init`/`end`/`start` evaluate exactly once); an empty range returns
@@ -33261,6 +33543,22 @@
 ;;   (spmd-reduce <op> ([i : ty start end]) init value)
 ;;     === (let [acc : result-ty init] [end' end] [i start]
 ;;           (begin (while (< i end') (begin <acc-update> (set! i (+ i 1)))) acc))
+;; With a `LowerMaybeReduceSplit.Split` plan (a `sum` over `(+ X U)` with a
+;; reduction-invariant `U`, see `lower-spmd-reduce-split-addend`) the scaffold
+;; additionally binds `start'` and the hoisted uniform addend `u'`, the
+;; accumulator update adds only `X`, and the loop tail returns
+;; `(+ acc (* (- i start') u'))`:
+;;     === (let [acc : result-ty init] [end' end] [start' start] [i start']
+;;             [u' U]
+;;           (begin
+;;             (while (< i end') (begin <acc-update-X> (set! i (+ i 1))))
+;;             (+ acc (* (- i start') u'))))
+;; Exactness: `i` counts up by one per trip, so `(- i start')` after the loop
+;; is the trip count n (0 for an empty range), and over wrapping i64/u64
+;; arithmetic `init + Σ_k (X_k + U) == init + Σ_k X_k + n*U` because wrapping
+;; `+` and `*` are the mod-2^64 ring operations. `u'` reads `U` once before
+;; the loop; that is unobservable because a `Var` read is pure and the split
+;; plan guarantees `U` is never written inside the value expression.
 (define (lower-spmd-reduce-scaffold
   [ctx : TcContext]
   [state : LowerState]
@@ -33274,72 +33572,141 @@
   [end : AstExpr]
   [init : AstExpr]
   [acc-ty : AstType]
-  [acc-update : i64]) : ResultLowerExpr
+  [acc-update : i64]
+  [split : LowerMaybeReduceSplit]) : ResultLowerExpr
   (let
     [pools : AstNodePoolContext (tc-context-pools ctx)]
-    [root-id : i64
-      (ast-expr-let-with-pools
+    [loop-id : i64
+      (ast-expr-while-with-pools
         pools
-        (ast-let-binding-cons
-          (ast-let-binding-id
-            (lower-spmd-reduce-acc-id)
-            (AstMaybeType.Some acc-ty)
-            (ast-node-pool-context-expr-push pools init))
-          (ast-let-binding-cons
-            (ast-let-binding-id
-              (lower-spmd-reduce-end-id)
-              (AstMaybeType.Some index-ty)
-              (ast-node-pool-context-expr-push pools end))
-            (ast-let-binding-cons
-              (ast-let-binding-id
-                index-id
-                (AstMaybeType.Some index-ty)
-                (ast-node-pool-context-expr-push pools start))
-              (ast-let-binding-list-new))))
+        (ast-expr-binary-with-pools
+          pools
+          (AstBinOp.Lt)
+          (ast-node-pool-context-expr-push pools (AstExpr.Var index-id))
+          (ast-node-pool-context-expr-push
+            pools
+            (AstExpr.Var (lower-spmd-reduce-end-id))))
         (ast-node-pool-context-expr-push
           pools
           (AstExpr.Begin
             (ast-expr-cons
-              (ast-expr-while-with-pools
-                pools
-                (ast-expr-binary-with-pools
-                  pools
-                  (AstBinOp.Lt)
-                  (ast-node-pool-context-expr-push pools (AstExpr.Var index-id))
-                  (ast-node-pool-context-expr-push
-                    pools
-                    (AstExpr.Var (lower-spmd-reduce-end-id))))
-                (ast-node-pool-context-expr-push
-                  pools
-                  (AstExpr.Begin
-                    (ast-expr-cons
-                      acc-update
-                      (ast-expr-cons
-                        (ast-expr-set-id-with-pools
-                          pools
-                          index-id
-                          (ast-expr-binary-with-pools
-                            pools
-                            (AstBinOp.Add)
-                            (ast-node-pool-context-expr-push
-                              pools
-                              (AstExpr.Var index-id))
-                            (ast-node-pool-context-expr-push
-                              pools
-                              (AstExpr.Literal (ast-lit-int 1)))))
-                        (ast-expr-list-new))))))
+              acc-update
               (ast-expr-cons
-                (ast-node-pool-context-expr-push
+                (ast-expr-set-id-with-pools
                   pools
-                  (AstExpr.Var (lower-spmd-reduce-acc-id)))
+                  index-id
+                  (ast-expr-binary-with-pools
+                    pools
+                    (AstBinOp.Add)
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Var index-id))
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Literal (ast-lit-int 1)))))
                 (ast-expr-list-new))))))]
+    [root-id : i64
+      (match split
+        [(LowerMaybeReduceSplit.Split _ u-id)
+          (ast-expr-let-with-pools
+            pools
+            (ast-let-binding-cons
+              (ast-let-binding-id
+                (lower-spmd-reduce-acc-id)
+                (AstMaybeType.Some acc-ty)
+                (ast-node-pool-context-expr-push pools init))
+              (ast-let-binding-cons
+                (ast-let-binding-id
+                  (lower-spmd-reduce-end-id)
+                  (AstMaybeType.Some index-ty)
+                  (ast-node-pool-context-expr-push pools end))
+                (ast-let-binding-cons
+                  (ast-let-binding-id
+                    (lower-spmd-reduce-start-id)
+                    (AstMaybeType.Some index-ty)
+                    (ast-node-pool-context-expr-push pools start))
+                  (ast-let-binding-cons
+                    (ast-let-binding-id
+                      index-id
+                      (AstMaybeType.Some index-ty)
+                      (ast-node-pool-context-expr-push
+                        pools
+                        (AstExpr.Var (lower-spmd-reduce-start-id))))
+                    (ast-let-binding-cons
+                      (ast-let-binding-id
+                        (lower-spmd-reduce-uniform-id)
+                        (AstMaybeType.No)
+                        (ast-node-pool-context-expr-push
+                          pools
+                          (AstExpr.Var u-id)))
+                      (ast-let-binding-list-new))))))
+            (ast-node-pool-context-expr-push
+              pools
+              (AstExpr.Begin
+                (ast-expr-cons
+                  loop-id
+                  (ast-expr-cons
+                    (ast-expr-binary-with-pools
+                      pools
+                      (AstBinOp.Add)
+                      (ast-node-pool-context-expr-push
+                        pools
+                        (AstExpr.Var (lower-spmd-reduce-acc-id)))
+                      (ast-expr-binary-with-pools
+                        pools
+                        (AstBinOp.Mul)
+                        (ast-expr-binary-with-pools
+                          pools
+                          (AstBinOp.Sub)
+                          (ast-node-pool-context-expr-push
+                            pools
+                            (AstExpr.Var index-id))
+                          (ast-node-pool-context-expr-push
+                            pools
+                            (AstExpr.Var (lower-spmd-reduce-start-id))))
+                        (ast-node-pool-context-expr-push
+                          pools
+                          (AstExpr.Var (lower-spmd-reduce-uniform-id)))))
+                    (ast-expr-list-new))))))]
+        [_
+          (ast-expr-let-with-pools
+            pools
+            (ast-let-binding-cons
+              (ast-let-binding-id
+                (lower-spmd-reduce-acc-id)
+                (AstMaybeType.Some acc-ty)
+                (ast-node-pool-context-expr-push pools init))
+              (ast-let-binding-cons
+                (ast-let-binding-id
+                  (lower-spmd-reduce-end-id)
+                  (AstMaybeType.Some index-ty)
+                  (ast-node-pool-context-expr-push pools end))
+                (ast-let-binding-cons
+                  (ast-let-binding-id
+                    index-id
+                    (AstMaybeType.Some index-ty)
+                    (ast-node-pool-context-expr-push pools start))
+                  (ast-let-binding-list-new))))
+            (ast-node-pool-context-expr-push
+              pools
+              (AstExpr.Begin
+                (ast-expr-cons
+                  loop-id
+                  (ast-expr-cons
+                    (ast-node-pool-context-expr-push
+                      pools
+                      (AstExpr.Var (lower-spmd-reduce-acc-id)))
+                    (ast-expr-list-new))))))])]
     [root : AstExpr (lower-context-expr-get ctx root-id)]
     (lower-expr ctx state env type-env root)))
 
 ;; Scalar lowering for all reduction ops: `sum` (wrapping `+`, also f64
 ;; ordered add), `all`/`any` (boolean `and`/`or`), and `min`/`max` (ordered
 ;; select). Each supplies its per-iteration accumulator update to the shared
-;; loop scaffold.
+;; loop scaffold. A `sum` whose value is `(+ X U)` with reduction-invariant
+;; `U` takes the addend split (see `lower-spmd-reduce-split-addend`): the loop
+;; accumulates only `X` and the scaffold adds `(* trip-count U)` once at the
+;; end. The SIMD-mode vector plan, when it applies, is unaffected.
 (define (lower-spmd-reduce
   [ctx : TcContext]
   [state : LowerState]
@@ -33358,11 +33725,20 @@
     [(ResultTcType.Ok value-ty)
       (let
         [acc-ty : AstType (tc-type-without-regions value-ty)]
+        [split : LowerMaybeReduceSplit
+          (lower-spmd-reduce-split-addend ctx op acc-ty index-id index-ty value)]
         [acc-update : i64
-          (spmd-reduce-acc-update-expr
-            (tc-context-pools ctx)
-            op
-            (lower-context-expr-push ctx value))]
+          (match split
+            [(LowerMaybeReduceSplit.Split x-id _)
+              (spmd-reduce-acc-binop-update
+                (tc-context-pools ctx)
+                (AstBinOp.Add)
+                x-id)]
+            [_
+              (spmd-reduce-acc-update-expr
+                (tc-context-pools ctx)
+                op
+                (lower-context-expr-push ctx value))])]
         (if (and
           (lower-mode-simd? (lower-state-mode state))
           (lower-type-i64? index-ty))
@@ -33416,7 +33792,8 @@
                   end
                   init
                   acc-ty
-                  acc-update)]))
+                  acc-update
+                  split)]))
           (lower-spmd-reduce-scaffold
             ctx
             state
@@ -33430,7 +33807,8 @@
             end
             init
             acc-ty
-            acc-update)))]
+            acc-update
+            split)))]
     [(ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr value message)))]))
 

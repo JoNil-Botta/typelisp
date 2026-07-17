@@ -9133,8 +9133,7 @@
       "backend: unsupported float binary op"
       34
       9)
-    ;; An f64 unary op other than negation is rejected (mirrors the
-    ;; f64-binary-op reject; only CompilerIrUnOp.Neg has an f64 lowering).
+    ;; An unsupported f64 unary op is rejected. Neg and Sqrt have f64 lowering.
     (compiler-backend-instr-diagnostic-case-ok?
       (CompilerIrInstr.UnOp
         2
@@ -16812,6 +16811,95 @@
         (not (compiler-backend-string-contains? asm "%xmm0")))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-float-sqrt-home-ok?) : bool
+  (let
+    [direct : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%xmm2"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%xmm3"))
+          CompilerRegAssignmentList.Nil))]
+    [spill : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%xmm3"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+          CompilerRegAssignmentList.Nil))]
+    (and
+      (match (compiler-backend-emit-unop
+        direct
+        1
+        (CompilerIrUnOp.Sqrt)
+        (CompilerIrValue.Var 0)
+        (AstType.F64))
+        [(ResultCompilerBackend.Ok asm)
+          (string.eq asm "    movsd %xmm2, %xmm3\n    sqrtsd %xmm3, %xmm3\n")]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-unop
+        direct
+        1
+        (CompilerIrUnOp.Sqrt)
+        (CompilerIrValue.Var 0)
+        (AstType.F32))
+        [(ResultCompilerBackend.Ok asm)
+          (string.eq asm "    movss %xmm2, %xmm3\n    sqrtss %xmm3, %xmm3\n")]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-unop
+        spill
+        1
+        (CompilerIrUnOp.Sqrt)
+        (CompilerIrValue.Var 0)
+        (AstType.F64))
+        [(ResultCompilerBackend.Ok asm)
+          (string.eq
+            asm
+            "    movsd %xmm3, %xmm2\n    sqrtsd %xmm2, %xmm2\n    movsd %xmm2, -16(%rbp)\n")]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-unop
+        spill
+        1
+        (CompilerIrUnOp.Sqrt)
+        (CompilerIrValue.Var 0)
+        (AstType.F32))
+        [(ResultCompilerBackend.Ok asm)
+          (string.eq
+            asm
+            "    movss %xmm3, %xmm2\n    sqrtss %xmm2, %xmm2\n    movss %xmm2, -16(%rbp)\n")]
+        [(ResultCompilerBackend.Err _) false]))))
+
+(define (compiler-backend-float-sqrt-source) : String
+  "(define (sqrt64 [value : f64]) : f64 (__tl_float_sqrt value))
+(define (sqrt32 [value : f32]) : f32 (__tl_float_sqrt value))
+(define (main) : i64
+  (if (= (sqrt64 4.0) 2.0)
+    (if (= (sqrt32 (cast 9.0 : f32)) (cast 3.0 : f32)) 0 1)
+    1))")
+
+(define (compiler-backend-float-sqrt-source-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-float-sqrt-source)
+    target)
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    sqrtsd ")
+        (compiler-backend-string-contains? asm "    sqrtss ")
+        (not (compiler-backend-string-contains? asm "__tl_float_sqrt")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-float-sqrt-source-ok?) : bool
+  (and
+    (compiler-backend-float-sqrt-source-target-ok?
+      (CompilerBackendTarget.Linux))
+    (compiler-backend-float-sqrt-source-target-ok?
+      (CompilerBackendTarget.Windows))))
+
 (define (compiler-backend-f32-literal-binop-source) : String
   "(define (main) : i64
   (let
@@ -24014,6 +24102,8 @@
         (compiler-backend-f64-neg-sign-mask-ok?)
         (compiler-backend-direct-f64-neg-home-ok?)
         (compiler-backend-spill-f64-neg-home-ok?)
+        (compiler-backend-float-sqrt-home-ok?)
+        (compiler-backend-float-sqrt-source-ok?)
         (compiler-backend-f32-literal-binop-ok?)
         (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-spill-float-arith-home-ok?)

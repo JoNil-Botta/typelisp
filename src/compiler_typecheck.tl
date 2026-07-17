@@ -6407,6 +6407,9 @@
       "(define (f [x : i64]) : i64 (comptime x))"
       "compile-time evaluation cannot reference runtime variable 'x'")
     (compiler-typecheck-error-ok?
+      "(define (main) : f64 (comptime (__tl_float_sqrt 4.0)))"
+      "compile-time square root is not supported; use __tl_float_sqrt at runtime")
+    (compiler-typecheck-error-ok?
       "(define (main) : i64 (comptime (< 1 2)))"
       "typecheck: return type mismatch: expected i64, found bool")
     (compiler-typecheck-stdlib-comptime-surface-tests-ok?)))
@@ -6751,6 +6754,35 @@
       (compiler-typecheck-tls-current-arena-unsafe-set-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-tls-current-arena-shadow-source))))
+
+(define (compiler-typecheck-float-sqrt-source) : String
+  "(define (sqrt64 [value : f64]) : f64 (__tl_float_sqrt value))
+(define (sqrt32 [value : f32]) : f32 (__tl_float_sqrt value))
+(define (main) : i64
+  (if (= (sqrt64 4.0) 2.0)
+    (if (= (sqrt32 (cast 9.0 : f32)) (cast 3.0 : f32)) 0 1)
+    1))")
+
+(define (compiler-typecheck-float-sqrt-bad-type-source) : String
+  "(define (main) : i64 (__tl_float_sqrt 4))")
+
+(define (compiler-typecheck-float-sqrt-bad-arity-source) : String
+  "(define (main) : f64 (__tl_float_sqrt 4.0 9.0))")
+
+(define (compiler-typecheck-float-sqrt-shadow-source) : String
+  "(define (__tl_float_sqrt [value : i64]) : i64 value)
+(define (main) : i64 (__tl_float_sqrt 4))")
+
+(define (compiler-typecheck-float-sqrt-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-float-sqrt-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-float-sqrt-bad-type-source)
+      "typecheck: __tl_float_sqrt expects f64 or f32")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-float-sqrt-bad-arity-source)
+      "typecheck: __tl_float_sqrt expects exactly one argument")
+    (compiler-typecheck-ok? (compiler-typecheck-float-sqrt-shadow-source))))
 
 (define (compiler-typecheck-unsafe-tests-ok?) : bool
   (and
@@ -8196,6 +8228,9 @@
     (if (compiler-typecheck-tls-current-arena-tests-ok?)
       unit
       (io.panic "typecheck: tls current arena tests failed"))
+    (if (compiler-typecheck-float-sqrt-tests-ok?)
+      unit
+      (io.panic "typecheck: float sqrt intrinsic tests failed"))
     (if (compiler-typecheck-arena-unsafe-tests-ok?)
       unit
       (io.panic "typecheck: arena unsafe primitive tests failed"))

@@ -25842,6 +25842,10 @@
                     (not (tc-name-bound-id? env name-id)))
                   (tc-reflection-query-runtime-call name)]
                 [(and
+                    (cbi.compiler-builtin-typecheck-float-sqrt-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-float-sqrt-call ctx env args)]
+                [(and
                     (cbi.compiler-builtin-typecheck-clone-id? name-id)
                     (not (tc-name-bound-id? env name-id)))
                   (tc-clone-call ctx env args)]
@@ -26566,6 +26570,26 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (ResultTcType.Err "typecheck: clone expects exactly one argument")))
 
+(define (tc-float-sqrt-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcType
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr ctx env arg)
+        [(ResultTcType.Ok arg-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
+            [(AstType.F64) (ResultTcType.Ok (AstType.F64))]
+            [(AstType.F32) (ResultTcType.Ok (AstType.F32))]
+            [_
+              (ResultTcType.Err
+                (tc-locate-error-at-expr
+                  arg
+                  "typecheck: __tl_float_sqrt expects f64 or f32"))])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: __tl_float_sqrt expects exactly one argument")))
+
 (define (tc-tls-current-arena-read-call [args : AstExprList]) : ResultTcType
   (if (ast-expr-list-empty? (& args))
     (ResultTcType.Ok (AstType.I64))
@@ -26687,6 +26711,10 @@
                   (not (tc-name-bound-id? env name-id)))
                 (tc-reflection-query-runtime-call name)]
               [(and
+                  (cbi.compiler-builtin-typecheck-float-sqrt-id? name-id)
+                  (not (tc-name-bound-id? env name-id)))
+                (tc-float-sqrt-call ctx env args)]
+              [(and
                   (cbi.compiler-builtin-typecheck-clone-id? name-id)
                   (not (tc-name-bound-id? env name-id)))
                 (tc-clone-call ctx env args)]
@@ -26777,6 +26805,10 @@
                     (ctfe-builtin-reflection-id? name-id)
                     (not (tc-name-bound-id? env name-id)))
                   (tc-reflection-query-runtime-call name)]
+                [(and
+                    (cbi.compiler-builtin-typecheck-float-sqrt-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-float-sqrt-call ctx env args)]
                 [(and
                     (cbi.compiler-builtin-typecheck-clone-id? name-id)
                     (not (tc-name-bound-id? env name-id)))

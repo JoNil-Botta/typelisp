@@ -2493,6 +2493,11 @@
           (not (opt-used-array-contains items dst))])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (not (opt-used-array-contains items dst))]
+    ;; Register-group ops are pure producers like the scalar temps above: a
+    ;; Pack whose group is never read (every Word extraction folded away) is
+    ;; dead, and so is a Word nobody reads. Mirrors `opt-instr-dead?`.
+    [(CompilerIrInstr.Pack dst _ _) (not (opt-used-array-contains items dst))]
+    [(CompilerIrInstr.Word dst _ _ _) (not (opt-used-array-contains items dst))]
     [_ false]))
 
 (define (opt-dce-instr-seq-array
@@ -41849,6 +41854,129 @@
       (unless (= (opt-count-cpuid-blocks probe-different) 3) (return 9))
       (unless (= (opt-count-xgetbv-blocks probe-different) 2) (return 10))
       42)))
+
+(define (opt-word-instr-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.Word _ _ _ _) 1]
+    [_ 0]))
+
+(define (opt-count-word-instr-seq-from
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-count-word-instr-seq-from
+      slots
+      (+ index 1)
+      count
+      (+ acc (opt-word-instr-count (array-ref slots index))))))
+
+(define (opt-count-word-instr-seq [instrs : CompilerIrInstrSeq]) : i64
+  (opt-count-word-instr-seq-from
+    (struct-get instrs slots)
+    0
+    (struct-get instrs len)
+    0))
+
+(define (opt-count-words-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-count-word-instr-seq instrs)
+            (opt-count-words-blocks (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-count-words-blocks (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-pack-instr-count [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.Pack _ _ _) 1]
+    [_ 0]))
+
+(define (opt-count-pack-instr-seq-from
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [count : i64]
+  [acc : i64]) : i64
+  (if (>= index count)
+    acc
+    (opt-count-pack-instr-seq-from
+      slots
+      (+ index 1)
+      count
+      (+ acc (opt-pack-instr-count (array-ref slots index))))))
+
+(define (opt-count-pack-instr-seq [instrs : CompilerIrInstrSeq]) : i64
+  (opt-count-pack-instr-seq-from
+    (struct-get instrs slots)
+    0
+    (struct-get instrs len)
+    0))
+
+(define (opt-count-packs-blocks [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-count-pack-instr-seq instrs)
+            (opt-count-packs-blocks (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-count-packs-blocks (compiler-ir-block-seq-to-list seq))]))
+
+;; A Pack whose extractions all fold block-locally leaves the group unused:
+;; the array-backed pipeline DCE must retire it (the map-backed DCE always
+;; did; the array mirror was missing the Pack/Word arms).
+(define (opt-dce-pack-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Pack
+          10
+          (compiler-ir-value-cons
+            (CompilerIrValue.Var 0)
+            (compiler-ir-value-cons
+              (CompilerIrValue.Var 1)
+              CompilerIrValueList.Nil))
+          (AstType.Struct (intern "Pair")))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Word 11 (CompilerIrValue.Var 10) 0 (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Word 12 (CompilerIrValue.Var 10) 1 (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                13
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 11)
+                (CompilerIrValue.Var 12)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 13)))
+                (CompilerIrInstrList.Nil)))))))
+    (CompilerIrBlockList.Nil)))
+
+;; Returns 42 only when the full pipeline folds both extractions block-locally
+;; and retires the now-unused Pack (0 Words and 0 Packs remain).
+(define (compiler-optimize-dce-pack-self-test) : i64
+  (match (optimize-function-once
+    (CompilerIrFunction.Function
+      (opt-test-symbol "dce_pack")
+      (opt-gvn-test-params)
+      (AstType.I64)
+      16
+      (opt-dce-pack-blocks)))
+    [(CompilerIrFunction.Function _ _ _ _ optimized-blocks)
+      (begin
+        (unless (= (opt-count-words-blocks optimized-blocks) 0) (return 1))
+        (unless (= (opt-count-packs-blocks optimized-blocks) 0) (return 2))
+        42)]))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
 ;; is absent or its lhs is not a var. Used to inspect copy-propagation rewrites.

@@ -31,6 +31,26 @@
   (Shl)
   (Shr))
 
+;; Scalar comparison instructions carry their operand type in the `BinOp`
+;; type field. Their destination is always `bool`; every other binary op uses
+;; the field as both operand and result type.
+(define (compiler-ir-binop-compare? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Eq) true]
+    [(CompilerIrBinOp.Ne) true]
+    [(CompilerIrBinOp.Lt) true]
+    [(CompilerIrBinOp.Le) true]
+    [(CompilerIrBinOp.Gt) true]
+    [(CompilerIrBinOp.Ge) true]
+    [_ false]))
+
+(define (compiler-ir-binop-result-type
+  [op : CompilerIrBinOp]
+  [instruction-ty : AstType]) : AstType
+  (if (compiler-ir-binop-compare? op)
+    (AstType.Bool)
+    instruction-ty))
+
 (defenum CompilerIrUnOp
   (Neg)
   (Not)

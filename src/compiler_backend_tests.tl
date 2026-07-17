@@ -15989,22 +15989,24 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-make-array-source) : String
-  "(define (main) : i64
-  (let
-    [a : (Array i64) (make-array i64 2)]
-    (begin
-      (array-set! a 0 40)
-      (array-set! a 1 2)
-      (+ (array-ref a 0) (array-ref a 1)))))")
+  "(define (make_u32 [n : u32]) : i64
+  (array-length (make-array i64 n)))
+(define (at_i32_max) : i64 (make_u32 2147483647))
+(define (past_i32_max) : i64 (make_u32 2147483648))
+(define (main) : i64 (make_u32 2))")
 
 (define (compiler-backend-make-array-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-make-array-source))
     [(ResultCompilerBackend.Ok asm)
-      (and
-        (compiler-backend-string-contains? asm "main:\n")
-        (compiler-backend-string-contains? asm "    call tl_alloc\n")
-        (compiler-backend-string-contains? asm "call tl_oob_abort")
-        (compiler-backend-string-contains? asm "make_array_len_ok"))]
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_make_u32")]
+        (and
+          (compiler-backend-string-contains? asm "main:\n")
+          (compiler-backend-string-contains? body "    call tl_alloc\n")
+          (compiler-backend-string-contains? body "call tl_oob_abort")
+          (compiler-backend-string-contains? body "make_array_len_ok")
+          (>= (compiler-backend-string-count body "    cmpq ") 2)
+          (= (compiler-backend-string-count body "    cmpl ") 0)))]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-region-source) : String

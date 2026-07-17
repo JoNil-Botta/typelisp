@@ -1079,8 +1079,12 @@
       (compiler-reg-var-type-array-set! present types dst to-ty)]
     [(CompilerIrInstr.Bitcast dst _ _ to-ty)
       (compiler-reg-var-type-array-set! present types dst to-ty)]
-    [(CompilerIrInstr.BinOp dst _ _ _ ty)
-      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(CompilerIrInstr.BinOp dst op _ _ ty)
+      (compiler-reg-var-type-array-set!
+        present
+        types
+        dst
+        (compiler-ir-binop-result-type op ty))]
     [(CompilerIrInstr.UnOp dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(CompilerIrInstr.VectorReduce dst _ _ _ elem-ty)

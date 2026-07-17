@@ -5,6 +5,7 @@
 (import "compiler_diagnostic.tl")
 (import "compiler_float.tl")
 (import stdlib.string)
+(import stdlib.text_buf)
 (import stdlib.hashmap)
 (import (hashmap i64 i64) as spec_id_i64_map)
 (import compiler_intern as spec_ci)
@@ -594,21 +595,34 @@
     (string.append "m" (string.int->string (- 0 n)))
     (string.int->string n)))
 
-(define (spec-string-key-from [text : String] [idx : i64] [n : i64]) : String
+;; Build the "_<code>" tail into `buf` without re-copying the accumulated
+;; prefix per character. The old recursive string.append form cost O(n^2) per
+;; key, and macro-identity-key-sexpr applies this to already-encoded sub-keys,
+;; which made deep syntax identities allocate gigabytes on a self-compile.
+(define (spec-string-key-from-into
+  [text : String]
+  [idx : i64]
+  [n : i64]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (>= idx n)
-    ""
-    (string.append
-      "_"
-      (string.append
-        (string.int->string (cast (string.string-ref text idx) : i64))
-        (spec-string-key-from text (+ idx 1) n)))))
+    buf
+    (spec-string-key-from-into
+      text
+      (+ idx 1)
+      n
+      (text_buf.append-int
+        (text_buf.append buf "_")
+        (cast (string.string-ref text idx) : i64)))))
 
 (define (spec-string-key [text : String]) : String
   (let
     [n : i64 (string.string-length text)]
-    (string.append
-      "string_"
-      (string.append (string.int->string n) (spec-string-key-from text 0 n)))))
+    (text_buf.render
+      (spec-string-key-from-into
+        text
+        0
+        n
+        (text_buf.append-int (text_buf.append (text_buf.empty) "string_") n)))))
 
 (define (spec-type-list-key-at [types : (& types AstTypeList)] [index : i64]) : String
   (if (>= index (ast-type-list-len types))

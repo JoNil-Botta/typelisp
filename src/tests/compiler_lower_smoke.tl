@@ -96,6 +96,62 @@
       (CompilerLowerMode.Avx2)
       (lower-simd-foreach-fallback-diagnostic))))
 
+;; Scalar `spmd-reduce` addend split: a `sum` over `(+ X U)` with
+;; reduction-invariant `U` lowers to a loop that accumulates only `X` plus one
+;; exit `(* trip-count U)` (visible as a single `Mul` in the lowered IR), while
+;; the guarded-away shapes keep the per-iteration add (no `Mul`).
+(define (compiler-lower-smoke-spmd-reduce-split-source) : String
+  "(define (reduce_split_pos [a : (Array i64)] [n : i64] [r : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref a i) r)))
+(define (reduce_split_pos_swapped [a : (Array i64)] [n : i64] [r : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 n]) 0 (+ r (array-ref a i))))
+(define (reduce_split_neg_i32 [g : (Array i32)] [n : i64] [r : i32]) : i32
+  (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (+ (array-ref g i) r)))
+(define (reduce_split_neg_index [a : (Array i64)] [n : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref a i) i)))
+(define (reduce_split_neg_rebind [a : (Array i64)] [n : i64] [r : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 n]) 0 (+ (let [r : i64 9] (+ (array-ref a i) r)) r)))")
+
+(define (compiler-lower-smoke-spmd-reduce-split-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-smoke-spmd-reduce-split-source)
+    (CompilerLowerMode.Scalar))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "reduce_split_pos"
+                CompilerIrBinOp.Mul)
+              1)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "reduce_split_pos_swapped"
+                CompilerIrBinOp.Mul)
+              1)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "reduce_split_neg_i32"
+                CompilerIrBinOp.Mul)
+              0)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "reduce_split_neg_index"
+                CompilerIrBinOp.Mul)
+              0)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "reduce_split_neg_rebind"
+                CompilerIrBinOp.Mul)
+              0))])]
+    [(ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-smoke-imported-local-vector-source) : String
   "(module stdlib.vector)
 (define (local-vector-string) : String \"a\")
@@ -804,6 +860,9 @@
     (unless
       (compiler-lower-smoke-foreach-multi-output-shape-ok?)
       (panic "lower: multi-output foreach smoke mismatch"))
+    (unless
+      (compiler-lower-smoke-spmd-reduce-split-ok?)
+      (panic "lower: spmd reduce addend split smoke mismatch"))
     (unless
       (compiler-lower-back-half-tests-ok?)
       (panic "lower: back-half smoke mismatch"))

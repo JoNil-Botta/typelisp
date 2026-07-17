@@ -917,11 +917,6 @@
 
 (cfg
   compile-profile
-  (define (compiler-lower-profile-field [value : i64]) : String
-    (string.append "|" (string.int->string value))))
-
-(cfg
-  compile-profile
   (define (compiler-lower-profile-start) : unit
     (begin
       (set! compiler-lower-profile-start-ms (profile.now-ms))

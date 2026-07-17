@@ -13,7 +13,7 @@ usage: scripts/analyze-stage0-size.sh [options] <stage0-binary>
 
 Options:
   --embedded-stdlib <file>  payload build-input declaration file to count
-                            (default: all six embedded stdlib payload shards)
+                            (default: the embedded stdlib payload module)
 
 The section report uses llvm-readobj when available, then readelf, then objdump.
 It reports only the supplied binary format; Linux and Windows binaries can be
@@ -24,7 +24,7 @@ EOF
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-EMBEDDED_STDLIB='src/compiler_embedded_stdlib_payload_[a-f].tl'
+EMBEDDED_STDLIB=src/compiler_embedded_stdlib_payload.tl
 BINARY=
 
 while [ "$#" -gt 0 ]; do

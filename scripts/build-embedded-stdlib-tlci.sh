@@ -58,7 +58,7 @@ collecting {
     declaration = declaration " " $0
     if ($0 ~ /\)[ \t]*$/) emit_input()
 }
-' src/compiler_embedded_stdlib_payload_[a-f].tl > "$MANIFEST"
+' src/compiler_embedded_stdlib_payload.tl > "$MANIFEST"
 
 BUILD_HASH=$(git rev-parse --verify HEAD)
 "$COMPILER" run tools/embedded-stdlib-tlci/build.tl \

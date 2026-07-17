@@ -43,7 +43,7 @@ collecting {
         emit_input()
     }
 }
-' src/compiler_embedded_stdlib_payload_[a-f].tl > "$NORMALIZED_MANIFEST"
+' src/compiler_embedded_stdlib_payload.tl > "$NORMALIZED_MANIFEST"
 
 if [ ! -s "$NORMALIZED_MANIFEST" ]; then
     echo "embedded stdlib payload has no build inputs" >&2

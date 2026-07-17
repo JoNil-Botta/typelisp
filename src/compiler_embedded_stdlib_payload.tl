@@ -1,11 +1,89 @@
-;; Handwritten lookup over build-time embedded stdlib payload shards.
-(import compiler_embedded_stdlib_payload_a as a)
-(import compiler_embedded_stdlib_payload_b as b)
-(import compiler_embedded_stdlib_payload_c as c)
-(import compiler_embedded_stdlib_payload_d as d)
-(import compiler_embedded_stdlib_payload_e as e)
-(import compiler_embedded_stdlib_payload_f as f)
+;; Explicit compressed compile-only inputs for the embedded stdlib payload.
 (import stdlib.string)
+
+(include-str-lzss payload-arena "../stdlib/arena.tl")
+
+(include-str-lzss payload-atomic "../stdlib/atomic.tl")
+
+(include-str-lzss payload-args "../stdlib/args.tl")
+
+(include-str-lzss payload-array "../stdlib/array.tl")
+
+(include-str-lzss payload-byte-buf "../stdlib/byte_buf.tl")
+
+(include-str-lzss payload-byte-buf-core "../stdlib/byte_buf_core.tl")
+
+(include-str-lzss payload-clone "../stdlib/clone.tl")
+
+(include-str-lzss payload-cpu "../stdlib/cpu.tl")
+
+(include-str-lzss payload-comptime "../stdlib/comptime.tl")
+
+(include-str-lzss payload-core-macros "../stdlib/core_macros.tl")
+
+(include-str-lzss payload-env "../stdlib/env.tl")
+
+(include-str-lzss payload-eq "../stdlib/eq.tl")
+
+(include-str-lzss payload-ffi "../stdlib/ffi.tl")
+
+(include-str-lzss payload-fs "../stdlib/fs.tl")
+
+(include-str-lzss payload-format "../stdlib/format.tl")
+
+(include-str-lzss payload-hash "../stdlib/hash.tl")
+
+(include-str-lzss payload-hashmap "../stdlib/hashmap.tl")
+
+(include-str-lzss payload-io-core "../stdlib/io_core.tl")
+
+(include-str-lzss payload-io "../stdlib/io.tl")
+
+(include-str-lzss payload-iterator "../stdlib/iterator.tl")
+
+(include-str-lzss payload-json "../stdlib/json.tl")
+
+(include-str-lzss payload-math "../stdlib/math.tl")
+
+(include-str-lzss payload-msvc "../stdlib/msvc.tl")
+
+(include-str-lzss payload-process "../stdlib/process.tl")
+
+(include-str-lzss payload-process-borrowed "../stdlib/process_borrowed.tl")
+
+(include-str-lzss payload-profile "../stdlib/profile.tl")
+
+(include-str-lzss payload-queue "../stdlib/queue.tl")
+
+(include-str-lzss payload-random "../stdlib/random.tl")
+
+(include-str-lzss payload-result "../stdlib/result.tl")
+
+(include-str-lzss payload-runtime "../stdlib/runtime.tl")
+
+(include-str-lzss payload-serialize "../stdlib/serialize.tl")
+
+(include-str-lzss payload-sort "../stdlib/sort.tl")
+
+(include-str-lzss payload-sync "../stdlib/sync.tl")
+
+(include-str-lzss payload-string "../stdlib/string.tl")
+
+(include-str-lzss payload-test "../stdlib/test.tl")
+
+(include-str-lzss payload-thread "../stdlib/thread.tl")
+
+(include-str-lzss payload-time "../stdlib/time.tl")
+
+(include-str-lzss payload-text-buf "../stdlib/text_buf.tl")
+
+(include-str-lzss payload-text-buf-borrowed "../stdlib/text_buf_borrowed.tl")
+
+(include-str-lzss payload-text-buf-family "../stdlib/text_buf_family.tl")
+
+(include-str-lzss payload-vector "../stdlib/vector.tl")
+
+(include-str-lzss payload-vector-slice "../stdlib/vector_slice.tl")
 
 (defenum CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone)
@@ -14,87 +92,84 @@
 (define (compiler-embedded-stdlib-payload-lookup [suffix : String]) : CompilerEmbeddedStdlibPayload
   (cond
     [(string.eq suffix "arena.tl")
-      (CompilerEmbeddedStdlibPayloadSome a.payload-arena)]
+      (CompilerEmbeddedStdlibPayloadSome payload-arena)]
     [(string.eq suffix "atomic.tl")
-      (CompilerEmbeddedStdlibPayloadSome a.payload-atomic)]
+      (CompilerEmbeddedStdlibPayloadSome payload-atomic)]
     [(string.eq suffix "args.tl")
-      (CompilerEmbeddedStdlibPayloadSome a.payload-args)]
+      (CompilerEmbeddedStdlibPayloadSome payload-args)]
     [(string.eq suffix "array.tl")
-      (CompilerEmbeddedStdlibPayloadSome a.payload-array)]
+      (CompilerEmbeddedStdlibPayloadSome payload-array)]
     [(string.eq suffix "byte_buf.tl")
-      (CompilerEmbeddedStdlibPayloadSome a.payload-byte-buf)]
+      (CompilerEmbeddedStdlibPayloadSome payload-byte-buf)]
     [(string.eq suffix "byte_buf_core.tl")
-      (CompilerEmbeddedStdlibPayloadSome a.payload-byte-buf-core)]
+      (CompilerEmbeddedStdlibPayloadSome payload-byte-buf-core)]
     [(string.eq suffix "clone.tl")
-      (CompilerEmbeddedStdlibPayloadSome a.payload-clone)]
+      (CompilerEmbeddedStdlibPayloadSome payload-clone)]
     [(string.eq suffix "cpu.tl")
-      (CompilerEmbeddedStdlibPayloadSome b.payload-cpu)]
+      (CompilerEmbeddedStdlibPayloadSome payload-cpu)]
     [(string.eq suffix "comptime.tl")
-      (CompilerEmbeddedStdlibPayloadSome b.payload-comptime)]
+      (CompilerEmbeddedStdlibPayloadSome payload-comptime)]
     [(string.eq suffix "core_macros.tl")
-      (CompilerEmbeddedStdlibPayloadSome b.payload-core-macros)]
+      (CompilerEmbeddedStdlibPayloadSome payload-core-macros)]
     [(string.eq suffix "env.tl")
-      (CompilerEmbeddedStdlibPayloadSome b.payload-env)]
-    [(string.eq suffix "eq.tl")
-      (CompilerEmbeddedStdlibPayloadSome b.payload-eq)]
+      (CompilerEmbeddedStdlibPayloadSome payload-env)]
+    [(string.eq suffix "eq.tl") (CompilerEmbeddedStdlibPayloadSome payload-eq)]
     [(string.eq suffix "ffi.tl")
-      (CompilerEmbeddedStdlibPayloadSome b.payload-ffi)]
-    [(string.eq suffix "fs.tl")
-      (CompilerEmbeddedStdlibPayloadSome b.payload-fs)]
+      (CompilerEmbeddedStdlibPayloadSome payload-ffi)]
+    [(string.eq suffix "fs.tl") (CompilerEmbeddedStdlibPayloadSome payload-fs)]
     [(string.eq suffix "format.tl")
-      (CompilerEmbeddedStdlibPayloadSome c.payload-format)]
+      (CompilerEmbeddedStdlibPayloadSome payload-format)]
     [(string.eq suffix "hash.tl")
-      (CompilerEmbeddedStdlibPayloadSome c.payload-hash)]
+      (CompilerEmbeddedStdlibPayloadSome payload-hash)]
     [(string.eq suffix "hashmap.tl")
-      (CompilerEmbeddedStdlibPayloadSome c.payload-hashmap)]
+      (CompilerEmbeddedStdlibPayloadSome payload-hashmap)]
     [(string.eq suffix "io_core.tl")
-      (CompilerEmbeddedStdlibPayloadSome c.payload-io-core)]
-    [(string.eq suffix "io.tl")
-      (CompilerEmbeddedStdlibPayloadSome c.payload-io)]
+      (CompilerEmbeddedStdlibPayloadSome payload-io-core)]
+    [(string.eq suffix "io.tl") (CompilerEmbeddedStdlibPayloadSome payload-io)]
     [(string.eq suffix "iterator.tl")
-      (CompilerEmbeddedStdlibPayloadSome c.payload-iterator)]
+      (CompilerEmbeddedStdlibPayloadSome payload-iterator)]
     [(string.eq suffix "json.tl")
-      (CompilerEmbeddedStdlibPayloadSome c.payload-json)]
+      (CompilerEmbeddedStdlibPayloadSome payload-json)]
     [(string.eq suffix "math.tl")
-      (CompilerEmbeddedStdlibPayloadSome d.payload-math)]
+      (CompilerEmbeddedStdlibPayloadSome payload-math)]
     [(string.eq suffix "msvc.tl")
-      (CompilerEmbeddedStdlibPayloadSome d.payload-msvc)]
+      (CompilerEmbeddedStdlibPayloadSome payload-msvc)]
     [(string.eq suffix "process.tl")
-      (CompilerEmbeddedStdlibPayloadSome d.payload-process)]
+      (CompilerEmbeddedStdlibPayloadSome payload-process)]
     [(string.eq suffix "process_borrowed.tl")
-      (CompilerEmbeddedStdlibPayloadSome d.payload-process-borrowed)]
+      (CompilerEmbeddedStdlibPayloadSome payload-process-borrowed)]
     [(string.eq suffix "profile.tl")
-      (CompilerEmbeddedStdlibPayloadSome d.payload-profile)]
+      (CompilerEmbeddedStdlibPayloadSome payload-profile)]
     [(string.eq suffix "queue.tl")
-      (CompilerEmbeddedStdlibPayloadSome d.payload-queue)]
+      (CompilerEmbeddedStdlibPayloadSome payload-queue)]
     [(string.eq suffix "random.tl")
-      (CompilerEmbeddedStdlibPayloadSome d.payload-random)]
+      (CompilerEmbeddedStdlibPayloadSome payload-random)]
     [(string.eq suffix "result.tl")
-      (CompilerEmbeddedStdlibPayloadSome e.payload-result)]
+      (CompilerEmbeddedStdlibPayloadSome payload-result)]
     [(string.eq suffix "runtime.tl")
-      (CompilerEmbeddedStdlibPayloadSome e.payload-runtime)]
+      (CompilerEmbeddedStdlibPayloadSome payload-runtime)]
     [(string.eq suffix "serialize.tl")
-      (CompilerEmbeddedStdlibPayloadSome e.payload-serialize)]
+      (CompilerEmbeddedStdlibPayloadSome payload-serialize)]
     [(string.eq suffix "sort.tl")
-      (CompilerEmbeddedStdlibPayloadSome e.payload-sort)]
+      (CompilerEmbeddedStdlibPayloadSome payload-sort)]
     [(string.eq suffix "sync.tl")
-      (CompilerEmbeddedStdlibPayloadSome e.payload-sync)]
+      (CompilerEmbeddedStdlibPayloadSome payload-sync)]
     [(string.eq suffix "string.tl")
-      (CompilerEmbeddedStdlibPayloadSome e.payload-string)]
+      (CompilerEmbeddedStdlibPayloadSome payload-string)]
     [(string.eq suffix "test.tl")
-      (CompilerEmbeddedStdlibPayloadSome e.payload-test)]
+      (CompilerEmbeddedStdlibPayloadSome payload-test)]
     [(string.eq suffix "thread.tl")
-      (CompilerEmbeddedStdlibPayloadSome f.payload-thread)]
+      (CompilerEmbeddedStdlibPayloadSome payload-thread)]
     [(string.eq suffix "time.tl")
-      (CompilerEmbeddedStdlibPayloadSome f.payload-time)]
+      (CompilerEmbeddedStdlibPayloadSome payload-time)]
     [(string.eq suffix "text_buf.tl")
-      (CompilerEmbeddedStdlibPayloadSome f.payload-text-buf)]
+      (CompilerEmbeddedStdlibPayloadSome payload-text-buf)]
     [(string.eq suffix "text_buf_borrowed.tl")
-      (CompilerEmbeddedStdlibPayloadSome f.payload-text-buf-borrowed)]
+      (CompilerEmbeddedStdlibPayloadSome payload-text-buf-borrowed)]
     [(string.eq suffix "text_buf_family.tl")
-      (CompilerEmbeddedStdlibPayloadSome f.payload-text-buf-family)]
+      (CompilerEmbeddedStdlibPayloadSome payload-text-buf-family)]
     [(string.eq suffix "vector.tl")
-      (CompilerEmbeddedStdlibPayloadSome f.payload-vector)]
+      (CompilerEmbeddedStdlibPayloadSome payload-vector)]
     [(string.eq suffix "vector_slice.tl")
-      (CompilerEmbeddedStdlibPayloadSome f.payload-vector-slice)]
+      (CompilerEmbeddedStdlibPayloadSome payload-vector-slice)]
     [else (CompilerEmbeddedStdlibPayloadNone)]))

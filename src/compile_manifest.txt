@@ -437,12 +437,6 @@ case|selfhost_compiler_embedded_stdlib_payload|src/compiler_embedded_stdlib_payl
 contains|compiler_embedded_stdlib_payload_lookup:
 end
 
-decision|src/compiler_embedded_stdlib_payload_a.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
-decision|src/compiler_embedded_stdlib_payload_b.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
-decision|src/compiler_embedded_stdlib_payload_c.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
-decision|src/compiler_embedded_stdlib_payload_d.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
-decision|src/compiler_embedded_stdlib_payload_e.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
-decision|src/compiler_embedded_stdlib_payload_f.tl|compiler-owned declarative build-input shard for the generated-at-build embedded stdlib payload; exact decode and source-mutation behavior are covered by scripts/verify-embedded-stdlib-payload.sh (#5108)
 decision|src/compiler_embedded_stdlib_payload_seed.tl|payload-free seed-bootstrap and package-test placeholder; production payload coverage starts with the converged compiler and is verified by bootstrap fixpoint plus scripts/verify-embedded-stdlib-payload.sh (#5108)
 decision|src/compiler_embedded_stdlib_tlci_payload.tl|compiler-owned include-bin input for the stage-built host stdlib comptime image; the bootstrap gate maps it through the production loader and validates the registered macro catalog (#2658)
 decision|src/compiler_embedded_stdlib_tlci_payload_seed.tl|payload-free seed/test fallback; stage1 builds the same-commit stdlib image embedded from stage2 onward so bootstrap ordering stays sound (#2658)

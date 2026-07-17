@@ -48568,7 +48568,8 @@
           [(CompilerIrBlock.Block _ instrs)
             (cond
               ;; the sixteen chained *5 collapse into one *152587890625 ...
-              [(not (opt-affine-test-seq-has-mul-by? instrs 0 152587890625)) fail-mul]
+              [(not (opt-affine-test-seq-has-mul-by? instrs 0 152587890625))
+                fail-mul]
               ;; ... and DCE drops the orphaned intermediate pairs.
               [(> (opt-affine-test-seq-count-mul instrs 0 0) 1) fail-count]
               [else 42])])])))

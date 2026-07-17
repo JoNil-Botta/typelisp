@@ -409,6 +409,13 @@
               (struct-get state pool-arena)
               0
               (ast-node-pool-context-base-arena pools))
+            ;; Keep the snapshot handle naming a live arena: the old pool
+            ;; chain was destroyed above, and the next entry's load-phase
+            ;; state-pool-arena row walks this global before any reinstall.
+            (array-set!
+              compiler-driver-active-state-pool-arena
+              0
+              (ast-node-pool-context-base-arena pools))
             (array-set!
               (struct-get state expr-pool)
               0

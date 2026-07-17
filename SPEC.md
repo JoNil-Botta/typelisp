@@ -6338,8 +6338,10 @@ in documentation passes.
   and no destination read by a fused value; eligible vectorized
   `spmd-reduce` folds; AVX2/AVX-512 masked varying `if` subsets including
   nested branch-mask composition and value-producing selects; AVX2/AVX-512
-  varying `while` with loop-carried active masks and nested masked flow; runtime
-  dispatch via `defdispatch` with cached CPUID/XGETBV selection.
+  standalone bool dynamic-array lanes, including bool copies and numeric
+  comparison results stored to bool arrays; AVX2/AVX-512 varying `while` with
+  loop-carried active masks and nested masked flow; runtime dispatch via
+  `defdispatch` with cached CPUID/XGETBV selection.
 - Comptime: declaration-emitting typed macros, type reflection, CTFE with
   deterministic fuel, and per-package `tlci` comptime interface images.
 - Tooling: package builds with lockfiles and dependency DAGs, inline tests,
@@ -6355,7 +6357,6 @@ in documentation passes.
 | Feature | Status |
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
-| SIMD lowering for standalone bool dynamic-array lanes | AVX-512 subset only; scalar reference lowering is complete and AVX2 reports an explicit diagnostic outside supported masked-if lowering. |
 | AVX2 lowering for varying `match`, and SIMD early exits | Deferred; AVX2 varying `while` is implemented, while scalar reference lowering is complete and unsupported SIMD backend modes report explicit diagnostics for the remaining forms. |
 | Vectorized `spmd-scan`, vectorized shuffles, vectorized enum-payload gather/match | Deferred. |
 | Public vector/mask/varying source value types | Deferred by design. |

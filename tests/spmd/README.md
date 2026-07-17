@@ -119,10 +119,10 @@ falling back to scalar code.
   empty, sub-lane, tail, and repeated-index lengths for i32, i64, f32, and f64.
   All modes exit 42; full SIMD gangs use native gathers and tails retain
   active-lane-only scalar checks.
-- `bool_lanes.tl` - AVX-512-only bool dynamic-array lane fixture covering
-  bool array copies and i64 comparison results stored to bool arrays across
-  empty, sub-lane, exact-lane, and tail lengths. Scalar exits 42; AVX2 reports
-  the staged bool-lane diagnostic.
+- `bool_lanes.tl` - scalar/AVX2/AVX-512 bool dynamic-array lane fixture
+  covering bool array copies and i64/i32/i16/i8 comparison results stored to
+  bool arrays across empty, sub-lane, exact-lane, and tail lengths. All modes
+  exit 42.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
   i64/i32/f64, f32 `sum`, plus `all`/`any` bool reductions across empty,
   sub-lane, exact-lane, tail, signed-zero, and finite-overflow cases. Exit 42.
@@ -158,8 +158,8 @@ Coverage map:
   `vector_slice_surface_i64.tl`.
 - Scalar and AVX2/AVX-512 gather-read coverage for dynamic arrays lives in
   `../integration/spmd_gather_read.tl`.
-- AVX-512 bool dynamic-array lane coverage lives in `bool_lanes.tl`; AVX2 keeps
-  an explicit staged diagnostic for the same source shape.
+- Scalar and AVX2/AVX-512 bool dynamic-array lane coverage lives in
+  `bool_lanes.tl`, including all AVX2 mask widths.
 - AVX2/AVX-512 masked varying `if` direct-index, shifted-contiguous-index,
   foreach-index-as-value, value-producing i64 select, nested branch-mask
   composition, and i16/u16 coverage lives in `masked_if_i64.tl`,

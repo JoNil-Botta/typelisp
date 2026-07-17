@@ -143,9 +143,6 @@ spmd_mode_expected_compile_diagnostic() {
         tests/spmd/varying_match_i64.tl:avx2 | tests/spmd/varying_match_enum_payload.tl:avx2)
             printf '%s\n' "lower: SPMD varying match is not supported in AVX2 backend mode; use scalar or avx512"
             ;;
-        tests/spmd/bool_lanes.tl:avx2)
-            printf '%s\n' "lower: SPMD foreach bool dynamic-array lanes require AVX-512 backend mode; use scalar or avx512"
-            ;;
         tests/spmd/private_helper_i64.tl:avx2 | tests/spmd/private_helper_f64.tl:avx2 | tests/spmd/private_helper_bool.tl:avx2 | tests/spmd/private_helper_masked_load.tl:avx2 | tests/spmd/private_helper_store.tl:avx2 | tests/spmd/private_helper_effects.tl:avx2)
             printf '%s\n' "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512"
             ;;

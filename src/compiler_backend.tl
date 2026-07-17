@@ -6512,6 +6512,14 @@
     [(AstType.Bool) "%r10b"]
     [_ ""]))
 
+(define (compiler-backend-avx2-lane-fill-mnemonic [lane-bytes : i64]) : String
+  (cond
+    [(= lane-bytes 8) "movq"]
+    [(= lane-bytes 4) "movl"]
+    [(= lane-bytes 2) "movw"]
+    [(= lane-bytes 1) "movb"]
+    [else ""]))
+
 (define (compiler-backend-avx2-lane-stack-address
   [lane : i64]
   [lane-bytes : i64]) : String
@@ -6549,7 +6557,14 @@
       [move : String (compiler-backend-avx2-scalar-move-mnemonic elem-ty)]
       [tmp : String (compiler-backend-avx2-scalar-temp-reg elem-ty)]
       [mem : String
-        (compiler-backend-avx2-lane-memory-address addr lane lane-bytes)]
+        (compiler-backend-avx2-lane-memory-address
+          addr
+          lane
+          (if (match elem-ty
+            [(AstType.Bool) true]
+            [_ false])
+            1
+            lane-bytes))]
       [slot : String (compiler-backend-avx2-lane-stack-address lane lane-bytes)]
       [lane-asm : String
         (if (match elem-ty
@@ -6564,7 +6579,9 @@
             mem
             "\n    je "
             skip-label
-            "\n    movb $-1, "
+            "\n    "
+            (compiler-backend-avx2-lane-fill-mnemonic lane-bytes)
+            " $-1, "
             slot
             "\n"
             skip-label
@@ -6666,7 +6683,8 @@
   (if (>= lane lanes)
     acc
     (let
-      [bit : i64 (compiler-backend-avx2-mask-test-bit lane 1)]
+      [lane-bytes : i64 (compiler-backend-avx2-lane-bytes lanes)]
+      [bit : i64 (compiler-backend-avx2-mask-test-bit lane lane-bytes)]
       [skip-label : String
         (compiler-backend-avx2-mask-label
           function
@@ -6710,7 +6728,7 @@
   (if (if (match elem-ty
     [(AstType.Bool) true]
     [_ false])
-    (= lanes 32)
+    (compiler-backend-avx2-mask-shape-ok? lanes)
     (compiler-backend-avx2-shape-ok? elem-ty lanes))
     (match (compiler-backend-vector-register-use
       assignments
@@ -6793,7 +6811,7 @@
   (if (if (match elem-ty
     [(AstType.Bool) true]
     [_ false])
-    (= lanes 32)
+    (compiler-backend-avx2-mask-shape-ok? lanes)
     (compiler-backend-avx2-shape-ok? elem-ty lanes))
     (match (compiler-backend-vector-register-use
       assignments

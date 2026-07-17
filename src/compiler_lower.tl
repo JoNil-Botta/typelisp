@@ -34187,9 +34187,6 @@
 (define (lower-avx2-spmd-call-diagnostic) : String
   "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512")
 
-(define (lower-spmd-bool-lane-diagnostic) : String
-  "lower: SPMD foreach bool dynamic-array lanes require AVX-512 backend mode; use scalar or avx512")
-
 (define (lower-simd-foreach-fallback-diagnostic) : String
   "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands")
 
@@ -37562,7 +37559,7 @@
           out-of-line-call))
       (and
         (lower-mode-avx2? mode)
-        (or varying-if varying-while)
+        (or varying-if varying-while bool-array-lane)
         (not varying-match)))
       (let
         [lanes : i64
@@ -45689,19 +45686,6 @@
                         (if (lower-mode-avx2? (lower-state-mode state))
                           (lower-avx2-varying-match-diagnostic)
                           "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
-                [(and
-                    (lower-mode-avx2? (lower-state-mode state))
-                    (lower-masked-vector-body-has-bool-array-lane?
-                      ctx
-                      env
-                      type-env
-                      index
-                      body))
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic-at-expr
-                        body
-                        (lower-spmd-bool-lane-diagnostic))))]
                 [(lower-vector-body-has-spmd-shuffle? ctx body)
                   (ResultLowerExpr.Err
                     (box

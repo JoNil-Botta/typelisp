@@ -1681,6 +1681,7 @@
     [(not (= (compiler-optimize-bce-version-mb-self-test) 42)) 52]
     [(not (= (compiler-optimize-bce-version-mb-negative-self-test) 42)) 53]
     [(not (= (compiler-optimize-bce-version-mb-pipeline-self-test) 42)) 54]
+    [(not (= (compiler-optimize-bce-version-mb-partial-self-test) 42)) 55]
     [else 42]))
 
 (define (main) : i64
@@ -1735,3 +1736,10 @@
     (compiler-optimize-bce-version-mb-pipeline-self-test)
     42
     "multi-block versioning full pipeline"))
+
+(test
+  bce-version-multiblock-partial
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-partial-self-test)
+    42
+    "multi-block versioning keeps underivable checks in the fast clone"))

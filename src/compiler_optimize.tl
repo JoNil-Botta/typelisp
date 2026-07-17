@@ -27191,13 +27191,18 @@
 ;; This pass recognizes such a loop from its natural-loop back edge (header
 ;; dominating latch, a single dedicated preheader whose only successor is the
 ;; header, <= (opt-bce-mb-block-max) blocks, clonable whitelist instructions
-;; only, Jump/Branch or intra-loop fallthrough terminators only), derives a
-;; sufficient guard condition for EVERY BoundsCheck in ANY loop block, and
-;; versions exactly like the single-block pass: a guard block on the
-;; preheader edge branches to a check-free fast clone of the whole loop when
-;; the conjunction holds and to the original checked loop otherwise.
+;; only, Jump/Branch or intra-loop fallthrough terminators only) and versions
+;; like the single-block pass: a guard block on the preheader edge branches
+;; to a fast clone of the whole loop when the guard conjunction holds and to
+;; the original checked loop otherwise. PARTIAL elimination: every BoundsCheck
+;; whose condition derives is dropped from the clone; a check that does not
+;; derive (a dynamic stack index, a second array, ...) is simply KEPT there --
+;; remapped like every other cloned instruction -- instead of rejecting the
+;; whole loop, and the guard constrains only the removed checks. Cloning
+;; requires at least one derivable check; the kept checks preserve the exact
+;; abort semantics of the slow path.
 ;;
-;; Derivations (any check anywhere that fails to derive rejects the loop):
+;; Derivations (a check matching none of these stays in the clone):
 ;;   * index resolves to the counter phi       -> `bound <= len`
 ;;   * index resolves to a bounded header phi  -> covered by the counter's
 ;;     conditions (same resolved seed; back-edge value is sphi or sphi+1
@@ -27862,6 +27867,38 @@
         false)]))
 
 ;; Derive the sufficient invariant condition for one check's index operand.
+;; Underivable checks kept in the fast clone, identified by (block label,
+;; instruction index) -- both walks visit `shape body-blocks` in order, so the
+;; pair is a stable identity between guard derivation and cloning.
+(defenum OptBceMbKeep
+  (Nil)
+  (Cons String i64 (Box OptBceMbKeep)))
+
+(define (opt-bce-mb-keep-contains?
+  [keep : OptBceMbKeep]
+  [label : String]
+  [index : i64]) : bool
+  (match keep
+    [(OptBceMbKeep.Nil) false]
+    [(OptBceMbKeep.Cons item-label item-index rest)
+      (if (and (= item-index index) (string.eq item-label label))
+        true
+        (opt-bce-mb-keep-contains? (box-get rest) label index))]))
+
+;; Derivation fold state: the guard accumulator (conditions for REMOVED
+;; checks), the kept-check set, and how many checks derived -- partial
+;; versioning requires at least one derivable check to make cloning pay.
+(defstruct OptBceMbDerive
+  (guard OptBceVersionGuardAcc)
+  (keep OptBceMbKeep)
+  (derived i64))
+
+;; guard-conds output: the guard instructions + value plus the kept-check set
+;; the clone must preserve (remapped) instead of dropping.
+(defenum OptBceMbGuardOut
+  (No)
+  (Some CompilerIrInstrList CompilerIrValue OptBceMbKeep))
+
 (define (opt-bce-mb-derive-index
   [all-blocks : CompilerIrBlockList]
   [body-blocks : CompilerIrBlockList]
@@ -27960,6 +27997,7 @@
     [_ (OptBceVersionGuardAcc.No)]))
 
 (define (opt-bce-mb-derive-block
+  [label : String]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [all-blocks : CompilerIrBlockList]
@@ -27971,10 +28009,11 @@
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
   [cell : (Array i64)]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [state : OptBceMbDerive]) : OptBceMbDerive
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    acc
+    state
     (opt-bce-mb-derive-block
+      label
       instrs
       (+ index 1)
       all-blocks
@@ -27990,21 +28029,43 @@
         [(CompilerIrInstr.BoundsCheck index-value length-value _)
           (match (opt-bce-mb-invariant-operand body-blocks defs length-value)
             [(CompilerIrMaybeValue.Some length-invariant)
-              (opt-bce-mb-derive-index
-                all-blocks
-                body-blocks
-                defs
-                latch
-                preheader
-                iphi
-                seed
-                bound
-                cell
-                index-value
-                length-invariant
-                acc)]
-            [(CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)])]
-        [_ acc]))))
+              (let
+                [derived-guard : OptBceVersionGuardAcc
+                  (opt-bce-mb-derive-index
+                    all-blocks
+                    body-blocks
+                    defs
+                    latch
+                    preheader
+                    iphi
+                    seed
+                    bound
+                    cell
+                    index-value
+                    length-invariant
+                    (struct-get state guard))]
+                (match derived-guard
+                  [(OptBceVersionGuardAcc.No)
+                    ;; Underivable: the check STAYS (remapped) in the fast
+                    ;; clone instead of rejecting the whole loop.
+                    (OptBceMbDerive
+                      (struct-get state guard)
+                      (OptBceMbKeep.Cons
+                        label
+                        index
+                        (box (struct-get state keep)))
+                      (struct-get state derived))]
+                  [(OptBceVersionGuardAcc.Some _ _ _)
+                    (OptBceMbDerive
+                      derived-guard
+                      (struct-get state keep)
+                      (+ (struct-get state derived) 1))]))]
+            [(CompilerIrMaybeValue.No)
+              (OptBceMbDerive
+                (struct-get state guard)
+                (OptBceMbKeep.Cons label index (box (struct-get state keep)))
+                (struct-get state derived))])]
+        [_ state]))))
 
 (define (opt-bce-mb-derive-blocks
   [remaining : CompilerIrBlockList]
@@ -28017,12 +28078,12 @@
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
   [cell : (Array i64)]
-  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  [state : OptBceMbDerive]) : OptBceMbDerive
   (match remaining
-    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Nil) state]
     [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(CompilerIrBlock.Block _ instrs)
+        [(CompilerIrBlock.Block label instrs)
           (opt-bce-mb-derive-blocks
             (box-get rest)
             all-blocks
@@ -28035,6 +28096,7 @@
             bound
             cell
             (opt-bce-mb-derive-block
+              label
               instrs
               0
               all-blocks
@@ -28046,7 +28108,7 @@
               seed
               bound
               cell
-              acc))])]
+              state))])]
     [(CompilerIrBlockList.Array seq)
       (opt-bce-mb-derive-blocks
         (compiler-ir-block-seq-to-list seq)
@@ -28059,32 +28121,44 @@
         seed
         bound
         cell
-        acc)]))
+        state)]))
 
 (define (opt-bce-mb-guard-conds
   [all-blocks : CompilerIrBlockList]
   [shape : OptBceMbShape]
   [defs : opt_i64_i64_map.Map]
-  [cell : (Array i64)]) : OptBceVersionGuardResult
-  (opt-bce-version-guard-finish
-    (struct-get shape seed)
-    (struct-get shape bound)
-    cell
-    (opt-bce-mb-derive-blocks
-      (struct-get shape body-blocks)
-      all-blocks
-      (struct-get shape body-blocks)
-      defs
-      (struct-get shape latch)
-      (struct-get shape preheader)
-      (struct-get shape iphi)
-      (struct-get shape seed)
-      (struct-get shape bound)
-      cell
-      (OptBceVersionGuardAcc.Some
-        (CompilerIrInstrList.Nil)
-        (CompilerIrValueList.Nil)
-        false))))
+  [cell : (Array i64)]) : OptBceMbGuardOut
+  (let
+    [dr : OptBceMbDerive
+      (opt-bce-mb-derive-blocks
+        (struct-get shape body-blocks)
+        all-blocks
+        (struct-get shape body-blocks)
+        defs
+        (struct-get shape latch)
+        (struct-get shape preheader)
+        (struct-get shape iphi)
+        (struct-get shape seed)
+        (struct-get shape bound)
+        cell
+        (OptBceMbDerive
+          (OptBceVersionGuardAcc.Some
+            (CompilerIrInstrList.Nil)
+            (CompilerIrValueList.Nil)
+            false)
+          (OptBceMbKeep.Nil)
+          0))]
+    (if (= (struct-get dr derived) 0)
+      ;; No removable check: cloning the loop would only duplicate it.
+      (OptBceMbGuardOut.No)
+      (match (opt-bce-version-guard-finish
+        (struct-get shape seed)
+        (struct-get shape bound)
+        cell
+        (struct-get dr guard))
+        [(OptBceVersionGuardResult.No) (OptBceMbGuardOut.No)]
+        [(OptBceVersionGuardResult.Some guard-instrs guard-value)
+          (OptBceMbGuardOut.Some guard-instrs guard-value (struct-get dr keep))]))))
 
 ;; --- fast-clone emission --------------------------------------------------------
 (define (opt-bce-mb-fast-label [body-labels : OptLabelSet] [label : String]) : String
@@ -28164,6 +28238,7 @@
 (define (opt-bce-mb-clone-instr
   [remap : (Array CompilerIrValue)]
   [body-labels : OptLabelSet]
+  [all-labels : OptLabelSet]
   [preheader : String]
   [guard-label : String]
   [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -28231,53 +28306,115 @@
         (opt-unroll-subst-value remap cond)
         (opt-bce-mb-fast-label body-labels then-label)
         (opt-bce-mb-fast-label body-labels else-label))]
+    ;; A kept (underivable) check: remap operands and the ok edge. An ok-label
+    ;; naming a real loop block remaps to its fast clone; one naming a real
+    ;; block OUTSIDE the loop stays shared; anything else is a synthetic
+    ;; mid-block continuation label the backend re-emits at the check site, so
+    ;; it must be uniquified per clone or the slow and fast blocks define it
+    ;; twice.
+    [(CompilerIrInstr.BoundsCheck index length ok-label)
+      (CompilerIrInstr.BoundsCheck
+        (opt-unroll-subst-value remap index)
+        (opt-unroll-subst-value remap length)
+        (if (opt-label-contains body-labels ok-label)
+          (opt-bce-mb-fast-label body-labels ok-label)
+          (if (opt-label-contains all-labels ok-label)
+            ok-label
+            (string.append ok-label "__bce_fast"))))]
     ;; unreachable: the shape scan whitelisted every loop instruction
     [_ instr]))
 
-;; Pass B: clone a loop's instructions, dropping every BoundsCheck (the
-;; guard proved them all non-failing).
+;; Every block label in the function: a kept check's ok-label that names a
+;; real block outside the loop must NOT be renamed, while a synthetic
+;; mid-block continuation label (no such block exists) MUST be uniquified.
+(define (opt-bce-mb-all-labels-from
+  [blocks : CompilerIrBlockList]
+  [acc : OptLabelSet]) : OptLabelSet
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label _)
+          (opt-bce-mb-all-labels-from (box-get rest) (opt-label-add acc label))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-all-labels-from (compiler-ir-block-seq-to-list seq) acc)]))
+
+;; Pass B: clone a loop's instructions, dropping every BoundsCheck the guard
+;; proved non-failing and remapping the kept underivable ones (partial
+;; versioning: the fast clone is not necessarily check-free).
 (define (opt-bce-mb-clone-instrs
+  [label : String]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [remap : (Array CompilerIrValue)]
   [body-labels : OptLabelSet]
+  [all-labels : OptLabelSet]
   [preheader : String]
-  [guard-label : String]) : CompilerIrInstrList
+  [guard-label : String]
+  [keep : OptBceMbKeep]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (CompilerIrInstrList.Nil)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (match instr
         [(CompilerIrInstr.BoundsCheck _ _ _)
-          (opt-bce-mb-clone-instrs
-            instrs
-            (+ index 1)
-            remap
-            body-labels
-            preheader
-            guard-label)]
+          (if (opt-bce-mb-keep-contains? keep label index)
+            (compiler-ir-instr-cons
+              (opt-bce-mb-clone-instr
+                remap
+                body-labels
+                all-labels
+                preheader
+                guard-label
+                instr)
+              (opt-bce-mb-clone-instrs
+                label
+                instrs
+                (+ index 1)
+                remap
+                body-labels
+                all-labels
+                preheader
+                guard-label
+                keep))
+            (opt-bce-mb-clone-instrs
+              label
+              instrs
+              (+ index 1)
+              remap
+              body-labels
+              all-labels
+              preheader
+              guard-label
+              keep))]
         [_
           (compiler-ir-instr-cons
             (opt-bce-mb-clone-instr
               remap
               body-labels
+              all-labels
               preheader
               guard-label
               instr)
             (opt-bce-mb-clone-instrs
+              label
               instrs
               (+ index 1)
               remap
               body-labels
+              all-labels
               preheader
-              guard-label))]))))
+              guard-label
+              keep))]))))
 
 (define (opt-bce-mb-clone-blocks
   [blocks : CompilerIrBlockList]
   [remap : (Array CompilerIrValue)]
   [body-labels : OptLabelSet]
+  [all-labels : OptLabelSet]
   [preheader : String]
-  [guard-label : String]) : CompilerIrBlockList
+  [guard-label : String]
+  [keep : OptBceMbKeep]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
@@ -28287,25 +28424,32 @@
             (compiler-ir-block
               (string.append label "__bce_fast")
               (opt-bce-mb-clone-instrs
+                label
                 instrs
                 0
                 remap
                 body-labels
+                all-labels
                 preheader
-                guard-label))
+                guard-label
+                keep))
             (opt-bce-mb-clone-blocks
               (box-get rest)
               remap
               body-labels
+              all-labels
               preheader
-              guard-label))])]
+              guard-label
+              keep))])]
     [(CompilerIrBlockList.Array seq)
       (opt-bce-mb-clone-blocks
         (compiler-ir-block-seq-to-list seq)
         remap
         body-labels
+        all-labels
         preheader
-        guard-label)]))
+        guard-label
+        keep)]))
 
 ;; --- rewrite --------------------------------------------------------------------
 ;; Extend outside phis: every input carried on a loop edge gains a parallel
@@ -28455,9 +28599,8 @@
         [cell : (Array i64) (array.make-array i64 1)]
         [_cell : unit (array-set! cell 0 frame)]
         (match (opt-bce-mb-guard-conds blocks shape defs cell)
-          [(OptBceVersionGuardResult.No)
-            (OptUnrollResult.Result blocks frame false)]
-          [(OptBceVersionGuardResult.Some guard-instrs guard-value)
+          [(OptBceMbGuardOut.No) (OptUnrollResult.Result blocks frame false)]
+          [(OptBceMbGuardOut.Some guard-instrs guard-value keep)
             (let
               [remap : (Array CompilerIrValue)
                 (array.make-array CompilerIrValue frame)]
@@ -28470,8 +28613,10 @@
                   body-blocks
                   remap
                   body-labels
+                  (opt-bce-mb-all-labels-from blocks (OptLabelSet.Nil))
                   (struct-get shape preheader)
-                  guard-label)]
+                  guard-label
+                  keep)]
               [guard-block : CompilerIrBlock
                 (compiler-ir-block
                   guard-label
@@ -49995,9 +50140,10 @@
 ;; The quicksort-partition shape: a counted scan loop (body) whose body splits
 ;; into a swap path (then: store++) and a skip path (else) before merging back
 ;; into the incrementing latch (merge). `variant` mutates one detail each: 1
-;; makes the swap check's index unprovable (store+1 used directly), 2 puts a
-;; call in the swap block, 3 makes the counter step +2 -- every one of those
-;; must leave the function untouched.
+;; makes the swap check's index underivable (store+1 used directly) -- which
+;; PARTIALLY versions now (the counter check still derives, the swap check
+;; stays in the fast clone) -- 2 puts a call in the swap block, 3 makes the
+;; counter step +2 -- the latter two must leave the function untouched.
 (define (opt-bce-mb-test-header-block) : CompilerIrBlock
   (compiler-ir-block
     "body"
@@ -50040,34 +50186,54 @@
               (CompilerIrInstrList.Nil))))))))
 
 (define (opt-bce-mb-test-then-block [variant : i64]) : CompilerIrBlock
-  (compiler-ir-block
-    "then"
-    (compiler-ir-instr-cons
-      (CompilerIrInstr.BoundsCheck
-        (CompilerIrValue.Var
-          (if (= variant 1)
-            6
-            4))
-        (CompilerIrValue.Var 1)
-        "mb_ok1")
+  (if (= variant 1)
+    ;; The underivable-but-clean partial case: check store+1, defined before
+    ;; the check. The counter check in "body" still derives, so the loop
+    ;; partially versions and this check STAYS in the fast clone.
+    (compiler-ir-block
+      "then"
       (compiler-ir-instr-cons
-        (if (= variant 2)
-          (CompilerIrInstr.Call
-            11
-            (opt-test-symbol "mb_callee")
-            (CompilerIrCallArgs.Nil)
-            (AstType.I64))
-          (CompilerIrInstr.Mov 11 (CompilerIrValue.I64 0) (AstType.I64)))
+        (CompilerIrInstr.BinOp
+          6
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 4)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.BinOp
-            6
-            (CompilerIrBinOp.Add)
-            (CompilerIrValue.Var 4)
-            (CompilerIrValue.I64 1)
-            (AstType.I64))
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 6)
+            (CompilerIrValue.Var 1)
+            "mb_ok1")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "merge")
-            (CompilerIrInstrList.Nil)))))))
+            (CompilerIrInstr.Mov 11 (CompilerIrValue.I64 0) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "merge")
+              (CompilerIrInstrList.Nil))))))
+    (compiler-ir-block
+      "then"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BoundsCheck
+          (CompilerIrValue.Var 4)
+          (CompilerIrValue.Var 1)
+          "mb_ok1")
+        (compiler-ir-instr-cons
+          (if (= variant 2)
+            (CompilerIrInstr.Call
+              11
+              (opt-test-symbol "mb_callee")
+              (CompilerIrCallArgs.Nil)
+              (AstType.I64))
+            (CompilerIrInstr.Mov 11 (CompilerIrValue.I64 0) (AstType.I64)))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              6
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "merge")
+              (CompilerIrInstrList.Nil))))))))
 
 (define (opt-bce-mb-test-else-block) : CompilerIrBlock
   (compiler-ir-block
@@ -50265,10 +50431,6 @@
 
 (define (compiler-optimize-bce-version-mb-negative-self-test) : i64
   (let
-    [unprovable : CompilerIrBlockList
-      (opt-function-blocks
-        (opt-bce-version-function
-          (opt-bce-mb-test-function (opt-bce-mb-test-blocks 1))))]
     [with-call : CompilerIrBlockList
       (opt-function-blocks
         (opt-bce-version-function
@@ -50288,10 +50450,33 @@
             (opt-bce-mb-test-chain-blocks))))]
     (cond
       ;; every rejection leaves the function untouched.
-      [(not (= (compiler-ir-block-list-count unprovable) 6)) 1]
-      [(not (= (compiler-ir-block-list-count with-call) 6)) 2]
-      [(not (= (compiler-ir-block-list-count step-two) 6)) 3]
-      [(not (= (compiler-ir-block-list-count too-big) 11)) 4]
+      [(not (= (compiler-ir-block-list-count with-call) 6)) 1]
+      [(not (= (compiler-ir-block-list-count step-two) 6)) 2]
+      [(not (= (compiler-ir-block-list-count too-big) 11)) 3]
+      [else 42])))
+
+;; Partial versioning: the swap check's store+1 index does not derive, but the
+;; body's counter check does -- the loop versions, the fast clone drops only
+;; the counter check and KEEPS the swap check (remapped).
+(define (compiler-optimize-bce-version-mb-partial-self-test) : i64
+  (let
+    [versioned : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 1)))]
+    [out : CompilerIrBlockList (opt-function-blocks versioned)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function versioned))) 1]
+      ;; entry + guard + four fast clones + four slow blocks + exit
+      [(not (= (compiler-ir-block-list-count out) 11)) 2]
+      ;; the derivable counter check is gone from the fast header...
+      [(not (= (opt-bce-version-test-block-checks out "body__bce_fast") 0)) 3]
+      ;; ... while the underivable swap check STAYS in the fast clone ...
+      [(not (= (opt-bce-version-test-block-checks out "then__bce_fast") 1)) 4]
+      ;; ... and the slow loop keeps both of its checks.
+      [(not (= (opt-bce-version-test-block-checks out "body") 1)) 5]
+      [(not (= (opt-bce-version-test-block-checks out "then") 1)) 6]
+      ;; the exit phi gained the parallel fast-edge input.
+      [(not (= (opt-bce-version-test-exit-phi-inputs out "exit") 2)) 7]
       [else 42])))
 
 ;; --- multi-block versioning pipeline self-test --------------------------------------

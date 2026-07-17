@@ -18,6 +18,12 @@
 ;; `compiler_typecheck`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
 (import stdlib.io)
+
+;; Keep legacy root aliases for reader enum variants while stage0 expands the
+;; build-version cfg declarations below. Dotted imports in the CLI cores share
+;; the same `read` module; importing it unqualified here preserves both views.
+;; lint-allow: unused-import -- the import's legacy alias side effect is required.
+(import read)
 (import "build_cli_core.tl")
 (import "run_cli_core.tl")
 (import "check_cli_core.tl")

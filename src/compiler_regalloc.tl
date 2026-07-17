@@ -17909,24 +17909,32 @@
     ;; a precision error here can only mis-coalesce (caught by the fixpoint), never
     ;; under-approximate allocation interference.
     [coalesce-index : CompilerRegIntervalIndex
-      (if allow-caller-saved-zero-call
-        ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
-        ;; by the coalescing segment index AND the live-out-input phi exclusion.
-        (let
-          [ep-liveness : CompilerFunctionLiveness
-            (compiler-reg-liveness-handle-edge-precise liveness-handle)]
-          (compiler-reg-hybrid-coalesce-index
-            interval-index
-            (compiler-reg-live-interval-selection-ep func ep-liveness)
-            ;; Exclude unsafe live-out inputs while admitting proven self-loop
-            ;; back-edge-only values. Fixed div/mod or variable-shift functions
-            ;; retain the conservative guard: relaxing an otherwise unrelated
-            ;; carry can reshape fixed-home pressure differently on SysV/Win64.
-            (compiler-reg-function-phi-touched-safe-mode
-              func
-              ep-liveness
-              (= (compiler-live-set-word-count destructive-fixed-points) 0))))
-        interval-index)]
+      (match moves
+        [(CompilerRegMoveList.Nil) interval-index]
+        [_
+          (if allow-caller-saved-zero-call
+            ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
+            ;; by the coalescing segment index AND the live-out-input phi exclusion.
+            ;; Skipped entirely when there are no moves to coalesce (the Nil arm
+            ;; above): the map build below returns the empty map without reading
+            ;; this index, so the plan is unchanged and the EP interval
+            ;; selection + safe-mode exclusion are provably dead work for
+            ;; move-free functions.
+            (let
+              [ep-liveness : CompilerFunctionLiveness
+                (compiler-reg-liveness-handle-edge-precise liveness-handle)]
+              (compiler-reg-hybrid-coalesce-index
+                interval-index
+                (compiler-reg-live-interval-selection-ep func ep-liveness)
+                ;; Exclude unsafe live-out inputs while admitting proven self-loop
+                ;; back-edge-only values. Fixed div/mod or variable-shift functions
+                ;; retain the conservative guard: relaxing an otherwise unrelated
+                ;; carry can reshape fixed-home pressure differently on SysV/Win64.
+                (compiler-reg-function-phi-touched-safe-mode
+                  func
+                  ep-liveness
+                  (= (compiler-live-set-word-count destructive-fixed-points) 0))))
+            interval-index)])]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build

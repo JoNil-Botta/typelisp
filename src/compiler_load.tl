@@ -317,6 +317,13 @@
   (lazy-import-skip-record-count (Array i64))
   (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState))
 
+;; Per-source traversal data stays explicit without widening the hot recursive
+;; declaration-loader call for each independently owned field.
+(defstruct CompilerLoadTraversalContext
+  (load-state CompilerLoadSessionState)
+  (importer-path-id i64)
+  (importer-decl-owner-id i64))
+
 (define (compiler-load-session-state-bool-cell [value : bool]) : (Array bool)
   (make-array value))
 
@@ -1071,11 +1078,13 @@
 (define (compiler-load-session-embedded-stdlib-source-used?) : bool
   (array-ref (struct-get compiler-load-active-session-state cache-enabled) 1))
 
+(define (compiler-load-session-state-note-embedded-stdlib-source!
+  [state : CompilerLoadSessionState]) : unit
+  (array-set! (struct-get state cache-enabled) 1 true))
+
 (define (compiler-load-session-note-embedded-stdlib-source!) : unit
-  (array-set!
-    (struct-get compiler-load-active-session-state cache-enabled)
-    1
-    true))
+  (compiler-load-session-state-note-embedded-stdlib-source!
+    compiler-load-active-session-state))
 
 (define (compiler-load-session-reset-pools!) : unit
   (begin
@@ -2868,12 +2877,14 @@
       cfgs)))
 
 (define (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+  [load-state : CompilerLoadSessionState]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-file-with-paths-and-roots-cfg-with-pools
+      load-state
       compiler-load-core-macro-prelude-path
       seen
       stdlib-roots
@@ -3477,7 +3488,8 @@
     compiler-load-active-session-state
     module-id))
 
-(define (compiler-load-surface-summary-seen-expected-module?
+(define (compiler-load-session-state-surface-summary-seen-expected-module?
+  [state : CompilerLoadSessionState]
   [source-path-id : i64]
   [expected-module : AstMaybeModuleName]
   [seen : sym_i64_env.SymI64Env]) : bool
@@ -3486,10 +3498,22 @@
     [(AstMaybeModuleName.Some expected-id)
       (and
         (compiler-load-seen-module-contains? seen "" expected-id)
-        (match (compiler-load-surface-summary-find-source source-path-id)
+        (match (compiler-load-session-state-surface-summary-find-source
+          state
+          source-path-id)
           [(CompilerLoadNoSurfaceSummary) false]
           [(CompilerLoadSomeSurfaceSummary summary)
             (= (struct-get summary module-id) expected-id)]))]))
+
+(define (compiler-load-surface-summary-seen-expected-module?
+  [source-path-id : i64]
+  [expected-module : AstMaybeModuleName]
+  [seen : sym_i64_env.SymI64Env]) : bool
+  (compiler-load-session-state-surface-summary-seen-expected-module?
+    compiler-load-active-session-state
+    source-path-id
+    expected-module
+    seen))
 
 (define (compiler-load-seen-expected-module-with-paths
   [path : String]
@@ -3562,6 +3586,7 @@
     source-path-id))
 
 (define (compiler-load-surface-summary-load-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [parse-identity : CompilerLoadParseIdentity]
   [stdlib-roots : svec.Vec]
@@ -3576,6 +3601,7 @@
     [fallback-id : i64 (struct-get parse-identity module-fallback-id)]
     (match (if (io.file-exists? path)
       (compiler-load-parse-file-diagnostic-session-id-with-pools
+        load-state
         path
         source-path-id
         stdlib-roots
@@ -3585,6 +3611,7 @@
         [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
             source)
           (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+            load-state
             path
             source-path-id
             source
@@ -3603,11 +3630,14 @@
           program
           fallback-id)
           [(ResultCompilerLoadSurfaceSummary.Ok summary)
-            (compiler-load-record-surface-summary! summary)]
+            (compiler-load-session-state-record-surface-summary!
+              load-state
+              summary)]
           [(ResultCompilerLoadSurfaceSummary.Err _) unit])]
       [(ResultAstProgramDiagnostic.Err _) unit])))
 
 (define (compiler-load-surface-summary-ensure-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [source-path-id : i64]
   [stdlib-roots : svec.Vec]
@@ -3622,11 +3652,13 @@
         source-path-id
         (compiler-load-module-fallback-id-for-parse fallback expected-module)
         cbi.compiler-builtin-id-fix-empty)]
-    (match (compiler-load-surface-summary-find-source
+    (match (compiler-load-session-state-surface-summary-find-source
+      load-state
       (struct-get parse-identity source-path-id))
       [(CompilerLoadSomeSurfaceSummary _) unit]
       [(CompilerLoadNoSurfaceSummary)
         (compiler-load-surface-summary-load-with-pools
+          load-state
           path
           parse-identity
           stdlib-roots
@@ -3635,7 +3667,8 @@
           cfgs
           pools)])))
 
-(define (compiler-load-surface-summary-refresh-with-pools
+(define (compiler-load-surface-summary-refresh-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [source-path-id : i64]
   [stdlib-roots : svec.Vec]
@@ -3651,9 +3684,11 @@
         (compiler-load-module-fallback-id-for-parse fallback expected-module)
         cbi.compiler-builtin-id-fix-empty)]
     (begin
-      (compiler-load-surface-summary-remove-source!
+      (compiler-load-session-state-surface-summary-remove-source!
+        load-state
         (struct-get parse-identity source-path-id))
       (compiler-load-surface-summary-load-with-pools
+        load-state
         path
         parse-identity
         stdlib-roots
@@ -3661,6 +3696,26 @@
         import-root
         cfgs
         pools))))
+
+(define (compiler-load-surface-summary-refresh-with-pools
+  [path : String]
+  [source-path-id : i64]
+  [stdlib-roots : svec.Vec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  ;; Typecheck/package compatibility path; driver-owned loading calls the
+  ;; state-taking traversal functions above.
+  (compiler-load-surface-summary-refresh-with-state-and-pools
+    compiler-load-active-session-state
+    path
+    source-path-id
+    stdlib-roots
+    expected-module
+    import-root
+    cfgs
+    pools))
 
 (define (compiler-load-surface-summary-decl-requires-eager?
   [decl : CompilerLoadSurfaceDecl]) : bool
@@ -5518,7 +5573,8 @@
       [(AstMaybeImportAlias.Some _) true]
       [(AstMaybeImportAlias.No) false])))
 
-(define (compiler-load-lazy-import-preload-summary-with-pools
+(define (compiler-load-lazy-import-preload-summary-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
   [resolved : String]
   [resolved-id : i64]
   [stdlib-roots : svec.Vec]
@@ -5527,6 +5583,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
   (compiler-load-surface-summary-ensure-with-pools
+    load-state
     resolved
     resolved-id
     stdlib-roots
@@ -5535,7 +5592,26 @@
     cfgs
     pools))
 
-(define (compiler-load-lazy-import-skip?
+(define (compiler-load-lazy-import-preload-summary-with-pools
+  [resolved : String]
+  [resolved-id : i64]
+  [stdlib-roots : svec.Vec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (compiler-load-lazy-import-preload-summary-with-state-and-pools
+    compiler-load-active-session-state
+    resolved
+    resolved-id
+    stdlib-roots
+    expected-module
+    import-root
+    cfgs
+    pools))
+
+(define (compiler-load-lazy-import-skip-with-state?
+  [load-state : CompilerLoadSessionState]
   [importer-path : String]
   [kind : AstImportKind]
   [resolved-id : i64]
@@ -5550,7 +5626,9 @@
       (not (compiler-load-lazy-imports-enabled?))
       (compiler-load-prelude-importer? importer-path))
       false
-      (match (compiler-load-surface-summary-find-source resolved-id)
+      (match (compiler-load-session-state-surface-summary-find-source
+        load-state
+        resolved-id)
         [(CompilerLoadNoSurfaceSummary) false]
         [(CompilerLoadSomeSurfaceSummary summary)
           (let
@@ -5590,6 +5668,26 @@
                                   (sym_i64_env.sym-i64-empty)))))])]
                     [(AstMaybeImportAlias.No) false]))]
               [_ false]))]))))
+
+(define (compiler-load-lazy-import-skip?
+  [importer-path : String]
+  [kind : AstImportKind]
+  [resolved-id : i64]
+  [expected-module : AstMaybeModuleName]
+  [alias : AstMaybeImportAlias]
+  [rest : AstDeclList]
+  [pools : AstNodePoolContext]
+  [preload-demand : CompilerLoadLazyAliasDemand]) : bool
+  (compiler-load-lazy-import-skip-with-state?
+    compiler-load-active-session-state
+    importer-path
+    kind
+    resolved-id
+    expected-module
+    alias
+    rest
+    pools
+    preload-demand))
 
 (define (compiler-load-surface-zero-span) : AstSourceSpan
   (ast-source-span 0 0 0 0))
@@ -6284,10 +6382,9 @@
       after-alias)))
 
 (define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+  [traversal : CompilerLoadTraversalContext]
   [decls : AstDeclList]
   [importer-path : String]
-  [importer-path-id : i64]
-  [importer-decl-owner-id : i64]
   [importer-module : String]
   [importer-module-id : i64]
   [importer-source-module : String]
@@ -6321,10 +6418,12 @@
                       importer-path
                       "compiler-load: duplicate module declaration")))
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  (CompilerLoadTraversalContext
+                    (struct-get traversal load-state)
+                    (struct-get traversal importer-path-id)
+                    target-module-id)
                   body
                   importer-path
-                  importer-path-id
-                  target-module-id
                   target-module
                   target-module-id
                   target-module
@@ -6340,10 +6439,9 @@
                       body-modules
                       body-seen)
                     (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                      traversal
                       rest
                       importer-path
-                      importer-path-id
-                      importer-decl-owner-id
                       importer-module
                       importer-module-id
                       importer-source-module
@@ -6373,7 +6471,7 @@
                               body-paths
                               (ast-decl-path-list-prepend-builder-with-owner-id
                                 importer-path
-                                importer-decl-owner-id
+                                (struct-get traversal importer-decl-owner-id)
                                 rest-paths)))
                           (ast-decl-module-list-prepend-builder-id
                             target-module-id
@@ -6391,10 +6489,9 @@
               (AstImportSpec.Spec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                traversal
                 rest
                 importer-path
-                importer-path-id
-                importer-decl-owner-id
                 importer-module
                 importer-module-id
                 importer-source-module
@@ -6416,7 +6513,7 @@
                       rest-decls)
                     (ast-decl-path-list-prepend-builder-with-owner-id
                       importer-path
-                      importer-decl-owner-id
+                      (struct-get traversal importer-decl-owner-id)
                       rest-paths)
                     (ast-decl-module-list-prepend-builder-id
                       importer-source-module-id
@@ -6454,7 +6551,8 @@
                             (struct-get preload-demand unknown))))]
                     [_preload-summary : unit
                       (if preload-summary-needed
-                        (compiler-load-lazy-import-preload-summary-with-pools
+                        (compiler-load-lazy-import-preload-summary-with-state-and-pools
+                          (struct-get traversal load-state)
                           resolved
                           resolved-id
                           stdlib-roots
@@ -6465,7 +6563,8 @@
                         unit)]
                     [preload-skip : bool
                       (if preload-summary-needed
-                        (compiler-load-lazy-import-skip?
+                        (compiler-load-lazy-import-skip-with-state?
+                          (struct-get traversal load-state)
                           importer-path
                           kind
                           resolved-id
@@ -6481,7 +6580,8 @@
                         (ast-decl-path-list-new)
                         (ast-decl-module-list-new)
                         seen)
-                      (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
+                      (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
+                        (struct-get traversal load-state)
                         resolved
                         resolved-id
                         seen
@@ -6506,10 +6606,9 @@
                               seen
                               import-seen)]
                           (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                            traversal
                             rest
                             importer-path
-                            importer-path-id
-                            importer-decl-owner-id
                             importer-module
                             importer-module-id
                             importer-source-module
@@ -6539,7 +6638,8 @@
                                     imported-decls)]
                                 (if lazy-skip
                                   (begin
-                                    (compiler-load-lazy-import-record-skip!)
+                                    (compiler-load-session-state-lazy-import-record-skip!
+                                      (struct-get traversal load-state))
                                     (ResultCompilerLoadWithPaths.Ok
                                       (compiler-load-decls-after-import
                                         kind
@@ -6552,7 +6652,9 @@
                                         rest-decls)
                                       (compiler-load-paths-after-import
                                         importer-path
-                                        importer-decl-owner-id
+                                        (struct-get
+                                          traversal
+                                          importer-decl-owner-id)
                                         after-import-alias
                                         (ast-decl-list-new)
                                         rest-paths)
@@ -6578,7 +6680,9 @@
                                       imported-paths
                                       (compiler-load-paths-after-import
                                         importer-path
-                                        importer-decl-owner-id
+                                        (struct-get
+                                          traversal
+                                          importer-decl-owner-id)
                                         after-import-alias
                                         imported-decls
                                         rest-paths))
@@ -6606,10 +6710,9 @@
               pools)
               [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  traversal
                   rest
                   importer-path
-                  importer-path-id
-                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6631,7 +6734,7 @@
                         rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-decl-owner-id
+                        (struct-get traversal importer-decl-owner-id)
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -6650,10 +6753,9 @@
               pools)
               [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  traversal
                   rest
                   importer-path
-                  importer-path-id
-                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6675,7 +6777,7 @@
                         rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-decl-owner-id
+                        (struct-get traversal importer-decl-owner-id)
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -6694,10 +6796,9 @@
               pools)
               [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  traversal
                   rest
                   importer-path
-                  importer-path-id
-                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6716,7 +6817,7 @@
                       (ast-decl-list-prepend-builder expanded rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-decl-owner-id
+                        (struct-get traversal importer-decl-owner-id)
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -6735,10 +6836,9 @@
               pools)
               [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  traversal
                   rest
                   importer-path
-                  importer-path-id
-                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6760,7 +6860,7 @@
                         rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-decl-owner-id
+                        (struct-get traversal importer-decl-owner-id)
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -6772,10 +6872,9 @@
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [_
             (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+              traversal
               rest
               importer-path
-              importer-path-id
-              importer-decl-owner-id
               importer-module
               importer-module-id
               importer-source-module
@@ -6797,7 +6896,7 @@
                     rest-decls)
                   (ast-decl-path-list-prepend-builder-with-owner-id
                     importer-path
-                    importer-decl-owner-id
+                    (struct-get traversal importer-decl-owner-id)
                     rest-paths)
                   (ast-decl-module-list-prepend-builder-id
                     importer-source-module-id
@@ -6823,10 +6922,12 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
       (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+        (CompilerLoadTraversalContext
+          compiler-load-active-session-state
+          importer-path-id
+          importer-decl-owner-id)
         decls
         importer-path
-        importer-path-id
-        importer-decl-owner-id
         importer-module
         importer-module-id
         importer-source-module
@@ -6859,6 +6960,7 @@
     parse-identity))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
@@ -6868,6 +6970,7 @@
   [pools : AstNodePoolContext]
   [parse-identity : CompilerLoadParseIdentity]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
+    load-state
     path
     program
     seen
@@ -6879,6 +6982,7 @@
     parse-identity))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
@@ -6889,6 +6993,7 @@
   [pools : AstNodePoolContext]
   [parse-identity : CompilerLoadParseIdentity]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
+    load-state
     path
     program
     seen
@@ -6903,6 +7008,7 @@
     cbi.compiler-builtin-id-fix-empty))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [program : AstProgram]
   [seen : sym_i64_env.SymI64Env]
@@ -6916,7 +7022,8 @@
   [source-module-fallback : String]
   [source-module-fallback-id : i64]) : ResultCompilerLoadWithPaths
   (let
-    [_ : unit (compiler-load-surface-summary-load-enter!)]
+    [_ : unit
+      (compiler-load-session-state-surface-summary-load-enter! load-state)]
     [source-path-id : i64 (struct-get parse-identity source-path-id)]
     [module-id-fallback-id : i64 (struct-get parse-identity module-fallback-id)]
     [source-path : String (intern-str source-path-id)]
@@ -6980,7 +7087,8 @@
                         source-module)
                         [(ResultCompilerLoadAliasCheck.Ok)
                           (begin
-                            (compiler-load-record-surface-summary!
+                            (compiler-load-session-state-record-surface-summary!
+                              load-state
                               (compiler-load-surface-summary-from-decls
                                 source-path
                                 source-path-id
@@ -6988,10 +7096,12 @@
                                 module-name-id
                                 load-decls))
                             (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                              (CompilerLoadTraversalContext
+                                load-state
+                                source-path-id
+                                (struct-get parse-identity decl-owner-id))
                               load-decls
                               source-path
-                              source-path-id
-                              (struct-get parse-identity decl-owner-id)
                               module-id
                               module-name-id
                               source-module
@@ -7011,7 +7121,7 @@
               [(ResultCompilerLoadModuleId.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)]))])]
     (begin
-      (compiler-load-surface-summary-load-exit!)
+      (compiler-load-session-state-surface-summary-load-exit! load-state)
       loaded)))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -7027,6 +7137,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
       (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
+        compiler-load-active-session-state
         path
         program
         seen
@@ -7282,14 +7393,20 @@
       (ResultAstProgramDiagnostic.Err diag)]))
 
 (define (compiler-load-cache-program-result-with-pools
+  [load-state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [result : ResultAstProgramDiagnostic]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (match result
     [(ResultAstProgramDiagnostic.Ok program)
       (begin
-        (if (compiler-load-program-cache-store key program)
-          (compiler-load-session-note-persistent-with-pools! pools)
+        (if (compiler-load-session-state-program-cache-store
+          load-state
+          key
+          program)
+          (compiler-load-session-state-note-persistent-with-pools!
+            load-state
+            pools)
           unit)
         (ResultAstProgramDiagnostic.Ok program))]
     [(ResultAstProgramDiagnostic.Err diag)
@@ -7319,11 +7436,12 @@
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
 (define (compiler-load-parse-file-diagnostic-cache-miss-with-pools
+  [load-state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
-  (if (compiler-load-program-cache-can-store key)
+  (if (compiler-load-session-state-program-cache-can-store load-state key)
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
@@ -7342,6 +7460,7 @@
               (unsafe
                 (arena.tl_arena_set prev-arena))
               (compiler-load-cache-program-result-with-pools
+                load-state
                 persistent-key
                 parsed
                 pools))))]
@@ -7372,11 +7491,12 @@
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
 (define (compiler-load-parse-file-diagnostic-cache-miss-local-with-pools
+  [load-state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
-  (if (compiler-load-program-cache-can-store key)
+  (if (compiler-load-session-state-program-cache-can-store load-state key)
     (let
       [start-nodes : i64 (ast-node-pool-context-expr-len pools)]
       [cold : ResultAstProgramDiagnostic
@@ -7389,6 +7509,7 @@
         (compiler-load-ast-program-result-ok? cold)
         (<= node-delta compiler-load-local-program-cache-node-limit))
         (compiler-load-parse-file-diagnostic-cache-miss-with-pools
+          load-state
           key
           path
           cfgs
@@ -7413,6 +7534,7 @@
       parsed)))
 
 (define (compiler-load-parse-file-diagnostic-admit-only-with-pools
+  [load-state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
@@ -7423,7 +7545,9 @@
     (begin
       (match parsed
         [(ResultAstProgramDiagnostic.Ok _)
-          (if (compiler-load-program-admission-record-persistent key)
+          (if (compiler-load-session-state-program-admission-record-persistent
+            load-state
+            key)
             unit
             unit)]
         [(ResultAstProgramDiagnostic.Err _) unit])
@@ -7467,46 +7591,53 @@
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
 (define (compiler-load-parse-file-diagnostic-session-id-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [source-path-id : i64]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (and
-    (compiler-load-session-cache-enabled?)
-    (compiler-load-session-program-cache-enabled?)
+    (compiler-load-session-state-cache-enabled? load-state)
+    (compiler-load-session-state-program-cache-enabled? load-state)
     (compiler-load-session-file-cacheable? path stdlib-roots))
     (let
       [key : CompilerLoadProgramCacheKey
-        (compiler-load-program-cache-key-id
+        (compiler-load-session-state-program-cache-key-id
+          load-state
           CompilerLoadProgramFile
           source-path-id
           cfgs)]
-      (match (compiler-load-program-cache-lookup key)
+      (match (compiler-load-session-state-program-cache-lookup load-state key)
         [(CompilerLoadProgramCacheHit program)
           (begin
-            (compiler-load-program-cache-note-hit!)
+            (compiler-load-session-state-program-cache-note-hit! load-state)
             (ResultAstProgramDiagnostic.Ok program))]
         [(CompilerLoadProgramCacheMiss)
           (begin
-            (compiler-load-program-cache-note-miss!)
+            (compiler-load-session-state-program-cache-note-miss! load-state)
             (if (or
               (compiler-load-session-file-cache-immediate? path stdlib-roots)
-              (compiler-load-program-admission-contains? key))
+              (compiler-load-session-state-program-admission-contains?
+                load-state
+                key))
               (if (compiler-load-session-file-cache-immediate?
                 path
                 stdlib-roots)
                 (compiler-load-parse-file-diagnostic-cache-miss-with-pools
+                  load-state
                   key
                   path
                   cfgs
                   pools)
                 (compiler-load-parse-file-diagnostic-cache-miss-local-with-pools
+                  load-state
                   key
                   path
                   cfgs
                   pools))
               (compiler-load-parse-file-diagnostic-admit-only-with-pools
+                load-state
                 key
                 path
                 cfgs
@@ -7538,12 +7669,13 @@
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
 
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss-with-pools
+  [load-state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
   [path : String]
   [source : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
-  (if (compiler-load-program-cache-can-store key)
+  (if (compiler-load-session-state-program-cache-can-store load-state key)
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
       [loaded : ResultAstProgramDiagnostic
@@ -7563,6 +7695,7 @@
               (unsafe
                 (arena.tl_arena_set prev-arena))
               (compiler-load-cache-program-result-with-pools
+                load-state
                 persistent-key
                 parsed
                 pools))))]
@@ -7605,31 +7738,34 @@
       (compiler-load-parse-source-diagnostic-escaping path source cfgs))))
 
 (define (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [source-path-id : i64]
   [source : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (begin
-    (compiler-load-session-note-embedded-stdlib-source!)
+    (compiler-load-session-state-note-embedded-stdlib-source! load-state)
     (if (and
-      (compiler-load-session-cache-enabled?)
-      (compiler-load-session-program-cache-enabled?))
+      (compiler-load-session-state-cache-enabled? load-state)
+      (compiler-load-session-state-program-cache-enabled? load-state))
       (let
         [key : CompilerLoadProgramCacheKey
-          (compiler-load-program-cache-key-id
+          (compiler-load-session-state-program-cache-key-id
+            load-state
             CompilerLoadProgramEmbedded
             source-path-id
             cfgs)]
-        (match (compiler-load-program-cache-lookup key)
+        (match (compiler-load-session-state-program-cache-lookup load-state key)
           [(CompilerLoadProgramCacheHit program)
             (begin
-              (compiler-load-program-cache-note-hit!)
+              (compiler-load-session-state-program-cache-note-hit! load-state)
               (ResultAstProgramDiagnostic.Ok program))]
           [(CompilerLoadProgramCacheMiss)
             (begin
-              (compiler-load-program-cache-note-miss!)
+              (compiler-load-session-state-program-cache-note-miss! load-state)
               (compiler-load-parse-embedded-source-diagnostic-cache-miss-with-pools
+                load-state
                 key
                 path
                 source
@@ -7666,6 +7802,7 @@
         (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [source : String]
   [seen : sym_i64_env.SymI64Env]
@@ -7684,6 +7821,7 @@
       pools)
       [(ResultAstProgramDiagnostic.Ok program)
         (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
+          load-state
           path
           program
           seen
@@ -7729,12 +7867,14 @@
     cfgs))
 
 (define (compiler-load-file-with-paths-and-roots-cfg-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
+    load-state
     path
     seen
     stdlib-roots
@@ -7785,6 +7925,7 @@
     cfgs))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
@@ -7792,6 +7933,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
+    load-state
     path
     seen
     stdlib-roots
@@ -7817,6 +7959,7 @@
     true))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
@@ -7825,6 +7968,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
+    load-state
     path
     seen
     stdlib-roots
@@ -7834,7 +7978,8 @@
     true
     pools))
 
-(define (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
+(define (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [source-path-id : i64]
   [seen : sym_i64_env.SymI64Env]
@@ -7858,6 +8003,7 @@
         expected-module
         context-module)]
     (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
+      load-state
       path
       source-path-id
       seen
@@ -7874,6 +8020,34 @@
         context-module-id
         -1)
       (compiler-load-decl-owner-id-from-root import-root path))))
+
+(define (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
+  [path : String]
+  [source-path-id : i64]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [kind : AstImportKind]
+  [import-path : String]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [context-module : String]
+  [context-module-id : i64]) : ResultCompilerLoadWithPaths
+  (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
+    compiler-load-active-session-state
+    path
+    source-path-id
+    seen
+    stdlib-roots
+    kind
+    import-path
+    expected-module
+    import-root
+    cfgs
+    pools
+    context-module
+    context-module-id))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
   [path : String]
@@ -7979,6 +8153,7 @@
                       (string.append "compiler-load: cannot read import " path))))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
@@ -7990,6 +8165,7 @@
   (let
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
     (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
+      load-state
       path
       (compiler-load-source-path-id path)
       seen
@@ -8006,6 +8182,7 @@
       cbi.compiler-builtin-id-fix-empty)))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [source-path-id : i64]
   [seen : sym_i64_env.SymI64Env]
@@ -8024,7 +8201,8 @@
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     [path-key-id : i64
       (compiler-load-seen-path-key-id source-path-id context-module-id)]
-    (if (compiler-load-surface-summary-seen-expected-module?
+    (if (compiler-load-session-state-surface-summary-seen-expected-module?
+      load-state
       source-path-id
       expected-module
       seen)
@@ -8068,6 +8246,7 @@
           (if (io.file-exists? path)
             (match (if cache-current
               (compiler-load-parse-file-diagnostic-session-id-with-pools
+                load-state
                 path
                 source-path-id
                 stdlib-roots
@@ -8080,6 +8259,7 @@
               [(ResultAstProgramDiagnostic.Ok program)
                 (compiler-load-bind-path-dedup
                   (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
+                    load-state
                     path
                     program
                     seen
@@ -8101,6 +8281,7 @@
                   source)
                 (match (if cache-current
                   (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+                    load-state
                     path
                     source-path-id
                     source
@@ -8114,6 +8295,7 @@
                   [(ResultAstProgramDiagnostic.Ok program)
                     (compiler-load-bind-path-dedup
                       (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
+                        load-state
                         path
                         program
                         seen
@@ -8149,6 +8331,7 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
       (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
+        compiler-load-active-session-state
         path
         (compiler-load-source-path-id path)
         seen
@@ -8184,12 +8367,14 @@
     false))
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+  [load-state : CompilerLoadSessionState]
   [path : String]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
+    load-state
     path
     seen
     stdlib-roots
@@ -13971,6 +14156,80 @@
       (compiler-load-session-state-use! previous-state)
       ok)))
 
+(define (compiler-load-session-explicit-parse-isolation-ok?) : bool
+  (let
+    [previous-state : CompilerLoadSessionState
+      compiler-load-active-session-state]
+    [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]
+    [_select-b : unit (compiler-load-session-state-use! state-b)]
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [cfgs : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+    [ok-path : String "explicit-state-a.tl"]
+    [ok-id : i64 (compiler-load-source-path-id ok-path)]
+    [first : ResultAstProgramDiagnostic
+      (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+        state-a
+        ok-path
+        ok-id
+        "(define value : i64 42)"
+        cfgs
+        pools)]
+    [second : ResultAstProgramDiagnostic
+      (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+        state-a
+        ok-path
+        ok-id
+        "(define value : i64 42)"
+        cfgs
+        pools)]
+    [bad-path : String "explicit-state-a-bad.tl"]
+    [bad : ResultAstProgramDiagnostic
+      (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+        state-a
+        bad-path
+        (compiler-load-source-path-id bad-path)
+        "("
+        cfgs
+        pools)]
+    [ok : bool
+      (and
+        (compiler-load-ast-program-result-ok? first)
+        (compiler-load-ast-program-result-ok? second)
+        (match bad
+          [(ResultAstProgramDiagnostic.Err diag)
+            (and
+              (string.eq (compiler-diagnostic-path (box-get diag)) bad-path)
+              (>
+                (string.string-length
+                  (compiler-diagnostic-message (box-get diag)))
+                0))]
+          [_ false])
+        (=
+          (compiler-load-session-state-program-cache-hit-count-value state-a)
+          1)
+        (=
+          (compiler-load-session-state-program-cache-miss-count-value state-a)
+          2)
+        (=
+          (compiler-load-session-state-program-cache-store-count-value state-a)
+          1)
+        (array-ref (struct-get state-a cache-enabled) 1)
+        (=
+          (compiler-load-session-state-program-cache-hit-count-value state-b)
+          0)
+        (=
+          (compiler-load-session-state-program-cache-miss-count-value state-b)
+          0)
+        (=
+          (compiler-load-session-state-program-cache-store-count-value state-b)
+          0)
+        (not (array-ref (struct-get state-b cache-enabled) 1)))]
+    (begin
+      (compiler-load-session-state-use! previous-state)
+      ok)))
+
 (define (compiler-load-session-owned-traversal-isolation-ok?) : bool
   (let
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
@@ -14104,6 +14363,10 @@
       (compiler-load-session-explicit-cache-api-isolation-ok?)
       (return
         (io.panic "compiler-load: explicit cache API isolation smoke mismatch")))
+    (unless
+      (compiler-load-session-explicit-parse-isolation-ok?)
+      (return
+        (io.panic "compiler-load: explicit parse isolation smoke mismatch")))
     (unless
       (compiler-load-session-owned-traversal-isolation-ok?)
       (return

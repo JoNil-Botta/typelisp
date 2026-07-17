@@ -29861,7 +29861,97 @@
         [(AstType.Unit) true]
         [(AstType.Ptr _) true]
         [(AstType.MutPtr _) true]
+        [(AstType.Struct _)
+          (lower-make-array-zero-fill-struct-supported? ctx resolved)]
+        [(AstType.StructArgs _ _)
+          (lower-make-array-zero-fill-struct-supported? ctx resolved)]
+        [(AstType.Enum _)
+          (lower-make-array-zero-fill-enum-supported? ctx resolved)]
+        [(AstType.EnumArgs _ _)
+          (lower-make-array-zero-fill-enum-supported? ctx resolved)]
+        [(AstType.Tuple elems)
+          (lower-make-array-zero-fill-type-list-supported?
+            ctx
+            (box-get elems)
+            0)]
+        [(AstType.Array elem _)
+          (lower-make-array-zero-fill-supported?
+            ctx
+            (tc-context-type-get ctx elem))]
         [_ false]))))
+
+;; Every type in `types` (starting at `index`) must have an all-zero-bytes
+;; default value. Used to decide whether make-array can zero its backing
+;; store instead of running the per-element default-init loop.
+(define (lower-make-array-zero-fill-type-list-supported?
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len (& types)))
+    true
+    (if (lower-make-array-zero-fill-supported?
+      ctx
+      (tc-context-type-get
+        ctx
+        (ast-type-list-get (& types) index (ast-type-id-fallback))))
+      (lower-make-array-zero-fill-type-list-supported? ctx types (+ index 1))
+      false)))
+
+;; A struct can be zero-filled when every field's default is all-zero bytes
+;; (default-layout only, mirroring lower-init-struct).
+(define (lower-make-array-zero-fill-struct-supported?
+  [ctx : TcContext]
+  [struct-ty : AstType]) : bool
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module-id
+        ctx
+        (lower-struct-type-name-id-or struct-ty -1))]
+    (if (lower-struct-repr-c-id?
+      field-ctx
+      (lower-struct-type-name-id-or struct-ty -1))
+      false
+      (match (lower-struct-fields-id
+        field-ctx
+        (lower-struct-type-name-id-or struct-ty -1)
+        (tc-nominal-name-id-display (lower-struct-type-name-id-or struct-ty -1)))
+        [(ResultAstFieldDefList.Ok fields)
+          (lower-make-array-zero-fill-type-list-supported?
+            field-ctx
+            (tc-resolve-type-list
+              field-ctx
+              (lower-struct-constructor-field-types-for-result
+                field-ctx
+                struct-ty
+                fields))
+            0)]
+        [(ResultAstFieldDefList.Err _) false]))))
+
+;; An enum can be zero-filled when its first variant (tag 0) is fieldless:
+;; the default value is then the zero tag word plus don't-care payload bytes,
+;; which zeroing satisfies. (A payloaded first variant could have a non-zero
+;; default, so those enums keep the init loop.)
+(define (lower-make-array-zero-fill-enum-supported?
+  [ctx : TcContext]
+  [enum-ty : AstType]) : bool
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module-id
+        ctx
+        (lower-enum-type-name-id-or enum-ty -1))]
+    (match (tc-enum-decl-id field-ctx (lower-enum-type-name-id-or enum-ty -1))
+      [(ResultTcEnumDecl.Ok decl)
+        (match decl
+          [(TcEnumDecl _ variants)
+            (if (ast-variant-def-list-empty? (& variants))
+              false
+              (match (ast-variant-def-list-get
+                (& variants)
+                0
+                (ast-variant-def-fallback))
+                [(AstVariantDef.Def _ fields _)
+                  (ast-type-list-empty? (& fields))]))])]
+      [(ResultTcEnumDecl.Err _) false])))
 
 (define (lower-make-array-zero-fill
   [state : LowerState]
@@ -58973,16 +59063,23 @@
             (>= (lower-test-function-store-ptr-count functions "main") 3))])]
     [(ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-make-array-register-resident-fill8-shape-ok?) : bool
+(define (compiler-lower-make-array-register-resident-zero-fill-shape-ok?) : bool
+  ;; A one-word register-resident struct with an all-zero default takes the
+  ;; tl_array_zero path (the aggregate zero-fill supersedes fill8 for
+  ;; all-zero defaults; fill8 remains for non-zero defaults).
   (match (lower-compiler-source-with-mode
     (compiler-lower-make-array-register-resident-fill8-source)
     (CompilerLowerMode.InlineAggregates))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
-          (=
-            (lower-test-function-call-count functions "main" "tl_array_fill8")
-            1)])]
+          (and
+            (=
+              (lower-test-function-call-count functions "main" "tl_array_zero")
+              1)
+            (=
+              (lower-test-function-call-count functions "main" "tl_array_fill8")
+              0))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool

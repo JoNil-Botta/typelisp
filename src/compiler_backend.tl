@@ -8707,6 +8707,7 @@
       (or
         (string.eq name "tl_memcpy")
         (string.eq name "tl_memchr")
+        (string.eq name "tl_array_zero")
         (string.eq name "tl_tlci_call_image_entry")
         (string.eq name "tl_tlci_call_macro_entry")))))
 
@@ -49523,6 +49524,42 @@ tl_memchr:
     ret
 "))
 
+;; Bulk zeroing for `array.make-array` backing stores. Always emitted alongside
+;; tl_memcpy. Linux SysV args rdi=buf, rsi=byte-count; rep stosq/stosb consume
+;; rax/rcx/rdi (all caller-saved). Windows x64 args rcx=buf, rdx=byte-count;
+;; rdi is NONvolatile there, so save/restore it around the fill. A qword rep
+;; fill plus a byte tail costs one instruction per eight bytes under the
+;; deterministic instruction-count gate, replacing the compiled word-at-a-time
+;; loop that charged four.
+(define (compiler-backend-runtime-array-zero-functions
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .globl tl_array_zero
+tl_array_zero:
+    pushq %rdi
+    movq %rcx, %rdi
+    movq %rdx, %rcx
+    shrq $3, %rcx
+    xorl %eax, %eax
+    rep stosq
+    movq %rdx, %rcx
+    andq $7, %rcx
+    rep stosb
+    popq %rdi
+    ret
+"
+    "    .globl tl_array_zero
+tl_array_zero:
+    movq %rsi, %rcx
+    shrq $3, %rcx
+    xorl %eax, %eax
+    rep stosq
+    movq %rsi, %rcx
+    andq $7, %rcx
+    rep stosb
+    ret
+"))
+
 (define (compiler-backend-runtime-tlci-entry-functions
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
@@ -49707,6 +49744,8 @@ tl_tlci_call_macro_entry:
           (compiler-backend-runtime-profile-functions-for-target target profile)]
         [memcpy-asm : String (compiler-backend-runtime-memcpy-functions target)]
         [memchr-asm : String (compiler-backend-runtime-memchr-functions target)]
+        [array-zero-asm : String
+          (compiler-backend-runtime-array-zero-functions target)]
         [tlci-entry-asm : String
           (compiler-backend-runtime-tlci-entry-functions target)]
         [tlci-macro-entry-asm : String
@@ -49720,21 +49759,23 @@ tl_tlci_call_macro_entry:
             (string.append
               memchr-asm
               (string.append
-                tlci-entry-asm
+                array-zero-asm
                 (string.append
-                  tlci-macro-entry-asm
+                  tlci-entry-asm
                   (string.append
-                    atomic-asm
+                    tlci-macro-entry-asm
                     (string.append
-                      arena-asm
+                      atomic-asm
                       (string.append
-                        profile-asm
-                        (str_cat.str-cat
-                          alloc-asm
-                          region-mark-asm
-                          region-reset-asm
-                          oob-asm
-                          div-abort-asm))))))))]
+                        arena-asm
+                        (string.append
+                          profile-asm
+                          (str_cat.str-cat
+                            alloc-asm
+                            region-mark-asm
+                            region-reset-asm
+                            oob-asm
+                            div-abort-asm)))))))))]
         [runtime-string-asm : String
           (string.append
             (str_cat.str-cat

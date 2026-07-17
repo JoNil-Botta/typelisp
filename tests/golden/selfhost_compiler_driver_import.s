@@ -202,62 +202,10 @@ tl_array_fill8:
     addq $104, %rsp
     ret
 
-.globl tl_array_zero
-tl_array_zero:
-    subq $232, %rsp
-    movq %rdi, 216(%rsp)
-    movq %rsi, 208(%rsp)
-.Lf10_entry:
-    movq 208(%rsp), %rax
-    movq %rax, %r10
-    movq %rax, %r9
-    sarq $63, %r9
-    andq $7, %r9
-    addq %r9, %rax
-    sarq $3, %rax
-    movq %rax, %r8
-    movq %r8, 184(%rsp)
-    movq %rax, %r8
-    imulq $8, %r8
-    movq %r8, 168(%rsp)
-    movq 216(%rsp), %r8
-    movq %r8, 152(%rsp)
-    movq $0, 136(%rsp)
-    movq 168(%rsp), %r8
-    movq %r8, 128(%rsp)
-.Lf10_while_header.0:
-    movq 184(%rsp), %r8
-    cmpq %r8, 136(%rsp)
-    jge .Lf10_while_exit.2
-.Lf10_while_body.1:
-    movq 152(%rsp), %r10
-    movq 136(%rsp), %r8
-    movq $0, (%r10,%r8,8)
-    movq 136(%rsp), %rax
-    addq $1, %rax
-    movq %rax, 136(%rsp)
-    jmp .Lf10_while_header.0
-.Lf10_while_exit.2:
-.Lf10_while_header.3:
-    movq 208(%rsp), %r8
-    cmpq %r8, 128(%rsp)
-    jge .Lf10_while_exit.5
-.Lf10_while_body.4:
-    movq 216(%rsp), %r10
-    movq 128(%rsp), %r8
-    movb $0, (%r10,%r8,1)
-    movq 128(%rsp), %rax
-    addq $1, %rax
-    movq %rax, 128(%rsp)
-    jmp .Lf10_while_header.3
-.Lf10_while_exit.5:
-    addq $232, %rsp
-    ret
-
 .globl tl_region_abort
 tl_region_abort:
     subq $40, %rsp
-.Lf11_entry:
+.Lf10_entry:
     leaq .L_tl_str_l24_1300740986_1050262163(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
@@ -268,7 +216,7 @@ tl_region_abort:
 .globl tl_oom_abort
 tl_oom_abort:
     subq $40, %rsp
-.Lf12_entry:
+.Lf11_entry:
     leaq .L_tl_str_l22_1063972566_1775948496(%rip), %r8
     movq %r8, %rdi
     call _tl_stdlib_runtime_stdlib_runtime_abort_write
@@ -279,7 +227,7 @@ tl_oom_abort:
 .globl _tl_helper_helper
 _tl_helper_helper:
     subq $24, %rsp
-.Lf13_entry:
+.Lf12_entry:
     movl $38, %eax
     movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
@@ -289,7 +237,7 @@ _tl_helper_helper:
 .globl main
 main:
     subq $24, %rsp
-.Lf14_entry:
+.Lf13_entry:
     call _tl_helper_helper
     movq _tl_shared_shared(%rip), %r8
     addq %r8, %rax
@@ -334,6 +282,16 @@ tl_memchr:
 .Ltl_memchr_not_found:
     movq $-1, %rax
 .Ltl_memchr_found:
+    ret
+    .globl tl_array_zero
+tl_array_zero:
+    movq %rsi, %rcx
+    shrq $3, %rcx
+    xorl %eax, %eax
+    rep stosq
+    movq %rsi, %rcx
+    andq $7, %rcx
+    rep stosb
     ret
     .globl tl_tlci_call_image_entry
 tl_tlci_call_image_entry:

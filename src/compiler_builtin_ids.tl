@@ -594,6 +594,8 @@
   -1)
 (define compiler-builtin-id-cfg-feature-tl-memchr : i64
   -1)
+(define compiler-builtin-id-cfg-feature-tl-array-zero : i64
+  -1)
 (define compiler-builtin-id-cfg-feature-plain-comptime-well-known : i64
   -1)
 (define compiler-builtin-id-cfg-feature-comptime-public-fields : i64
@@ -612,7 +614,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 295)]
+    [ids : (Array i64) (make-array i64 296)]
     [ctfe-ids : (Array i64) (make-array i64 216)]
     [i : i64 0]
     (begin
@@ -620,7 +622,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 295)
+      (while (< i 296)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -1074,6 +1076,7 @@
     (state-set! state 292 compiler-builtin-id-atomic-i32-fetch-add)
     (state-set! state 293 compiler-builtin-id-atomic-i32-cas)
     (state-set! state 294 compiler-builtin-id-tl-tlci-call-macro-entry)
+    (state-set! state 295 compiler-builtin-id-cfg-feature-tl-array-zero)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1454,6 +1457,7 @@
     (set! compiler-builtin-id-atomic-i32-fetch-add (state-ref state 292))
     (set! compiler-builtin-id-atomic-i32-cas (state-ref state 293))
     (set! compiler-builtin-id-tl-tlci-call-macro-entry (state-ref state 294))
+    (set! compiler-builtin-id-cfg-feature-tl-array-zero (state-ref state 295))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -2681,6 +2685,9 @@
     (set!
       compiler-builtin-id-cfg-feature-tl-memchr
       (compiler-builtin-resolve-name insert-missing "feature-tl-memchr"))
+    (set!
+      compiler-builtin-id-cfg-feature-tl-array-zero
+      (compiler-builtin-resolve-name insert-missing "feature-tl-array-zero"))
     (set!
       compiler-builtin-id-cfg-feature-plain-comptime-well-known
       (compiler-builtin-resolve-name

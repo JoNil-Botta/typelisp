@@ -1273,7 +1273,8 @@ EOF
     # This direct backend fixture bypasses the driver-owned runtime prelude.
     # Provide freestanding support for runtime calls this fixture can emit:
     # bounds-check abort, tl_alloc's out-of-memory tail-jump (tl_oom_abort,
-    # #2221), and array initialization helpers.
+    # #2221), and the non-zero array initialization helper. `tl_array_zero`
+    # is emitted by the backend runtime prelude itself.
     cat > "$_raw_ptr_abort_asm" <<'EOF'
     .text
     .globl tl_oob_abort
@@ -1287,18 +1288,6 @@ tl_oom_abort:
     movq $60, %rax
     movq $134, %rdi
     syscall
-
-    .globl tl_array_zero
-tl_array_zero:
-    testq %rsi, %rsi
-    jle .L_tl_array_zero_done
-.L_tl_array_zero_loop:
-    movb $0, (%rdi)
-    addq $1, %rdi
-    subq $1, %rsi
-    jg .L_tl_array_zero_loop
-.L_tl_array_zero_done:
-    ret
 
     .globl tl_array_fill8
 tl_array_fill8:

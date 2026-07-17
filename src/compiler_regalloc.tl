@@ -197,7 +197,11 @@
       (cfg
         regalloc-liveness-census
         (io.print-error
-          (if need-edge-precise
+          (if (and
+            need-edge-precise
+            (match func
+              [(CompilerIrFunction.Function _ _ _ _ blocks)
+                (compiler-reg-blocks-have-phi? blocks)]))
             "regalloc-liveness-census|baseline=1|edge-precise=1\n"
             "regalloc-liveness-census|baseline=1|edge-precise=0\n"))
         unit)

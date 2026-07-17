@@ -5273,7 +5273,10 @@ and both have return type `never` (section 9).
 
 **CPU intrinsics.** The low-level CPU instruction forms `cpuid-eax`,
 `cpuid-ebx`, `cpuid-ecx`, `cpuid-edx`, and `xgetbv` are compiler intrinsics.
-Public CPU capability checks use `stdlib.cpu`.
+Public CPU capability checks use `stdlib.cpu`. The private polymorphic
+`__tl_float_sqrt` intrinsic accepts exactly one `f64` or `f32` and lowers to
+SSE2 `sqrtsd` or `sqrtss`. Results follow the active MXCSR rounding mode and
+the instruction's IEEE-754 special-value behavior.
 
 **Fixed-array element operations.** The public `Array` type is the fixed
 `(Array T N)` form. The core element operations are:

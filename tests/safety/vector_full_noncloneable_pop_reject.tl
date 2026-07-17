@@ -10,5 +10,5 @@
   (let
     [values : holders.Vec (holders.new)]
     (begin
-      (holders.pop (&mut values))
+      (holders.pop! values)
       unit)))

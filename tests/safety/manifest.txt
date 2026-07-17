@@ -83,6 +83,7 @@ comptime_mut_call_rvalue_reject|check-fail|tests/safety/comptime_mut_call_rvalue
 queue_bang_rvalue_reject|check-fail|tests/safety/queue_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 set_bang_rvalue_reject|check-fail|tests/safety/set_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
+vector_bang_rvalue_reject|check-fail|tests/safety/vector_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
 auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|typecheck: constructor lifetime mismatch
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: argument type mismatch

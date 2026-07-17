@@ -290,7 +290,7 @@
     [(EnvStringNil) unit]
     [(EnvStringCons head rest)
       (begin
-        (svec.push out head)
+        (svec.push-ref! out head)
         (string-list-to-vec-into (box-get rest) out))]))
 
 ;: Copy `items` into a fresh generated string vector, preserving list order.
@@ -330,13 +330,11 @@
           (while (< i n)
             (if (string.char-eq (string-ref value i) sep)
               (begin
-                (svec.push
-                  (&mut items)
-                  (string.substring value start (- i start)))
+                (svec.push! items (string.substring value start (- i start)))
                 (set! start (+ i 1))
                 (set! i (+ i 1)))
               (set! i (+ i 1))))
-          (svec.push (&mut items) (string.substring value start (- n start)))
+          (svec.push! items (string.substring value start (- n start)))
           items)))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.

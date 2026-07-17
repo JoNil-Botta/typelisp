@@ -42,7 +42,7 @@
   [items : (&mut items FsStringVector)]
   [value : String])
   (:export-symbol "_tl_fs_stdlib_fs_fs_string_vector_push_bang") : unit
-  (svec.push (&mut (struct-get items items)) value))
+  (svec.push! (struct-get items items) value))
 
 ;: Result type for directory-listing APIs.
 (defenum ResultIoStringVector
@@ -1023,23 +1023,23 @@
     [(string.eq segment ".") segments]
     [(not (string.eq segment ".."))
       (begin
-        (svec.push (&mut segments) segment)
+        (svec.push! segments segment)
         segments)]
     [(<= (svec.len (& segments)) 0)
       (if rooted
         segments
         (begin
-          (svec.push (&mut segments) segment)
+          (svec.push! segments segment)
           segments))]
     [else
       (let
         [top : String (svec.last (& segments) "")]
         (if (string.eq top "..")
           (begin
-            (svec.push (&mut segments) segment)
+            (svec.push! segments segment)
             segments)
           (begin
-            (match (svec.pop (&mut segments))
+            (match (svec.pop! segments)
               [(svec.Pop.Ok _) unit]
               [svec.Pop.Empty unit])
             segments)))]))
@@ -1440,15 +1440,13 @@
         (if (string.char-eq (string-ref entries i) '\n')
           (begin
             (if (> i start)
-              (svec.push
-                (&mut items)
-                (string.substring entries start (- i start)))
+              (svec.push! items (string.substring entries start (- i start)))
               unit)
             (set! start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
       (if (< start n)
-        (svec.push (&mut items) (string.substring entries start (- n start)))
+        (svec.push! items (string.substring entries start (- n start)))
         unit)
       (FsStringVector items))))
 

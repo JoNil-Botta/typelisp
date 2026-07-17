@@ -294,7 +294,7 @@
         (if (string.eq (io.arg i) "--stdlib-root")
           (if (< (+ i 1) n)
             (begin
-              (doc_svec.push (&mut roots) (io.arg (+ i 1)))
+              (doc_svec.push! roots (io.arg (+ i 1)))
               (set! i (+ i 2)))
             (set! i n))
           (set! i (+ i 1))))
@@ -378,7 +378,7 @@
           [line : String (string.substring text i (- line-end i))]
           (begin
             (if (> (string.string-length line) 0)
-              (doc_svec.push (&mut paths) line)
+              (doc_svec.push! paths line)
               unit)
             (set! i (doc-test-batch-next-line-start text line-end n)))))
       paths)))
@@ -460,7 +460,7 @@
               (let
                 [next-roots : doc_svec.Vec stdlib-roots]
                 (begin
-                  (doc_svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (doc_svec.push! next-roots (io.arg (+ idx 1)))
                   next-roots))
               batch-list))]
         [(string.eq current "--manifest-path")
@@ -512,7 +512,7 @@
             (let
               [next-paths : doc_svec.Vec input-paths]
               (begin
-                (doc_svec.push (&mut next-paths) current)
+                (doc_svec.push! next-paths current)
                 next-paths))
             manifest-path
             has-manifest
@@ -670,7 +670,7 @@
               (let
                 [next-roots : doc_svec.Vec stdlib-roots]
                 (begin
-                  (doc_svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (doc_svec.push! next-roots (io.arg (+ idx 1)))
                   next-roots))))]
         [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
@@ -695,7 +695,7 @@
             (let
               [next-paths : doc_svec.Vec input-paths]
               (begin
-                (doc_svec.push (&mut next-paths) current)
+                (doc_svec.push! next-paths current)
                 next-paths))
             output-path
             manifest-path

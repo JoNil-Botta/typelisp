@@ -20,7 +20,7 @@
         (let
           [items : vec.Vec (vec.new)]
           (begin
-            (vec.push (&mut items) first)
+            (vec.push! items first)
             (if (= (vec.len (& items)) 1)
               (begin
                 (vec.get (& items) 0 fallback)

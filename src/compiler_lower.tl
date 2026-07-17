@@ -2920,7 +2920,7 @@
       (let
         [next-segments : svec.Vec segments]
         (begin
-          (svec.push (&mut next-segments) segment)
+          (svec.push! next-segments segment)
           next-segments))]
     [(<= (svec.len (& segments)) 0)
       (if rooted
@@ -2928,7 +2928,7 @@
         (let
           [next-segments : svec.Vec segments]
           (begin
-            (svec.push (&mut next-segments) segment)
+            (svec.push! next-segments segment)
             next-segments)))]
     [else
       (let
@@ -2937,12 +2937,12 @@
           (let
             [next-segments : svec.Vec segments]
             (begin
-              (svec.push (&mut next-segments) segment)
+              (svec.push! next-segments segment)
               next-segments))
           (let
             [next-segments : svec.Vec segments]
             (begin
-              (match (svec.pop (&mut next-segments))
+              (match (svec.pop! next-segments)
                 [(svec.Pop.Ok _) unit]
                 [svec.Pop.Empty unit])
               next-segments))))]))
@@ -19281,7 +19281,7 @@
   (match maybe-writeback
     [(LowerMaybeArgWriteback.No) unit]
     [(LowerMaybeArgWriteback.Some writeback)
-      (lower_arg_writeback_vec.push writebacks writeback)]))
+      (lower_arg_writeback_vec.push-ref! writebacks writeback)]))
 
 (define (lower-call-args-as
   [ctx : TcContext]
@@ -58163,7 +58163,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) first)
+          (vec.push! items first)
           (if (= (vec.len (& items)) 1)
             (begin
               (vec.get (& items) 0 fallback)

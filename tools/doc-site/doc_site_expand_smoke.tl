@@ -28,6 +28,9 @@
         "<h3><a href=\"#tl-len\">len</a></h3>")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         sections
-        "<h3><a href=\"#tl-push\">push</a></h3>"))
+        "<h3><a href=\"#tl-push-ref-33\">push-ref!</a></h3>")
+      (doc_site_expand_pages_core.doc-site-expand-string-contains?
+        sections
+        "<h3><a href=\"#tl-push-33\">push!</a></h3>"))
       42
       (io.panic "doc-site-expand: generated vector smoke mismatch"))))

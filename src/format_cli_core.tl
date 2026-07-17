@@ -151,7 +151,7 @@
           (ResultFmtConfig.Err (string.append "fmt: unknown flag " current))]
         [else
           (begin
-            (fmt_svec.push (&mut paths) current)
+            (fmt_svec.push! paths current)
             (fmt-parse-args
               (+ idx 1)
               count

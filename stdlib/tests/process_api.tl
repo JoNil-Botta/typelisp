@@ -191,24 +191,24 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
+      (svec.push! items a)
       items)))
 
 (define (process-api-string-vec2 [a : String] [b : String]) : svec.Vec
   (let
     [items : svec.Vec (svec.with-capacity 2)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
+      (svec.push! items a)
+      (svec.push! items b)
       items)))
 
 (define (process-api-string-vec3 [a : String] [b : String] [c : String]) : svec.Vec
   (let
     [items : svec.Vec (svec.with-capacity 3)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
-      (svec.push (&mut items) c)
+      (svec.push! items a)
+      (svec.push! items b)
+      (svec.push! items c)
       items)))
 
 (define (process-api-env-vec1 [name : String] [value : String]) : process.ProcessEnvVec
@@ -235,7 +235,7 @@
     [names : svec.Vec (svec.new)]
     [values : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut names) "ONLY_NAME")
+      (svec.push! names "ONLY_NAME")
       (process.ProcessEnvVec names values))))
 
 (define (assert-process-invalid-command

@@ -20,7 +20,7 @@
         (let
           [items : vec.Vec (vec.new)]
           (begin
-            (vec.push (&mut items) first)
+            (vec.push! items first)
             (let
               [view : (slice.Slice items) (slice.all-vec (& items))]
               (if (= (slice.len view) 1)

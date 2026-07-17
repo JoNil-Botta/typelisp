@@ -21,9 +21,9 @@
 ;#   (let
 ;#     [v : ivec.Vec (ivec.new)]
 ;#     (begin
-;#       (ivec.push (&mut v) 3)
-;#       (ivec.push (&mut v) 1)
-;#       (ivec.push (&mut v) 2)
+;#       (ivec.push! v 3)
+;#       (ivec.push! v 1)
+;#       (ivec.push! v 2)
 ;#       (isort.sort! (&mut v))
 ;#       (+ (ivec.get (& v) 0 0) (ivec.get (& v) 2 0)))))
 ;# ```
@@ -169,7 +169,7 @@
     (let
       [v : i64v.Vec (i64v.new)]
       (begin
-        (i64v.push (&mut v) a)
+        (i64v.push! v a)
         v))))
 
 (cfg
@@ -178,9 +178,9 @@
     (let
       [v : i64v.Vec (i64v.new)]
       (begin
-        (i64v.push (&mut v) a)
-        (i64v.push (&mut v) b)
-        (i64v.push (&mut v) c)
+        (i64v.push! v a)
+        (i64v.push! v b)
+        (i64v.push! v c)
         v))))
 
 (cfg
@@ -194,11 +194,11 @@
     (let
       [v : i64v.Vec (i64v.new)]
       (begin
-        (i64v.push (&mut v) a)
-        (i64v.push (&mut v) b)
-        (i64v.push (&mut v) c)
-        (i64v.push (&mut v) d)
-        (i64v.push (&mut v) e)
+        (i64v.push! v a)
+        (i64v.push! v b)
+        (i64v.push! v c)
+        (i64v.push! v d)
+        (i64v.push! v e)
         v))))
 
 (cfg
@@ -244,7 +244,7 @@
     (let
       [v : strv.Vec (strv.new)]
       (begin
-        (strv.push (&mut v) a)
+        (strv.push! v a)
         v))))
 
 (cfg
@@ -257,10 +257,10 @@
     (let
       [v : strv.Vec (strv.new)]
       (begin
-        (strv.push (&mut v) a)
-        (strv.push (&mut v) b)
-        (strv.push (&mut v) c)
-        (strv.push (&mut v) d)
+        (strv.push! v a)
+        (strv.push! v b)
+        (strv.push! v c)
+        (strv.push! v d)
         v))))
 
 (cfg
@@ -397,10 +397,10 @@
     (let
       [items : strv.Vec (strv.new)]
       (begin
-        (strv.push (&mut items) "b0")
-        (strv.push (&mut items) "a1")
-        (strv.push (&mut items) "b2")
-        (strv.push (&mut items) "a3")
+        (strv.push! items "b0")
+        (strv.push! items "a1")
+        (strv.push! items "b2")
+        (strv.push! items "a3")
         (strsort.sort! (&mut items) sort-test-first-char-less?)
         (sort-test-assert-string-vec4 items "a1" "a3" "b0" "b2")))))
 

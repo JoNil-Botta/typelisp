@@ -66,12 +66,12 @@
 (define (replacement-cleans-old-and-new) : unit
   (with
     ([items (append-token (tokens.new) 1000000) tokens.cleanup-vec])
-    (tokens.set (&mut items) 0 (CleanupToken 2000000))))
+    (tokens.set! items 0 (CleanupToken 2000000))))
 
 (define (out-of-range-set-cleans-rejected-owner) : unit
   (with
     ([items (tokens.new) tokens.cleanup-vec])
-    (tokens.set (&mut items) 4 (CleanupToken 8000000))))
+    (tokens.set! items 4 (CleanupToken 8000000))))
 
 (define (enum-payload-cleanup) : unit
   (with ([pair (CleanupPair.Both 4000000 5000000) cleanup-pair]) unit))

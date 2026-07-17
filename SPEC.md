@@ -1539,6 +1539,13 @@ cleanup-owning, so an abandoned `Item` cleans its payload, while abandoning the
 A future `for` macro may select this protocol for a bare owned source; protocol
 discovery remains explicit library API until that macro lands.
 
+**Generated vector mutators.** A generated `(vector T)` module exposes
+place-taking `push!`, `set!`, `pop!`, `extend!`, and `reverse!` macros. Each
+evaluates its caller-owned `Vec` place once and expands to an explicit mutable
+borrow passed to the corresponding `*-ref!` helper. Code that already holds an
+`(&mut Vec)` calls the helper directly. The place form rejects rvalues and
+retains ordinary borrow-conflict and left-to-right argument evaluation rules.
+
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference
 lifetime from the owner:
 

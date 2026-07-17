@@ -498,7 +498,7 @@
               (let
                 [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (cli_svec.push! next-roots (io.arg (+ idx 1)))
                   next-roots))))]
         [(string.eq current "--target")
           (if (>= (+ idx 1) count)
@@ -935,7 +935,7 @@
               (let
                 [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (cli_svec.push! next-roots (io.arg (+ idx 1)))
                   next-roots))
               resolved-deps))]
         [(string.eq current "--resolved-dep")
@@ -3421,7 +3421,7 @@
           (set! index (+ index 1))))
       (if present
         unit
-        (cli_svec.push out name)))))
+        (cli_svec.push-ref! out name)))))
 
 (define (build-package-tlci-collect-decl-macro!
   [decl : AstDecl]
@@ -5364,7 +5364,7 @@
               (let
                 [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
+                  (cli_svec.push! next-roots (io.arg (+ idx 1)))
                   next-roots))
               opt-level
               link-inputs))]

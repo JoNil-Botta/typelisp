@@ -140,14 +140,14 @@
                         acc
                         (+ (* acc 10) (digit-value (string.string-ref src i))))
                       (set! i (+ i 1))))
-                  (tokvec.push toks (Token.Int acc))
+                  (tokvec.push-ref! toks (Token.Int acc))
                   (set! count (+ count 1))))
               (begin
-                (tokvec.push toks (single-token c))
+                (tokvec.push-ref! toks (single-token c))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))))))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (tokvec.push toks Token.End)
+      (tokvec.push-ref! toks Token.End)
       count)))
 
 ;; ============================ Parser ======================================

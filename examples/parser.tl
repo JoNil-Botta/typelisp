@@ -249,22 +249,22 @@
 ;; Token.Int(3), Token.Star, Token.Int(4), Token.End.
 (define (build-sample-tags [tags : (&mut tags i64-vec.Vec)]) : i64
   (begin
-    (i64-vec.push tags (token-tag (Token.Int 2)))
-    (i64-vec.push tags (token-tag Token.Plus))
-    (i64-vec.push tags (token-tag (Token.Int 3)))
-    (i64-vec.push tags (token-tag Token.Star))
-    (i64-vec.push tags (token-tag (Token.Int 4)))
-    (i64-vec.push tags (token-tag Token.End))
+    (i64-vec.push-ref! tags (token-tag (Token.Int 2)))
+    (i64-vec.push-ref! tags (token-tag Token.Plus))
+    (i64-vec.push-ref! tags (token-tag (Token.Int 3)))
+    (i64-vec.push-ref! tags (token-tag Token.Star))
+    (i64-vec.push-ref! tags (token-tag (Token.Int 4)))
+    (i64-vec.push-ref! tags (token-tag Token.End))
     6))
 
 (define (build-sample-vals [vals : (&mut vals i64-vec.Vec)]) : i64
   (begin
-    (i64-vec.push vals (token-int (Token.Int 2)))
-    (i64-vec.push vals 0)
-    (i64-vec.push vals (token-int (Token.Int 3)))
-    (i64-vec.push vals 0)
-    (i64-vec.push vals (token-int (Token.Int 4)))
-    (i64-vec.push vals 0)
+    (i64-vec.push-ref! vals (token-int (Token.Int 2)))
+    (i64-vec.push-ref! vals 0)
+    (i64-vec.push-ref! vals (token-int (Token.Int 3)))
+    (i64-vec.push-ref! vals 0)
+    (i64-vec.push-ref! vals (token-int (Token.Int 4)))
+    (i64-vec.push-ref! vals 0)
     6))
 
 ;; Parse and evaluate "2 + 3 * 4":

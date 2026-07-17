@@ -331,7 +331,7 @@
   (let
     [positionals : svec.Vec (struct-get state positionals)]
     (begin
-      (svec.push (&mut positionals) value)
+      (svec.push! positionals value)
       (ArgsParseState
         (struct-get state options)
         positionals
@@ -467,7 +467,7 @@
       (cond
         [stop-options
           (begin
-            (svec.push (&mut positionals) current)
+            (svec.push! positionals current)
             (parse-array-loop-fields
               specs
               argv
@@ -518,7 +518,7 @@
                   stop-options))])]
         [else
           (begin
-            (svec.push (&mut positionals) current)
+            (svec.push! positionals current)
             (parse-array-loop-fields
               specs
               argv
@@ -572,7 +572,7 @@
           (cond
             [stop-options
               (begin
-                (svec.push (&mut positionals) current)
+                (svec.push! positionals current)
                 (set! i (+ i 1)))]
             [(stdlib.args.end-of-options-token? current)
               (begin
@@ -613,7 +613,7 @@
                       (set! i (+ i 1))))])]
             [else
               (begin
-                (svec.push (&mut positionals) current)
+                (svec.push! positionals current)
                 (set! i (+ i 1)))])))
       (if failed
         (stdlib.args.ErrArgsParsed error)
@@ -643,7 +643,7 @@
       (cond
         [stop-options
           (begin
-            (svec.push (&mut positionals) current)
+            (svec.push! positionals current)
             (parse-argv-loop-fields
               specs
               (+ index 1)
@@ -690,7 +690,7 @@
                   stop-options))])]
         [else
           (begin
-            (svec.push (&mut positionals) current)
+            (svec.push! positionals current)
             (parse-argv-loop-fields
               specs
               (+ index 1)
@@ -740,7 +740,7 @@
           (cond
             [stop-options
               (begin
-                (svec.push (&mut positionals) current)
+                (svec.push! positionals current)
                 (set! i (+ i 1)))]
             [(stdlib.args.end-of-options-token? current)
               (begin
@@ -781,7 +781,7 @@
                       (set! i (+ i 1))))])]
             [else
               (begin
-                (svec.push (&mut positionals) current)
+                (svec.push! positionals current)
                 (set! i (+ i 1)))])))
       (if failed
         (stdlib.args.ErrArgsParsed error)

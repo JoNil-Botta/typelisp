@@ -216,8 +216,8 @@
   (let
     [cells : svec.Vec (svec.with-capacity 2)]
     (begin
-      (svec.push (&mut cells) first)
-      (svec.push (&mut cells) second)
+      (svec.push! cells first)
+      (svec.push! cells second)
       (MdTableRow.Row cells))))
 
 (define (md-vector-core-growth-order?) : bool
@@ -225,12 +225,12 @@
     [rows : md_table_rows.Vec (md_table_rows.with-capacity 1)]
     [blocks : md_blocks.Vec (md_blocks.with-capacity 1)]
     (begin
-      (md_table_rows.push (&mut rows) (md-vector-core-test-row "r0" "a"))
-      (md_table_rows.push (&mut rows) (md-vector-core-test-row "r1" "b"))
-      (md_table_rows.push (&mut rows) (md-vector-core-test-row "r2" "c"))
-      (md_blocks.push (&mut blocks) (MdBlock.Paragraph "first"))
-      (md_blocks.push (&mut blocks) MdBlock.Blank)
-      (md_blocks.push (&mut blocks) (MdBlock.Heading 2 "third"))
+      (md_table_rows.push! rows (md-vector-core-test-row "r0" "a"))
+      (md_table_rows.push! rows (md-vector-core-test-row "r1" "b"))
+      (md_table_rows.push! rows (md-vector-core-test-row "r2" "c"))
+      (md_blocks.push! blocks (MdBlock.Paragraph "first"))
+      (md_blocks.push! blocks MdBlock.Blank)
+      (md_blocks.push! blocks (MdBlock.Heading 2 "third"))
       (and
         (= (md_table_rows.len (& rows)) 3)
         (= (md_table_rows.capacity (& rows)) 4)
@@ -535,15 +535,15 @@
       (while (< i n)
         (if (= (string.string-ref (& body) i) '|')
           (begin
-            (svec.push
-              (&mut items)
+            (svec.push!
+              items
               (md-trim
                 (string.substring (& body) segment-start (- i segment-start))))
             (set! segment-start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
-      (svec.push
-        (&mut items)
+      (svec.push!
+        items
         (md-trim (string.substring (& body) segment-start (- n segment-start))))
       items)))
 
@@ -602,7 +602,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-blockquote-start? line)
             (begin
-              (svec.push (&mut items) (md-blockquote-text line))
+              (svec.push! items (md-blockquote-text line))
               (set! scan-pos next))
             (set! done true))))
       (MdScanBlock.Block scan-pos (MdBlock.Blockquote items)))))
@@ -621,7 +621,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-bullet-start? line)
             (begin
-              (svec.push (&mut items) (md-bullet-text line))
+              (svec.push! items (md-bullet-text line))
               (set! scan-pos next))
             (set! done true))))
       (MdScanBlock.Block scan-pos (MdBlock.BulletList items)))))
@@ -640,7 +640,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-numbered-start? line)
             (begin
-              (svec.push (&mut items) (md-numbered-text line))
+              (svec.push! items (md-numbered-text line))
               (set! scan-pos next))
             (set! done true))))
       (MdScanBlock.Block scan-pos (MdBlock.NumberedList items)))))
@@ -659,8 +659,8 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-pipe-row-line? line)
             (begin
-              (md_table_rows.push
-                (&mut rows)
+              (md_table_rows.push!
+                rows
                 (MdTableRow.Row (md-split-pipe-row line)))
               (set! scan-pos next))
             (set! done true))))
@@ -731,7 +731,7 @@
         (match (md-scan-block-at src pos n)
           [(MdScanBlock.Block next block)
             (begin
-              (md_blocks.push (&mut blocks) block)
+              (md_blocks.push! blocks block)
               (set! pos next))]))
       blocks)))
 

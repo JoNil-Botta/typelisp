@@ -20,7 +20,7 @@
         (let
           [items : Vec (new)]
           (begin
-            (push (&mut items) first)
+            (push! items first)
             (if (if (= (len (& items)) 1)
               (not (is-empty? (& items)))
               false)

@@ -21,7 +21,7 @@
     (begin
       (while (< i n)
         (begin
-          (pvec.push (&mut v) (Pair i (+ i 1)))
+          (pvec.push! v (Pair i (+ i 1)))
           (set! i (+ i 1))))
       v)))
 
@@ -39,12 +39,12 @@
         (pair-score (pvec.get (& v) 5 (Pair 0 0)))
         56
         "struct vector macro keeps grown element")
-      (pvec.set (&mut v) 1 (Pair 9 8))
+      (pvec.set! v 1 (Pair 9 8))
       (test.assert-i64-eq
         (pair-score (pvec.get (& v) 1 (Pair 0 0)))
         98
         "struct vector macro set in place")
-      (pvec.set (&mut v) 20 (Pair 7 7))
+      (pvec.set! v 20 (Pair 7 7))
       (test.assert-i64-eq
         (pair-score (pvec.get (& v) 1 (Pair 0 0)))
         98
@@ -55,7 +55,7 @@
   (let
     [v : pvec.Vec (vector-macro-pair-fill 3)]
     (begin
-      (pvec.reverse! (&mut v))
+      (pvec.reverse! v)
       (test.assert-i64-eq
         (pair-score (pvec.get (& v) 0 (Pair 0 0)))
         23
@@ -68,7 +68,7 @@
             (pair-score (array-ref snapshot 0))
             32
             "struct vector map snapshots aggregate")
-          (match (pvec.pop (&mut v))
+          (match (pvec.pop! v)
             [(pvec.Pop.Ok value)
               (begin
                 (test.assert-i64-eq

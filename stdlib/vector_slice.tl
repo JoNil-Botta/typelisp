@@ -364,9 +364,9 @@
     (let
       [dst : i64v.Vec (i64v.with-capacity 3)]
       (begin
-        (i64v.push (&mut dst) 0)
-        (i64v.push (&mut dst) 0)
-        (i64v.push (&mut dst) 0)
+        (i64v.push! dst 0)
+        (i64v.push! dst 0)
+        (i64v.push! dst 0)
         (let
           [full-mut : (i64s.MutSlice dst) (i64s.all-vec-mut (&mut dst))]
           (begin

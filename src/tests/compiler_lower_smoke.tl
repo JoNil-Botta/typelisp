@@ -175,7 +175,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) root)
+          (svec.push! items root)
           items))]
     (begin
       (compiler-load-test-mkdir root)
@@ -214,7 +214,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (svec.push! items "stdlib")
           items))]
     (begin
       (compiler-driver-reset-file-state!)
@@ -244,7 +244,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) first)
+          (vec.push! items first)
           (if (= (vec.len (& items)) 1)
             (begin
               (vec.get (& items) 0 fallback)
@@ -265,7 +265,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (svec.push! items "stdlib")
           items))]
     (begin
       (io.write-file
@@ -289,7 +289,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) "stdlib")
+          (svec.push! items "stdlib")
           items))]
     (begin
       (io.write-file path "(define (no-main-direct-helper) : i64 7)")
@@ -329,7 +329,7 @@
   (let
     [v : pvec.Vec (pvec.new)]
     (begin
-      (pvec.push (&mut v) (C43Point 1 2))
+      (pvec.push! v (C43Point 1 2))
       (pvec.len (& v)))))")
 
 (define (compiler-lower-smoke-c43-vector-push-map-source) : String
@@ -342,7 +342,7 @@
   (let
     [v : pvec.Vec (pvec.new)]
     (begin
-      (pvec.push (&mut v) (C43Point 1 2))
+      (pvec.push! v (C43Point 1 2))
       (let
         [w : pvec.Vec (pvec.map (& v) c43-bump)]
         (pvec.len (& w))))))")
@@ -359,7 +359,7 @@
   (let
     [v : pvec.Vec (pvec.new)]
     (begin
-      (pvec.push (&mut v) (C43Point 1 2))
+      (pvec.push! v (C43Point 1 2))
       (pvec.len (& v)))))
 (define (c43-dead [s : String]) : i64 (+ s 1))")
 

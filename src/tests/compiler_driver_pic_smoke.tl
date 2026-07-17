@@ -8,8 +8,8 @@
   (let
     [roots : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut roots) "stdlib")
-      (svec.push (&mut roots) "../stdlib")
+      (svec.push! roots "stdlib")
+      (svec.push! roots "../stdlib")
       roots)))
 
 (define (compiler-driver-pic-smoke-contains? [text : String] [needle : String]) : bool

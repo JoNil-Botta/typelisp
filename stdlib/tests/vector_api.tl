@@ -72,17 +72,17 @@
     [shared-empty : countervec.Vec (countervec.new)]
     [balls : ballvec.Vec (ballvec.new)]
     (begin
-      (i64vec.push (&mut numbers) 10)
-      (i64vec.push (&mut numbers) 32)
-      (i64vec.set (&mut numbers) 0 11)
-      (i64vec.reverse! (&mut numbers))
-      (strvec.push (&mut words) "alpha")
-      (strvec.push (&mut words) "beta")
-      (countervec.push (&mut counters) (VectorApiCounter 10))
-      (countervec.push (&mut counters) (VectorApiCounter 20))
-      (countervec.push (&mut single-counter) (VectorApiCounter 9))
-      (ballvec.push (&mut balls) (VectorApiBall (VectorApiPoint 3 4) 5))
-      (ballvec.push (&mut balls) (VectorApiBall (VectorApiPoint 1 2) 7))
+      (i64vec.push! numbers 10)
+      (i64vec.push! numbers 32)
+      (i64vec.set! numbers 0 11)
+      (i64vec.reverse! numbers)
+      (strvec.push! words "alpha")
+      (strvec.push! words "beta")
+      (countervec.push! counters (VectorApiCounter 10))
+      (countervec.push! counters (VectorApiCounter 20))
+      (countervec.push! single-counter (VectorApiCounter 9))
+      (ballvec.push! balls (VectorApiBall (VectorApiPoint 3 4) 5))
+      (ballvec.push! balls (VectorApiBall (VectorApiPoint 1 2) 7))
       (increment-all! (&mut counters))
       (let
         [word-first-alpha : bool
@@ -141,7 +141,7 @@
                   [(ballvec.IterNext.Item ball)
                     (set! total (+ total (shared-ball-score ball)))]))
               total))]
-        (match (strvec.pop (&mut words))
+        (match (strvec.pop! words)
           [(strvec.Pop.Ok word)
             (if (and
               (= (i64vec.len (& numbers)) 2)

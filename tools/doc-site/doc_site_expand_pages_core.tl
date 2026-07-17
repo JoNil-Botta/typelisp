@@ -188,16 +188,21 @@
     (doc-site-expand-nav-entry "new")
     (doc-site-expand-nav-entry "get")
     (doc-site-expand-nav-entry "last")
-    (doc-site-expand-nav-entry "set")
+    (doc-site-expand-nav-entry "set-ref!")
+    (doc-site-expand-nav-entry "set!")
     (doc-site-expand-nav-entry "copy-range!")
     (doc-site-expand-nav-entry "grow")
-    (doc-site-expand-nav-entry "push")
-    (doc-site-expand-nav-entry "pop")
+    (doc-site-expand-nav-entry "push-ref!")
+    (doc-site-expand-nav-entry "push!")
+    (doc-site-expand-nav-entry "pop-ref!")
+    (doc-site-expand-nav-entry "pop!")
     (doc-site-expand-nav-entry "from-array")
     (doc-site-expand-nav-entry "to-array")
     (doc-site-expand-nav-entry "extend-from")
-    (doc-site-expand-nav-entry "extend")
+    (doc-site-expand-nav-entry "extend-ref!")
+    (doc-site-expand-nav-entry "extend!")
     (doc-site-expand-nav-entry "reverse-range!")
+    (doc-site-expand-nav-entry "reverse-ref!")
     (doc-site-expand-nav-entry "reverse!")
     (doc-site-expand-nav-entry "fold-from")
     (doc-site-expand-nav-entry "fold")
@@ -292,12 +297,17 @@
       "")
     (doc-site-expand-item
       "define-function"
-      "set"
+      "set-ref!"
       (str_cat.str-cat
-        "(define (set [v : (&mut v Vec)] [index : i64] [value : "
+        "(define (set-ref! [v : (&mut v Vec)] [index : i64] [value : "
         type-name
         "]) : unit ...)")
-      "")
+      "Explicit mutable-reference helper for `set!`.")
+    (doc-site-expand-item
+      "defmacro"
+      "set!"
+      "(defmacro (set! [place : Expr] [index : Expr] [value : Expr]) : unit ...)"
+      "Mutates a caller-owned vector place by expanding to `set-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
       "define-function"
       "copy-range!"
@@ -315,17 +325,27 @@
       "")
     (doc-site-expand-item
       "define-function"
-      "push"
+      "push-ref!"
       (str_cat.str-cat
-        "(define (push [v : (&mut v Vec)] [value : "
+        "(define (push-ref! [v : (&mut v Vec)] [value : "
         type-name
         "]) : unit ...)")
-      "")
+      "Explicit mutable-reference helper for `push!`.")
+    (doc-site-expand-item
+      "defmacro"
+      "push!"
+      "(defmacro (push! [place : Expr] [value : Expr]) : unit ...)"
+      "Mutates a caller-owned vector place by expanding to `push-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
       "define-function"
-      "pop"
-      "(define (pop [v : (&mut v Vec)]) : Pop ...)"
-      "")
+      "pop-ref!"
+      "(define (pop-ref! [v : (&mut v Vec)]) : Pop ...)"
+      "Explicit mutable-reference helper for `pop!`.")
+    (doc-site-expand-item
+      "defmacro"
+      "pop!"
+      "(defmacro (pop! [place : Expr]) : Pop ...)"
+      "Mutates a caller-owned vector place by expanding to `pop-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
       "define-function"
       "from-array"
@@ -352,12 +372,17 @@
       "")
     (doc-site-expand-item
       "define-function"
-      "extend"
+      "extend-ref!"
       (str_cat.str-cat
-        "(define (extend [v : (&mut v Vec)] [src : (& src (Array "
+        "(define (extend-ref! [v : (&mut v Vec)] [src : (& src (Array "
         type-name
         "))] [count : i64]) : unit ...)")
-      "")
+      "Explicit mutable-reference helper for `extend!`.")
+    (doc-site-expand-item
+      "defmacro"
+      "extend!"
+      "(defmacro (extend! [place : Expr] [src : Expr] [count : Expr]) : unit ...)"
+      "Mutates a caller-owned vector place by expanding to `extend-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
       "define-function"
       "reverse-range!"
@@ -368,9 +393,14 @@
       "")
     (doc-site-expand-item
       "define-function"
+      "reverse-ref!"
+      "(define (reverse-ref! [v : (&mut v Vec)]) : unit ...)"
+      "Explicit mutable-reference helper for `reverse!`.")
+    (doc-site-expand-item
+      "defmacro"
       "reverse!"
-      "(define (reverse! [v : (&mut v Vec)]) : unit ...)"
-      "")
+      "(defmacro (reverse! [place : Expr]) : unit ...)"
+      "Mutates a caller-owned vector place by expanding to `reverse-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
       "define-function"
       "fold-from"

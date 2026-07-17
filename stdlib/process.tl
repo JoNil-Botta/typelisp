@@ -274,8 +274,8 @@
   [name : String]
   [value : String]) : unit
   (begin
-    (svec.push (&mut (struct-get env names)) name)
-    (svec.push (&mut (struct-get env values)) value)))
+    (svec.push! (struct-get env names) name)
+    (svec.push! (struct-get env values) value)))
 
 ;: Convert vector-backed env overrides to a list, preserving vector order at
 ;: the existing runtime boundary.
@@ -975,7 +975,7 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut items) a)
+      (svec.push! items a)
       items)))
 
 ;: Inline test helper for generated string-vector argv buffers.
@@ -983,8 +983,8 @@
   (let
     [items : svec.Vec (svec.with-capacity 2)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
+      (svec.push! items a)
+      (svec.push! items b)
       items)))
 
 ;: Inline test helper for generated string-vector argv buffers.
@@ -992,9 +992,9 @@
   (let
     [items : svec.Vec (svec.with-capacity 3)]
     (begin
-      (svec.push (&mut items) a)
-      (svec.push (&mut items) b)
-      (svec.push (&mut items) c)
+      (svec.push! items a)
+      (svec.push! items b)
+      (svec.push! items c)
       items)))
 
 ;: Inline test helper for vector-backed environment overrides.
@@ -1024,7 +1024,7 @@
     [names : svec.Vec (svec.new)]
     [values : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut names) "ONLY_NAME")
+      (svec.push! names "ONLY_NAME")
       (ProcessEnvVec names values))))
 
 ;: Inline test body for command and argv helpers.

@@ -7,6 +7,6 @@
     [values : vec.Vec (vec.new)]
     [iter : (vec.IterMut values) (vec.iterator-mut (&mut values))]
     (begin
-      (vec.pop (&mut values))
+      (vec.pop! values)
       (vec.next-mut (&mut iter))
       unit)))

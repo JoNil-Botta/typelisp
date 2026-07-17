@@ -8,5 +8,5 @@
   (let
     [inner : vec.Vec (vec.new)]
     (begin
-      (vec.push (&mut inner) 10)
+      (vec.push! inner 10)
       (slice.from-vec (& inner) 0 1))))

@@ -12,7 +12,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (i64v.push v (+ (* i scale) 1))
+        (i64v.push-ref! v (+ (* i scale) 1))
         (set! i (+ i 1))))))
 
 (define (fill-vector-foreach

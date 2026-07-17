@@ -21,7 +21,7 @@
         (let
           [items : vec.Vec (vec.new)]
           (begin
-            (vec.push (&mut items) first)
+            (vec.push! items first)
             (if (if (= (vec.len (& items)) 1)
               (not (vec.is-empty? (& items)))
               false)

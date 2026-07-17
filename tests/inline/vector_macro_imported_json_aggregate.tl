@@ -11,7 +11,7 @@
   (let
     [members : mvec.Vec (mvec.new)]
     (begin
-      (mvec.push (&mut members) (json.JsonMember "k" (json.JsonBool true)))
+      (mvec.push! members (json.JsonMember "k" (json.JsonBool true)))
       (test.assert-i64-eq
         (mvec.len (& members))
         1

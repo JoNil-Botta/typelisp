@@ -21,7 +21,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push! items value)
           (struct-get (vec.get (& items) 0 (provider.T 0)) value))))))
 
 (import (vector-user) as user)

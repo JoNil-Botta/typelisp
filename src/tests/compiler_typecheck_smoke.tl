@@ -1267,7 +1267,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push! items value)
           (struct-get (vec.get (& items) 0 (T 0)) value))))))
 (import (vector-user) as user)
 (define (main) : i64
@@ -1291,7 +1291,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push! items value)
           (struct-get (vec.get (& items) 0 (provider.T 0)) value))))))
 (import (vector-user) as user)
 (define (main) : i64
@@ -1309,7 +1309,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push! items value)
           (vec.len (& items)))))))
 (import (vector-user Pair) as user)
 (define (main) : i64
@@ -1328,7 +1328,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push (&mut items) value)
+          (vec.push! items value)
           (vec.len (& items)))))))
 (import (vector-user Pair) as user)
 (define (main) : i64
@@ -1498,7 +1498,7 @@
         (let
           [items : vec.Vec (vec.new)]
           (begin
-            (vec.push (&mut items) value)
+            (vec.push! items value)
             (struct-get (vec.get (& items) 0 (T 0)) value)))))))
 (import (make vector) as gen)
 (define (main) : i64
@@ -1923,7 +1923,7 @@
   (let
     [roots : svec.Vec (svec.new)]
     (begin
-      (svec.push (&mut roots) root)
+      (svec.push! roots root)
       roots)))
 
 (define (compiler-typecheck-smoke-paths-contain?
@@ -2220,7 +2220,7 @@
       (let
         [items : svec.Vec (svec.new)]
         (begin
-          (svec.push (&mut items) stdlib-root)
+          (svec.push! items stdlib-root)
           items))]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin

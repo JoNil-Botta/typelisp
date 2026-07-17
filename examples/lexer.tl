@@ -145,7 +145,7 @@
                 [start : i64 i]
                 [end : i64 (ident-end src i n)]
                 (begin
-                  (token-vec.push toks (ident-token src start end))
+                  (token-vec.push-ref! toks (ident-token src start end))
                   (set! count (+ count 1))
                   (set! i end)))]
             [(is-digit c)
@@ -159,15 +159,15 @@
                         acc
                         (+ (* acc 10) (digit-value (string.char-at src i))))
                       (set! i (+ i 1))))
-                  (token-vec.push toks (Token.Int acc))
+                  (token-vec.push-ref! toks (Token.Int acc))
                   (set! count (+ count 1))))]
             [else
               (begin
-                (token-vec.push toks (single-token c))
+                (token-vec.push-ref! toks (single-token c))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))])))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (token-vec.push toks Token.End)
+      (token-vec.push-ref! toks Token.End)
       count)))
 
 ;; Lex the sample `"foo - 3 * (12 / 4)"` (exercises every operator `- * /` and

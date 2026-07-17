@@ -39,11 +39,9 @@
     [balls : ballvec.Vec (ballvec.new)]
     [empty : i64vec.Vec (i64vec.new)]
     (begin
-      (i64vec.push (&mut numbers) 17)
-      (i64vec.push (&mut numbers) 25)
-      (ballvec.push
-        (&mut balls)
-        (SharedIteratorBall (SharedIteratorPoint 3 4) 5))
+      (i64vec.push! numbers 17)
+      (i64vec.push! numbers 25)
+      (ballvec.push! balls (SharedIteratorBall (SharedIteratorPoint 3 4) 5))
       (let
         [number-iter : (i64vec.Iter numbers) (i64vec.iterator (& numbers))]
         [ball-iter : (ballvec.Iter balls) (ballvec.iterator (& balls))]

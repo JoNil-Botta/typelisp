@@ -6,5 +6,5 @@
   (let
     [values : compact.Vec (compact.new)]
     (begin
-      (compact.pop (&mut values))
+      (compact.pop! values)
       unit)))

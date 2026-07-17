@@ -14,7 +14,7 @@
 
 (define (append-through-ref [world : (&mut a World)]) : unit
   (begin
-    (ivec.push (&mut world.balls) 31)
+    (ivec.push! world.balls 31)
     (set! world.count (+ world.count 1))))
 
 (define (main) : i64
@@ -22,7 +22,10 @@
     [world : World (World (ivec.new) 40)]
     [vector : Shadow (Shadow 9)]
     (begin
-      (ivec.push (&mut world.balls) 7)
+      ;; The bang macro reserves `world.balls` before evaluating the value, so
+      ;; reading the disjoint sibling remains the same two-phase call-borrow
+      ;; case as `(ivec.push-ref! (&mut world.balls) world.count)`.
+      (ivec.push! world.balls world.count)
       (set! world.count (+ world.count 1))
       (append-through-ref (&mut world))
       (unless (and (= (ivec.len (& world.balls)) 2)) (return 0))

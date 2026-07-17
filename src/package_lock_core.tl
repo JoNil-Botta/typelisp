@@ -160,7 +160,9 @@
   [entry : PackageLockEntry]
   [index : i64]) : unit
   (begin
-    (package_lock_entry_vec.push entries (package-lock-entry-list-fallback))
+    (package_lock_entry_vec.push-ref!
+      entries
+      (package-lock-entry-list-fallback))
     (let
       [write : i64 (- (package_lock_entry_vec.len entries) 1)]
       (begin
@@ -172,9 +174,9 @@
                 (- write 1)
                 (package-lock-entry-list-fallback))]
             (begin
-              (package_lock_entry_vec.set entries write previous)
+              (package_lock_entry_vec.set-ref! entries write previous)
               (set! write (- write 1)))))
-        (package_lock_entry_vec.set entries index entry)))))
+        (package_lock_entry_vec.set-ref! entries index entry)))))
 
 (define (package-lock-entry-list-insert
   [entries : package_lock_entry_vec.Vec]

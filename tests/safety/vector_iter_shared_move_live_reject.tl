@@ -12,7 +12,7 @@
   (let
     [values : vec.Vec (vec.new)]
     (begin
-      (vec.push (&mut values) 7)
+      (vec.push! values 7)
       (let
         [first : (vec.IterNext values)
           (let

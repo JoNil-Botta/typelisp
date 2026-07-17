@@ -197,8 +197,10 @@ grep -q 'stdlib.vector.generated.i64' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated vector module docs"
 grep -q 'generated-module-import' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated module import docs"
-grep -q 'href="#tl-push"' "$SITE/stdlib-vector.html" \
-    || fail "stdlib-vector.html is missing generated push API docs"
+grep -q 'href="#tl-push-ref-33"' "$SITE/stdlib-vector.html" \
+    || fail "stdlib-vector.html is missing generated push-ref! API docs"
+grep -q 'href="#tl-push-33"' "$SITE/stdlib-vector.html" \
+    || fail "stdlib-vector.html is missing generated push! API docs"
 
 hidden_payload=$(find "$SITE" -mindepth 1 -maxdepth 1 -name '.*' | head -n 1)
 [ -z "$hidden_payload" ] || fail "docs-site output contains scratch artifact: $(basename "$hidden_payload")"

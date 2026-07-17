@@ -6,5 +6,5 @@
   (let
     [values : vec.Vec (vec.new)]
     (begin
-      (vec.push (&mut values) 42)
+      (vec.push! values 42)
       (vec.get (& values) 0 0))))

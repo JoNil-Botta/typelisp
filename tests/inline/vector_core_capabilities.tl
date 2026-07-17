@@ -33,9 +33,9 @@
     [compact : compact_i64.Vec (compact_i64.with-capacity 1)]
     [full : full_i64.Vec (full_i64.new)]
     (begin
-      (compact_i64.push (&mut compact) 10)
-      (compact_i64.push (&mut compact) 32)
-      (compact_i64.set (&mut compact) 0 11)
+      (compact_i64.push! compact 10)
+      (compact_i64.push! compact 32)
+      (compact_i64.set! compact 0 11)
       (test.assert-i64-eq (compact_i64.len (& compact)) 2 "core len")
       (test.assert-i64-eq
         (compact_i64.capacity (& compact))
@@ -53,8 +53,8 @@
         (compact_i64.get (& compact) -1 7)
         7
         "core get checks negative bounds")
-      (full_i64.push (&mut full) 42)
-      (match (full_i64.pop (&mut full))
+      (full_i64.push! full 42)
+      (match (full_i64.pop! full)
         [(full_i64.Pop.Empty)
           (test.assert-true false "full vector pop remains available")]
         [(full_i64.Pop.Ok value)
@@ -66,11 +66,11 @@
     [points : compact_point.Vec (compact_point.with-capacity 1)]
     [choices : compact_choice.Vec (compact_choice.new)]
     (begin
-      (compact_point.push (&mut points) (VectorCorePoint 1 2))
-      (compact_point.push (&mut points) (VectorCorePoint 3 4))
-      (compact_point.set (&mut points) 0 (VectorCorePoint 9 8))
-      (compact_choice.push (&mut choices) (First 7))
-      (compact_choice.push (&mut choices) (Second 35))
+      (compact_point.push! points (VectorCorePoint 1 2))
+      (compact_point.push! points (VectorCorePoint 3 4))
+      (compact_point.set! points 0 (VectorCorePoint 9 8))
+      (compact_choice.push! choices (First 7))
+      (compact_choice.push! choices (Second 35))
       (test.assert-i64-eq
         (vector-core-point-score
           (compact_point.get (& points) 0 (VectorCorePoint 0 0)))
@@ -93,18 +93,18 @@
     [second : i64 32]
     [holders : compact_raw.Vec (compact_raw.with-capacity 1)]
     (begin
-      (compact_raw.push
-        (&mut holders)
+      (compact_raw.push!
+        holders
         (VectorCoreRawHolder
           (unsafe
             (ptr-addr-of first))))
-      (compact_raw.push
-        (&mut holders)
+      (compact_raw.push!
+        holders
         (VectorCoreRawHolder
           (unsafe
             (ptr-addr-of second))))
-      (compact_raw.set
-        (&mut holders)
+      (compact_raw.set!
+        holders
         0
         (VectorCoreRawHolder
           (unsafe

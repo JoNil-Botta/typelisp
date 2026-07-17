@@ -5,8 +5,8 @@
   (let
     [items : sv.Vec (sv.new)]
     (begin
-      (sv.push (&mut items) "alpha")
-      (sv.push (&mut items) "beta")
+      (sv.push! items "alpha")
+      (sv.push! items "beta")
       (if (and
         (sv.contains? (& items) "beta")
         (not (sv.contains? (& items) "gamma")))

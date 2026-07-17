@@ -12,12 +12,12 @@
   (let
     [values : vec.Vec (vec.new)]
     (begin
-      (vec.push (&mut values) 7)
+      (vec.push! values 7)
       (let
         [first : (vec.IterNext values)
           (let
             [iter : (vec.Iter values) (vec.iterator (& values))]
             (vec.next (&mut iter)))]
         (begin
-          (vec.push (&mut values) 9)
+          (vec.push! values 9)
           (consume first))))))

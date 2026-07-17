@@ -25869,32 +25869,17 @@
                 (AstType.Bool))
               (CompilerIrInstrList.Nil)))))]))
 
-;; Assemble the guard: the per-check conditions, the once-only `seed >= 0`
-;; when any counter-cased check needs it (a literal non-negative seed skips
-;; it; a literal negative seed rejects -- the guard could never pass), then
-;; the And chain over every condition value.
-(define (opt-bce-version-guard-conds
-  [instrs : CompilerIrInstrSeq]
-  [phi-count : i64]
-  [last : i64]
-  [defs : opt_i64_i64_map.Map]
-  [iphi : i64]
+;; Assemble the guard from the derived per-check conditions: the once-only
+;; `seed < bound` and `seed >= 0` when any counter-cased check needs them (a
+;; literal non-negative seed skips the latter; a literal negative seed
+;; rejects -- the guard could never pass), then the And chain over every
+;; condition value.
+(define (opt-bce-version-guard-finish
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
-  [cell : (Array i64)]) : OptBceVersionGuardResult
-  (match (opt-bce-version-derive-checks
-    instrs
-    phi-count
-    phi-count
-    last
-    defs
-    iphi
-    bound
-    cell
-    (OptBceVersionGuardAcc.Some
-      (CompilerIrInstrList.Nil)
-      (CompilerIrValueList.Nil)
-      false))
+  [cell : (Array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardResult
+  (match acc
     [(OptBceVersionGuardAcc.No) (OptBceVersionGuardResult.No)]
     [(OptBceVersionGuardAcc.Some cond-instrs cond-values counter-seen)
       (let
@@ -25974,6 +25959,35 @@
                   (compiler-ir-instr-list-reverse-onto
                     all-instrs
                     CompilerIrInstrList.Nil))])]))]))
+
+;; Assemble the single-block guard: derive the per-check conditions, then
+;; finish them (seed compares + And chain).
+(define (opt-bce-version-guard-conds
+  [instrs : CompilerIrInstrSeq]
+  [phi-count : i64]
+  [last : i64]
+  [defs : opt_i64_i64_map.Map]
+  [iphi : i64]
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [cell : (Array i64)]) : OptBceVersionGuardResult
+  (opt-bce-version-guard-finish
+    seed
+    bound
+    cell
+    (opt-bce-version-derive-checks
+      instrs
+      phi-count
+      phi-count
+      last
+      defs
+      iphi
+      bound
+      cell
+      (OptBceVersionGuardAcc.Some
+        (CompilerIrInstrList.Nil)
+        (CompilerIrValueList.Nil)
+        false))))
 
 ;; --- shape scan ---------------------------------------------------------------
 (define (opt-bce-version-shape-phi
@@ -26687,6 +26701,1455 @@
       (opt-bce-version-blocks-have-candidate?
         (compiler-ir-block-seq-to-list seq))]))
 
+;; --- multi-block bounds-check loop versioning ----------------------------------
+;;
+;; The single-block pass above only sees do-while self-loops. A counted loop
+;; whose body spans several blocks (an if/else inside a scan -- the quicksort
+;; partition loop is the running example) pays the same per-iteration cmp+jb
+;; on every BoundsCheck even though the same up-front reasoning applies: a
+;; counter phi stepping exactly +1 per latch crossing with an invariant
+;; bound, plus a second "bounded" header phi sharing the counter's seed whose
+;; back-edge value stays within {sphi, sphi+1} through any merge, keeps every
+;; provable index inside [0, len) for the whole trip range whenever
+;;   seed >= 0 && seed < bound && bound <= len.
+;; This pass recognizes such a loop from its natural-loop back edge (header
+;; dominating latch, a single dedicated preheader whose only successor is the
+;; header, <= (opt-bce-mb-block-max) blocks, clonable whitelist instructions
+;; only, Jump/Branch or intra-loop fallthrough terminators only), derives a
+;; sufficient guard condition for EVERY BoundsCheck in ANY loop block, and
+;; versions exactly like the single-block pass: a guard block on the
+;; preheader edge branches to a check-free fast clone of the whole loop when
+;; the conjunction holds and to the original checked loop otherwise.
+;;
+;; Derivations (any check anywhere that fails to derive rejects the loop):
+;;   * index resolves to the counter phi       -> `bound <= len`
+;;   * index resolves to a bounded header phi  -> covered by the counter's
+;;     conditions (same resolved seed; back-edge value is sphi or sphi+1
+;;     through any phi merge, so seed <= sphi <= scan < bound <= len); emits
+;;     `bound <= len` and forces the counter seed compares
+;;   * index == BitAnd(_, M), M >= 0 literal   -> `M < len`
+;;   * index loop-invariant                    -> `index >= 0 && index < len`
+;; A latch-merge-phi index (sphi+1 selected at the merge) is deliberately NOT
+;; accepted: it can reach `bound` itself, which `bound <= len` does not
+;; exclude from failing. Likewise `sphi + 1` used directly.
+;;
+;; Exit wiring generalizes the single-block scheme: loop defs may reach
+;; outside code only as exit-phi inputs on loop edges (any other outside use
+;; rejects); each such input gains a parallel input from the corresponding
+;; fast clone's edge. Fallthrough is positional: loop blocks may only fall
+;; through to other loop blocks, the fast clone group preserves the loop's
+;; block order so intra-loop fallthroughs clone correctly, and the guard
+;; sits immediately before the slow header so a fallthrough preheader lands
+;; on it.
+(defenum OptBceMbMaybeInstr
+  (No)
+  (Some CompilerIrInstr))
+
+(defenum OptBceMbMaybeSeed
+  (No)
+  (Some CompilerIrValue))
+
+;; cond-var, exit-label of a latch branch.
+(defenum OptBceMbMaybeLatch
+  (No)
+  (Some i64 String))
+
+;; iphi, seed, inext, bound.
+(defenum OptBceMbMaybeCounter
+  (No)
+  (Some i64 CompilerIrValue i64 CompilerIrValue))
+
+(defstruct OptBceMbShape
+  (header String)
+  (latch String)
+  (preheader String)
+  (body-labels OptLabelSet)
+  (body-blocks CompilerIrBlockList)
+  (iphi i64)
+  (seed CompilerIrValue)
+  (bound CompilerIrValue))
+
+(defenum OptBceMbMaybeShape
+  (No)
+  (Some OptBceMbShape))
+
+(define (opt-bce-mb-block-max) : i64
+  8)
+
+;; The (SSA single-def) instruction defining var anywhere in the loop.
+(define (opt-bce-mb-find-def-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : OptBceMbMaybeInstr
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptBceMbMaybeInstr.No)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (if (= (compiler-ir-instr-loop-dst-or instr (- 0 1)) var)
+        (OptBceMbMaybeInstr.Some instr)
+        (opt-bce-mb-find-def-instrs instrs (+ index 1) var)))))
+
+(define (opt-bce-mb-find-def [blocks : CompilerIrBlockList] [var : i64]) : OptBceMbMaybeInstr
+  (match blocks
+    [(CompilerIrBlockList.Nil) (OptBceMbMaybeInstr.No)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (match (opt-bce-mb-find-def-instrs instrs 0 var)
+            [(OptBceMbMaybeInstr.Some instr) (OptBceMbMaybeInstr.Some instr)]
+            [(OptBceMbMaybeInstr.No) (opt-bce-mb-find-def (box-get rest) var)])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-find-def (compiler-ir-block-seq-to-list seq) var)]))
+
+;; Resolve through Mov copies and 64-bit int reinterpret casts anywhere in
+;; the loop (the multi-block analogue of `opt-bce-version-resolve`).
+(define (opt-bce-mb-resolve
+  [blocks : CompilerIrBlockList]
+  [var : i64]
+  [fuel : i64]) : i64
+  (if (<= fuel 0)
+    var
+    (match (opt-bce-mb-find-def blocks var)
+      [(OptBceMbMaybeInstr.No) var]
+      [(OptBceMbMaybeInstr.Some instr)
+        (match instr
+          [(CompilerIrInstr.Mov _ src _)
+            (match src
+              [(CompilerIrValue.Var src-id)
+                (opt-bce-mb-resolve blocks src-id (- fuel 1))]
+              [_ var])]
+          [(CompilerIrInstr.Cast _ src from-ty to-ty)
+            (if (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+              (match src
+                [(CompilerIrValue.Var src-id)
+                  (opt-bce-mb-resolve blocks src-id (- fuel 1))]
+                [_ var])
+              var)]
+          [_ var])])))
+
+(define (opt-bce-mb-collect-defs
+  [blocks : CompilerIrBlockList]
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (opt-bce-mb-collect-defs
+        (box-get rest)
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-unroll-block-defs
+              (struct-get instrs slots)
+              0
+              (compiler-ir-instr-seq-count instrs)
+              acc)]))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-collect-defs (compiler-ir-block-seq-to-list seq) acc)]))
+
+;; --- shape scan ---------------------------------------------------------------
+;; The latch must end `Branch c header exit` with the exit outside the loop.
+(define (opt-bce-mb-latch-branch
+  [block : CompilerIrBlock]
+  [header : String]
+  [body-labels : OptLabelSet]) : OptBceMbMaybeLatch
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 1)
+          (OptBceMbMaybeLatch.No)
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch cond then-label else-label)
+              (match cond
+                [(CompilerIrValue.Var cond-var)
+                  (if (and
+                    (string.eq then-label header)
+                    (not (opt-label-contains body-labels else-label)))
+                    (OptBceMbMaybeLatch.Some cond-var else-label)
+                    (OptBceMbMaybeLatch.No))]
+                [_ (OptBceMbMaybeLatch.No)])]
+            [_ (OptBceMbMaybeLatch.No)])))]))
+
+;; The counter phi: a header phi (only header phis carry latch-edge inputs)
+;; of type i64 fed (seed from the preheader, inext from the latch).
+(define (opt-bce-mb-counter-phi
+  [body-blocks : CompilerIrBlockList]
+  [latch : String]
+  [preheader : String]
+  [inext : i64]
+  [iphi : i64]) : OptBceMbMaybeSeed
+  (match (opt-bce-mb-find-def body-blocks iphi)
+    [(OptBceMbMaybeInstr.No) (OptBceMbMaybeSeed.No)]
+    [(OptBceMbMaybeInstr.Some instr)
+      (match instr
+        [(CompilerIrInstr.Phi _ inputs pty)
+          (match pty
+            [(AstType.I64)
+              (match (opt-unroll-split-phi-inputs inputs latch)
+                [(OptUnrollPhiSplit.Split seed back pred-label)
+                  (if (and
+                    (string.eq pred-label preheader)
+                    (match back
+                      [(CompilerIrValue.Var back-id)
+                        (= (opt-bce-mb-resolve body-blocks back-id 16) inext)]
+                      [_ false]))
+                    (OptBceMbMaybeSeed.Some seed)
+                    (OptBceMbMaybeSeed.No))]
+                [(OptUnrollPhiSplit.No) (OptBceMbMaybeSeed.No)])]
+            [_ (OptBceMbMaybeSeed.No)])]
+        [_ (OptBceMbMaybeSeed.No)])]))
+
+(define (opt-bce-mb-counter-step-inext
+  [body-blocks : CompilerIrBlockList]
+  [latch : String]
+  [preheader : String]
+  [inext : i64]
+  [bound : CompilerIrValue]) : OptBceMbMaybeCounter
+  (match (opt-bce-mb-find-def body-blocks inext)
+    [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+    [(OptBceMbMaybeInstr.Some instr)
+      (match instr
+        [(CompilerIrInstr.BinOp _ add-op add-lhs add-rhs ity)
+          (match add-op
+            [(CompilerIrBinOp.Add)
+              (match add-lhs
+                [(CompilerIrValue.Var add-src)
+                  (match add-rhs
+                    [(CompilerIrValue.I64 step)
+                      (if (and
+                        (= step 1)
+                        ;; I64 only: the guard reasons in SIGNED 64-bit
+                        ;; arithmetic, like the single-block pass.
+                        (match ity
+                          [(AstType.I64) true]
+                          [_ false]))
+                        (let
+                          [iphi : i64
+                            (opt-bce-mb-resolve body-blocks add-src 16)]
+                          (match (opt-bce-mb-counter-phi
+                            body-blocks
+                            latch
+                            preheader
+                            inext
+                            iphi)
+                            [(OptBceMbMaybeSeed.No) (OptBceMbMaybeCounter.No)]
+                            [(OptBceMbMaybeSeed.Some seed)
+                              (OptBceMbMaybeCounter.Some iphi seed inext bound)]))
+                        (OptBceMbMaybeCounter.No))]
+                    [_ (OptBceMbMaybeCounter.No)])]
+                [_ (OptBceMbMaybeCounter.No)])]
+            [_ (OptBceMbMaybeCounter.No)])]
+        [_ (OptBceMbMaybeCounter.No)])]))
+
+;; The latch compare `c = inext < bound` with `inext = iphi + 1` (i64, step
+;; exactly one) and an invariant bound.
+(define (opt-bce-mb-counter-step
+  [body-blocks : CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : String]
+  [preheader : String]
+  [cond-var : i64]) : OptBceMbMaybeCounter
+  (match (opt-bce-mb-find-def body-blocks cond-var)
+    [(OptBceMbMaybeInstr.No) (OptBceMbMaybeCounter.No)]
+    [(OptBceMbMaybeInstr.Some instr)
+      (match instr
+        [(CompilerIrInstr.BinOp _ cmp-op cmp-lhs cmp-rhs _)
+          (match cmp-op
+            [(CompilerIrBinOp.Lt)
+              (match cmp-lhs
+                [(CompilerIrValue.Var cmp-src)
+                  (if (opt-unroll-invariant-bound? defs cmp-rhs)
+                    (opt-bce-mb-counter-step-inext
+                      body-blocks
+                      latch
+                      preheader
+                      (opt-bce-mb-resolve body-blocks cmp-src 16)
+                      cmp-rhs)
+                    (OptBceMbMaybeCounter.No))]
+                [_ (OptBceMbMaybeCounter.No)])]
+            [_ (OptBceMbMaybeCounter.No)])]
+        [_ (OptBceMbMaybeCounter.No)])]))
+
+;; Every header phi must split as (preheader, latch): the header then has
+;; exactly the two expected predecessors.
+(define (opt-bce-mb-header-phis-ok?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [latch : String]
+  [preheader : String]) : bool
+  (if (>= index phi-count)
+    true
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ inputs _)
+        (match (opt-unroll-split-phi-inputs inputs latch)
+          [(OptUnrollPhiSplit.Split _ _ pred-label)
+            (if (string.eq pred-label preheader)
+              (opt-bce-mb-header-phis-ok?
+                instrs
+                (+ index 1)
+                phi-count
+                latch
+                preheader)
+              false)]
+          [(OptUnrollPhiSplit.No) false])]
+      [_ false])))
+
+;; One loop block's BoundsCheck count, or -1 when the block is not clonable:
+;; phis only as a prefix, whitelist body instructions, and either a
+;; Jump/Branch terminator or a plain fallthrough (the fallthrough TARGET is
+;; validated separately against the block list).
+(define (opt-bce-mb-block-checks [block : CompilerIrBlock]) : i64
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
+        (if (not (opt-unroll-no-phi-from? instrs phi-count))
+          (- 0 1)
+          (if (opt-cfg-instr-seq-can-fallthrough? instrs)
+            (if (and
+              (<= (- count phi-count) (opt-bce-version-body-max))
+              (opt-bce-version-body-ok? instrs phi-count count))
+              (opt-bce-version-check-count instrs phi-count count 0)
+              (- 0 1))
+            (let
+              [last : i64 (- count 1)]
+              (if (and
+                (<= (- last phi-count) (opt-bce-version-body-max))
+                (match (compiler-ir-instr-seq-ref instrs last)
+                  [(CompilerIrInstr.Jump _) true]
+                  [(CompilerIrInstr.Branch _ _ _) true]
+                  [_ false])
+                (opt-bce-version-body-ok? instrs phi-count last))
+                (opt-bce-version-check-count instrs phi-count last 0)
+                (- 0 1))))))]))
+
+;; Total BoundsCheck count across the loop, or -1 when any block is not
+;; clonable (the caller treats < 1 as a rejection).
+(define (opt-bce-mb-body-checks [blocks : CompilerIrBlockList] [acc : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (let
+        [checks : i64 (opt-bce-mb-block-checks block)]
+        (if (< checks 0)
+          (- 0 1)
+          (opt-bce-mb-body-checks (box-get rest) (+ acc checks))))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-body-checks (compiler-ir-block-seq-to-list seq) acc)]))
+
+;; Fallthrough is positional: a loop block without a terminator may only
+;; fall into another loop block (the fast clone group preserves loop order,
+;; so intra-loop fallthroughs clone correctly).
+(define (opt-bce-mb-fallthroughs-ok?
+  [blocks : CompilerIrBlockList]
+  [body-labels : OptLabelSet]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) true]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (if (and
+            (opt-label-contains body-labels label)
+            (opt-cfg-instr-seq-can-fallthrough? instrs)
+            (not
+              (opt-label-contains
+                body-labels
+                (opt-cfg-entry-label (box-get rest)))))
+            false
+            (opt-bce-mb-fallthroughs-ok? (box-get rest) body-labels))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-fallthroughs-ok?
+        (compiler-ir-block-seq-to-list seq)
+        body-labels)]))
+
+;; Idempotence: no fast-clone label may already exist.
+(define (opt-bce-mb-fast-labels-fresh?
+  [blocks : CompilerIrBlockList]
+  [body-labels : OptLabelSet]) : bool
+  (match body-labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Cons label rest)
+      (if (opt-cfg-block-exists? blocks (string.append label "__bce_fast"))
+        false
+        (opt-bce-mb-fast-labels-fresh? blocks (box-get rest)))]))
+
+(define (opt-bce-mb-loop-shape-finish
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [latch : String]
+  [pred : String]
+  [body-labels : OptLabelSet]
+  [body-blocks : CompilerIrBlockList]
+  [counter : OptBceMbMaybeCounter]) : OptBceMbMaybeShape
+  (match counter
+    [(OptBceMbMaybeCounter.No) (OptBceMbMaybeShape.No)]
+    [(OptBceMbMaybeCounter.Some iphi seed _ bound)
+      (match (opt-cfg-find-block blocks header)
+        [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
+        [(OptMaybeBlock.Some header-block)
+          (match header-block
+            [(CompilerIrBlock.Block _ header-instrs)
+              (if (and
+                (opt-bce-mb-header-phis-ok?
+                  header-instrs
+                  0
+                  (opt-unroll-phi-prefix-count header-instrs 0)
+                  latch
+                  pred)
+                (>= (opt-bce-mb-body-checks body-blocks 0) 1))
+                (OptBceMbMaybeShape.Some
+                  (OptBceMbShape
+                    header
+                    latch
+                    pred
+                    body-labels
+                    body-blocks
+                    iphi
+                    seed
+                    bound))
+                (OptBceMbMaybeShape.No))])])]))
+
+;; No nested natural loop inside the candidate body: versioning an OUTER
+;; loop only removes its own per-iteration checks (few next to a whole inner
+;; loop's work) while the guard and fast-region prologue cost is paid at
+;; every outer entry -- a measured net loss (array_sum's outer loop). Flat
+;; loops keep the full win.
+(define (opt-bce-mb-has-nested-loop?
+  [loops : OptNaturalLoopList]
+  [header : String]
+  [body-labels : OptLabelSet]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match loop
+        [(OptNaturalLoop.Loop other-header _ _ _)
+          (if (and
+            (not (string.eq other-header header))
+            (opt-label-contains body-labels other-header))
+            true
+            (opt-bce-mb-has-nested-loop? (box-get rest) header body-labels))])]))
+
+(define (opt-bce-mb-loop-shape-with-preheader
+  [blocks : CompilerIrBlockList]
+  [loops : OptNaturalLoopList]
+  [header : String]
+  [latch : String]
+  [body : OptLoopBody]
+  [pred : String]) : OptBceMbMaybeShape
+  (let
+    [body-labels : OptLabelSet (struct-get body labels)]
+    [body-blocks : CompilerIrBlockList (struct-get body blocks)]
+    (if (or
+      (< (opt-label-count body-labels) 2)
+      (> (opt-label-count body-labels) (opt-bce-mb-block-max))
+      (opt-cfg-block-exists? blocks (string.append header "__bce_guard"))
+      (opt-bce-mb-has-nested-loop? loops header body-labels)
+      (not (opt-bce-mb-fast-labels-fresh? blocks body-labels))
+      (not (opt-bce-mb-fallthroughs-ok? blocks body-labels)))
+      (OptBceMbMaybeShape.No)
+      (match (opt-cfg-find-block blocks latch)
+        [(OptMaybeBlock.No) (OptBceMbMaybeShape.No)]
+        [(OptMaybeBlock.Some latch-block)
+          (match (opt-bce-mb-latch-branch latch-block header body-labels)
+            [(OptBceMbMaybeLatch.No) (OptBceMbMaybeShape.No)]
+            [(OptBceMbMaybeLatch.Some cond-var _)
+              (let
+                [defs : opt_i64_i64_map.Map
+                  (opt-bce-mb-collect-defs
+                    body-blocks
+                    (opt_i64_i64_map.with-capacity 64))]
+                (opt-bce-mb-loop-shape-finish
+                  blocks
+                  header
+                  latch
+                  pred
+                  body-labels
+                  body-blocks
+                  (opt-bce-mb-counter-step body-blocks defs latch pred cond-var)))])]))))
+
+(define (opt-bce-mb-loop-shape
+  [blocks : CompilerIrBlockList]
+  [loops : OptNaturalLoopList]
+  [entry-label : String]
+  [loop : OptNaturalLoop]) : OptBceMbMaybeShape
+  (match loop
+    [(OptNaturalLoop.Loop header latch body preheader)
+      (match preheader
+        [(OptLoopPreheader.No) (OptBceMbMaybeShape.No)]
+        [(OptLoopPreheader.Some pred)
+          (if (or
+            ;; single-block self-loops belong to the dedicated pass above
+            (string.eq header latch)
+            (string.eq header entry-label))
+            (OptBceMbMaybeShape.No)
+            (opt-bce-mb-loop-shape-with-preheader
+              blocks
+              loops
+              header
+              latch
+              body
+              pred))])]))
+
+;; --- outside uses --------------------------------------------------------------
+;; Uses of loop defs anywhere outside the loop, except as the loop-edge
+;; inputs of exit blocks' phis (those gain a parallel fast-edge input).
+(define (opt-bce-mb-outside-phi-uses
+  [set : opt_i64_i64_map.Map]
+  [inputs : CompilerIrPhiInputList]
+  [body-labels : OptLabelSet]) : opt_i64_i64_map.Map
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) set]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-outside-phi-uses
+        set
+        (compiler-ir-phi-input-seq-to-list seq)
+        body-labels)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (opt-bce-mb-outside-phi-uses
+        (if (opt-label-contains body-labels label)
+          set
+          (opt-collect-value-uses set value))
+        (box-get rest)
+        body-labels)]))
+
+(define (opt-bce-mb-outside-uses-seq
+  [set : opt_i64_i64_map.Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [body-labels : OptLabelSet]) : opt_i64_i64_map.Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    set
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (opt-bce-mb-outside-uses-seq
+        (match instr
+          [(CompilerIrInstr.Phi _ inputs _)
+            (opt-bce-mb-outside-phi-uses set inputs body-labels)]
+          [_ (opt-collect-instr-uses set instr)])
+        instrs
+        (+ index 1)
+        body-labels))))
+
+(define (opt-bce-mb-outside-uses
+  [set : opt_i64_i64_map.Map]
+  [blocks : CompilerIrBlockList]
+  [body-labels : OptLabelSet]) : opt_i64_i64_map.Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (opt-bce-mb-outside-uses
+        (match block
+          [(CompilerIrBlock.Block label instrs)
+            (if (opt-label-contains body-labels label)
+              set
+              (opt-bce-mb-outside-uses-seq set instrs 0 body-labels))])
+        (box-get rest)
+        body-labels)]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-outside-uses
+        set
+        (compiler-ir-block-seq-to-list seq)
+        body-labels)]))
+
+(define (opt-bce-mb-defs-escape-instrs?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [outside : opt_i64_i64_map.Map]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (let
+      [dst : i64 (compiler-ir-instr-seq-loop-dst-or instrs index (- 0 1))]
+      (if (and (>= dst 0) (opt-used-contains outside dst))
+        true
+        (opt-bce-mb-defs-escape-instrs? instrs (+ index 1) outside)))))
+
+(define (opt-bce-mb-defs-escape?
+  [blocks : CompilerIrBlockList]
+  [outside : opt_i64_i64_map.Map]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-bce-mb-defs-escape-instrs? instrs 0 outside)
+            true
+            (opt-bce-mb-defs-escape? (box-get rest) outside))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-defs-escape? (compiler-ir-block-seq-to-list seq) outside)]))
+
+;; --- guard condition derivation ------------------------------------------------
+;; Seed equality for the bounded header phi: both seeds are preheader-edge
+;; values defined outside the loop, but separate initializers give them
+;; distinct var ids (`store : i64 lo` / `scan : i64 lo` lower to two Movs).
+;; Compare them up to function-wide Mov/reinterpret-cast resolution so both
+;; reduce to the same runtime value.
+(define (opt-bce-mb-seeds-match?
+  [all-blocks : CompilerIrBlockList]
+  [seed : CompilerIrValue]
+  [init : CompilerIrValue]) : bool
+  (match seed
+    [(CompilerIrValue.Var seed-id)
+      (match init
+        [(CompilerIrValue.Var init-id)
+          (=
+            (opt-bce-mb-resolve all-blocks seed-id 16)
+            (opt-bce-mb-resolve all-blocks init-id 16))]
+        [_ false])]
+    [(CompilerIrValue.I64 sk)
+      (match init
+        [(CompilerIrValue.I64 ik) (= sk ik)]
+        [_ false])]
+    [_ false]))
+
+;; The invariant value an operand resolves to across the whole loop (a
+;; literal, or a var defined outside every loop block).
+(define (opt-bce-mb-invariant-operand
+  [body-blocks : CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [value : CompilerIrValue]) : CompilerIrMaybeValue
+  (match value
+    [(CompilerIrValue.I64 k)
+      (CompilerIrMaybeValue.Some (CompilerIrValue.I64 k))]
+    [(CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (if (opt-used-contains defs id)
+          (CompilerIrMaybeValue.No)
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var id))))]
+    [_ (CompilerIrMaybeValue.No)]))
+
+;; The bounded header phi's back-edge value: sphi itself, sphi + 1, or a
+;; merge phi whose inputs are each sphi / sphi+1 -- per latch crossing the
+;; phi grows by at most the counter's step and never shrinks, so it stays
+;; within [seed, scan] for every executed iteration.
+(define (opt-bce-mb-bounded-value?
+  [body-blocks : CompilerIrBlockList]
+  [sphi : i64]
+  [value : CompilerIrValue]
+  [fuel : i64]) : bool
+  (match value
+    [(CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (cond
+          [(= id sphi) true]
+          [(<= fuel 0) false]
+          [else
+            (match (opt-bce-mb-find-def body-blocks id)
+              [(OptBceMbMaybeInstr.No) false]
+              [(OptBceMbMaybeInstr.Some instr)
+                (match instr
+                  [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+                    (match op
+                      [(CompilerIrBinOp.Add)
+                        (match rhs
+                          [(CompilerIrValue.I64 step)
+                            (and
+                              (= step 1)
+                              (match ty
+                                [(AstType.I64) true]
+                                [_ false])
+                              (match lhs
+                                [(CompilerIrValue.Var add-src)
+                                  (=
+                                    (opt-bce-mb-resolve body-blocks add-src 16)
+                                    sphi)]
+                                [_ false]))]
+                          [_ false])]
+                      [_ false])]
+                  [(CompilerIrInstr.Phi _ inputs _)
+                    (opt-bce-mb-bounded-inputs?
+                      body-blocks
+                      sphi
+                      inputs
+                      (- fuel 1))]
+                  [_ false])])]))]
+    [_ false]))
+
+(define (opt-bce-mb-bounded-inputs?
+  [body-blocks : CompilerIrBlockList]
+  [sphi : i64]
+  [inputs : CompilerIrPhiInputList]
+  [fuel : i64]) : bool
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) true]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-bounded-inputs?
+        body-blocks
+        sphi
+        (compiler-ir-phi-input-seq-to-list seq)
+        fuel)]
+    [(CompilerIrPhiInputList.Cons value _ rest)
+      (if (opt-bce-mb-bounded-value? body-blocks sphi value fuel)
+        (opt-bce-mb-bounded-inputs? body-blocks sphi (box-get rest) fuel)
+        false)]))
+
+;; Derive the sufficient invariant condition for one check's index operand.
+(define (opt-bce-mb-derive-index
+  [all-blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : String]
+  [preheader : String]
+  [iphi : i64]
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [cell : (Array i64)]
+  [index-value : CompilerIrValue]
+  [length-value : CompilerIrValue]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match index-value
+    [(CompilerIrValue.I64 k)
+      (if (>= k 0)
+        (opt-bce-version-cond
+          cell
+          (CompilerIrBinOp.Lt)
+          (CompilerIrValue.I64 k)
+          length-value
+          acc)
+        (OptBceVersionGuardAcc.No))]
+    [(CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (cond
+          [(= id iphi)
+            ;; counter: [seed, bound) subset of [0, len) iff seed >= 0
+            ;; (emitted once at the end) and bound <= len.
+            (opt-bce-version-cond-counter-seen
+              (opt-bce-version-cond
+                cell
+                (CompilerIrBinOp.Le)
+                bound
+                length-value
+                acc))]
+          [(not (opt-used-contains defs id))
+            ;; loop-invariant index: exactly its own range check, hoisted.
+            (opt-bce-version-cond
+              cell
+              (CompilerIrBinOp.Lt)
+              (CompilerIrValue.Var id)
+              length-value
+              (opt-bce-version-cond
+                cell
+                (CompilerIrBinOp.Ge)
+                (CompilerIrValue.Var id)
+                (CompilerIrValue.I64 0)
+                acc))]
+          [else
+            (match (opt-bce-mb-find-def body-blocks id)
+              [(OptBceMbMaybeInstr.No) (OptBceVersionGuardAcc.No)]
+              [(OptBceMbMaybeInstr.Some instr)
+                (match instr
+                  [(CompilerIrInstr.BinOp _ op lhs rhs _)
+                    (match op
+                      [(CompilerIrBinOp.BitAnd)
+                        (match (opt-affine-var-const lhs rhs)
+                          [(OptAffineOperands.Some _ m)
+                            (if (>= m 0)
+                              ;; masked index: in [0, m] whatever the source.
+                              (opt-bce-version-cond
+                                cell
+                                (CompilerIrBinOp.Lt)
+                                (CompilerIrValue.I64 m)
+                                length-value
+                                acc)
+                              (OptBceVersionGuardAcc.No))]
+                          [(OptAffineOperands.No) (OptBceVersionGuardAcc.No)])]
+                      [_ (OptBceVersionGuardAcc.No)])]
+                  [(CompilerIrInstr.Phi _ inputs pty)
+                    ;; Bounded header phi (only header phis carry latch-edge
+                    ;; inputs): same seed as the counter, back-edge value
+                    ;; within {sphi, sphi+1} through any merge. The counter's
+                    ;; conditions then cover its whole range.
+                    (match pty
+                      [(AstType.I64)
+                        (match (opt-unroll-split-phi-inputs inputs latch)
+                          [(OptUnrollPhiSplit.Split init back pred-label)
+                            (if (and
+                              (string.eq pred-label preheader)
+                              (opt-bce-mb-seeds-match? all-blocks seed init)
+                              (opt-bce-mb-bounded-value? body-blocks id back 8))
+                              (opt-bce-version-cond-counter-seen
+                                (opt-bce-version-cond
+                                  cell
+                                  (CompilerIrBinOp.Le)
+                                  bound
+                                  length-value
+                                  acc))
+                              (OptBceVersionGuardAcc.No))]
+                          [(OptUnrollPhiSplit.No) (OptBceVersionGuardAcc.No)])]
+                      [_ (OptBceVersionGuardAcc.No)])]
+                  [_ (OptBceVersionGuardAcc.No)])])]))]
+    [_ (OptBceVersionGuardAcc.No)]))
+
+(define (opt-bce-mb-derive-block
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [all-blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : String]
+  [preheader : String]
+  [iphi : i64]
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [cell : (Array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-bce-mb-derive-block
+      instrs
+      (+ index 1)
+      all-blocks
+      body-blocks
+      defs
+      latch
+      preheader
+      iphi
+      seed
+      bound
+      cell
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.BoundsCheck index-value length-value _)
+          (match (opt-bce-mb-invariant-operand body-blocks defs length-value)
+            [(CompilerIrMaybeValue.Some length-invariant)
+              (opt-bce-mb-derive-index
+                all-blocks
+                body-blocks
+                defs
+                latch
+                preheader
+                iphi
+                seed
+                bound
+                cell
+                index-value
+                length-invariant
+                acc)]
+            [(CompilerIrMaybeValue.No) (OptBceVersionGuardAcc.No)])]
+        [_ acc]))))
+
+(define (opt-bce-mb-derive-blocks
+  [remaining : CompilerIrBlockList]
+  [all-blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [latch : String]
+  [preheader : String]
+  [iphi : i64]
+  [seed : CompilerIrValue]
+  [bound : CompilerIrValue]
+  [cell : (Array i64)]
+  [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
+  (match remaining
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-derive-blocks
+            (box-get rest)
+            all-blocks
+            body-blocks
+            defs
+            latch
+            preheader
+            iphi
+            seed
+            bound
+            cell
+            (opt-bce-mb-derive-block
+              instrs
+              0
+              all-blocks
+              body-blocks
+              defs
+              latch
+              preheader
+              iphi
+              seed
+              bound
+              cell
+              acc))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-derive-blocks
+        (compiler-ir-block-seq-to-list seq)
+        all-blocks
+        body-blocks
+        defs
+        latch
+        preheader
+        iphi
+        seed
+        bound
+        cell
+        acc)]))
+
+(define (opt-bce-mb-guard-conds
+  [all-blocks : CompilerIrBlockList]
+  [shape : OptBceMbShape]
+  [defs : opt_i64_i64_map.Map]
+  [cell : (Array i64)]) : OptBceVersionGuardResult
+  (opt-bce-version-guard-finish
+    (struct-get shape seed)
+    (struct-get shape bound)
+    cell
+    (opt-bce-mb-derive-blocks
+      (struct-get shape body-blocks)
+      all-blocks
+      (struct-get shape body-blocks)
+      defs
+      (struct-get shape latch)
+      (struct-get shape preheader)
+      (struct-get shape iphi)
+      (struct-get shape seed)
+      (struct-get shape bound)
+      cell
+      (OptBceVersionGuardAcc.Some
+        (CompilerIrInstrList.Nil)
+        (CompilerIrValueList.Nil)
+        false))))
+
+;; --- fast-clone emission --------------------------------------------------------
+(define (opt-bce-mb-fast-label [body-labels : OptLabelSet] [label : String]) : String
+  (if (opt-label-contains body-labels label)
+    (string.append label "__bce_fast")
+    label))
+
+;; Pass A: allocate a fresh id for every def in the loop BEFORE any clone
+;; substitutes (loop-carried references cross blocks in both directions).
+(define (opt-bce-mb-alloc-defs-instrs!
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [remap : (Array CompilerIrValue)]
+  [cell : (Array i64)]) : unit
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    unit
+    (let
+      [dst : i64 (compiler-ir-instr-seq-loop-dst-or instrs index (- 0 1))]
+      (begin
+        (if (>= dst 0)
+          (begin
+            (opt-unroll-clone-dst remap cell dst)
+            unit)
+          unit)
+        (opt-bce-mb-alloc-defs-instrs! instrs (+ index 1) remap cell)))))
+
+(define (opt-bce-mb-alloc-defs!
+  [blocks : CompilerIrBlockList]
+  [remap : (Array CompilerIrValue)]
+  [cell : (Array i64)]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-bce-mb-alloc-defs-instrs! instrs 0 remap cell)
+            (opt-bce-mb-alloc-defs! (box-get rest) remap cell))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-alloc-defs! (compiler-ir-block-seq-to-list seq) remap cell)]))
+
+(define (opt-bce-mb-remap-dst [remap : (Array CompilerIrValue)] [dst : i64]) : i64
+  (match (opt-unroll-subst-value remap (CompilerIrValue.Var dst))
+    [(CompilerIrValue.Var fresh) fresh]
+    [_ dst]))
+
+(define (opt-bce-mb-clone-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [remap : (Array CompilerIrValue)]
+  [body-labels : OptLabelSet]
+  [preheader : String]
+  [guard-label : String]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-clone-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        remap
+        body-labels
+        preheader
+        guard-label)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (compiler-ir-phi-input-cons
+        (opt-unroll-subst-value remap value)
+        ;; only header phis carry a preheader input: it now comes from the
+        ;; guard; every other loop-edge input comes from the fast clone.
+        (if (string.eq label preheader)
+          guard-label
+          (opt-bce-mb-fast-label body-labels label))
+        (opt-bce-mb-clone-phi-inputs
+          (box-get rest)
+          remap
+          body-labels
+          preheader
+          guard-label))]))
+
+(define (opt-bce-mb-clone-instr
+  [remap : (Array CompilerIrValue)]
+  [body-labels : OptLabelSet]
+  [preheader : String]
+  [guard-label : String]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Mov dst src ty)
+      (CompilerIrInstr.Mov
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        ty)]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (CompilerIrInstr.Cast
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (CompilerIrInstr.Bitcast
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (CompilerIrInstr.BinOp
+        (opt-bce-mb-remap-dst remap dst)
+        op
+        (opt-unroll-subst-value remap lhs)
+        (opt-unroll-subst-value remap rhs)
+        ty)]
+    [(CompilerIrInstr.UnOp dst op src ty)
+      (CompilerIrInstr.UnOp
+        (opt-bce-mb-remap-dst remap dst)
+        op
+        (opt-unroll-subst-value remap src)
+        ty)]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (CompilerIrInstr.Gep
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap base)
+        (opt-unroll-subst-value remap offset)
+        ty)]
+    [(CompilerIrInstr.Load dst src ty)
+      (CompilerIrInstr.Load
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        ty)]
+    [(CompilerIrInstr.StorePtr ptr value ty)
+      (CompilerIrInstr.StorePtr
+        (opt-unroll-subst-value remap ptr)
+        (opt-unroll-subst-value remap value)
+        ty)]
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (CompilerIrInstr.Phi
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-bce-mb-clone-phi-inputs
+          inputs
+          remap
+          body-labels
+          preheader
+          guard-label)
+        ty)]
+    [(CompilerIrInstr.Jump target)
+      (CompilerIrInstr.Jump (opt-bce-mb-fast-label body-labels target))]
+    [(CompilerIrInstr.Branch cond then-label else-label)
+      (CompilerIrInstr.Branch
+        (opt-unroll-subst-value remap cond)
+        (opt-bce-mb-fast-label body-labels then-label)
+        (opt-bce-mb-fast-label body-labels else-label))]
+    ;; unreachable: the shape scan whitelisted every loop instruction
+    [_ instr]))
+
+;; Pass B: clone a loop's instructions, dropping every BoundsCheck (the
+;; guard proved them all non-failing).
+(define (opt-bce-mb-clone-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [remap : (Array CompilerIrValue)]
+  [body-labels : OptLabelSet]
+  [preheader : String]
+  [guard-label : String]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(CompilerIrInstr.BoundsCheck _ _ _)
+          (opt-bce-mb-clone-instrs
+            instrs
+            (+ index 1)
+            remap
+            body-labels
+            preheader
+            guard-label)]
+        [_
+          (compiler-ir-instr-cons
+            (opt-bce-mb-clone-instr
+              remap
+              body-labels
+              preheader
+              guard-label
+              instr)
+            (opt-bce-mb-clone-instrs
+              instrs
+              (+ index 1)
+              remap
+              body-labels
+              preheader
+              guard-label))]))))
+
+(define (opt-bce-mb-clone-blocks
+  [blocks : CompilerIrBlockList]
+  [remap : (Array CompilerIrValue)]
+  [body-labels : OptLabelSet]
+  [preheader : String]
+  [guard-label : String]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (string.append label "__bce_fast")
+              (opt-bce-mb-clone-instrs
+                instrs
+                0
+                remap
+                body-labels
+                preheader
+                guard-label))
+            (opt-bce-mb-clone-blocks
+              (box-get rest)
+              remap
+              body-labels
+              preheader
+              guard-label))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-clone-blocks
+        (compiler-ir-block-seq-to-list seq)
+        remap
+        body-labels
+        preheader
+        guard-label)]))
+
+;; --- rewrite --------------------------------------------------------------------
+;; Extend outside phis: every input carried on a loop edge gains a parallel
+;; input carrying the fast clone's remapped value on the fast edge.
+(define (opt-bce-mb-extend-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [body-labels : OptLabelSet]
+  [remap : (Array CompilerIrValue)]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-mb-extend-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        body-labels
+        remap)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (let
+        [tail : CompilerIrPhiInputList
+          (opt-bce-mb-extend-phi-inputs (box-get rest) body-labels remap)]
+        (if (opt-label-contains body-labels label)
+          (compiler-ir-phi-input-cons
+            value
+            label
+            (compiler-ir-phi-input-cons
+              (opt-unroll-subst-value remap value)
+              (string.append label "__bce_fast")
+              tail))
+          (compiler-ir-phi-input-cons value label tail)))]))
+
+(define (opt-bce-mb-extend-exit-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [body-labels : OptLabelSet]
+  [remap : (Array CompilerIrValue)]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (compiler-ir-instr-cons
+        (match instr
+          [(CompilerIrInstr.Phi dst inputs ty)
+            (CompilerIrInstr.Phi
+              dst
+              (opt-bce-mb-extend-phi-inputs inputs body-labels remap)
+              ty)]
+          [_ instr])
+        (opt-bce-mb-extend-exit-instrs instrs (+ index 1) body-labels remap)))))
+
+(define (opt-bce-mb-blocks-cons-onto
+  [fast-blocks : CompilerIrBlockList]
+  [tail : CompilerIrBlockList]) : CompilerIrBlockList
+  (match fast-blocks
+    [(CompilerIrBlockList.Nil) tail]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        block
+        (opt-bce-mb-blocks-cons-onto (box-get rest) tail))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-blocks-cons-onto (compiler-ir-block-seq-to-list seq) tail)]))
+
+(define (opt-bce-mb-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [shape : OptBceMbShape]
+  [guard-block : CompilerIrBlock]
+  [fast-blocks : CompilerIrBlockList]
+  [remap : (Array CompilerIrValue)]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (let
+            [tail : CompilerIrBlockList
+              (opt-bce-mb-rewrite-blocks
+                (box-get rest)
+                shape
+                guard-block
+                fast-blocks
+                remap)]
+            (cond
+              [(string.eq label (struct-get shape header))
+                ;; guard + fast group immediately before the slow header: a
+                ;; fallthrough preheader lands on the guard, and the fast
+                ;; group preserves loop order for intra-loop fallthroughs.
+                (compiler-ir-block-cons
+                  guard-block
+                  (opt-bce-mb-blocks-cons-onto
+                    fast-blocks
+                    (compiler-ir-block-cons
+                      (compiler-ir-block
+                        label
+                        (opt-bce-version-relabel-loop-instrs
+                          instrs
+                          0
+                          (struct-get shape preheader)
+                          (string.append
+                            (struct-get shape header)
+                            "__bce_guard")))
+                      tail)))]
+              [(string.eq label (struct-get shape preheader))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    label
+                    (opt-unroll-retarget-instrs
+                      instrs
+                      0
+                      (struct-get shape header)
+                      (string.append (struct-get shape header) "__bce_guard")))
+                  tail)]
+              [(opt-label-contains (struct-get shape body-labels) label)
+                (compiler-ir-block-cons block tail)]
+              [else
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    label
+                    (opt-bce-mb-extend-exit-instrs
+                      instrs
+                      0
+                      (struct-get shape body-labels)
+                      remap))
+                  tail)]))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        shape
+        guard-block
+        fast-blocks
+        remap)]))
+
+(define (opt-bce-mb-apply
+  [blocks : CompilerIrBlockList]
+  [shape : OptBceMbShape]
+  [frame : i64]) : OptUnrollResult
+  (let
+    [body-labels : OptLabelSet (struct-get shape body-labels)]
+    [body-blocks : CompilerIrBlockList (struct-get shape body-blocks)]
+    [defs : opt_i64_i64_map.Map
+      (opt-bce-mb-collect-defs body-blocks (opt_i64_i64_map.with-capacity 64))]
+    [outside : opt_i64_i64_map.Map
+      (opt-bce-mb-outside-uses
+        (opt_i64_i64_map.with-capacity 64)
+        blocks
+        body-labels)]
+    (if (opt-bce-mb-defs-escape? body-blocks outside)
+      (OptUnrollResult.Result blocks frame false)
+      (let
+        [cell : (Array i64) (array.make-array i64 1)]
+        [_cell : unit (array-set! cell 0 frame)]
+        (match (opt-bce-mb-guard-conds blocks shape defs cell)
+          [(OptBceVersionGuardResult.No)
+            (OptUnrollResult.Result blocks frame false)]
+          [(OptBceVersionGuardResult.Some guard-instrs guard-value)
+            (let
+              [remap : (Array CompilerIrValue)
+                (array.make-array CompilerIrValue frame)]
+              [_fill : unit (opt-unroll-remap-fill remap 0)]
+              [_alloc : unit (opt-bce-mb-alloc-defs! body-blocks remap cell)]
+              [guard-label : String
+                (string.append (struct-get shape header) "__bce_guard")]
+              [fast-blocks : CompilerIrBlockList
+                (opt-bce-mb-clone-blocks
+                  body-blocks
+                  remap
+                  body-labels
+                  (struct-get shape preheader)
+                  guard-label)]
+              [guard-block : CompilerIrBlock
+                (compiler-ir-block
+                  guard-label
+                  (opt-aggregate-instr-list-append
+                    guard-instrs
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Branch
+                        guard-value
+                        (string.append (struct-get shape header) "__bce_fast")
+                        (struct-get shape header))
+                      (CompilerIrInstrList.Nil))))]
+              (OptUnrollResult.Result
+                (opt-bce-mb-rewrite-blocks
+                  blocks
+                  shape
+                  guard-block
+                  fast-blocks
+                  remap)
+                (array-ref cell 0)
+                true))])))))
+
+;; Apply at most one multi-block versioning per invocation, like the
+;; single-block pass.
+(define (opt-bce-mb-loops-scan
+  [blocks : CompilerIrBlockList]
+  [all-loops : OptNaturalLoopList]
+  [loops : OptNaturalLoopList]
+  [entry-label : String]
+  [frame : i64]) : OptUnrollResult
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-bce-mb-loop-shape blocks all-loops entry-label loop)
+        [(OptBceMbMaybeShape.Some shape)
+          (match (opt-bce-mb-apply blocks shape frame)
+            [(OptUnrollResult.Result next-blocks next-frame changed)
+              (if changed
+                (OptUnrollResult.Result next-blocks next-frame true)
+                (opt-bce-mb-loops-scan
+                  blocks
+                  all-loops
+                  (box-get rest)
+                  entry-label
+                  frame))])]
+        [(OptBceMbMaybeShape.No)
+          (opt-bce-mb-loops-scan
+            blocks
+            all-loops
+            (box-get rest)
+            entry-label
+            frame)])]))
+
+;; --- prescan ---------------------------------------------------------------------
+(define (opt-bce-mb-block-starts-phi?
+  [blocks : CompilerIrBlockList]
+  [label : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (and
+            (> (compiler-ir-instr-seq-count instrs) 0)
+            (compiler-ir-instr-seq-phi? instrs 0))])]))
+
+;; A back edge into a phi header: some block branches or jumps to an EARLIER
+;; block that starts with a Phi.
+(define (opt-bce-mb-back-edge-to-phi?
+  [blocks : CompilerIrBlockList]
+  [all : CompilerIrBlockList]
+  [seen : OptLabelSet]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (if (and
+              (> count 0)
+              (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                [(CompilerIrInstr.Jump target)
+                  (and
+                    (opt-label-contains seen target)
+                    (opt-bce-mb-block-starts-phi? all target))]
+                [(CompilerIrInstr.Branch _ then-label else-label)
+                  (or
+                    (and
+                      (opt-label-contains seen then-label)
+                      (opt-bce-mb-block-starts-phi? all then-label))
+                    (and
+                      (opt-label-contains seen else-label)
+                      (opt-bce-mb-block-starts-phi? all else-label)))]
+                [_ false]))
+              true
+              (opt-bce-mb-back-edge-to-phi?
+                (box-get rest)
+                all
+                (opt-label-add seen label))))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-back-edge-to-phi?
+        (compiler-ir-block-seq-to-list seq)
+        all
+        seen)]))
+
+(define (opt-bce-mb-blocks-have-check? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (>=
+            (opt-bce-version-check-count
+              instrs
+              0
+              (compiler-ir-instr-seq-count instrs)
+              0)
+            1)
+            true
+            (opt-bce-mb-blocks-have-check? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-blocks-have-check? (compiler-ir-block-seq-to-list seq))]))
+
+;; Cheap prescan: a candidate needs a back edge into a phi header and at
+;; least one BoundsCheck anywhere in the function.
+(define (opt-bce-mb-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
+  (and
+    (opt-bce-mb-blocks-have-check? blocks)
+    (opt-bce-mb-back-edge-to-phi? blocks blocks (OptLabelSet.Nil))))
+
+;; Rebuild the function around a versioned block list and verify it, falling
+;; back to the original function when the verifier rejects the rewrite.
+(define (opt-bce-version-finish-with-context
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]
+  [next-blocks : CompilerIrBlockList]
+  [next-frame : i64]) : OptFunctionCtxResult
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty _ _)
+      (let
+        [next : CompilerIrFunction
+          (CompilerIrFunction.Function
+            name
+            params
+            ret-ty
+            next-frame
+            next-blocks)]
+        [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+        (match (opt-verify-function-with-context next next-context)
+          [(ResultCompilerOptimizeVerify.Ok)
+            (OptFunctionCtxResult.Result next next-context)]
+          [(ResultCompilerOptimizeVerify.Err _)
+            (OptFunctionCtxResult.Result func context)]))]))
+
 (define (opt-bce-version-function-verified-with-context-result
   [context : OptCfgContext]
   [verified? : bool]
@@ -26694,7 +28157,7 @@
   (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
-        [(CompilerIrFunction.Function name params ret-ty frame blocks)
+        [(CompilerIrFunction.Function _ _ _ frame blocks)
           (if (>
             (compiler-ir-block-list-count blocks)
             (opt-bce-version-block-limit))
@@ -26706,22 +28169,30 @@
               frame)
               [(OptUnrollResult.Result next-blocks next-frame changed)
                 (if changed
+                  (opt-bce-version-finish-with-context
+                    context
+                    func
+                    next-blocks
+                    next-frame)
+                  ;; no single-block self-loop matched: try multi-block
+                  ;; counted loops over the natural-loop back edges.
                   (let
-                    [next : CompilerIrFunction
-                      (CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        next-frame
-                        next-blocks)]
-                    [next-context : OptCfgContext
-                      (opt-cfg-context-build next-blocks)]
-                    (match (opt-verify-function-with-context next next-context)
-                      [(ResultCompilerOptimizeVerify.Ok)
-                        (OptFunctionCtxResult.Result next next-context)]
-                      [(ResultCompilerOptimizeVerify.Err _)
-                        (OptFunctionCtxResult.Result func context)]))
-                  (OptFunctionCtxResult.Result func context))]))])]
+                    [loops : OptNaturalLoopList
+                      (opt-cfg-natural-loops-with-context blocks context)]
+                    (match (opt-bce-mb-loops-scan
+                      blocks
+                      loops
+                      loops
+                      (opt-cfg-entry-label blocks)
+                      frame)
+                      [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
+                        (if mb-changed
+                          (opt-bce-version-finish-with-context
+                            context
+                            func
+                            mb-blocks
+                            mb-frame)
+                          (OptFunctionCtxResult.Result func context))])))]))])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -26732,7 +28203,9 @@
   ;; `context` must be valid for `func`'s blocks (the entry verify reuses it).
   (match func
     [(CompilerIrFunction.Function _ _ _ _ prescan-blocks)
-      (if (opt-bce-version-blocks-have-candidate? prescan-blocks)
+      (if (or
+        (opt-bce-version-blocks-have-candidate? prescan-blocks)
+        (opt-bce-mb-blocks-have-candidate? prescan-blocks))
         (opt-bce-version-function-verified-with-context-result
           context
           verified?
@@ -47950,6 +49423,504 @@
         3]
       ;; ... and the slow original keeps its per-iteration check.
       [(< (opt-bce-version-test-block-checks blocks "body") 1) 4]
+      [else 42])))
+
+;; --- multi-block bce-version self-tests -------------------------------------------
+;;
+;; The quicksort-partition shape: a counted scan loop (body) whose body splits
+;; into a swap path (then: store++) and a skip path (else) before merging back
+;; into the incrementing latch (merge). `variant` mutates one detail each: 1
+;; makes the swap check's index unprovable (store+1 used directly), 2 puts a
+;; call in the swap block, 3 makes the counter step +2 -- every one of those
+;; must leave the function untouched.
+(define (opt-bce-mb-test-header-block) : CompilerIrBlock
+  (compiler-ir-block
+    "body"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        3
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.I64 0)
+          "entry"
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 8)
+            "merge"
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Phi
+          4
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.I64 0)
+            "entry"
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 7)
+              "merge"
+              (CompilerIrPhiInputList.Nil)))
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 1)
+            "mb_ok0")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              5
+              (CompilerIrBinOp.Lt)
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.I64 4)
+              (AstType.Bool))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "then" "else")
+              (CompilerIrInstrList.Nil))))))))
+
+(define (opt-bce-mb-test-then-block [variant : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    "then"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BoundsCheck
+        (CompilerIrValue.Var
+          (if (= variant 1)
+            6
+            4))
+        (CompilerIrValue.Var 1)
+        "mb_ok1")
+      (compiler-ir-instr-cons
+        (if (= variant 2)
+          (CompilerIrInstr.Call
+            11
+            (opt-test-symbol "mb_callee")
+            (CompilerIrCallArgs.Nil)
+            (AstType.I64))
+          (CompilerIrInstr.Mov 11 (CompilerIrValue.I64 0) (AstType.I64)))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            6
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-bce-mb-test-else-block) : CompilerIrBlock
+  (compiler-ir-block
+    "else"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Jump "merge")
+      (CompilerIrInstrList.Nil))))
+
+(define (opt-bce-mb-test-merge-block [variant : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    "merge"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        7
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.Var 6)
+          "then"
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 4)
+            "else"
+            (CompilerIrPhiInputList.Nil)))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          8
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.I64
+            (if (= variant 3)
+              2
+              1))
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            9
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 8)
+            (CompilerIrValue.Var 0)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 9) "body" "exit")
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-bce-mb-test-exit-block) : CompilerIrBlock
+  (compiler-ir-block
+    "exit"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Phi
+        10
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.Var 7)
+          "merge"
+          (CompilerIrPhiInputList.Nil))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Return
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 10)))
+        (CompilerIrInstrList.Nil)))))
+
+(define (opt-bce-mb-test-blocks [variant : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump "body")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (opt-bce-mb-test-header-block)
+      (compiler-ir-block-cons
+        (opt-bce-mb-test-then-block variant)
+        (compiler-ir-block-cons
+          (opt-bce-mb-test-else-block)
+          (compiler-ir-block-cons
+            (opt-bce-mb-test-merge-block variant)
+            (compiler-ir-block-cons
+              (opt-bce-mb-test-exit-block)
+              (CompilerIrBlockList.Nil))))))))
+
+(define (opt-bce-mb-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "bce_version_mb_fixture")
+    (opt-bce-version-test-params)
+    (AstType.I64)
+    12
+    blocks))
+
+(define (opt-bce-mb-test-jump-block [label : String] [target : String]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Jump target)
+      (CompilerIrInstrList.Nil))))
+
+;; Nine loop blocks -- one over the multi-block cap -- so even a fully
+;; derivable counted loop must stay unversioned.
+(define (opt-bce-mb-test-chain-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (opt-bce-mb-test-jump-block "entry" "body")
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "body"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            3
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.I64 0)
+              "entry"
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 8)
+                "latch"
+                (CompilerIrPhiInputList.Nil)))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.Var 1)
+              "mb_chain_ok")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "b1")
+              (CompilerIrInstrList.Nil)))))
+      (compiler-ir-block-cons
+        (opt-bce-mb-test-jump-block "b1" "b2")
+        (compiler-ir-block-cons
+          (opt-bce-mb-test-jump-block "b2" "b3")
+          (compiler-ir-block-cons
+            (opt-bce-mb-test-jump-block "b3" "b4")
+            (compiler-ir-block-cons
+              (opt-bce-mb-test-jump-block "b4" "b5")
+              (compiler-ir-block-cons
+                (opt-bce-mb-test-jump-block "b5" "b6")
+                (compiler-ir-block-cons
+                  (opt-bce-mb-test-jump-block "b6" "b7")
+                  (compiler-ir-block-cons
+                    (opt-bce-mb-test-jump-block "b7" "latch")
+                    (compiler-ir-block-cons
+                      (compiler-ir-block
+                        "latch"
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.BinOp
+                            8
+                            (CompilerIrBinOp.Add)
+                            (CompilerIrValue.Var 3)
+                            (CompilerIrValue.I64 1)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.BinOp
+                              9
+                              (CompilerIrBinOp.Lt)
+                              (CompilerIrValue.Var 8)
+                              (CompilerIrValue.Var 0)
+                              (AstType.Bool))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.Branch
+                                (CompilerIrValue.Var 9)
+                                "body"
+                                "exit")
+                              (CompilerIrInstrList.Nil)))))
+                      (compiler-ir-block-cons
+                        (compiler-ir-block
+                          "exit"
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Return
+                              (CompilerIrMaybeValue.Some
+                                (CompilerIrValue.I64 0)))
+                            (CompilerIrInstrList.Nil)))
+                        (CompilerIrBlockList.Nil)))))))))))))
+
+(define (compiler-optimize-bce-version-mb-self-test) : i64
+  (let
+    [versioned : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 0)))]
+    [out : CompilerIrBlockList (opt-function-blocks versioned)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function versioned))) 1]
+      ;; entry + guard + four fast clones + four slow blocks + exit
+      [(not (= (compiler-ir-block-list-count out) 11)) 2]
+      ;; the fast region dropped every check ...
+      [(not (= (opt-bce-version-test-block-checks out "body__bce_fast") 0)) 3]
+      [(not (= (opt-bce-version-test-block-checks out "then__bce_fast") 0)) 4]
+      [(match (opt-cfg-find-block out "merge__bce_fast")
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        5]
+      [(match (opt-cfg-find-block out "body__bce_guard")
+          [(OptMaybeBlock.No) true]
+          [(OptMaybeBlock.Some _) false])
+        6]
+      ;; ... while the slow loop keeps both of its checks.
+      [(not (= (opt-bce-version-test-block-checks out "body") 1)) 7]
+      [(not (= (opt-bce-version-test-block-checks out "then") 1)) 8]
+      ;; the exit phi gained the parallel fast-edge input.
+      [(not (= (opt-bce-version-test-exit-phi-inputs out "exit") 2)) 9]
+      [else 42])))
+
+(define (compiler-optimize-bce-version-mb-negative-self-test) : i64
+  (let
+    [unprovable : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-mb-test-function (opt-bce-mb-test-blocks 1))))]
+    [with-call : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-mb-test-function (opt-bce-mb-test-blocks 2))))]
+    [step-two : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (opt-bce-mb-test-function (opt-bce-mb-test-blocks 3))))]
+    [too-big : CompilerIrBlockList
+      (opt-function-blocks
+        (opt-bce-version-function
+          (CompilerIrFunction.Function
+            (opt-test-symbol "bce_version_mb_chain_fixture")
+            (opt-bce-version-test-params)
+            (AstType.I64)
+            10
+            (opt-bce-mb-test-chain-blocks))))]
+    (cond
+      ;; every rejection leaves the function untouched.
+      [(not (= (compiler-ir-block-list-count unprovable) 6)) 1]
+      [(not (= (compiler-ir-block-list-count with-call) 6)) 2]
+      [(not (= (compiler-ir-block-list-count step-two) 6)) 3]
+      [(not (= (compiler-ir-block-list-count too-big) 11)) 4]
+      [else 42])))
+
+;; --- multi-block versioning pipeline self-test --------------------------------------
+;; Full-pipeline integration: a lowered while loop whose body splits into a
+;; store++ path and a skip path (the quicksort partition shape) must rotate
+;; into a multi-block counted loop, version, and leave every fast-derived
+;; block check-free while the slow original keeps its per-iteration checks.
+(define (opt-bce-mb-pipeline-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 3 (CompilerIrValue.I64 0) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 0) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "header")
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "header"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            5
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 0)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "body" "exit")
+            (CompilerIrInstrList.Nil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.Var 1)
+              "mbp_ok0")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                6
+                (CompilerIrBinOp.Lt)
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.I64 4)
+                (AstType.Bool))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch (CompilerIrValue.Var 6) "then" "else")
+                (CompilerIrInstrList.Nil)))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "then"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BoundsCheck
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.Var 1)
+                "mbp_ok1")
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  7
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 4)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Mov 4 (CompilerIrValue.Var 7) (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump "merge")
+                    (CompilerIrInstrList.Nil))))))
+          (compiler-ir-block-cons
+            (opt-bce-mb-test-jump-block "else" "merge")
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "merge"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    8
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 3)
+                    (CompilerIrValue.I64 1)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      3
+                      (CompilerIrValue.Var 8)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump "header")
+                      (CompilerIrInstrList.Nil)))))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "exit"
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+                    (CompilerIrInstrList.Nil)))
+                (CompilerIrBlockList.Nil)))))))))
+
+(define (opt-bce-mb-test-matches-at?
+  [label : String]
+  [needle : String]
+  [off : i64]
+  [index : i64]) : bool
+  (if (>= index (string.string-length needle))
+    true
+    (if (=
+      (cast (string.string-ref label (+ off index)) : i64)
+      (cast (string.string-ref needle index) : i64))
+      (opt-bce-mb-test-matches-at? label needle off (+ index 1))
+      false)))
+
+(define (opt-bce-mb-test-label-contains-from?
+  [label : String]
+  [needle : String]
+  [off : i64]) : bool
+  (if (> (+ off (string.string-length needle)) (string.string-length label))
+    false
+    (if (opt-bce-mb-test-matches-at? label needle off 0)
+      true
+      (opt-bce-mb-test-label-contains-from? label needle (+ off 1)))))
+
+(define (opt-bce-mb-test-label-contains? [label : String] [needle : String]) : bool
+  (opt-bce-mb-test-label-contains-from? label needle 0))
+
+;; Count blocks whose label contains needle.
+(define (opt-bce-mb-test-matching-blocks
+  [blocks : CompilerIrBlockList]
+  [needle : String]
+  [acc : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (opt-bce-mb-test-matching-blocks
+        (box-get rest)
+        needle
+        (match block
+          [(CompilerIrBlock.Block label _)
+            (if (opt-bce-mb-test-label-contains? label needle)
+              (+ acc 1)
+              acc)]))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-test-matching-blocks
+        (compiler-ir-block-seq-to-list seq)
+        needle
+        acc)]))
+
+;; Total BoundsChecks in blocks whose label contains needle.
+(define (opt-bce-mb-test-matching-checks
+  [blocks : CompilerIrBlockList]
+  [needle : String]
+  [acc : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) acc]
+    [(CompilerIrBlockList.Cons block rest)
+      (opt-bce-mb-test-matching-checks
+        (box-get rest)
+        needle
+        (match block
+          [(CompilerIrBlock.Block label instrs)
+            (if (opt-bce-mb-test-label-contains? label needle)
+              (+
+                acc
+                (opt-bce-version-check-count
+                  instrs
+                  0
+                  (compiler-ir-instr-seq-count instrs)
+                  0))
+              acc)]))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-test-matching-checks
+        (compiler-ir-block-seq-to-list seq)
+        needle
+        acc)]))
+
+(define (compiler-optimize-bce-version-mb-pipeline-self-test) : i64
+  (let
+    [optimized : CompilerIrFunction
+      (optimize-function
+        (CompilerIrFunction.Function
+          (opt-test-symbol "bce_version_mb_while_fixture")
+          (opt-bce-version-test-params)
+          (AstType.I64)
+          9
+          (opt-bce-mb-pipeline-blocks)))]
+    [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
+      ;; the fast region exists ...
+      [(< (opt-bce-mb-test-matching-blocks blocks "__bce_fast" 0) 2) 2]
+      ;; ... every fast-derived block is check-free ...
+      [(not (= (opt-bce-mb-test-matching-checks blocks "__bce_fast" 0) 0)) 3]
+      ;; ... and the slow original keeps its per-iteration checks ("" is a
+      ;; prefix of every label, so this counts checks function-wide).
+      [(< (opt-bce-version-test-prefix-checks blocks "" 0) 2) 4]
       [else 42])))
 
 ;; --- pre-existing-phi SSA construction self-test --------------------------------

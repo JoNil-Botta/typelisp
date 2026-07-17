@@ -96,8 +96,8 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
 - The `io_caller_result.tl` escape fixture verifies the checker rejects
   returning a fallback result whose fallback owner is shorter-lived than the
   declared result lifetime.
-- `test_assert_failure.tl` covers the panic-on-failure path and exact caller
-  diagnostic on stderr.
+- `test_assert_failure.tl` covers the panic-on-failure path and exact caller,
+  expected-value, and actual-value diagnostic on stderr.
 
 Inline stdlib coverage:
 

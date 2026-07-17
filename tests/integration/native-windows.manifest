@@ -228,6 +228,12 @@ stdlib_substring_negative_start_trap|tests/integration/stdlib_substring_negative
 stdlib_substring_range_overflow_trap|tests/integration/stdlib_substring_range_overflow_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_substring_start_past_end_trap|tests/integration/stdlib_substring_start_past_end_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl stdlib/io.tl stdlib/string.tl
+stdlib_test_bool_failure|tests/integration/stdlib_test.tl|134|-|bool|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:bool mismatch: expected false, found true
+stdlib_test_i64_failure|tests/integration/stdlib_test.tl|134|-|i64|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:score mismatch: expected 27, found 26
+stdlib_test_i32_failure|tests/integration/stdlib_test.tl|134|-|i32|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:offset mismatch: expected 4, found -3
+stdlib_test_f64_failure|tests/integration/stdlib_test.tl|134|-|f64|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:ratio mismatch: expected 2.5, found 1.25
+stdlib_test_char_failure|tests/integration/stdlib_test.tl|134|-|char|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:mark mismatch: expected 'y', found 'x'
+stdlib_test_string_failure|tests/integration/stdlib_test.tl|134|-|string|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:name mismatch: expected "right", found "left"
 string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|stdlib/io.tl stdlib/string.tl
 string_concat_deep|tests/integration/string_concat_deep.tl|42|-|-|stdlib/string.tl
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl

@@ -107,6 +107,23 @@ if [ ! -x "$COMPILER" ]; then
     exit 1
 fi
 
+# The generated `(hashmap K V)` modules are the only supported scalar hashmap
+# surface. Keep the removed flat family spellings from returning in source,
+# fixtures, scripts, or documentation. Split the literals so this guard does
+# not match its own implementation.
+legacy_hashmap_type_pattern='StringI64''Map|StringString''Map|I64I64''Map|I64String''Map'
+legacy_hashmap_function_pattern='string-i64-''map-|string-string-''map-|i64-i64-''map-|i64-string-''map-'
+legacy_hashmap_matches=$(grep -R -n -E \
+    --include='*.tl' --include='*.md' --include='*.sh' \
+    "($legacy_hashmap_type_pattern)|($legacy_hashmap_function_pattern)" \
+    README.md SPEC.md benchmarks examples scripts src stdlib tests tools \
+    2>/dev/null || true)
+if [ -n "$legacy_hashmap_matches" ]; then
+    echo "removed legacy hashmap surface is still referenced:" >&2
+    printf '%s\n' "$legacy_hashmap_matches" >&2
+    exit 1
+fi
+
 # Build a fixture .tl to a runnable binary (host-aware). Linux uses GNU as/ld;
 # Windows builds a native executable via clang/lld-link. Build/link output is
 # captured to <stem>.build.out / <stem>.build.err and `build_status` is set.

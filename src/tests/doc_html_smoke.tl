@@ -28,10 +28,10 @@
   (let
     [modules : doc_module_vec.Vec (doc_module_vec.with-capacity 2)]
     (begin
-      (doc_module_vec.push
+      (doc_module_vec.push-ref!
         (&mut modules)
         (doc_render.DocModule.Module "smoke<&>.tl" docs))
-      (doc_module_vec.push
+      (doc_module_vec.push-ref!
         (&mut modules)
         (doc_render.DocModule.Module "second.tl" second-docs))
       modules)))

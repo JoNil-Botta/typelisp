@@ -31,7 +31,7 @@
   (if (>= index count)
     unit
     (begin
-      (doc_module_vec.push out (doc-module-list-ref src index))
+      (doc_module_vec.push-ref! out (doc-module-list-ref src index))
       (doc-module-list-append-from out src (+ index 1) count))))
 
 (define (doc-module-list-append

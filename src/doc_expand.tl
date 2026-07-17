@@ -103,7 +103,7 @@
   [form : String]) : unit
   (if (doc-import-form-list-mut-contains? forms form)
     unit
-    (doc_import_form_vec.push forms form)))
+    (doc_import_form_vec.push-ref! forms form)))
 
 (define (doc-import-form-list-source-from
   [forms : doc_import_form_vec.Vec]
@@ -316,7 +316,7 @@
   [examples : (&mut examples doc_macro_import_example_vec.Vec)]
   [alias : String]
   [form : String]) : unit
-  (doc_macro_import_example_vec.push
+  (doc_macro_import_example_vec.push-ref!
     examples
     (DocMacroImportExample alias form)))
 
@@ -457,7 +457,7 @@
         (doc-generated-target-example-mut-find examples target))
       0))
     unit
-    (doc_generated_target_example_vec.push
+    (doc_generated_target_example_vec.push-ref!
       examples
       (DocGeneratedTargetExample target form))))
 
@@ -825,7 +825,7 @@
   (if (>= index count)
     unit
     (begin
-      (doc_item_vec.push out (doc_extract.doc-item-list-ref items index))
+      (doc_item_vec.push-ref! out (doc_extract.doc-item-list-ref items index))
       (doc-generated-copy-items out items (+ index 1) count))))
 
 (define (doc-generated-module-items [form : String] [items : doc_item_vec.Vec]) : doc_item_vec.Vec
@@ -833,7 +833,7 @@
     [count : i64 (doc_extract.doc-item-list-count items)]
     [out : doc_item_vec.Vec (doc_item_vec.with-capacity (+ count 1))]
     (begin
-      (doc_item_vec.push (&mut out) (doc-generated-import-item form))
+      (doc_item_vec.push-ref! (&mut out) (doc-generated-import-item form))
       (doc-generated-copy-items (&mut out) items 0 count)
       out)))
 
@@ -849,7 +849,7 @@
       has-generated
       (> (string.string-length module-name) 0)
       (> (string.string-length form) 0))
-      (doc_module_vec.push
+      (doc_module_vec.push-ref!
         modules
         (doc_render.DocModule.Module
           module-name
@@ -898,7 +898,7 @@
                   (match (doc-ast-generated-decl-item decl)
                     [(DocMaybeItem.Some item)
                       (begin
-                        (doc_item_vec.push (&mut items) item)
+                        (doc_item_vec.push-ref! (&mut items) item)
                         (set! has-generated true))]
                     [(DocMaybeItem.No) unit])])
               (set! cursor rest))]))
@@ -1129,21 +1129,23 @@
     (begin
       (while (< index 6)
         (begin
-          (doc_item_vec.push
+          (doc_item_vec.push-ref!
             (&mut items)
             (doc_extract.DocItem.Item
               (doc_extract.DocItemKind.Define)
               (string.int->string index)
               ""
               ""))
-          (doc_import_form_vec.push (&mut forms) (string.int->string index))
-          (doc_macro_import_example_vec.push
+          (doc_import_form_vec.push-ref!
+            (&mut forms)
+            (string.int->string index))
+          (doc_macro_import_example_vec.push-ref!
             (&mut macro-examples)
             (DocMacroImportExample (string.int->string index) ""))
-          (doc_generated_target_example_vec.push
+          (doc_generated_target_example_vec.push-ref!
             (&mut targets)
             (DocGeneratedTargetExample (string.int->string index) ""))
-          (doc_module_vec.push
+          (doc_module_vec.push-ref!
             (&mut modules)
             (doc_render.DocModule.Module
               (string.int->string index)

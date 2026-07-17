@@ -71,7 +71,7 @@
     (begin
       (while (< i end)
         (begin
-          (doc_module_vec.push
+          (doc_module_vec.push-ref!
             (&mut modules)
             (doc_render.DocModule.Module
               (io.arg i)
@@ -88,7 +88,7 @@
     (let
       [path : String (doc_svec.get (& paths) index "")]
       (begin
-        (doc_module_vec.push
+        (doc_module_vec.push-ref!
           modules
           (doc_render.DocModule.Module path (doc_extract.doc-extract-file path)))
         (doc-modules-from-package-sources-from paths (+ index 1) modules)))))
@@ -115,7 +115,7 @@
         [rest : AstDeclPathList rest]
         (if (doc_path_map.insert-if-absent-ref! seen path 1)
           (begin
-            (doc_module_vec.push
+            (doc_module_vec.push-ref!
               modules
               (doc_render.DocModule.Module
                 path
@@ -313,7 +313,7 @@
         (let
           [path : String (doc_svec.get (& paths) i "")]
           (begin
-            (doc_module_vec.push
+            (doc_module_vec.push-ref!
               (&mut modules)
               (doc_render.DocModule.Module
                 path

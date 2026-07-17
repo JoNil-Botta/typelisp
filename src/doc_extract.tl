@@ -100,7 +100,7 @@
   (if (>= index count)
     unit
     (begin
-      (doc_item_vec.push out (array-ref items index))
+      (doc_item_vec.push-ref! out (array-ref items index))
       (doc-item-array-copy-to-list out items (+ index 1) count))))
 
 (define (doc-item-array-to-list [items : (Array DocItem)]) : doc_item_vec.Vec

@@ -6896,6 +6896,14 @@
   [lifetimes : AstLifetimeList]) : String
   (str_cat.str-cat "(" name " " (tc-lifetime-list-render lifetimes) ")"))
 
+(define (tc-elided-lifetime-name-prefix) : String
+  "\n__typelisp_signature_elided_lifetime_")
+
+(define (tc-elaborated-lifetime-hidden? [name : i64]) : bool
+  (or
+    (= name cbi.compiler-builtin-id-fix-empty)
+    (tc-diag-string-prefix? (intern-str name) (tc-elided-lifetime-name-prefix))))
+
 (define (tc-type-render [ty : AstType]) : String
   (match ty
     [(AstType.I64) "i64"]
@@ -6942,19 +6950,23 @@
     [(AstType.MutPtr elem)
       (str_cat.str-cat "(MutPtr " (tc-type-render (ty-node-get elem)) ")")]
     [(AstType.Ref region inner)
-      (str_cat.str-cat
-        "(& "
-        (intern-str region)
-        " "
-        (tc-type-render (ty-node-get inner))
-        ")")]
+      (if (tc-elaborated-lifetime-hidden? region)
+        (str_cat.str-cat "(& " (tc-type-render (ty-node-get inner)) ")")
+        (str_cat.str-cat
+          "(& "
+          (intern-str region)
+          " "
+          (tc-type-render (ty-node-get inner))
+          ")"))]
     [(AstType.MutRef region inner)
-      (str_cat.str-cat
-        "(&mut "
-        (intern-str region)
-        " "
-        (tc-type-render (ty-node-get inner))
-        ")")]
+      (if (tc-elaborated-lifetime-hidden? region)
+        (str_cat.str-cat "(&mut " (tc-type-render (ty-node-get inner)) ")")
+        (str_cat.str-cat
+          "(&mut "
+          (intern-str region)
+          " "
+          (tc-type-render (ty-node-get inner))
+          ")"))]
     [(AstType.Region region inner)
       (str_cat.str-cat
         "(Region "
@@ -10722,12 +10734,28 @@
   (let
     [name : String
       (string.append
-        "\n__typelisp_signature_elided_lifetime_"
+        (tc-elided-lifetime-name-prefix)
         (string.int->string index))]
     (tc-generated-name-id name)))
 
 (define (tc-elided-lifetime? [name : i64]) : bool
   (= name cbi.compiler-builtin-id-fix-empty))
+
+(test
+  tc-type-render-hides-elaborated-lifetimes
+  (let
+    [hidden : i64 (tc-elided-lifetime-name 0)]
+    [named : i64 (intern "named")]
+    (if (and
+      (string.eq (tc-type-render (ast-ty-ref hidden (AstType.I64))) "(& i64)")
+      (string.eq
+        (tc-type-render (ast-ty-mut-ref hidden (AstType.I64)))
+        "(&mut i64)")
+      (string.eq
+        (tc-type-render (ast-ty-ref named (AstType.I64)))
+        "(& named i64)"))
+      unit
+      (io.panic "typecheck: elaborated lifetime leaked through type rendering"))))
 
 (define (tc-signature-input-lifetimes-into [ty : AstType] [out : TcNameIdList]) : TcNameIdList
   ;; A nested function type owns a separate signature scope. Its lifetimes are
@@ -14895,6 +14923,26 @@
         (tc-source-type-list-policy-ok-at ctx types (+ index 1))]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
+(define (tc-source-elided-reference-policy-message) : String
+  "typecheck: elided reference lifetime is only allowed in function signatures; write an explicit lifetime")
+
+(define (tc-source-function-type-policy-ok
+  [ctx : TcContext]
+  [args : AstTypeList]
+  [ret : AstType]) : ResultTcUnit
+  (match (tc-elide-function-type args ret)
+    [(ResultTcElidedType.Ok normalized)
+      (match (struct-get normalized ty)
+        [(AstType.Func normalized-args normalized-ret)
+          (match (tc-source-type-list-policy-ok ctx (box-get normalized-args))
+            [(ResultTcUnit.Ok)
+              (tc-source-type-policy-ok ctx (ty-node-get normalized-ret))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+        [_
+          (ResultTcUnit.Err
+            "typecheck: internal lifetime-elision function type mismatch")])]
+    [(ResultTcElidedType.Err message) (ResultTcUnit.Err message)]))
+
 (define (tc-source-type-policy-ok [ctx : TcContext] [ty : AstType]) : ResultTcUnit
   (if (tc-type-unquote-marker? ty)
     ResultTcUnit.Ok
@@ -14921,10 +14969,10 @@
         [(ResultTcUnit.Ok)
           (match (tc-resolve-type ctx ty)
             [(AstType.Func args ret)
-              (match (tc-source-type-list-policy-ok ctx (box-get args))
-                [(ResultTcUnit.Ok)
-                  (tc-source-type-policy-ok ctx (ty-node-get ret))]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+              (tc-source-function-type-policy-ok
+                ctx
+                (box-get args)
+                (ty-node-get ret))]
             [(AstType.Tuple elems)
               (tc-source-type-list-policy-ok ctx (box-get elems))]
             [(AstType.Array elem _)
@@ -14937,17 +14985,21 @@
               (tc-source-type-policy-ok ctx (ty-node-get elem))]
             [(AstType.MutPtr elem)
               (tc-source-type-policy-ok ctx (ty-node-get elem))]
-            [(AstType.Ref _ inner)
-              (match (tc-resolve-type ctx (ty-node-get inner))
-                [(AstType.Str) ResultTcUnit.Ok]
-                [(AstType.Bytes) ResultTcUnit.Ok]
-                [_ (tc-source-type-policy-ok ctx (ty-node-get inner))])]
-            [(AstType.MutRef _ inner)
-              (match (tc-resolve-type ctx (ty-node-get inner))
-                [(AstType.Str)
-                  (ResultTcUnit.Err (tc-source-str-mut-ref-policy-message))]
-                [(AstType.Bytes) ResultTcUnit.Ok]
-                [_ (tc-source-type-policy-ok ctx (ty-node-get inner))])]
+            [(AstType.Ref lifetime inner)
+              (if (tc-elided-lifetime? lifetime)
+                (ResultTcUnit.Err (tc-source-elided-reference-policy-message))
+                (match (tc-resolve-type ctx (ty-node-get inner))
+                  [(AstType.Str) ResultTcUnit.Ok]
+                  [(AstType.Bytes) ResultTcUnit.Ok]
+                  [_ (tc-source-type-policy-ok ctx (ty-node-get inner))]))]
+            [(AstType.MutRef lifetime inner)
+              (if (tc-elided-lifetime? lifetime)
+                (ResultTcUnit.Err (tc-source-elided-reference-policy-message))
+                (match (tc-resolve-type ctx (ty-node-get inner))
+                  [(AstType.Str)
+                    (ResultTcUnit.Err (tc-source-str-mut-ref-policy-message))]
+                  [(AstType.Bytes) ResultTcUnit.Ok]
+                  [_ (tc-source-type-policy-ok ctx (ty-node-get inner))]))]
             [(AstType.Region _ inner)
               (tc-source-type-policy-ok ctx (ty-node-get inner))]
             [(AstType.Str)
@@ -15861,6 +15913,27 @@
       (tc-source-expr-list-spmd-broadcast-scope-ok args allow)]
     [_ ResultTcUnit.Ok]))
 
+(define (tc-source-lambda-signature-policy-ok
+  [ctx : TcContext]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]) : ResultTcUnit
+  (match maybe-ret
+    [(AstMaybeType.Some ret)
+      (match (tc-elide-function-signature params ret)
+        [(ResultTcElidedSignature.Ok signature)
+          (match (tc-source-param-list-policy-ok
+            ctx
+            (struct-get signature params))
+            [(ResultTcUnit.Ok)
+              (tc-source-type-policy-ok ctx (struct-get signature ret))]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+        [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
+    [(AstMaybeType.No)
+      (match (tc-elide-input-params-at (& params) 0 0 (ast-param-list-new))
+        [(ResultTcElidedParams.Ok inputs)
+          (tc-source-param-list-policy-ok ctx (struct-get inputs params))]
+        [(ResultTcElidedParams.Err message) (ResultTcUnit.Err message)])]))
+
 (define (tc-source-expr-policy-ok [ctx : TcContext] [expr : AstExpr]) : ResultTcUnit
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -15904,11 +15977,8 @@
         [(AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (match (tc-source-param-list-policy-ok ctx params)
-              [(ResultTcUnit.Ok)
-                (match (tc-source-maybe-type-policy-ok ctx maybe-ret)
-                  [(ResultTcUnit.Ok) (tc-source-expr-policy-ok ctx body)]
-                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+            (match (tc-source-lambda-signature-policy-ok ctx params maybe-ret)
+              [(ResultTcUnit.Ok) (tc-source-expr-policy-ok ctx body)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(AstExpr.Tuple exprs) (tc-source-expr-list-policy-ok ctx exprs)]
     [(AstExpr.TupleRef tuple-box _)

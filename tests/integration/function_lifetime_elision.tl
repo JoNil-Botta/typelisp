@@ -14,12 +14,22 @@
 (define (tuple-view [item : (& ElisionItem)]) : (Tuple (& ElisionItem))
   (tuple item))
 
+(define (array-view [items : (Array (& ElisionItem) 1)]) : (Array
+    (& ElisionItem)
+    1)
+  items)
+
 (define (shared-left
   [left : (& shared ElisionItem)]
   [right : (& shared ElisionItem)]) : (& ElisionItem)
   (if (= left.value right.value)
     left
     left))
+
+(define (mixed-inputs?
+  [left : (& shared ElisionItem)]
+  [right : (& ElisionItem)]) : bool
+  (= left.value right.value))
 
 (define (call-view
   [view : (-> (& ElisionItem) (& ElisionItem))]
@@ -30,11 +40,14 @@
   (let
     [item : ElisionItem (ElisionItem 41)]
     [view (increment-and-view (&mut item))]
+    [views : (Array (& item ElisionItem) 1) (array view)]
     (if (and
       (= view.value 42)
       (same-value? view (& item))
       (= (struct-get (tuple-ref (tuple-view view) 0) value) 42)
+      (= (struct-get (array-ref (array-view views) 0) value) 42)
       (= (struct-get (shared-left (& item) (& item)) value) 42)
+      (mixed-inputs? (& item) (& item))
       (=
         (call-view
           (lambda ([value : (& ElisionItem)]) : (& ElisionItem)

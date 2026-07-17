@@ -336,7 +336,7 @@ function emit_input() {
     declaration = ""
     collecting = 0
 }
-/^\(include-str-comptime-lzss([ \t]|$)/ {
+/^\(include-str-lzss([ \t]|$)/ {
     declaration = $0
     declaration_file = FILENAME
     collecting = 1

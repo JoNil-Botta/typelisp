@@ -14194,7 +14194,7 @@
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDecl.IncludeStrComptime _ _)
             (tc-nominal-owner-name-list rest target index module)]
-          [(AstDecl.IncludeStrComptimeLzss _ _)
+          [(AstDecl.IncludeStrLzss _ _)
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDecl.IncludeBin _ _)
             (tc-nominal-owner-name-list rest target index module)]
@@ -16318,9 +16318,9 @@
     [(AstDecl.IncludeStrComptime _ _)
       (ResultTcUnit.Err
         "typecheck: include-str-comptime must be expanded by compiler loader")]
-    [(AstDecl.IncludeStrComptimeLzss _ _)
+    [(AstDecl.IncludeStrLzss _ _)
       (ResultTcUnit.Err
-        "typecheck: include-str-comptime-lzss must be expanded by compiler loader")]
+        "typecheck: include-str-lzss must be expanded by compiler loader")]
     [(AstDecl.IncludeBin _ _)
       (ResultTcUnit.Err
         "typecheck: include-bin must be expanded by compiler loader")]
@@ -20156,7 +20156,7 @@
     [(AstDecl.Import _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeStr _ _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeStrComptime _ _) (ResultTcEnv.Ok env)]
-    [(AstDecl.IncludeStrComptimeLzss _ _) (ResultTcEnv.Ok env)]
+    [(AstDecl.IncludeStrLzss _ _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeBin _ _) (ResultTcEnv.Ok env)]
     [(AstDecl.Test _ _ _) (ResultTcEnv.Ok env)]))
 
@@ -20619,7 +20619,7 @@
                 [(AstDecl.Import _) (set! cur rest)]
                 [(AstDecl.IncludeStr _ _) (set! cur rest)]
                 [(AstDecl.IncludeStrComptime _ _) (set! cur rest)]
-                [(AstDecl.IncludeStrComptimeLzss _ _) (set! cur rest)]
+                [(AstDecl.IncludeStrLzss _ _) (set! cur rest)]
                 [(AstDecl.IncludeBin _ _) (set! cur rest)]
                 [(AstDecl.Test _ _ _) (set! cur rest)]
                 [_
@@ -35053,7 +35053,7 @@
             (tc-variant-owner-name-list rest target index module)]
           [(AstDecl.IncludeStrComptime _ _)
             (tc-variant-owner-name-list rest target index module)]
-          [(AstDecl.IncludeStrComptimeLzss _ _)
+          [(AstDecl.IncludeStrLzss _ _)
             (tc-variant-owner-name-list rest target index module)]
           [(AstDecl.IncludeBin _ _)
             (tc-variant-owner-name-list rest target index module)]
@@ -50899,7 +50899,7 @@
     [(AstDecl.Import _) false]
     [(AstDecl.IncludeStr _ _) false]
     [(AstDecl.IncludeStrComptime _ _) false]
-    [(AstDecl.IncludeStrComptimeLzss _ _) false]
+    [(AstDecl.IncludeStrLzss _ _) false]
     [(AstDecl.IncludeBin _ _) false]
     [(AstDecl.DefMacro _ _ _ _) false]
     [(AstDecl.Unsafe inner-box)
@@ -66463,8 +66463,8 @@
       (str_cat.str-cat "include-str:" (tc-env-key-name-text name))]
     [(AstDecl.IncludeStrComptime name _)
       (str_cat.str-cat "include-str-comptime:" (tc-env-key-name-text name))]
-    [(AstDecl.IncludeStrComptimeLzss name _)
-      (str_cat.str-cat "include-str-comptime-lzss:" (tc-env-key-name-text name))]
+    [(AstDecl.IncludeStrLzss name _)
+      (str_cat.str-cat "include-str-lzss:" (tc-env-key-name-text name))]
     [(AstDecl.IncludeBin name _)
       (str_cat.str-cat "include-bin:" (tc-env-key-name-text name))]
     [(AstDecl.DefDispatch name _)

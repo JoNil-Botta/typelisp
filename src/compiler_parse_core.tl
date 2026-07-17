@@ -1226,6 +1226,14 @@
     [(string.eq name "impl") true]
     [else (string.eq name "where")]))
 
+(define (compiler-parse-removed-compressed-include-name) : String
+  (string.append "include-str-comptime-" "lzss"))
+
+(define (compiler-parse-removed-compressed-include-message) : String
+  (string.append
+    "parse: include-str-comptime-"
+    "lzss is removed; use include-str-lzss"))
+
 (define (ast-source-span-from-source-span [span : token.SourceSpan]) : AstSourceSpan
   (ast-source-span
     (token.span-start-line span)
@@ -1749,8 +1757,11 @@
 (define (compiler-parse-tag-decl-include-str-comptime) : i64
   414)
 
-(define (compiler-parse-tag-decl-include-str-comptime-lzss) : i64
+(define (compiler-parse-tag-decl-include-str-lzss) : i64
   415)
+
+(define (compiler-parse-tag-decl-removed-compressed-include) : i64
+  416)
 
 (define (compiler-parse-tag-decl-include-bin) : i64
   413)
@@ -2655,15 +2666,20 @@
     [e14 : sym_i64_env.SymI64Env
       (compiler-parse-dispatch-bind
         e13
-        "include-str-comptime-lzss"
-        (compiler-parse-tag-decl-include-str-comptime-lzss))]
+        "include-str-lzss"
+        (compiler-parse-tag-decl-include-str-lzss))]
     [e15 : sym_i64_env.SymI64Env
       (compiler-parse-dispatch-bind
         e14
+        (compiler-parse-removed-compressed-include-name)
+        (compiler-parse-tag-decl-removed-compressed-include))]
+    [e16 : sym_i64_env.SymI64Env
+      (compiler-parse-dispatch-bind
+        e15
         "include-bin"
         (compiler-parse-tag-decl-include-bin))]
     (compiler-parse-dispatch-bind
-      e15
+      e16
       "defdispatch"
       (compiler-parse-tag-decl-defdispatch))))
 
@@ -9652,11 +9668,10 @@
             "parse: include-str-comptime name must be a symbol")])]
     [_ (ResultAstDecl.Err "parse: malformed include-str-comptime")]))
 
-(define (parse-ast-include-str-comptime-lzss [rest : reader.SpannedSexpr]) : ResultAstDecl
+(define (parse-ast-include-str-lzss [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match rest
     [(reader.SpannedSexpr.Nil _)
-      (ResultAstDecl.Err
-        "parse: include-str-comptime-lzss expects name and string path")]
+      (ResultAstDecl.Err "parse: include-str-lzss expects name and string path")]
     [(reader.SpannedSexpr.Cons name-node tail _)
       (match (reader.sp-node-get name-node)
         [(reader.SpannedSexpr.Sym name _)
@@ -9667,25 +9682,21 @@
                   (match (reader.sp-node-get end)
                     [(reader.SpannedSexpr.Nil _)
                       (ResultAstDecl.Ok
-                        (AstDecl.IncludeStrComptimeLzss
-                          name
-                          (ci.intern-str path)))]
+                        (AstDecl.IncludeStrLzss name (ci.intern-str path)))]
                     [_
                       (ResultAstDecl.Err
-                        "parse: include-str-comptime-lzss expects exactly two operands")])]
+                        "parse: include-str-lzss expects exactly two operands")])]
                 [_
                   (ResultAstDecl.Err
-                    "parse: include-str-comptime-lzss path must be a string")])]
+                    "parse: include-str-lzss path must be a string")])]
             [(reader.SpannedSexpr.Nil _)
               (ResultAstDecl.Err
-                "parse: include-str-comptime-lzss expects name and string path")]
+                "parse: include-str-lzss expects name and string path")]
             [_
               (ResultAstDecl.Err
-                "parse: include-str-comptime-lzss expects exactly two operands")])]
-        [_
-          (ResultAstDecl.Err
-            "parse: include-str-comptime-lzss name must be a symbol")])]
-    [_ (ResultAstDecl.Err "parse: malformed include-str-comptime-lzss")]))
+                "parse: include-str-lzss expects exactly two operands")])]
+        [_ (ResultAstDecl.Err "parse: include-str-lzss name must be a symbol")])]
+    [_ (ResultAstDecl.Err "parse: malformed include-str-lzss")]))
 
 (define (parse-ast-include-bin [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -9971,9 +9982,11 @@
                     (parse-ast-include-str (reader.sp-node-get rest))]
                   [(= tag (compiler-parse-tag-decl-include-str-comptime))
                     (parse-ast-include-str-comptime (reader.sp-node-get rest))]
-                  [(= tag (compiler-parse-tag-decl-include-str-comptime-lzss))
-                    (parse-ast-include-str-comptime-lzss
-                      (reader.sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-include-str-lzss))
+                    (parse-ast-include-str-lzss (reader.sp-node-get rest))]
+                  [(= tag (compiler-parse-tag-decl-removed-compressed-include))
+                    (ResultAstDecl.Err
+                      (compiler-parse-removed-compressed-include-message))]
                   [(= tag (compiler-parse-tag-decl-include-bin))
                     (parse-ast-include-bin (reader.sp-node-get rest))]
                   [(= tag (compiler-parse-tag-decl-module))
@@ -10759,9 +10772,9 @@
       (and (string.eq (intern-str name) "payload") (string.eq path "data.txt"))]
     [_ false]))
 
-(define (ast-first-include-str-comptime-lzss-ok? [decls : AstDeclList]) : bool
+(define (ast-first-include-str-lzss-ok? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Cons (AstDecl.IncludeStrComptimeLzss name path) _)
+    [(AstDeclListStep.Cons (AstDecl.IncludeStrLzss name path) _)
       (and (string.eq (intern-str name) "payload") (string.eq path "data.txt"))]
     [_ false]))
 
@@ -11029,26 +11042,35 @@
       "(include-str-comptime payload \"data.txt\" extra)"
       "parse: include-str-comptime expects exactly two operands")))
 
-(define (compiler-parse-include-str-comptime-lzss-ok?) : bool
-  (match (parse-ast-source "(include-str-comptime-lzss payload \"data.txt\")")
+(define (compiler-parse-include-str-lzss-ok?) : bool
+  (match (parse-ast-source "(include-str-lzss payload \"data.txt\")")
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (ast-first-include-str-comptime-lzss-ok? (box-get decls-box))]
+      (ast-first-include-str-lzss-ok? (box-get decls-box))]
     [(ResultAstProgram.Err _) false]))
 
-(define (compiler-parse-include-str-comptime-lzss-errors-ok?) : bool
+(define (compiler-parse-include-str-lzss-errors-ok?) : bool
   (and
     (compiler-parse-error-ok?
-      "(include-str-comptime-lzss)"
-      "parse: include-str-comptime-lzss expects name and string path")
+      "(include-str-lzss)"
+      "parse: include-str-lzss expects name and string path")
     (compiler-parse-error-ok?
-      "(include-str-comptime-lzss \"name\" \"data.txt\")"
-      "parse: include-str-comptime-lzss name must be a symbol")
+      "(include-str-lzss \"name\" \"data.txt\")"
+      "parse: include-str-lzss name must be a symbol")
     (compiler-parse-error-ok?
-      "(include-str-comptime-lzss payload data.txt)"
-      "parse: include-str-comptime-lzss path must be a string")
+      "(include-str-lzss payload data.txt)"
+      "parse: include-str-lzss path must be a string")
     (compiler-parse-error-ok?
-      "(include-str-comptime-lzss payload \"data.txt\" extra)"
-      "parse: include-str-comptime-lzss expects exactly two operands")))
+      "(include-str-lzss payload \"data.txt\" extra)"
+      "parse: include-str-lzss expects exactly two operands")))
+
+(define (compiler-parse-removed-compressed-include-rejected?) : bool
+  (compiler-parse-error-ok?
+    (string.append
+      "("
+      (string.append
+        (compiler-parse-removed-compressed-include-name)
+        " payload \"data.txt\")"))
+    (compiler-parse-removed-compressed-include-message)))
 
 (define (compiler-parse-include-bin-ok?) : bool
   (match (parse-ast-source "(include-bin payload \"data.bin\")")
@@ -13190,8 +13212,9 @@
     (compiler-parse-include-str-errors-ok?)
     (compiler-parse-include-str-comptime-ok?)
     (compiler-parse-include-str-comptime-errors-ok?)
-    (compiler-parse-include-str-comptime-lzss-ok?)
-    (compiler-parse-include-str-comptime-lzss-errors-ok?)
+    (compiler-parse-include-str-lzss-ok?)
+    (compiler-parse-include-str-lzss-errors-ok?)
+    (compiler-parse-removed-compressed-include-rejected?)
     (compiler-parse-include-bin-ok?)
     (compiler-parse-include-bin-errors-ok?)
     (compiler-parse-error-ok?

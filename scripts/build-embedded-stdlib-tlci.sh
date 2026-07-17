@@ -48,7 +48,7 @@ function emit_input() {
     declaration = ""
     collecting = 0
 }
-/^\(include-str-comptime-lzss([ \t]|$)/ {
+/^\(include-str-lzss([ \t]|$)/ {
     declaration = $0
     collecting = 1
     if ($0 ~ /\)[ \t]*$/) emit_input()

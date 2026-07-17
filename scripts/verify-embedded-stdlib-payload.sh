@@ -29,7 +29,7 @@ function emit_input() {
     declaration = ""
     collecting = 0
 }
-/^\(include-str-comptime-lzss([ \t]|$)/ {
+/^\(include-str-lzss([ \t]|$)/ {
     declaration = $0
     collecting = 1
     if ($0 ~ /\)[ \t]*$/) {
@@ -89,7 +89,7 @@ fi
 MUTATION_DIR="$WORKDIR/source-mutation"
 mkdir -p "$MUTATION_DIR"
 cat > "$MUTATION_DIR/main.tl" <<'EOF'
-(include-str-comptime-lzss payload "payload.txt")
+(include-str-lzss payload "payload.txt")
 (define (main) : i64 (array-length payload))
 EOF
 printf 'payload-A\n' > "$MUTATION_DIR/payload.txt"

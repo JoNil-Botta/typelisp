@@ -59063,16 +59063,23 @@
             (>= (lower-test-function-store-ptr-count functions "main") 3))])]
     [(ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-make-array-register-resident-fill8-shape-ok?) : bool
+(define (compiler-lower-make-array-register-resident-zero-fill-shape-ok?) : bool
+  ;; A one-word register-resident struct with an all-zero default takes the
+  ;; tl_array_zero path (the aggregate zero-fill supersedes fill8 for
+  ;; all-zero defaults; fill8 remains for non-zero defaults).
   (match (lower-compiler-source-with-mode
     (compiler-lower-make-array-register-resident-fill8-source)
     (CompilerLowerMode.InlineAggregates))
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
-          (=
-            (lower-test-function-call-count functions "main" "tl_array_fill8")
-            1)])]
+          (and
+            (=
+              (lower-test-function-call-count functions "main" "tl_array_zero")
+              1)
+            (=
+              (lower-test-function-call-count functions "main" "tl_array_fill8")
+              0))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-string-runtime-shape-ok? [src : String]) : bool

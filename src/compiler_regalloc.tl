@@ -8915,6 +8915,45 @@
             coalesce)
           counts))]))
 
+;; One-pass spill weights for the scalar-opt2 greedy: the remat walk accumulates
+;; the exact raw use/def counts the plain spill-weights walk computes (same
+;; adds, plus the def-status tracking), so the two per-function walks collapse
+;; into one. Returns the same combined array as
+;; (combine (merge (remat-discounted weights)) (merge (raw weights))).
+(define (compiler-reg-function-spill-weights-combined
+  [func : CompilerIrFunction]
+  [coalesce : CompilerRegCoalesceMap]
+  [vars : i64]) : (Array i64)
+  (match func
+    [(CompilerIrFunction.Function _ _ _ fn-vars blocks)
+      (let
+        [raw : (Array i64) (array.make-array i64 fn-vars)]
+        [def-status : (Array i64) (array.make-array i64 fn-vars)]
+        [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+        [allow-invariant-loads : bool
+          (compiler-reg-remat-invariant-loads-ok? func)]
+        (begin
+          (compiler-reg-fill-i64-array raw 0)
+          (compiler-reg-fill-i64-array def-status 0)
+          (compiler-reg-ref-counts-blocks-weighted-remat!
+            raw
+            def-status
+            blocks
+            depths
+            0
+            allow-invariant-loads)
+          (let
+            [discounted : (Array i64) (array.make-array i64 fn-vars)]
+            (begin
+              (compiler-reg-copy-i64-array! discounted raw 0)
+              (compiler-reg-remat-discount-single-def-spill-weights!
+                discounted
+                def-status
+                coalesce)
+              (compiler-reg-greedy-combine-spill-weights
+                (compiler-reg-merge-ref-counts coalesce discounted vars)
+                (compiler-reg-merge-ref-counts coalesce raw vars))))))]))
+
 (define (compiler-reg-interval-index-var-has-segments?
   [index : CompilerRegIntervalIndex]
   [var : i64]) : bool
@@ -18084,15 +18123,10 @@
         ;; weight is combined with the RAW use-density as a tie-break (combine-
         ;; spill-weights) so that among equal-discounted values the genuinely
         ;; coldest one spills, not an arbitrary tied one.
-        (compiler-reg-greedy-combine-spill-weights
-          (compiler-reg-merge-ref-counts
-            coalesce
-            (compiler-reg-function-spill-weights-remat func coalesce)
-            (array-length (struct-get interval-index starts)))
-          (compiler-reg-merge-ref-counts
-            coalesce
-            (compiler-reg-function-spill-weights func)
-            (array-length (struct-get interval-index starts))))
+        (compiler-reg-function-spill-weights-combined
+          func
+          coalesce
+          (array-length (struct-get interval-index starts)))
         (array.make-array i64 0))]
     ;; The greedy's per-register clobber restriction (15c) reuses the kind
     ;; point sets bound above: `clobber-points` IS the kind-0 set, and

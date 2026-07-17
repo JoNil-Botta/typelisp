@@ -187,12 +187,6 @@
   [need-edge-precise : bool]) : CompilerRegLivenessHandle
   (let
     [baseline : CompilerFunctionLiveness (compiler-live-analyze-function func)]
-    [run-edge-precise : bool
-      (if need-edge-precise
-        (match func
-          [(CompilerIrFunction.Function _ _ _ _ blocks)
-            (compiler-reg-blocks-have-phi? blocks)])
-        false)]
     (begin
       (cfg
         (any regalloc-liveness-census test)
@@ -203,32 +197,34 @@
       (cfg
         regalloc-liveness-census
         (io.print-error
-          (if run-edge-precise
+          (if need-edge-precise
             "regalloc-liveness-census|baseline=1|edge-precise=1\n"
             "regalloc-liveness-census|baseline=1|edge-precise=0\n"))
         unit)
       (if need-edge-precise
-        ;; Edge-precise liveness differs from the baseline only at Phi
-        ;; instructions (phi inputs attribute to predecessor edges instead
-        ;; of the phi block). A phi-free function has identical analyses,
-        ;; so reuse the baseline instead of running a second fixpoint.
-        (if run-edge-precise
-          (let
-            [edge-precise : CompilerFunctionLiveness
-              (compiler-live-analyze-function-edge-precise func)]
-            (begin
-              (cfg
-                (any regalloc-liveness-census test)
-                (set!
-                  compiler-reg-liveness-census-edge-precise
-                  (+ compiler-reg-liveness-census-edge-precise 1))
-                unit)
+        (match func
+          [(CompilerIrFunction.Function _ _ _ _ blocks)
+            ;; Edge-precise liveness differs from the baseline only at Phi
+            ;; instructions (phi inputs attribute to predecessor edges instead
+            ;; of the phi block). A phi-free function has identical analyses,
+            ;; so reuse the baseline instead of running a second fixpoint.
+            (if (compiler-reg-blocks-have-phi? blocks)
+              (let
+                [edge-precise : CompilerFunctionLiveness
+                  (compiler-live-analyze-function-edge-precise func)]
+                (begin
+                  (cfg
+                    (any regalloc-liveness-census test)
+                    (set!
+                      compiler-reg-liveness-census-edge-precise
+                      (+ compiler-reg-liveness-census-edge-precise 1))
+                    unit)
+                  (CompilerRegLivenessHandle
+                    baseline
+                    (CompilerRegMaybeLiveness.Some edge-precise))))
               (CompilerRegLivenessHandle
                 baseline
-                (CompilerRegMaybeLiveness.Some edge-precise))))
-          (CompilerRegLivenessHandle
-            baseline
-            (CompilerRegMaybeLiveness.Some baseline)))
+                (CompilerRegMaybeLiveness.Some baseline)))])
         (CompilerRegLivenessHandle baseline (CompilerRegMaybeLiveness.No))))))
 
 (define (compiler-reg-liveness-handle-edge-precise

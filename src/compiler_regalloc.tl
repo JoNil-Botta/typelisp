@@ -21475,7 +21475,7 @@
       [_ false])))
 
 (define (compiler-reg-scratch-vreg-slots
-  [abi : CompilerRegTargetAbi]
+  [_abi : CompilerRegTargetAbi]
   [_assignments : CompilerRegAssignmentList]
   [_instr : CompilerIrInstr]
   [_phi-targets : CompilerRegStringList]
@@ -21486,14 +21486,14 @@
       ;; Fixed-width ordinals keep the map independent of assignment failure.
       [(CompilerIrInstr.Call _ name _ _)
         (if (and
-          (compiler-reg-linux-abi? abi)
+          (compiler-reg-linux-abi? _abi)
           (compiler-reg-c-memory-call-name? name))
           2
           1)]
       [(CompilerIrInstr.CallIndirect _ _ _ _) 2]
       [(CompilerIrInstr.CallIndirectC _ _ args _)
         (if (and
-          (compiler-reg-linux-abi? abi)
+          (compiler-reg-linux-abi? _abi)
           (compiler-reg-call-args-have-c-memory-marker? args))
           3
           2)]
@@ -21501,7 +21501,7 @@
         (match (box-get payload-box)
           [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ name _ _)
             (if (and
-              (compiler-reg-linux-abi? abi)
+              (compiler-reg-linux-abi? _abi)
               (compiler-reg-c-memory-call-name? name))
               3
               2)])]
@@ -21513,7 +21513,7 @@
               args
               _)
             (if (and
-              (compiler-reg-linux-abi? abi)
+              (compiler-reg-linux-abi? _abi)
               (compiler-reg-call-args-have-c-memory-marker? args))
               3
               2)])]

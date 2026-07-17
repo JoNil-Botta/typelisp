@@ -271,7 +271,10 @@ check_rbp_sixth_csr() {
 check_licm_desc_hoist() {
     _asm=$(compile_gate licm_desc_hoist tests/integration/licm_desc_hoist.tl)
     _body=$(function_body "$_asm" _tl_licm_desc_hoist_sum_loop)
-    assert_fixed_count_eq "$_body" 'movq 8(%rdi), %r12' 1 licm-desc-hoist
+    # The allocator may exchange the descriptor length and loop-bound homes;
+    # LICM's contract is the single hoisted descriptor load, not a particular
+    # physical register choice.
+    assert_regex_count_eq "$_body" '^[[:space:]]+movq 8\(%rdi\), %r[a-z0-9]+$' 1 licm-desc-hoist
     assert_fixed_count_eq "$_body" 'movq (%rdi), %rdi' 1 licm-desc-hoist
     assert_contains "$_body" 'call tl_oob_abort' licm-desc-hoist
 }

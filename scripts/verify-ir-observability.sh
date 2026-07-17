@@ -25,6 +25,8 @@ mkdir -p "$WORKDIR"
 SOURCE="$ROOT/tests/golden/optimizer_fold.tl"
 EXPECTED="$ROOT/tests/golden/optimizer_fold.after-fold.ir"
 ACTUAL="$WORKDIR/optimizer_fold.after-fold.ir"
+EXPECTED_NORMALIZED="$WORKDIR/optimizer_fold.expected.normalized.ir"
+ACTUAL_NORMALIZED="$WORKDIR/optimizer_fold.actual.normalized.ir"
 TRACE="$WORKDIR/trace.stderr"
 
 "$COMPILER" compile "$SOURCE" \
@@ -36,9 +38,11 @@ TRACE="$WORKDIR/trace.stderr"
     --stdlib-root "$ROOT/src" \
     >"$WORKDIR/fold.stdout" 2>"$WORKDIR/fold.stderr"
 
-if ! cmp -s "$EXPECTED" "$ACTUAL"; then
+tr -d '\r' <"$EXPECTED" >"$EXPECTED_NORMALIZED"
+tr -d '\r' <"$ACTUAL" >"$ACTUAL_NORMALIZED"
+if ! cmp -s "$EXPECTED_NORMALIZED" "$ACTUAL_NORMALIZED"; then
     echo "optimizer fold IR golden mismatch" >&2
-    diff -u "$EXPECTED" "$ACTUAL" >&2 || true
+    diff -u "$EXPECTED_NORMALIZED" "$ACTUAL_NORMALIZED" >&2 || true
     exit 1
 fi
 

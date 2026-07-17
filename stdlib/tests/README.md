@@ -151,8 +151,9 @@ Inline stdlib coverage:
   helpers, replacement paths, prefix checks, borrowed/owned substring helpers,
   and legacy `string->int` / `int->string` edge cases.
 - `str_cat.tl` owns inline tests for empty, single, two-operand, many-operand,
-  variable-operand, nested `str-cat` expansion, generated helper hygiene, and
-  declaration-family ordering beside macro expansion.
+  variable-operand, nested `str-cat` expansion, and generated helper hygiene.
+  `tests/inline/str_cat_hashmap_declaration_ordering.tl` keeps the declaration-
+  family ordering check beside a generated hashmap module.
 - `format_api.tl` covers literal placeholders, escaped braces, and String,
   integer, boolean, char, and float formatting; `comptime_string_literal_reject.tl`
   keeps non-literal syntax inspection rejected at macro expansion. The

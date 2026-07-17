@@ -20,8 +20,6 @@
 (import stdlib.array)
 (import stdlib.string)
 (cfg test (import stdlib.test))
-(cfg test (import stdlib.hashmap))
-(cfg test (import (hashmap i64 i64) as map_i64_i64))
 (cfg test (import stdlib.str_cat_runtime as str_cat_runtime))
 
 ;: Internal pack step used by `str-cat` expansion for six or more operands.
@@ -167,20 +165,9 @@
 
 (cfg
   test
-  (define (str-cat-api-generated-ok) : bool
-    (let
-      [m : map_i64_i64.Map (map_i64_i64.with-capacity 8)]
-      (begin
-        (map_i64_i64.insert! m 1 7)
-        (>= (map_i64_i64.capacity (& m)) 8)))))
-
-(cfg
-  test
   (define (str-cat-test-main) : i64
     (if (= (str-cat-api-checks) 8)
-      (if (str-cat-api-generated-ok)
-        42
-        1)
+      42
       1)))
 
 (cfg

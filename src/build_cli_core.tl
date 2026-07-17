@@ -245,7 +245,7 @@
 (define build-status-already-exists : i64
   17)
 
-(define (build-string-i64-map-put
+(define (build-string-index-map-put
   [map : build_string_i64_map.Map]
   [key : String]
   [value : i64]) : build_string_i64_map.Map
@@ -2315,7 +2315,7 @@
   [manifest-path : String]
   [mark : i64]) : BuildPackageGraphState
   (BuildPackageGraphState
-    (build-string-i64-map-put (struct-get state seen) manifest-path mark)
+    (build-string-index-map-put (struct-get state seen) manifest-path mark)
     (struct-get state order)))
 
 (define (build-package-graph-state-add-order
@@ -2437,7 +2437,7 @@
     [root-dir : String (compiler-load-dirname root-path)]
     [initial : BuildPackageGraphState
       (BuildPackageGraphState
-        (build-string-i64-map-put
+        (build-string-index-map-put
           (build_string_i64_map.with-capacity 32)
           root-path
           build-package-visit-visiting)
@@ -4681,7 +4681,7 @@
                     (begin
                       (set!
                         next-scheduled
-                        (build-string-i64-map-put
+                        (build-string-index-map-put
                           next-scheduled
                           manifest-path
                           1))
@@ -4786,7 +4786,7 @@
                                   1)))
                             (set!
                               next-built
-                              (build-string-i64-map-put
+                              (build-string-index-map-put
                                 next-built
                                 manifest-path
                                 1))))))

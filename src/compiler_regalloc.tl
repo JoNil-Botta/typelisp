@@ -18225,20 +18225,36 @@
     [mask-vars : CompilerLiveI64Set
       (match vector-mask-defs
         [(CompilerLiveUseDef.Def _ vars) vars])]
+    ;; Scalar-only functions (no vector or mask IR values) have no special
+    ;; candidates at all: the select-false preference walk, both special-candidate
+    ;; interval filters, the vector greedy, and the mask fixed-candidate pass all
+    ;; return their inputs unchanged, so skip the whole vector/mask prep chain.
+    [vector-mask-empty? : bool
+      (and
+        (= (compiler-live-set-count vector-vars) 0)
+        (= (compiler-live-set-count mask-vars) 0))]
     [vector-candidate-vars : CompilerLiveI64Set
-      (if mask-vars-use-vector-registers
-        (compiler-live-set-union vector-vars mask-vars)
-        vector-vars)]
+      (if vector-mask-empty?
+        vector-vars
+        (if mask-vars-use-vector-registers
+          (compiler-live-set-union vector-vars mask-vars)
+          vector-vars))]
     [mask-candidate-vars : CompilerLiveI64Set
-      (if mask-vars-use-vector-registers
-        (compiler-live-set-empty)
-        mask-vars)]
+      (if vector-mask-empty?
+        mask-vars
+        (if mask-vars-use-vector-registers
+          (compiler-live-set-empty)
+          mask-vars))]
     [vector-preferences : (Array i64)
-      (compiler-reg-function-select-false-preferences
-        func
-        (array-length (struct-get interval-index starts)))]
+      (if vector-mask-empty?
+        (array.make-array i64 0)
+        (compiler-reg-function-select-false-preferences
+          func
+          (array-length (struct-get interval-index starts))))]
     [vector-candidates : CompilerRegIntervalList
-      (compiler-reg-special-candidates intervals vector-candidate-vars blocked)]
+      (if vector-mask-empty?
+        CompilerRegIntervalList.Nil
+        (compiler-reg-special-candidates intervals vector-candidate-vars blocked))]
     [_vector-class-reset : unit
       (compiler-reg-unassign-special-candidates!
         scalar-assignments
@@ -18248,32 +18264,36 @@
       ;; Vectors share the XMM physical bank and the scalar greedy's ABI
       ;; clobber rule. `%vecN` is an allocator-only class spelling; backend
       ;; save/restore sees the same physical N through the overlap helper.
-      (compiler-reg-greedy-state
-        vector-candidates
-        (compiler-reg-vector-registers-for-abi abi)
-        scalar-assignments
-        interval-index
-        (compiler-live-set-empty)
-        (compiler-live-set-empty)
-        (array.make-array i64 0)
-        vector-preferences
-        (array.make-array i64 0)
-        xmm-call-points
-        div-points
-        shift-points
-        (compiler-reg-vector-callee-registers-for-abi abi)
-        (compiler-reg-xmm-caller-register-count-for-abi abi))]
+      (if vector-mask-empty?
+        (CompilerRegAssignState.State CompilerRegActiveList.Nil scalar-assignments)
+        (compiler-reg-greedy-state
+          vector-candidates
+          (compiler-reg-vector-registers-for-abi abi)
+          scalar-assignments
+          interval-index
+          (compiler-live-set-empty)
+          (compiler-live-set-empty)
+          (array.make-array i64 0)
+          vector-preferences
+          (array.make-array i64 0)
+          xmm-call-points
+          div-points
+          shift-points
+          (compiler-reg-vector-callee-registers-for-abi abi)
+          (compiler-reg-xmm-caller-register-count-for-abi abi)))]
     [vector-assignments : CompilerRegAssignmentTable
       (match vector-state
         [(CompilerRegAssignState.State _ assignments) assignments])]
     [mask-state : CompilerRegAssignState
-      (compiler-reg-assign-fixed-candidates
-        (compiler-reg-special-candidates intervals mask-candidate-vars blocked)
-        (compiler-reg-mask-registers)
-        CompilerRegActiveList.Nil
-        vector-assignments
-        (array.make-array i64 0)
-        interval-index)]
+      (if vector-mask-empty?
+        (CompilerRegAssignState.State CompilerRegActiveList.Nil vector-assignments)
+        (compiler-reg-assign-fixed-candidates
+          (compiler-reg-special-candidates intervals mask-candidate-vars blocked)
+          (compiler-reg-mask-registers)
+          CompilerRegActiveList.Nil
+          vector-assignments
+          (array.make-array i64 0)
+          interval-index))]
     [assignments : CompilerRegAssignmentTable
       (match mask-state
         [(CompilerRegAssignState.State _ found) found])]

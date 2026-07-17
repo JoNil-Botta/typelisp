@@ -3999,18 +3999,10 @@
                     next))
                 (set! walked (+ walked 1))))]
           [(HashmapI64I64BackingOccupied slot-key _ slot-hash)
-            (if (= slot-hash hash)
-              (if (= slot-key key)
-                (return (HashmapI64I64BackingProbeFound cursor))
-                (let
-                  [next : i64 (+ cursor 1)]
-                  (begin
-                    (set!
-                      cursor
-                      (if (>= next capacity)
-                        0
-                        next))
-                    (set! walked (+ walked 1)))))
+            (if (if (= slot-hash hash)
+              (= slot-key key)
+              false)
+              (return (HashmapI64I64BackingProbeFound cursor))
               (let
                 [next : i64 (+ cursor 1)]
                 (begin
@@ -4134,51 +4126,21 @@
 ;: Generated concrete hashmap family helper.
 (define (hashmap-i64-i64-backing-get [map : HashmapI64I64Backing] [key : i64]) : HashmapI64I64BackingLookup
   (let
-    [slots : (Array HashmapI64I64BackingSlot) (struct-get map slots)]
-    [capacity : i64 (array-length slots)]
-    [hash : i64 (hashmap-i64-i64-backing-hash-key key)]
-    [cursor : i64
-      (hashmap-i64-i64-backing-normalized-bucket-index hash capacity)]
-    [walked : i64 0]
-    (begin
-      ;; The walk bound must stay: a capacity-1 full table is reachable, and
-      ;; lookups do not grow first the way put does.
-      (while (< walked capacity)
-        (match (array-ref slots cursor)
-          [(HashmapI64I64BackingEmpty) (return (HashmapI64I64BackingMissing))]
-          [(HashmapI64I64BackingTombstone)
-            (let
-              [next : i64 (+ cursor 1)]
-              (begin
-                (set!
-                  cursor
-                  (if (>= next capacity)
-                    0
-                    next))
-                (set! walked (+ walked 1))))]
-          [(HashmapI64I64BackingOccupied slot-key value slot-hash)
-            (if (= slot-hash hash)
-              (if (= slot-key key)
-                (return (HashmapI64I64BackingFound value))
-                (let
-                  [next : i64 (+ cursor 1)]
-                  (begin
-                    (set!
-                      cursor
-                      (if (>= next capacity)
-                        0
-                        next))
-                    (set! walked (+ walked 1)))))
-              (let
-                [next : i64 (+ cursor 1)]
-                (begin
-                  (set!
-                    cursor
-                    (if (>= next capacity)
-                      0
-                      next))
-                  (set! walked (+ walked 1)))))]))
-      (HashmapI64I64BackingMissing))))
+    [slots : (Array HashmapI64I64BackingSlot)
+      (hashmap-i64-i64-backing-slots map)]
+    (match (hashmap-i64-i64-backing-probe
+      slots
+      (hashmap-i64-i64-backing-capacity map)
+      key
+      (hashmap-i64-i64-backing-hash-key key))
+      [(HashmapI64I64BackingProbeFound index)
+        (match (array-ref slots index)
+          [(HashmapI64I64BackingOccupied _ value _)
+            (HashmapI64I64BackingFound value)]
+          [(HashmapI64I64BackingEmpty) (HashmapI64I64BackingMissing)]
+          [(HashmapI64I64BackingTombstone) (HashmapI64I64BackingMissing)])]
+      [(HashmapI64I64BackingProbeAbsent _) (HashmapI64I64BackingMissing)]
+      [(HashmapI64I64BackingProbeFull) (HashmapI64I64BackingMissing)])))
 
 ;: Generated concrete hashmap family helper.
 (define (hashmap-i64-i64-backing-get-value-borrowed

@@ -24364,67 +24364,91 @@
         out-extra-assignments
         out-extra-types))))
 
+;; Remat replaces spilled cheap-recompute defs with recompute-at-use homes;
+;; with no Spill assignment in the plan there is nothing to rescue, so skip
+;; the remat table, liveness fixpoint, interval selection, and coalesce map
+;; for the (majority) spill-free functions.
+(define (compiler-reg-assignments-have-spill?
+  [assignments : CompilerRegAssignmentList]) : bool
+  (match assignments
+    [(CompilerRegAssignmentList.Nil) false]
+    [(CompilerRegAssignmentList.Cons item rest)
+      (match item
+        [(CompilerRegAssignment.Assignment _ location)
+          (match location
+            [(CompilerRegLocation.Spill _) true]
+            [_ (compiler-reg-assignments-have-spill? (box-get rest))])])]))
+
 (define (compiler-reg-remat-rewrite-blocks
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
-  (let
-    [table : CompilerRegRematTable (compiler-reg-remat-table-build func)]
-    [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
-    [group-vars : CompilerLiveI64Set
-      (compiler-reg-function-group-vars func types)]
-    [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make func false)]
-    [liveness : CompilerFunctionLiveness (struct-get liveness-handle baseline)]
-    (match (compiler-reg-live-interval-selection func liveness)
-      [(CompilerRegIntervalSelection.Selection intervals interval-index)
-        (let
-          [coalesce : CompilerRegCoalesceMap
-            (compiler-reg-coalesce-map-build
-              (compiler-reg-function-moves func false)
-              interval-index
-              type-info
-              group-vars
-              vars
-              (array.make-array i64 0))]
-          [parents : (Array i64) (struct-get coalesce parents)]
-          [merged-roots : CompilerLiveI64Set
-            (compiler-reg-coalesce-merged-root-set coalesce)]
-          ;; One function-scoped identity remap array, reused across every
-          ;; instruction. Each rewritten instruction restores the few bits it
-          ;; touches (see compiler-reg-remat-reset-remap-uses!), replacing the
-          ;; old per-instruction O(vars) allocation + zero + identity fill.
-          [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
-          (match (compiler-reg-remat-rewrite-blocks-rev
-            blocks
-            0
-            vars
-            vars
-            table
-            (compiler-reg-plan-assignments plan)
-            interval-index
-            parents
-            merged-roots
-            CompilerRegAssignmentList.Nil
-            CompilerRegVarTypeList.Nil
-            remap
-            CompilerIrBlockList.Nil)
-            [(CompilerRegCallSaveRewrite.Rewrite
-                rev
-                _
-                out-vars
-                extra-assignments
-                extra-types)
-              (CompilerRegCallSaveRewrite.Rewrite
-                (compiler-ir-block-list-reverse-onto
-                  rev
-                  CompilerIrBlockList.Nil)
+  (if (not
+    (compiler-reg-assignments-have-spill? (compiler-reg-plan-assignments plan)))
+    (CompilerRegCallSaveRewrite.Rewrite
+      blocks
+      vars
+      vars
+      CompilerRegAssignmentList.Nil
+      CompilerRegVarTypeList.Nil)
+    (let
+      [table : CompilerRegRematTable (compiler-reg-remat-table-build func)]
+      [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
+      [group-vars : CompilerLiveI64Set
+        (compiler-reg-function-group-vars func types)]
+      [liveness-handle : CompilerRegLivenessHandle
+        (compiler-reg-liveness-handle-make func false)]
+      [liveness : CompilerFunctionLiveness
+        (struct-get liveness-handle baseline)]
+      (match (compiler-reg-live-interval-selection func liveness)
+        [(CompilerRegIntervalSelection.Selection intervals interval-index)
+          (let
+            [coalesce : CompilerRegCoalesceMap
+              (compiler-reg-coalesce-map-build
+                (compiler-reg-function-moves func false)
+                interval-index
+                type-info
+                group-vars
                 vars
-                out-vars
-                extra-assignments
-                extra-types)]))])))
+                (array.make-array i64 0))]
+            [parents : (Array i64) (struct-get coalesce parents)]
+            [merged-roots : CompilerLiveI64Set
+              (compiler-reg-coalesce-merged-root-set coalesce)]
+            ;; One function-scoped identity remap array, reused across every
+            ;; instruction. Each rewritten instruction restores the few bits it
+            ;; touches (see compiler-reg-remat-reset-remap-uses!), replacing the
+            ;; old per-instruction O(vars) allocation + zero + identity fill.
+            [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
+            (match (compiler-reg-remat-rewrite-blocks-rev
+              blocks
+              0
+              vars
+              vars
+              table
+              (compiler-reg-plan-assignments plan)
+              interval-index
+              parents
+              merged-roots
+              CompilerRegAssignmentList.Nil
+              CompilerRegVarTypeList.Nil
+              remap
+              CompilerIrBlockList.Nil)
+              [(CompilerRegCallSaveRewrite.Rewrite
+                  rev
+                  _
+                  out-vars
+                  extra-assignments
+                  extra-types)
+                (CompilerRegCallSaveRewrite.Rewrite
+                  (compiler-ir-block-list-reverse-onto
+                    rev
+                    CompilerIrBlockList.Nil)
+                  vars
+                  out-vars
+                  extra-assignments
+                  extra-types)]))]))))
 
 (define (compiler-reg-location-register?
   [maybe-location : CompilerRegMaybeLocation]

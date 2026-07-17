@@ -14582,6 +14582,13 @@
 (defenum OptLicmBlocksResult
   (Result CompilerIrBlockList CompilerIrInstrList opt_i64_i64_map.Map bool))
 
+;; Result of applying LICM to a block list: the rewritten blocks plus whether
+;; any loop actually hoisted. When nothing changed the caller can skip the
+;; rewritten-CFG context rebuild and post-pass verify -- the input context
+;; stays valid for the unchanged function.
+(defenum OptLicmLoopApplyResult
+  (Result CompilerIrBlockList bool))
+
 (defstruct OptLicmStoreSummary
   (call-or-unknown? bool)
   (header-or-unknown-store? bool)
@@ -15712,7 +15719,7 @@
   [types : OptSsaVarTypes]
   [direct-call-clean : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
-  [loop : OptNaturalLoop]) : CompilerIrBlockList
+  [loop : OptNaturalLoop]) : OptLicmLoopApplyResult
   (match (opt-natural-loop-preheader loop)
     [(OptLoopPreheader.Some preheader)
       (let
@@ -15777,19 +15784,23 @@
                     (OptCopyEnv.Nil))]
                 (match dedup-env
                   [(OptCopyEnv.Nil)
-                    (opt-licm-insert-preheader-blocks
-                      preheader
-                      hoisted
-                      (opt-licm-replace-body-blocks blocks filtered-body))]
+                    (OptLicmLoopApplyResult.Result
+                      (opt-licm-insert-preheader-blocks
+                        preheader
+                        hoisted
+                        (opt-licm-replace-body-blocks blocks filtered-body))
+                      true)]
                   [_
-                    (opt-licm-insert-preheader-blocks
-                      preheader
-                      (opt-licm-subst-instr-list dedup-env hoisted)
-                      (opt-licm-replace-body-blocks
-                        blocks
-                        (opt-licm-subst-body-blocks dedup-env filtered-body)))]))
-              blocks)]))]
-    [(OptLoopPreheader.No) blocks]))
+                    (OptLicmLoopApplyResult.Result
+                      (opt-licm-insert-preheader-blocks
+                        preheader
+                        (opt-licm-subst-instr-list dedup-env hoisted)
+                        (opt-licm-replace-body-blocks
+                          blocks
+                          (opt-licm-subst-body-blocks dedup-env filtered-body)))
+                      true)]))
+              (OptLicmLoopApplyResult.Result blocks false))]))]
+    [(OptLoopPreheader.No) (OptLicmLoopApplyResult.Result blocks false)]))
 
 (define (opt-licm-apply-loops
   [index : OptCfgIndex]
@@ -15797,24 +15808,36 @@
   [types : OptSsaVarTypes]
   [direct-call-clean : opt_i64_i64_map.Map]
   [loops : OptNaturalLoopList]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  [blocks : CompilerIrBlockList]) : OptLicmLoopApplyResult
   (match loops
-    [(OptNaturalLoopList.Nil) blocks]
+    [(OptNaturalLoopList.Nil) (OptLicmLoopApplyResult.Result blocks false)]
     [(OptNaturalLoopList.Cons loop rest)
-      (opt-licm-apply-loops
+      (match (opt-licm-apply-loop
         index
         sources
         types
         direct-call-clean
-        (box-get rest)
-        (opt-licm-apply-loop index sources types direct-call-clean blocks loop))]))
+        blocks
+        loop)
+        [(OptLicmLoopApplyResult.Result loop-blocks loop-changed)
+          (match (opt-licm-apply-loops
+            index
+            sources
+            types
+            direct-call-clean
+            (box-get rest)
+            loop-blocks)
+            [(OptLicmLoopApplyResult.Result rest-blocks rest-changed)
+              (OptLicmLoopApplyResult.Result
+                rest-blocks
+                (or loop-changed rest-changed))])])]))
 
 (define (opt-licm-blocks-with-context-and-direct-call-clean
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [direct-call-clean : opt_i64_i64_map.Map]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  [blocks : CompilerIrBlockList]) : OptLicmLoopApplyResult
   (opt-licm-apply-loops
     (struct-get context index)
     sources
@@ -15841,30 +15864,38 @@
                   (opt_i64_i64_map.with-capacity 64)))]
             [types : OptSsaVarTypes
               (opt-licm-type-env-from-function params blocks)]
-            [hoisted-blocks : CompilerIrBlockList
-              (opt-licm-blocks-with-context-and-direct-call-clean
-                context
-                sources
-                types
-                direct-call-clean
-                blocks)]
-            [hoisted : CompilerIrFunction
-              (CompilerIrFunction.Function
-                name
-                params
-                ret-ty
-                frame
-                hoisted-blocks)]
-            ;; LICM may hoist into a synthesized preheader edge, so build one
-            ;; fresh context for the rewritten CFG, reuse it for the post-pass
-            ;; verify, and hand it back for the next pass.
-            [hoisted-context : OptCfgContext
-              (opt-cfg-context-build hoisted-blocks)]
-            (match (opt-verify-function-with-context hoisted hoisted-context)
-              [(ResultCompilerOptimizeVerify.Ok)
-                (OptFunctionCtxResult.Result hoisted hoisted-context)]
-              [(ResultCompilerOptimizeVerify.Err _)
-                (OptFunctionCtxResult.Result func context)]))])]
+            (match (opt-licm-blocks-with-context-and-direct-call-clean
+              context
+              sources
+              types
+              direct-call-clean
+              blocks)
+              [(OptLicmLoopApplyResult.Result hoisted-blocks licm-changed?)
+                (if (not licm-changed?)
+                  ;; Nothing hoisted: the input context still describes the
+                  ;; unchanged CFG, so skip the context rebuild and the
+                  ;; post-pass verify entirely.
+                  (OptFunctionCtxResult.Result func context)
+                  (let
+                    [hoisted : CompilerIrFunction
+                      (CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        frame
+                        hoisted-blocks)]
+                    ;; LICM may hoist into a synthesized preheader edge, so build
+                    ;; one fresh context for the rewritten CFG, reuse it for the
+                    ;; post-pass verify, and hand it back for the next pass.
+                    [hoisted-context : OptCfgContext
+                      (opt-cfg-context-build hoisted-blocks)]
+                    (match (opt-verify-function-with-context
+                      hoisted
+                      hoisted-context)
+                      [(ResultCompilerOptimizeVerify.Ok)
+                        (OptFunctionCtxResult.Result hoisted hoisted-context)]
+                      [(ResultCompilerOptimizeVerify.Err _)
+                        (OptFunctionCtxResult.Result func context)])))]))])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -26724,7 +26755,8 @@
                       [bounds-dom : CompilerIrBlockList
                         (if (and
                           run-heavy?
-                          (opt-verify-ok? (opt-verify-function ssa)))
+                          (opt-verify-ok?
+                            (opt-verify-function-with-context ssa ssa-context)))
                           (opt-bounds-dom-blocks-with-context
                             ssa-context
                             params

@@ -1699,14 +1699,23 @@
 (define (compiler-backend-emit-assignment-index-empty) : CompilerRegAssignmentIndex
   (compiler-reg-assignment-index-build CompilerRegAssignmentList.Nil 1))
 
-(define compiler-backend-emit-assignment-index : CompilerRegAssignmentIndex
+(define compiler-backend-inactive-assignment-index : CompilerRegAssignmentIndex
   (compiler-backend-emit-assignment-index-empty))
+(define compiler-backend-emit-assignment-index : CompilerRegAssignmentIndex
+  compiler-backend-inactive-assignment-index)
 (define compiler-backend-emit-assignment-index-active : bool
   false)
 (define compiler-backend-rax-override-var : i64
   -1)
 (define compiler-backend-rax-forward-pending-var : i64
   -1)
+
+(define (compiler-backend-emit-assignment-index-clear!) : unit
+  (begin
+    (set! compiler-backend-emit-assignment-index-active false)
+    (set!
+      compiler-backend-emit-assignment-index
+      compiler-backend-inactive-assignment-index)))
 
 (define (compiler-backend-emit-assignment-lookup
   [assignments : CompilerRegAssignmentList]
@@ -44539,7 +44548,7 @@
 
 (define (compiler-backend-clear-function-emit-state!) : unit
   (begin
-    (set! compiler-backend-emit-assignment-index-active false)
+    (compiler-backend-emit-assignment-index-clear!)
     (set! compiler-backend-rax-override-var -1)
     (set! compiler-backend-rax-forward-pending-var -1)
     (compiler-backend-set-scavenge-ctx!
@@ -44601,21 +44610,28 @@
     [result : ResultCompilerBackend
       (with-escape
         (arena.Arena scratch)
-        (compiler-backend-emit-function
-          target
-          mode
-          func
-          all-functions
-          globals
-          global-types
-          externs
-          plan
-          program-index
-          spans
-          span-index
-          emit-entry
-          crt-entry
-          true))]
+        (let
+          [emitted : ResultCompilerBackend
+            (compiler-backend-emit-function
+              target
+              mode
+              func
+              all-functions
+              globals
+              global-types
+              externs
+              plan
+              program-index
+              spans
+              span-index
+              emit-entry
+              crt-entry
+              true)]
+          (begin
+            ;; The dense index was allocated in this scratch arena. Remove its
+            ;; global root before with-escape tears the arena down.
+            (compiler-backend-emit-assignment-index-clear!)
+            emitted)))]
     (begin
       (compiler-backend-user-symbol-cache-reset!)
       result)))

@@ -1,7 +1,9 @@
 ;; doc_html_smoke.tl - Runnable golden smoke for doc_html.tl.
+(import stdlib.vector)
 (import doc_html)
 (import doc_render)
 (import doc_extract)
+(import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import stdlib.str_cat_runtime as str_cat)
 
 (define (doc-html-smoke-source) : String
@@ -22,15 +24,14 @@
 
 (define (doc-html-smoke-modules
   [docs : doc_extract.DocExtraction]
-  [second-docs : doc_extract.DocExtraction]) : doc_render.DocModuleList
+  [second-docs : doc_extract.DocExtraction]) : doc_module_vec.Vec
   (let
-    [modules : doc_render.DocModuleList
-      (doc_render.doc-module-list-with-capacity 2)]
+    [modules : doc_module_vec.Vec (doc_module_vec.with-capacity 2)]
     (begin
-      (doc_render.doc-module-list-push
+      (doc_module_vec.push
         (&mut modules)
         (doc_render.DocModule.Module "smoke<&>.tl" docs))
-      (doc_render.doc-module-list-push
+      (doc_module_vec.push
         (&mut modules)
         (doc_render.DocModule.Module "second.tl" second-docs))
       modules)))

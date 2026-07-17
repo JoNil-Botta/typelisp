@@ -34,7 +34,8 @@
 (defenum CompilerIrUnOp
   (Neg)
   (Not)
-  (BitNot))
+  (BitNot)
+  (Sqrt))
 
 (defenum CompilerIrMaskBinOp
   (And)

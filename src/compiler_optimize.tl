@@ -1126,7 +1126,10 @@
                   (CompilerIrValue.I64
                     (opt-normalize-int-to-i64 (bit-not a) result-ty)))]
               [(option_i64.None) (CompilerIrMaybeValue.No)])
-            (CompilerIrMaybeValue.No))])]
+            (CompilerIrMaybeValue.No))]
+        ;; Do not fold sqrt through the compiler host. Runtime SSE2 is the
+        ;; specified rounding/NaN implementation and must stay visible in IR.
+        [(CompilerIrUnOp.Sqrt) (CompilerIrMaybeValue.No)])]
     [(OptKnownConst.NoConst) (CompilerIrMaybeValue.No)]))
 
 ;; --- strength reduction / algebraic identities ------------------------------
@@ -3875,7 +3878,8 @@
   (match op
     [(CompilerIrUnOp.Neg) 0]
     [(CompilerIrUnOp.Not) 1]
-    [(CompilerIrUnOp.BitNot) 2]))
+    [(CompilerIrUnOp.BitNot) 2]
+    [(CompilerIrUnOp.Sqrt) 3]))
 
 (define (opt-unop-eq [a : CompilerIrUnOp] [b : CompilerIrUnOp]) : bool
   (= (opt-unop-tag a) (opt-unop-tag b)))
@@ -36820,6 +36824,25 @@
       (unless (= (opt-count-arith-instrs neg) 4) (return 16))
       (unless (compiler-float-self-test) (return 17))
       (unless (compiler-optimize-float-fold-ok?) (return 18))
+      (unless
+        (and
+          (match (opt-fold-unop
+            (CompilerIrUnOp.Sqrt)
+            (OptKnownConst.SomeConst
+              (CompilerIrValue.F64 (opt-test-f64-bits "4.0"))
+              (AstType.F64))
+            (AstType.F64))
+            [(CompilerIrMaybeValue.No) true]
+            [_ false])
+          (match (opt-fold-unop
+            (CompilerIrUnOp.Sqrt)
+            (OptKnownConst.SomeConst
+              (CompilerIrValue.F64 (opt-test-f32-bits "4.0"))
+              (AstType.F32))
+            (AstType.F32))
+            [(CompilerIrMaybeValue.No) true]
+            [_ false]))
+        (return 19))
       42)))
 
 ;; Positive strength-reduction cases: integer neutral/absorbing identities and
@@ -37609,6 +37632,21 @@
         (AstType.I64))
       (CompilerIrInstrList.Nil))))
 
+(define (opt-cse-sqrt-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.UnOp
+      2
+      (CompilerIrUnOp.Sqrt)
+      (CompilerIrValue.Var 0)
+      (AstType.F64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.UnOp
+        3
+        (CompilerIrUnOp.Sqrt)
+        (CompilerIrValue.Var 0)
+        (AstType.F64))
+      (CompilerIrInstrList.Nil))))
+
 ;; A store between the two identical expressions clears the table, so the second
 ;; expression is preserved (no cross-store CSE).
 (define (opt-cse-store-clears-instrs) : CompilerIrInstrList
@@ -37943,6 +37981,8 @@
   (let
     [cse : CompilerIrInstrList
       (opt-cse-instrs (OptExprTable.Nil) (opt-cse-self-test-instrs))]
+    [sqrt : CompilerIrInstrList
+      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-sqrt-instrs))]
     [store : CompilerIrInstrList
       (opt-cse-instrs (OptExprTable.Nil) (opt-cse-store-clears-instrs))]
     [redef : CompilerIrInstrList
@@ -37953,6 +37993,7 @@
       (opt-cse-instrs (OptExprTable.Nil) (opt-cse-probe-different-instrs))]
     (begin
       (unless (= (opt-count-arith-instrs cse) 1) (return 1))
+      (unless (= (opt-mov-src-var sqrt 3 (- 0 1)) 2) (return 10))
       (unless (= (opt-count-arith-instrs store) 2) (return 2))
       (unless (= (opt-count-arith-instrs redef) 2) (return 3))
       (unless (= (opt-count-cpuid-instrs probe) 1) (return 4))

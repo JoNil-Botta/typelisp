@@ -7336,6 +7336,13 @@
                     call-name
                     (string.append "#" (string.int->string call-id))))))))))))
 
+(define (ctfe-float-sqrt-unsupported [expr : AstExpr]) : ResultCtfe
+  (ResultCtfe.Err
+    (box
+      (ctfe-diagnostic-at-expr
+        expr
+        "compile-time square root is not supported; use __tl_float_sqrt at runtime"))))
+
 (define (ctfe-eval-call
   [func : AstExpr]
   [args : AstExprList]
@@ -7507,6 +7514,8 @@
               fuel)]
           [(ctfe-builtin-comptime-error-id? call-id)
             (ctfe-eval-comptime-error-call args expr env fuel)]
+          [(cbi.compiler-builtin-typecheck-float-sqrt-id? lookup-id)
+            (ctfe-float-sqrt-unsupported expr)]
           [else (ctfe-unsupported-call expr raw-name raw-id call-name call-id)]))]
     [_ (ctfe-unsupported-form expr)]))
 

@@ -132,6 +132,8 @@
   -1)
 (define compiler-builtin-id-tl-tlci-call-macro-entry : i64
   -1)
+(define compiler-builtin-id-tl-private-float-sqrt : i64
+  -1)
 (define compiler-builtin-id-string-length : i64
   -1)
 (define compiler-builtin-id-length : i64
@@ -614,7 +616,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 296)]
+    [ids : (Array i64) (make-array i64 297)]
     [ctfe-ids : (Array i64) (make-array i64 216)]
     [i : i64 0]
     (begin
@@ -622,7 +624,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 296)
+      (while (< i 297)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -1077,6 +1079,7 @@
     (state-set! state 293 compiler-builtin-id-atomic-i32-cas)
     (state-set! state 294 compiler-builtin-id-tl-tlci-call-macro-entry)
     (state-set! state 295 compiler-builtin-id-cfg-feature-tl-array-zero)
+    (state-set! state 296 compiler-builtin-id-tl-private-float-sqrt)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1458,6 +1461,7 @@
     (set! compiler-builtin-id-atomic-i32-cas (state-ref state 293))
     (set! compiler-builtin-id-tl-tlci-call-macro-entry (state-ref state 294))
     (set! compiler-builtin-id-cfg-feature-tl-array-zero (state-ref state 295))
+    (set! compiler-builtin-id-tl-private-float-sqrt (state-ref state 296))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -1944,6 +1948,9 @@
     (set!
       compiler-builtin-id-tl-tlci-call-macro-entry
       (compiler-builtin-resolve-name insert-missing "tl_tlci_call_macro_entry"))
+    (set!
+      compiler-builtin-id-tl-private-float-sqrt
+      (compiler-builtin-resolve-name insert-missing "__tl_float_sqrt"))
     (set!
       compiler-builtin-id-string-length
       (compiler-builtin-resolve-name insert-missing "string-length"))
@@ -3124,6 +3131,11 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-clone)))
 
+(define (compiler-builtin-lower-float-sqrt-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-private-float-sqrt)))
+
 (define (compiler-builtin-typecheck-string-length-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
@@ -3158,6 +3170,9 @@
 
 (define (compiler-builtin-typecheck-clone-id? [name-id : i64]) : bool
   (compiler-builtin-lower-clone-id? name-id))
+
+(define (compiler-builtin-typecheck-float-sqrt-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-float-sqrt-id? name-id))
 
 (define (compiler-builtin-typecheck-tls-current-arena-id? [name-id : i64]) : bool
   (compiler-builtin-lower-tls-current-arena-id? name-id))

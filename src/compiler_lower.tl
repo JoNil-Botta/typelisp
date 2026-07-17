@@ -18341,6 +18341,43 @@
     (lower-tls-current-arena-read-call state args result-ty)
     (lower-tls-current-arena-set-call ctx state env type-env args result-ty)))
 
+(define (lower-float-sqrt-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [arg : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
+      (match (lower-expr-expected ctx state env type-env arg result-ty arg)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr arg-state arg-value _)
+              (match (lower-state-alloc-var arg-state)
+                [(LowerAlloc.Alloc allocated var-id)
+                  (ResultLowerExpr.Ok
+                    (LowerExpr.Expr
+                      (lower-state-emit-at-expr
+                        allocated
+                        (CompilerIrInstr.UnOp
+                          var-id
+                          (CompilerIrUnOp.Sqrt)
+                          arg-value
+                          result-ty)
+                        origin)
+                      (CompilerIrValue.Var var-id)
+                      result-ty))])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic-at-expr
+          origin
+          "lower: __tl_float_sqrt expects exactly one argument")))))
+
 ;; Lower `(clone x)`: the canonical deep-copy / arena-escape. A String
 ;; copies its buffer through `tl_substring`; tuple, fixed-array, and dynamic-
 ;; array values allocate fresh storage and recursively clone each element; Box
@@ -28111,6 +28148,17 @@
                             name-id
                             args
                             result-ty)]
+                        [(and
+                            builtin-available
+                            (cbi.compiler-builtin-lower-float-sqrt-id? name-id))
+                          (lower-float-sqrt-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            result-ty
+                            origin)]
                         [(and
                             builtin-available
                             (cbi.compiler-builtin-lower-tls-current-arena-id?

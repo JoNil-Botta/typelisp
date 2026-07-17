@@ -14440,7 +14440,9 @@
   (match op
     [(CompilerIrUnOp.Neg) (str_cat.str-cat "    negq " reg "\n")]
     [(CompilerIrUnOp.Not) (str_cat.str-cat "    xorq $1, " reg "\n")]
-    [(CompilerIrUnOp.BitNot) (str_cat.str-cat "    notq " reg "\n")]))
+    [(CompilerIrUnOp.BitNot) (str_cat.str-cat "    notq " reg "\n")]
+    ;; Sqrt is admitted only for f32/f64 and takes the float path below.
+    [(CompilerIrUnOp.Sqrt) ""]))
 
 (define (compiler-backend-float-suffix [fty : AstType]) : String
   (if (compiler-backend-f64-type? fty)
@@ -14800,7 +14802,10 @@
             ""
             "backend: unsupported float binary op"))))))
 
-(define (compiler-backend-f64-unop-reg-asm [op : CompilerIrUnOp] [reg : String]) : ResultCompilerBackend
+(define (compiler-backend-float-unop-reg-asm
+  [op : CompilerIrUnOp]
+  [ty : AstType]
+  [reg : String]) : ResultCompilerBackend
   (match op
     [(CompilerIrUnOp.Neg)
       (ResultCompilerBackend.Ok
@@ -14810,10 +14815,35 @@
           "(%rip), "
           reg
           "\n"))]
+    [(CompilerIrUnOp.Sqrt)
+      (ResultCompilerBackend.Ok
+        (str-cat
+          "    sqrt"
+          (compiler-backend-float-suffix ty)
+          " "
+          reg
+          ", "
+          reg
+          "\n"))]
     [_
       (ResultCompilerBackend.Err
         (box
-          (compiler-diagnostic-at-start "" "backend: unsupported f64 unary op")))]))
+          (compiler-diagnostic-at-start
+            ""
+            (if (compiler-backend-f64-type? ty)
+              "backend: unsupported f64 unary op"
+              "backend: unsupported float unary op"))))]))
+
+(define (compiler-backend-direct-float-unop?
+  [op : CompilerIrUnOp]
+  [ty : AstType]) : bool
+  (or
+    (compiler-backend-f64-type? ty)
+    (and
+      (compiler-backend-float-type? ty)
+      (match op
+        [(CompilerIrUnOp.Sqrt) true]
+        [_ false]))))
 
 ;; 64-bit accumulate-in-place mnemonic for the arithmetic/bitwise binops whose
 ;; result can be computed directly in the destination register (dst = lhs <op>
@@ -17770,16 +17800,17 @@
   [src : CompilerIrValue]
   [ty : AstType]
   [planned-gp : String]) : ResultCompilerBackend
-  (if (compiler-backend-f64-type? ty)
+  (if (compiler-backend-direct-float-unop? op ty)
     (let
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
-        (match (compiler-backend-emit-load-f64-value-with-plan
+        (match (compiler-backend-emit-load-float-value-with-plan
           assignments
           src
+          ty
           dst-home)
           [(ResultCompilerBackend.Ok src-asm)
-            (match (compiler-backend-f64-unop-reg-asm op dst-home)
+            (match (compiler-backend-float-unop-reg-asm op ty dst-home)
               [(ResultCompilerBackend.Ok op-asm)
                 (ResultCompilerBackend.Ok (string.append src-asm op-asm))]
               [(ResultCompilerBackend.Err message)
@@ -17793,22 +17824,24 @@
               (array.make-array String 0)
               0
               "%xmm2")]
-          (match (compiler-backend-emit-load-f64-value-with-plan
+          (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             src
+            ty
             result-reg)
             [(ResultCompilerBackend.Ok src-asm)
-              (match (compiler-backend-f64-unop-reg-asm op result-reg)
+              (match (compiler-backend-float-unop-reg-asm op ty result-reg)
                 [(ResultCompilerBackend.Ok op-asm)
                   (ResultCompilerBackend.Ok
                     (string.append
                       src-asm
                       (string.append
                         op-asm
-                        (compiler-backend-emit-store-f64-var-with-plan
+                        (compiler-backend-emit-store-float-var-with-plan
                           assignments
                           dst
-                          result-reg))))]
+                          result-reg
+                          ty))))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)])]
             [(ResultCompilerBackend.Err message)

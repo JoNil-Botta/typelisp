@@ -61186,7 +61186,7 @@
             (compiler-lower-and8
               (= load-count 0)
               (= store-count 0)
-              (>= binop-count 8)
+              (>= binop-count 6)
               (>= pred-load-count 6)
               (= pred-store-count 2)
               (= select-count 2)

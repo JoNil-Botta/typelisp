@@ -320,6 +320,12 @@
 (define (compiler-load-session-state-bool-cell [value : bool]) : (Array bool)
   (make-array value))
 
+(define (compiler-load-session-state-flags-new) : (Array bool)
+  ;; Slot 0 is cache-enabled; slot 1 records embedded-stdlib source use. Keep
+  ;; both session flags in one allocation so the published seed backend does
+  ;; not cross its per-function aggregate-allocation label limit here.
+  (array.make-array bool 2))
+
 (define (compiler-load-session-state-i64-cell [value : i64]) : (Array i64)
   (make-array value))
 
@@ -358,7 +364,7 @@
     [lazy-qualified-observer : CompilerLoadLazyQualifiedObserverState
       (compiler-load-lazy-qualified-observer-state-new)]
     (CompilerLoadSessionState
-      (compiler-load-session-state-bool-cell false)
+      (compiler-load-session-state-flags-new)
       (compiler-load-session-state-bool-cell true)
       (compiler-load-session-state-i64-cell 0)
       (compiler-load-session-state-i64-cell 0)
@@ -1061,6 +1067,15 @@
 
 (define (compiler-load-session-cache-enabled?) : bool
   (array-ref (struct-get compiler-load-active-session-state cache-enabled) 0))
+
+(define (compiler-load-session-embedded-stdlib-source-used?) : bool
+  (array-ref (struct-get compiler-load-active-session-state cache-enabled) 1))
+
+(define (compiler-load-session-note-embedded-stdlib-source!) : unit
+  (array-set!
+    (struct-get compiler-load-active-session-state cache-enabled)
+    1
+    true))
 
 (define (compiler-load-session-reset-pools!) : unit
   (begin
@@ -7567,29 +7582,31 @@
   [source-path-id : i64]
   [source : String]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
-  (if (and
-    (compiler-load-session-cache-enabled?)
-    (compiler-load-session-program-cache-enabled?))
-    (let
-      [key : CompilerLoadProgramCacheKey
-        (compiler-load-program-cache-key-id
-          CompilerLoadProgramEmbedded
-          source-path-id
-          cfgs)]
-      (match (compiler-load-program-cache-lookup key)
-        [(CompilerLoadProgramCacheHit program)
-          (begin
-            (compiler-load-program-cache-note-hit!)
-            (ResultAstProgramDiagnostic.Ok program))]
-        [(CompilerLoadProgramCacheMiss)
-          (begin
-            (compiler-load-program-cache-note-miss!)
-            (compiler-load-parse-embedded-source-diagnostic-cache-miss
-              key
-              path
-              source
-              cfgs))]))
-    (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
+  (begin
+    (compiler-load-session-note-embedded-stdlib-source!)
+    (if (and
+      (compiler-load-session-cache-enabled?)
+      (compiler-load-session-program-cache-enabled?))
+      (let
+        [key : CompilerLoadProgramCacheKey
+          (compiler-load-program-cache-key-id
+            CompilerLoadProgramEmbedded
+            source-path-id
+            cfgs)]
+        (match (compiler-load-program-cache-lookup key)
+          [(CompilerLoadProgramCacheHit program)
+            (begin
+              (compiler-load-program-cache-note-hit!)
+              (ResultAstProgramDiagnostic.Ok program))]
+          [(CompilerLoadProgramCacheMiss)
+            (begin
+              (compiler-load-program-cache-note-miss!)
+              (compiler-load-parse-embedded-source-diagnostic-cache-miss
+                key
+                path
+                source
+                cfgs))]))
+      (compiler-load-parse-source-diagnostic-escaping path source cfgs))))
 
 (define (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
   [path : String]
@@ -7597,34 +7614,36 @@
   [source : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
-  (if (and
-    (compiler-load-session-cache-enabled?)
-    (compiler-load-session-program-cache-enabled?))
-    (let
-      [key : CompilerLoadProgramCacheKey
-        (compiler-load-program-cache-key-id
-          CompilerLoadProgramEmbedded
-          source-path-id
-          cfgs)]
-      (match (compiler-load-program-cache-lookup key)
-        [(CompilerLoadProgramCacheHit program)
-          (begin
-            (compiler-load-program-cache-note-hit!)
-            (ResultAstProgramDiagnostic.Ok program))]
-        [(CompilerLoadProgramCacheMiss)
-          (begin
-            (compiler-load-program-cache-note-miss!)
-            (compiler-load-parse-embedded-source-diagnostic-cache-miss-with-pools
-              key
-              path
-              source
-              cfgs
-              pools))]))
-    (compiler-load-parse-source-diagnostic-escaping-with-pools
-      path
-      source
-      cfgs
-      pools)))
+  (begin
+    (compiler-load-session-note-embedded-stdlib-source!)
+    (if (and
+      (compiler-load-session-cache-enabled?)
+      (compiler-load-session-program-cache-enabled?))
+      (let
+        [key : CompilerLoadProgramCacheKey
+          (compiler-load-program-cache-key-id
+            CompilerLoadProgramEmbedded
+            source-path-id
+            cfgs)]
+        (match (compiler-load-program-cache-lookup key)
+          [(CompilerLoadProgramCacheHit program)
+            (begin
+              (compiler-load-program-cache-note-hit!)
+              (ResultAstProgramDiagnostic.Ok program))]
+          [(CompilerLoadProgramCacheMiss)
+            (begin
+              (compiler-load-program-cache-note-miss!)
+              (compiler-load-parse-embedded-source-diagnostic-cache-miss-with-pools
+                key
+                path
+                source
+                cfgs
+                pools))]))
+      (compiler-load-parse-source-diagnostic-escaping-with-pools
+        path
+        source
+        cfgs
+        pools))))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg
   [path : String]

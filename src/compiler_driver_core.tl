@@ -277,6 +277,10 @@
       0
       (ast-node-pool-context-base-arena pools))
     (array-set!
+      compiler-driver-active-state-pool-arena
+      0
+      (ast-node-pool-context-base-arena pools))
+    (array-set!
       (struct-get state expr-pool)
       0
       (array-ref (struct-get pools expr-pool) 0))

@@ -908,27 +908,12 @@
 ;; build's retention decomposes across the walk / clone augmentation / context
 ;; extension stages. Detail rows carry absolute alloc-live and the running peak
 ;; so analysis can diff stages without perturbing the phase-level peak math.
+;; Kept out of the shipped compiler: the compile-profile verifier gate rejects
+;; unexpected detail rows, so these fire only in local measurement builds.
 (cfg
   compile-profile
-  (define (compiler-lower-profile-stage [stage : String]) : unit
-    (io.print-error
-      (string.append
-        "compile-profile-detail|typecheck.stage."
-        (string.append
-          stage
-          (string.append
-            "|"
-            (string.append
-              (string.int->string (profile.now-ms))
-              (string.append
-                "|"
-                (string.append
-                  (string.int->string (profile.alloc-live))
-                  (string.append
-                    "|"
-                    (string.append
-                      (string.int->string (profile.alloc-peak))
-                      "\n")))))))))))
+  (define (compiler-lower-profile-field [value : i64]) : String
+    (string.append "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -52358,8 +52343,6 @@
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (match (let
     [_start-early-exit-facts : unit (tc-body-early-exit-facts-start! pools)]
-    [_p-begin : unit
-      (cfg compile-profile (compiler-lower-profile-stage "begin"))]
     (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
       program
       paths
@@ -52368,8 +52351,6 @@
       pools))
     [(ResultCompilerTypecheckChecked.Ok _ source-ctx source-top-env)
       (let
-        [_p-walk : unit
-          (cfg compile-profile (compiler-lower-profile-stage "walk-done"))]
         [_finish-early-exit-facts : unit (tc-body-early-exit-facts-finish!)]
         [clone-roots : CloneNameList
           (tc-clone-root-collection-finish! source-ctx)]
@@ -52390,10 +52371,6 @@
             clone-able
             clone-roots
             pools)]
-        [_p-augment : unit
-          (cfg
-            compile-profile
-            (compiler-lower-profile-stage "clone-augment-done"))]
         [checked-program : AstProgram
           (match clone-augmentation
             [(ResultLowerCloneAugment.Ok augmented _) augmented]
@@ -52409,8 +52386,6 @@
                 checked-program)]
             [(ResultLowerCloneAugment.Err message)
               (ResultLowerCheckedContext.Err message)])]
-        [_p-extend : unit
-          (cfg compile-profile (compiler-lower-profile-stage "extend-done"))]
         [lower-names : LowerNameEnv
           (match checked-program
             [(AstProgram.Program decls-box)

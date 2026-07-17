@@ -3,7 +3,7 @@
 ;; This is the first compiler front-end component authored in TypeLisp, the
 ;; opening slice of the self-hosting milestone (#27, phase 4). It scans a
 ;; hardcoded source String character-by-character and produces a token stream,
-;; proving the language primitives - String indexing (`string.string-ref`,
+;; proving the language primitives - String indexing (`string.char-at`,
 ;; `string.string-length`), `string.substring` (#104), `char`->`i64` casts and comparison,
 ;; `defenum` + `match` with String-payload variants (#101), `while`/`let`/
 ;; `set!`/`begin`, and a generated vector of `Token` aggregates compose into
@@ -14,7 +14,7 @@
 ;;   integers (one or more decimal digits), the operators `+` `-` `*` `/`,
 ;;   `(`, `)`, and whitespace (space / tab / newline, which separate tokens but
 ;;   emit nothing).
-;; An unexpected character aborts the program via the `panic` builtin (#45),
+;; An unexpected character aborts the program via `io.panic` (#45),
 ;; exactly as a real lexer reports malformed input.
 ;;
 ;; Token stream representation (refs #13/#27/#41): the scanner records each
@@ -23,9 +23,6 @@
 ;; vector reads can return a `(Token.Ident text)` token whose payload is still
 ;; projectable through `match`.
 ;;
-;; Deferred - current language gaps, recorded as self-hosting signal:
-;;   - Digit and whitespace classification compares each char's `i64` code
-;;     point against ASCII constants.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -41,7 +38,7 @@
   (RParen)
   (End))
 
-(import (vector.vector Token) as token_vec)
+(import (vector.vector Token) as token-vec)
 
 ;; Numeric tag for a token kind. Exercises `match` over every variant of the
 ;; Token enum, including the String-payload `Token.Ident` variant.
@@ -85,9 +82,8 @@
 
 ;; Classify a single (non-digit, non-letter, non-space) char into its Token,
 ;; building an actual `Token` value so enum construction is exercised. An
-;; unexpected char aborts via the `panic` builtin (#45); the trailing
-;; `Token.End` is dead code that only satisfies the `Token` result type, since
-;; `panic` yields unit and never returns.
+;; unexpected char aborts through `io.panic`, whose `never` result lets the
+;; failure arm type as `Token`.
 (define (single-token [c : char]) : Token
   (cond
     [(= c '+') Token.Plus]
@@ -104,7 +100,7 @@
   (let
     [j : i64 start]
     (begin
-      (while (and (< j n) (is-ident-char (string.string-ref src j)))
+      (while (and (< j n) (is-ident-char (string.char-at src j)))
         (set! j (+ j 1)))
       j)))
 
@@ -132,7 +128,7 @@
 ;; token count. The loop is exactly the shape of a real lexer: a cursor over the
 ;; input, a whitespace skip, multi-char accumulation for integers, an identifier
 ;; run sliced out with `string.substring`, and single-char tokens.
-(define (lex [src : String] [toks : (&mut toks token_vec.Vec)]) : i64
+(define (lex [src : String] [toks : (&mut toks token-vec.Vec)]) : i64
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
@@ -140,7 +136,7 @@
     (begin
       (while (< i n)
         (let
-          [c : char (string.string-ref src i)]
+          [c : char (string.char-at src i)]
           (cond
             [(is-space c) (set! i (+ i 1))]
             [(is-alpha c)
@@ -149,7 +145,7 @@
                 [start : i64 i]
                 [end : i64 (ident-end src i n)]
                 (begin
-                  (token_vec.push toks (ident-token src start end))
+                  (token-vec.push toks (ident-token src start end))
                   (set! count (+ count 1))
                   (set! i end)))]
             [(is-digit c)
@@ -157,21 +153,21 @@
               (let
                 [acc : i64 0]
                 (begin
-                  (while (and (< i n) (is-digit (string.string-ref src i)))
+                  (while (and (< i n) (is-digit (string.char-at src i)))
                     (begin
                       (set!
                         acc
-                        (+ (* acc 10) (digit-value (string.string-ref src i))))
+                        (+ (* acc 10) (digit-value (string.char-at src i))))
                       (set! i (+ i 1))))
-                  (token_vec.push toks (Token.Int acc))
+                  (token-vec.push toks (Token.Int acc))
                   (set! count (+ count 1))))]
             [else
               (begin
-                (token_vec.push toks (single-token c))
+                (token-vec.push toks (single-token c))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))])))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (token_vec.push toks Token.End)
+      (token-vec.push toks Token.End)
       count)))
 
 ;; Lex the sample `"foo - 3 * (12 / 4)"` (exercises every operator `- * /` and
@@ -186,6 +182,6 @@
 ;; that depends on both the token count and the substring-sliced identifier.
 (define (main) : i64
   (let
-    [toks : token_vec.Vec (token_vec.with-capacity 16)]
+    [toks : token-vec.Vec (token-vec.with-capacity 16)]
     [count : i64 (lex "foo - 3 * (12 / 4)" (&mut toks))]
-    (+ count (ident-text-length (token_vec.get (& toks) 0 Token.End)))))
+    (+ count (ident-text-length (token-vec.get (& toks) 0 Token.End)))))

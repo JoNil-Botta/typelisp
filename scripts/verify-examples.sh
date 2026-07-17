@@ -64,6 +64,14 @@ for source in "$ROOT/examples/"*.tl; do
     obj="$WORKDIR/$name.$NL_OBJ_EXT"
     bin="$WORKDIR/$name$NL_BIN_EXT"
 
+    echo "[$name] checking format and source conventions"
+    "$COMPILER" fmt --check "$source"
+    "$COMPILER" lint "$source" --check \
+        --deprecated-string-concat \
+        --redundant-function-name \
+        --prefer-dotted-field \
+        --name-case
+
     if [ "$HOST_OS" = windows ]; then
         echo "[$name] compiling (windows-x86_64)"
         "$COMPILER" compile "$WORKDIR/$name.tl" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) -o "$asm"

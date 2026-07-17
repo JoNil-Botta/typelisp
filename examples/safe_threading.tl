@@ -1,16 +1,16 @@
 (import stdlib.arena)
-(import stdlib.str_cat)
+(import stdlib.str_cat as str-cat)
 (import stdlib.string)
 (import stdlib.thread)
-(import (thread.handle i64) as thread_i64)
+(import (thread.handle i64) as thread-i64)
 
 (define (safe-threading-box [base : i64]) : (Box i64)
   (box (+ base 22)))
 
-(define (safe-threading-join-i64 [worker : thread_i64.Handle] [failure : i64]) : i64
-  (match (thread_i64.join worker)
-    [(thread_i64.I64JoinOk value) value]
-    [(thread_i64.I64JoinErr _) failure]))
+(define (safe-threading-join-i64 [worker : thread-i64.Handle] [failure : i64]) : i64
+  (match (thread-i64.join worker)
+    [(thread-i64.I64JoinOk value) value]
+    [(thread-i64.I64JoinErr _) failure]))
 
 (define (safe-threading-join-box-value [worker : ThreadBoxI64] [failure : i64]) : i64
   (match (thread.join-box-i64 worker)
@@ -23,7 +23,7 @@
     [(ThreadStringJoinErr _) false]))
 
 (define (safe-threading-finish
-  [number : thread_i64.Handle]
+  [number : thread-i64.Handle]
   [cell : ThreadBoxI64]
   [text : ThreadString]) : i64
   (let
@@ -40,11 +40,11 @@
   (let
     [base : i64 20]
     [owner : arena.Arena (arena.make-atomic)]
-    (match (thread_i64.spawn
+    (match (thread-i64.spawn
       (lambda () : i64
         (+ base 1)))
-      [(thread_i64.I64SpawnErr _) 4]
-      [(thread_i64.I64SpawnOk number)
+      [(thread-i64.I64SpawnErr _) 4]
+      [(thread-i64.I64SpawnOk number)
         (match (thread.spawn-box-i64
           (lambda () : (Box i64)
             (in-arena owner (safe-threading-box 20))))
@@ -52,7 +52,7 @@
           [(ThreadBoxI64SpawnOk cell)
             (match (thread.spawn-string
               (lambda () : String
-                (in-arena owner (str_cat.str-cat "safe" "-" "thread"))))
+                (in-arena owner (str-cat.str-cat "safe" "-" "thread"))))
               [(ThreadStringSpawnErr _) 6]
               [(ThreadStringSpawnOk text)
                 (safe-threading-finish number cell text)])])])))

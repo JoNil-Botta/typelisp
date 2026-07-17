@@ -106,13 +106,15 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheck
   (match loaded
-    [(ResultCompilerLoadWithPaths.Ok entry-decls entry-paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok entry-decls entry-paths entry-modules _)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (compiler-check-program-with-paths-cache
           path
           (compiler-load-decl-list-append prelude-decls entry-decls)
-          (compiler-load-decl-path-list-append prelude-paths entry-paths)
+          (compiler-load-decl-path-list-append
+            prelude-paths
+            (ast-decl-path-list-with-modules entry-paths entry-modules))
           stdlib-roots
           cache-scope))]
     [(ResultCompilerLoadWithPaths.Err diag)
@@ -126,19 +128,22 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerCheckWithPaths
   (match loaded
-    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
-      (begin
-        (cfg compile-profile (compiler-check-profile-finish "load"))
-        (match (compiler-check-program-with-paths-cache
-          path
-          decls
-          paths
-          stdlib-roots
-          cache-scope)
-          [(ResultCompilerCheck.Ok summary)
-            (ResultCompilerCheckWithPaths.Ok summary paths)]
-          [(ResultCompilerCheck.Err diag)
-            (ResultCompilerCheckWithPaths.Err diag)]))]
+    [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
+      (let
+        [owned-paths : AstDeclPathList
+          (ast-decl-path-list-with-modules paths modules)]
+        (begin
+          (cfg compile-profile (compiler-check-profile-finish "load"))
+          (match (compiler-check-program-with-paths-cache
+            path
+            decls
+            owned-paths
+            stdlib-roots
+            cache-scope)
+            [(ResultCompilerCheck.Ok summary)
+              (ResultCompilerCheckWithPaths.Ok summary owned-paths)]
+            [(ResultCompilerCheck.Err diag)
+              (ResultCompilerCheckWithPaths.Err diag)])))]
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -162,11 +167,15 @@
   [stdlib-roots : svec.Vec]
   [prelude : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
   (match prelude
-    [(ResultCompilerLoadWithPaths.Ok prelude-decls prelude-paths _ prelude-seen)
+    [(ResultCompilerLoadWithPaths.Ok
+        prelude-decls
+        prelude-paths
+        prelude-modules
+        prelude-seen)
       (compiler-check-loaded-with-prelude-cache
         path
         prelude-decls
-        prelude-paths
+        (ast-decl-path-list-with-modules prelude-paths prelude-modules)
         (compiler-load-file-with-paths-and-roots-cfg
           path
           prelude-seen
@@ -225,12 +234,12 @@
       [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
-          _
+          prelude-modules
           prelude-seen)
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
-          prelude-paths
+          (ast-decl-path-list-with-modules prelude-paths prelude-modules)
           (compiler-load-package-file-with-paths-and-roots-cfg
             path
             prelude-seen
@@ -266,7 +275,7 @@
       [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
-          _
+          prelude-modules
           prelude-seen)
         (let
           [parse-identity : CompilerLoadParseIdentity
@@ -282,7 +291,7 @@
               (compiler-check-loaded-with-prelude-cache
                 path
                 prelude-decls
-                prelude-paths
+                (ast-decl-path-list-with-modules prelude-paths prelude-modules)
                 (compiler-load-package-program-with-paths-and-roots-expect
                   path
                   program
@@ -342,12 +351,12 @@
       [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
-          _
+          prelude-modules
           prelude-seen)
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
-          prelude-paths
+          (ast-decl-path-list-with-modules prelude-paths prelude-modules)
           (compiler-load-source-with-paths-and-roots-cfg
             path
             source
@@ -378,12 +387,12 @@
       [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
-          _
+          prelude-modules
           prelude-seen)
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
-          prelude-paths
+          (ast-decl-path-list-with-modules prelude-paths prelude-modules)
           (compiler-load-source-with-paths-and-roots-cfg
             path
             source

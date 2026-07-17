@@ -1,12 +1,11 @@
 (import stdlib.hashmap)
+(import (hashmap String String) as map_string_string)
 
 ; Must fail: the returned lookup is tied to the inner map, not `outer`.
-(define (main [outer : hashmap.StringStringMap] [key : String]) : (hashmap.StringStringMapBorrowedValueLookup
+(define (main [outer : map_string_string.Map] [key : String]) : (map_string_string.BorrowedValueLookup
     outer)
   (let
-    [inner : hashmap.StringStringMap
-      (hashmap.string-string-map-put
-        (hashmap.string-string-map-with-capacity 4)
-        "alpha"
-        "red")]
-    (hashmap.string-string-map-get-value-borrowed (& inner) (& key))))
+    [inner : map_string_string.Map (map_string_string.with-capacity 4)]
+    (begin
+      (map_string_string.insert! inner "alpha" "red")
+      (map_string_string.get-value-borrowed (& inner) (& key)))))

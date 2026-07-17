@@ -276,15 +276,15 @@ stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
 stdlib/tests/io_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/msvc_api.tl|pass|-
 stdlib/tests/hashmap_value_borrow_escape.tl|fail|typecheck: reference value would escape lexical scope
-stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot assign to borrowed place `m`
-stdlib/tests/hashmap_value_borrow_remove_live.tl|fail|typecheck: cannot assign to borrowed place `m`
-stdlib/tests/hashmap_value_borrow_put_live.tl|fail|typecheck: cannot assign to borrowed place `m`
-stdlib/tests/hashmap_value_borrow_resize_live.tl|fail|typecheck: cannot assign to borrowed place `m`
+stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
+stdlib/tests/hashmap_value_borrow_remove_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
+stdlib/tests/hashmap_value_borrow_put_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
+stdlib/tests/hashmap_value_borrow_resize_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
-stdlib/tests/hashmap_mut_entry_double_live.tl|fail|typecheck: cannot read mutably borrowed place `m.slots`
+stdlib/tests/hashmap_mut_entry_double_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/hashmap_mut_entry_put_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/hashmap_mut_entry_resize_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
-stdlib/tests/hashmap_mut_entry_value_borrow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m.slots`
+stdlib/tests/hashmap_mut_entry_value_borrow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_macro_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_macro_mut_entry_insert_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope

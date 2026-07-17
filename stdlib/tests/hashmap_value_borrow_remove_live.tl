@@ -1,29 +1,25 @@
 (import stdlib.hashmap)
+(import (hashmap String String) as map_string_string)
 
 ;; lint-allow: unused-import
 (import stdlib.string)
 
 (define (hashmap-borrowed-value-len
-  [lookup : (hashmap.StringStringMapBorrowedValueLookup map)]) : i64
+  [lookup : (map_string_string.BorrowedValueLookup map)]) : i64
   (match lookup
-    [(hashmap.StringStringMapBorrowedValueFound value) (string-length value)]
-    [(hashmap.StringStringMapBorrowedValueMissing) 0]))
+    [(map_string_string.BorrowedValueFound value) (string-length value)]
+    [(map_string_string.BorrowedValueMissing) 0]))
 
 ; Must fail: removing a slot would invalidate the returned value reference.
 (define (main) : i64
   (let
     [key : String "alpha"]
-    [m : hashmap.StringStringMap
-      (hashmap.string-string-map-put
-        (hashmap.string-string-map-with-capacity 4)
-        "alpha"
-        "red")]
-    [borrowed : (hashmap.StringStringMapBorrowedValueLookup m)
-      (hashmap.string-string-map-get-value-borrowed (& m) (& key))]
-    [removed : hashmap.StringStringMapRemoveResult
-      (hashmap.string-string-map-remove-borrowed m (& key))]
-    (+
-      (hashmap-borrowed-value-len borrowed)
-      (match removed
-        [(hashmap.StringStringMapRemoveOk _) 1]
-        [(hashmap.StringStringMapRemoveMissing _) 0]))))
+    [m : map_string_string.Map (map_string_string.with-capacity 4)]
+    (begin
+      (map_string_string.insert! m "alpha" "red")
+      (let
+        [borrowed : (map_string_string.BorrowedValueLookup m)
+          (map_string_string.get-value-borrowed (& m) (& key))]
+        (begin
+          (map_string_string.remove-borrowed! m (& key))
+          (hashmap-borrowed-value-len borrowed))))))

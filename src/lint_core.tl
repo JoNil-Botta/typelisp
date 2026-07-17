@@ -2866,7 +2866,7 @@
     [(AstDecl.Import _) false]
     [(AstDecl.IncludeStr _ _) false]
     [(AstDecl.IncludeStrComptime _ _) false]
-    [(AstDecl.IncludeStrComptimeLzss _ _) false]
+    [(AstDecl.IncludeStrLzss _ _) false]
     [(AstDecl.IncludeBin _ _) false]
     [(AstDecl.DefDispatch _ variants)
       (lint-dispatch-variant-list-uses-import? variants alias module-name)]
@@ -10395,7 +10395,7 @@
     [(AstDecl.DefDispatch _ _) acc]
     [(AstDecl.IncludeStr _ _) acc]
     [(AstDecl.IncludeStrComptime _ _) acc]
-    [(AstDecl.IncludeStrComptimeLzss _ _) acc]
+    [(AstDecl.IncludeStrLzss _ _) acc]
     [(AstDecl.IncludeBin _ _) acc]
     [(AstDecl.Import _) acc]))
 

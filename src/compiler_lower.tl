@@ -4232,7 +4232,7 @@
                   [(AstDecl.Import _) unit]
                   [(AstDecl.IncludeStr _ _) unit]
                   [(AstDecl.IncludeStrComptime _ _) unit]
-                  [(AstDecl.IncludeStrComptimeLzss _ _) unit]
+                  [(AstDecl.IncludeStrLzss _ _) unit]
                   [(AstDecl.IncludeBin _ _) unit]
                   [(AstDecl.Test _ _ _) unit]
                   [_
@@ -4428,7 +4428,7 @@
                   [(AstDecl.Import _) unit]
                   [(AstDecl.IncludeStr _ _) unit]
                   [(AstDecl.IncludeStrComptime _ _) unit]
-                  [(AstDecl.IncludeStrComptimeLzss _ _) unit]
+                  [(AstDecl.IncludeStrLzss _ _) unit]
                   [(AstDecl.IncludeBin _ _) unit]
                   [(AstDecl.Test _ _ _) unit]
                   [_
@@ -51263,7 +51263,7 @@
                 [(AstDecl.Import _) (set! cur-decls rest)]
                 [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
                 [(AstDecl.IncludeStrComptime _ _) (set! cur-decls rest)]
-                [(AstDecl.IncludeStrComptimeLzss _ _) (set! cur-decls rest)]
+                [(AstDecl.IncludeStrLzss _ _) (set! cur-decls rest)]
                 [(AstDecl.IncludeBin _ _) (set! cur-decls rest)]
                 [(AstDecl.Module next-module)
                   (let

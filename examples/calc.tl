@@ -28,15 +28,15 @@
 ;; and a value array) built BY HAND, because reading a real `token.Token` back
 ;; out of storage was the unproven part. The lexer now emits a generated vector
 ;; of real `token.Token` values and the parser reads each token.Token straight
-;; out of it with `(token.token-tag (tokvec.get toks i token.Token.End))` /
-;; `(token.token-int (tokvec.get toks i token.Token.End))`.
+;; out of it with `(token.token-tag (token-vec.get toks i token.Token.End))` /
+;; `(token.token-int (token-vec.get toks i token.Token.End))`.
 ;; There is no hand-built token.Token stream anywhere in this file: the parser's
 ;; input is exactly the lexer's output.
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
 (import token)
-(import (vector.vector token.Token) as tokvec)
+(import (vector.vector token.Token) as token-vec)
 
 ;; ============================ AST model ===================================
 ;; The real recursive AST: an integer literal, or a binary node over two
@@ -71,26 +71,18 @@
   (- (code c) (code '0')))
 
 ;; Return the end index (exclusive) of the digit run that starts at `start`.
-;; Keep the bounds check outside the `string.string-ref`; boolean `and` is not a
-;; short-circuit guard in lowered TypeLisp code.
+;; Prelude `and` short-circuits, so `string.char-at` is reached only in bounds.
 (define (scan-int-end [src : String] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
-    [keep : bool true]
     (begin
-      (while keep
-        (if (< j n)
-          (if (is-digit (string.string-ref src j))
-            (set! j (+ j 1))
-            (set! keep false))
-          (set! keep false)))
+      (while (and (< j n) (is-digit (string.char-at src j)))
+        (set! j (+ j 1)))
       j)))
 
 ;; Classify a single non-digit, non-space char into its operator/paren token.Token,
-;; building a real `token.Token` value. An unexpected char aborts via the `panic`
-;; builtin (#45) - exactly as a real lexer reports malformed input; the trailing
-;; `token.Token.End` is dead code that only satisfies the `token.Token` result type, since
-;; `panic` yields unit and never returns.
+;; building a real `token.Token` value. An unexpected char aborts through
+;; `io.panic`, whose `never` result lets the failure arm type as `token.Token`.
 (define (single-token [c : char]) : token.Token
   (cond
     [(= c '+') token.Token.Plus]
@@ -106,7 +98,7 @@
 ;; whitespace skip, multi-char accumulation for integers, and single-char tokens
 ;; for the operators and parens. The terminating `token.Token.End` is recorded too, so
 ;; the parser's cursor always has a sentinel to stop on.
-(define (lex [src : String] [toks : (&mut toks tokvec.Vec)]) : i64
+(define (lex [src : String] [toks : (&mut toks token-vec.Vec)]) : i64
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
@@ -114,7 +106,7 @@
     (begin
       (while (< i n)
         (let
-          [c : char (string.string-ref src i)]
+          [c : char (string.char-at src i)]
           (if (is-space c)
             (set! i (+ i 1))
             (if (is-digit c)
@@ -127,16 +119,16 @@
                     (begin
                       (set!
                         acc
-                        (+ (* acc 10) (digit-value (string.string-ref src i))))
+                        (+ (* acc 10) (digit-value (string.char-at src i))))
                       (set! i (+ i 1))))
-                  (tokvec.push toks (token.Token.Int acc))
+                  (token-vec.push toks (token.Token.Int acc))
                   (set! count (+ count 1))))
               (begin
-                (tokvec.push toks (single-token c))
+                (token-vec.push toks (single-token c))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))))))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (tokvec.push toks token.Token.End)
+      (token-vec.push toks token.Token.End)
       count)))
 
 ;; ============================ Parser ======================================
@@ -158,28 +150,31 @@
   (array-ref cur 0))
 
 ;; Kind tag of the token.Token under the cursor.
-(define (current-tag [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
-  (token.token-tag (tokvec.get toks (cur-pos cur) token.Token.End)))
+(define (current-tag [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : i64
+  (token.token-tag (token-vec.get toks (cur-pos cur) token.Token.End)))
 
 ;; Integer value of the token.Token under the cursor (meaningful only for `token.Token.Int`).
-(define (current-val [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
-  (token.token-int (tokvec.get toks (cur-pos cur) token.Token.End)))
+(define (current-val [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : i64
+  (token.token-int (token-vec.get toks (cur-pos cur) token.Token.End)))
 
 ;; Consume the current token.Token: advance the cursor by one.
 (define (advance [cur : (Array i64 1)]) : unit
   (array-set! cur 0 (+ (cur-pos cur) 1)))
 
-;; `expect`: assert the cursor is on `want`, aborting via `panic` (#45) on a
+;; `expect`: assert the cursor is on `want`, aborting via `io.panic` (#45) on a
 ;; grammar violation - exactly how a real parser reports a syntax error - then
 ;; consume the matched token.
-(define (expect [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)] [want : i64]) : unit
+(define (expect
+  [toks : (& toks token-vec.Vec)]
+  [cur : (Array i64 1)]
+  [want : i64]) : unit
   (if (= (current-tag toks cur) want)
     (advance cur)
     (io.panic "parser: unexpected token.Token")))
 
 ;; factor := int | '(' expr ')'
 ;; Parse one factor under the cursor and return its `Expr` node.
-(define (parse-factor [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : Expr
+(define (parse-factor [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : Expr
   (let
     [t : i64 (current-tag toks cur)]
     (if (= t (token.tag-int))
@@ -203,7 +198,7 @@
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then fold left-associative `Expr.Mul`/`Expr.Div` nodes over the
 ;; following `*`/`/` factors, giving them higher precedence than `+`/`-`.
-(define (parse-term [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : Expr
+(define (parse-term [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : Expr
   (let
     [acc : Expr (parse-factor toks cur)]
     (begin
@@ -223,7 +218,7 @@
 ;; Parse a term, then fold left-associative `Expr.Add`/`Expr.Sub` nodes over the
 ;; following `+`/`-` terms. Because each `term` is a full `*`/`/` chain, the tree
 ;; shape gives `*`/`/` higher precedence than `+`/`-`.
-(define (parse-expr [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : Expr
+(define (parse-expr [toks : (& toks token-vec.Vec)] [cur : (Array i64 1)]) : Expr
   (let
     [acc : Expr (parse-term toks cur)]
     (begin
@@ -242,7 +237,7 @@
 ;; Parse a whole token.Token vector starting at index 0: thread a fresh cursor cell
 ;; through `parse-expr` and return the resulting `Expr` tree. This is the
 ;; Token-vector -> Expr step of the pipeline.
-(define (parse [toks : (& toks tokvec.Vec)]) : Expr
+(define (parse [toks : (& toks token-vec.Vec)]) : Expr
   (let
     [cur : (Array i64 1) (array 0)]
     (parse-expr toks cur)))
@@ -275,7 +270,7 @@
 ;; observable result an execution test can assert as the process exit code.
 (define (main) : i64
   (let
-    [toks : tokvec.Vec (tokvec.with-capacity 16)]
+    [toks : token-vec.Vec (token-vec.with-capacity 16)]
     (begin
       (lex "2 + 3 * 4" (&mut toks))
       (eval (parse (& toks))))))

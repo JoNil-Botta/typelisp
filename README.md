@@ -59,9 +59,9 @@ Some transitional spellings survive in the tree while migrations finish. New
 code should use the end-state forms and not imitate the leftovers:
 
 - **Imports**: dotted module imports with aliases and dotted member access
-  (`(import stdlib.string)`, `(string.length text)`). Legacy string path
+  (`(import stdlib.string)`, `(string.eq left right)`). Legacy string path
   imports are compatibility-only while final migration fixtures are removed.
-- **Stdlib names**: qualified short names such as `str.append` are the end
+- **Stdlib names**: qualified short names such as `string.append` are the end
   state; module-name-prefixed flat names (`string-append`, `read-dir`, ...)
   are transitional.
 - **Core macros**: bare prelude spellings `when`, `unless`, `and`, `or`, and
@@ -250,7 +250,7 @@ Dotted module imports bind a module alias and keep imported definitions out
 of the local unqualified namespace: `(import stdlib.string)` binds `string`,
 and `(import stdlib.core_macros as core)` binds `core`. Imported values,
 types, constructors, variants, patterns, and macros are referenced with
-dotted member access — `(string.length text)`, `[p : geometry.Point]`.
+dotted member access — `(string.eq left right)`, `[p : geometry.Point]`.
 Macro imports use the same module identities, with expansion happening
 before ordinary typechecking. Legacy string path imports are retained only for
 named compatibility fixtures until final removal; new code should use dotted
@@ -377,7 +377,7 @@ imply destructors or arena resets.
 
 Safe task threads use generated typed closure modules from
 `stdlib/thread.tl` — for example `(import (thread.handle i64) as
-thread_i64)` with `thread_i64.spawn` / `thread_i64.join` — plus aggregate
+thread-i64)` with `thread-i64.spawn` / `thread-i64.join` — plus aggregate
 wrappers. The checker validates captured environments and joined results
 structurally (no traits): references, borrowed views, scoped regions,
 ordinary arenas, raw-pointer ownership claims, and live mutable aliases do

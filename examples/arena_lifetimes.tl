@@ -7,8 +7,9 @@
 ; - event-driven unload destroys an atomic level arena only after users join
 (import stdlib.arena)
 (import stdlib.profile)
+(import stdlib.str_cat as str-cat)
 (import stdlib.thread)
-(import (thread.handle i64) as thread_i64)
+(import (thread.handle i64) as thread-i64)
 (import stdlib.string)
 (import stdlib.test)
 
@@ -22,14 +23,13 @@
 
 (define (frame-temp-score [frame-index : i64]) : i64
   (let
+    [index-text : String (string.int->string frame-index)]
     [before : i64 (profile.alloc-live)]
     [score : i64
       (with-arena
         frame
         (let
-          [prefix : String "visible:"]
-          [index-text : String (string.int->string frame-index)]
-          [label : String (string.append (& prefix) (& index-text))]
+          [label : String (str-cat.str-cat "visible:" index-text)]
           (string.string-length (& label))))]
     [after : i64 (profile.alloc-live)]
     (begin
@@ -43,14 +43,12 @@
   [scratch : arena.Arena]
   [frame-index : i64]
   [score : i64]) : String
-  (with-escape
-    scratch
-    (let
-      [frame-text : String (string.int->string frame-index)]
-      [score-text : String (string.int->string score)]
-      [prefix : String (string.append "frame:" frame-text)]
-      [suffix : String (string.append "/score:" score-text)]
-      (string.append prefix suffix))))
+  (let
+    [frame-text : String (string.int->string frame-index)]
+    [score-text : String (string.int->string score)]
+    (with-escape
+      scratch
+      (str-cat.str-cat "frame:" frame-text "/score:" score-text))))
 
 (define (run-level [global : GlobalState]) : i64
   (let
@@ -59,7 +57,7 @@
       (with-arena
         level
         (let
-          [frame-count : i64 (struct-get global frame-count)]
+          [frame-count : i64 global.frame-count]
           [frame-scores : (Array i64 3) (array 0 0 0)]
           [frame-index : i64 0]
           [total : i64 0]
@@ -78,17 +76,11 @@
                   (set! frame-index (+ frame-index 1)))))
             (let
               [state : LevelState (LevelState frame-scores total)]
-              [global-title : String (struct-get global title)]
+              [global-title : String global.title]
               [first : String
-                (frame-summary
-                  scratch
-                  0
-                  (array-ref (struct-get state frame-scores) 0))]
+                (frame-summary scratch 0 (array-ref state.frame-scores 0))]
               [last : String
-                (frame-summary
-                  scratch
-                  2
-                  (array-ref (struct-get state frame-scores) 2))]
+                (frame-summary scratch 2 (array-ref state.frame-scores 2))]
               [want-title : String "arena-cookbook"]
               [want-first : String "frame:0/score:9"]
               [want-last : String "frame:2/score:9"]
@@ -106,13 +98,10 @@
                   (& want-last)
                   "last frame summary")
                 (test.assert-i64-eq
-                  (struct-get global frame-count)
+                  global.frame-count
                   3
                   "global state should remain available inside level")
-                (test.assert-i64-eq
-                  (struct-get state total-score)
-                  27
-                  "level total score")
+                (test.assert-i64-eq state.total-score 27 "level total score")
                 42)))))]
     (begin
       (arena.destroy-safe! scratch)
@@ -123,26 +112,23 @@
     [frame-a : arena.Arena (arena.make)]
     [frame-b : arena.Arena (arena.make)]
     [phase-a0 : arena.ArenaPhase (arena.phase frame-a)]
-    [label-a0 : String
-      (in-arena frame-a (string.append "frame:" (string.int->string 0)))]
+    [label-a0 : String (in-arena frame-a (str-cat.str-cat "frame:" "0"))]
     [score-a0 : i64 (string.string-length (& label-a0))]
     [phase-b0 : arena.ArenaPhase (arena.phase frame-b)]
-    [label-b1 : String
-      (in-arena frame-b (string.append "frame:" (string.int->string 1)))]
+    [label-b1 : String (in-arena frame-b (str-cat.str-cat "frame:" "1"))]
     [score-b1 : i64 (string.string-length (& label-b1))]
     (begin
       (arena.rewind-safe! phase-a0)
       (let
         [phase-a1 : arena.ArenaPhase (arena.phase frame-a)]
-        [label-a2 : String
-          (in-arena frame-a (string.append "frame:" (string.int->string 2)))]
+        [label-a2 : String (in-arena frame-a (str-cat.str-cat "frame:" "2"))]
         [score-a2 : i64 (string.string-length (& label-a2))]
         (begin
           (arena.rewind-safe! phase-b0)
           (let
             [phase-b1 : arena.ArenaPhase (arena.phase frame-b)]
             [label-b3 : String
-              (in-arena frame-b (string.append "frame:" (string.int->string 3)))]
+              (in-arena frame-b (str-cat.str-cat "frame:" "3"))]
             [score-b3 : i64 (string.string-length (& label-b3))]
             [total : i64 (+ (+ score-a0 score-b1) (+ score-a2 score-b3))]
             (begin
@@ -152,20 +138,20 @@
               (arena.destroy-safe! frame-b)
               total)))))))
 
-(define (arena-lifetimes-join-i64 [worker : thread_i64.Handle]) : i64
-  (match (thread_i64.join worker)
-    [(thread_i64.I64JoinOk value) value]
-    [(thread_i64.I64JoinErr _) -1]))
+(define (arena-lifetimes-join-i64 [worker : thread-i64.Handle]) : i64
+  (match (thread-i64.join worker)
+    [(thread-i64.I64JoinOk value) value]
+    [(thread-i64.I64JoinErr _) -1]))
 
 (define (run-event-driven-unload) : i64
   (let
     [level : arena.Arena (arena.make-atomic)]
-    [level-name : String (in-arena level (string.append "level:" "docks"))]
-    (match (thread_i64.spawn
+    [level-name : String (in-arena level (str-cat.str-cat "level:" "docks"))]
+    (match (thread-i64.spawn
       (lambda () : i64
         (string.string-length (& level-name))))
-      [(thread_i64.I64SpawnErr _) 1]
-      [(thread_i64.I64SpawnOk worker)
+      [(thread-i64.I64SpawnErr _) 1]
+      [(thread-i64.I64SpawnOk worker)
         (let
           [worker-score : i64 (arena-lifetimes-join-i64 worker)]
           [name-score : i64 (string.string-length (& level-name))]
@@ -178,7 +164,7 @@
 (define (run-game) : i64
   (let
     [title-prefix : String "arena"]
-    [title : String (string.append title-prefix "-cookbook")]
+    [title : String (str-cat.str-cat title-prefix "-cookbook")]
     [global : GlobalState (GlobalState title 3)]
     (run-level global)))
 

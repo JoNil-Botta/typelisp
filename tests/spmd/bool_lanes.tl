@@ -169,13 +169,10 @@
       (fill-bool-compare-i8-scalar values8 cmp8-want n)
       (and
         (eq-bool copy-got copy-want n)
-        (and
-          (eq-bool cmp-got cmp-want n)
-          (and
-            (eq-bool cmp32-got cmp32-want n)
-            (and
-              (eq-bool cmp16-got cmp16-want n)
-              (eq-bool cmp8-got cmp8-want n))))))))
+        (eq-bool cmp-got cmp-want n)
+        (eq-bool cmp32-got cmp32-want n)
+        (eq-bool cmp16-got cmp16-want n)
+        (eq-bool cmp8-got cmp8-want n)))))
 
 (define (all-cases) : bool
   (and

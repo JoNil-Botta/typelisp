@@ -1429,11 +1429,12 @@ Reference types are lifetime-bearing:
   copy the referent.
 - Mutable references are exclusive, non-copying handles to the same referent.
   The checker enforces many immutable borrows or one mutable borrow for
-  tracked local/place paths. Tracked aggregate-place paths conflict only when
-  they are the same path or one is an ancestor of the other, so mutable borrows
-  of disjoint sibling fields may coexist while overlapping whole-field,
-  same-field, and field-element borrows are rejected. Borrows end at their
-  last use under the non-lexical lifetime rule below.
+  tracked local, parameter, and global place paths. Tracked aggregate-place
+  paths conflict only when they are the same path or one is an ancestor of the
+  other, so mutable borrows of disjoint sibling fields may coexist while
+  overlapping whole-field, same-field, and field-element borrows are rejected.
+  The same exclusivity rules apply to direct mutation of a borrowed global.
+  Borrows end at their last use under the non-lexical lifetime rule below.
 - Array operations accept reference receivers: `array-ref` reads through an
   immutable or mutable array reference, and `array-set!` / `array-push!` write
   through an owned array or a mutable array reference. Borrowed `str` source
@@ -1484,6 +1485,8 @@ Borrow expressions:
 owner/provenance is statically known:
 
 - Local bindings and function parameters.
+- Global variables, including supported aggregate field and element
+  projections rooted in global storage.
 - Aggregate field and element projections rooted in a borrowable place. In a
   borrow expression, forms such as `(struct-get p field)`, dotted field sugar
   `p.field`, `(tuple-ref t 0)`, and array element access `(array-ref items i)`
@@ -1544,6 +1547,8 @@ lifetime from the owner:
 
 - A local or parameter root named `x` gives references rooted in `x` the
   lifetime name `x`.
+- A global root named `x` gives references rooted in `x` the lifetime name
+  `x`, unless its arena-tagged type supplies the owner lifetime below.
 - A field, tuple element, or array element projection inherits the lifetime
   name of its root place.
 - A region-tagged aggregate `(in phase T)` gives references to its owned storage

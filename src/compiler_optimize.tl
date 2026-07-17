@@ -30372,6 +30372,14 @@
               compile-profile
               (compiler-opt-profile-pass-finish "tailrec" name _t-tailrec)
               unit)]
+          ;; Substitute proven constant-global operands up front so the local
+          ;; folds below see literals: a mask global otherwise keeps its `and`
+          ;; alive into the loop cluster, pushing an otherwise-unrollable body
+          ;; past the unroll size gate (the opt_crc32 shape). The map is shared
+          ;; with the later divisor-targeted rewrite and empty in the common
+          ;; case, which makes this a length check per function.
+          [const-global-blocks : CompilerIrBlockList
+            (opt-const-divisor-rewrite-summary-blocks summaries blocks)]
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
           [folded : CompilerIrBlockList
             (compiler-opt-debug-observe-blocks
@@ -30380,7 +30388,7 @@
               params
               ret-ty
               frame
-              (optimize-block-list-for-function frame params blocks))]
+              (optimize-block-list-for-function frame params const-global-blocks))]
           [_p-fold : unit
             (cfg
               compile-profile

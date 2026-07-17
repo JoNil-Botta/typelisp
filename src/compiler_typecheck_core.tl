@@ -42852,6 +42852,19 @@
             (TcMovedPathFactsRemove.Removed
               (TcMovedPathFacts.Cons fact (box tail)))]))]))
 
+(define (tc-moved-path-facts-contains-exact-kind?
+  [facts : TcMovedPathFacts]
+  [path : TcMovePath]
+  [kind : TcMovedPathKind]) : bool
+  (match facts
+    [(TcMovedPathFacts.Nil) false]
+    [(TcMovedPathFacts.Cons fact rest)
+      (if (and
+        (tc-move-path-eq? (struct-get fact path) path)
+        (tc-moved-path-kind-eq? (struct-get fact kind) kind))
+        true
+        (tc-moved-path-facts-contains-exact-kind? (box-get rest) path kind))]))
+
 (define (tc-moved-add-path-fact
   [set : TcMovedSet]
   [path : TcMovePath]
@@ -46609,7 +46622,7 @@
   [path : TcMovePath]) : i64
   (let
     [root-id : i64 (tc-move-path-root-id path)]
-    (match (tc-lookup-id env root-id)
+    (match (tc-lookup-visible-id ctx env root-id)
       [(ResultTcType.Ok ty)
         (let
           [resolved : AstType (tc-resolve-type ctx ty)]
@@ -46621,6 +46634,17 @@
                 [(TcMaybeNameId.Some region) region]
                 [(TcMaybeNameId.No) root-id])]))]
       [(ResultTcType.Err _) root-id])))
+
+(define (tc-borrow-check-root-in-scope?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [root-id : i64]) : bool
+  (or
+    (tc-moved-contains? locals root-id)
+    (match (tc-lookup-visible-id ctx env root-id)
+      [(ResultTcType.Ok _) true]
+      [(ResultTcType.Err _) false])))
 
 (define (tc-borrow-check-type-contains-lifetime?
   [ctx : TcContext]
@@ -46714,7 +46738,7 @@
         locals
         (ast-node-get inner-box))]
     [(AstExpr.Borrow _ _ place-box)
-      (match (tc-borrow-check-local-place-path locals (ast-node-get place-box))
+      (match (tc-borrow-check-place-path (ast-node-get place-box))
         [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
         [(TcMaybeMovePath.No) (TcMaybeMovePath.No)])]
     [(AstExpr.Begin exprs) (tc-borrow-check-result-expr-list-path locals exprs)]
@@ -46769,7 +46793,11 @@
         [out2 : TcMovedSet
           (if (and
             keep-kind
-            (tc-moved-contains? outer-locals (tc-move-path-root-id path))
+            (tc-borrow-check-root-in-scope?
+              ctx
+              env
+              outer-locals
+              (tc-move-path-root-id path))
             (tc-name-id-list-contains
               result-lifetimes
               (tc-borrow-check-path-lifetime ctx env path))
@@ -46848,7 +46876,11 @@
           (if (and
             shared
             new
-            (tc-moved-contains? locals (tc-move-path-root-id path))
+            (tc-borrow-check-root-in-scope?
+              ctx
+              env
+              locals
+              (tc-move-path-root-id path))
             (tc-name-id-list-contains
               result-lifetimes
               (tc-borrow-check-path-lifetime ctx env path)))
@@ -46979,17 +47011,13 @@
       (tc-moved-paths borrowed)
       borrowed)))
 
-(define (tc-borrow-check-local-place-path
-  [locals : TcMovedSet]
-  [expr : AstExpr]) : TcMaybeMovePath
+(define (tc-borrow-check-place-path [expr : AstExpr]) : TcMaybeMovePath
   (match (tc-move-root-projection-var-id expr)
     [(TcMaybeNameId.Some root-id)
-      (if (tc-moved-contains? locals root-id)
-        (match (tc-move-direct-root-base-path expr)
-          [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
-          [(TcMaybeMovePath.No)
-            (TcMaybeMovePath.Some (TcMovePath root-id TcMovePathSegments.Nil))])
-        (TcMaybeMovePath.No))]
+      (match (tc-move-direct-root-base-path expr)
+        [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
+        [(TcMaybeMovePath.No)
+          (TcMaybeMovePath.Some (TcMovePath root-id TcMovePathSegments.Nil))])]
     [(TcMaybeNameId.No) (TcMaybeMovePath.No)]))
 
 (define (tc-borrow-check-add-borrow-path
@@ -47024,11 +47052,11 @@
     (ast-node-push origin)))
 
 (define (tc-borrow-check-add-two-phase-mut-place
-  [locals : TcMovedSet]
+  [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : AstExpr]
   [origin : AstExpr]) : TcBorrowCheckResult
-  (match (tc-borrow-check-local-place-path locals place)
+  (match (tc-borrow-check-place-path place)
     [(TcMaybeMovePath.Some path)
       (match (tc-borrow-check-mutably-borrow-conflict borrowed path origin)
         [(ResultTcUnit.Ok)
@@ -47142,13 +47170,13 @@
     ResultTcUnit.Ok))
 
 (define (tc-borrow-check-place-read-conflict
-  [locals : TcMovedSet]
+  [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : AstExpr]
   [primary : AstExpr]) : TcBorrowCheckResult
   (if (= (tc-moved-len borrowed) 0)
     (TcBorrowCheckResult.Ok borrowed)
-    (match (tc-borrow-check-local-place-path locals expr)
+    (match (tc-borrow-check-place-path expr)
       [(TcMaybeMovePath.Some path)
         (match (tc-borrow-check-read-conflict borrowed path primary)
           [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
@@ -47156,12 +47184,12 @@
       [(TcMaybeMovePath.No) (TcBorrowCheckResult.Ok borrowed)])))
 
 (define (tc-borrow-check-add-place-with-mutability
-  [locals : TcMovedSet]
+  [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [mutable : bool]
   [place : AstExpr]
   [origin : AstExpr]) : TcBorrowCheckResult
-  (match (tc-borrow-check-local-place-path locals place)
+  (match (tc-borrow-check-place-path place)
     [(TcMaybeMovePath.Some path)
       (if mutable
         (match (tc-borrow-check-mutably-borrow-conflict borrowed path origin)
@@ -47177,10 +47205,10 @@
     [(TcMaybeMovePath.No) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-after-consuming-place
-  [locals : TcMovedSet]
+  [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [expr : AstExpr]) : TcBorrowCheckResult
-  (match (tc-borrow-check-local-place-path locals expr)
+  (match (tc-borrow-check-place-path expr)
     [(TcMaybeMovePath.Some path)
       (match (tc-borrow-check-move-conflict borrowed path expr)
         [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
@@ -47322,7 +47350,7 @@
     [(AstExpr.Borrow true _ place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]
-        (match (tc-borrow-check-local-place-path locals place)
+        (match (tc-borrow-check-place-path place)
           [(TcMaybeMovePath.Some path)
             (let
               [without-temporary
@@ -47492,71 +47520,131 @@
           [_
             (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)])])))
 
+(define (tc-borrow-check-prune-value-temporaries-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [prior : TcMovedSet]
+  [facts : TcMovedPathFacts]
+  [value : AstExpr]
+  [out : TcMovedSet]) : TcMovedSet
+  (match facts
+    [(TcMovedPathFacts.Nil) out]
+    [(TcMovedPathFacts.Cons fact rest)
+      (let
+        [path : TcMovePath (struct-get fact path)]
+        [kind : TcMovedPathKind (struct-get fact kind)]
+        [borrow-kind : bool
+          (match kind
+            [(TcMovedPathKind.BorrowShared) true]
+            [(TcMovedPathKind.BorrowMut) true]
+            [(TcMovedPathKind.BorrowTwoPhaseMut) true]
+            [_ false])]
+        [new : bool
+          (not
+            (tc-moved-path-facts-contains-exact-kind?
+              (tc-moved-paths prior)
+              path
+              kind))]
+        [remove : bool
+          (if (and borrow-kind new)
+            (let
+              [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
+              (not
+                (or
+                  (tc-borrow-check-expr-type-contains-lifetime?
+                    ctx
+                    env
+                    value
+                    lifetime)
+                  (tc-borrow-check-expr-stores-lifetime? ctx env value lifetime))))
+            false)]
+        [out2 : TcMovedSet
+          (if remove
+            (tc-moved-remove-path-kind out path kind)
+            out)]
+        (tc-borrow-check-prune-value-temporaries-at
+          ctx
+          env
+          prior
+          (box-get rest)
+          value
+          out2))]))
+
+;; Argument auto-borrows created while evaluating an assignment RHS end after
+;; that value is produced unless the result or a nested store retains their
+;; lifetime. Drop only newly introduced facts so pre-existing live borrows keep
+;; protecting the assigned place.
+(define (tc-borrow-check-prune-value-temporaries
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [prior : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [value : AstExpr]) : TcMovedSet
+  (tc-borrow-check-prune-value-temporaries-at
+    ctx
+    env
+    prior
+    (tc-moved-paths borrowed)
+    value
+    borrowed))
+
 (define (tc-borrow-check-assignment
-  [locals : TcMovedSet]
+  [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [name-id : i64]
   [primary : AstExpr]) : ResultTcUnit
-  (if (tc-moved-contains? locals name-id)
-    (tc-borrow-check-assign-conflict
-      borrowed
-      (TcMovePath name-id TcMovePathSegments.Nil)
-      primary)
-    ResultTcUnit.Ok))
+  (tc-borrow-check-assign-conflict
+    borrowed
+    (TcMovePath name-id TcMovePathSegments.Nil)
+    primary))
 
 (define (tc-borrow-check-array-set-conflict
-  [locals : TcMovedSet]
+  [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [array : AstExpr]
   [index : AstExpr]
   [primary : AstExpr]) : ResultTcUnit
   (match (tc-move-root-projection-var-id array)
     [(TcMaybeNameId.Some root-id)
-      (if (tc-moved-contains? locals root-id)
-        (match (tc-move-array-set-path array index)
-          [(TcMaybeMovePath.Some path)
-            (tc-borrow-check-assign-conflict borrowed path primary)]
-          [(TcMaybeMovePath.No)
-            (tc-borrow-check-assign-conflict
-              borrowed
-              (TcMovePath root-id TcMovePathSegments.Nil)
-              primary)])
-        ResultTcUnit.Ok)]
+      (match (tc-move-array-set-path array index)
+        [(TcMaybeMovePath.Some path)
+          (tc-borrow-check-assign-conflict borrowed path primary)]
+        [(TcMaybeMovePath.No)
+          (tc-borrow-check-assign-conflict
+            borrowed
+            (TcMovePath root-id TcMovePathSegments.Nil)
+            primary)])]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
 (define (tc-borrow-check-struct-set-conflict
-  [locals : TcMovedSet]
+  [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [receiver : AstExpr]
   [field-id : i64]
   [primary : AstExpr]) : ResultTcUnit
   (match (tc-move-root-projection-var-id receiver)
     [(TcMaybeNameId.Some root-id)
-      (if (tc-moved-contains? locals root-id)
-        (match (tc-move-struct-set-path receiver field-id)
-          [(TcMaybeMovePath.Some path)
-            (tc-borrow-check-assign-conflict borrowed path primary)]
-          [(TcMaybeMovePath.No)
-            (tc-borrow-check-assign-conflict
-              borrowed
-              (TcMovePath root-id TcMovePathSegments.Nil)
-              primary)])
-        ResultTcUnit.Ok)]
+      (match (tc-move-struct-set-path receiver field-id)
+        [(TcMaybeMovePath.Some path)
+          (tc-borrow-check-assign-conflict borrowed path primary)]
+        [(TcMaybeMovePath.No)
+          (tc-borrow-check-assign-conflict
+            borrowed
+            (TcMovePath root-id TcMovePathSegments.Nil)
+            primary)])]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
 (define (tc-borrow-check-root-mutation-conflict
-  [locals : TcMovedSet]
+  [_locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [place : AstExpr]
   [primary : AstExpr]) : ResultTcUnit
   (match (tc-move-root-projection-var-id place)
     [(TcMaybeNameId.Some root-id)
-      (if (tc-moved-contains? locals root-id)
-        (tc-borrow-check-assign-conflict
-          borrowed
-          (TcMovePath root-id TcMovePathSegments.Nil)
-          primary)
-        ResultTcUnit.Ok)]
+      (tc-borrow-check-assign-conflict
+        borrowed
+        (TcMovePath root-id TcMovePathSegments.Nil)
+        primary)]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
 (define (tc-borrow-check-region-invalidation-scan
@@ -50128,10 +50216,22 @@
                 borrowed1
                 rhs-box)
                 [(TcBorrowCheckResult.Ok borrowed2)
-                  (match (tc-borrow-check-assignment locals borrowed2 name rhs)
-                    [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed2)]
-                    [(ResultTcUnit.Err message)
-                      (TcBorrowCheckResult.Err message)])]
+                  (let
+                    [borrowed3 : TcMovedSet
+                      (tc-borrow-check-prune-value-temporaries
+                        ctx
+                        env
+                        borrowed
+                        borrowed2
+                        rhs)]
+                    (match (tc-borrow-check-assignment
+                      locals
+                      borrowed3
+                      name
+                      rhs)
+                      [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed3)]
+                      [(ResultTcUnit.Err message)
+                        (TcBorrowCheckResult.Err message)]))]
                 [(TcBorrowCheckResult.Err message)
                   (TcBorrowCheckResult.Err message)])]
             [(TcBorrowCheckResult.Err message)

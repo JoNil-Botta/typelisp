@@ -12115,13 +12115,19 @@
                                           (lower-binop op)
                                           l0
                                           r0
-                                          expr-ty))
+                                          (lower-register-word-type
+                                            ctx
+                                            group-ty
+                                            0)))
                                       (CompilerIrInstr.BinOp
                                         word1-cmp
                                         (lower-binop op)
                                         l1
                                         r1
-                                        expr-ty))
+                                        (lower-register-word-type
+                                          ctx
+                                          group-ty
+                                          1)))
                                     (CompilerIrInstr.BinOp
                                       combined
                                       ;; eq: both words equal; ne: either differs.
@@ -16778,7 +16784,7 @@
                               CompilerIrBinOp.Eq
                               tag
                               (CompilerIrValue.I64 index)
-                              (AstType.Bool)))
+                              (AstType.I64)))
                           (CompilerIrInstr.Branch
                             (CompilerIrValue.Var cond-var)
                             variant-label
@@ -18184,7 +18190,7 @@
                                   (CompilerIrValue.I64
                                     (compiler-registry-handle-child-index
                                       ok-handle))
-                                  (AstType.Bool))
+                                  (AstType.I64))
                                 origin)]
                             (lower-try-finish
                               ctx
@@ -18942,7 +18948,7 @@
                                     CompilerIrBinOp.Lt
                                     (CompilerIrValue.Var index-var)
                                     len
-                                    (AstType.Bool)))
+                                    (AstType.I64)))
                                 (CompilerIrInstr.Branch
                                   (CompilerIrValue.Var cond-var)
                                   body-label
@@ -22180,7 +22186,10 @@
                                                   (lower-binop op)
                                                   left-value
                                                   right-value
-                                                  result-ty)
+                                                  (if (compiler-ir-binop-compare?
+                                                    (lower-binop op))
+                                                    left-ty
+                                                    result-ty))
                                                 origin)
                                               (CompilerIrValue.Var var-id)
                                               result-ty))]))])]
@@ -26549,7 +26558,7 @@
                             CompilerIrBinOp.Eq
                             left-i64
                             right-i64
-                            (AstType.Bool))
+                            (AstType.I64))
                             [(LowerExpr.Expr byte-eq-state byte-eq _)
                               (match (lower-emit-binop
                                 byte-eq-state
@@ -26618,7 +26627,7 @@
                                 CompilerIrBinOp.Eq
                                 left-len
                                 right-len
-                                (AstType.Bool))
+                                (AstType.I64))
                                 [(LowerExpr.Expr len-state len-ok _)
                                   (let
                                     [header-start : LowerState
@@ -26635,7 +26644,7 @@
                                       CompilerIrBinOp.Lt
                                       (CompilerIrValue.Var index-var)
                                       left-len
-                                      (AstType.Bool))
+                                      (AstType.I64))
                                       [(LowerExpr.Expr cond-state cond-value _)
                                         (lower-inline-string-eq-body
                                           (lower-state-finish-block
@@ -26780,7 +26789,7 @@
     CompilerIrBinOp.Lt
     (CompilerIrValue.Var index-var)
     len
-    (AstType.Bool))
+    (AstType.I64))
     [(LowerExpr.Expr cond-state cond-value _)
       (lower-inline-string-to-int-body
         (lower-state-finish-block
@@ -26827,7 +26836,7 @@
                 CompilerIrBinOp.Eq
                 first-i64
                 (CompilerIrValue.I64 45)
-                (AstType.Bool))
+                (AstType.I64))
                 [(LowerExpr.Expr minus-test-state minus? _)
                   (let
                     [minus-start : LowerState
@@ -26926,7 +26935,7 @@
                                             CompilerIrBinOp.Gt
                                             len
                                             (CompilerIrValue.I64 0)
-                                            (AstType.Bool))
+                                            (AstType.I64))
                                             [(LowerExpr.Expr
                                                 nonempty-state
                                                 nonempty
@@ -28900,7 +28909,7 @@
       (LowerExpr.Expr
         (lower-state-emit s (CompilerIrInstr.BinOp v op lhs rhs ty))
         (CompilerIrValue.Var v)
-        ty)]))
+        (compiler-ir-binop-result-type op ty))]))
 
 (define (lower-emit-bounds-check
   [state : LowerState]
@@ -29866,7 +29875,7 @@
           CompilerIrBinOp.Lt
           (CompilerIrValue.Var index-var)
           len-i64
-          (AstType.Bool))
+          (AstType.I64))
           [(LowerExpr.Expr cond-state cond-value _)
             (let
               [body-start : LowerState
@@ -29916,7 +29925,7 @@
           CompilerIrBinOp.Lt
           (CompilerIrValue.Var index-var)
           len-i64
-          (AstType.Bool))
+          (AstType.I64))
           [(LowerExpr.Expr cond-state cond-value _)
             (let
               [body-start : LowerState
@@ -30351,7 +30360,7 @@
                         (CompilerIrBinOp.Le)
                         (CompilerIrValue.I64 0)
                         len-i64
-                        (AstType.Bool))
+                        (AstType.I64))
                         [(LowerExpr.Expr s4 non-negative _)
                           (let
                             [check-start : LowerState
@@ -30372,7 +30381,7 @@
                               (CompilerIrBinOp.Le)
                               len-i64
                               (CompilerIrValue.I64 max-len)
-                              (AstType.Bool))
+                              (AstType.I64))
                               [(LowerExpr.Expr s5 within-max _)
                                 (lower-make-array-after-max-check
                                   ctx
@@ -30522,14 +30531,14 @@
                         CompilerIrBinOp.Lt
                         index-u
                         array-len-u
-                        (AstType.Bool))
+                        (AstType.U64))
                         [(LowerExpr.Expr array-ok-state array-ok _)
                           (match (lower-emit-binop
                             array-ok-state
                             CompilerIrBinOp.Lt
                             index-u
                             live-len-u
-                            (AstType.Bool))
+                            (AstType.U64))
                             [(LowerExpr.Expr live-ok-state live-ok _)
                               (match (lower-emit-binop
                                 live-ok-state
@@ -31883,7 +31892,7 @@
                                     CompilerIrBinOp.Lt
                                     (CompilerIrValue.Var index-var)
                                     old-len
-                                    (AstType.Bool)))
+                                    (AstType.I64)))
                                 (CompilerIrInstr.Branch
                                   (CompilerIrValue.Var cond-var)
                                   body-label
@@ -32074,7 +32083,7 @@
                       CompilerIrBinOp.Le
                       old-len
                       (CompilerIrValue.I64 max-old-len)
-                      (AstType.Bool))
+                      (AstType.I64))
                       [(LowerExpr.Expr check-state within-max _)
                         (lower-array-push-after-max-check
                           ctx
@@ -39539,7 +39548,7 @@
         (CompilerIrBinOp.Ge)
         (CompilerIrValue.Var index-var)
         (CompilerIrValue.I64 0)
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -39549,7 +39558,7 @@
         (CompilerIrBinOp.Le)
         (CompilerIrValue.Var index-var)
         (CompilerIrValue.I64 (- 9223372036854775807 lanes))
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -39564,7 +39573,7 @@
         (CompilerIrBinOp.Le)
         next-index
         end-value
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -39579,7 +39588,7 @@
         (CompilerIrBinOp.Le)
         next-index
         array-len
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -39602,7 +39611,7 @@
         (CompilerIrBinOp.Le)
         (CompilerIrValue.Var index-var)
         (CompilerIrValue.I64 (- 9223372036854775807 lanes))
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -39612,7 +39621,7 @@
         (CompilerIrBinOp.Le)
         next-index
         end-value
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -40027,7 +40036,7 @@
                           (CompilerIrBinOp.Lt)
                           (CompilerIrValue.Var index-var)
                           end-value
-                          (AstType.Bool))
+                          (AstType.I64))
                           [(LowerExpr.Expr next-s value _)
                             (begin
                               (set! s next-s)
@@ -40234,7 +40243,7 @@
                               (CompilerIrBinOp.Lt)
                               (CompilerIrValue.Var index-var)
                               end-value
-                              (AstType.Bool))
+                              (AstType.I64))
                               [(LowerExpr.Expr next-s value _)
                                 (begin
                                   (set! s next-s)
@@ -41317,7 +41326,7 @@
             CompilerIrBinOp.Lt
             (CompilerIrValue.Var tail-var)
             end-value
-            (AstType.Bool))
+            (AstType.I64))
             [(LowerExpr.Expr next-s value _)
               (begin
                 (set! s next-s)
@@ -41503,7 +41512,7 @@
                       (CompilerIrBinOp.Le)
                       limit-index
                       array-len
-                      (AstType.Bool))
+                      (AstType.I64))
                       [(LowerExpr.Expr cmp-state within _)
                         (match (lower-emit-binop
                           cmp-state
@@ -41545,7 +41554,7 @@
                       (CompilerIrBinOp.Le)
                       limit-index
                       array-len
-                      (AstType.Bool))
+                      (AstType.I64))
                       [(LowerExpr.Expr cmp-state within _)
                         (match (lower-emit-binop
                           cmp-state
@@ -41588,7 +41597,7 @@
         (CompilerIrBinOp.Ge)
         (CompilerIrValue.Var index-var)
         (CompilerIrValue.I64 0)
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -41598,7 +41607,7 @@
         (CompilerIrBinOp.Le)
         (CompilerIrValue.Var index-var)
         (CompilerIrValue.I64 (lower-avx512-masked-index-limit lanes max-offset))
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -41613,7 +41622,7 @@
         (CompilerIrBinOp.Le)
         next-index
         end-value
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -41638,7 +41647,7 @@
         (CompilerIrBinOp.Ge)
         (CompilerIrValue.Var index-var)
         (CompilerIrValue.I64 0)
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -41648,7 +41657,7 @@
         (CompilerIrBinOp.Le)
         end-value
         (CompilerIrValue.I64 (lower-avx512-masked-tail-limit max-offset))
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -41663,7 +41672,7 @@
         (CompilerIrBinOp.Le)
         (CompilerIrValue.Var index-var)
         end-value
-        (AstType.Bool))
+        (AstType.I64))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -45140,7 +45149,7 @@
                 (CompilerIrBinOp.Lt)
                 (CompilerIrValue.Var index-var)
                 end-value
-                (AstType.Bool))
+                (AstType.I64))
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
@@ -45468,7 +45477,7 @@
                 (CompilerIrBinOp.Lt)
                 (CompilerIrValue.Var index-var)
                 end-value
-                (AstType.Bool))
+                (AstType.I64))
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
@@ -50713,7 +50722,7 @@
         CompilerIrBinOp.Ne
         (CompilerIrValue.Global cache-name)
         (CompilerIrValue.I64 0)
-        (AstType.Bool))
+        (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Branch
           (CompilerIrValue.Var cached-var)
@@ -50769,7 +50778,7 @@
                 CompilerIrBinOp.Ge
                 (CompilerIrValue.Var max-leaf-var)
                 (CompilerIrValue.I64 7)
-                (AstType.Bool))
+                (AstType.I64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Branch
                   (CompilerIrValue.Var max-ok-var)
@@ -50799,7 +50808,7 @@
                   CompilerIrBinOp.Ne
                   (CompilerIrValue.Var osxsave-mask-var)
                   (CompilerIrValue.I64 0)
-                  (AstType.Bool))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Branch
                     (CompilerIrValue.Var osxsave-ok-var)
@@ -50825,7 +50834,7 @@
                   CompilerIrBinOp.Eq
                   (CompilerIrValue.Var xcr0-mask-var)
                   (CompilerIrValue.I64 xcr0-mask)
-                  (AstType.Bool))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Branch
                     (CompilerIrValue.Var xcr0-ok-var)
@@ -50855,7 +50864,7 @@
                   CompilerIrBinOp.Eq
                   (CompilerIrValue.Var feature-mask-var)
                   (CompilerIrValue.I64 feature-mask)
-                  (AstType.Bool))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Branch
                     (CompilerIrValue.Var feature-ok-var)
@@ -53991,7 +54000,7 @@
 ;; immediately uses `array-set!`, `array-ref`, and `array-length` so the
 ;; generated IR exercises the full dynamic-array primitive set.
 (define (compiler-lower-make-array-source) : String
-  "(define (main [n : i64]) : i64
+  "(define (main [n : u32]) : i64
   (let
     [a : (Array i64) (make-array i64 n)]
     (begin
@@ -55907,6 +55916,20 @@
         0)]
     [_ 0]))
 
+(define (lower-test-instr-i64-binop-op-count
+  [instr : CompilerIrInstr]
+  [op : CompilerIrBinOp]) : i64
+  (match instr
+    [(CompilerIrInstr.BinOp _ actual _ _ ty)
+      (if (and
+        (lower-test-binop-same? actual op)
+        (match ty
+          [(AstType.I64) true]
+          [_ false]))
+        1
+        0)]
+    [_ 0]))
+
 (define (lower-test-instr-cast-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(CompilerIrInstr.Cast _ _ _ _) 1]
@@ -56485,6 +56508,25 @@
           (set! index (+ index 1))))
       acc)))
 
+(define (lower-test-instr-seq-i64-binop-op-count
+  [instrs : CompilerIrInstrSeq]
+  [op : CompilerIrBinOp]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-i64-binop-op-count (array-ref slots index) op)))
+          (set! index (+ index 1))))
+      acc)))
+
 (define (lower-test-instr-seq-cast-count [instrs : CompilerIrInstrSeq]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -56972,6 +57014,22 @@
             (lower-test-blocks-binop-op-count (box-get rest) op))])]
     [(CompilerIrBlockList.Array seq)
       (lower-test-blocks-binop-op-count (compiler-ir-block-seq-to-list seq) op)]))
+
+(define (lower-test-blocks-i64-binop-op-count
+  [blocks : CompilerIrBlockList]
+  [op : CompilerIrBinOp]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-i64-binop-op-count instrs op)
+            (lower-test-blocks-i64-binop-op-count (box-get rest) op))])]
+    [(CompilerIrBlockList.Array seq)
+      (lower-test-blocks-i64-binop-op-count
+        (compiler-ir-block-seq-to-list seq)
+        op)]))
 
 (define (lower-test-blocks-cast-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -57641,6 +57699,24 @@
             (lower-test-function-binop-op-count (box-get rest) name op))])]
     [(CompilerIrFunctionList.Array seq)
       (lower-test-function-binop-op-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        op)]))
+
+(define (lower-test-function-i64-binop-op-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [op : CompilerIrBinOp]) : i64
+  (match funcs
+    [(CompilerIrFunctionList.Nil) (- 0 1)]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function fname _ _ _ blocks)
+          (if (string.eq (compiler-ir-symbol-text fname) name)
+            (lower-test-blocks-i64-binop-op-count blocks op)
+            (lower-test-function-i64-binop-op-count (box-get rest) name op))])]
+    [(CompilerIrFunctionList.Array seq)
+      (lower-test-function-i64-binop-op-count
         (compiler-ir-function-seq-to-list seq)
         name
         op)]))
@@ -59566,6 +59642,21 @@
           (and
             (> (lower-test-functions-call-count functions "tl_alloc") 1)
             (> (lower-test-functions-call-count functions "tl_oob_abort") 0)
+            (>=
+              (lower-test-function-i64-binop-op-count
+                functions
+                "main"
+                (CompilerIrBinOp.Le))
+              2)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "main"
+                (CompilerIrBinOp.Le))
+              (lower-test-function-i64-binop-op-count
+                functions
+                "main"
+                (CompilerIrBinOp.Le)))
             (=
               (lower-test-function-call-count functions "main" "tl_array_zero")
               1))])]

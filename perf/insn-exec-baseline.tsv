@@ -3,13 +3,13 @@ benchmark/typelisp/arith_loop	437500084
 benchmark/c/arith_loop	500001471
 benchmark/typelisp/array_sum	1428313814
 benchmark/c/array_sum	2101310930
-benchmark/typelisp/hashmap_churn	7512331
+benchmark/typelisp/hashmap_churn	7165129
 benchmark/c/hashmap_churn	4316283
-benchmark/typelisp/hashmap_get	376444407
+benchmark/typelisp/hashmap_get	376432119
 benchmark/c/hashmap_get	209671160
-benchmark/typelisp/hashmap_grow	3798697
+benchmark/typelisp/hashmap_grow	3654691
 benchmark/c/hashmap_grow	1934687
-benchmark/typelisp/hashmap_insert	74298416
+benchmark/typelisp/hashmap_insert	70360112
 benchmark/c/hashmap_insert	65952384
 benchmark/typelisp/opt_bytecode_vm	1396001241
 benchmark/c/opt_bytecode_vm	716006209
@@ -19,4 +19,4 @@ benchmark/typelisp/opt_quicksort	752294208
 benchmark/c/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	1488029719
 benchmark/c/spmd_reduce	1693815306
-self_compile/compile_cli_opt1	64677487283
+self_compile/compile_cli_opt1	64441534261

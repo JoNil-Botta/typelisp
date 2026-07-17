@@ -1395,17 +1395,19 @@
               instr))])]
     [(CompilerIrInstr.Bitcast dst _ _ _) (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.BinOp dst op l r ty)
-      (match (opt-fold-binop
-        op
-        (opt-resolve-known env l ty)
-        (opt-resolve-known env r ty)
-        ty)
-        [(CompilerIrMaybeValue.Some folded)
-          (OptInstrResult.Result
-            (opt-const-bind env dst folded ty)
-            (CompilerIrInstr.Mov dst folded ty))]
-        [(CompilerIrMaybeValue.No)
-          (OptInstrResult.Result (opt-const-unbind env dst) instr)])]
+      (let
+        [result-ty : AstType (compiler-ir-binop-result-type op ty)]
+        (match (opt-fold-binop
+          op
+          (opt-resolve-known env l ty)
+          (opt-resolve-known env r ty)
+          ty)
+          [(CompilerIrMaybeValue.Some folded)
+            (OptInstrResult.Result
+              (opt-const-bind env dst folded result-ty)
+              (CompilerIrInstr.Mov dst folded result-ty))]
+          [(CompilerIrMaybeValue.No)
+            (OptInstrResult.Result (opt-const-unbind env dst) instr)]))]
     [(CompilerIrInstr.UnOp dst op v ty)
       (match (opt-fold-unop op (opt-resolve-known env v ty) ty)
         [(CompilerIrMaybeValue.Some folded)
@@ -5450,7 +5452,12 @@
         [key : OptExprKey (OptExprKey.BinKey op l r ty)]
         (match (opt-expr-lookup t1 key)
           [(CompilerIrMaybeValue.Some earlier)
-            (OptCseResult.Result t1 (CompilerIrInstr.Mov dst earlier ty))]
+            (OptCseResult.Result
+              t1
+              (CompilerIrInstr.Mov
+                dst
+                earlier
+                (compiler-ir-binop-result-type op ty)))]
           [(CompilerIrMaybeValue.No)
             (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
     [(CompilerIrInstr.UnOp dst op v ty)
@@ -9655,8 +9662,8 @@
     [(CompilerIrInstr.Cast dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(CompilerIrInstr.Bitcast dst _ _ ty)
       (opt-ssa-facts-add-def-ty facts dst ty)]
-    [(CompilerIrInstr.BinOp dst _ _ _ ty)
-      (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(CompilerIrInstr.BinOp dst op _ _ ty)
+      (opt-ssa-facts-add-def-ty facts dst (compiler-ir-binop-result-type op ty))]
     [(CompilerIrInstr.UnOp dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(CompilerIrInstr.Call dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(CompilerIrInstr.CallIndirect dst _ _ ty)
@@ -12400,8 +12407,11 @@
                   (CompilerIrInstr.Mov dst earlier ty)]
                 [(CompilerIrInstr.Cast _ _ _ to-ty)
                   (CompilerIrInstr.Mov dst earlier to-ty)]
-                [(CompilerIrInstr.BinOp _ _ _ _ ty)
-                  (CompilerIrInstr.Mov dst earlier ty)]
+                [(CompilerIrInstr.BinOp _ op _ _ ty)
+                  (CompilerIrInstr.Mov
+                    dst
+                    earlier
+                    (compiler-ir-binop-result-type op ty))]
                 [(CompilerIrInstr.UnOp _ _ _ ty)
                   (CompilerIrInstr.Mov dst earlier ty)]
                 [_ instr])]
@@ -17764,8 +17774,7 @@
                             [(CompilerIrInstr.BinOp dst op _ _ ty)
                               (if (and
                                 (= dst cond-var)
-                                (opt-bool-branch-compare-op? op)
-                                (opt-type-eq ty (AstType.Bool)))
+                                (opt-bool-branch-compare-op? op))
                                 (OptBoolBranchPredRewrite.Some
                                   instrs
                                   (- count 1)
@@ -18728,7 +18737,7 @@
       (opt-sccp-rewrite-scalar-def
         env
         dst
-        ty
+        (compiler-ir-binop-result-type op ty)
         (CompilerIrInstr.BinOp
           dst
           op
@@ -20223,7 +20232,10 @@
           [earlier : i64 (opt-gvn-lookup table (OptExprKey.BinKey op l r ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
             (OptMaybeInstr.Some
-              (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty))
+              (CompilerIrInstr.Mov
+                dst
+                (CompilerIrValue.Var earlier)
+                (compiler-ir-binop-result-type op ty)))
             (OptMaybeInstr.No)))
         (OptMaybeInstr.No))]
     [(CompilerIrInstr.UnOp dst op v ty)
@@ -23321,7 +23333,7 @@
     [(CompilerIrInstr.Bitcast dst _ _ _)
       (opt-loop-bce-state-invalidate-def state dst)]
     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
-      (if (and (opt-type-eq ty (AstType.Bool)) (opt-divrem-compare-op? op))
+      (if (opt-divrem-compare-op? op)
         (let
           [operand-ty : AstType (opt-range-compare-value-type types lhs rhs ty)]
           (opt-loop-bce-state-bind-cmp
@@ -23841,12 +23853,10 @@
     false
     (match (array-ref slots index)
       [(CompilerIrInstr.BinOp _ op _ _ ty)
-        (if (and
-          (opt-type-eq ty (AstType.Bool))
-          (match op
-            [(CompilerIrBinOp.Lt) true]
-            [(CompilerIrBinOp.Gt) true]
-            [_ false]))
+        (if (match op
+          [(CompilerIrBinOp.Lt) true]
+          [(CompilerIrBinOp.Gt) true]
+          [_ false])
           true
           (opt-loop-bce-compare-shape-instrs slots (+ index 1) count))]
       [_ (opt-loop-bce-compare-shape-instrs slots (+ index 1) count)])))
@@ -26728,14 +26738,14 @@
                   (CompilerIrBinOp.Le)
                   (CompilerIrValue.Var ngroup)
                   bound
-                  (AstType.Bool))
+                  ity)
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
                     gfirst
                     (CompilerIrBinOp.Lt)
                     seed
                     (CompilerIrValue.Var ngroup)
-                    (AstType.Bool))
+                    ity)
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.BinOp
                       gok
@@ -26778,7 +26788,7 @@
                       (CompilerIrBinOp.Lt)
                       inext3
                       (CompilerIrValue.Var ngroup)
-                      (AstType.Bool))
+                      ity)
                     (compiler-ir-instr-cons
                       (CompilerIrInstr.Branch
                         (CompilerIrValue.Var gu)
@@ -27038,7 +27048,7 @@
         [dst : i64 (opt-bce-version-alloc-var cell)]
         (OptBceVersionGuardAcc.Some
           (compiler-ir-instr-cons
-            (CompilerIrInstr.BinOp dst op lhs rhs (AstType.Bool))
+            (CompilerIrInstr.BinOp dst op lhs rhs (AstType.I64))
             instrs)
           (compiler-ir-value-cons (CompilerIrValue.Var dst) values)
           counter-seen))]))

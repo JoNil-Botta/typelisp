@@ -11639,16 +11639,6 @@
     [(CompilerIrValue.Function _) (CompilerRegMaybeType.Some (AstType.U64))]
     [_ (CompilerRegMaybeType.No)]))
 
-(define (compiler-backend-binop-compare-result? [op : CompilerIrBinOp]) : bool
-  (match op
-    [(CompilerIrBinOp.Eq) true]
-    [(CompilerIrBinOp.Ne) true]
-    [(CompilerIrBinOp.Lt) true]
-    [(CompilerIrBinOp.Le) true]
-    [(CompilerIrBinOp.Gt) true]
-    [(CompilerIrBinOp.Ge) true]
-    [_ false]))
-
 (define (compiler-backend-binop-bit-or-shift? [op : CompilerIrBinOp]) : bool
   (match op
     [(CompilerIrBinOp.BitAnd) true]
@@ -11670,14 +11660,21 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [result-ty : AstType]) : AstType
-  (if (compiler-backend-binop-compare-result? op)
-    (match (compiler-backend-value-type types global-types lhs)
-      [(CompilerRegMaybeType.Some ty) ty]
-      [(CompilerRegMaybeType.No)
-        (match (compiler-backend-value-type types global-types rhs)
-          [(CompilerRegMaybeType.Some ty) ty]
-          [(CompilerRegMaybeType.No)
-            (compiler-backend-missing-compare-operand-ty result-ty)])])
+  (if (compiler-ir-binop-compare? op)
+    ;; New comparison IR records the operand type directly. Keep the old Bool
+    ;; inference fallback for hand-authored optimizer/backend fixtures while
+    ;; they migrate; production lowering must never depend on it.
+    (if (match result-ty
+      [(AstType.Bool) true]
+      [_ false])
+      (match (compiler-backend-value-type types global-types lhs)
+        [(CompilerRegMaybeType.Some ty) ty]
+        [(CompilerRegMaybeType.No)
+          (match (compiler-backend-value-type types global-types rhs)
+            [(CompilerRegMaybeType.Some ty) ty]
+            [(CompilerRegMaybeType.No)
+              (compiler-backend-missing-compare-operand-ty result-ty)])])
+      result-ty)
     (if (compiler-backend-binop-bit-or-shift? op)
       (match (compiler-backend-value-type types global-types lhs)
         [(CompilerRegMaybeType.Some ty) ty]
@@ -15366,6 +15363,7 @@
     (let
       [fty : AstType
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
+      [result-ty : AstType (compiler-ir-binop-result-type op ty)]
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       [rhs-operand : String
         (compiler-backend-float-direct-rhs-operand assignments rhs fty dst-home)]
@@ -15390,7 +15388,7 @@
             lhs
             rhs
             fty
-            ty)
+            result-ty)
           (compiler-backend-emit-float-compare-direct
             assignments
             dst-home
@@ -15428,10 +15426,11 @@
             lhs
             rhs
             fty
-            ty))))
+            result-ty))))
     (let
       [operand-ty : AstType
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
+      [result-ty : AstType (compiler-ir-binop-result-type op ty)]
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       [mnem : String (compiler-backend-binop-direct-mnemonic op)]
       (if (and
@@ -15444,7 +15443,7 @@
           lhs
           rhs
           operand-ty
-          ty
+          result-ty
           planned0
           planned1)
         (if (if (string.eq dst-home "")
@@ -15500,7 +15499,7 @@
                   op
                   lhs
                   operand-ty
-                  ty
+                  result-ty
                   imm
                   planned0)
                 (compiler-backend-emit-binop-direct-immediate
@@ -15524,7 +15523,7 @@
                     lhs
                     rhs
                     operand-ty
-                    ty
+                    result-ty
                     planned0
                     planned1)]
                 [(string.eq dst-home "")
@@ -15536,7 +15535,7 @@
                     lhs
                     rhs
                     operand-ty
-                    ty
+                    result-ty
                     planned0)]
                 [(compiler-backend-compare-op? op)
                   (compiler-backend-emit-binop-direct-compare
@@ -15723,7 +15722,7 @@
                             assignments
                             dst
                             staging
-                            ty))))]
+                            result-ty))))]
                   [(CompilerBackendMaybeAsm.No)
                     (match (compiler-backend-immediate-operand rhs)
                       [(CompilerBackendMaybeImmediate.Some imm)
@@ -15743,7 +15742,7 @@
                                     assignments
                                     dst
                                     staging
-                                    ty))))]
+                                    result-ty))))]
                           [(CompilerBackendMaybeAsm.No)
                             (let
                               [scav-rhs : String
@@ -15779,7 +15778,7 @@
                                             assignments
                                             dst
                                             staging
-                                            ty)))))]
+                                            result-ty)))))]
                                 [(ResultCompilerBackend.Err message)
                                   (ResultCompilerBackend.Err message)]))])]
                       [(CompilerBackendMaybeImmediate.No)
@@ -15804,7 +15803,7 @@
                                         assignments
                                         dst
                                         staging
-                                        ty))))]
+                                        result-ty))))]
                               [(CompilerBackendMaybeAsm.No)
                                 (let
                                   [scav-rhs : String
@@ -15840,7 +15839,7 @@
                                                 assignments
                                                 dst
                                                 staging
-                                                ty)))))]
+                                                result-ty)))))]
                                     [(ResultCompilerBackend.Err message)
                                       (ResultCompilerBackend.Err message)]))])
                             ;; #perf: rhs has no stack address, so it is register-
@@ -15905,7 +15904,7 @@
                                           assignments
                                           dst
                                           staging
-                                          ty))))]
+                                          result-ty))))]
                                 [(CompilerBackendMaybeAsm.No)
                                   (match (compiler-backend-emit-load-value-with-plan
                                     assignments
@@ -15930,7 +15929,7 @@
                                                   assignments
                                                   dst
                                                   staging
-                                                  ty))))
+                                                  result-ty))))
                                           (string.append
                                             lhs-asm
                                             (string.append
@@ -15947,7 +15946,7 @@
                                                   assignments
                                                   dst
                                                   staging
-                                                  ty))))))]
+                                                  result-ty))))))]
                                     [(ResultCompilerBackend.Err message)
                                       (ResultCompilerBackend.Err message)])]))))])])]
               [(ResultCompilerBackend.Err message)

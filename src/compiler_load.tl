@@ -317,6 +317,13 @@
   (lazy-import-skip-record-count (Array i64))
   (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState))
 
+;; Per-source traversal data stays explicit without widening the hot recursive
+;; declaration-loader call for each independently owned field.
+(defstruct CompilerLoadTraversalContext
+  (load-state CompilerLoadSessionState)
+  (importer-path-id i64)
+  (importer-decl-owner-id i64))
+
 (define (compiler-load-session-state-bool-cell [value : bool]) : (Array bool)
   (make-array value))
 
@@ -6379,11 +6386,9 @@
       after-alias)))
 
 (define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-  [load-state : CompilerLoadSessionState]
+  [traversal : CompilerLoadTraversalContext]
   [decls : AstDeclList]
   [importer-path : String]
-  [importer-path-id : i64]
-  [importer-decl-owner-id : i64]
   [importer-module : String]
   [importer-module-id : i64]
   [importer-source-module : String]
@@ -6417,11 +6422,12 @@
                       importer-path
                       "compiler-load: duplicate module declaration")))
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  load-state
+                  (CompilerLoadTraversalContext
+                    (struct-get traversal load-state)
+                    (struct-get traversal importer-path-id)
+                    target-module-id)
                   body
                   importer-path
-                  importer-path-id
-                  target-module-id
                   target-module
                   target-module-id
                   target-module
@@ -6437,11 +6443,9 @@
                       body-modules
                       body-seen)
                     (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                      load-state
+                      traversal
                       rest
                       importer-path
-                      importer-path-id
-                      importer-decl-owner-id
                       importer-module
                       importer-module-id
                       importer-source-module
@@ -6471,7 +6475,7 @@
                               body-paths
                               (ast-decl-path-list-prepend-builder-with-owner-id
                                 importer-path
-                                importer-decl-owner-id
+                                (struct-get traversal importer-decl-owner-id)
                                 rest-paths)))
                           (ast-decl-module-list-prepend-builder-id
                             target-module-id
@@ -6489,11 +6493,9 @@
               (AstImportSpec.Spec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                load-state
+                traversal
                 rest
                 importer-path
-                importer-path-id
-                importer-decl-owner-id
                 importer-module
                 importer-module-id
                 importer-source-module
@@ -6515,7 +6517,7 @@
                       rest-decls)
                     (ast-decl-path-list-prepend-builder-with-owner-id
                       importer-path
-                      importer-decl-owner-id
+                      (struct-get traversal importer-decl-owner-id)
                       rest-paths)
                     (ast-decl-module-list-prepend-builder-id
                       importer-source-module-id
@@ -6554,7 +6556,7 @@
                     [_preload-summary : unit
                       (if preload-summary-needed
                         (compiler-load-lazy-import-preload-summary-with-state-and-pools
-                          load-state
+                          (struct-get traversal load-state)
                           resolved
                           resolved-id
                           stdlib-roots
@@ -6566,7 +6568,7 @@
                     [preload-skip : bool
                       (if preload-summary-needed
                         (compiler-load-lazy-import-skip-with-state?
-                          load-state
+                          (struct-get traversal load-state)
                           importer-path
                           kind
                           resolved-id
@@ -6583,7 +6585,7 @@
                         (ast-decl-module-list-new)
                         seen)
                       (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
-                        load-state
+                        (struct-get traversal load-state)
                         resolved
                         resolved-id
                         seen
@@ -6608,11 +6610,9 @@
                               seen
                               import-seen)]
                           (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                            load-state
+                            traversal
                             rest
                             importer-path
-                            importer-path-id
-                            importer-decl-owner-id
                             importer-module
                             importer-module-id
                             importer-source-module
@@ -6643,7 +6643,7 @@
                                 (if lazy-skip
                                   (begin
                                     (compiler-load-session-state-lazy-import-record-skip!
-                                      load-state)
+                                      (struct-get traversal load-state))
                                     (ResultCompilerLoadWithPaths.Ok
                                       (compiler-load-decls-after-import
                                         kind
@@ -6656,7 +6656,9 @@
                                         rest-decls)
                                       (compiler-load-paths-after-import
                                         importer-path
-                                        importer-decl-owner-id
+                                        (struct-get
+                                          traversal
+                                          importer-decl-owner-id)
                                         after-import-alias
                                         (ast-decl-list-new)
                                         rest-paths)
@@ -6682,7 +6684,9 @@
                                       imported-paths
                                       (compiler-load-paths-after-import
                                         importer-path
-                                        importer-decl-owner-id
+                                        (struct-get
+                                          traversal
+                                          importer-decl-owner-id)
                                         after-import-alias
                                         imported-decls
                                         rest-paths))
@@ -6710,11 +6714,9 @@
               pools)
               [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  load-state
+                  traversal
                   rest
                   importer-path
-                  importer-path-id
-                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6736,7 +6738,7 @@
                         rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-decl-owner-id
+                        (struct-get traversal importer-decl-owner-id)
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -6755,11 +6757,9 @@
               pools)
               [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  load-state
+                  traversal
                   rest
                   importer-path
-                  importer-path-id
-                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6781,7 +6781,7 @@
                         rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-decl-owner-id
+                        (struct-get traversal importer-decl-owner-id)
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -6800,11 +6800,9 @@
               pools)
               [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  load-state
+                  traversal
                   rest
                   importer-path
-                  importer-path-id
-                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6823,7 +6821,7 @@
                       (ast-decl-list-prepend-builder expanded rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-decl-owner-id
+                        (struct-get traversal importer-decl-owner-id)
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -6842,11 +6840,9 @@
               pools)
               [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  load-state
+                  traversal
                   rest
                   importer-path
-                  importer-path-id
-                  importer-decl-owner-id
                   importer-module
                   importer-module-id
                   importer-source-module
@@ -6868,7 +6864,7 @@
                         rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
-                        importer-decl-owner-id
+                        (struct-get traversal importer-decl-owner-id)
                         rest-paths)
                       (ast-decl-module-list-prepend-builder-id
                         importer-source-module-id
@@ -6880,11 +6876,9 @@
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [_
             (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-              load-state
+              traversal
               rest
               importer-path
-              importer-path-id
-              importer-decl-owner-id
               importer-module
               importer-module-id
               importer-source-module
@@ -6906,7 +6900,7 @@
                     rest-decls)
                   (ast-decl-path-list-prepend-builder-with-owner-id
                     importer-path
-                    importer-decl-owner-id
+                    (struct-get traversal importer-decl-owner-id)
                     rest-paths)
                   (ast-decl-module-list-prepend-builder-id
                     importer-source-module-id
@@ -6932,11 +6926,12 @@
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
       (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-        compiler-load-active-session-state
+        (CompilerLoadTraversalContext
+          compiler-load-active-session-state
+          importer-path-id
+          importer-decl-owner-id)
         decls
         importer-path
-        importer-path-id
-        importer-decl-owner-id
         importer-module
         importer-module-id
         importer-source-module
@@ -7105,11 +7100,12 @@
                                 module-name-id
                                 load-decls))
                             (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                              load-state
+                              (CompilerLoadTraversalContext
+                                load-state
+                                source-path-id
+                                (struct-get parse-identity decl-owner-id))
                               load-decls
                               source-path
-                              source-path-id
-                              (struct-get parse-identity decl-owner-id)
                               module-id
                               module-name-id
                               source-module

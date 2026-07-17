@@ -7677,6 +7677,15 @@
 ;; the last register.
 (define compiler-backend-emergency-pending : bool
   false)
+;; When true, switch dispatches may use the absolute indexed form
+;; `jmp *table(,%idx,8)`: it needs no table register, so it skips the
+;; emergency borrow/stash/restore dance entirely. Valid only for non-PIC
+;; Linux binaries (absolute disp32 addressing); PIC and Windows emission
+;; keep the RIP-relative forms. Initialized per program emission.
+(define compiler-backend-absolute-switch-ok : bool
+  false)
+(define (compiler-backend-set-absolute-switch-ok! [ok : bool]) : unit
+  (set! compiler-backend-absolute-switch-ok ok))
 (define compiler-backend-emergency-reg : String
   "")
 (define compiler-backend-emergency-used : bool
@@ -30060,9 +30069,11 @@
         index-home)]
     [table-exclude : (Array String) (compiler-backend-one-exclude index-reg)]
     [table-reg : String
-      (if (string.eq planned-table-reg "")
-        (compiler-backend-scavenge-reg-here table-exclude 1 "%r9")
-        planned-table-reg)]
+      (if compiler-backend-absolute-switch-ok
+        ""
+        (if (string.eq planned-table-reg "")
+          (compiler-backend-scavenge-reg-here table-exclude 1 "%r9")
+          planned-table-reg))]
     [index-load : ResultCompilerBackend
       (if need-index-scratch
         (compiler-backend-emit-load-value-with-plan assignments index index-reg)
@@ -30070,20 +30081,12 @@
     (match index-load
       [(ResultCompilerBackend.Ok load-index)
         (ResultCompilerBackend.Ok
-          (if compiler-backend-emergency-pending
-            ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
-            ;; a trailing restore after the indirect jmp is unreachable. Emit the
-            ;; slot-indirect form with the restore BEFORE the transfer.
-            (compiler-backend-emit-switch-dispatch-emergency
-              function
-              current-label
-              default-label
-              case-count
-              base
-              index-reg
-              table-reg
-              load-index)
-            (str_cat.str-cat
+          (if compiler-backend-absolute-switch-ok
+            ;; Absolute indexed form (non-PIC Linux): no table register at
+            ;; all, so the dispatch never borrows one. Pending emergency
+            ;; occupants from earlier borrows are restored before the compare
+            ;; (movq loads keep the ja flags intact), covering both edges.
+            (str-cat
               load-index
               (if (= base 0)
                 ""
@@ -30094,21 +30097,59 @@
                   index-reg
                   "\n"
                   ""))
+              (if compiler-backend-emergency-pending
+                (compiler-backend-emergency-restore-before-jumps)
+                "")
               "    cmpq $"
               (int->string (- case-count 1))
               ", "
               index-reg
               "\n    ja "
               (compiler-backend-asm-label function default-label)
-              "\n    leaq "
+              "\n    jmp *"
               (compiler-backend-switch-table-label function current-label)
-              "(%rip), "
-              table-reg
-              "\n    jmp *("
-              table-reg
-              ","
+              "(,"
               index-reg
-              ",8)\n")))]
+              ",8)\n")
+            (if compiler-backend-emergency-pending
+              ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
+              ;; a trailing restore after the indirect jmp is unreachable. Emit the
+              ;; slot-indirect form with the restore BEFORE the transfer.
+              (compiler-backend-emit-switch-dispatch-emergency
+                function
+                current-label
+                default-label
+                case-count
+                base
+                index-reg
+                table-reg
+                load-index)
+              (str_cat.str-cat
+                load-index
+                (if (= base 0)
+                  ""
+                  (str_cat.str-cat
+                    "    subq $"
+                    (int->string base)
+                    ", "
+                    index-reg
+                    "\n"
+                    ""))
+                "    cmpq $"
+                (int->string (- case-count 1))
+                ", "
+                index-reg
+                "\n    ja "
+                (compiler-backend-asm-label function default-label)
+                "\n    leaq "
+                (compiler-backend-switch-table-label function current-label)
+                "(%rip), "
+                table-reg
+                "\n    jmp *("
+                table-reg
+                ","
+                index-reg
+                ",8)\n"))))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-switch
@@ -50110,6 +50151,7 @@ tl_tlci_call_macro_entry:
     mode
     spans
     emit-entry
+    false
     false))
 
 (define (compiler-backend-emit-program-prefix-buffer
@@ -50438,10 +50480,15 @@ tl_tlci_call_macro_entry:
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  [crt-entry : bool]
+  [pic-emit? : bool]) : ResultCompilerBackendBuffer
   (begin
     (compiler-backend-user-symbol-cache-reset!)
     (compiler-backend-peephole-carry-safe-reset!)
+    (compiler-backend-set-absolute-switch-ok!
+      (and
+        (not pic-emit?)
+        (not (compiler-backend-target-windows? target))))
     (set! compiler-backend-rsp-rebase-ok-count 0)
     (set! compiler-backend-rsp-rebase-keep-count 0)
     (set! compiler-backend-fpo-count 0)
@@ -56428,7 +56475,8 @@ tl_tlci_call_macro_entry:
                       mode
                       spans
                       emit-entry
-                      crt-entry)
+                      crt-entry
+                      false)
                     (compiler-backend-emit-program-target-with-mode-buffer
                       program
                       target
@@ -57002,7 +57050,8 @@ tl_tlci_call_macro_entry:
     mode
     spans
     emit-entry
-    crt-entry)
+    crt-entry
+    true)
     [(ResultCompilerBackendBuffer.Ok buf)
       (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
         program

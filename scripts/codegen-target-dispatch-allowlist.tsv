@@ -82,3 +82,4 @@ src/compiler_backend.tl	compiler-backend-lower-mode-for-target	backend-mode	Comp
 src/compiler_backend.tl	compiler-backend-extern-metadata-symbol-ok?	test-only	CompilerBackendTarget[.](Linux|Windows)	2	Inline backend test checks extern metadata symbols on both targets.
 src/compiler_backend.tl	compiler-backend-windows-driver-runtime-ok?	test-only	CompilerBackendTarget[.]Windows	1	Inline backend test checks Windows runtime acceptance.
 src/compiler_backend.tl	compiler-backend-instr-outgoing-stack-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-instruction outgoing stack space follows target calling convention rules.
+src/compiler_backend.tl	compiler-backend-emit-program-target-with-mode-buffer-and-crt	object-format	compiler-backend-target-windows[?]	1	Absolute indexed switch dispatch is initialized per program emission: non-PIC Linux only; PIC and Windows keep RIP-relative forms.

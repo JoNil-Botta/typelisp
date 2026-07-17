@@ -3841,8 +3841,7 @@
       ;; lookups do not grow first the way put does.
       (while (< walked capacity)
         (match (array-ref slots cursor)
-          [(I64I64MapEmpty)
-            (return (I64I64MapMissing))]
+          [(I64I64MapEmpty) (return (I64I64MapMissing))]
           [(I64I64MapTombstone)
             (let
               [next : i64 (+ cursor 1)]

@@ -11138,6 +11138,13 @@
 ;; re-selected for the same region, so it converges; fuel (the integer register
 ;; count) bounds it. With a single candidate this is bit-identical to the old
 ;; one-shot behaviour (merging additions with the empty tail is the identity).
+(define (compiler-reg-depths-have-loop? [depths : (Array i64)] [index : i64]) : bool
+  (if (>= index (array-length depths))
+    false
+    (if (> (array-ref depths index) 0)
+      true
+      (compiler-reg-depths-have-loop? depths (+ index 1)))))
+
 (define (compiler-reg-loop-split-rewrite-one
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
@@ -11150,17 +11157,29 @@
       (compiler-reg-loop-split-noop blocks vars)
       "")
     (let
-      [liveness-handle : CompilerRegLivenessHandle
-        (compiler-reg-liveness-handle-make func false)]
-      (compiler-reg-loop-split-rewrite-fueled
-        abi
-        func
-        liveness-handle
-        blocks
-        vars
-        type-info
-        plan
-        (compiler-reg-callee-saved-integer-register-count-for-abi abi)))))
+      [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+      ;; Every candidate class (single-block self-loop/read-only, single-block
+      ;; phi, multi-block phi-carried) and the refused-preheader splice lives
+      ;; inside a natural loop. A function with no loop-depth above zero can
+      ;; produce none of them, so skip the liveness fixpoint, interval build,
+      ;; and coalesce map entirely for loop-free functions.
+      (if (not (compiler-reg-depths-have-loop? depths 0))
+        (CompilerRegLoopSplitRewriteResult.Result
+          (compiler-reg-loop-split-noop blocks vars)
+          "")
+        (let
+          [liveness-handle : CompilerRegLivenessHandle
+            (compiler-reg-liveness-handle-make func false)]
+          (compiler-reg-loop-split-rewrite-fueled
+            abi
+            func
+            liveness-handle
+            blocks
+            vars
+            type-info
+            plan
+            depths
+            (compiler-reg-callee-saved-integer-register-count-for-abi abi)))))))
 
 (define (compiler-reg-loop-split-rewrite-fueled
   [abi : CompilerRegTargetAbi]
@@ -11170,6 +11189,7 @@
   [vars : i64]
   [type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]
+  [depths : (Array i64)]
   [fuel : i64]) : CompilerRegLoopSplitRewriteResult
   (if (<= fuel 0)
     (CompilerRegLoopSplitRewriteResult.Result
@@ -11185,7 +11205,6 @@
         (compiler-reg-plan-assignments plan)]
       [group-vars : CompilerLiveI64Set
         (compiler-reg-function-group-vars func types)]
-      [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
       (match selection
         [(CompilerRegIntervalSelection.Selection _ intervals)
           (let
@@ -11326,6 +11345,8 @@
                                     new-vars
                                     type-info
                                     new-plan
+                                    (compiler-reg-function-loop-depths
+                                      new-blocks)
                                     (- fuel 1))]
                                 (match rest
                                   [(CompilerRegLoopSplitRewriteResult.Result

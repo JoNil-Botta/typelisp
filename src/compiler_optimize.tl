@@ -30353,6 +30353,144 @@
               [(ResultCompilerOptimizeVerify.Ok) next]
               [(ResultCompilerOptimizeVerify.Err _) func]))))]))
 
+;; Sink a compare whose only block-local use is the block's final Branch to
+;; the instruction right before that Branch. The backend fuses a
+;; compare+branch pair (cmp;jcc) only when they are adjacent, and a
+;; loop-closing compare is often separated from its branch by a flag-safe
+;; pointer-increment Gep (the counted-fill shape), forcing the
+;; setl/movzbq/test/jne materialization instead. The move is pure scheduling:
+;; it fires only when no intervening instruction reads the compare's result
+;; or redefines its operands.
+;;
+;; Scan backward from the branch for the cond var's definition. Returns the
+;; defining compare's index, or -1 if a use of the cond var or a non-compare
+;; definition comes first.
+(define (opt-cmp-sink-find-compare
+  [instrs : CompilerIrInstrSeq]
+  [cond-var : i64]
+  [index : i64]) : i64
+  (if (< index 0)
+    (- 0 1)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(CompilerIrInstr.BinOp dst op lhs rhs _)
+          (if (= dst cond-var)
+            (if (opt-bool-branch-compare-op? op)
+              index
+              (- 0 1))
+            (if (or
+              (opt-value-is-var? lhs cond-var)
+              (opt-value-is-var? rhs cond-var))
+              (- 0 1)
+              (opt-cmp-sink-find-compare instrs cond-var (- index 1))))]
+        [_
+          (if (or
+            (= (opt-gvn-instr-dst instr) cond-var)
+            (opt-cmp-sink-instr-uses-var? instr cond-var))
+            (- 0 1)
+            (opt-cmp-sink-find-compare instrs cond-var (- index 1)))]))))
+
+;; Conservative operand-position use check for the instructions that can sit
+;; between a loop-closing compare and its branch (Mov/Gep/Load/Cast/Bitcast/
+;; UnOp/BinOp and other non-terminators). Unknown kinds count as using the var.
+(define (opt-cmp-sink-instr-uses-var? [instr : CompilerIrInstr] [var : i64]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ src _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.Gep _ base offset _)
+      (or (opt-value-is-var? base var) (opt-value-is-var? offset var))]
+    [(CompilerIrInstr.Load _ src _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.Cast _ src _ _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.Bitcast _ src _ _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.UnOp _ _ src _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (or (opt-value-is-var? lhs var) (opt-value-is-var? rhs var))]
+    [_ true]))
+
+;; Every instruction strictly between `def-index` and the block's final
+;; Branch must leave the compare's operands (and its result) untouched.
+(define (opt-cmp-sink-clear?
+  [instrs : CompilerIrInstrSeq]
+  [def-index : i64]
+  [last : i64]
+  [cond-var : i64]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : bool
+  (if (>= def-index last)
+    true
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs def-index)]
+      [dst : i64 (opt-gvn-instr-dst instr)]
+      (if (or
+        (= dst cond-var)
+        (opt-value-is-var? lhs dst)
+        (opt-value-is-var? rhs dst))
+        false
+        (opt-cmp-sink-clear? instrs (+ def-index 1) last cond-var lhs rhs)))))
+
+(define (opt-cmp-sink-move-onto
+  [instrs : CompilerIrInstrSeq]
+  [def-index : i64]
+  [index : i64]
+  [out : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (< index 0)
+    out
+    (opt-cmp-sink-move-onto
+      instrs
+      def-index
+      (- index 1)
+      (if (= index def-index)
+        out
+        (compiler-ir-instr-cons (compiler-ir-instr-seq-ref instrs index) out)))))
+
+(define (opt-cmp-sink-block [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 3)
+          block
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch (CompilerIrValue.Var cond-var) _ _)
+              (let
+                [def-index : i64
+                  (opt-cmp-sink-find-compare instrs cond-var (- count 2))]
+                (if (or (< def-index 0) (= def-index (- count 2)))
+                  block
+                  (match (compiler-ir-instr-seq-ref instrs def-index)
+                    [(CompilerIrInstr.BinOp _ _ lhs rhs _)
+                      (if (opt-cmp-sink-clear?
+                        instrs
+                        (+ def-index 1)
+                        (- count 1)
+                        cond-var
+                        lhs
+                        rhs)
+                        (compiler-ir-block
+                          label
+                          (opt-cmp-sink-move-onto
+                            instrs
+                            def-index
+                            (- count 2)
+                            (compiler-ir-instr-cons
+                              (compiler-ir-instr-seq-ref instrs def-index)
+                              (compiler-ir-instr-cons
+                                (compiler-ir-instr-seq-ref instrs (- count 1))
+                                CompilerIrInstrList.Nil))))
+                        block)]
+                    [_ block])))]
+            [_ block])))]))
+
+(define (opt-cmp-sink-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-cmp-sink-block block)
+        (opt-cmp-sink-blocks (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-cmp-sink-blocks (compiler-ir-block-seq-to-list seq))]))
+
 (define (optimize-function-once-with-summaries
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
@@ -30388,7 +30526,10 @@
               params
               ret-ty
               frame
-              (optimize-block-list-for-function frame params const-global-blocks))]
+              (optimize-block-list-for-function
+                frame
+                params
+                const-global-blocks))]
           [_p-fold : unit
             (cfg
               compile-profile
@@ -31029,11 +31170,25 @@
                       [gep-split-frame : i64 (opt-function-frame gep-split)]
                       [gep-split-blocks : CompilerIrBlockList
                         (opt-function-blocks gep-split)]
+                      [_t-cmp-sink : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      ;; Sink loop-closing compares next to their branches so
+                      ;; the backend's compare+branch fusion fires past the
+                      ;; flag-safe pointer-increment Gep (the counted-fill
+                      ;; shape's setl/movzbq/test/jne becomes cmp;jcc).
+                      [cmp-sink : CompilerIrBlockList
+                        (opt-cmp-sink-blocks gep-split-blocks)]
+                      [_p-cmp-sink : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "cmp_sink"
+                            name
+                            _t-cmp-sink)
+                          unit)]
                       [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [used : (Array i64)
-                        (opt-collect-blocks-uses-array
-                          gep-split-frame
-                          gep-split-blocks)]
+                        (opt-collect-blocks-uses-array gep-split-frame cmp-sink)]
                       [dced : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           "dce"
@@ -31041,7 +31196,7 @@
                           params
                           ret-ty
                           gep-split-frame
-                          (opt-dce-block-list-array used gep-split-blocks))]
+                          (opt-dce-block-list-array used cmp-sink))]
                       [_p-dce : unit
                         (cfg
                           compile-profile
@@ -42548,6 +42703,118 @@
         (unless (= (opt-count-words-blocks optimized-blocks) 0) (return 1))
         (unless (= (opt-count-packs-blocks optimized-blocks) 0) (return 2))
         42)]))
+
+(define (opt-instr-compare-dst? [instr : CompilerIrInstr] [dst : i64]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp d op _ _ _)
+      (and (= d dst) (opt-bool-branch-compare-op? op))]
+    [_ false]))
+
+(define (opt-block-instr-at [block : CompilerIrBlock] [index : i64]) : CompilerIrInstr
+  (match block
+    [(CompilerIrBlock.Block _ instrs) (compiler-ir-instr-seq-ref instrs index)]))
+
+(define (opt-block-instr-count [block : CompilerIrBlock]) : i64
+  (match block
+    [(CompilerIrBlock.Block _ instrs) (compiler-ir-instr-seq-count instrs)]))
+
+;; The counted-fill shape: the loop-closing compare sits one flag-safe
+;; pointer-increment Gep away from its branch. Sinking moves it adjacent so
+;; the backend can fuse cmp;jcc.
+(define (opt-cmp-sink-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "loop"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          5
+          (CompilerIrBinOp.Lt)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.Bool))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            6
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 8)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "t" "f")
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "t"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "f"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrBlockList.Nil)))))
+
+;; Same shape, but the intervening instruction redefines a compare operand:
+;; the compare must stay put.
+(define (opt-cmp-sink-blocked-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "loop"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          5
+          (CompilerIrBinOp.Lt)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.Bool))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            0
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "t" "f")
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "t"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "f"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrBlockList.Nil)))))
+
+;; Returns 42 only when the movable compare lands right before the branch and
+;; the operand-clobbering one stays at index 0.
+(define (compiler-optimize-cmp-sink-self-test) : i64
+  (match (opt-cmp-sink-blocks (opt-cmp-sink-test-blocks))
+    [(CompilerIrBlockList.Cons moved _)
+      (match (opt-cmp-sink-blocks (opt-cmp-sink-blocked-test-blocks))
+        [(CompilerIrBlockList.Cons stayed _)
+          (begin
+            (unless
+              (opt-instr-compare-dst?
+                (opt-block-instr-at moved (- (opt-block-instr-count moved) 2))
+                5)
+              (return 1))
+            (unless
+              (opt-instr-compare-dst? (opt-block-instr-at stayed 0) 5)
+              (return 2))
+            42)]
+        [_ 3])]
+    [_ 4]))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
 ;; is absent or its lhs is not a var. Used to inspect copy-propagation rewrites.

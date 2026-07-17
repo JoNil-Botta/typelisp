@@ -1867,6 +1867,10 @@
       "compiler-optimize-dce-pack-self-test"
       (compiler-optimize-dce-pack-self-test)
       42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-cmp-sink-self-test"
+      (compiler-optimize-cmp-sink-self-test)
+      42)
     42))
 
 (define (main) : i64
@@ -1945,3 +1949,10 @@
     (compiler-optimize-dce-pack-self-test)
     42
     "Pipeline DCE retires a Pack whose extractions all folded"))
+
+(test
+  cmp-sink-to-branch
+  (test.assert-i64-eq
+    (compiler-optimize-cmp-sink-self-test)
+    42
+    "Sinking a loop-closing compare next to its branch"))

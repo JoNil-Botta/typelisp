@@ -50722,6 +50722,14 @@
   (Ok TcTypeEnv)
   (Err (Box CompilerDiagnostic)))
 
+(defenum ResultMacroResourceBindings
+  (Ok AstResourceBindingList TcTypeEnv)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum ResultMacroResourceBindingsBuild
+  (Ok TcTypeEnv)
+  (Err (Box CompilerDiagnostic)))
+
 (defenum ResultMacroEnv
   (Ok CtfeEnv)
   (Err (Box CompilerDiagnostic)))
@@ -61108,6 +61116,78 @@
                     (box (tc-expr-diag (ast-node-get ninit) message)))])]
             [(ResultMacroExpr.Err diag) (ResultMacroLetBindingsBuild.Err diag)]))])))
 
+(define (macro-expand-resource-bindings
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [bindings : AstResourceBindingList]) : ResultMacroResourceBindings
+  (let
+    [out : AstResourceBindingList
+      (ast-resource-binding-list-with-capacity
+        (ast-resource-binding-list-len (& bindings)))]
+    (match (macro-expand-resource-bindings-into
+      ctx
+      env
+      decls
+      depth
+      (& bindings)
+      0
+      (&mut out))
+      [(ResultMacroResourceBindingsBuild.Ok final-env)
+        (ResultMacroResourceBindings.Ok out final-env)]
+      [(ResultMacroResourceBindingsBuild.Err diag)
+        (ResultMacroResourceBindings.Err diag)])))
+
+(define (macro-expand-resource-bindings-into
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]
+  [out : (&mut out AstResourceBindingList)]) : ResultMacroResourceBindingsBuild
+  (if (>= index (ast-resource-binding-list-len bindings))
+    (ResultMacroResourceBindingsBuild.Ok env)
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init-box cleanup-box)
+        (let
+          [init : AstExpr (ast-node-get init-box)]
+          [cleanup : AstExpr (ast-node-get cleanup-box)]
+          (match (macro-expand-expr ctx env decls depth init)
+            [(ResultMacroExpr.Ok ninit)
+              (match (macro-expand-expr ctx env decls depth cleanup)
+                [(ResultMacroExpr.Ok ncleanup)
+                  (let
+                    [binding : AstResourceBinding
+                      (ast-resource-binding-id name ninit ncleanup)]
+                    [single : AstResourceBindingList
+                      (ast-resource-binding-cons
+                        binding
+                        (ast-resource-binding-list-new))]
+                    (match (tc-resource-bindings ctx env single)
+                      [(ResultTcEnv.Ok next-env)
+                        (begin
+                          (ast-resource-binding-list-push out binding)
+                          (macro-expand-resource-bindings-into
+                            ctx
+                            next-env
+                            decls
+                            depth
+                            bindings
+                            (+ index 1)
+                            out))]
+                      [(ResultTcEnv.Err message)
+                        (ResultMacroResourceBindingsBuild.Err
+                          (box (tc-expr-diag (ast-node-get ninit) message)))]))]
+                [(ResultMacroExpr.Err diag)
+                  (ResultMacroResourceBindingsBuild.Err diag)])]
+            [(ResultMacroExpr.Err diag)
+              (ResultMacroResourceBindingsBuild.Err diag)]))])))
+
 (define (macro-compat-unit-expr) : i64
   (ast-node-push (AstExpr.Literal AstLiteral.Unit)))
 
@@ -61587,6 +61667,20 @@
                     [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
                 [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+      [(AstExpr.WithResource wr-box)
+        (match (box-get wr-box)
+          [(AstWithResource.WithResource bindings body)
+            (match (macro-expand-resource-bindings ctx env decls depth bindings)
+              [(ResultMacroResourceBindings.Ok nbindings body-env)
+                (match (macro-expand-exprs ctx body-env decls depth body)
+                  [(ResultMacroExprList.Ok nbody)
+                    (ResultMacroExpr.Ok
+                      (ast-node-push
+                        (AstExpr.WithResource
+                          (box (AstWithResource.WithResource nbindings nbody)))))]
+                  [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroResourceBindings.Err diag)
+                (ResultMacroExpr.Err diag)])])]
       [(AstExpr.Box inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]

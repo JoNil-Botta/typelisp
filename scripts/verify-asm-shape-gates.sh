@@ -238,7 +238,9 @@ check_loadcse_forward() {
 check_switch_dispatch_scavenge() {
     _asm=$(compile_gate switch_dispatch_scavenge tests/integration/switch_dispatch_scavenge.tl)
     _body=$(function_body "$_asm" _tl_switch_dispatch_scavenge_run_switch)
-    assert_regex_count_eq "$_body" '^[[:space:]]+jmp \*[0-9]+\(%rsp\)$' 1 switch-dispatch-scavenge
+    # Non-PIC Linux dispatches with the absolute indexed form: no table
+    # register is borrowed even under the fixture's deliberate pressure.
+    assert_regex_count_eq "$_body" '^[[:space:]]+jmp \*\.Lf.*_switch_table\(,%r[a-z0-9]+,8\)$' 1 switch-dispatch-scavenge
     assert_not_matches "$_body" '^[[:space:]]+jmp \*%r' switch-dispatch-scavenge
 }
 

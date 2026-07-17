@@ -19,7 +19,7 @@
 ;;   control-flow edge.
 ;;
 ;; Out of scope: broad aggregate/String/array IR optimization.
-(cfg compile-profile (import stdlib.io))
+(import stdlib.io)
 (cfg compile-profile (import stdlib.profile))
 (import stdlib.array)
 (import stdlib.vector)
@@ -34,7 +34,7 @@
 (import (hashmap String i64) as opt_string_i64_map)
 (import (hashmap i64 i64) as opt_i64_i64_map)
 (import stdlib.string)
-(cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
+(import stdlib.str_cat_runtime as str_cat)
 (cfg compile-profile-summary (import compiler_profile_summary as cps))
 (import stdlib.option)
 (import (option i64) as option_i64)
@@ -45,6 +45,104 @@
 
 (defenum CompilerOptimizedProgram
   (Program CompilerIrProgram CompilerSourceSpans))
+
+;; Developer-only optimizer observability. The CLI resets this state before
+;; every command, so normal compilation remains silent and allocation-free at
+;; pass boundaries.
+(define compiler-opt-debug-trace-passes : bool
+  false)
+(define compiler-opt-debug-dump-pass : String
+  "")
+(define compiler-opt-debug-dump-text : String
+  "")
+(define compiler-opt-debug-dump-arena : i64
+  0)
+(define compiler-opt-debug-verify-ir : bool
+  false)
+(define compiler-opt-debug-verify-error : String
+  "")
+
+(define (compiler-opt-debug-configure!
+  [trace-passes : bool]
+  [dump-pass : String]
+  [verify-ir : bool]) : unit
+  (begin
+    (set! compiler-opt-debug-trace-passes trace-passes)
+    (set! compiler-opt-debug-dump-pass dump-pass)
+    (set! compiler-opt-debug-dump-text "")
+    (set! compiler-opt-debug-dump-arena (arena.tl_arena_current))
+    (set! compiler-opt-debug-verify-ir verify-ir)
+    (set! compiler-opt-debug-verify-error "")))
+
+(define (compiler-opt-debug-dump-result) : String
+  compiler-opt-debug-dump-text)
+
+(define (compiler-opt-debug-verification-error) : String
+  compiler-opt-debug-verify-error)
+
+(define (compiler-opt-debug-pass-selected? [pass : String]) : bool
+  (and
+    (> (string.string-length compiler-opt-debug-dump-pass) 0)
+    (string.eq compiler-opt-debug-dump-pass pass)))
+
+(define (compiler-opt-debug-observe-function
+  [pass : String]
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function name _ _ _ blocks)
+      (begin
+        (if compiler-opt-debug-trace-passes
+          (io.print-error
+            (str_cat.str-cat
+              "optimizer-pass|"
+              (compiler-ir-symbol-text name)
+              "|"
+              pass
+              "|blocks="
+              (string.int->string (compiler-ir-block-list-count blocks))
+              "|instructions="
+              (string.int->string
+                (compiler-ir-block-list-instruction-count blocks))
+              "\n"))
+          unit)
+        (if (compiler-opt-debug-pass-selected? pass)
+          (let
+            [pass-arena : i64 (arena.tl_arena_current)]
+            (unsafe
+              (begin
+                (arena.tl_arena_set compiler-opt-debug-dump-arena)
+                (set!
+                  compiler-opt-debug-dump-text
+                  (str_cat.str-cat
+                    compiler-opt-debug-dump-text
+                    (if (=
+                      (string.string-length compiler-opt-debug-dump-text)
+                      0)
+                      ""
+                      "\n")
+                    "after "
+                    pass
+                    " @"
+                    (compiler-ir-symbol-text name)
+                    "\n"
+                    (compiler-ir-function-render func)))
+                (set! compiler-opt-debug-dump-arena (arena.tl_arena_current))
+                (arena.tl_arena_set pass-arena))))
+          unit)
+        func)]))
+
+(define (compiler-opt-debug-observe-blocks
+  [pass : String]
+  [name : i64]
+  [params : CompilerIrParamList]
+  [ret-ty : AstType]
+  [frame : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (begin
+    (compiler-opt-debug-observe-function
+      pass
+      (CompilerIrFunction.Function name params ret-ty frame blocks))
+    blocks))
 
 (defenum OptAggregatePointer
   (Pointer i64 i64))
@@ -9157,6 +9255,65 @@
     [(CompilerIrBlockList.Array seq)
       (opt-verify-block-uses defs doms (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-verify-instr-seq-uses-contextual
+  [defs : (Array OptMaybeVarDef)]
+  [doms : OptDomInfo]
+  [block-label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [pos : i64]) : ResultCompilerOptimizeVerify
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (ResultCompilerOptimizeVerify.Ok)
+    (match (opt-verify-instr-uses
+      defs
+      doms
+      block-label
+      pos
+      (compiler-ir-instr-seq-ref instrs index))
+      [(ResultCompilerOptimizeVerify.Ok)
+        (opt-verify-instr-seq-uses-contextual
+          defs
+          doms
+          block-label
+          instrs
+          (+ index 1)
+          (+ pos 1))]
+      [(ResultCompilerOptimizeVerify.Err message)
+        (ResultCompilerOptimizeVerify.Err
+          (str_cat.str-cat
+            "block "
+            block-label
+            " instruction "
+            (string.int->string index)
+            ": "
+            message))])))
+
+(define (opt-verify-block-uses-contextual
+  [defs : (Array OptMaybeVarDef)]
+  [doms : OptDomInfo]
+  [blocks : CompilerIrBlockList]) : ResultCompilerOptimizeVerify
+  (match blocks
+    [(CompilerIrBlockList.Nil) (ResultCompilerOptimizeVerify.Ok)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (match (opt-verify-instr-seq-uses-contextual
+            defs
+            doms
+            label
+            instrs
+            0
+            1)
+            [(ResultCompilerOptimizeVerify.Ok)
+              (opt-verify-block-uses-contextual defs doms (box-get rest))]
+            [(ResultCompilerOptimizeVerify.Err message)
+              (ResultCompilerOptimizeVerify.Err message)])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-verify-block-uses-contextual
+        defs
+        doms
+        (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-verify-function-body-with-context
   [func : CompilerIrFunction]
   [context : OptCfgContext]) : ResultCompilerOptimizeVerify
@@ -9175,6 +9332,27 @@
             (match (opt-verify-phi-predecessors-blocks pred-map blocks)
               [(ResultCompilerOptimizeVerify.Ok)
                 (opt-verify-block-uses defs doms blocks)]
+              [(ResultCompilerOptimizeVerify.Err message)
+                (ResultCompilerOptimizeVerify.Err message)]))])]))
+
+(define (opt-verify-final-function-body-with-context
+  [func : CompilerIrFunction]
+  [context : OptCfgContext]) : ResultCompilerOptimizeVerify
+  (match func
+    [(CompilerIrFunction.Function _ params _ vars blocks)
+      (cond
+        [(not (opt-verify-single-defs? params vars blocks))
+          (ResultCompilerOptimizeVerify.Err
+            "optimizer verify: duplicate var definition")]
+        [else
+          (let
+            [doms : OptDomInfo (struct-get context doms)]
+            [pred-map : OptPredMap (struct-get context pred-map)]
+            [defs : (Array OptMaybeVarDef)
+              (opt-var-defs-index (opt-var-defs-from-function params blocks))]
+            (match (opt-verify-phi-predecessors-blocks pred-map blocks)
+              [(ResultCompilerOptimizeVerify.Ok)
+                (opt-verify-block-uses-contextual defs doms blocks)]
               [(ResultCompilerOptimizeVerify.Err message)
                 (ResultCompilerOptimizeVerify.Err message)]))])]))
 
@@ -9222,6 +9400,93 @@
           (opt-verify-function-body-with-context
             func
             (opt-cfg-context-build blocks))])]))
+
+(define (opt-verify-final-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
+  (match func
+    [(CompilerIrFunction.Function _ params _ vars blocks)
+      (cond
+        [(not (opt-cfg-block-labels-unique? blocks))
+          (ResultCompilerOptimizeVerify.Err
+            "optimizer verify: duplicate block label")]
+        [(not (opt-cfg-successor-targets-known? blocks))
+          (ResultCompilerOptimizeVerify.Err
+            "optimizer verify: unknown successor label")]
+        ;; Final backend IR is not required to be SSA. Apply dominance/use
+        ;; checks when it is SSA-shaped; otherwise the structural CFG checks
+        ;; above are the valid final-IR contract.
+        [(opt-verify-single-defs? params vars blocks)
+          (opt-verify-final-function-body-with-context
+            func
+            (opt-cfg-context-build blocks))]
+        [else (ResultCompilerOptimizeVerify.Ok)])]))
+
+(define (opt-verify-function-list [functions : CompilerIrFunctionList]) : ResultCompilerOptimizeVerify
+  (match (compiler-ir-function-list-force-cons functions)
+    [(CompilerIrFunctionList.Nil) (ResultCompilerOptimizeVerify.Ok)]
+    [(CompilerIrFunctionList.Array seq)
+      (opt-verify-function-list (compiler-ir-function-seq-to-list seq))]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (match (opt-verify-final-function func)
+            [(ResultCompilerOptimizeVerify.Ok)
+              (opt-verify-function-list (box-get rest))]
+            [(ResultCompilerOptimizeVerify.Err message)
+              (ResultCompilerOptimizeVerify.Err
+                (str_cat.str-cat
+                  "function @"
+                  (compiler-ir-symbol-text name)
+                  ": "
+                  message))])])]))
+
+(define (opt-verify-program [program : CompilerIrProgram]) : ResultCompilerOptimizeVerify
+  (match program
+    [(CompilerIrProgram.Program _ functions _)
+      (opt-verify-function-list functions)]))
+
+(define (compiler-opt-debug-finish-program [program : CompilerIrProgram]) : CompilerIrProgram
+  (begin
+    (if compiler-opt-debug-verify-ir
+      (match (opt-verify-program program)
+        [(ResultCompilerOptimizeVerify.Ok)
+          (set! compiler-opt-debug-verify-error "")]
+        [(ResultCompilerOptimizeVerify.Err message)
+          (set! compiler-opt-debug-verify-error message)])
+      unit)
+    program))
+
+(define (compiler-optimize-debug-verifier-self-test) : i64
+  (let
+    [name : i64 (compiler-ir-test-symbol "debug-invalid")]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil)]
+    [program : CompilerIrProgram
+      (CompilerIrProgram.Program
+        CompilerIrGlobalList.Nil
+        (compiler-ir-function-cons
+          (CompilerIrFunction.Function
+            name
+            CompilerIrParamList.Nil
+            (AstType.I64)
+            1
+            blocks)
+          CompilerIrFunctionList.Nil)
+        CompilerIrExternList.Nil)]
+    (match (opt-verify-program program)
+      [(ResultCompilerOptimizeVerify.Err message)
+        (if (string.eq
+          message
+          "function @debug-invalid: block entry instruction 0: optimizer verify: use before definition")
+          42
+          1)]
+      [(ResultCompilerOptimizeVerify.Ok) 2])))
 
 ;; --- standalone scalar SSA construction / mem2reg --------------------------
 ;;
@@ -29496,7 +29761,10 @@
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
   (let
     [_t-tailrec : i64 (cfg compile-profile (profile.now-ms) 0)]
-    [tailrec : CompilerIrFunction (opt-tailrec-function func)]
+    [tailrec : CompilerIrFunction
+      (compiler-opt-debug-observe-function
+        "tailrec"
+        (opt-tailrec-function func))]
     (match tailrec
       [(CompilerIrFunction.Function name params ret-ty frame blocks)
         ;; Fold first so SCCP can reuse local facts, then simplify the reachable
@@ -29509,14 +29777,27 @@
               unit)]
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
           [folded : CompilerIrBlockList
-            (optimize-block-list-for-function frame params blocks)]
+            (compiler-opt-debug-observe-blocks
+              "fold"
+              name
+              params
+              ret-ty
+              frame
+              (optimize-block-list-for-function frame params blocks))]
           [_p-fold : unit
             (cfg
               compile-profile
               (compiler-opt-profile-pass-finish "fold" name _t-fold)
               unit)]
           [_t-affine : i64 (cfg compile-profile (profile.now-ms) 0)]
-          [affine : CompilerIrBlockList (opt-affine-fold-blocks frame folded)]
+          [affine : CompilerIrBlockList
+            (compiler-opt-debug-observe-blocks
+              "affine"
+              name
+              params
+              ret-ty
+              frame
+              (opt-affine-fold-blocks frame folded))]
           [_p-affine : unit
             (cfg
               compile-profile
@@ -29528,8 +29809,10 @@
               affine)]
           [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
           [promoted : CompilerIrFunction
-            (opt-aggregate-stack-promote-function
-              (CompilerIrFunction.Function name params ret-ty frame loop-bce))]
+            (compiler-opt-debug-observe-function
+              "stack_promote"
+              (opt-aggregate-stack-promote-function
+                (CompilerIrFunction.Function name params ret-ty frame loop-bce)))]
           [_p-promote : unit
             (cfg
               compile-profile
@@ -29543,13 +29826,15 @@
               (let
                 [_t-sroa : i64 (cfg compile-profile (profile.now-ms) 0)]
                 [sroa : CompilerIrFunction
-                  (opt-aggregate-sroa-function
-                    (CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      promoted-frame
-                      promoted-blocks))]
+                  (compiler-opt-debug-observe-function
+                    "sroa"
+                    (opt-aggregate-sroa-function
+                      (CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        promoted-frame
+                        promoted-blocks)))]
                 [_p-sroa : unit
                   (cfg
                     compile-profile
@@ -29570,20 +29855,22 @@
                       [_t-rotation : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [rotated : CompilerIrFunction
-                        (if run-heavy?
-                          (opt-loop-rotation-function
+                        (compiler-opt-debug-observe-function
+                          "rotation"
+                          (if run-heavy?
+                            (opt-loop-rotation-function
+                              (CompilerIrFunction.Function
+                                name
+                                params
+                                ret-ty
+                                promoted-frame
+                                sroa-blocks))
                             (CompilerIrFunction.Function
                               name
                               params
                               ret-ty
                               promoted-frame
-                              sroa-blocks))
-                          (CompilerIrFunction.Function
-                            name
-                            params
-                            ret-ty
-                            promoted-frame
-                            sroa-blocks))]
+                              sroa-blocks)))]
                       [_p-rotation : unit
                         (cfg
                           compile-profile
@@ -29604,8 +29891,10 @@
                             rotated
                             (opt-cfg-context-empty)))]
                       [ssa : CompilerIrFunction
-                        (match ssa-result
-                          [(OptFunctionCtxResult.Result f _) f])]
+                        (compiler-opt-debug-observe-function
+                          "ssa"
+                          (match ssa-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [ssa-context : OptCfgContext
                         (match ssa-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
@@ -29619,12 +29908,18 @@
                         (opt-function-blocks ssa)]
                       [_t-gvn : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [gvn : CompilerIrBlockList
-                        (if run-heavy?
-                          (opt-gvn-blocks-with-context
-                            ssa-context
-                            params
-                            ssa-blocks)
-                          ssa-blocks)]
+                        (compiler-opt-debug-observe-blocks
+                          "gvn"
+                          name
+                          params
+                          ret-ty
+                          ssa-frame
+                          (if run-heavy?
+                            (opt-gvn-blocks-with-context
+                              ssa-context
+                              params
+                              ssa-blocks)
+                            ssa-blocks))]
                       [_p-gvn : unit
                         (cfg
                           compile-profile
@@ -29644,15 +29939,21 @@
                       [_t-bounds-dom : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [bounds-dom : CompilerIrBlockList
-                        (if (and
-                          run-heavy?
-                          (opt-verify-ok?
-                            (opt-verify-function-with-context ssa ssa-context)))
-                          (opt-bounds-dom-blocks-with-context
-                            ssa-context
-                            params
-                            gvn)
-                          gvn)]
+                        (compiler-opt-debug-observe-blocks
+                          "bounds_dom"
+                          name
+                          params
+                          ret-ty
+                          ssa-frame
+                          (if (and
+                            run-heavy?
+                            (opt-verify-ok?
+                              (opt-verify-function-with-context ssa ssa-context)))
+                            (opt-bounds-dom-blocks-with-context
+                              ssa-context
+                              params
+                              gvn)
+                            gvn))]
                       [_p-bounds-dom : unit
                         (cfg
                           compile-profile
@@ -29673,8 +29974,14 @@
                             (opt-cfg-context-empty)
                             false))]
                       [sccp : CompilerIrBlockList
-                        (match sccp-result
-                          [(OptBlockCtxResult.Result b _ _) b])]
+                        (compiler-opt-debug-observe-blocks
+                          "sccp"
+                          name
+                          params
+                          ret-ty
+                          ssa-frame
+                          (match sccp-result
+                            [(OptBlockCtxResult.Result b _ _) b]))]
                       [sccp-context : OptCfgContext
                         (match sccp-result
                           [(OptBlockCtxResult.Result _ ctx _) ctx])]
@@ -29691,8 +29998,14 @@
                       [bool-branch-result : OptBoolBranchFuseResult
                         (opt-bool-branch-fuse-blocks sccp frame 16)]
                       [bool-branch : CompilerIrBlockList
-                        (match bool-branch-result
-                          [(OptBoolBranchFuseResult.Result b _) b])]
+                        (compiler-opt-debug-observe-blocks
+                          "bool_branch"
+                          name
+                          params
+                          ret-ty
+                          ssa-frame
+                          (match bool-branch-result
+                            [(OptBoolBranchFuseResult.Result b _) b]))]
                       [bool-branch-changed : bool
                         (match bool-branch-result
                           [(OptBoolBranchFuseResult.Result _ changed) changed])]
@@ -29717,8 +30030,14 @@
                             (opt-cfg-context-empty)
                             false))]
                       [cfg : CompilerIrBlockList
-                        (match cfg-result
-                          [(OptBlockCtxResult.Result b _ _) b])]
+                        (compiler-opt-debug-observe-blocks
+                          "cfg"
+                          name
+                          params
+                          ret-ty
+                          ssa-frame
+                          (match cfg-result
+                            [(OptBlockCtxResult.Result b _ _) b]))]
                       [cfg-context : OptCfgContext
                         (match cfg-result
                           [(OptBlockCtxResult.Result _ ctx _) ctx])]
@@ -29740,8 +30059,10 @@
                           (opt-switch-form-function-pass switch-input)
                           (OptFunctionPassResult.Result switch-input false))]
                       [switched : CompilerIrFunction
-                        (match switch-result
-                          [(OptFunctionPassResult.Result f _) f])]
+                        (compiler-opt-debug-observe-function
+                          "switch"
+                          (match switch-result
+                            [(OptFunctionPassResult.Result f _) f]))]
                       [switch-changed : bool
                         (match switch-result
                           [(OptFunctionPassResult.Result _ changed) changed])]
@@ -29814,8 +30135,10 @@
                               switch-blocks)
                             (opt-cfg-context-empty)))]
                       [preheaders : CompilerIrFunction
-                        (match preheaders-result
-                          [(OptFunctionCtxResult.Result f _) f])]
+                        (compiler-opt-debug-observe-function
+                          "preheaders"
+                          (match preheaders-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [preheaders-context : OptCfgContext
                         (match preheaders-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
@@ -29837,8 +30160,10 @@
                             preheaders)
                           preheaders-result)]
                       [rotate-ssa : CompilerIrFunction
-                        (match rotate-ssa-result
-                          [(OptFunctionCtxResult.Result f _) f])]
+                        (compiler-opt-debug-observe-function
+                          "rotate_ssa"
+                          (match rotate-ssa-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [rotate-ssa-context : OptCfgContext
                         (match rotate-ssa-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
@@ -29860,8 +30185,10 @@
                             rotate-ssa)
                           rotate-ssa-result)]
                       [scratch-reset : CompilerIrFunction
-                        (match scratch-reset-result
-                          [(OptFunctionCtxResult.Result f _) f])]
+                        (compiler-opt-debug-observe-function
+                          "scratch_reset"
+                          (match scratch-reset-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [scratch-reset-context : OptCfgContext
                         (match scratch-reset-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
@@ -29883,8 +30210,10 @@
                             scratch-reset)
                           scratch-reset-result)]
                       [licm : CompilerIrFunction
-                        (match licm-result
-                          [(OptFunctionCtxResult.Result f _) f])]
+                        (compiler-opt-debug-observe-function
+                          "licm"
+                          (match licm-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [licm-context : OptCfgContext
                         (match licm-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
@@ -29903,8 +30232,10 @@
                             licm)
                           licm-result)]
                       [induction : CompilerIrFunction
-                        (match induction-result
-                          [(OptFunctionCtxResult.Result f _) f])]
+                        (compiler-opt-debug-observe-function
+                          "induction"
+                          (match induction-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [induction-context : OptCfgContext
                         (match induction-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
@@ -29931,8 +30262,10 @@
                             induction)
                           induction-result)]
                       [bce-version : CompilerIrFunction
-                        (match bce-version-result
-                          [(OptFunctionCtxResult.Result f _) f])]
+                        (compiler-opt-debug-observe-function
+                          "bce_version"
+                          (match bce-version-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [bce-version-context : OptCfgContext
                         (match bce-version-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
@@ -29958,8 +30291,10 @@
                             bce-version)
                           bce-version-result)]
                       [unrolled : CompilerIrFunction
-                        (match unroll-result
-                          [(OptFunctionCtxResult.Result f _) f])]
+                        (compiler-opt-debug-observe-function
+                          "unroll"
+                          (match unroll-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [unroll-context : OptCfgContext
                         (match unroll-result
                           [(OptFunctionCtxResult.Result _ ctx) ctx])]
@@ -29991,21 +30326,23 @@
                       ;; blocks are global_gvn's input blocks unchanged.
                       [_t-global : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [global : CompilerIrFunction
-                        (if run-heavy?
-                          (opt-global-value-number-function-with-context
-                            unroll-context
+                        (compiler-opt-debug-observe-function
+                          "global_gvn"
+                          (if run-heavy?
+                            (opt-global-value-number-function-with-context
+                              unroll-context
+                              (CompilerIrFunction.Function
+                                name
+                                params
+                                ret-ty
+                                unroll-frame
+                                unroll-blocks))
                             (CompilerIrFunction.Function
                               name
                               params
                               ret-ty
                               unroll-frame
-                              unroll-blocks))
-                          (CompilerIrFunction.Function
-                            name
-                            params
-                            ret-ty
-                            unroll-frame
-                            unroll-blocks))]
+                              unroll-blocks)))]
                       [_p-global : unit
                         (cfg
                           compile-profile
@@ -30030,12 +30367,18 @@
                       [_t-divrem-safety : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [divrem-safe : CompilerIrBlockList
-                        (if run-heavy?
-                          (opt-divrem-safety-blocks-with-context
-                            unroll-context
-                            params
-                            const-div-blocks)
-                          const-div-blocks)]
+                        (compiler-opt-debug-observe-blocks
+                          "divrem_safety"
+                          name
+                          params
+                          ret-ty
+                          unroll-frame
+                          (if run-heavy?
+                            (opt-divrem-safety-blocks-with-context
+                              unroll-context
+                              params
+                              const-div-blocks)
+                            const-div-blocks))]
                       [_p-divrem-safety : unit
                         (cfg
                           compile-profile
@@ -30048,7 +30391,13 @@
                       [used : (Array i64)
                         (opt-collect-blocks-uses-array unroll-frame divrem-safe)]
                       [dced : CompilerIrBlockList
-                        (opt-dce-block-list-array used divrem-safe)]
+                        (compiler-opt-debug-observe-blocks
+                          "dce"
+                          name
+                          params
+                          ret-ty
+                          unroll-frame
+                          (opt-dce-block-list-array used divrem-safe))]
                       [_p-dce : unit
                         (cfg
                           compile-profile
@@ -30078,7 +30427,13 @@
       (let
         [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
         [folded : CompilerIrBlockList
-          (optimize-block-list-for-function frame params blocks)]
+          (compiler-opt-debug-observe-blocks
+            "fold"
+            name
+            params
+            ret-ty
+            frame
+            (optimize-block-list-for-function frame params blocks))]
         [_p-fold : unit
           (cfg
             compile-profile
@@ -30090,8 +30445,10 @@
             folded)]
         [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
         [promoted : CompilerIrFunction
-          (opt-aggregate-stack-promote-function
-            (CompilerIrFunction.Function name params ret-ty frame loop-bce))]
+          (compiler-opt-debug-observe-function
+            "stack_promote"
+            (opt-aggregate-stack-promote-function
+              (CompilerIrFunction.Function name params ret-ty frame loop-bce)))]
         [_p-promote : unit
           (cfg
             compile-profile
@@ -30103,7 +30460,13 @@
               [_t-cfg : i64 (cfg compile-profile (profile.now-ms) 0)]
               [used : (Array i64) (opt-used-array-new promoted-frame)]
               [cfg : CompilerIrBlockList
-                (opt-cfg-simplify-blocks-in-place promoted-blocks used)]
+                (compiler-opt-debug-observe-blocks
+                  "cfg"
+                  name
+                  params
+                  ret-ty
+                  promoted-frame
+                  (opt-cfg-simplify-blocks-in-place promoted-blocks used))]
               [_p-cfg : unit
                 (cfg
                   compile-profile
@@ -30128,7 +30491,13 @@
           (let
             [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
             [dced : CompilerIrBlockList
-              (opt-dce-block-list-array-in-place used blocks)]
+              (compiler-opt-debug-observe-blocks
+                "dce"
+                name
+                params
+                ret-ty
+                frame
+                (opt-dce-block-list-array-in-place used blocks))]
             [_p-dce : unit
               (cfg
                 compile-profile
@@ -37340,7 +37709,7 @@
     [(CompilerIrProgram.Program globals functions externs)
       (if (= level 0)
         (CompilerOptimizedProgram.Program
-          program
+          (compiler-opt-debug-finish-program program)
           (opt-remap-spans-program spans program))
         (begin
           (cfg compile-profile (compiler-opt-profile-start))
@@ -37413,7 +37782,7 @@
                           compile-profile
                           (compiler-opt-profile-finish "post_prune"))
                         (CompilerOptimizedProgram.Program
-                          optimized
+                          (compiler-opt-debug-finish-program optimized)
                           (opt-remap-spans-program inline-spans optimized)))))))])))]))
 
 (define (optimize-program-with-spans

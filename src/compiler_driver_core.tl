@@ -3,6 +3,7 @@
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
 (import (vector String) as svec)
 (cfg compile-profile (import stdlib.profile))
@@ -3273,6 +3274,110 @@
       mode
       (compiler-driver-state-target-cfgs state target cfgs))
     opt-level))
+
+(define (compiler-driver-ir-text-result
+  [optimized : CompilerIrProgram]
+  [dump-pass : String]) : ResultCompilerDriver
+  (let
+    [verify-error : String (compiler-opt-debug-verification-error)]
+    (if (> (string.string-length verify-error) 0)
+      (ResultCompilerDriver.Err
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            (string.append "IR verification failed: " verify-error))))
+      (let
+        [text : String
+          (if (> (string.string-length dump-pass) 0)
+            (compiler-opt-debug-dump-result)
+            (compiler-ir-program-render optimized))]
+        (if (and
+          (> (string.string-length dump-pass) 0)
+          (= (string.string-length text) 0))
+          (ResultCompilerDriver.Err
+            (box
+              (compiler-diagnostic-at-start
+                ""
+                (str_cat.str-cat "optimizer pass '" dump-pass "' did not run"))))
+          (ResultCompilerDriver.Ok text))))))
+
+(define (compiler-driver-emit-ir-text-lowered-with-level
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [opt-level : i64]
+  [dump-pass : String]) : ResultCompilerDriver
+  (if (ast-node-pool-reader-type-exhausted?)
+    (ResultCompilerDriver.Err
+      (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
+    (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-retire-frontend-arena!)
+      (match (optimize-program-with-spans-and-level program spans opt-level)
+        [(CompilerOptimizedProgram.Program optimized _)
+          (begin
+            (compiler-driver-release-lowered-ir! opt-level)
+            (if (ast-node-pool-reader-type-exhausted?)
+              (ResultCompilerDriver.Err
+                (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
+              (compiler-driver-ir-text-result optimized dump-pass)))]))))
+
+(define (compiler-driver-emit-ir-text-lowered-result-with-level
+  [lowered : ResultCompilerDriverLowered]
+  [opt-level : i64]
+  [dump-pass : String]) : ResultCompilerDriver
+  (match lowered
+    [(ResultCompilerDriverLowered.Ok program spans pools)
+      (let
+        [emit-program : CompilerIrProgram
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (compiler-ir-clone-program-shell program)
+            program)]
+        [emit-spans : CompilerSourceSpans
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (clone spans)
+            spans)]
+        [out : ResultCompilerDriver
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (if (>= opt-level 1)
+              (compiler-driver-retire-lowered-source-arena!)
+              unit)
+            (compiler-driver-emit-ir-text-lowered-with-level
+              emit-program
+              emit-spans
+              opt-level
+              dump-pass))]
+        (begin
+          (if (= opt-level 0)
+            (compiler-driver-retire-lowered-source-arena!)
+            unit)
+          (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-frontend-return-arena!)
+          out))]
+    [(ResultCompilerDriverLowered.Err diag)
+      (begin
+        (compiler-driver-restore-frontend-return-arena!)
+        (ResultCompilerDriver.Err diag))]))
+
+(define (compiler-driver-state-emit-ir-text-file-with-target-roots-level-mode-and-cfg
+  [state : CompilerDriverState]
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : svec.Vec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : sym_i64_env.SymI64Env]
+  [dump-pass : String]) : ResultCompilerDriver
+  (compiler-driver-emit-ir-text-lowered-result-with-level
+    (compiler-driver-load-and-lower-pic-image-with-state
+      state
+      input-path
+      target
+      stdlib-roots
+      mode
+      (compiler-driver-state-target-cfgs state target cfgs))
+    opt-level
+    dump-pass))
 
 (define (compiler-driver-write-text-buf
   [output-path : String]

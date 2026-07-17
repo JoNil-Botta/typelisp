@@ -1,0 +1,91 @@
+#!/usr/bin/env sh
+set -eu
+
+# Verify the compiler-developer IR dump, pass trace, and verifier surfaces.
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+
+if [ -n "${TYPELISP_BIN:-}" ]; then
+    COMPILER=$TYPELISP_BIN
+else
+    . "$ROOT/scripts/lib-stage0.sh"
+    COMPILER=$(resolve_stage0_compiler "$ROOT") || exit 1
+fi
+
+if [ ! -x "$COMPILER" ]; then
+    echo "typelisp compiler is not executable: $COMPILER" >&2
+    exit 1
+fi
+
+WORKDIR="$ROOT/target/ir-observability-verify"
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
+
+SOURCE="$ROOT/tests/golden/optimizer_fold.tl"
+EXPECTED="$ROOT/tests/golden/optimizer_fold.after-fold.ir"
+ACTUAL="$WORKDIR/optimizer_fold.after-fold.ir"
+TRACE="$WORKDIR/trace.stderr"
+
+"$COMPILER" compile "$SOURCE" \
+    --dump-ir after-fold \
+    --verify-ir \
+    --opt-level 1 \
+    -o "$ACTUAL" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/fold.stdout" 2>"$WORKDIR/fold.stderr"
+
+if ! cmp -s "$EXPECTED" "$ACTUAL"; then
+    echo "optimizer fold IR golden mismatch" >&2
+    diff -u "$EXPECTED" "$ACTUAL" >&2 || true
+    exit 1
+fi
+
+"$COMPILER" compile "$SOURCE" \
+    --dump-ir \
+    --verify-ir \
+    --opt-level 2 \
+    -o "$WORKDIR/optimizer_fold.final.ir" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/final.stdout" 2>"$WORKDIR/final.stderr"
+grep -F "typelisp-ir v1" "$WORKDIR/optimizer_fold.final.ir" >/dev/null
+grep -F "function @main()" "$WORKDIR/optimizer_fold.final.ir" >/dev/null
+
+"$COMPILER" compile "$SOURCE" \
+    --dump-ir after-licm \
+    --trace-passes \
+    --verify-ir \
+    --opt-level 2 \
+    -o "$WORKDIR/optimizer_fold.after-licm.ir" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/trace.stdout" 2>"$TRACE"
+
+grep -F "optimizer-pass|main|licm|blocks=" "$TRACE" >/dev/null
+grep -F "after licm @main" "$WORKDIR/optimizer_fold.after-licm.ir" >/dev/null
+
+"$COMPILER" compile "$SOURCE" \
+    --verify-ir \
+    --opt-level 2 \
+    -o "$WORKDIR/optimizer_fold.s" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/verify.stdout" 2>"$WORKDIR/verify.stderr"
+test -s "$WORKDIR/optimizer_fold.s"
+
+if "$COMPILER" compile "$SOURCE" \
+    --dump-ir after-no-such-pass \
+    --opt-level 2 \
+    -o "$WORKDIR/should-not-exist.ir" \
+    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/missing.stdout" 2>"$WORKDIR/missing.stderr"; then
+    echo "unknown IR pass unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -F "optimizer pass 'no-such-pass' did not run" "$WORKDIR/missing.stderr" >/dev/null
+test ! -e "$WORKDIR/should-not-exist.ir"
+
+echo "[ir-observability] dump golden, pass trace, and verifier passed"

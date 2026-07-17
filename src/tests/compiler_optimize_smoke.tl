@@ -1682,6 +1682,7 @@
     [(not (= (compiler-optimize-bce-version-mb-negative-self-test) 42)) 53]
     [(not (= (compiler-optimize-bce-version-mb-pipeline-self-test) 42)) 54]
     [(not (= (compiler-optimize-bce-version-mb-partial-self-test) 42)) 55]
+    [(not (= (compiler-optimize-debug-verifier-self-test) 42)) 56]
     [else 42]))
 
 (define (main) : i64
@@ -1743,3 +1744,10 @@
     (compiler-optimize-bce-version-mb-partial-self-test)
     42
     "multi-block versioning keeps underivable checks in the fast clone"))
+
+(test
+  optimizer-debug-verifier-identity
+  (test.assert-i64-eq
+    (compiler-optimize-debug-verifier-self-test)
+    42
+    "IR verifier failures include function, block, and instruction identity"))

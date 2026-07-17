@@ -3262,8 +3262,488 @@
     ") : "
     (compiler-ir-type-render ty)))
 
+(define (compiler-ir-bin-op-render [op : CompilerIrBinOp]) : String
+  (match op
+    [(CompilerIrBinOp.Add) "add"]
+    [(CompilerIrBinOp.Sub) "sub"]
+    [(CompilerIrBinOp.Mul) "mul"]
+    [(CompilerIrBinOp.Div) "div"]
+    [(CompilerIrBinOp.Mod) "mod"]
+    [(CompilerIrBinOp.SafeDiv) "safe_div"]
+    [(CompilerIrBinOp.SafeMod) "safe_mod"]
+    [(CompilerIrBinOp.Eq) "eq"]
+    [(CompilerIrBinOp.Ne) "ne"]
+    [(CompilerIrBinOp.Lt) "lt"]
+    [(CompilerIrBinOp.Le) "le"]
+    [(CompilerIrBinOp.Gt) "gt"]
+    [(CompilerIrBinOp.Ge) "ge"]
+    [(CompilerIrBinOp.And) "and"]
+    [(CompilerIrBinOp.Or) "or"]
+    [(CompilerIrBinOp.BitAnd) "bit_and"]
+    [(CompilerIrBinOp.BitOr) "bit_or"]
+    [(CompilerIrBinOp.BitXor) "bit_xor"]
+    [(CompilerIrBinOp.Shl) "shl"]
+    [(CompilerIrBinOp.Shr) "shr"]))
+
+(define (compiler-ir-un-op-render [op : CompilerIrUnOp]) : String
+  (match op
+    [(CompilerIrUnOp.Neg) "neg"]
+    [(CompilerIrUnOp.Not) "not"]
+    [(CompilerIrUnOp.BitNot) "bit_not"]
+    [(CompilerIrUnOp.Sqrt) "sqrt"]))
+
+(define (compiler-ir-mask-bin-op-render [op : CompilerIrMaskBinOp]) : String
+  (match op
+    [(CompilerIrMaskBinOp.And) "and"]
+    [(CompilerIrMaskBinOp.Or) "or"]))
+
+(define (compiler-ir-vector-reduce-op-render [op : CompilerIrVectorReduceOp]) : String
+  (match op
+    [(CompilerIrVectorReduceOp.Sum) "sum"]
+    [(CompilerIrVectorReduceOp.Min) "min"]
+    [(CompilerIrVectorReduceOp.Max) "max"]))
+
+(define (compiler-ir-mask-reduce-op-render [op : CompilerIrMaskReduceOp]) : String
+  (match op
+    [(CompilerIrMaskReduceOp.All) "all"]
+    [(CompilerIrMaskReduceOp.Any) "any"]))
+
+(define (compiler-ir-dst-render [dst : i64]) : String
+  (str_cat.str-cat "  %" (string.int->string dst) " = "))
+
+(define (compiler-ir-typed-value-render
+  [value : CompilerIrValue]
+  [ty : AstType]) : String
+  (str_cat.str-cat
+    (compiler-ir-value-render value)
+    " : "
+    (compiler-ir-type-render ty)))
+
+(define (compiler-ir-maybe-value-render [value : CompilerIrMaybeValue]) : String
+  (match value
+    [(CompilerIrMaybeValue.No) ""]
+    [(CompilerIrMaybeValue.Some inner) (compiler-ir-value-render inner)]))
+
+(define (compiler-ir-phi-input-list-render [inputs : CompilerIrPhiInputList]) : String
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) ""]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-ir-phi-input-list-render
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (str_cat.str-cat
+        "["
+        (compiler-ir-value-render value)
+        ", "
+        label
+        "]"
+        (match (compiler-ir-phi-input-list-force-cons (box-get rest))
+          [(CompilerIrPhiInputList.Nil) ""]
+          [_
+            (str_cat.str-cat
+              ", "
+              (compiler-ir-phi-input-list-render (box-get rest)))]))]))
+
+(define (compiler-ir-c-abi-return-slot-list-render
+  [slots : CompilerIrCAbiReturnSlotList]) : String
+  (match slots
+    [(CompilerIrCAbiReturnSlotList.Nil) ""]
+    [(CompilerIrCAbiReturnSlotList.Array seq)
+      (compiler-ir-c-abi-return-slot-list-render
+        (compiler-ir-c-abi-return-slot-seq-to-list seq))]
+    [(CompilerIrCAbiReturnSlotList.Cons slot rest)
+      (match slot
+        [(CompilerIrCAbiReturnSlot.Slot ty offset)
+          (str_cat.str-cat
+            (compiler-ir-type-render ty)
+            "@"
+            (string.int->string offset)
+            (match (box-get rest)
+              [(CompilerIrCAbiReturnSlotList.Nil) ""]
+              [_
+                (str_cat.str-cat
+                  ", "
+                  (compiler-ir-c-abi-return-slot-list-render (box-get rest)))]))])]))
+
 (define (compiler-ir-instr-render [instr : CompilerIrInstr]) : String
   (match instr
+    [(CompilerIrInstr.Mov dst value ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "mov "
+        (compiler-ir-typed-value-render value ty))]
+    [(CompilerIrInstr.Alloc dst ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "alloc "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.AddrOf dst src)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "addr_of %"
+        (string.int->string src))]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "gep "
+        (compiler-ir-value-render base)
+        ", "
+        (compiler-ir-typed-value-render offset ty))]
+    [(CompilerIrInstr.Load dst source ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "load "
+        (compiler-ir-typed-value-render source ty))]
+    [(CompilerIrInstr.StorePtr ptr value ty)
+      (str_cat.str-cat
+        "  store_ptr "
+        (compiler-ir-value-render ptr)
+        ", "
+        (compiler-ir-typed-value-render value ty))]
+    [(CompilerIrInstr.CopyBytes dst src count)
+      (str_cat.str-cat
+        "  copy_bytes "
+        (compiler-ir-value-render dst)
+        ", "
+        (compiler-ir-value-render src)
+        ", "
+        (string.int->string count))]
+    [(CompilerIrInstr.BoundsCheck index length message)
+      (str_cat.str-cat
+        "  bounds_check "
+        (compiler-ir-value-render index)
+        ", "
+        (compiler-ir-value-render length)
+        " message \""
+        message
+        "\"")]
+    [(CompilerIrInstr.Cast dst value from to)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "cast "
+        (compiler-ir-value-render value)
+        " : "
+        (compiler-ir-type-render from)
+        " to "
+        (compiler-ir-type-render to))]
+    [(CompilerIrInstr.Bitcast dst value from to)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "bitcast "
+        (compiler-ir-value-render value)
+        " : "
+        (compiler-ir-type-render from)
+        " to "
+        (compiler-ir-type-render to))]
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        (compiler-ir-bin-op-render op)
+        " "
+        (compiler-ir-value-render lhs)
+        ", "
+        (compiler-ir-typed-value-render rhs ty))]
+    [(CompilerIrInstr.UnOp dst op value ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        (compiler-ir-un-op-render op)
+        " "
+        (compiler-ir-typed-value-render value ty))]
+    [(CompilerIrInstr.LaneId dst lanes ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "lane_id "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.Splat dst value lanes ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "splat "
+        (compiler-ir-value-render value)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload.Payload dst op lhs rhs lanes ty)
+          (str_cat.str-cat
+            (compiler-ir-dst-render dst)
+            "vector_"
+            (compiler-ir-bin-op-render op)
+            " "
+            (compiler-ir-value-render lhs)
+            ", "
+            (compiler-ir-value-render rhs)
+            " lanes "
+            (string.int->string lanes)
+            " : "
+            (compiler-ir-type-render ty))])]
+    [(CompilerIrInstr.VectorReduce dst op value lanes ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "vector_reduce_"
+        (compiler-ir-vector-reduce-op-render op)
+        " "
+        (compiler-ir-value-render value)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload.Payload dst op lhs rhs lanes ty)
+          (str_cat.str-cat
+            (compiler-ir-dst-render dst)
+            "vector_compare_"
+            (compiler-ir-bin-op-render op)
+            " "
+            (compiler-ir-value-render lhs)
+            ", "
+            (compiler-ir-value-render rhs)
+            " lanes "
+            (string.int->string lanes)
+            " : "
+            (compiler-ir-type-render ty))])]
+    [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "mask_"
+        (compiler-ir-mask-bin-op-render op)
+        " "
+        (compiler-ir-value-render lhs)
+        ", "
+        (compiler-ir-value-render rhs)
+        " lanes "
+        (string.int->string lanes))]
+    [(CompilerIrInstr.MaskNot dst value lanes)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "mask_not "
+        (compiler-ir-value-render value)
+        " lanes "
+        (string.int->string lanes))]
+    [(CompilerIrInstr.MaskReduce dst op value lanes)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "mask_reduce_"
+        (compiler-ir-mask-reduce-op-render op)
+        " "
+        (compiler-ir-value-render value)
+        " lanes "
+        (string.int->string lanes))]
+    [(CompilerIrInstr.Select payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload.Payload
+            dst
+            mask
+            on-true
+            on-false
+            lanes
+            ty)
+          (str_cat.str-cat
+            (compiler-ir-dst-render dst)
+            "select "
+            (compiler-ir-value-render mask)
+            ", "
+            (compiler-ir-value-render on-true)
+            ", "
+            (compiler-ir-value-render on-false)
+            " lanes "
+            (string.int->string lanes)
+            " : "
+            (compiler-ir-type-render ty))])]
+    [(CompilerIrInstr.VectorLoad dst base index lanes ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "vector_load "
+        (compiler-ir-value-render base)
+        ", "
+        (compiler-ir-value-render index)
+        " lanes "
+        (string.int->string lanes)
+        " : "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.VectorStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorStorePayload.Payload base index value lanes ty)
+          (str_cat.str-cat
+            "  vector_store "
+            (compiler-ir-value-render base)
+            ", "
+            (compiler-ir-value-render index)
+            ", "
+            (compiler-ir-value-render value)
+            " lanes "
+            (string.int->string lanes)
+            " : "
+            (compiler-ir-type-render ty))])]
+    [(CompilerIrInstr.PredicatedStore payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedStorePayload.Payload
+            base
+            index
+            value
+            mask
+            lanes
+            ty)
+          (str_cat.str-cat
+            "  predicated_store "
+            (compiler-ir-value-render base)
+            ", "
+            (compiler-ir-value-render index)
+            ", "
+            (compiler-ir-value-render value)
+            " mask "
+            (compiler-ir-value-render mask)
+            " lanes "
+            (string.int->string lanes)
+            " : "
+            (compiler-ir-type-render ty))])]
+    [(CompilerIrInstr.PredicatedLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload
+            dst
+            base
+            index
+            mask
+            lanes
+            ty)
+          (str_cat.str-cat
+            (compiler-ir-dst-render dst)
+            "predicated_load "
+            (compiler-ir-value-render base)
+            ", "
+            (compiler-ir-value-render index)
+            " mask "
+            (compiler-ir-value-render mask)
+            " lanes "
+            (string.int->string lanes)
+            " : "
+            (compiler-ir-type-render ty))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            dst
+            base
+            index-base
+            index
+            lane-offset
+            lanes
+            ty)
+          (str_cat.str-cat
+            (compiler-ir-dst-render dst)
+            "gather_load "
+            (compiler-ir-value-render base)
+            ", "
+            (compiler-ir-value-render index-base)
+            ", "
+            (compiler-ir-value-render index)
+            " lane_offset "
+            (if lane-offset
+              "true"
+              "false")
+            " lanes "
+            (string.int->string lanes)
+            " : "
+            (compiler-ir-type-render ty))])]
+    [(CompilerIrInstr.TailMask dst index length lanes)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "tail_mask "
+        (compiler-ir-value-render index)
+        ", "
+        (compiler-ir-value-render length)
+        " lanes "
+        (string.int->string lanes))]
+    [(CompilerIrInstr.EntryArgc dst)
+      (str_cat.str-cat (compiler-ir-dst-render dst) "entry_argc")]
+    [(CompilerIrInstr.EntryArgv dst)
+      (str_cat.str-cat (compiler-ir-dst-render dst) "entry_argv")]
+    [(CompilerIrInstr.EntryEnvp dst)
+      (str_cat.str-cat (compiler-ir-dst-render dst) "entry_envp")]
+    [(CompilerIrInstr.CpuId dst leaf subleaf word)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "cpuid "
+        (compiler-ir-value-render leaf)
+        ", "
+        (compiler-ir-value-render subleaf)
+        " word "
+        (string.int->string word))]
+    [(CompilerIrInstr.Xgetbv dst index)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "xgetbv "
+        (compiler-ir-value-render index))]
+    [(CompilerIrInstr.Syscall dst args)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "syscall("
+        (compiler-ir-call-args-render args)
+        ")")]
+    [(CompilerIrInstr.Call dst name args ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "call "
+        (compiler-ir-symbol-text name)
+        "("
+        (compiler-ir-call-args-render args)
+        ") : "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.CallIndirect dst callee args ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "call* "
+        (compiler-ir-value-render callee)
+        "("
+        (compiler-ir-call-args-render args)
+        ") : "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.CallIndirectC dst callee args ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "call_c* "
+        (compiler-ir-value-render callee)
+        "("
+        (compiler-ir-call-args-render args)
+        ") : "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload
+            base
+            name
+            args
+            slots)
+          (str_cat.str-cat
+            "  call_c_store "
+            (compiler-ir-symbol-text name)
+            "("
+            (compiler-ir-call-args-render args)
+            ") -> "
+            (compiler-ir-value-render base)
+            " ["
+            (compiler-ir-c-abi-return-slot-list-render slots)
+            "]")])]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
+            base
+            callee
+            args
+            slots)
+          (str_cat.str-cat
+            "  call_c_store* "
+            (compiler-ir-value-render callee)
+            "("
+            (compiler-ir-call-args-render args)
+            ") -> "
+            (compiler-ir-value-render base)
+            " ["
+            (compiler-ir-c-abi-return-slot-list-render slots)
+            "]")])]
     [(CompilerIrInstr.TailCall name args ty)
       (compiler-ir-tail-call-render name args ty)]
     [(CompilerIrInstr.TailCallIndirect callee args ty)
@@ -3284,6 +3764,46 @@
             active-mask
             args
             result)])]
+    [(CompilerIrInstr.Store dst value ty)
+      (str_cat.str-cat
+        "  store %"
+        (string.int->string dst)
+        ", "
+        (compiler-ir-typed-value-render value ty))]
+    [(CompilerIrInstr.Jump label) (str_cat.str-cat "  jump " label)]
+    [(CompilerIrInstr.Branch test on-true on-false)
+      (str_cat.str-cat
+        "  branch "
+        (compiler-ir-value-render test)
+        ", "
+        on-true
+        ", "
+        on-false)]
+    [(CompilerIrInstr.Return value)
+      (str_cat.str-cat "  return " (compiler-ir-maybe-value-render value))]
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "phi "
+        (compiler-ir-phi-input-list-render inputs)
+        " : "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.Pack dst values ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "pack ["
+        (compiler-ir-value-list-render values)
+        "] : "
+        (compiler-ir-type-render ty))]
+    [(CompilerIrInstr.Word dst value index ty)
+      (str_cat.str-cat
+        (compiler-ir-dst-render dst)
+        "word "
+        (compiler-ir-value-render value)
+        ", "
+        (string.int->string index)
+        " : "
+        (compiler-ir-type-render ty))]
     [(CompilerIrInstr.Switch index base cases default-label)
       (str_cat.str-cat
         "  switch "
@@ -3293,8 +3813,164 @@
         " ["
         (compiler-ir-switch-case-list-render cases)
         "] default "
-        default-label)]
-    [_ "  <ir-instr>"]))
+        default-label)]))
+
+(define (compiler-ir-instr-seq-render-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : String
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    ""
+    (str_cat.str-cat
+      (compiler-ir-instr-render (compiler-ir-instr-seq-ref instrs index))
+      "\n"
+      (compiler-ir-instr-seq-render-from instrs (+ index 1)))))
+
+(define (compiler-ir-block-render [block : CompilerIrBlock]) : String
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (str_cat.str-cat label ":\n" (compiler-ir-instr-seq-render-from instrs 0))]))
+
+(define (compiler-ir-block-list-render [blocks : CompilerIrBlockList]) : String
+  (match (compiler-ir-block-list-force-cons blocks)
+    [(CompilerIrBlockList.Nil) ""]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-ir-block-list-render (compiler-ir-block-seq-to-list seq))]
+    [(CompilerIrBlockList.Cons block rest)
+      (str_cat.str-cat
+        (compiler-ir-block-render block)
+        (match (compiler-ir-block-list-force-cons (box-get rest))
+          [(CompilerIrBlockList.Nil) ""]
+          [_
+            (str_cat.str-cat
+              "\n"
+              (compiler-ir-block-list-render (box-get rest)))]))]))
+
+(define (compiler-ir-param-render [param : CompilerIrParam]) : String
+  (match param
+    [(CompilerIrParam.Param name ty var)
+      (str_cat.str-cat
+        name
+        "=%"
+        (string.int->string var)
+        ":"
+        (compiler-ir-type-render ty))]))
+
+(define (compiler-ir-param-list-render [params : CompilerIrParamList]) : String
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) ""]
+    [(CompilerIrParamList.Array seq)
+      (compiler-ir-param-list-render (compiler-ir-param-seq-to-list seq))]
+    [(CompilerIrParamList.Cons param rest)
+      (str_cat.str-cat
+        (compiler-ir-param-render param)
+        (match (compiler-ir-param-list-force-cons (box-get rest))
+          [(CompilerIrParamList.Nil) ""]
+          [_
+            (str_cat.str-cat
+              ", "
+              (compiler-ir-param-list-render (box-get rest)))]))]))
+
+(define (compiler-ir-function-render [func : CompilerIrFunction]) : String
+  (match func
+    [(CompilerIrFunction.Function name params ret vars blocks)
+      (str_cat.str-cat
+        "function @"
+        (compiler-ir-symbol-text name)
+        "("
+        (compiler-ir-param-list-render params)
+        ") -> "
+        (compiler-ir-type-render ret)
+        " vars "
+        (string.int->string vars)
+        " {\n"
+        (compiler-ir-block-list-render blocks)
+        "}\n")]))
+
+(define (compiler-ir-function-list-render [functions : CompilerIrFunctionList]) : String
+  (match (compiler-ir-function-list-force-cons functions)
+    [(CompilerIrFunctionList.Nil) ""]
+    [(CompilerIrFunctionList.Array seq)
+      (compiler-ir-function-list-render (compiler-ir-function-seq-to-list seq))]
+    [(CompilerIrFunctionList.Cons func rest)
+      (str_cat.str-cat
+        (compiler-ir-function-render func)
+        (match (compiler-ir-function-list-force-cons (box-get rest))
+          [(CompilerIrFunctionList.Nil) ""]
+          [_
+            (str_cat.str-cat
+              "\n"
+              (compiler-ir-function-list-render (box-get rest)))]))]))
+
+(define (compiler-ir-global-render [global : CompilerIrGlobal]) : String
+  (match global
+    [(CompilerIrGlobal.Global name ty value)
+      (str_cat.str-cat
+        "global @"
+        (compiler-ir-symbol-text name)
+        " : "
+        (compiler-ir-type-render ty)
+        " = "
+        (compiler-ir-value-render value)
+        "\n")]))
+
+(define (compiler-ir-global-list-render [globals : CompilerIrGlobalList]) : String
+  (match globals
+    [(CompilerIrGlobalList.Nil) ""]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-ir-global-list-render (compiler-ir-global-seq-to-list seq))]
+    [(CompilerIrGlobalList.Cons global rest)
+      (str_cat.str-cat
+        (compiler-ir-global-render global)
+        (compiler-ir-global-list-render (box-get rest)))]))
+
+(define (compiler-ir-extern-abi-render [abi : AstExternAbi]) : String
+  (match abi
+    [(AstExternAbi.C) "c"]
+    [(AstExternAbi.CVarargsOpen) "c-varargs"]
+    [(AstExternAbi.CVarargsTyped ty)
+      (str_cat.str-cat "c-varargs:" (compiler-ir-type-render ty))]))
+
+(define (compiler-ir-extern-render [extern : CompilerIrExtern]) : String
+  (match extern
+    [(CompilerIrExtern.Extern name _ symbol ty abi _ _ weak)
+      (str_cat.str-cat
+        "extern @"
+        (compiler-ir-symbol-text name)
+        " symbol \""
+        symbol
+        "\" : "
+        (compiler-ir-type-render ty)
+        " abi "
+        (compiler-ir-extern-abi-render abi)
+        (if weak
+          " weak"
+          "")
+        "\n")]))
+
+(define (compiler-ir-extern-list-render [externs : CompilerIrExternList]) : String
+  (match externs
+    [(CompilerIrExternList.Nil) ""]
+    [(CompilerIrExternList.Array seq)
+      (compiler-ir-extern-list-render (compiler-ir-extern-seq-to-list seq))]
+    [(CompilerIrExternList.Cons extern rest)
+      (str_cat.str-cat
+        (compiler-ir-extern-render extern)
+        (compiler-ir-extern-list-render (box-get rest)))]))
+
+(define (compiler-ir-program-render [program : CompilerIrProgram]) : String
+  (match program
+    [(CompilerIrProgram.Program globals functions externs)
+      (str_cat.str-cat
+        "typelisp-ir v1\n"
+        (compiler-ir-global-list-render globals)
+        (if (= (compiler-ir-global-list-count globals) 0)
+          ""
+          "\n")
+        (compiler-ir-extern-list-render externs)
+        (if (= (compiler-ir-extern-list-count externs) 0)
+          ""
+          "\n")
+        (compiler-ir-function-list-render functions))]))
 
 (defenum CompilerIrEffect
   (Pure)

@@ -258,17 +258,20 @@ Options:
 
 (define (cli-compile-help-text) : String
   "Usage:
-    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
+    typelisp compile <file.tl> [-o <file>] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
     typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
 
 Summary:
-    Generate assembly or an IR summary.
+    Generate assembly, an IR summary, or a deterministic textual IR dump.
 
 Options:
     -o <file>                      Output assembly or IR file
     --batch <file>                 Read input|output pairs and compile them in one process
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --emit-ir                      Emit intermediate representation
+    --dump-ir [after-<pass>]       Emit textual IR, optionally after a pass
+    --verify-ir                    Verify optimized IR before writing output
+    --trace-passes                 Trace optimizer pass/function sizes to stderr
     --pic                          Emit runtime-free no-entry PIC assembly and <output>.fixups
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512

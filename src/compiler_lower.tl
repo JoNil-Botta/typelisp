@@ -39485,6 +39485,197 @@
         (CompilerIrValue.Var v)
         ty)]))
 
+;; SIMD loop bounds are invariant across gangs. Build the minimum with scalar
+;; mask blends in the preheader so each vector header needs only one compare.
+(define (lower-vector-loop-i64-compare
+  [state : LowerState]
+  [op : CompilerIrBinOp]
+  [left : CompilerIrValue]
+  [right : CompilerIrValue]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc s v)
+      ;; Comparisons produce a boolean value, but the IR instruction's type is
+      ;; the operand width used by the backend comparison.
+      (LowerExpr.Expr
+        (lower-state-emit
+          s
+          (CompilerIrInstr.BinOp v op left right (AstType.I64)))
+        (CompilerIrValue.Var v)
+        (AstType.Bool))]))
+
+(define (lower-vector-loop-select
+  [state : LowerState]
+  [condition : CompilerIrValue]
+  [on-true : CompilerIrValue]
+  [on-false : CompilerIrValue]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [condition-i64 : CompilerIrValue CompilerIrValue.Unit]
+    [mask : CompilerIrValue CompilerIrValue.Unit]
+    [different-bits : CompilerIrValue CompilerIrValue.Unit]
+    [selected-bits : CompilerIrValue CompilerIrValue.Unit]
+    (begin
+      (match (lower-emit-cast s condition (AstType.Bool) (AstType.I64))
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! condition-i64 value))])
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Sub)
+        (CompilerIrValue.I64 0)
+        condition-i64
+        (AstType.I64))
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! mask value))])
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.BitXor)
+        on-true
+        on-false
+        (AstType.I64))
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! different-bits value))])
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.BitAnd)
+        different-bits
+        mask
+        (AstType.I64))
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! selected-bits value))])
+      (lower-emit-binop
+        s
+        (CompilerIrBinOp.BitXor)
+        on-false
+        selected-bits
+        (AstType.I64)))))
+
+(define (lower-vector-loop-min
+  [state : LowerState]
+  [left : CompilerIrValue]
+  [right : CompilerIrValue]) : LowerExpr
+  (match (lower-vector-loop-i64-compare state (CompilerIrBinOp.Le) left right)
+    [(LowerExpr.Expr cmp-state take-left _)
+      (lower-vector-loop-select cmp-state take-left left right)]))
+
+(define (lower-vector-loop-start-ok
+  [state : LowerState]
+  [index-var : i64]
+  [lanes : i64]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc s v)
+      ;; As u64, every negative i64 start is above INT64_MAX. This one check
+      ;; therefore also proves that adding lanes cannot overflow.
+      (LowerExpr.Expr
+        (lower-state-emit
+          s
+          (CompilerIrInstr.BinOp
+            v
+            (CompilerIrBinOp.Le)
+            (CompilerIrValue.Var index-var)
+            (CompilerIrValue.I64 (- 9223372036854775807 lanes))
+            (AstType.U64)))
+        (CompilerIrValue.Var v)
+        (AstType.Bool))]))
+
+(define (lower-vector-loop-array-limit
+  [state : LowerState]
+  [array-var : i64]
+  [offset : i64]) : LowerExpr
+  (match (lower-array-len-value state (CompilerIrValue.Var array-var))
+    [(LowerExpr.Expr len-state array-len _)
+      (if (> offset 0)
+        (let
+          [s : LowerState len-state]
+          [offset-valid : CompilerIrValue CompilerIrValue.Unit]
+          [candidate : CompilerIrValue CompilerIrValue.Unit]
+          (begin
+            (match (lower-vector-loop-i64-compare
+              s
+              (CompilerIrBinOp.Ge)
+              array-len
+              (CompilerIrValue.I64 offset))
+              [(LowerExpr.Expr next-s value _)
+                (begin
+                  (set! s next-s)
+                  (set! offset-valid value))])
+            (match (lower-emit-binop
+              s
+              (CompilerIrBinOp.Sub)
+              array-len
+              (CompilerIrValue.I64 offset)
+              (AstType.I64))
+              [(LowerExpr.Expr next-s value _)
+                (begin
+                  (set! s next-s)
+                  (set! candidate value))])
+            ;; A too-short array cannot admit a vector gang. Avoid exposing the
+            ;; wrapped subtraction as a large positive bound.
+            (lower-vector-loop-select
+              s
+              offset-valid
+              candidate
+              (CompilerIrValue.I64 -1))))
+        (LowerExpr.Expr len-state array-len (AstType.I64)))]))
+
+(define (lower-vector-loop-limit
+  [state : LowerState]
+  [end-value : CompilerIrValue]
+  [arrays : LowerArrayVarSet]
+  [lanes : i64]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc alloc-state end-var)
+      (let
+        [s : LowerState
+          (lower-state-emit
+            alloc-state
+            (CompilerIrInstr.Mov end-var end-value (AstType.I64)))]
+        [limit : CompilerIrValue CompilerIrValue.Unit]
+        [index : i64 0]
+        [count : i64 (struct-get arrays count)]
+        (begin
+          ;; Materialize the end bound before comparing it: direct literal
+          ;; endpoints do not retain their width through scalar min selection.
+          ;;
+          ;; Besides bounding the first gang, this clamp ensures the next
+          ;; header's index + lanes calculation cannot overflow after a
+          ;; successful gang.
+          (match (lower-vector-loop-min
+            s
+            (CompilerIrValue.Var end-var)
+            (CompilerIrValue.I64 (- 9223372036854775807 lanes)))
+            [(LowerExpr.Expr next-s value _)
+              (begin
+                (set! s next-s)
+                (set! limit value))])
+          (while (< index count)
+            (begin
+              (match (lower-vector-loop-array-limit
+                s
+                (array-ref (struct-get arrays vars) index)
+                (array-ref (struct-get arrays offsets) index))
+                [(LowerExpr.Expr array-state array-limit _)
+                  (match (lower-vector-loop-min array-state limit array-limit)
+                    [(LowerExpr.Expr next-s value _)
+                      (begin
+                        (set! s next-s)
+                        (set! limit value))])])
+              (set! index (+ index 1))))
+          (LowerExpr.Expr s limit (AstType.I64))))]))
+
+(define (lower-vector-loop-next-ok
+  [state : LowerState]
+  [next-index : CompilerIrValue]
+  [limit : CompilerIrValue]) : LowerExpr
+  (lower-vector-loop-i64-compare state (CompilerIrBinOp.Le) next-index limit))
+
 (define (lower-emit-vector-reduce
   [state : LowerState]
   [op : CompilerIrVectorReduceOp]
@@ -39530,103 +39721,6 @@
           pools
           op
           (ast-node-pool-context-expr-push pools (AstExpr.Var current-name-id)))))))
-
-(define (lower-avx2-reduce-ok
-  [state : LowerState]
-  [index-var : i64]
-  [next-index : CompilerIrValue]
-  [end-value : CompilerIrValue]
-  [array-len : CompilerIrValue]
-  [lanes : i64]) : LowerExpr
-  (let
-    [s : LowerState state]
-    [ok : CompilerIrValue CompilerIrValue.Unit]
-    [within : CompilerIrValue CompilerIrValue.Unit]
-    (begin
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Ge)
-        (CompilerIrValue.Var index-var)
-        (CompilerIrValue.I64 0)
-        (AstType.I64))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        (CompilerIrValue.Var index-var)
-        (CompilerIrValue.I64 (- 9223372036854775807 lanes))
-        (AstType.I64))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        next-index
-        end-value
-        (AstType.I64))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        next-index
-        array-len
-        (AstType.I64))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool)))))
-
-(define (lower-avx2-reduce-range-ok
-  [state : LowerState]
-  [index-var : i64]
-  [next-index : CompilerIrValue]
-  [end-value : CompilerIrValue]
-  [lanes : i64]) : LowerExpr
-  (let
-    [s : LowerState state]
-    [ok : CompilerIrValue CompilerIrValue.Unit]
-    [within : CompilerIrValue CompilerIrValue.Unit]
-    (begin
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        (CompilerIrValue.Var index-var)
-        (CompilerIrValue.I64 (- 9223372036854775807 lanes))
-        (AstType.I64))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        next-index
-        end-value
-        (AstType.I64))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool)))))
 
 (define (lower-avx2-reduce-vector-body
   [ctx : TcContext]
@@ -39684,28 +39778,6 @@
               (ResultLowerExpr.Err
                 (box (lower-diagnostic "lower: invalid vector reduce result")))])])]))
 
-(define (lower-spmd-reduce-value-index-range-check
-  [state : LowerState]
-  [index-var : i64]
-  [lanes : i64]
-  [value-plan : LowerVectorMapValue]) : LowerExpr
-  (match value-plan
-    [(LowerVectorMapValue.Gather _ indexes-var)
-      (match (lower-array-len-value state (CompilerIrValue.Var indexes-var))
-        [(LowerExpr.Expr len-state indexes-len _)
-          (match (lower-emit-binop
-            len-state
-            CompilerIrBinOp.Add
-            (CompilerIrValue.Var index-var)
-            (CompilerIrValue.I64 (- lanes 1))
-            (AstType.I64))
-            [(LowerExpr.Expr last-state last-index _)
-              (LowerExpr.Expr
-                (lower-emit-bounds-check last-state last-index indexes-len)
-                CompilerIrValue.Unit
-                (AstType.Unit))])])]
-    [_ (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit))]))
-
 (define (lower-avx2-reduce-vector-value-body
   [ctx : TcContext]
   [state : LowerState]
@@ -39719,57 +39791,49 @@
   [vector-op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]
   [lanes : i64]) : ResultLowerExpr
-  (match (lower-spmd-reduce-value-index-range-check
+  (match (lower-emit-vector-map-value
+    ctx
     state
     index-var
     lanes
+    elem-ty
     value-plan)
-    [(LowerExpr.Expr checked-state _ _)
-      (match (lower-emit-vector-map-value
-        ctx
-        checked-state
-        index-var
+    [(LowerExpr.Expr value-state chunk-vec _)
+      (match (lower-emit-vector-reduce
+        value-state
+        vector-op
+        chunk-vec
         lanes
-        elem-ty
-        value-plan)
-        [(LowerExpr.Expr value-state chunk-vec _)
-          (match (lower-emit-vector-reduce
-            value-state
-            vector-op
-            chunk-vec
-            lanes
-            elem-ty)
-            [(LowerExpr.Expr reduce-state reduced _)
-              (match reduced
-                [(CompilerIrValue.Var reduced-var)
-                  (match (lower-spmd-reduce-apply-update
-                    ctx
-                    reduce-state
-                    env
-                    type-env
-                    op
-                    acc-var
-                    elem-ty
-                    reduced-var)
-                    [(ResultLowerExpr.Ok update-lowered)
-                      (match update-lowered
-                        [(LowerExpr.Expr update-state _ _)
-                          (ResultLowerExpr.Ok
-                            (LowerExpr.Expr
-                              (lower-state-emit
-                                update-state
-                                (CompilerIrInstr.Mov
-                                  index-var
-                                  next-index
-                                  (AstType.I64)))
-                              CompilerIrValue.Unit
-                              (AstType.Unit)))])]
-                    [(ResultLowerExpr.Err message)
-                      (ResultLowerExpr.Err message)])]
-                [_
-                  (ResultLowerExpr.Err
-                    (box
-                      (lower-diagnostic "lower: invalid vector reduce result")))])])])]))
+        elem-ty)
+        [(LowerExpr.Expr reduce-state reduced _)
+          (match reduced
+            [(CompilerIrValue.Var reduced-var)
+              (match (lower-spmd-reduce-apply-update
+                ctx
+                reduce-state
+                env
+                type-env
+                op
+                acc-var
+                elem-ty
+                reduced-var)
+                [(ResultLowerExpr.Ok update-lowered)
+                  (match update-lowered
+                    [(LowerExpr.Expr update-state _ _)
+                      (ResultLowerExpr.Ok
+                        (LowerExpr.Expr
+                          (lower-state-emit
+                            update-state
+                            (CompilerIrInstr.Mov
+                              index-var
+                              next-index
+                              (AstType.I64)))
+                          CompilerIrValue.Unit
+                          (AstType.Unit)))])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+            [_
+              (ResultLowerExpr.Err
+                (box (lower-diagnostic "lower: invalid vector reduce result")))])])]))
 
 (define (lower-spmd-reduce-scalar-tail-body
   [ctx : TcContext]
@@ -39935,7 +39999,10 @@
             [tail-header-label : String ""]
             [tail-body-label : String ""]
             [exit-label : String ""]
-            [array-len : CompilerIrValue CompilerIrValue.Unit]
+            [arrays : LowerArrayVarSet
+              (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
+            [vector-limit : CompilerIrValue CompilerIrValue.Unit]
+            [vector-start-ok : CompilerIrValue CompilerIrValue.Unit]
             [next-index : CompilerIrValue CompilerIrValue.Unit]
             [vector-ok : CompilerIrValue CompilerIrValue.Unit]
             [tail-cond : CompilerIrValue CompilerIrValue.Unit]
@@ -39965,15 +40032,25 @@
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
-              (match (lower-array-len-value s (CompilerIrValue.Var array-var))
+              (match (lower-vector-loop-limit s end-value arrays lanes)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
-                    (set! array-len value))])
+                    (set! vector-limit value))])
+              (match (lower-vector-loop-start-ok s index-var lanes)
+                [(LowerExpr.Expr next-s value _)
+                  (begin
+                    (set! s next-s)
+                    (set! vector-start-ok value))])
               (set!
                 s
                 (lower-state-finish-block
-                  (lower-state-emit s (CompilerIrInstr.Jump header-label))
+                  (lower-state-emit
+                    s
+                    (CompilerIrInstr.Branch
+                      vector-start-ok
+                      header-label
+                      tail-header-label))
                   header-label))
               (match (lower-emit-binop
                 s
@@ -39985,13 +40062,7 @@
                   (begin
                     (set! s next-s)
                     (set! next-index value))])
-              (match (lower-avx2-reduce-ok
-                s
-                index-var
-                next-index
-                end-value
-                array-len
-                lanes)
+              (match (lower-vector-loop-next-ok s next-index vector-limit)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
@@ -40031,12 +40102,11 @@
                               s
                               (CompilerIrInstr.Jump header-label))
                             tail-header-label))
-                        (match (lower-emit-binop
+                        (match (lower-vector-loop-i64-compare
                           s
                           (CompilerIrBinOp.Lt)
                           (CompilerIrValue.Var index-var)
-                          end-value
-                          (AstType.I64))
+                          end-value)
                           [(LowerExpr.Expr next-s value _)
                             (begin
                               (set! s next-s)
@@ -40112,6 +40182,10 @@
                 [tail-check-label : String ""]
                 [tail-body-label : String ""]
                 [exit-label : String ""]
+                [arrays : LowerArrayVarSet
+                  (lower-vector-map-value-array-vars value-plan)]
+                [vector-limit : CompilerIrValue CompilerIrValue.Unit]
+                [vector-start-ok : CompilerIrValue CompilerIrValue.Unit]
                 [next-index : CompilerIrValue CompilerIrValue.Unit]
                 [vector-ok : CompilerIrValue CompilerIrValue.Unit]
                 [active-lanes : CompilerIrValue CompilerIrValue.Unit]
@@ -40153,10 +40227,25 @@
                       (begin
                         (set! s next-s)
                         (set! exit-label label))])
+                  (match (lower-vector-loop-limit s end-value arrays lanes)
+                    [(LowerExpr.Expr next-s value _)
+                      (begin
+                        (set! s next-s)
+                        (set! vector-limit value))])
+                  (match (lower-vector-loop-start-ok s index-var lanes)
+                    [(LowerExpr.Expr next-s value _)
+                      (begin
+                        (set! s next-s)
+                        (set! vector-start-ok value))])
                   (set!
                     s
                     (lower-state-finish-block
-                      (lower-state-emit s (CompilerIrInstr.Jump header-label))
+                      (lower-state-emit
+                        s
+                        (CompilerIrInstr.Branch
+                          vector-start-ok
+                          header-label
+                          tail-init-label))
                       header-label))
                   (match (lower-emit-binop
                     s
@@ -40168,12 +40257,7 @@
                       (begin
                         (set! s next-s)
                         (set! next-index value))])
-                  (match (lower-avx2-reduce-range-ok
-                    s
-                    index-var
-                    next-index
-                    end-value
-                    lanes)
+                  (match (lower-vector-loop-next-ok s next-index vector-limit)
                     [(LowerExpr.Expr next-s value _)
                       (begin
                         (set! s next-s)
@@ -40238,12 +40322,11 @@
                                   s
                                   (CompilerIrInstr.Jump tail-check-label))
                                 tail-check-label))
-                            (match (lower-emit-binop
+                            (match (lower-vector-loop-i64-compare
                               s
                               (CompilerIrBinOp.Lt)
                               (CompilerIrValue.Var index-var)
-                              end-value
-                              (AstType.I64))
+                              end-value)
                               [(LowerExpr.Expr next-s value _)
                                 (begin
                                   (set! s next-s)
@@ -41485,48 +41568,6 @@
       (AstType.I64))
     (LowerExpr.Expr state base (AstType.I64))))
 
-(define (lower-avx512-array-set-next-ok
-  [state : LowerState]
-  [ok : CompilerIrValue]
-  [next-index : CompilerIrValue]
-  [arrays : LowerArrayVarSet]) : LowerExpr
-  (let
-    [s : LowerState state]
-    [next-ok : CompilerIrValue ok]
-    [index : i64 0]
-    [count : i64 (struct-get arrays count)]
-    (begin
-      (while (< index count)
-        (let
-          [array-var : i64 (array-ref (struct-get arrays vars) index)]
-          [offset : i64 (array-ref (struct-get arrays offsets) index)]
-          (begin
-            (match (lower-avx512-index-plus-offset s next-index offset)
-              [(LowerExpr.Expr index-state limit-index _)
-                (match (lower-array-len-value
-                  index-state
-                  (CompilerIrValue.Var array-var))
-                  [(LowerExpr.Expr len-state array-len _)
-                    (match (lower-emit-binop
-                      len-state
-                      (CompilerIrBinOp.Le)
-                      limit-index
-                      array-len
-                      (AstType.I64))
-                      [(LowerExpr.Expr cmp-state within _)
-                        (match (lower-emit-binop
-                          cmp-state
-                          (CompilerIrBinOp.And)
-                          next-ok
-                          within
-                          (AstType.Bool))
-                          [(LowerExpr.Expr next-state value _)
-                            (begin
-                              (set! s next-state)
-                              (set! next-ok value))])])])])
-            (set! index (+ index 1)))))
-      (LowerExpr.Expr s next-ok (AstType.Bool)))))
-
 (define (lower-avx512-array-set-end-ok
   [state : LowerState]
   [ok : CompilerIrValue]
@@ -41549,12 +41590,11 @@
                   index-state
                   (CompilerIrValue.Var array-var))
                   [(LowerExpr.Expr len-state array-len _)
-                    (match (lower-emit-binop
+                    (match (lower-vector-loop-i64-compare
                       len-state
                       (CompilerIrBinOp.Le)
                       limit-index
-                      array-len
-                      (AstType.I64))
+                      array-len)
                       [(LowerExpr.Expr cmp-state within _)
                         (match (lower-emit-binop
                           cmp-state
@@ -41569,67 +41609,8 @@
             (set! index (+ index 1)))))
       (LowerExpr.Expr s next-ok (AstType.Bool)))))
 
-(define (lower-avx512-masked-index-limit [lanes : i64] [offset : i64]) : i64
-  (let
-    [base : i64 (- 9223372036854775807 lanes)]
-    (if (> offset base)
-      -1
-      (- base offset))))
-
 (define (lower-avx512-masked-tail-limit [offset : i64]) : i64
   (- 9223372036854775807 offset))
-
-(define (lower-avx512-masked-vector-ok
-  [state : LowerState]
-  [index-var : i64]
-  [next-index : CompilerIrValue]
-  [end-value : CompilerIrValue]
-  [arrays : LowerArrayVarSet]
-  [lanes : i64]) : LowerExpr
-  (let
-    [s : LowerState state]
-    [max-offset : i64 (lower-array-var-set-max-offset arrays)]
-    [ok : CompilerIrValue CompilerIrValue.Unit]
-    [within : CompilerIrValue CompilerIrValue.Unit]
-    (begin
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Ge)
-        (CompilerIrValue.Var index-var)
-        (CompilerIrValue.I64 0)
-        (AstType.I64))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        (CompilerIrValue.Var index-var)
-        (CompilerIrValue.I64 (lower-avx512-masked-index-limit lanes max-offset))
-        (AstType.I64))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        next-index
-        end-value
-        (AstType.I64))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (lower-avx512-array-set-next-ok next-s value next-index arrays)]))))
 
 (define (lower-avx512-masked-tail-ok
   [state : LowerState]
@@ -41642,22 +41623,20 @@
     [ok : CompilerIrValue CompilerIrValue.Unit]
     [within : CompilerIrValue CompilerIrValue.Unit]
     (begin
-      (match (lower-emit-binop
+      (match (lower-vector-loop-i64-compare
         s
         (CompilerIrBinOp.Ge)
         (CompilerIrValue.Var index-var)
-        (CompilerIrValue.I64 0)
-        (AstType.I64))
+        (CompilerIrValue.I64 0))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop
+      (match (lower-vector-loop-i64-compare
         s
         (CompilerIrBinOp.Le)
         end-value
-        (CompilerIrValue.I64 (lower-avx512-masked-tail-limit max-offset))
-        (AstType.I64))
+        (CompilerIrValue.I64 (lower-avx512-masked-tail-limit max-offset)))
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -41667,12 +41646,11 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop
+      (match (lower-vector-loop-i64-compare
         s
         (CompilerIrBinOp.Le)
         (CompilerIrValue.Var index-var)
-        end-value
-        (AstType.I64))
+        end-value)
         [(LowerExpr.Expr next-s value _)
           (begin
             (set! s next-s)
@@ -45031,6 +45009,8 @@
             [tail-mask-label : String ""]
             [tail-body-label : String ""]
             [exit-label : String ""]
+            [vector-limit : CompilerIrValue CompilerIrValue.Unit]
+            [vector-start-ok : CompilerIrValue CompilerIrValue.Unit]
             [next-index : CompilerIrValue CompilerIrValue.Unit]
             [vector-ok : CompilerIrValue CompilerIrValue.Unit]
             [tail-cond : CompilerIrValue CompilerIrValue.Unit]
@@ -45072,10 +45052,25 @@
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
+              (match (lower-vector-loop-limit s end-value arrays lanes)
+                [(LowerExpr.Expr next-s value _)
+                  (begin
+                    (set! s next-s)
+                    (set! vector-limit value))])
+              (match (lower-vector-loop-start-ok s index-var lanes)
+                [(LowerExpr.Expr next-s value _)
+                  (begin
+                    (set! s next-s)
+                    (set! vector-start-ok value))])
               (set!
                 s
                 (lower-state-finish-block
-                  (lower-state-emit s (CompilerIrInstr.Jump header-label))
+                  (lower-state-emit
+                    s
+                    (CompilerIrInstr.Branch
+                      vector-start-ok
+                      header-label
+                      tail-header-label))
                   header-label))
               (match (lower-emit-binop
                 s
@@ -45087,13 +45082,7 @@
                   (begin
                     (set! s next-s)
                     (set! next-index value))])
-              (match (lower-avx512-masked-vector-ok
-                s
-                index-var
-                next-index
-                end-value
-                arrays
-                lanes)
+              (match (lower-vector-loop-next-ok s next-index vector-limit)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
@@ -45144,12 +45133,11 @@
                 (lower-state-finish-block
                   (lower-state-emit s (CompilerIrInstr.Jump header-label))
                   tail-header-label))
-              (match (lower-emit-binop
+              (match (lower-vector-loop-i64-compare
                 s
                 (CompilerIrBinOp.Lt)
                 (CompilerIrValue.Var index-var)
-                end-value
-                (AstType.I64))
+                end-value)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
@@ -45388,6 +45376,8 @@
             [tail-mask-label : String ""]
             [tail-body-label : String ""]
             [exit-label : String ""]
+            [vector-limit : CompilerIrValue CompilerIrValue.Unit]
+            [vector-start-ok : CompilerIrValue CompilerIrValue.Unit]
             [next-index : CompilerIrValue CompilerIrValue.Unit]
             [vector-ok : CompilerIrValue CompilerIrValue.Unit]
             [tail-cond : CompilerIrValue CompilerIrValue.Unit]
@@ -45428,10 +45418,25 @@
                   (begin
                     (set! s next-s)
                     (set! exit-label label))])
+              (match (lower-vector-loop-limit s end-value arrays lanes)
+                [(LowerExpr.Expr next-s value _)
+                  (begin
+                    (set! s next-s)
+                    (set! vector-limit value))])
+              (match (lower-vector-loop-start-ok s index-var lanes)
+                [(LowerExpr.Expr next-s value _)
+                  (begin
+                    (set! s next-s)
+                    (set! vector-start-ok value))])
               (set!
                 s
                 (lower-state-finish-block
-                  (lower-state-emit s (CompilerIrInstr.Jump header-label))
+                  (lower-state-emit
+                    s
+                    (CompilerIrInstr.Branch
+                      vector-start-ok
+                      header-label
+                      tail-header-label))
                   header-label))
               (match (lower-emit-binop
                 s
@@ -45443,13 +45448,7 @@
                   (begin
                     (set! s next-s)
                     (set! next-index value))])
-              (match (lower-avx512-masked-vector-ok
-                s
-                index-var
-                next-index
-                end-value
-                arrays
-                lanes)
+              (match (lower-vector-loop-next-ok s next-index vector-limit)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)
@@ -45472,12 +45471,11 @@
                 (lower-state-finish-block
                   (lower-state-emit s (CompilerIrInstr.Jump header-label))
                   tail-header-label))
-              (match (lower-emit-binop
+              (match (lower-vector-loop-i64-compare
                 s
                 (CompilerIrBinOp.Lt)
                 (CompilerIrValue.Var index-var)
-                end-value
-                (AstType.I64))
+                end-value)
                 [(LowerExpr.Expr next-s value _)
                   (begin
                     (set! s next-s)

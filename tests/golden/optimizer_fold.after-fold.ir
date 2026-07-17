@@ -1,0 +1,17 @@
+after fold @main
+function @main() -> i64 vars 6 {
+entry:
+  %0 = mov 20 : i64
+  %1 = mov 22 : i64
+  %2 = mov 42 : i64
+  %3 = mov 42 : i64
+  %4 = mov true : bool
+  branch true, if_then.0, if_else.1
+
+if_then.0:
+  return %3
+
+if_else.1:
+  %5 = mov 0 : i64
+  return 0
+}

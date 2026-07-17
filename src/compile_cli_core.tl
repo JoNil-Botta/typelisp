@@ -9,7 +9,10 @@
 ;; `compile` subcommand shape used by the unified CLI.
 ;; `--backend-mode scalar`, `avx2`, and `avx512` are accepted by the selfhost
 ;; compiler.
-;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary.
+;; `--emit-ir` writes a deterministic TypeLisp-owned IR summary. `--dump-ir`
+;; writes textual IR, optionally at an `after-<pass>` boundary; `--trace-passes`
+;; and `--verify-ir` expose optimizer diagnostics without changing normal
+;; compilation.
 ;; `--pic` writes runtime-free, no-entry PIC assembly plus `<output>.fixups`.
 ;;
 ;; This is a main-free core (like the other `*_cli_core.tl` modules): the entry
@@ -38,6 +41,14 @@
   (Err i64))
 
 (define compile-cli-allocation-profile-requested : bool
+  false)
+(define compile-cli-dump-ir-requested : bool
+  false)
+(define compile-cli-dump-ir-pass : String
+  "")
+(define compile-cli-verify-ir-requested : bool
+  false)
+(define compile-cli-trace-passes-requested : bool
   false)
 
 (defstruct CompileCliCfgNames
@@ -205,8 +216,13 @@
 (define (compile-cli-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
+(define (compile-cli-after-pass? [value : String]) : bool
+  (and
+    (> (string.string-length value) 6)
+    (string.eq (string.substring value 0 6) "after-")))
+
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]")
+  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir | --dump-ir [after-<pass>]] [--verify-ir] [--trace-passes] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string.append message (string.append "\n\n" (compile-cli-usage))))
@@ -473,21 +489,106 @@
             opt-level
             backend-mode)]
         [(string.eq current "--emit-ir")
-          (compile-cli-parse-options
-            (+ idx 1)
-            count
-            input-path
-            output-path
-            has-output
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            true
-            pic
-            has-opt-level
-            opt-level
-            backend-mode)]
+          (if emit-ir
+            (ResultCompileCliConfig.Err
+              "compile: IR output was requested more than once")
+            (compile-cli-parse-options
+              (+ idx 1)
+              count
+              input-path
+              output-path
+              has-output
+              has-target
+              target
+              stdlib-roots
+              cfgs
+              true
+              pic
+              has-opt-level
+              opt-level
+              backend-mode))]
+        [(string.eq current "--dump-ir")
+          (if emit-ir
+            (ResultCompileCliConfig.Err
+              "compile: IR output was requested more than once")
+            (let
+              [has-pass : bool
+                (and
+                  (< (+ idx 1) count)
+                  (compile-cli-after-pass? (io.arg (+ idx 1))))]
+              [next-idx : i64
+                (if has-pass
+                  (+ idx 2)
+                  (+ idx 1))]
+              (begin
+                (set! compile-cli-dump-ir-requested true)
+                (set!
+                  compile-cli-dump-ir-pass
+                  (if has-pass
+                    (let
+                      [value : String (io.arg (+ idx 1))]
+                      (string.substring
+                        value
+                        6
+                        (- (string.string-length value) 6)))
+                    ""))
+                (compile-cli-parse-options
+                  next-idx
+                  count
+                  input-path
+                  output-path
+                  has-output
+                  has-target
+                  target
+                  stdlib-roots
+                  cfgs
+                  true
+                  pic
+                  has-opt-level
+                  opt-level
+                  backend-mode))))]
+        [(string.eq current "--verify-ir")
+          (if compile-cli-verify-ir-requested
+            (ResultCompileCliConfig.Err
+              "compile: --verify-ir was provided more than once")
+            (begin
+              (set! compile-cli-verify-ir-requested true)
+              (compile-cli-parse-options
+                (+ idx 1)
+                count
+                input-path
+                output-path
+                has-output
+                has-target
+                target
+                stdlib-roots
+                cfgs
+                emit-ir
+                pic
+                has-opt-level
+                opt-level
+                backend-mode)))]
+        [(string.eq current "--trace-passes")
+          (if compile-cli-trace-passes-requested
+            (ResultCompileCliConfig.Err
+              "compile: --trace-passes was provided more than once")
+            (begin
+              (set! compile-cli-trace-passes-requested true)
+              (compile-cli-parse-options
+                (+ idx 1)
+                count
+                input-path
+                output-path
+                has-output
+                has-target
+                target
+                stdlib-roots
+                cfgs
+                emit-ir
+                pic
+                has-opt-level
+                opt-level
+                backend-mode)))]
         [(string.eq current "--profile-allocations")
           (if compile-cli-allocation-profile-requested
             (ResultCompileCliConfig.Err
@@ -838,6 +939,37 @@
             (io.print-error (doc-test-run-report-render report))
             1)))]))
 
+(define (compile-cli-ir-verification-failed?) : bool
+  (let
+    [message : String (compiler-opt-debug-verification-error)]
+    (if (= (string.string-length message) 0)
+      false
+      (begin
+        (io.print-error
+          (str_cat.str-cat "compile: IR verification failed: " message "\n"))
+        true))))
+
+(define (compile-cli-write-result-with-ir-verification
+  [result : ResultCompilerDriver]
+  [output-path : String]) : i64
+  (if (compile-cli-ir-verification-failed?)
+    1
+    (compiler-driver-write-result result output-path)))
+
+(define (compile-cli-write-buffer-result-with-ir-verification
+  [result : ResultCompilerDriverBuffer]
+  [output-path : String]) : i64
+  (if (compile-cli-ir-verification-failed?)
+    1
+    (compiler-driver-write-buffer-result result output-path)))
+
+(define (compile-cli-write-pic-result-with-ir-verification
+  [result : ResultCompilerDriverPic]
+  [output-path : String]) : i64
+  (if (compile-cli-ir-verification-failed?)
+    1
+    (compiler-driver-write-pic-result result output-path)))
+
 (define (compile-cli-run-compile-file
   [state : CompilerDriverState]
   [input-path : String]
@@ -884,6 +1016,10 @@
           (if (= inline-test-status 0)
             (begin
               (compiler-driver-state-reset-file-state! state)
+              (compiler-opt-debug-configure!
+                compile-cli-trace-passes-requested
+                compile-cli-dump-ir-pass
+                compile-cli-verify-ir-requested)
               (let
                 [emit-cfgs : sym_i64_env.SymI64Env
                   (compile-cli-cfg-names-to-env-with-intern-state
@@ -891,18 +1027,28 @@
                     (compiler-driver-state-owned-interns state))]
                 [status : i64
                   (if emit-ir
-                    (compiler-driver-write-result
-                      (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
-                        state
-                        input-path
-                        target
-                        stdlib-roots
-                        opt-level
-                        backend-mode
-                        emit-cfgs)
+                    (compile-cli-write-result-with-ir-verification
+                      (if compile-cli-dump-ir-requested
+                        (compiler-driver-state-emit-ir-text-file-with-target-roots-level-mode-and-cfg
+                          state
+                          input-path
+                          target
+                          stdlib-roots
+                          opt-level
+                          backend-mode
+                          emit-cfgs
+                          compile-cli-dump-ir-pass)
+                        (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+                          state
+                          input-path
+                          target
+                          stdlib-roots
+                          opt-level
+                          backend-mode
+                          emit-cfgs))
                       output-path)
                     (if pic
-                      (compiler-driver-write-pic-result
+                      (compile-cli-write-pic-result-with-ir-verification
                         (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
                           state
                           input-path
@@ -913,7 +1059,7 @@
                           backend-mode
                           emit-cfgs)
                         output-path)
-                      (compiler-driver-write-buffer-result
+                      (compile-cli-write-buffer-result-with-ir-verification
                         (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
                           state
                           input-path
@@ -1366,6 +1512,10 @@
     [action : CompileCliAction
       (begin
         (set! compile-cli-allocation-profile-requested false)
+        (set! compile-cli-dump-ir-requested false)
+        (set! compile-cli-dump-ir-pass "")
+        (set! compile-cli-verify-ir-requested false)
+        (set! compile-cli-trace-passes-requested false)
         (compile-cli-dispatch count))]
     [profile? : bool compile-cli-allocation-profile-requested]
     (begin

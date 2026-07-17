@@ -204,6 +204,36 @@ New Linux/Windows dispatch sites in `src/compiler_lower.tl` or
 TYPELISP_BIN=target/stage0/typelisp scripts/check-codegen-target-parity.sh
 ```
 
+### IR Dumps, Pass Tracing, and Verification
+
+Compiler-development builds expose three opt-in `typelisp compile` diagnostics:
+
+- `--dump-ir` writes the deterministic final textual IR to `-o` (or the
+  input's `.ir` path).
+- `--dump-ir after-<pass>` writes every function snapshot observed immediately
+  after the named optimizer pass. Pass names use the trace spelling, including
+  `fold`, `ssa`, `gvn`, `licm`, `global_gvn`, and `dce`.
+- `--trace-passes` writes one
+  `optimizer-pass|<function>|<pass>|blocks=<n>|instructions=<n>` record per
+  observed boundary to stderr.
+- `--verify-ir` runs structural final-IR verification and the full SSA
+  dominance/use verifier for SSA-shaped functions before any output file is
+  written. Failures name the function and, for operand failures, the block and
+  instruction index.
+
+The checked-in pass golden is
+[`../tests/golden/optimizer_fold.after-fold.ir`](../tests/golden/optimizer_fold.after-fold.ir).
+Run the focused cross-platform gate with a current compiler:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/verify-ir-observability.sh
+```
+
+When an intentional IR change updates the golden, generate it with
+`compile tests/golden/optimizer_fold.tl --dump-ir after-fold --verify-ir
+--opt-level 1`, inspect the diff, and run the focused gate. An unknown pass is
+an error and does not create the requested output.
+
 Use [`../scripts/check-backend-target-asm-parity.sh`](../scripts/check-backend-target-asm-parity.sh)
 for the next layer down: normalized Linux/Windows assembly parity for selected
 user helper bodies. The script compiles a conservative corpus for both targets

@@ -386,6 +386,9 @@ assert_subcommand_help_pair doc "typelisp doc"
 assert_subcommand_help_pair compile "typelisp compile"
 if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
     assert_contains "$err" "--emit-ir                      Emit intermediate representation"
+    assert_contains "$err" "--dump-ir [after-<pass>]       Emit textual IR, optionally after a pass"
+    assert_contains "$err" "--verify-ir                    Verify optimized IR before writing output"
+    assert_contains "$err" "--trace-passes                 Trace optimizer pass/function sizes to stderr"
 fi
 if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_subcommand_help_pair inspect "typelisp inspect"

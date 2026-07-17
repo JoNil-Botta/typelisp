@@ -13389,23 +13389,46 @@
       context
       (opt-cfg-natural-loops-with-context blocks context))))
 
+(define (opt-loop-preheaders-blocks-once-with-context
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]) : OptLoopPreheadersResult
+  ;; `context` must be valid for `blocks` (the caller's pipeline context).
+  (opt-loop-preheaders-synthesize-loops
+    blocks
+    context
+    (opt-cfg-natural-loops-with-context blocks context)))
+
 (define (opt-loop-preheaders-blocks-fixed-result
   [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
   [remaining : i64]
-  [any-changed : bool]) : OptLoopPreheadersResult
+  [any-changed : bool]
+  [first-round? : bool]) : OptLoopPreheadersResult
+  ;; The first round reuses the pipeline's CFG context (valid for `blocks`);
+  ;; only rounds after an actual synthesis (which rewrote the CFG) pay for a
+  ;; fresh context build.
   (if (<= remaining 0)
     (OptLoopPreheadersResult.Result blocks any-changed)
-    (match (opt-loop-preheaders-blocks-once blocks)
+    (match (if first-round?
+      (opt-loop-preheaders-blocks-once-with-context context blocks)
+      (opt-loop-preheaders-blocks-once blocks))
       [(OptLoopPreheadersResult.Result next changed)
         (if changed
-          (opt-loop-preheaders-blocks-fixed-result next (- remaining 1) true)
+          (opt-loop-preheaders-blocks-fixed-result
+            next
+            context
+            (- remaining 1)
+            true
+            false)
           (OptLoopPreheadersResult.Result next any-changed))])))
 
 (define (opt-loop-preheaders-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match (opt-loop-preheaders-blocks-fixed-result
     blocks
+    (opt-cfg-context-build blocks)
     (+ 1 (compiler-ir-block-list-count blocks))
-    false)
+    false
+    true)
     [(OptLoopPreheadersResult.Result next _) next]))
 
 (define (opt-loop-preheaders-function-with-context-result
@@ -13419,8 +13442,10 @@
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
           (match (opt-loop-preheaders-blocks-fixed-result
             blocks
+            context
             (+ 1 (compiler-ir-block-list-count blocks))
-            false)
+            false
+            true)
             [(OptLoopPreheadersResult.Result next-blocks preheaders-changed?)
               (if (not preheaders-changed?)
                 ;; No preheader was synthesized: the input context still

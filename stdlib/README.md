@@ -155,33 +155,25 @@ use.
   `(import stdlib.ffi)`.
 - `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
   future collections. Import it with `(import stdlib.hash)`.
-- `hashmap.tl`: generated concrete hashmap family (collections v1, #817) over
-  open-addressed linear-probing slot arrays. `StringI64Map` remains the
-  compatibility `String -> i64` map, while generated `StringStringMap`,
-  `I64I64Map`, and `I64StringMap` add `String -> String`, `i64 -> i64`,
-  and `i64 -> String` instantiations with the same API shape:
-  `*-map-with-capacity` / `-insert` / `-put` / `-get` /
-  `-contains?` / `-remove` / `-update-if-present` / `-insert-or-update` /
-  `-entry-or-insert` / mutable-entry helpers / `-len` / `-capacity`,
-  tombstone accounting,
-  resize/rehash helpers, and deterministic bucket-order iteration through
-  `-next-occupied` / `-entry-at`. String-key maps expose borrowed-key lookup,
-  containment, removal, and update helpers such as
-  `string-string-map-get-borrowed` and
-  `string-string-map-update-borrowed-if-present`; owned-key wrappers remain for
-  compatibility. Generated metadata uses explicit key descriptor identities:
+- `hashmap.tl`: generated hashmap modules (collections v1, #817) over
+  open-addressed linear-probing slot arrays. Import a specialization such as
+  `(import (hashmap String i64) as map)` and use its `Map`, `with-capacity`,
+  `get`, `contains?`, `len`, `capacity`, bucket-order cursor helpers, and
+  place-taking `insert!`, `insert-or-update!`, `remove!`, and
+  `entry-or-insert!` mutators. String-key modules also expose borrowed-key
+  lookup, containment, removal, and mutable-entry helpers. Generated metadata
+  uses explicit key descriptor identities:
   `stdlib/hashmap/string-key-v1` for `String` keys and
   `stdlib/hashmap/i64-key-v1` for `i64` keys; unsupported key types are not
   inferred through traits. These descriptors also support nominal struct and
   enum value types; values move into the map, owned lookup moves the value out
-  through the result, and `*-get-value-borrowed` returns a map-lifetime borrow
+  through the result, and `get-value-borrowed` returns a map-lifetime borrow
   for field or payload inspection until the map is mutated. Aggregate keys are
   still unsupported. Use these stdlib maps for ordinary program data and keep
   compiler-specialized symbol tables where their value domain or lifecycle is
   deliberately narrower. Import it with
-  `(import stdlib.hashmap)`. Module imports such as
-  `(import (hashmap String String) as map)` expose the same scalar families
-  with `Map`, `&` readers, and place-taking bang mutators: `insert!`,
+  `(import stdlib.hashmap)`. Module imports expose `Map`, `&` readers, and
+  place-taking bang mutators: `insert!`,
   `insert-or-update!`, `insert-if-absent!` where supported, `remove!`,
   `remove-borrowed!` where supported, and `entry-or-insert!`. These public
   macros expand to the explicit `&mut` `*-ref!` helpers; the pre-bang mutator
@@ -556,7 +548,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `math-*` helpers | Pure scalar arithmetic/comparison helpers are non-allocating and import no runtime or platform externs. The `abs` macro covers typed `f64` and `f32` expressions; `i64` uses `math-i64-abs`/`math-i64-abs-or` for explicit signed-min behavior. V1 intentionally excludes `sqrt`, trigonometry, `log`, `pow`, and other libm-style functions until a freestanding or explicit platform-extern policy is chosen. |
 | `array.tl` helper macros | Macro wrappers add no allocation by themselves. `make-array` allocates and initializes dynamic-array storage under the same rules as the compiler intrinsic; `array-length` and `array-ref` inspect existing storage, `array-set!` mutates existing storage, and `array-push!` may grow dynamic-array backing storage. |
-| `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*`, `i64-string-map-*`, and scalar `(hashmap K V)` module helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. Flat legacy `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; generated-module `insert!`, `insert-or-update!`, `insert-if-absent!`, `remove!`, `remove-borrowed!`, and `entry-or-insert!` macros evaluate their arguments once and update `Map` through explicit `&mut` `*-ref!` helpers. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed key text without copying it. `*-get-value-borrowed` and module `get-value-borrowed` return a lifetime-parameterized lookup whose found branch borrows the map-owned value; mutating/removing/resizing the map while that result is live is rejected by the checker. Mutable-entry helpers such as `string-i64-map-get-mut-entry-borrowed`, module `get-mut-entry*`, `*-mut-entry-present?`, `*-mut-entry-value-or`, and `*-mut-entry-set!` borrow the backing table uniquely and update existing entries in place; another mutable entry, a value borrow, resize, put, or remove is rejected while the entry is live. Missing mutable entries are explicit no-ops, and insertion/growth remains the threaded `*-entry-or-insert`/`*-put` path for flat helpers or `entry-or-insert!`/`insert!` for modules. |
+| Scalar `(hashmap K V)` module helpers in `hashmap.tl` | Map construction, growth, resize, and rehash allocate backing slot arrays in the active arena. `insert!`, `insert-or-update!`, `insert-if-absent!`, `remove!`, `remove-borrowed!`, and `entry-or-insert!` macros evaluate their arguments once and update `Map` through explicit `&mut` helpers. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed key text without copying it. `get-value-borrowed` returns a lifetime-parameterized lookup whose found branch borrows the map-owned value; mutating, removing, or growing the map while that result is live is rejected by the checker. Mutable-entry helpers borrow the backing table uniquely and update existing entries in place; another mutable entry, a value borrow, or any structural mutation is rejected while the entry is live. Missing mutable entries are explicit no-ops. |
 | `(set T)` generated modules in `set.tl` | Set constructors, `insert!`, `remove!`, growth, resize, and rehash allocate/mutate the backing open-addressed table through the same active-arena policy as `hashmap.tl`. Public bang mutators take a storage place and expand to explicit `&mut` `*-ref!` calls. Duplicate inserts keep `len` unchanged. Lookup, containment, len/capacity accessors, and bucket-order cursor helpers take `&` and are non-allocating aside from caller-provided owned keys. String-key borrowed contains/remove variants inspect borrowed key text without copying it. |
 | `(vector T)` generated modules in `vector.tl` | Vector constructors, growth, `push`, from-array/extend/conversion/map helpers where available, and `push-owned` for cleanup-owning elements allocate backing arrays in the active arena. Cleanup-owning specializations store only constructed values, track slot liveness, clean replaced values in `set`, make `IntoNext.Item` own its payload, and drain still-live unvisited slots if consuming iteration is abandoned; clone-dependent helpers are omitted. `map*` traverses borrowed `Vec` values and returns fresh owned vectors; borrowed slice traversal remains separate in `vector_slice.tl`. `iterator` retains a shared vector borrow in `Iter source`; `next` is non-allocating and yields `IterNext.Item (& source T)` or stable `Done`, so moving or mutating the vector is rejected while iterator state or an item is live. `iterator-mut` retains an exclusive vector borrow in `IterMut source`; `next-mut` yields `IterMutNext.Item (&mut source T)` or stable `Done`, so a yielded item must be dead before the next call. `String` elements retain the language's immutable-text rule and yield `(& source str)` instead. `set` and `reverse!` mutate through `&mut`; `get`, `last`, `len`, `capacity`, `is-empty?`, `contains?`, and `fold*` are non-allocating aside from caller-provided fallback/value/function storage. |
 | `(vec T)` generated `sort!` helpers and `string-less*` comparators in `sort.tl` | Stable insertion sort helpers extend the matching generated `(vector T)` module, mutate the existing vector backing array in place through a mutable reference, and do not allocate. Scalar instantiations compare values directly with `<`; String and aggregate instantiations use the caller-supplied less-than function and shift only strictly-less values, preserving the relative order of equal elements. |

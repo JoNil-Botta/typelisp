@@ -11,6 +11,7 @@
 ;# preventing whole-loop constant folding.
 (import stdlib.io)
 (import stdlib.hashmap)
+(import (hashmap i64 i64) as map_i64_i64)
 
 (define base-entries : i64
   24000)
@@ -21,17 +22,10 @@
 (define (hashmap-grow-value [key : i64]) : i64
   (+ (* key 33) 7))
 
-(define (hashmap-grow-lookup-value-or
-  [result : hashmap.I64I64MapLookup]
-  [fallback : i64]) : i64
-  (match result
-    [(hashmap.I64I64MapFound value) value]
-    [(hashmap.I64I64MapMissing) fallback]))
-
 (define (main) : i64
   (let
     [n : i64 (+ base-entries (io.arg-count))]
-    [m : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 4)]
+    [m : map_i64_i64.Map (map_i64_i64.with-capacity 4)]
     [i : i64 0]
     [acc : i64 0]
     (begin
@@ -39,21 +33,15 @@
         (begin
           (let
             [key : i64 (hashmap-grow-key i)]
-            (set! m (hashmap.i64-i64-map-put m key (hashmap-grow-value key))))
+            (map_i64_i64.insert! m key (hashmap-grow-value key)))
           (set! i (+ i 1))))
       (set! i 0)
       (while (< i n)
         (begin
           (let
             [key : i64 (hashmap-grow-key i)]
-            (set!
-              acc
-              (+
-                acc
-                (hashmap-grow-lookup-value-or
-                  (hashmap.i64-i64-map-get m key)
-                  -1))))
+            (set! acc (+ acc (map_i64_i64.get-value-or (& m) key -1))))
           (set! i (+ i 257))))
       (bit-and
-        (+ (+ acc (hashmap.i64-i64-map-len m)) (hashmap.i64-i64-map-capacity m))
+        (+ (+ acc (map_i64_i64.len (& m))) (map_i64_i64.capacity (& m)))
         255))))

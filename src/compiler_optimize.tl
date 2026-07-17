@@ -27568,9 +27568,10 @@
 
 ;; Reachability working set keyed on each function's dense index slot (the value
 ;; OptFunctionIndex.names already maps a name to). `reachable` dedups by slot
-;; (I64I64Map) and the worklist carries slots, so the per-edge dedup / membership
-;; / pop-and-resolve are O(1) i64 compares instead of re-hashing and string_eq-ing
-;; the name (string_eq was ~6% of an opt1 self-compile, dominated by these
+;; (a generated i64/i64 map) and the worklist carries slots, so per-edge dedup,
+;; membership, and pop-and-resolve are O(1) i64 compares instead of re-hashing
+;; and string_eq-ing the name (string_eq was ~6% of an opt1 self-compile,
+;; dominated by these
 ;; reach/cfg sweeps). One name->slot probe per reference stays (unavoidable to
 ;; resolve a reference), but the index value is a plain slot, so no global intern
 ;; table is mutated -- IR names live in the transient optimize arena and interning

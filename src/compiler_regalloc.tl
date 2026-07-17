@@ -31194,7 +31194,64 @@
               [(CompilerRegEdgeCopyPlan.Plan _) true]
               [(CompilerRegEdgeCopyPlan.Refused _) false])
             (= (compiler-reg-liveness-census-baseline-count) 1)
-            (= (compiler-reg-liveness-census-edge-precise-count) 1)))))))
+            ;; The linear fixture is phi-free, so the edge-precise analysis is
+            ;; the baseline itself and no second fixpoint is computed.
+            (= (compiler-reg-liveness-census-edge-precise-count) 0)))))))
+
+(cfg
+  test
+  (define (compiler-reg-liveness-handle-phi-fixture) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      (compiler-ir-test-symbol "liveness_handle_phi")
+      CompilerIrParamList.Nil
+      (AstType.I64)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "loop"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                1
+                (CompilerIrPhiInputList.Cons
+                  (CompilerIrValue.Var 0)
+                  "entry"
+                  (box
+                    (CompilerIrPhiInputList.Cons
+                      (CompilerIrValue.Var 1)
+                      "loop"
+                      (box CompilerIrPhiInputList.Nil))))
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                CompilerIrInstrList.Nil)))
+          CompilerIrBlockList.Nil)))))
+
+(cfg
+  test
+  (define (compiler-reg-liveness-handle-phi-ok?) : bool
+    (begin
+      (compiler-reg-liveness-census-reset!)
+      (let
+        [_handle : CompilerRegLivenessHandle
+          (compiler-reg-liveness-handle-make
+            (compiler-reg-liveness-handle-phi-fixture)
+            true)]
+        (and
+          (= (compiler-reg-liveness-census-baseline-count) 1)
+          ;; Phi present: the second, edge-precise fixpoint is computed.
+          (= (compiler-reg-liveness-census-edge-precise-count) 1))))))
 
 (cfg
   test
@@ -31549,6 +31606,7 @@
     (compiler-reg-xmm-vector-class-reset-ok?)
     (compiler-reg-coalesce-ok?)
     (cfg test (compiler-reg-liveness-handle-ok?) true)
+    (cfg test (compiler-reg-liveness-handle-phi-ok?) true)
     (cfg test (compiler-reg-xmm-physical-ownership-ok?) true)
     (cfg test (compiler-reg-dense-mask-on-vector-homes-ok?) true)
     (compiler-reg-vector-mask-homes-ok?)

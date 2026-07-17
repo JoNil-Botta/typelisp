@@ -321,7 +321,7 @@
   (and
     (compiler-typecheck-error-ok?
       (compiler-typecheck-bad-call-source)
-      "typecheck: argument type mismatch: expected i64, found bool")
+      "typecheck: call `id` argument 1 (parameter `x`) type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       "(define (main) : i64 (let [x : i64 \"hello\"] x))"
       "typecheck: let binding type mismatch: expected i64, found String")
@@ -347,7 +347,7 @@
 (defstruct Right (value i64))
 (define (take [value : Left]) : i64 value.value)
 (define (main) : i64 (take (Right 1)))"
-      "typecheck: argument type mismatch: expected Left, found Right")))
+      "typecheck: call `take` argument 1 (parameter `value`) type mismatch: expected Left, found Right")))
 
 (define (compiler-typecheck-branch-mismatch-source) : String
   "(define (main [flag : bool]) : i64
@@ -877,7 +877,7 @@
       "typecheck: array elements must have same type: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-string-index-source)
-      "typecheck: string index must be integer")
+      "typecheck: call `__tl_string_ref` argument 2 type mismatch: expected integer, found bool")
     (compiler-typecheck-ok-score? (compiler-typecheck-string-shadow-source) 30)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-cast-bad-source)
@@ -2283,12 +2283,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-struct-constructor-mismatch-source)
-        "typecheck: argument type mismatch: expected i64, found bool")
+        "typecheck: call `Point` argument 1 (parameter `x`) type mismatch: expected i64, found bool")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-struct-constructor-arity-source)
-        "typecheck: arity mismatch")
+        "typecheck: call arity mismatch: Point expected 2 arguments, got 1 argument")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -3765,7 +3765,7 @@
       (compiler-typecheck-extern-head-varargs-typed-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-head-varargs-typed-mismatch-source)
-      "typecheck: argument type mismatch: expected f64, found bool")
+      "typecheck: call `sumf` argument 2 type mismatch: expected f64, found bool")
     (compiler-typecheck-ok?
       (compiler-typecheck-extern-head-varargs-tail-enum-source))
     (compiler-typecheck-error-ok?
@@ -4432,7 +4432,7 @@
     [regular-call-lifetime-conflict-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-regular-call-lifetime-conflict-source)
-        "typecheck: constructor lifetime mismatch")]
+        "typecheck: call `same-owner` argument 2 (parameter `b`) type mismatch: expected (& source i64), found (& other i64)")]
     [lifetime-duplicate-error-ok : bool
       (compiler-typecheck-error-location-ok?
         (compiler-typecheck-lifetime-duplicate-source)
@@ -5513,7 +5513,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-nullary-call-arity-source)
-            "typecheck: arity mismatch")))
+            "typecheck: call arity mismatch: Nothing expected 0 arguments, got 1 argument")))
       (set!
         ok
         (and
@@ -5562,7 +5562,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-nested-field-use-source)
-            "typecheck: argument type mismatch")))
+            "typecheck: call `__tl_string_length` argument 1 type mismatch: expected String, (& str), (& bytes), or (&mut bytes), found i64")))
       (set!
         ok
         (and
@@ -5842,12 +5842,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-bad-arg-source)
-        "typecheck: argument type mismatch")
+        "typecheck: call `__tl_string_length` argument 1 type mismatch: expected String, (& str), (& bytes), or (&mut bytes), found i32")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-bad-array-source)
-        "typecheck: argument type mismatch")
+        "typecheck: call `__tl_string_length` argument 1 type mismatch: expected String, (& str), (& bytes), or (&mut bytes), found (Array i64)")
         unit
         (set! ok false))
       ok)))
@@ -5886,7 +5886,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-argv-builtin-ok-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-argv-builtin-bad-index-source)
-      "typecheck: argument type mismatch: expected i64, found String")
+      "typecheck: call `io.arg` argument 1 type mismatch: expected i64, found String")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-argv-builtin-bad-arg-arity-source)
       "typecheck: call arity mismatch: io.arg expected 1 argument, got 2 arguments")
@@ -6553,7 +6553,7 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [c : String]) : unit (io.write-file 5 c))")
-        "typecheck: argument type mismatch: expected String, found i32")
+        "typecheck: call `io.write-file` argument 1 type mismatch: expected String, found i32")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6565,19 +6565,19 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [p : i64]) : String (io.read-file p))")
-        "typecheck: argument type mismatch: expected String, found i64")
+        "typecheck: call `io.read-file` argument 1 type mismatch: expected String, found i64")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [p : String]) : i64 (io.file-open-status p \"r\"))")
-        "typecheck: argument type mismatch: expected i64, found String")
+        "typecheck: call `io.file-open-status` argument 2 type mismatch: expected i64, found String")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [from : String]) : i64 (rename-status from 5))")
-        "typecheck: argument type mismatch: expected String, found i32")
+        "typecheck: call `rename-status` argument 2 type mismatch: expected String, found i32")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6595,13 +6595,13 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f) : i64 (io.file-close-status \"h\"))")
-        "typecheck: argument type mismatch: expected i64, found String")
+        "typecheck: call `io.file-close-status` argument 1 type mismatch: expected i64, found String")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [h : i64]) : i64 (io.file-write-status h 5))")
-        "typecheck: argument type mismatch: expected String, found i32")
+        "typecheck: call `io.file-write-status` argument 2 type mismatch: expected String, found i32")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -10137,7 +10137,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-builtin-shadow-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-cross-module-mismatch-source)
-      "typecheck: argument type mismatch: expected i64, found bool")))
+      "typecheck: call `left.helper` argument 1 type mismatch: expected i64, found bool")))
 
 (define (compiler-typecheck-self-test-diagnostics) : unit
   (begin
@@ -10181,7 +10181,7 @@
       (io.panic "typecheck: unbound-name diagnostic test failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-bad-call-source)
-      "typecheck: argument type mismatch: expected i64, found bool")
+      "typecheck: call `id` argument 1 (parameter `x`) type mismatch: expected i64, found bool")
       unit
       (io.panic "typecheck: bad-call diagnostic test failed"))
     (if (compiler-typecheck-error-ok?
@@ -10396,26 +10396,26 @@
     (compiler-typecheck-ok? (compiler-typecheck-runtime-builtin-shadow-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-string-bad-source)
-      "typecheck: argument type mismatch: expected String, found i32")
+      "typecheck: call `io.print-string` argument 1 type mismatch: expected String, found i32")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-str-bad-source)
-      "typecheck: argument type mismatch: expected String, found i32")
+      "typecheck: call `io.print-str` argument 1 type mismatch: expected String, found i32")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-error-bad-source)
-      "typecheck: argument type mismatch: expected String, found i32")
+      "typecheck: call `io.print-error` argument 1 type mismatch: expected String, found i32")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-xgetbv-bad-source)
       "typecheck: xgetbv index must be integer")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-cpuid-bad-source)
-      "typecheck: argument type mismatch: expected i64, found String")
+      "typecheck: call `cpuid` argument 1 (parameter `leaf`) type mismatch: expected i64, found String")
     (compiler-typecheck-runtime-stdlib-no-import-tests-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-string-ref-bad-index-source)
-      "typecheck: string index must be integer")
+      "typecheck: call `__tl_string_ref` argument 2 type mismatch: expected integer, found String")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-char-at-bad-index-source)
-      "typecheck: string index must be integer")))
+      "typecheck: call `__tl_string_ref` argument 2 type mismatch: expected integer, found String")))
 
 (define (compiler-typecheck-panic-error-never-tests-ok?) : bool
   (let
@@ -10486,12 +10486,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source "(define (f) : i64 (io.panic 5))")
-        "typecheck: argument type mismatch: expected String, found i32")
+        "typecheck: call `io.panic` argument 1 type mismatch: expected String, found i32")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source "(define (f) : i64 (io.error true))")
-        "typecheck: argument type mismatch: expected String, found bool")
+        "typecheck: call `io.error` argument 1 type mismatch: expected String, found bool")
         unit
         (set! ok false))
       ok)))

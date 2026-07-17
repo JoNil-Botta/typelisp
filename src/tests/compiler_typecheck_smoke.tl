@@ -365,6 +365,51 @@
         (let [moved : String text] 1)
         (len borrowed)))))")
 
+(define (compiler-typecheck-call-argument-diagnostic-source) : String
+  "(define (takes-two [count : i64] [enabled : bool]) : i64 count)
+(define (main) : i64 (takes-two true false))")
+
+(define (compiler-typecheck-lambda-argument-diagnostic-source) : String
+  "(define (main) : i64
+  ((lambda ([item : i64]) : i64 item) false))")
+
+(define (compiler-typecheck-constructor-argument-diagnostic-source) : String
+  "(defstruct Pair
+  (left i64)
+  (right bool))
+(define (main) : i64
+  (let [pair : Pair (Pair false true)] pair.left))")
+
+(define (compiler-typecheck-lifetime-argument-diagnostic-source) : String
+  "(define (take-same
+  [left : (& same i64)]
+  [right : (& same i64)]) : unit
+  unit)
+(define (main [left : i64] [right : i64]) : unit
+  (take-same (& left) (& right)))")
+
+(define (compiler-typecheck-call-arity-diagnostic-source) : String
+  "(define (takes-two [count : i64] [enabled : bool]) : i64 count)
+(define (main) : i64 (takes-two 1))")
+
+(define (compiler-typecheck-call-diagnostic-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-call-argument-diagnostic-source)
+      "typecheck: call `takes-two` argument 1 (parameter `count`) type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-lambda-argument-diagnostic-source)
+      "typecheck: call `lambda` argument 1 (parameter `item`) type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-constructor-argument-diagnostic-source)
+      "typecheck: call `Pair` argument 1 (parameter `left`) type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-lifetime-argument-diagnostic-source)
+      "typecheck: call `take-same` argument 2 (parameter `right`) type mismatch: expected (& same i64), found (& right i64)")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-call-arity-diagnostic-source)
+      "typecheck: call arity mismatch: takes-two expected 2 arguments, got 1 argument")))
+
 (define (compiler-typecheck-auto-borrow-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-auto-borrow-ok-source))
@@ -373,20 +418,20 @@
       "typecheck: borrow requires a local, parameter, or aggregate place")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-auto-borrow-shared-lifetime-source)
-      "typecheck: constructor lifetime mismatch")
+      "typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& same str), found (& right str)")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-auto-borrow-mutable-param-source)
-      "typecheck: argument type mismatch")
+      "typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64")
     (compiler-typecheck-ok? (compiler-typecheck-mut-to-immut-reborrow-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-mut-to-immut-reborrow-live-source)
       "typecheck: cannot assign to borrowed place `item.value`")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-mut-to-immut-reborrow-mismatch-source)
-      "typecheck: argument type mismatch")
+      "typecheck: call `read` argument 1 (parameter `value`) type mismatch: expected (& shared i64), found (& value bool)")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-immut-to-mut-no-strengthen-source)
-      "typecheck: argument type mismatch")
+      "typecheck: call `write` argument 1 (parameter `value`) type mismatch: expected (&mut value i64), found (& value i64)")
     (compiler-typecheck-ok?
       (compiler-typecheck-auto-borrow-string-aggregate-place-source))
     (compiler-typecheck-ok?
@@ -3951,6 +3996,37 @@
       (macro-hygiene-local-id? surface-local-id)
       (not (= direct-local-id surface-local-id)))))
 
+(test
+  compiler-typecheck-call-diagnostics
+  (unless
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-call-argument-diagnostic-source)
+      "typecheck: call `takes-two` argument 1 (parameter `count`) type mismatch: expected i64, found bool")
+    (io.panic "typecheck: named call diagnostic inline test failed"))
+  (unless
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-lambda-argument-diagnostic-source)
+      "typecheck: call `lambda` argument 1 (parameter `item`) type mismatch: expected i64, found bool")
+    (io.panic "typecheck: lambda call diagnostic inline test failed"))
+  (unless
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-constructor-argument-diagnostic-source)
+      "typecheck: call `Pair` argument 1 (parameter `left`) type mismatch: expected i64, found bool")
+    (io.panic "typecheck: constructor call diagnostic inline test failed"))
+  (unless
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-lifetime-argument-diagnostic-source)
+      "typecheck: call `take-same` argument 2 (parameter `right`) type mismatch: expected (& same i64), found (& right i64)")
+    (io.panic "typecheck: lifetime call diagnostic inline test failed"))
+  (unless
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-call-arity-diagnostic-source)
+      "typecheck: call arity mismatch: takes-two expected 2 arguments, got 1 argument")
+    (io.panic "typecheck: arity call diagnostic inline test failed"))
+  (unless
+    (compiler-typecheck-auto-borrow-tests-ok?)
+    (io.panic "typecheck: auto-borrow call diagnostic inline test failed")))
+
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -3989,6 +4065,9 @@
     (unless
       (compiler-typecheck-auto-borrow-tests-ok?)
       (io.panic "typecheck: auto-borrow tests failed"))
+    (unless
+      (compiler-typecheck-call-diagnostic-tests-ok?)
+      (io.panic "typecheck: call diagnostic tests failed"))
     (unless
       (compiler-typecheck-borrow-diagnostic-tests-ok?)
       (io.panic "typecheck: borrow diagnostic tests failed"))

@@ -26093,7 +26093,13 @@
   (match (tc-call-extern-abi-for-name-id ctx name-id)
     [(TcMaybeExternAbi.Some abi)
       (if (tc-call-dynamic-c-varargs-abi? abi)
-        (tc-call-extern-varargs-params ctx type-env args params abi)
+        (tc-call-extern-varargs-params
+          ctx
+          type-env
+          (AstExpr.Var name-id)
+          args
+          params
+          abi)
         (ResultTcTypeList.Ok params))]
     [(TcMaybeExternAbi.No) (ResultTcTypeList.Ok params)]))
 

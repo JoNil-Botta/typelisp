@@ -46235,13 +46235,15 @@
     [(ResultLowerExpr.Ok scrut-lowered)
       (match scrut-lowered
         [(LowerExpr.Expr scrut-state scrut-value scrut-ty)
-          (match (lower-state-alloc-var scrut-state)
-            [(LowerAlloc.Alloc scrut-alloc scrut-var)
-              (match (lower-state-fresh-label
-                (lower-state-emit
-                  scrut-alloc
-                  (CompilerIrInstr.Mov scrut-var scrut-value scrut-ty))
-                "match_merge")
+          ;; Use the scrutinee var directly when it is already a var, like the
+          ;; tail path: a copying Mov into a fresh home makes a 2-word enum pay
+          ;; a Pack round-trip per copy.
+          (match (lower-tail-match-scrutinee-home
+            scrut-state
+            scrut-value
+            scrut-ty)
+            [(LowerScrutineeHome.Home home-state scrut-var)
+              (match (lower-state-fresh-label home-state "match_merge")
                 [(LowerLabel.Label merge-state merge-label)
                   (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
                     [(AstType.Enum _)

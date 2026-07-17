@@ -535,8 +535,8 @@
   (let
     [items : i64vec.Vec (i64vec.with-capacity 2)]
     (begin
-      (i64vec.push! items 41)
-      (i64vec.push! items 1)
+      (i64vec.push-ref! (&mut items) 41)
+      (i64vec.push-ref! (&mut items) 1)
       (i64vec.len (& items)))))")
 
 ;; Compatibility alias fixture for the __tl_dyn-array alias. The qualified stdlib.array path is

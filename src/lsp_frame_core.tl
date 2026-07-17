@@ -270,7 +270,7 @@
   (let
     [next-items : lsp_svec.Vec items]
     (begin
-      (lsp_svec.push! next-items value)
+      (lsp_svec.push-ref! (&mut next-items) value)
       next-items)))
 
 ;; The LSP is serial, so the narrow frame boundary can select one active
@@ -744,8 +744,8 @@
             old-check-cache
             LspCheckCacheInvalid)]
         (begin
-          (lsp_document_vec.set!
-            docs
+          (lsp_document_vec.set-ref!
+            (&mut docs)
             index
             (LspDocument
               uri
@@ -769,13 +769,13 @@
         (if (>= (lsp_document_vec.len (& docs)) lsp-documents-max-capacity)
           (begin
             (lsp-documents-shift-left! docs 0)
-            (lsp_document_vec.set!
-              docs
+            (lsp_document_vec.set-ref!
+              (&mut docs)
               (- (lsp_document_vec.len (& docs)) 1)
               doc)
             docs)
           (begin
-            (lsp_document_vec.push! docs doc)
+            (lsp_document_vec.push-ref! (&mut docs) doc)
             docs))))))
 
 (define (lsp-documents-set-check-cache
@@ -789,8 +789,8 @@
         [doc : LspDocument
           (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
         (begin
-          (lsp_document_vec.set!
-            docs
+          (lsp_document_vec.set-ref!
+            (&mut docs)
             index
             (LspDocument
               (struct-get doc uri)
@@ -812,7 +812,7 @@
         [next : LspDocument
           (lsp_document_vec.get (& docs) (+ i 1) (lsp-document-fallback))]
         (begin
-          (lsp_document_vec.set! docs i next)
+          (lsp_document_vec.set-ref! (&mut docs) i next)
           (set! i (+ i 1)))))))
 
 (define (lsp-documents-remove-index [docs : lsp_document_vec.Vec] [index : i64]) : lsp_document_vec.Vec
@@ -865,7 +865,7 @@
                   false
                   LspCheckCacheInvalid)]
               (begin
-                (lsp_document_vec.set! docs index updated)
+                (lsp_document_vec.set-ref! (&mut docs) index updated)
                 updated)))]
         [(io.ErrIoString _) doc]))))
 
@@ -2734,13 +2734,15 @@
           (if (= (string.string-ref s i) ' ')
             (begin
               (if (> i start)
-                (lsp_svec.push! acc (string.substring s start (- i start)))
+                (lsp_svec.push-ref!
+                  (&mut acc)
+                  (string.substring s start (- i start)))
                 unit)
               (set! start (+ i 1)))
             unit)
           (set! i (+ i 1))))
       (if (> n start)
-        (lsp_svec.push! acc (string.substring s start (- n start)))
+        (lsp_svec.push-ref! (&mut acc) (string.substring s start (- n start)))
         unit)
       acc)))
 
@@ -4188,8 +4190,8 @@
                           (lsp-line-col-cache-at-offset! lc-cache text name-off)]
                         [form-end-lc : LspLineCol
                           (lsp-line-col-cache-at-offset! lc-cache text form-end)]
-                        (lsp_decl_vec.push!
-                          result
+                        (lsp_decl_vec.push-ref!
+                          (&mut result)
                           (LspDeclEntry
                             kind
                             name
@@ -4257,8 +4259,8 @@
     (begin
       (if (>= idx 0)
         (begin
-          (lsp_document_vec.set!
-            docs
+          (lsp_document_vec.set-ref!
+            (&mut docs)
             idx
             (LspDocument
               uri
@@ -6527,7 +6529,7 @@
         (if (string.eq (io.arg i) "--stdlib-root")
           (if (< (+ i 1) count)
             (begin
-              (lsp_svec.push! roots (io.arg (+ i 1)))
+              (lsp_svec.push-ref! (&mut roots) (io.arg (+ i 1)))
               (set! i (+ i 2)))
             (set! i count))
           (set! i (+ i 1))))
@@ -6821,10 +6823,10 @@
                             (struct-get entry input-path)))]
                       [else
                         (begin
-                          (lsp_svec.push! ids case-id)
-                          (lsp_svec.push! result-paths stdout-path)
-                          (lsp_svec.push! result-paths stderr-path)
-                          (lsp_svec.push! result-paths status-path)
+                          (lsp_svec.push-ref! (&mut ids) case-id)
+                          (lsp_svec.push-ref! (&mut result-paths) stdout-path)
+                          (lsp_svec.push-ref! (&mut result-paths) stderr-path)
+                          (lsp_svec.push-ref! (&mut result-paths) status-path)
                           (set! entries (+ entries 1)))]))]))
             (set! cursor next)
             (set! line-number (+ line-number 1)))))

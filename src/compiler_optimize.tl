@@ -3036,8 +3036,8 @@
                 (match offset
                   [(CompilerIrValue.I64 field-offset)
                     (begin
-                      (opt_aggregate_pointer_vec.push!
-                        ptrs
+                      (opt_aggregate_pointer_vec.push-ref!
+                        (&mut ptrs)
                         (OptAggregatePointer.Pointer
                           dst
                           (+ base-offset field-offset)))
@@ -3065,8 +3065,8 @@
             (match (opt-aggregate-value-offset base ptrs src)
               [(option_i64.Some offset)
                 (begin
-                  (opt_aggregate_access_vec.push!
-                    accesses
+                  (opt_aggregate_access_vec.push-ref!
+                    (&mut accesses)
                     (OptAggregateAccess.Load dst offset load-ty))
                   (opt-aggregate-scan-instrs
                     base
@@ -3096,8 +3096,8 @@
                 (if (opt-aggregate-value-has-pointer? base ptrs value)
                   (OptAggregateScanResult.Reject)
                   (begin
-                    (opt_aggregate_access_vec.push!
-                      accesses
+                    (opt_aggregate_access_vec.push-ref!
+                      (&mut accesses)
                       (OptAggregateAccess.Store offset store-ty))
                     (opt-aggregate-scan-instrs
                       base
@@ -3168,8 +3168,8 @@
           (match (opt-aggregate-classify-one base ty size scan)
             [(OptAggregateScanResult.Ok ptrs accesses)
               (begin
-                (opt_aggregate_candidate_vec.push!
-                  candidates
+                (opt_aggregate_candidate_vec.push-ref!
+                  (&mut candidates)
                   (OptAggregateAllocCandidate.Candidate
                     base
                     ty
@@ -3235,8 +3235,8 @@
     (begin
       (while (< i right-count)
         (begin
-          (opt_aggregate_candidate_vec.push!
-            left
+          (opt_aggregate_candidate_vec.push-ref!
+            (&mut left)
             (array-ref (opt_aggregate_candidate_vec.slots (& right)) i))
           (set! i (+ i 1))))
       left)))
@@ -3387,8 +3387,8 @@
                   [slot-count : i64 (opt-aggregate-stack-slot-count size)]
                   [storage : i64 (+ frame (- slot-count 1))]
                   (begin
-                    (opt_aggregate_promote_slot_vec.push!
-                      promote-slots
+                    (opt_aggregate_promote_slot_vec.push-ref!
+                      (&mut promote-slots)
                       (OptAggregatePromoteSlot.Slot base storage))
                     (set! frame (+ frame slot-count))))
                 unit)])
@@ -35652,20 +35652,20 @@
     [accesses : opt_aggregate_access_vec.Vec
       (opt_aggregate_access_vec.with-capacity 1)]
     (begin
-      (opt_aggregate_access_vec.push!
-        accesses
+      (opt_aggregate_access_vec.push-ref!
+        (&mut accesses)
         (OptAggregateAccess.Store 0 (AstType.I64)))
-      (opt_aggregate_access_vec.push!
-        accesses
+      (opt_aggregate_access_vec.push-ref!
+        (&mut accesses)
         (OptAggregateAccess.Load 11 0 (AstType.I64)))
-      (opt_aggregate_access_vec.push!
-        accesses
+      (opt_aggregate_access_vec.push-ref!
+        (&mut accesses)
         (OptAggregateAccess.Store 8 (AstType.Bool)))
-      (opt_aggregate_access_vec.push!
-        accesses
+      (opt_aggregate_access_vec.push-ref!
+        (&mut accesses)
         (OptAggregateAccess.Load 12 8 (AstType.Bool)))
-      (opt_aggregate_access_vec.push!
-        accesses
+      (opt_aggregate_access_vec.push-ref!
+        (&mut accesses)
         (OptAggregateAccess.Store 16 (AstType.U64)))
       (and
         (= (opt_aggregate_access_vec.len (& accesses)) 5)
@@ -35723,23 +35723,23 @@
     (begin
       (while (< index 5)
         (begin
-          (opt_aggregate_pointer_vec.push!
-            ptrs
+          (opt_aggregate_pointer_vec.push-ref!
+            (&mut ptrs)
             (OptAggregatePointer.Pointer
               (if (or (= index 0) (= index 4))
                 10
                 (+ 10 index))
               (* index 8)))
-          (opt_aggregate_candidate_vec.push!
-            candidates
+          (opt_aggregate_candidate_vec.push-ref!
+            (&mut candidates)
             (OptAggregateAllocCandidate.Candidate
               index
               (AstType.Unit)
               (+ index 1)
               (opt_aggregate_pointer_vec.new)
               (opt_aggregate_access_vec.new)))
-          (opt_aggregate_promote_slot_vec.push!
-            promote-slots
+          (opt_aggregate_promote_slot_vec.push-ref!
+            (&mut promote-slots)
             (OptAggregatePromoteSlot.Slot index (+ 100 index)))
           (set! index (+ index 1))))
       (and

@@ -73,7 +73,7 @@
               (let
                 [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (cli_svec.push! next-roots (io.arg (+ idx 1)))
+                  (cli_svec.push-ref! (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))))]
         [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)

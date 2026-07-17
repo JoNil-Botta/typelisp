@@ -81,7 +81,7 @@
     (begin
       (while (< idx end)
         (begin
-          (svec.push! cur (svec.get (& items) idx ""))
+          (svec.push-ref! (&mut cur) (svec.get (& items) idx ""))
           (set! idx (+ idx 1))))
       cur)))
 
@@ -93,7 +93,7 @@
     [out : svec.Vec (svec.with-capacity (+ (svec.len (& items)) 1))]
     (begin
       (set! out (package-source-vec-copy-range items out 0 slot))
-      (svec.push! out value)
+      (svec.push-ref! (&mut out) value)
       (set!
         out
         (package-source-vec-copy-range items out slot (svec.len (& items))))
@@ -226,11 +226,11 @@
   (let
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push! items "src/a.tl")
-      (svec.push! items "src/b.tl")
-      (svec.push! items "src/c.tl")
-      (svec.push! items "src/d.tl")
-      (svec.push! items "src/e.tl")
+      (svec.push-ref! (&mut items) "src/a.tl")
+      (svec.push-ref! (&mut items) "src/b.tl")
+      (svec.push-ref! (&mut items) "src/c.tl")
+      (svec.push-ref! (&mut items) "src/d.tl")
+      (svec.push-ref! (&mut items) "src/e.tl")
       (and
         (= (svec.len (& items)) 5)
         (string.eq (svec.get (& items) 0 "") "src/a.tl")
@@ -324,7 +324,7 @@
           (struct-get manifest entry)))]
     [items : svec.Vec (svec.new)]
     (begin
-      (svec.push! items entry)
+      (svec.push-ref! (&mut items) entry)
       items)))
 
 (define (package-source-scan-dir

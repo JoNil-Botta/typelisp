@@ -2920,7 +2920,7 @@
       (let
         [next-segments : svec.Vec segments]
         (begin
-          (svec.push! next-segments segment)
+          (svec.push-ref! (&mut next-segments) segment)
           next-segments))]
     [(<= (svec.len (& segments)) 0)
       (if rooted
@@ -2928,7 +2928,7 @@
         (let
           [next-segments : svec.Vec segments]
           (begin
-            (svec.push! next-segments segment)
+            (svec.push-ref! (&mut next-segments) segment)
             next-segments)))]
     [else
       (let
@@ -2937,12 +2937,12 @@
           (let
             [next-segments : svec.Vec segments]
             (begin
-              (svec.push! next-segments segment)
+              (svec.push-ref! (&mut next-segments) segment)
               next-segments))
           (let
             [next-segments : svec.Vec segments]
             (begin
-              (match (svec.pop! next-segments)
+              (match (svec.pop-ref! (&mut next-segments))
                 [(svec.Pop.Ok _) unit]
                 [svec.Pop.Empty unit])
               next-segments))))]))
@@ -58163,7 +58163,7 @@
       (let
         [items : vec.Vec (vec.new)]
         (begin
-          (vec.push! items first)
+          (vec.push-ref! (&mut items) first)
           (if (= (vec.len (& items)) 1)
             (begin
               (vec.get (& items) 0 fallback)

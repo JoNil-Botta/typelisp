@@ -257,8 +257,8 @@
           (let
             [next-paths : cli_svec.Vec paths]
             (begin
-              (cli_svec.push!
-                next-paths
+              (cli_svec.push-ref!
+                (&mut next-paths)
                 (string.substring text start (- line-end start)))
               next-paths)))))))
 
@@ -452,7 +452,7 @@
               (let
                 [next-roots : cli_svec.Vec roots]
                 (begin
-                  (cli_svec.push! next-roots (io.arg (+ idx 1)))
+                  (cli_svec.push-ref! (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               has-opt-level
               opt-level
@@ -3120,14 +3120,14 @@
         (let
           [items : vec.Vec (vec.new)]
         (begin
-          (vec.push! items first)
+          (vec.push-ref! (&mut items) first)
           (let
             [has-one : bool
               (let
                 [view : (slice.Slice items) (slice.all-vec (& items))]
                 (= (slice.len view) 1))]
             (if has-one
-              (match (vec.pop! items)
+              (match (vec.pop-ref! (&mut items))
                 [(vec.Pop.Ok _) 42]
                 [(vec.Pop.Empty) 0])
               0))))))))
@@ -3366,8 +3366,8 @@
   (let
     [roots : cli_svec.Vec (cli_svec.new)]
     (begin
-      (cli_svec.push! roots "stdlib")
-      (cli_svec.push! roots "src")
+      (cli_svec.push-ref! (&mut roots) "stdlib")
+      (cli_svec.push-ref! (&mut roots) "src")
       roots)))
 
 (define (tltest-package-cfg-inline-load-self-test?) : bool

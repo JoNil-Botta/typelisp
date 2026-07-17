@@ -354,7 +354,7 @@
               (let
                 [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (cli_svec.push! next-roots (io.arg (+ idx 1)))
+                  (cli_svec.push-ref! (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               cfgs
               emit-ir
@@ -564,7 +564,7 @@
               (let
                 [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (cli_svec.push! next-roots (io.arg (+ idx 1)))
+                  (cli_svec.push-ref! (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               cfgs
               has-opt-level
@@ -771,7 +771,7 @@
             (let
               [next-roots : cli_svec.Vec stdlib-roots]
               (begin
-                (cli_svec.push! next-roots (io.arg (+ idx 1)))
+                (cli_svec.push-ref! (&mut next-roots) (io.arg (+ idx 1)))
                 next-roots))))
         (begin
           (io.print-error (string.append "Warning: unknown flag: " current))

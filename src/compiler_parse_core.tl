@@ -14,10 +14,8 @@
 (import sym_i64_env)
 (import stdlib.string)
 (import stdlib.option)
-(import stdlib.hashmap)
 (import stdlib.arena)
 (import token)
-(import (hashmap i64 i64) as parse_i64_i64_map)
 (import (option i64) as option_i64)
 
 (defenum CompilerParseMaybeDeclSpan
@@ -790,6 +788,206 @@
   (Ok AstProgram)
   (Err (Box CompilerDiagnostic)))
 
+;; Mutable parser data belongs to one compiler driver. The fixed dispatch
+;; arrays avoid arena-lifetime coupling in a state that survives individual
+;; file parses; the cached immutable environment is rebuilt when its owning
+;; intern table resets. Standalone parser helpers use the default state below
+;; as a compatibility adapter, while production drivers attach their state to
+;; cfgs with compiler-parse-state-cfgs.
+(defstruct CompilerParseState
+  (control (Array i64))
+  (dispatch-index-keys (Array i64))
+  (dispatch-index-tags (Array i64))
+  (dispatch-cache (Array sym_i64_env.SymI64Env))
+  (dispatch-cache-handle (Array (Array sym_i64_env.SymI64Env)))
+  (intern-owner (Array ci.InternCompatState)))
+
+(define compiler-parse-state-control-keys-addr : i64
+  0)
+(define compiler-parse-state-control-tags-addr : i64
+  1)
+(define compiler-parse-state-control-cache-addr : i64
+  2)
+(define compiler-parse-state-control-owner-addr : i64
+  3)
+(define compiler-parse-state-control-cache-generation : i64
+  4)
+(define compiler-parse-state-control-cache-table-id : i64
+  5)
+(define compiler-parse-state-control-marker-id : i64
+  6)
+(define compiler-parse-state-control-ready : i64
+  7)
+(define compiler-parse-state-control-has-type-literal : i64
+  8)
+(define compiler-parse-state-control-reserved : i64
+  9)
+(define compiler-parse-state-marker-id : i64
+  -2)
+(define compiler-parse-invocation-marker-id : i64
+  -3)
+(define compiler-parse-invocation-control-slot : i64
+  5)
+
+(define (compiler-parse-array-data-addr-i64 [items : (Array i64)]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
+    : i64))
+
+(define (compiler-parse-intern-owner-data-addr
+  [items : (Array ci.InternCompatState)]) : i64
+  (if (= (array-length items) 0)
+    0
+    (cast
+      (unsafe
+        (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
+      : i64)))
+
+(define (compiler-parse-dispatch-cache-handle-data-addr
+  [items : (Array (Array sym_i64_env.SymI64Env))]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
+    : i64))
+
+(define (compiler-parse-state-new-from-owner
+  [owner : (Array ci.InternCompatState)]) : CompilerParseState
+  (let
+    [control : (Array i64) (array.make-array i64 10)]
+    [keys : (Array i64) (array.make-array i64 512)]
+    [tags : (Array i64) (array.make-array i64 512)]
+    [cache : (Array sym_i64_env.SymI64Env)
+      (array.make-array sym_i64_env.SymI64Env 1)]
+    [cache-handle : (Array (Array sym_i64_env.SymI64Env))
+      (array.make-array (Array sym_i64_env.SymI64Env) 1)]
+    (begin
+      (array-set! cache 0 (sym_i64_env.sym-i64-empty))
+      (array-set! cache-handle 0 cache)
+      (array-set!
+        control
+        compiler-parse-state-control-keys-addr
+        (compiler-parse-array-data-addr-i64 keys))
+      (array-set!
+        control
+        compiler-parse-state-control-tags-addr
+        (compiler-parse-array-data-addr-i64 tags))
+      (array-set!
+        control
+        compiler-parse-state-control-cache-addr
+        (compiler-parse-dispatch-cache-handle-data-addr cache-handle))
+      (array-set!
+        control
+        compiler-parse-state-control-owner-addr
+        (compiler-parse-intern-owner-data-addr owner))
+      (array-set! control compiler-parse-state-control-cache-generation -1)
+      (array-set! control compiler-parse-state-control-cache-table-id -1)
+      (array-set! control compiler-parse-state-control-marker-id -1)
+      (array-set! control compiler-parse-state-control-ready 0)
+      (array-set! control compiler-parse-state-control-has-type-literal 0)
+      (array-set! control compiler-parse-state-control-reserved 0)
+      (CompilerParseState control keys tags cache cache-handle owner))))
+
+(define (compiler-parse-state-new) : CompilerParseState
+  (compiler-parse-state-new-from-owner
+    (array.make-array ci.InternCompatState 0)))
+
+(define (compiler-parse-state-new-with-intern-state
+  [intern-state : ci.InternCompatState]) : CompilerParseState
+  (let
+    [owner : (Array ci.InternCompatState)
+      (array.make-array ci.InternCompatState 1)]
+    (begin
+      (array-set! owner 0 intern-state)
+      (compiler-parse-state-new-from-owner owner))))
+
+(define (compiler-parse-state-control-addr [state : CompilerParseState]) : i64
+  (compiler-parse-array-data-addr-i64 (struct-get state control)))
+
+(define (compiler-parse-raw-i64-ref [address : i64] [index : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset (int->ptr address : (Ptr i64)) index))))
+
+(define (compiler-parse-raw-i64-set!
+  [address : i64]
+  [index : i64]
+  [value : i64]) : unit
+  (unsafe
+    (ptr-write! (ptr-offset (int->ptr address : (MutPtr i64)) index) value)))
+
+(define (compiler-parse-state-owner [control : i64]) : ci.InternCompatState
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (compiler-parse-raw-i64-ref
+          control
+          compiler-parse-state-control-owner-addr)
+        : (Ptr ci.InternCompatState)))))
+
+(define (compiler-parse-state-owner-generation [control : i64]) : i64
+  (if (=
+    (compiler-parse-raw-i64-ref control compiler-parse-state-control-owner-addr)
+    0)
+    (intern-generation)
+    (ci.intern-compat-state-generation (compiler-parse-state-owner control))))
+
+(define (compiler-parse-state-owner-table-id [control : i64]) : i64
+  (if (=
+    (compiler-parse-raw-i64-ref control compiler-parse-state-control-owner-addr)
+    0)
+    (ci.intern-active-table-id)
+    (ci.intern-compat-state-table-id (compiler-parse-state-owner control))))
+
+(define (compiler-parse-state-owner-persistent-arena [control : i64]) : i64
+  (if (=
+    (compiler-parse-raw-i64-ref control compiler-parse-state-control-owner-addr)
+    0)
+    (ci.intern-persistent-arena-handle)
+    (ci.intern-compat-state-persistent-arena
+      (compiler-parse-state-owner control))))
+
+(define (compiler-parse-env-marker-value
+  [dispatch : sym_i64_env.SymI64Env]
+  [marker-id : i64]) : i64
+  (let
+    [cursor : sym_i64_env.SymI64Env dispatch]
+    (begin
+      (while true
+        (match cursor
+          [(sym_i64_env.SymI64Nil) (return 0)]
+          [(sym_i64_env.SymI64Bind name-id value rest)
+            (if (= name-id marker-id)
+              (return value)
+              (set! cursor (box-get rest)))]))
+      0)))
+
+(define (compiler-parse-state-cfgs
+  [state : CompilerParseState]
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-bind-id
+    cfgs
+    compiler-parse-state-marker-id
+    (compiler-parse-state-control-addr state)))
+
+(define (compiler-parse-state-type-literal-reset! [state : CompilerParseState]) : unit
+  (array-set!
+    (struct-get state control)
+    compiler-parse-state-control-has-type-literal
+    0))
+
+(define (compiler-parse-state-has-type-literal? [state : CompilerParseState]) : bool
+  (not
+    (=
+      (array-ref
+        (struct-get state control)
+        compiler-parse-state-control-has-type-literal)
+      0)))
+
+;; Compatibility state for direct parser helpers and parser-only tests. Driver
+;; paths always attach their own state with compiler-parse-state-cfgs.
+(define compiler-parse-default-state : CompilerParseState
+  (compiler-parse-state-new))
+
 (define (sexpr-colon? [s : reader.Sexpr]) : bool
   (match s
     [(reader.Sexpr.Sym name-id) (= name-id cbi.compiler-builtin-id-fix-colon)]
@@ -1035,81 +1233,97 @@
     (token.span-end-line span)
     (token.span-end-col span)))
 
-;; Parser result enums still carry message strings; diagnostic parsing records
-;; the first failing spanned subform here while that message bubbles outward.
-(define parse-ast-error-span-active : bool
-  false)
-(define parse-ast-error-span-start-line : i64
-  0)
-(define parse-ast-error-span-start-col : i64
-  0)
-(define parse-ast-error-span-end-line : i64
-  0)
-(define parse-ast-error-span-end-col : i64
-  0)
+;; Parser result enums still carry message strings. Diagnostic parsing records
+;; the first failing spanned subform in the invocation frame carried by this
+;; dispatch, so nested and interleaved parser calls cannot overwrite it.
+(define (parse-ast-error-span-clear! [dispatch : sym_i64_env.SymI64Env]) : unit
+  (let
+    [invocation : i64
+      (compiler-parse-env-marker-value
+        dispatch
+        compiler-parse-invocation-marker-id)]
+    (if (= invocation 0)
+      unit
+      (compiler-parse-raw-i64-set! invocation 0 0))))
 
-(define (parse-ast-error-span-clear!) : unit
-  (begin
-    (set! parse-ast-error-span-active false)
-    unit))
+(define (parse-ast-error-span-note!
+  [dispatch : sym_i64_env.SymI64Env]
+  [span : token.SourceSpan]) : unit
+  (let
+    [invocation : i64
+      (compiler-parse-env-marker-value
+        dispatch
+        compiler-parse-invocation-marker-id)]
+    (if (or
+      (= invocation 0)
+      (not (= (compiler-parse-raw-i64-ref invocation 0) 0)))
+      unit
+      (begin
+        (compiler-parse-raw-i64-set! invocation 0 1)
+        (compiler-parse-raw-i64-set! invocation 1 (token.span-start-line span))
+        (compiler-parse-raw-i64-set! invocation 2 (token.span-start-col span))
+        (compiler-parse-raw-i64-set! invocation 3 (token.span-end-line span))
+        (compiler-parse-raw-i64-set! invocation 4 (token.span-end-col span))))))
 
-(define (parse-ast-error-span-note! [span : token.SourceSpan]) : unit
-  (if parse-ast-error-span-active
-    unit
-    (begin
-      (set! parse-ast-error-span-active true)
-      (set! parse-ast-error-span-start-line (token.span-start-line span))
-      (set! parse-ast-error-span-start-col (token.span-start-col span))
-      (set! parse-ast-error-span-end-line (token.span-end-line span))
-      (set! parse-ast-error-span-end-col (token.span-end-col span))
-      unit)))
-
-(define (parse-ast-error-span-current [fallback : token.SourceSpan]) : token.SourceSpan
-  (if parse-ast-error-span-active
-    (token.SourceSpan
-      parse-ast-error-span-start-line
-      parse-ast-error-span-start-col
-      parse-ast-error-span-end-line
-      parse-ast-error-span-end-col)
-    fallback))
+(define (parse-ast-error-span-current
+  [dispatch : sym_i64_env.SymI64Env]
+  [fallback : token.SourceSpan]) : token.SourceSpan
+  (let
+    [invocation : i64
+      (compiler-parse-env-marker-value
+        dispatch
+        compiler-parse-invocation-marker-id)]
+    (if (and
+      (not (= invocation 0))
+      (not (= (compiler-parse-raw-i64-ref invocation 0) 0)))
+      (token.SourceSpan
+        (compiler-parse-raw-i64-ref invocation 1)
+        (compiler-parse-raw-i64-ref invocation 2)
+        (compiler-parse-raw-i64-ref invocation 3)
+        (compiler-parse-raw-i64-ref invocation 4))
+      fallback)))
 
 (define (parse-ast-error-span-note-expr
+  [dispatch : sym_i64_env.SymI64Env]
   [s : reader.SpannedSexpr]
   [result : ResultAstExpr]) : ResultAstExpr
   (match result
     [(ResultAstExpr.Err _)
       (begin
-        (parse-ast-error-span-note! (reader.spanned-sexpr-span s))
+        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
         result)]
     [_ result]))
 
 (define (parse-ast-error-span-note-let-binding
+  [dispatch : sym_i64_env.SymI64Env]
   [s : reader.SpannedSexpr]
   [result : ResultAstLetBinding]) : ResultAstLetBinding
   (match result
     [(ResultAstLetBinding.Err _)
       (begin
-        (parse-ast-error-span-note! (reader.spanned-sexpr-span s))
+        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
         result)]
     [_ result]))
 
 (define (parse-ast-error-span-note-decl
+  [dispatch : sym_i64_env.SymI64Env]
   [s : reader.SpannedSexpr]
   [result : ResultAstDecl]) : ResultAstDecl
   (match result
     [(ResultAstDecl.Err _)
       (begin
-        (parse-ast-error-span-note! (reader.spanned-sexpr-span s))
+        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
         result)]
     [_ result]))
 
 (define (parse-ast-error-span-note-maybe-decl
+  [dispatch : sym_i64_env.SymI64Env]
   [s : reader.SpannedSexpr]
   [result : ResultAstMaybeDecl]) : ResultAstMaybeDecl
   (match result
     [(ResultAstMaybeDecl.Err _)
       (begin
-        (parse-ast-error-span-note! (reader.spanned-sexpr-span s))
+        (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
         result)]
     [_ result]))
 
@@ -1341,17 +1555,25 @@
 (define (compiler-parse-tag-expr-type-literal) : i64
   249)
 
-(define compiler-parse-current-load-has-type-literal : bool
-  false)
-
+;; Legacy parser-only adapters operate on the default state. Production load
+;; paths reset and inspect their CompilerDriverState-owned parser state.
 (define (compiler-parse-type-literal-tracking-reset!) : unit
-  (set! compiler-parse-current-load-has-type-literal false))
+  (compiler-parse-state-type-literal-reset! compiler-parse-default-state))
 
-(define (compiler-parse-type-literal-tracking-mark!) : unit
-  (set! compiler-parse-current-load-has-type-literal true))
+(define (compiler-parse-type-literal-tracking-mark!
+  [dispatch : sym_i64_env.SymI64Env]) : unit
+  (let
+    [control : i64
+      (compiler-parse-env-marker-value dispatch compiler-parse-state-marker-id)]
+    (if (= control 0)
+      unit
+      (compiler-parse-raw-i64-set!
+        control
+        compiler-parse-state-control-has-type-literal
+        1))))
 
 (define (compiler-parse-current-load-has-type-literal?) : bool
-  compiler-parse-current-load-has-type-literal)
+  (compiler-parse-state-has-type-literal? compiler-parse-default-state))
 
 (define (compiler-parse-tag-expr-init) : i64
   288)
@@ -1540,94 +1762,264 @@
 ;; as an immutable list. Keep that environment as the source of truth for cfg
 ;; evaluation and custom test dispatches, while indexing the canonical dispatch
 ;; by intern ID for constant-time syntax lookup.
-(define compiler-parse-dispatch-index : parse_i64_i64_map.Map
-  (parse_i64_i64_map.with-capacity 256))
-(define compiler-parse-dispatch-index-generation : i64
-  -1)
-(define compiler-parse-dispatch-index-table-id : i64
-  -1)
-(define compiler-parse-dispatch-index-marker-id : i64
-  -1)
-(define compiler-parse-dispatch-index-ready : bool
-  false)
-(define compiler-parse-dispatch-env-cache : sym_i64_env.SymI64Env
-  (sym_i64_env.sym-i64-empty))
-(define compiler-parse-dispatch-env-generation : i64
-  -1)
-(define compiler-parse-dispatch-env-table-id : i64
-  -1)
+(define compiler-parse-dispatch-index-capacity : i64
+  512)
 
-(define (compiler-parse-dispatch-index-current?) : bool
+(define (compiler-parse-dispatch-index-current-control? [control : i64]) : bool
   (and
-    (= compiler-parse-dispatch-index-generation (intern-generation))
-    (= compiler-parse-dispatch-index-table-id (ci.intern-active-table-id))))
+    (=
+      (compiler-parse-raw-i64-ref
+        control
+        compiler-parse-state-control-cache-generation)
+      (compiler-parse-state-owner-generation control))
+    (=
+      (compiler-parse-raw-i64-ref
+        control
+        compiler-parse-state-control-cache-table-id)
+      (compiler-parse-state-owner-table-id control))))
+
+(define (compiler-parse-dispatch-index-clear! [control : i64]) : unit
+  (let
+    [keys : i64
+      (compiler-parse-raw-i64-ref
+        control
+        compiler-parse-state-control-keys-addr)]
+    [i : i64 0]
+    (while (< i compiler-parse-dispatch-index-capacity)
+      (begin
+        (compiler-parse-raw-i64-set! keys i 0)
+        (set! i (+ i 1))))))
+
+(define (compiler-parse-dispatch-index-insert!
+  [control : i64]
+  [name-id : i64]
+  [tag : i64]) : bool
+  (let
+    [keys : i64
+      (compiler-parse-raw-i64-ref
+        control
+        compiler-parse-state-control-keys-addr)]
+    [tags : i64
+      (compiler-parse-raw-i64-ref
+        control
+        compiler-parse-state-control-tags-addr)]
+    [encoded : i64 (+ name-id 1)]
+    [slot : i64 (bit-and name-id (- compiler-parse-dispatch-index-capacity 1))]
+    [steps : i64 0]
+    (begin
+      (while (< steps compiler-parse-dispatch-index-capacity)
+        (let
+          [present : i64 (compiler-parse-raw-i64-ref keys slot)]
+          (if (or (= present 0) (= present encoded))
+            (begin
+              (compiler-parse-raw-i64-set! keys slot encoded)
+              (compiler-parse-raw-i64-set! tags slot tag)
+              (return true))
+            (begin
+              (set!
+                slot
+                (bit-and
+                  (+ slot 1)
+                  (- compiler-parse-dispatch-index-capacity 1)))
+              (set! steps (+ steps 1))))))
+      false)))
 
 (define (compiler-parse-dispatch-index-populate!
+  [control : i64]
   [dispatch : sym_i64_env.SymI64Env]) : unit
   (let
-    [generation : i64 (intern-generation)]
-    [table-id : i64 (ci.intern-active-table-id)]
+    [generation : i64 (compiler-parse-state-owner-generation control)]
+    [table-id : i64 (compiler-parse-state-owner-table-id control)]
     [cursor : sym_i64_env.SymI64Env dispatch]
     [done : bool false]
     (begin
-      ;; Parsing is sequential and the dispatch is module-local. Rebuilding here
-      ;; ensures this map never outlives the arena that owns its backing slots.
-      (set! compiler-parse-dispatch-index (parse_i64_i64_map.with-capacity 256))
-      (set! compiler-parse-dispatch-index-marker-id -1)
-      (set! compiler-parse-dispatch-index-ready true)
-      (while (not done)
+      (compiler-parse-dispatch-index-clear! control)
+      (compiler-parse-raw-i64-set!
+        control
+        compiler-parse-state-control-marker-id
+        -1)
+      (compiler-parse-raw-i64-set! control compiler-parse-state-control-ready 1)
+      (while (and
+        (not done)
+        (not
+          (=
+            (compiler-parse-raw-i64-ref
+              control
+              compiler-parse-state-control-ready)
+            0)))
         (match cursor
           [(sym_i64_env.SymI64Nil) (set! done true)]
           [(sym_i64_env.SymI64Bind name-id tag rest)
             (begin
-              (if (= tag (compiler-parse-tag-decl-defdispatch))
-                (set! compiler-parse-dispatch-index-marker-id name-id)
+              (if (and
+                (>= name-id 0)
+                (= tag (compiler-parse-tag-decl-defdispatch)))
+                (compiler-parse-raw-i64-set!
+                  control
+                  compiler-parse-state-control-marker-id
+                  name-id)
                 unit)
-              (parse_i64_i64_map.insert-ref!
-                (&mut compiler-parse-dispatch-index)
-                name-id
-                tag)
-              (set! cursor (box-get rest)))]))
-      (if (< compiler-parse-dispatch-index-marker-id 0)
-        (set! compiler-parse-dispatch-index-ready false)
+              (if (or
+                (< name-id 0)
+                (compiler-parse-dispatch-index-insert! control name-id tag))
+                (set! cursor (box-get rest))
+                (compiler-parse-raw-i64-set!
+                  control
+                  compiler-parse-state-control-ready
+                  0)))]))
+      (if (<
+        (compiler-parse-raw-i64-ref
+          control
+          compiler-parse-state-control-marker-id)
+        0)
+        (compiler-parse-raw-i64-set!
+          control
+          compiler-parse-state-control-ready
+          0)
         unit)
-      (set! compiler-parse-dispatch-index-generation generation)
-      (set! compiler-parse-dispatch-index-table-id table-id))))
+      (compiler-parse-raw-i64-set!
+        control
+        compiler-parse-state-control-cache-generation
+        generation)
+      (compiler-parse-raw-i64-set!
+        control
+        compiler-parse-state-control-cache-table-id
+        table-id))))
 
-;; A complete dispatch naturally starts with the defdispatch binding. Derived
-;; cfg dispatches repeat that same binding at the head as a semantics-neutral
-;; marker; partial/custom environments retain the exact linked-list fallback.
+;; Return the owning control address only when the first non-capability binding
+;; is this state's defdispatch marker. Partial/custom environments retain the
+;; linked-list fallback.
+(define (compiler-parse-dispatch-indexed-control
+  [dispatch : sym_i64_env.SymI64Env]) : i64
+  (let
+    [invocation-control : i64
+      (match dispatch
+        [(sym_i64_env.SymI64Bind name-id value _)
+          (if (= name-id compiler-parse-invocation-marker-id)
+            (compiler-parse-raw-i64-ref
+              value
+              compiler-parse-invocation-control-slot)
+            0)]
+        [(sym_i64_env.SymI64Nil) 0])]
+    [cursor : sym_i64_env.SymI64Env dispatch]
+    [control : i64 0]
+    [marker-id : i64 -1]
+    [marker-tag : i64 -1]
+    (begin
+      ;; Invocation frames are created only after the complete base dispatch
+      ;; has validated this control. Intern reset cannot occur during a parse,
+      ;; so the frame is the constant-time production path; the scan below is
+      ;; retained for derived and custom test environments.
+      (when (not (= invocation-control 0)) (return invocation-control))
+      (while (or (= control 0) (< marker-id 0))
+        (match cursor
+          [(sym_i64_env.SymI64Nil) (return 0)]
+          [(sym_i64_env.SymI64Bind name-id tag rest)
+            (begin
+              (if (= name-id compiler-parse-state-marker-id)
+                (set! control tag)
+                unit)
+              (if (and (>= name-id 0) (< marker-id 0))
+                (begin
+                  (set! marker-id name-id)
+                  (set! marker-tag tag))
+                unit)
+              (set! cursor (box-get rest)))]))
+      (if (and
+        (not (= control 0))
+        (= marker-tag (compiler-parse-tag-decl-defdispatch))
+        (not
+          (=
+            (compiler-parse-raw-i64-ref
+              control
+              compiler-parse-state-control-ready)
+            0))
+        (compiler-parse-dispatch-index-current-control? control)
+        (=
+          marker-id
+          (compiler-parse-raw-i64-ref
+            control
+            compiler-parse-state-control-marker-id)))
+        control
+        0))))
+
 (define (compiler-parse-dispatch-indexed? [dispatch : sym_i64_env.SymI64Env]) : bool
-  (and
-    compiler-parse-dispatch-index-ready
-    (compiler-parse-dispatch-index-current?)
-    (match dispatch
-      [(sym_i64_env.SymI64Bind name-id tag _)
-        (and
-          (= name-id compiler-parse-dispatch-index-marker-id)
-          (= tag (compiler-parse-tag-decl-defdispatch)))]
-      [(sym_i64_env.SymI64Nil) false])))
+  (not (= (compiler-parse-dispatch-indexed-control dispatch) 0)))
 
 (define (compiler-parse-dispatch-index-mark [dispatch : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (and
-    compiler-parse-dispatch-index-ready
-    (compiler-parse-dispatch-index-current?))
-    (sym_i64_env.sym-i64-bind-id
-      dispatch
-      compiler-parse-dispatch-index-marker-id
-      (compiler-parse-tag-decl-defdispatch))
-    dispatch))
+  (let
+    [control : i64
+      (compiler-parse-env-marker-value dispatch compiler-parse-state-marker-id)]
+    (if (and
+      (not (= control 0))
+      (not
+        (=
+          (compiler-parse-raw-i64-ref
+            control
+            compiler-parse-state-control-ready)
+          0))
+      (compiler-parse-dispatch-index-current-control? control))
+      (sym_i64_env.sym-i64-bind-id
+        dispatch
+        (compiler-parse-raw-i64-ref
+          control
+          compiler-parse-state-control-marker-id)
+        (compiler-parse-tag-decl-defdispatch))
+      dispatch)))
 
-(define (compiler-parse-dispatch-index-lookup-id [name-id : i64]) : i64
-  (match (parse_i64_i64_map.get (& compiler-parse-dispatch-index) name-id)
-    [(parse_i64_i64_map.LookupFound tag) tag]
-    [(parse_i64_i64_map.LookupMissing) (compiler-parse-tag-unknown)]))
+(define (compiler-parse-dispatch-index-lookup-id
+  [control : i64]
+  [name-id : i64]) : i64
+  (let
+    [keys : i64
+      (compiler-parse-raw-i64-ref
+        control
+        compiler-parse-state-control-keys-addr)]
+    [tags : i64
+      (compiler-parse-raw-i64-ref
+        control
+        compiler-parse-state-control-tags-addr)]
+    [encoded : i64 (+ name-id 1)]
+    [slot : i64 (bit-and name-id (- compiler-parse-dispatch-index-capacity 1))]
+    [steps : i64 0]
+    (begin
+      (while (< steps compiler-parse-dispatch-index-capacity)
+        (let
+          [present : i64 (compiler-parse-raw-i64-ref keys slot)]
+          (cond
+            [(= present 0) (return (compiler-parse-tag-unknown))]
+            [(= present encoded)
+              (return (compiler-parse-raw-i64-ref tags slot))]
+            [else
+              (begin
+                (set!
+                  slot
+                  (bit-and
+                    (+ slot 1)
+                    (- compiler-parse-dispatch-index-capacity 1)))
+                (set! steps (+ steps 1)))])))
+      (compiler-parse-tag-unknown))))
 
 (define (compiler-parse-dispatch-bind
   [env : sym_i64_env.SymI64Env]
   [name : String]
   [tag : i64]) : sym_i64_env.SymI64Env
-  (sym_i64_env.sym-i64-bind-id env (reader.read-stable-symbol-id name) tag))
+  (let
+    [control : i64
+      (compiler-parse-env-marker-value env compiler-parse-state-marker-id)]
+    [owner-address : i64
+      (if (= control 0)
+        0
+        (compiler-parse-raw-i64-ref
+          control
+          compiler-parse-state-control-owner-addr))]
+    [name-id : i64
+      (if (= owner-address 0)
+        (reader.read-stable-symbol-id name)
+        (ci.intern-compat-state-intern
+          (compiler-parse-state-owner control)
+          name))]
+    (sym_i64_env.sym-i64-bind-id env name-id tag)))
 
 (define (compiler-parse-dispatch-binops [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
@@ -2275,37 +2667,138 @@
       "defdispatch"
       (compiler-parse-tag-decl-defdispatch))))
 
+(define (compiler-parse-dispatch-cache-ref [control : i64]) : sym_i64_env.SymI64Env
+  (let
+    [cache : (Array sym_i64_env.SymI64Env)
+      (unsafe
+        (ptr-read
+          (int->ptr
+            (compiler-parse-raw-i64-ref
+              control
+              compiler-parse-state-control-cache-addr)
+            : (Ptr (Array sym_i64_env.SymI64Env)))))]
+    (array-ref cache 0)))
+
+(define (compiler-parse-dispatch-cache-set!
+  [control : i64]
+  [dispatch : sym_i64_env.SymI64Env]) : unit
+  (let
+    [cache : (Array sym_i64_env.SymI64Env)
+      (unsafe
+        (ptr-read
+          (int->ptr
+            (compiler-parse-raw-i64-ref
+              control
+              compiler-parse-state-control-cache-addr)
+            : (Ptr (Array sym_i64_env.SymI64Env)))))]
+    (array-set! cache 0 dispatch)))
+
+(define (compiler-parse-state-owner-floor-refresh! [control : i64]) : unit
+  (if (=
+    (compiler-parse-raw-i64-ref control compiler-parse-state-control-owner-addr)
+    0)
+    (ci.intern-persistent-arena-floor-refresh!)
+    (ci.intern-compat-state-persistent-arena-floor-refresh!
+      (compiler-parse-state-owner control))))
+
+(define (compiler-parse-state-owner-sync-active! [control : i64]) : unit
+  (let
+    [owner-address : i64
+      (compiler-parse-raw-i64-ref
+        control
+        compiler-parse-state-control-owner-addr)]
+    (if (or
+      (= owner-address 0)
+      (not
+        (=
+          (compiler-parse-state-owner-table-id control)
+          (ci.intern-active-table-id))))
+      unit
+      (ci.intern-compat-state-install! (compiler-parse-state-owner control)))))
+
+(define (compiler-parse-state-owner-capture-active! [control : i64]) : unit
+  (let
+    [owner-address : i64
+      (compiler-parse-raw-i64-ref
+        control
+        compiler-parse-state-control-owner-addr)]
+    (if (or
+      (= owner-address 0)
+      (not
+        (=
+          (compiler-parse-state-owner-table-id control)
+          (ci.intern-active-table-id))))
+      unit
+      (ci.intern-compat-state-capture-from-globals!
+        (compiler-parse-state-owner control)))))
+
+(define (compiler-parse-dispatch-env-for-control [control : i64]) : sym_i64_env.SymI64Env
+  (begin
+    ;; Builtin seeding may have advanced an already-installed owner's scalar
+    ;; compatibility view. Capture it before direct state-owned interning.
+    (compiler-parse-state-owner-capture-active! control)
+    (if (and
+      (not
+        (=
+          (compiler-parse-raw-i64-ref
+            control
+            compiler-parse-state-control-ready)
+          0))
+      (compiler-parse-dispatch-index-current-control? control))
+      (compiler-parse-dispatch-cache-ref control)
+      (let
+        [previous-arena : i64 (arena.tl_arena_current)]
+        [persistent-arena : i64
+          (compiler-parse-state-owner-persistent-arena control)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set persistent-arena))
+          (let
+            [seed : sym_i64_env.SymI64Env
+              (sym_i64_env.sym-i64-bind-id
+                (sym_i64_env.sym-i64-empty)
+                compiler-parse-state-marker-id
+                control)]
+            [dispatch : sym_i64_env.SymI64Env
+              (compiler-parse-dispatch-decls
+                (compiler-parse-dispatch-patterns
+                  (compiler-parse-dispatch-exprs
+                    (compiler-parse-dispatch-types
+                      (compiler-parse-dispatch-unops
+                        (compiler-parse-dispatch-binops seed))))))]
+            (begin
+              (compiler-parse-dispatch-index-populate! control dispatch)
+              (compiler-parse-dispatch-cache-set! control dispatch)
+              (compiler-parse-state-owner-floor-refresh! control)
+              ;; Direct owner interning advances the state's scalar pool count.
+              ;; When that owner is already installed, publish those scalars once
+              ;; after the immutable dispatch is complete so subsequent source
+              ;; lexing continues after its syntax IDs. Inactive owners remain
+              ;; untouched, preserving A/B state isolation.
+              (compiler-parse-state-owner-sync-active! control)
+              (unsafe
+                (arena.tl_arena_set previous-arena))
+              dispatch)))))))
+
+(define (compiler-parse-dispatch-env-from-cfg [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (let
+    [owned-cfgs : sym_i64_env.SymI64Env
+      (if (=
+        (compiler-parse-env-marker-value cfgs compiler-parse-state-marker-id)
+        0)
+        (compiler-parse-state-cfgs compiler-parse-default-state cfgs)
+        cfgs)]
+    [control : i64
+      (compiler-parse-env-marker-value
+        owned-cfgs
+        compiler-parse-state-marker-id)]
+    (compiler-parse-dispatch-index-mark
+      (compiler-cfg-merge
+        (compiler-parse-dispatch-env-for-control control)
+        owned-cfgs))))
+
 (define (compiler-parse-dispatch-env) : sym_i64_env.SymI64Env
-  (if (and
-    (= compiler-parse-dispatch-env-generation (intern-generation))
-    (= compiler-parse-dispatch-env-table-id (ci.intern-active-table-id)))
-    compiler-parse-dispatch-env-cache
-    (let
-      [previous-arena : i64 (arena.tl_arena_current)]
-      [persistent-arena : i64 (ci.intern-persistent-arena-handle)]
-      (begin
-        (unsafe
-          (arena.tl_arena_set persistent-arena))
-        (let
-          [dispatch : sym_i64_env.SymI64Env
-            (compiler-parse-dispatch-decls
-              (compiler-parse-dispatch-patterns
-                (compiler-parse-dispatch-exprs
-                  (compiler-parse-dispatch-types
-                    (compiler-parse-dispatch-unops
-                      (compiler-parse-dispatch-binops
-                        (sym_i64_env.sym-i64-empty)))))))]
-          (begin
-            (compiler-parse-dispatch-index-populate! dispatch)
-            (set! compiler-parse-dispatch-env-cache dispatch)
-            (set! compiler-parse-dispatch-env-generation (intern-generation))
-            (set!
-              compiler-parse-dispatch-env-table-id
-              (ci.intern-active-table-id))
-            (ci.intern-persistent-arena-floor-refresh!)
-            (unsafe
-              (arena.tl_arena_set previous-arena))
-            compiler-parse-dispatch-env-cache))))))
+  (compiler-parse-dispatch-env-from-cfg (compiler-cfg-empty)))
 
 (define (compiler-parse-dispatch-tag
   [dispatch : sym_i64_env.SymI64Env]
@@ -2315,11 +2808,13 @@
 (define (compiler-parse-dispatch-tag-id
   [dispatch : sym_i64_env.SymI64Env]
   [name-id : i64]) : i64
-  (if (compiler-parse-dispatch-indexed? dispatch)
-    (compiler-parse-dispatch-index-lookup-id name-id)
-    (match (sym_i64_env.sym-i64-lookup-id dispatch name-id)
-      [(option_i64.Some tag) tag]
-      [(option_i64.None) (compiler-parse-tag-unknown)])))
+  (let
+    [control : i64 (compiler-parse-dispatch-indexed-control dispatch)]
+    (if (not (= control 0))
+      (compiler-parse-dispatch-index-lookup-id control name-id)
+      (match (sym_i64_env.sym-i64-lookup-id dispatch name-id)
+        [(option_i64.Some tag) tag]
+        [(option_i64.None) (compiler-parse-tag-unknown)]))))
 
 (define (ast-binop-tag? [tag : i64]) : bool
   (or
@@ -2892,7 +3387,7 @@
     (match result
       [(ResultAstType.Err _)
         (begin
-          (parse-ast-error-span-note! (reader.spanned-sexpr-span s))
+          (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span s))
           result)]
       [_ result])))
 
@@ -4797,7 +5292,7 @@
                 [_ (ResultAstLetBinding.Err "parse: malformed let binding")])]
             [_ (ResultAstLetBinding.Err "parse: malformed let binding")])]
         [_ (ResultAstLetBinding.Err "parse: malformed let binding")])]
-    (parse-ast-error-span-note-let-binding s result)))
+    (parse-ast-error-span-note-let-binding dispatch s result)))
 
 (define (parse-ast-let-binding-list-into
   [dispatch : sym_i64_env.SymI64Env]
@@ -5323,7 +5818,7 @@
           (match (parse-ast-type-spanned dispatch pools (reader.sp-node-get ty))
             [(ResultAstType.Ok parsed-ty)
               (begin
-                (compiler-parse-type-literal-tracking-mark!)
+                (compiler-parse-type-literal-tracking-mark! dispatch)
                 (ResultAstExpr.Ok
                   (ast-node-pool-context-expr-push
                     pools
@@ -7129,7 +7624,7 @@
                   (ResultAstExpr.Ok (ast-expr-wrap-span pools parsed s))]
                 [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])])]
         [_ (ResultAstExpr.Err "parse: malformed expression")])]
-    (parse-ast-error-span-note-expr s result)))
+    (parse-ast-error-span-note-expr dispatch s result)))
 
 (define (parse-ast-expr
   [dispatch : sym_i64_env.SymI64Env]
@@ -9509,7 +10004,7 @@
                   [else (parse-ast-module-macro-call dispatch pools s)]))]
             [_ (ResultAstDecl.Err "parse: malformed declaration")])]
         [_ (ResultAstDecl.Err "parse: malformed declaration")])]
-    (parse-ast-error-span-note-decl s result)))
+    (parse-ast-error-span-note-decl dispatch s result)))
 
 (define (parse-ast-decl-maybe-with-pools
   [dispatch : sym_i64_env.SymI64Env]
@@ -9563,7 +10058,7 @@
                 [(ResultAstDecl.Ok decl) (ResultAstMaybeDecl.SomeDecl decl)]
                 [(ResultAstDecl.Err message) (ResultAstMaybeDecl.Err message)])])]
         [_ (ResultAstMaybeDecl.Err "parse: malformed declaration")])]
-    (parse-ast-error-span-note-maybe-decl s result)))
+    (parse-ast-error-span-note-maybe-decl dispatch s result)))
 
 (define (parse-ast-decl-maybe
   [dispatch : sym_i64_env.SymI64Env]
@@ -9867,11 +10362,7 @@
 (define (parse-ast-program-dispatch-with-cfg [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (begin
     (parse-ast-reserved-symbols-seed!)
-    (match cfgs
-      [(sym_i64_env.SymI64Nil) (compiler-parse-dispatch-env)]
-      [_
-        (compiler-parse-dispatch-index-mark
-          (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs))])))
+    (compiler-parse-dispatch-env-from-cfg cfgs)))
 
 (define (parse-ast-program-with-cfg-and-pools
   [toks : (Array token.SpannedToken)]
@@ -9879,10 +10370,22 @@
   [pools : AstNodePoolContext]) : ResultAstProgram
   (let
     [cur : (Array i64) (array.make-array i64 1)]
-    [dispatch : sym_i64_env.SymI64Env
+    [base-dispatch : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
+    [invocation : (Array i64) (array.make-array i64 6)]
+    [dispatch : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        base-dispatch
+        compiler-parse-invocation-marker-id
+        (compiler-parse-array-data-addr-i64 invocation))]
     (begin
       (array-set! cur 0 0)
+      (array-set!
+        invocation
+        compiler-parse-invocation-control-slot
+        (compiler-parse-env-marker-value
+          base-dispatch
+          compiler-parse-state-marker-id))
       (match (parse-ast-program-forms dispatch pools toks cur)
         [(ResultAstDeclList.Ok decls) (ResultAstProgram.Ok (ast-program decls))]
         [(ResultAstDeclList.Err message) (ResultAstProgram.Err message)]))))
@@ -10042,7 +10545,7 @@
           (let
             [records-start : i64 (reader.sp-node-pool-len)]
             (begin
-              (parse-ast-error-span-clear!)
+              (parse-ast-error-span-clear! dispatch)
               (match (parse-ast-decl-maybe-with-pools
                 dispatch
                 pools
@@ -10093,6 +10596,7 @@
                           (compiler-diagnostic-from-span
                             path
                             (parse-ast-error-span-current
+                              dispatch
                               (reader.spanned-sexpr-span spanned-form))
                             message)))))])))]
         [(reader.ResultSpannedSexpr.Err err)
@@ -10137,10 +10641,22 @@
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
     [cur : (Array i64) (array.make-array i64 1)]
-    [dispatch : sym_i64_env.SymI64Env
+    [base-dispatch : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
+    [invocation : (Array i64) (array.make-array i64 6)]
+    [dispatch : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        base-dispatch
+        compiler-parse-invocation-marker-id
+        (compiler-parse-array-data-addr-i64 invocation))]
     (begin
       (array-set! cur 0 0)
+      (array-set!
+        invocation
+        compiler-parse-invocation-control-slot
+        (compiler-parse-env-marker-value
+          base-dispatch
+          compiler-parse-state-marker-id))
       (match (parse-ast-program-forms-diagnostic path dispatch pools toks cur)
         [(ResultAstDeclListDiagnostic.Ok decls)
           (ResultAstProgramDiagnostic.Ok (ast-program decls))]
@@ -13357,10 +13873,145 @@
       "(defmacro (bad [T : type (:kind \"i64\")]) : Module unit)"
       "parse: macro type operand T constraint :kind expects unquoted kind names")))
 
+(define (compiler-parse-dispatch-state-interleaving-in-arena-ok?) : bool
+  (let
+    [owner-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [owner-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [name-a : i64 (ci.intern-compat-state-intern owner-a "only-a")]
+    [name-b : i64 (ci.intern-compat-state-intern owner-b "only-b")]
+    [marker-a : i64 (ci.intern-compat-state-intern owner-a "defdispatch")]
+    [marker-b : i64 (ci.intern-compat-state-intern owner-b "defdispatch")]
+    [state-a : CompilerParseState
+      (compiler-parse-state-new-with-intern-state owner-a)]
+    [state-b : CompilerParseState
+      (compiler-parse-state-new-with-intern-state owner-b)]
+    [control-a : i64 (compiler-parse-state-control-addr state-a)]
+    [control-b : i64 (compiler-parse-state-control-addr state-b)]
+    [env-a : sym_i64_env.SymI64Env
+      (compiler-parse-state-cfgs
+        state-a
+        (sym_i64_env.sym-i64-bind-id
+          (sym_i64_env.sym-i64-bind-id
+            (sym_i64_env.sym-i64-empty)
+            name-a
+            (compiler-parse-tag-bin-add))
+          marker-a
+          (compiler-parse-tag-decl-defdispatch)))]
+    [env-b : sym_i64_env.SymI64Env
+      (compiler-parse-state-cfgs
+        state-b
+        (sym_i64_env.sym-i64-bind-id
+          (sym_i64_env.sym-i64-bind-id
+            (sym_i64_env.sym-i64-empty)
+            name-b
+            (compiler-parse-tag-bin-sub))
+          marker-b
+          (compiler-parse-tag-decl-defdispatch)))]
+    (begin
+      (compiler-parse-dispatch-index-populate! control-a env-a)
+      (compiler-parse-dispatch-index-populate! control-b env-b)
+      (let
+        [indexed-a : sym_i64_env.SymI64Env
+          (compiler-parse-dispatch-index-mark env-a)]
+        [indexed-b : sym_i64_env.SymI64Env
+          (compiler-parse-dispatch-index-mark env-b)]
+        (and
+          (= name-a name-b)
+          (string.eq (ci.intern-compat-state-str owner-a name-a) "only-a")
+          (string.eq (ci.intern-compat-state-str owner-b name-b) "only-b")
+          (compiler-parse-dispatch-indexed? indexed-a)
+          (compiler-parse-dispatch-indexed? indexed-b)
+          (=
+            (compiler-parse-dispatch-tag-id indexed-a name-a)
+            (compiler-parse-tag-bin-add))
+          (=
+            (compiler-parse-dispatch-tag-id indexed-b name-b)
+            (compiler-parse-tag-bin-sub))
+          (=
+            (compiler-parse-dispatch-tag-id indexed-a name-a)
+            (compiler-parse-tag-bin-add)))))))
+
+(define (compiler-parse-dispatch-state-interleaving-ok?) : bool
+  (let
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [scratch-arena : i64 (arena.tl_arena_make)]
+    [ok : bool
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch-arena))
+        (compiler-parse-dispatch-state-interleaving-in-arena-ok?))]
+    (begin
+      (unsafe
+        (arena.tl_arena_set previous-arena))
+      (unsafe
+        (arena.tl_arena_destroy scratch-arena))
+      ok)))
+
+(define (compiler-parse-diagnostic-invocations-interleaving-ok?) : bool
+  (let
+    [base : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
+    [frame-a : (Array i64) (array.make-array i64 5)]
+    [frame-b : (Array i64) (array.make-array i64 5)]
+    [dispatch-a : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        base
+        compiler-parse-invocation-marker-id
+        (compiler-parse-array-data-addr-i64 frame-a))]
+    [dispatch-b : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        base
+        compiler-parse-invocation-marker-id
+        (compiler-parse-array-data-addr-i64 frame-b))]
+    [fallback : token.SourceSpan (token.SourceSpan 9 9 9 9)]
+    (begin
+      (parse-ast-error-span-clear! dispatch-a)
+      (parse-ast-error-span-clear! dispatch-b)
+      (parse-ast-error-span-note! dispatch-a (token.SourceSpan 1 2 3 4))
+      (parse-ast-error-span-note! dispatch-b (token.SourceSpan 5 6 7 8))
+      (parse-ast-error-span-note! dispatch-a (token.SourceSpan 10 11 12 13))
+      (let
+        [span-a : token.SourceSpan
+          (parse-ast-error-span-current dispatch-a fallback)]
+        [span-b : token.SourceSpan
+          (parse-ast-error-span-current dispatch-b fallback)]
+        (and
+          (= (token.span-start-line span-a) 1)
+          (= (token.span-start-col span-a) 2)
+          (= (token.span-end-line span-a) 3)
+          (= (token.span-end-col span-a) 4)
+          (= (token.span-start-line span-b) 5)
+          (= (token.span-start-col span-b) 6)
+          (= (token.span-end-line span-b) 7)
+          (= (token.span-end-col span-b) 8))))))
+
+(define (compiler-parse-type-literal-state-interleaving-ok?) : bool
+  (let
+    [state-a : CompilerParseState (compiler-parse-state-new)]
+    [state-b : CompilerParseState (compiler-parse-state-new)]
+    [cfgs-a : sym_i64_env.SymI64Env
+      (compiler-parse-state-cfgs state-a (compiler-cfg-empty))]
+    [cfgs-b : sym_i64_env.SymI64Env
+      (compiler-parse-state-cfgs state-b (compiler-cfg-empty))]
+    (begin
+      (compiler-parse-state-type-literal-reset! state-a)
+      (compiler-parse-state-type-literal-reset! state-b)
+      (match (parse-ast-source-with-cfg
+        "(define value : i64 (begin (type i64) 1))"
+        cfgs-a)
+        [(ResultAstProgram.Err _) false]
+        [(ResultAstProgram.Ok _)
+          (match (parse-ast-source-with-cfg "(define value : i64 1)" cfgs-b)
+            [(ResultAstProgram.Err _) false]
+            [(ResultAstProgram.Ok _)
+              (and
+                (compiler-parse-state-has-type-literal? state-a)
+                (not (compiler-parse-state-has-type-literal? state-b)))])]))))
+
 (define (compiler-parse-dispatch-index-env-matches?
   [dispatch : sym_i64_env.SymI64Env]) : bool
   (let
-    [ok : bool (compiler-parse-dispatch-indexed? dispatch)]
+    [control : i64 (compiler-parse-dispatch-indexed-control dispatch)]
+    [ok : bool (not (= control 0))]
     [cursor : sym_i64_env.SymI64Env dispatch]
     [done : bool false]
     (begin
@@ -13368,7 +14019,9 @@
         (match cursor
           [(sym_i64_env.SymI64Nil) (set! done true)]
           [(sym_i64_env.SymI64Bind name-id tag rest)
-            (if (= (compiler-parse-dispatch-index-lookup-id name-id) tag)
+            (if (or
+              (< name-id 0)
+              (= (compiler-parse-dispatch-index-lookup-id control name-id) tag))
               (set! cursor (box-get rest))
               (set! ok false))]))
       (and ok done))))
@@ -13422,6 +14075,9 @@
 (define (compiler-parse-shape-tests-middle-ok?) : bool
   (and
     (compiler-parse-dispatch-index-ok?)
+    (compiler-parse-dispatch-state-interleaving-ok?)
+    (compiler-parse-diagnostic-invocations-interleaving-ok?)
+    (compiler-parse-type-literal-state-interleaving-ok?)
     (compiler-parse-comptime-decl-ok?)
     (compiler-parse-unsafe-decl-ok?)
     (compiler-parse-module-decl-ok?)

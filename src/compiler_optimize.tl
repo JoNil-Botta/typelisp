@@ -9188,6 +9188,22 @@
             "optimizer verify: unknown successor label")]
         [else (opt-verify-function-body-with-context func context)])]))
 
+;; Pipeline-level verification consolidation: the opt2 pipeline verifies the
+;; SSA function once per iteration before the loop-pass cluster and threads
+;; the result through `verified?`. Passes in the cluster then skip their own
+;; entry verify -- each pass in the cluster preserves IR validity for valid
+;; input, and every mutating pass still post-verifies its own rewrite when it
+;; changed something, so the per-pass entry verify only repeated the upstream
+;; result. Callers outside the pipeline (tests, standalone drivers) pass
+;; `false` and keep the defensive entry verify.
+(define (opt-verify-gate
+  [verified? : bool]
+  [func : CompilerIrFunction]
+  [context : OptCfgContext]) : ResultCompilerOptimizeVerify
+  (if verified?
+    (ResultCompilerOptimizeVerify.Ok)
+    (opt-verify-function-with-context func context)))
+
 (define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
@@ -13391,9 +13407,10 @@
 
 (define (opt-loop-preheaders-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -13419,6 +13436,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-loop-preheaders-function-with-context-result
         (opt-cfg-context-build blocks)
+        false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -14528,13 +14546,14 @@
 
 (define (opt-rotate-ssa-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (if (> (compiler-ir-block-list-count blocks) (opt-rotate-ssa-block-limit))
         (OptFunctionCtxResult.Result func context)
-        (match (opt-verify-function-with-context func context)
+        (match (opt-verify-gate verified? func context)
           [(ResultCompilerOptimizeVerify.Ok)
             (match (opt-rotate-ssa-loops
               blocks
@@ -15848,10 +15867,11 @@
 
 (define (opt-licm-function-with-context-result-and-direct-call-clean
   [context : OptCfgContext]
+  [verified? : bool]
   [direct-call-clean : opt_i64_i64_map.Map]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -15904,6 +15924,7 @@
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   (opt-licm-function-with-context-result-and-direct-call-clean
     context
+    false
     (opt_i64_i64_map.with-capacity 1)
     func))
 
@@ -15920,6 +15941,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-licm-function-with-context-result-and-direct-call-clean
         (opt-cfg-context-build blocks)
+        false
         direct-call-clean
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
@@ -17095,9 +17117,10 @@
 
 (define (opt-induction-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -17134,7 +17157,7 @@
 (define (opt-induction-function-with-context
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-induction-function-with-context-result context func)
+  (match (opt-induction-function-with-context-result context false func)
     [(OptFunctionCtxResult.Result next _) next]))
 
 (define (opt-induction-function [func : CompilerIrFunction]) : CompilerIrFunction
@@ -25403,18 +25426,23 @@
 
 (define (opt-unroll-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match func
     [(CompilerIrFunction.Function _ _ _ _ prescan-blocks)
       (if (opt-unroll-blocks-have-candidate? prescan-blocks)
-        (opt-unroll-function-verified-with-context-result context func)
+        (opt-unroll-function-verified-with-context-result
+          context
+          verified?
+          func)
         (OptFunctionCtxResult.Result func context))]))
 
 (define (opt-unroll-function-verified-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -25454,6 +25482,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-unroll-function-with-context-result
         (opt-cfg-context-build blocks)
+        false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -26609,8 +26638,9 @@
 
 (define (opt-bce-version-function-verified-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -26646,12 +26676,16 @@
 
 (define (opt-bce-version-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (the entry verify reuses it).
   (match func
     [(CompilerIrFunction.Function _ _ _ _ prescan-blocks)
       (if (opt-bce-version-blocks-have-candidate? prescan-blocks)
-        (opt-bce-version-function-verified-with-context-result context func)
+        (opt-bce-version-function-verified-with-context-result
+          context
+          verified?
+          func)
         (OptFunctionCtxResult.Result func context))]))
 
 (define (opt-bce-version-function [func : CompilerIrFunction]) : CompilerIrFunction
@@ -26659,6 +26693,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-bce-version-function-with-context-result
         (opt-cfg-context-build blocks)
+        false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -26925,6 +26960,25 @@
                       ;; and dominance queries -- no rebuild between passes. Each
                       ;; pass that rewrites the CFG builds one fresh context for
                       ;; its output; the no-op majority reuses its input context.
+                      ;;
+                      ;; Verification is consolidated at the cluster head: one
+                      ;; full verify of the switch-form output, threaded through
+                      ;; `verified?`, replaces each cluster pass's entry verify.
+                      ;; Every mutating pass still post-verifies its own rewrite
+                      ;; (falling back to its input on rejection), so a verified
+                      ;; input stays verified across the chain.
+                      [loop-cluster-verified? : bool
+                        (and
+                          run-heavy?
+                          (opt-verify-ok?
+                            (opt-verify-function-with-context
+                              (CompilerIrFunction.Function
+                                name
+                                params
+                                ret-ty
+                                ssa-frame
+                                switch-blocks)
+                              switch-context)))]
                       [preheaders-result : OptFunctionCtxResult
                         (if run-heavy?
                           (let
@@ -26937,6 +26991,7 @@
                                 switch-blocks)]
                             (opt-loop-preheaders-function-with-context-result
                               switch-context
+                              loop-cluster-verified?
                               preheaders-input))
                           (OptFunctionCtxResult.Result
                             (CompilerIrFunction.Function
@@ -26966,6 +27021,7 @@
                         (if run-heavy?
                           (opt-rotate-ssa-function-with-context-result
                             preheaders-context
+                            loop-cluster-verified?
                             preheaders)
                           preheaders-result)]
                       [rotate-ssa : CompilerIrFunction
@@ -26988,6 +27044,7 @@
                         (if run-heavy?
                           (opt-scratch-reset-function-with-context-result
                             rotate-ssa-context
+                            loop-cluster-verified?
                             rotate-ssa)
                           rotate-ssa-result)]
                       [scratch-reset : CompilerIrFunction
@@ -27009,6 +27066,7 @@
                         (if run-heavy?
                           (opt-licm-function-with-context-result-and-direct-call-clean
                             scratch-reset-context
+                            loop-cluster-verified?
                             (struct-get summaries direct-call-clean)
                             scratch-reset)
                           scratch-reset-result)]
@@ -27029,6 +27087,7 @@
                         (if run-heavy?
                           (opt-induction-function-with-context-result
                             licm-context
+                            loop-cluster-verified?
                             licm)
                           licm-result)]
                       [induction : CompilerIrFunction
@@ -27056,6 +27115,7 @@
                         (if run-heavy?
                           (opt-bce-version-function-with-context-result
                             induction-context
+                            loop-cluster-verified?
                             induction)
                           induction-result)]
                       [bce-version : CompilerIrFunction
@@ -27082,6 +27142,7 @@
                         (if run-heavy?
                           (opt-unroll-function-with-context-result
                             bce-version-context
+                            loop-cluster-verified?
                             bce-version)
                           bce-version-result)]
                       [unrolled : CompilerIrFunction
@@ -49307,6 +49368,7 @@
     [blocks : CompilerIrBlockList (opt-rotate-ssa-test-blocks side-exit)]
     (match (opt-rotate-ssa-function-with-context-result
       (opt-cfg-context-build blocks)
+      false
       (opt-rotate-ssa-test-function blocks))
       [(OptFunctionCtxResult.Result next _) next])))
 
@@ -50994,8 +51056,9 @@
 
 (define (opt-scratch-reset-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -51030,6 +51093,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-scratch-reset-function-with-context-result
         (opt-cfg-context-build blocks)
+        false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -51075,7 +51139,7 @@
         [input : CompilerIrFunction
           (CompilerIrFunction.Function name params ret-ty frame blocks)]
         [preheaders-result : OptFunctionCtxResult
-          (opt-loop-preheaders-function-with-context-result context input)]
+          (opt-loop-preheaders-function-with-context-result context false input)]
         [preheaders : CompilerIrFunction
           (match preheaders-result
             [(OptFunctionCtxResult.Result f _) f])]
@@ -51084,6 +51148,7 @@
             [(OptFunctionCtxResult.Result _ ctx) ctx])]
         (opt-scratch-reset-function-with-context-result
           preheaders-context
+          false
           preheaders))]))
 
 (define (opt-scratch-test-alloc) : CompilerIrInstr

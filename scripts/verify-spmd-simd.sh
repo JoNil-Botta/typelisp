@@ -102,6 +102,7 @@ tests/spmd/masked_if_offset_i64.tl
 tests/spmd/masked_if_index_value_i64.tl
 tests/spmd/masked_if_index_mod_i64.tl
 tests/spmd/masked_if_value_i64.tl
+tests/spmd/masked_if_bitand_value_i64.tl
 tests/spmd/masked_if_value_types.tl
 tests/spmd/masked_if_nested_i64.tl
 tests/spmd/masked_if_i16_u16.tl

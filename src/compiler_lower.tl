@@ -34089,7 +34089,9 @@
 (define (lower-masked-vector-binop-supported? [op : AstBinOp]) : bool
   (match op
     [(AstBinOp.Add) true]
+    [(AstBinOp.Sub) true]
     [(AstBinOp.Mod) true]
+    [(AstBinOp.BitAnd) true]
     [(AstBinOp.Eq) true]
     [(AstBinOp.Ne) true]
     [(AstBinOp.Lt) true]
@@ -34691,13 +34693,12 @@
               lane-locals
               right))]
         ;; The masked-lane census records widths, not scalar types. Restrict
-        ;; new arithmetic to the f32/i32-width gang so existing i64 enum-match
-        ;; expressions keep their established lowering path.
+        ;; multiply to the f32/i32-width gang; wider multiply shapes have
+        ;; separate support checks.
         [lane32-arithmetic : bool
           (and
             (= operand-lanes (lower-simd-lanes-for-elem mode (AstType.F32)))
             (match op
-              [(AstBinOp.Sub) true]
               [(AstBinOp.Mul) true]
               [_ false]))]
         (if (or (lower-masked-vector-binop-supported? op) lane32-arithmetic)
@@ -41876,6 +41877,46 @@
                         (lower-emit-vector-binop
                           right-state
                           (CompilerIrBinOp.Sub)
+                          left-value
+                          right-value
+                          lanes
+                          left-ty))])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+    [(AstBinOp.BitAnd)
+      (match (lower-avx512-masked-expr
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        left)
+        [(ResultLowerExpr.Ok left-lowered)
+          (match left-lowered
+            [(LowerExpr.Expr left-state left-value left-ty)
+              (match (lower-avx512-masked-expr-expected
+                ctx
+                left-state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                right
+                left-ty)
+                [(ResultLowerExpr.Ok right-lowered)
+                  (match right-lowered
+                    [(LowerExpr.Expr right-state right-value _)
+                      (ResultLowerExpr.Ok
+                        (lower-emit-vector-binop
+                          right-state
+                          (CompilerIrBinOp.BitAnd)
                           left-value
                           right-value
                           lanes
@@ -60931,6 +60972,15 @@
         0
         (+ (array-ref xs i) 1)))))")
 
+(define (compiler-lower-masked-if-bitand-value-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64] [bias : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i
+      (if (= (bit-and (array-ref xs i) 1) 1)
+        (+ (array-ref xs i) bias)
+        (- (array-ref xs i) bias)))))")
+
 (define (compiler-lower-avx512-masked-if-nested-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
@@ -61101,6 +61151,47 @@
               (= select-count 2)
               (= tail-mask-count 2)
               (and (>= shape-count 8) (> tail-store-count 0))))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-masked-if-bitand-value-shape-ok?
+  [mode : CompilerLowerMode]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-masked-if-bitand-value-source)
+    mode)
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (let
+            [lanes : i64 (lower-simd-lanes-for-elem mode (AstType.I64))]
+            [load-count : i64
+              (lower-test-function-vector-load-count functions "fill")]
+            [store-count : i64
+              (lower-test-function-vector-store-count functions "fill")]
+            [binop-count : i64
+              (lower-test-function-vector-binop-count functions "fill")]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [select-count : i64
+              (lower-test-function-select-count functions "fill")]
+            [tail-mask-count : i64
+              (lower-test-function-tail-mask-count functions "fill")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                lanes
+                (AstType.I64))]
+            (compiler-lower-and8
+              (= load-count 0)
+              (= store-count 0)
+              (>= binop-count 6)
+              (>= pred-load-count 6)
+              (= pred-store-count 2)
+              (= select-count 2)
+              (= tail-mask-count 2)
+              (>= shape-count 16)))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-masked-if-nested-shape-ok?) : bool
@@ -61418,6 +61509,8 @@
     (compiler-lower-avx512-masked-if-index-value-shape-ok?)
     (compiler-lower-avx512-masked-if-index-mod-shape-ok?)
     (compiler-lower-avx512-masked-if-value-shape-ok?)
+    (compiler-lower-masked-if-bitand-value-shape-ok? (CompilerLowerMode.Avx2))
+    (compiler-lower-masked-if-bitand-value-shape-ok? (CompilerLowerMode.Avx512))
     (compiler-lower-avx512-masked-if-nested-shape-ok?)
     (compiler-lower-avx2-masked-if-shape-ok?)))
 

@@ -652,9 +652,8 @@ run_self_test() {
 
     validate_support_table
     support_lookup spmd_mask avx2
-    [ "$SUPPORT_STATUS" = unsupported ] || fail "self-test unsupported support row"
-    [ "$SUPPORT_DIAGNOSTIC" = "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands" ] || \
-        fail "self-test exact unsupported diagnostic"
+    [ "$SUPPORT_STATUS" = supported ] || fail "self-test supported spmd_mask row"
+    [ "$SUPPORT_DIAGNOSTIC" = "-" ] || fail "self-test supported spmd_mask diagnostic"
 
     _dir="$ROOT/target/spmd-mode-instruction-count-self-test"
     rm -rf "$_dir"

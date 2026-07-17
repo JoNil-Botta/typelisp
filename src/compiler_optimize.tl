@@ -23957,9 +23957,7 @@
     [(CompilerIrInstr.BinOp _ aop al ar _)
       (match b
         [(CompilerIrInstr.BinOp _ bop bl br _)
-          (and
-            (opt-binop-eq aop bop)
-            (and (opt-value-eq al bl) (opt-value-eq ar br)))]
+          (and (opt-binop-eq aop bop) (opt-value-eq al bl) (opt-value-eq ar br))]
         [_ false])]
     [(CompilerIrInstr.UnOp _ aop av _)
       (match b
@@ -23971,7 +23969,8 @@
         [(CompilerIrInstr.CpuId _ bleaf bsub breg)
           (and
             (opt-value-eq aleaf bleaf)
-            (and (opt-value-eq asub bsub) (= areg breg)))]
+            (opt-value-eq asub bsub)
+            (= areg breg))]
         [_ false])]
     [(CompilerIrInstr.Xgetbv _ aindex)
       (match b

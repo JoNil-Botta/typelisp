@@ -13389,21 +13389,24 @@
       context
       (opt-cfg-natural-loops-with-context blocks context))))
 
-(define (opt-loop-preheaders-blocks-fixed
+(define (opt-loop-preheaders-blocks-fixed-result
   [blocks : CompilerIrBlockList]
-  [remaining : i64]) : CompilerIrBlockList
+  [remaining : i64]
+  [any-changed : bool]) : OptLoopPreheadersResult
   (if (<= remaining 0)
-    blocks
+    (OptLoopPreheadersResult.Result blocks any-changed)
     (match (opt-loop-preheaders-blocks-once blocks)
       [(OptLoopPreheadersResult.Result next changed)
         (if changed
-          (opt-loop-preheaders-blocks-fixed next (- remaining 1))
-          next)])))
+          (opt-loop-preheaders-blocks-fixed-result next (- remaining 1) true)
+          (OptLoopPreheadersResult.Result next any-changed))])))
 
 (define (opt-loop-preheaders-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-loop-preheaders-blocks-fixed
+  (match (opt-loop-preheaders-blocks-fixed-result
     blocks
-    (+ 1 (compiler-ir-block-list-count blocks))))
+    (+ 1 (compiler-ir-block-list-count blocks))
+    false)
+    [(OptLoopPreheadersResult.Result next _) next]))
 
 (define (opt-loop-preheaders-function-with-context-result
   [context : OptCfgContext]
@@ -13414,20 +13417,34 @@
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
-          (let
-            [next-blocks : CompilerIrBlockList
-              (opt-loop-preheaders-blocks blocks)]
-            [next : CompilerIrFunction
-              (CompilerIrFunction.Function name params ret-ty frame next-blocks)]
-            ;; Preheader synthesis may have inserted blocks, so build one fresh
-            ;; context for the rewritten CFG, reuse it for the post-pass verify,
-            ;; and hand it back for the next pass.
-            [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-            (match (opt-verify-function-with-context next next-context)
-              [(ResultCompilerOptimizeVerify.Ok)
-                (OptFunctionCtxResult.Result next next-context)]
-              [(ResultCompilerOptimizeVerify.Err _)
-                (OptFunctionCtxResult.Result func context)]))])]
+          (match (opt-loop-preheaders-blocks-fixed-result
+            blocks
+            (+ 1 (compiler-ir-block-list-count blocks))
+            false)
+            [(OptLoopPreheadersResult.Result next-blocks preheaders-changed?)
+              (if (not preheaders-changed?)
+                ;; No preheader was synthesized: the input context still
+                ;; describes the unchanged CFG, so skip the context rebuild
+                ;; and the post-pass verify entirely.
+                (OptFunctionCtxResult.Result func context)
+                (let
+                  [next : CompilerIrFunction
+                    (CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      frame
+                      next-blocks)]
+                  ;; Preheader synthesis may have inserted blocks, so build one
+                  ;; fresh context for the rewritten CFG, reuse it for the
+                  ;; post-pass verify, and hand it back for the next pass.
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(ResultCompilerOptimizeVerify.Ok)
+                      (OptFunctionCtxResult.Result next next-context)]
+                    [(ResultCompilerOptimizeVerify.Err _)
+                      (OptFunctionCtxResult.Result func context)])))])])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 

@@ -9,9 +9,11 @@
 ;;   typelisp run selfhost/cli.tl -- doc --test --batch inputs.txt
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
 (import stdlib.io)
+(import stdlib.vector)
 (import (vector.vector String) as doc_svec)
 (import doc_render)
 (import doc_extract)
+(import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import doc_html)
 (import "doc_test.tl")
 (import "doc_expand.tl")
@@ -62,15 +64,14 @@
       (doc-print-wrote output-path)
       0)))
 
-(define (doc-read-modules [idx : i64] [end : i64]) : doc_render.DocModuleList
+(define (doc-read-modules [idx : i64] [end : i64]) : doc_module_vec.Vec
   (let
     [i : i64 idx]
-    [modules : doc_render.DocModuleList
-      (doc_render.doc-module-list-with-capacity (- end idx))]
+    [modules : doc_module_vec.Vec (doc_module_vec.with-capacity (- end idx))]
     (begin
       (while (< i end)
         (begin
-          (doc_render.doc-module-list-push
+          (doc_module_vec.push
             (&mut modules)
             (doc_render.DocModule.Module
               (io.arg i)
@@ -81,21 +82,21 @@
 (define (doc-modules-from-package-sources-from
   [paths : doc_svec.Vec]
   [index : i64]
-  [modules : (&mut modules doc_render.DocModuleList)]) : unit
+  [modules : (&mut modules doc_module_vec.Vec)]) : unit
   (if (>= index (doc_svec.len (& paths)))
     unit
     (let
       [path : String (doc_svec.get (& paths) index "")]
       (begin
-        (doc_render.doc-module-list-push
+        (doc_module_vec.push
           modules
           (doc_render.DocModule.Module path (doc_extract.doc-extract-file path)))
         (doc-modules-from-package-sources-from paths (+ index 1) modules)))))
 
-(define (doc-modules-from-package-sources [paths : doc_svec.Vec]) : doc_render.DocModuleList
+(define (doc-modules-from-package-sources [paths : doc_svec.Vec]) : doc_module_vec.Vec
   (let
-    [modules : doc_render.DocModuleList
-      (doc_render.doc-module-list-with-capacity (doc_svec.len (& paths)))]
+    [modules : doc_module_vec.Vec
+      (doc_module_vec.with-capacity (doc_svec.len (& paths)))]
     (begin
       (doc-modules-from-package-sources-from paths 0 (&mut modules))
       modules)))
@@ -106,7 +107,7 @@
 (define (doc-modules-from-paths-into
   [paths : AstDeclPathList]
   [seen : (&mut seen doc_path_map.Map)]
-  [modules : (&mut modules doc_render.DocModuleList)]) : unit
+  [modules : (&mut modules doc_module_vec.Vec)]) : unit
   (match (ast-decl-path-list-step paths)
     [(AstDeclPathListStep.Nil) unit]
     [(AstDeclPathListStep.Cons path rest)
@@ -114,7 +115,7 @@
         [rest : AstDeclPathList rest]
         (if (doc_path_map.insert-if-absent-ref! seen path 1)
           (begin
-            (doc_render.doc-module-list-push
+            (doc_module_vec.push
               modules
               (doc_render.DocModule.Module
                 path
@@ -122,9 +123,9 @@
             (doc-modules-from-paths-into rest seen modules))
           (doc-modules-from-paths-into rest seen modules)))]))
 
-(define (doc-modules-from-paths [paths : AstDeclPathList]) : doc_render.DocModuleList
+(define (doc-modules-from-paths [paths : AstDeclPathList]) : doc_module_vec.Vec
   (let
-    [modules : doc_render.DocModuleList (doc_render.doc-module-list-new)]
+    [modules : doc_module_vec.Vec (doc_module_vec.new)]
     [seen : doc_path_map.Map (doc-path-set-new)]
     (begin
       (doc-modules-from-paths-into paths (&mut seen) (&mut modules))
@@ -136,7 +137,7 @@
   [stdlib-roots : doc_svec.Vec]) : ResultDocExpandedModules
   (match (ast-decl-path-list-step paths)
     [(AstDeclPathListStep.Nil)
-      (ResultDocExpandedModules.Ok (doc_render.doc-module-list-new))]
+      (ResultDocExpandedModules.Ok (doc_module_vec.new))]
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
@@ -177,11 +178,11 @@
 (define (doc-render-loaded-markdown
   [input-path : String]
   [paths : AstDeclPathList]
-  [generated-modules : doc_render.DocModuleList]) : String
+  [generated-modules : doc_module_vec.Vec]) : String
   (let
-    [modules : doc_render.DocModuleList
+    [modules : doc_module_vec.Vec
       (doc-modules-from-paths (ast-decl-root-path-cons input-path paths))]
-    [all-modules : doc_render.DocModuleList
+    [all-modules : doc_module_vec.Vec
       (doc_render.doc-module-list-append modules generated-modules)]
     (if (> (doc_render.doc-module-list-count all-modules) 1)
       (doc_render.doc-render-module-graph-markdown all-modules)
@@ -205,14 +206,13 @@
             ;; above fail the command. Loaded graph expansion is best-effort:
             ;; synthetic graph docs can combine helper declarations from many
             ;; modules in ways normal source builds never do.
-            [generated-modules : doc_render.DocModuleList
+            [generated-modules : doc_module_vec.Vec
               (match (doc-expanded-generated-modules-from-loaded-decls
                 decls
                 paths
                 stdlib-roots)
                 [(ResultDocExpandedModules.Ok modules) modules]
-                [(ResultDocExpandedModules.Err _)
-                  (doc_render.doc-module-list-new)])]
+                [(ResultDocExpandedModules.Err _) (doc_module_vec.new)])]
             (begin
               (io.write-file
                 output-path
@@ -262,7 +262,7 @@
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
   (let
-    [modules : doc_render.DocModuleList (doc-read-modules 2 (- (arg-count) 1))]
+    [modules : doc_module_vec.Vec (doc-read-modules 2 (- (arg-count) 1))]
     (begin
       (io.write-file
         output-path
@@ -303,17 +303,17 @@
 (define (doc-modules-from-input-paths-before-last
   [paths : doc_svec.Vec]
   [index : i64]
-  [last-index : i64]) : doc_render.DocModuleList
+  [last-index : i64]) : doc_module_vec.Vec
   (let
     [i : i64 index]
-    [modules : doc_render.DocModuleList
-      (doc_render.doc-module-list-with-capacity (- last-index index))]
+    [modules : doc_module_vec.Vec
+      (doc_module_vec.with-capacity (- last-index index))]
     (begin
       (while (< i last-index)
         (let
           [path : String (doc_svec.get (& paths) i "")]
           (begin
-            (doc_render.doc-module-list-push
+            (doc_module_vec.push
               (&mut modules)
               (doc_render.DocModule.Module
                 path
@@ -324,7 +324,7 @@
 (define (doc-generate-module-graph-from-input-paths [paths : doc_svec.Vec]) : i64
   (let
     [output-path : String (doc_svec.last (& paths) "")]
-    [modules : doc_render.DocModuleList
+    [modules : doc_module_vec.Vec
       (doc-modules-from-input-paths-before-last
         paths
         0

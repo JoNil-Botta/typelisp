@@ -4,8 +4,11 @@
 ;; model as the Markdown renderer. Anchors intentionally reuse `doc-render-anchor`
 ;; so standalone item links remain compatible with existing Markdown anchors.
 (import stdlib.io)
+(import stdlib.vector)
 (import doc_render)
 (import doc_extract)
+(import (vector.vector doc_extract.DocItem core) as doc_item_vec)
+(import (vector.vector doc_render.DocModule core) as doc_module_vec)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -549,7 +552,7 @@
       "</code></a></li>\n")))
 
 (define (doc-html-item-nav-entries-from
-  [items : doc_extract.DocItemList]
+  [items : doc_item_vec.Vec]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -558,13 +561,13 @@
       (doc-html-item-nav-entry (doc_extract.doc-item-list-ref items index))
       (doc-html-item-nav-entries-from items (+ index 1) count))))
 
-(define (doc-html-item-nav-entries [items : doc_extract.DocItemList]) : String
+(define (doc-html-item-nav-entries [items : doc_item_vec.Vec]) : String
   (doc-html-item-nav-entries-from
     items
     0
     (doc_extract.doc-item-list-count items)))
 
-(define (doc-html-item-nav [items : doc_extract.DocItemList]) : String
+(define (doc-html-item-nav [items : doc_item_vec.Vec]) : String
   (if (= (doc_extract.doc-item-list-count items) 0)
     ""
     (str_cat.str-cat
@@ -596,7 +599,7 @@
       "</section>\n")))
 
 (define (doc-html-item-list-from
-  [items : doc_extract.DocItemList]
+  [items : doc_item_vec.Vec]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -605,10 +608,10 @@
       (doc-html-item (doc_extract.doc-item-list-ref items index))
       (doc-html-item-list-from items (+ index 1) count))))
 
-(define (doc-html-item-list [items : doc_extract.DocItemList]) : String
+(define (doc-html-item-list [items : doc_item_vec.Vec]) : String
   (doc-html-item-list-from items 0 (doc_extract.doc-item-list-count items)))
 
-(define (doc-html-items [items : doc_extract.DocItemList]) : String
+(define (doc-html-items [items : doc_item_vec.Vec]) : String
   (if (= (doc_extract.doc-item-list-count items) 0)
     "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"
     (doc-html-item-list items)))
@@ -626,7 +629,7 @@
       "</a></li>\n")))
 
 (define (doc-html-module-nav-entries-from
-  [modules : doc_render.DocModuleList]
+  [modules : doc_module_vec.Vec]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -635,13 +638,13 @@
       (doc-html-module-nav-entry (doc_render.doc-module-list-ref modules index))
       (doc-html-module-nav-entries-from modules (+ index 1) count))))
 
-(define (doc-html-module-nav-entries [modules : doc_render.DocModuleList]) : String
+(define (doc-html-module-nav-entries [modules : doc_module_vec.Vec]) : String
   (doc-html-module-nav-entries-from
     modules
     0
     (doc_render.doc-module-list-count modules)))
 
-(define (doc-html-module-nav [modules : doc_render.DocModuleList]) : String
+(define (doc-html-module-nav [modules : doc_module_vec.Vec]) : String
   (if (= (doc_render.doc-module-list-count modules) 0)
     "<p class=\"tl-doc-empty\">No modules.</p>\n"
     (str_cat.str-cat
@@ -674,7 +677,7 @@
       "</section>\n")))
 
 (define (doc-html-module-sections-from
-  [modules : doc_render.DocModuleList]
+  [modules : doc_module_vec.Vec]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
@@ -683,7 +686,7 @@
       (doc-html-module-section (doc_render.doc-module-list-ref modules index))
       (doc-html-module-sections-from modules (+ index 1) count))))
 
-(define (doc-html-module-sections [modules : doc_render.DocModuleList]) : String
+(define (doc-html-module-sections [modules : doc_module_vec.Vec]) : String
   (doc-html-module-sections-from
     modules
     0
@@ -705,7 +708,7 @@
 (define (doc-html-render-source [path : String] [source : String]) : String
   (doc-html-render-module-page path (doc_extract.doc-extract-source source)))
 
-(define (doc-html-render-module-graph [modules : doc_render.DocModuleList]) : String
+(define (doc-html-render-module-graph [modules : doc_module_vec.Vec]) : String
   (str_cat.str-cat
     (doc-html-page-open "TypeLisp API")
     (doc-html-header "TypeLisp API" "module index")

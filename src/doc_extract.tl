@@ -13,6 +13,7 @@
 ;; source text remains available as the item signature.
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
 
 (defenum DocItemKind
   (Define)
@@ -26,15 +27,13 @@
 (defenum DocItem
   (Item DocItemKind String String String))
 
-(defstruct DocItemList
-  (slots (Array DocItem))
-  (len i64))
+(import (vector.vector DocItem core) as doc_item_vec)
 
 (defenum DocExtraction
-  (Extraction String DocItemList))
+  (Extraction String doc_item_vec.Vec))
 
 (define (doc-extraction-empty) : DocExtraction
-  (DocExtraction.Extraction "" (doc-item-list-new)))
+  (DocExtraction.Extraction "" (doc_item_vec.new)))
 
 (defenum DocMaybeDeclInfo
   (No)
@@ -64,7 +63,7 @@
   (match docs
     [(DocExtraction.Extraction module-doc _) module-doc]))
 
-(define (doc-extraction-items [docs : DocExtraction]) : DocItemList
+(define (doc-extraction-items [docs : DocExtraction]) : doc_item_vec.Vec
   (match docs
     [(DocExtraction.Extraction _ items) items]))
 
@@ -87,90 +86,26 @@
 (define (doc-item-fallback) : DocItem
   (DocItem.Item (DocItemKind.Define) "" "" ""))
 
-(define (doc-item-list-slots [items : (& items DocItemList)]) : (&
-    items
-    (Array DocItem))
-  (& (struct-get items slots)))
+(define (doc-item-list-count [items : doc_item_vec.Vec]) : i64
+  (doc_item_vec.len (& items)))
 
-(define (doc-item-list-count [items : DocItemList]) : i64
-  (doc-item-list-len (& items)))
-
-(define (doc-item-list-len [items : (& items DocItemList)]) : i64
-  (struct-get items len))
-
-(define (doc-item-list-ref [items : DocItemList] [index : i64]) : DocItem
-  (doc-item-list-get (& items) index (doc-item-fallback)))
-
-(define (doc-item-list-with-capacity [capacity : i64]) : DocItemList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (DocItemList (make-array DocItem cap) 0)))
-
-(define (doc-item-list-new) : DocItemList
-  (doc-item-list-with-capacity 4))
-
-(define (doc-item-list-get
-  [items : (& items DocItemList)]
-  [index : i64]
-  [fallback : DocItem]) : DocItem
-  (if (if (>= index 0)
-    (< index (doc-item-list-len items))
-    false)
-    (array-ref (doc-item-list-slots items) index)
-    fallback))
-
-(define (doc-item-list-copy-range
-  [dst : (&mut dst (Array DocItem))]
-  [src : (& src (Array DocItem))]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array-set! dst index (array-ref src index))
-      (doc-item-list-copy-range dst src (+ index 1) count))))
-
-(define (doc-item-list-grow [items : (&mut items DocItemList)]) : unit
-  (let
-    [n : i64 (struct-get items len)]
-    [old-cap : i64 (array-length (struct-get items slots))]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (Array DocItem) (make-array DocItem new-cap)]
-    (begin
-      (doc-item-list-copy-range (&mut bigger) (& (struct-get items slots)) 0 n)
-      (set! (struct-get items slots) bigger))))
-
-(define (doc-item-list-push [items : (&mut items DocItemList)] [item : DocItem]) : unit
-  (begin
-    (if (< (struct-get items len) (array-length (struct-get items slots)))
-      unit
-      (doc-item-list-grow items))
-    (let
-      [index : i64 (struct-get items len)]
-      (begin
-        (array-set! (struct-get items slots) index item)
-        (set! (struct-get items len) (+ index 1))))))
+(define (doc-item-list-ref [items : doc_item_vec.Vec] [index : i64]) : DocItem
+  (doc_item_vec.get (& items) index (doc-item-fallback)))
 
 (define (doc-item-array-copy-to-list
-  [out : (&mut out DocItemList)]
+  [out : (&mut out doc_item_vec.Vec)]
   [items : (Array DocItem)]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
     unit
     (begin
-      (doc-item-list-push out (array-ref items index))
+      (doc_item_vec.push out (array-ref items index))
       (doc-item-array-copy-to-list out items (+ index 1) count))))
 
-(define (doc-item-array-to-list [items : (Array DocItem)]) : DocItemList
+(define (doc-item-array-to-list [items : (Array DocItem)]) : doc_item_vec.Vec
   (let
-    [out : DocItemList (doc-item-list-with-capacity (array-length items))]
+    [out : doc_item_vec.Vec (doc_item_vec.with-capacity (array-length items))]
     (begin
       (doc-item-array-copy-to-list (&mut out) items 0 (array-length items))
       out)))
@@ -718,7 +653,7 @@
         (unless (string.eq item-doc doc-text) (return false))
         (doc-string-contains? signature signature-fragment))]))
 
-(define (doc-extract-smoke-items-ok? [items : DocItemList]) : bool
+(define (doc-extract-smoke-items-ok? [items : doc_item_vec.Vec]) : bool
   (begin
     (unless (= (doc-item-list-count items) 6) (return false))
     (unless

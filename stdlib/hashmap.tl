@@ -3978,13 +3978,13 @@
     [cursor : i64 index]
     [walked : i64 steps]
     [first : i64 first-tombstone]
+    [data : (Ptr HashmapI64I64BackingSlot)
+      (unsafe
+        (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot)))]
     (begin
       (while (< walked capacity)
         (match (unsafe
-          (ptr-read
-            (ptr-offset
-              (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot))
-              cursor)))
+          (ptr-read (ptr-offset data cursor)))
           [(HashmapI64I64BackingEmpty)
             (return
               (HashmapI64I64BackingProbeAbsent
@@ -4398,6 +4398,9 @@
         (hashmap-i64-i64-backing-grow map)
         map)]
     [slots : (Array HashmapI64I64BackingSlot) (struct-get grown slots)]
+    [data : (Ptr HashmapI64I64BackingSlot)
+      (unsafe
+        (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot)))]
     [capacity : i64 (array-length slots)]
     [hash : i64 (hashmap-i64-i64-backing-hash-key key)]
     [cursor : i64
@@ -4408,10 +4411,7 @@
       ;; the probe always terminates without a walked-count bound.
       (while true
         (match (unsafe
-          (ptr-read
-            (ptr-offset
-              (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot))
-              cursor)))
+          (ptr-read (ptr-offset data cursor)))
           [(HashmapI64I64BackingEmpty)
             (let
               [index : i64
@@ -4535,15 +4535,15 @@
       [entry-key : i64 0]
       [entry-hash : i64 0]
       [done : bool false]
+      [data : (Ptr HashmapI64I64BackingSlot)
+        (unsafe
+          (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot)))]
       (begin
         (while (if (< walked capacity)
           (not done)
           false)
           (match (unsafe
-            (ptr-read
-              (ptr-offset
-                (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot))
-                cursor)))
+            (ptr-read (ptr-offset data cursor)))
             [(HashmapI64I64BackingOccupied slot-key _ slot-hash)
               (if (if (= slot-hash hash)
                 (= slot-key key)
@@ -5828,6 +5828,11 @@
   (let
     [slots : (& map (Array HashmapI64I64BackingSlot))
       (& (struct-get map slots))]
+    [data : (Ptr HashmapI64I64BackingSlot)
+      (unsafe
+        (ptr-cast
+          (array-data (struct-get map slots))
+          : (Ptr HashmapI64I64BackingSlot)))]
     [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       (HashmapI64I64BackingMissing)
@@ -5840,12 +5845,7 @@
         (begin
           (while (< walked capacity)
             (match (unsafe
-              (ptr-read
-                (ptr-offset
-                  (ptr-cast
-                    (array-data (struct-get map slots))
-                    : (Ptr HashmapI64I64BackingSlot))
-                  cursor)))
+              (ptr-read (ptr-offset data cursor)))
               [(HashmapI64I64BackingEmpty)
                 (return (HashmapI64I64BackingMissing))]
               [(HashmapI64I64BackingTombstone)

@@ -1408,6 +1408,34 @@
 (define (compiler-reg-cast-copy-64? [from-ty : AstType] [to-ty : AstType]) : bool
   (and (compiler-reg-int-width-64? from-ty) (compiler-reg-int-width-64? to-ty)))
 
+;; Scalar operations whose backend lowering can destructively reuse an operand
+;; home for the result. Comparisons produce a fresh boolean through cmp/setcc;
+;; div/mod use fixed rax:rdx and are not ordinary operand ties.
+(define (compiler-reg-binop-destructive-tie? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Div) false]
+    [(CompilerIrBinOp.Mod) false]
+    [(CompilerIrBinOp.SafeDiv) false]
+    [(CompilerIrBinOp.SafeMod) false]
+    [(CompilerIrBinOp.Eq) false]
+    [(CompilerIrBinOp.Ne) false]
+    [(CompilerIrBinOp.Lt) false]
+    [(CompilerIrBinOp.Le) false]
+    [(CompilerIrBinOp.Gt) false]
+    [(CompilerIrBinOp.Ge) false]
+    [_ true]))
+
+(define (compiler-reg-binop-destructive-commutative? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Add) true]
+    [(CompilerIrBinOp.Mul) true]
+    [(CompilerIrBinOp.And) true]
+    [(CompilerIrBinOp.Or) true]
+    [(CompilerIrBinOp.BitAnd) true]
+    [(CompilerIrBinOp.BitOr) true]
+    [(CompilerIrBinOp.BitXor) true]
+    [_ false]))
+
 ;; Harvest width-64 int casts as coalescable moves (M-C part 1). Kept SEPARATE
 ;; from compiler-reg-function-moves so the SIMD/AVX plan path and the post-hoc
 ;; loop-split/remat coalesce rebuilds stay byte-identical; only the scalar-opt2
@@ -1465,6 +1493,314 @@
               (set! i (+ i 1))))
           out))]))
 
+;; Destructive ties are useful for chains, but feeding every scalar binop into
+;; the general class coalescer makes arithmetic-heavy self-host functions
+;; pathologically expensive. Build a bounded candidate set instead. A tie is
+;; harvested when either endpoint is already move/phi-related, when its source is
+;; another destructive result, or when its destination feeds another destructive
+;; operation. This covers straight-line chains and phi-carried reductions while
+;; skipping isolated arithmetic.
+(define (compiler-reg-destructive-mark-move-vars!
+  [moves : CompilerRegMoveList]
+  [anchors : (Array i64)]) : unit
+  (match moves
+    [(CompilerRegMoveList.Nil) unit]
+    [(CompilerRegMoveList.Cons move rest)
+      (begin
+        (match move
+          [(CompilerRegMove.Move src dst _)
+            (begin
+              (if (and (>= src 0) (< src (array-length anchors)))
+                (array-set! anchors src 1)
+                unit)
+              (if (and (>= dst 0) (< dst (array-length anchors)))
+                (array-set! anchors dst 1)
+                unit))])
+        (compiler-reg-destructive-mark-move-vars! (box-get rest) anchors))]))
+
+(define (compiler-reg-destructive-shape-instr!
+  [instr : CompilerIrInstr]
+  [defs : (Array i64)]
+  [uses : (Array i64)]) : unit
+  (match instr
+    [(CompilerIrInstr.BinOp dst op lhs rhs _)
+      (if (compiler-reg-binop-destructive-tie? op)
+        (begin
+          (if (and (>= dst 0) (< dst (array-length defs)))
+            (array-set! defs dst 1)
+            unit)
+          (match lhs
+            [(CompilerIrValue.Var var)
+              (if (and (>= var 0) (< var (array-length uses)))
+                (array-set! uses var 1)
+                unit)]
+            [_ unit])
+          (if (compiler-reg-binop-destructive-commutative? op)
+            (match rhs
+              [(CompilerIrValue.Var var)
+                (if (and (>= var 0) (< var (array-length uses)))
+                  (array-set! uses var 1)
+                  unit)]
+              [_ unit])
+            unit))
+        unit)]
+    [_ unit]))
+
+(define (compiler-reg-destructive-shape-seq!
+  [instrs : CompilerIrInstrSeq]
+  [defs : (Array i64)]
+  [uses : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (compiler-reg-destructive-shape-instr!
+          (array-ref slots index)
+          defs
+          uses)
+        (set! index (+ index 1))))))
+
+(define (compiler-reg-destructive-shape-blocks!
+  [blocks : CompilerIrBlockList]
+  [defs : (Array i64)]
+  [uses : (Array i64)]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (compiler-reg-destructive-shape-seq! instrs defs uses)])
+        (compiler-reg-destructive-shape-blocks! (box-get rest) defs uses))]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        (while (< i count)
+          (begin
+            (match (compiler-ir-block-seq-ref seq i)
+              [(CompilerIrBlock.Block _ instrs)
+                (compiler-reg-destructive-shape-seq! instrs defs uses)])
+            (set! i (+ i 1)))))]))
+
+(define (compiler-reg-destructive-candidate?
+  [src : i64]
+  [dst : i64]
+  [anchors : (Array i64)]
+  [defs : (Array i64)]
+  [uses : (Array i64)]
+  [eligible : (Array i64)]) : bool
+  (and
+    (>= src 0)
+    (< src (array-length anchors))
+    (>= dst 0)
+    (< dst (array-length anchors))
+    (< src (array-length eligible))
+    (< dst (array-length eligible))
+    (= (array-ref eligible src) 1)
+    (= (array-ref eligible dst) 1)
+    (or
+      (= (array-ref anchors src) 1)
+      (= (array-ref anchors dst) 1)
+      (= (array-ref defs src) 1)
+      (= (array-ref uses dst) 1))))
+
+(define (compiler-reg-destructive-add-value-tie
+  [value : CompilerIrValue]
+  [dst : i64]
+  [moves : CompilerRegMoveList]
+  [anchors : (Array i64)]
+  [defs : (Array i64)]
+  [uses : (Array i64)]
+  [eligible : (Array i64)]) : CompilerRegMoveList
+  (match value
+    [(CompilerIrValue.Var src)
+      (if (compiler-reg-destructive-candidate?
+        src
+        dst
+        anchors
+        defs
+        uses
+        eligible)
+        (compiler-reg-move-list-add moves src dst false false)
+        moves)]
+    [_ moves]))
+
+(define (compiler-reg-destructive-value-candidate?
+  [value : CompilerIrValue]
+  [dst : i64]
+  [anchors : (Array i64)]
+  [defs : (Array i64)]
+  [uses : (Array i64)]
+  [eligible : (Array i64)]) : bool
+  (match value
+    [(CompilerIrValue.Var src)
+      (compiler-reg-destructive-candidate? src dst anchors defs uses eligible)]
+    [_ false]))
+
+(define (compiler-reg-destructive-tie-instr
+  [instr : CompilerIrInstr]
+  [moves : CompilerRegMoveList]
+  [anchors : (Array i64)]
+  [defs : (Array i64)]
+  [uses : (Array i64)]
+  [eligible : (Array i64)]) : CompilerRegMoveList
+  (match instr
+    [(CompilerIrInstr.BinOp dst op lhs rhs _)
+      (if (compiler-reg-binop-destructive-tie? op)
+        ;; Select exactly one destructive home. Prefer lhs whenever it is an
+        ;; eligible chain candidate; for commutative operations, rhs is the
+        ;; deterministic fallback when lhs cannot participate. Adding both
+        ;; alternatives lets unrelated rhs values reshape otherwise-stable
+        ;; coalesce classes and can increase register pressure.
+        (if (compiler-reg-destructive-value-candidate?
+          lhs
+          dst
+          anchors
+          defs
+          uses
+          eligible)
+          (compiler-reg-destructive-add-value-tie
+            lhs
+            dst
+            moves
+            anchors
+            defs
+            uses
+            eligible)
+          (if (compiler-reg-binop-destructive-commutative? op)
+            (match lhs
+              ;; A variable lhs remains the canonical destructive operand even
+              ;; when it is not a chain candidate. Falling through to rhs in
+              ;; that case perturbs unrelated arithmetic classes. A literal lhs
+              ;; has no reusable home, so rhs is the only legal alternative.
+              [(CompilerIrValue.Var _) moves]
+              [_
+                (match rhs
+                  ;; Keep the alternate relation chain-shaped: the reusable rhs
+                  ;; must itself be a destructive result. This covers operand-
+                  ;; swapped commutative chains without turning literal-led
+                  ;; standalone arithmetic into a global preference source.
+                  [(CompilerIrValue.Var rhs-var)
+                    (if (and
+                      (>= rhs-var 0)
+                      (< rhs-var (array-length defs))
+                      (= (array-ref defs rhs-var) 1))
+                      (compiler-reg-destructive-add-value-tie
+                        rhs
+                        dst
+                        moves
+                        anchors
+                        defs
+                        uses
+                        eligible)
+                      moves)]
+                  [_ moves])])
+            moves))
+        moves)]
+    [_ moves]))
+
+(define (compiler-reg-destructive-tie-moves-seq
+  [instrs : CompilerIrInstrSeq]
+  [moves : CompilerRegMoveList]
+  [anchors : (Array i64)]
+  [defs : (Array i64)]
+  [uses : (Array i64)]
+  [eligible : (Array i64)]) : CompilerRegMoveList
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [index : i64 (- (struct-get instrs len) 1)]
+    [out : CompilerRegMoveList moves]
+    (begin
+      (while (>= index 0)
+        (begin
+          (set!
+            out
+            (compiler-reg-destructive-tie-instr
+              (array-ref slots index)
+              out
+              anchors
+              defs
+              uses
+              eligible))
+          (set! index (- index 1))))
+      out)))
+
+(define (compiler-reg-destructive-tie-moves-blocks
+  [blocks : CompilerIrBlockList]
+  [moves : CompilerRegMoveList]
+  [anchors : (Array i64)]
+  [defs : (Array i64)]
+  [uses : (Array i64)]
+  [eligible : (Array i64)]) : CompilerRegMoveList
+  (match blocks
+    [(CompilerIrBlockList.Nil) moves]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-reg-destructive-tie-moves-blocks
+            (box-get rest)
+            (compiler-reg-destructive-tie-moves-seq
+              instrs
+              moves
+              anchors
+              defs
+              uses
+              eligible)
+            anchors
+            defs
+            uses
+            eligible)])]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [out : CompilerRegMoveList moves]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set!
+                    out
+                    (compiler-reg-destructive-tie-moves-seq
+                      instrs
+                      out
+                      anchors
+                      defs
+                      uses
+                      eligible))])
+              (set! i (+ i 1))))
+          out))]))
+
+(define (compiler-reg-function-destructive-tie-moves
+  [func : CompilerIrFunction]
+  [moves : CompilerRegMoveList]
+  [eligible : (Array i64)]) : CompilerRegMoveList
+  (match func
+    [(CompilerIrFunction.Function _ _ _ vars blocks)
+      (let
+        [anchors : (Array i64) (array.make-array i64 vars)]
+        [defs : (Array i64) (array.make-array i64 vars)]
+        [uses : (Array i64) (array.make-array i64 vars)]
+        (begin
+          (compiler-reg-fill-i64-array anchors 0)
+          (compiler-reg-fill-i64-array defs 0)
+          (compiler-reg-fill-i64-array uses 0)
+          (compiler-reg-destructive-mark-move-vars!
+            (compiler-reg-function-moves func false)
+            anchors)
+          (compiler-reg-destructive-shape-blocks! blocks defs uses)
+          (compiler-reg-destructive-tie-moves-blocks
+            blocks
+            moves
+            anchors
+            defs
+            uses
+            eligible)))]))
+
 ;; function-moves with the width-64 cast copies appended at the TAIL (the cast
 ;; list is built first and used as the seed accumulator the real moves are
 ;; prepended onto), so every existing move keeps its first-wins position for
@@ -1478,6 +1814,34 @@
         blocks
         (compiler-reg-cast-moves-blocks blocks CompilerRegMoveList.Nil)
         strict-pairs)]))
+
+(define (compiler-reg-function-moves-with-destructive-and-casts-eligible
+  [func : CompilerIrFunction]
+  [strict-pairs : bool]
+  [eligible : (Array i64)]) : CompilerRegMoveList
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (compiler-reg-block-list-moves
+        blocks
+        (compiler-reg-function-destructive-tie-moves
+          func
+          (compiler-reg-cast-moves-blocks blocks CompilerRegMoveList.Nil)
+          eligible)
+        strict-pairs)]))
+
+(define (compiler-reg-function-moves-with-destructive-and-casts
+  [func : CompilerIrFunction]
+  [strict-pairs : bool]) : CompilerRegMoveList
+  (match func
+    [(CompilerIrFunction.Function _ _ _ vars _)
+      (let
+        [eligible : (Array i64) (array.make-array i64 vars)]
+        (begin
+          (compiler-reg-fill-i64-array eligible 1)
+          (compiler-reg-function-moves-with-destructive-and-casts-eligible
+            func
+            strict-pairs
+            eligible)))]))
 
 (define (compiler-reg-move-list-filter-storage-identity
   [moves : CompilerRegMoveList]
@@ -2690,12 +3054,15 @@
 ;; entangled input is genuinely live, corrupting it (this is exactly the
 ;; `compiler-reg-merged-root-index` self-host mis-coalesce the fixpoint caught).
 ;;
-;; So a phi with ANY live-out input is EXCLUDED from EP relaxation: its result and
-;; inputs fall back to the conservative coarse interference, refusing the relaxed
-;; coalesce (never mis-applying it). Pure loop/if-merge carries -- whose inputs are all
-;; dead after the merge -- stay relaxed, preserving the loop-carry win (qs_partition /
-;; loopcarry_coalesce). Using the (sound) EP block live-out here can only over-exclude
-;; (a missed coalesce), never under-exclude.
+;; So a phi with ANY live-out input is normally EXCLUDED from EP relaxation: its
+;; result and inputs fall back to conservative interference. The narrow exception is
+;; a single-block self-loop back-edge value that is DEFINED in the block and has no
+;; ordinary (non-phi) use there. Such a value is live-out only to feed successor phi
+;; edges: sharing its storage with the header phi is exactly the destructive loop
+;; carry, while a counter still used by the exit compare fails the non-phi-use proof.
+;; Pure loop/if-merge carries whose inputs are all dead after the merge stay relaxed
+;; as before. Using the sound EP block live-out here can only over-exclude (a missed
+;; coalesce), never under-exclude.
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-block-live-out-by-label
   [liveness : CompilerFunctionLiveness]
@@ -2722,9 +3089,84 @@
         true
         (compiler-reg-phi-inputs-any-live-out? (box-get rest) live-out))]))
 
+(define (compiler-reg-instr-seq-defines-var?
+  [instrs : CompilerIrInstrSeq]
+  [var : i64]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (if (compiler-live-set-contains?
+            (compiler-live-instr-defs (array-ref slots index))
+            var)
+            (set! found true)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-reg-instr-seq-non-phi-uses-var?
+  [instrs : CompilerIrInstrSeq]
+  [var : i64]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (let
+          [instr : CompilerIrInstr (array-ref slots index)]
+          (begin
+            (match instr
+              [(CompilerIrInstr.Phi _ _ _) unit]
+              [_
+                (if (compiler-live-set-contains?
+                  (compiler-live-instr-uses instr)
+                  var)
+                  (set! found true)
+                  unit)])
+            (set! index (+ index 1)))))
+      found)))
+
+(define (compiler-reg-phi-live-out-inputs-self-loop-safe?
+  [inputs : CompilerIrPhiInputList]
+  [live-out : CompilerLiveI64Set]
+  [instrs : CompilerIrInstrSeq]
+  [block-label : String]) : bool
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) true]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-reg-phi-live-out-inputs-self-loop-safe?
+        (compiler-ir-phi-input-seq-to-list seq)
+        live-out
+        instrs
+        block-label)]
+    [(CompilerIrPhiInputList.Cons value predecessor rest)
+      (and
+        (match value
+          [(CompilerIrValue.Var var)
+            (if (compiler-live-set-contains? live-out var)
+              (and
+                (string.eq predecessor block-label)
+                (compiler-reg-instr-seq-defines-var? instrs var)
+                (not (compiler-reg-instr-seq-non-phi-uses-var? instrs var)))
+              true)]
+          [_ true])
+        (compiler-reg-phi-live-out-inputs-self-loop-safe?
+          (box-get rest)
+          live-out
+          instrs
+          block-label))]))
+
 (define (compiler-reg-phi-touched-safe-seq!
   [instrs : CompilerIrInstrSeq]
   [live-out : CompilerLiveI64Set]
+  [self-loop : bool]
+  [block-label : String]
   [mask : (Array i64)]) : unit
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -2735,7 +3177,16 @@
         (begin
           (match (array-ref slots index)
             [(CompilerIrInstr.Phi dst inputs _)
-              (if (compiler-reg-phi-inputs-any-live-out? inputs live-out)
+              (if (and
+                (compiler-reg-phi-inputs-any-live-out? inputs live-out)
+                (not
+                  (and
+                    self-loop
+                    (compiler-reg-phi-live-out-inputs-self-loop-safe?
+                      inputs
+                      live-out
+                      instrs
+                      block-label))))
                 unit
                 (begin
                   (compiler-reg-mark-phi-def! mask dst)
@@ -2747,6 +3198,7 @@
 (define (compiler-reg-phi-touched-safe-blocks!
   [blocks : CompilerIrBlockList]
   [liveness : CompilerFunctionLiveness]
+  [allow-exit-live-self-loop : bool]
   [mask : (Array i64)]) : unit
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
@@ -2757,8 +3209,18 @@
             (compiler-reg-phi-touched-safe-seq!
               instrs
               (compiler-reg-block-live-out-by-label liveness label)
+              (and
+                allow-exit-live-self-loop
+                (compiler-live-label-set-contains?
+                  (compiler-live-block-successors block)
+                  label))
+              label
               mask)
-            (compiler-reg-phi-touched-safe-blocks! (box-get rest) liveness mask))])]
+            (compiler-reg-phi-touched-safe-blocks!
+              (box-get rest)
+              liveness
+              allow-exit-live-self-loop
+              mask))])]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -2770,20 +3232,37 @@
                 (compiler-reg-phi-touched-safe-seq!
                   instrs
                   (compiler-reg-block-live-out-by-label liveness label)
+                  (and
+                    allow-exit-live-self-loop
+                    (compiler-live-label-set-contains?
+                      (compiler-live-block-successors
+                        (compiler-ir-block-seq-ref seq i))
+                      label))
+                  label
                   mask)])
             (set! i (+ i 1)))))]))
 
-(define (compiler-reg-function-phi-touched-safe
+(define (compiler-reg-function-phi-touched-safe-mode
   [func : CompilerIrFunction]
-  [liveness : CompilerFunctionLiveness]) : (Array i64)
+  [liveness : CompilerFunctionLiveness]
+  [allow-exit-live-self-loop : bool]) : (Array i64)
   (match func
     [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
         [mask : (Array i64) (array.make-array i64 vars)]
         (begin
           (compiler-reg-fill-i64-array mask 0)
-          (compiler-reg-phi-touched-safe-blocks! blocks liveness mask)
+          (compiler-reg-phi-touched-safe-blocks!
+            blocks
+            liveness
+            allow-exit-live-self-loop
+            mask)
           mask))]))
+
+(define (compiler-reg-function-phi-touched-safe
+  [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]) : (Array i64)
+  (compiler-reg-function-phi-touched-safe-mode func liveness true))
 
 ;; Hybrid segments: EP segments for phi-touched vars, conservative otherwise.
 (define (compiler-reg-hybrid-coalesce-index
@@ -17264,17 +17743,38 @@
           [(CompilerIrFunction.Function _ _ _ _ blocks)
             (compiler-reg-ineligible-memory blocks (compiler-live-set-empty))])
         (compiler-live-set-empty))]
+    ;; Destructive operand/result ties carry different values and never receive
+    ;; the same-value overlap waiver. Keep their ordinary non-overlap relation
+    ;; out of intervals spanning call-like, fixed div/mod, or variable-shift
+    ;; clobber points, and out of storage-identity variables. Unlike a copy class,
+    ;; a different-value destructive chain must not reshape itself across any of
+    ;; those physical-register boundaries.
+    [clobber-points : CompilerLiveI64Set
+      (compiler-reg-clobber-kind-points func 0)]
+    [destructive-fixed-points : CompilerLiveI64Set
+      (compiler-live-set-union
+        (compiler-reg-clobber-kind-points func 1)
+        (compiler-reg-clobber-kind-points func 2))]
+    [destructive-clobber-points : CompilerLiveI64Set
+      (compiler-live-set-union clobber-points destructive-fixed-points)]
+    [destructive-eligible : (Array i64)
+      (compiler-reg-same-value-eligible-vars-excluding
+        interval-index
+        destructive-clobber-points
+        storage-identity-vars)]
     [raw-moves
       : CompilerRegMoveList
       ;; Phi back-edge moves NON-strict so loop-carried phi/copy pairs coalesce
       ;; (then merge into one root via coalescing-by-rename). SIMD already
       ;; passed false here; only the scalar-opt2 plan gains the loop coalescing.
-      ;; M-C (part 1): the scalar-opt2 path additionally harvests width-64 int
-      ;; casts as copies (appended at the tail; see function-moves-with-casts),
-      ;; so the bounds-check index temps can coalesce with their sources. The
-      ;; SIMD/AVX path keeps the plain move list byte-identical.
+      ;; Scalar opt2 additionally harvests bounded destructive-binop chain ties,
+      ;; then width-64 int casts as copies. SIMD/AVX keeps the plain move list
+      ;; byte-identical.
       (if allow-caller-saved-zero-call
-        (compiler-reg-function-moves-with-casts func false)
+        (compiler-reg-function-moves-with-destructive-and-casts-eligible
+          func
+          false
+          destructive-eligible)
         (compiler-reg-function-moves func false))]
     [moves : CompilerRegMoveList
       (compiler-reg-move-list-filter-storage-identity
@@ -17292,8 +17792,6 @@
     ;; same-values from coalescing (as the merged set did) needlessly inflated
     ;; register pressure. Bounds-check and Pack are already absent from both sets
     ;; (clobber-point-instr? returns false for them), so only div/shift differ.
-    [clobber-points : CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points func 0)]
     ;; XMM-family ABI volatility is narrower than the GP clobber model above.
     ;; CpuId/Xgetbv/syscall have fixed GP effects but preserve XMM registers, so
     ;; only real call instructions restrict float/vector candidates to the ABI
@@ -17343,9 +17841,14 @@
           (compiler-reg-hybrid-coalesce-index
             interval-index
             (compiler-reg-live-interval-selection-ep func ep-liveness)
-            ;; Exclude phis whose input is live-out of the phi block (unsafe for EP
-            ;; relaxation); pure carries stay relaxed.
-            (compiler-reg-function-phi-touched-safe func ep-liveness)))
+            ;; Exclude unsafe live-out inputs while admitting proven self-loop
+            ;; back-edge-only values. Fixed div/mod or variable-shift functions
+            ;; retain the conservative guard: relaxing an otherwise unrelated
+            ;; carry can reshape fixed-home pressure differently on SysV/Win64.
+            (compiler-reg-function-phi-touched-safe-mode
+              func
+              ep-liveness
+              (= (compiler-live-set-word-count destructive-fixed-points) 0))))
         interval-index)]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
@@ -25622,6 +26125,299 @@
                 CompilerIrInstrList.Nil))
             CompilerIrBlockList.Nil))))))
 
+;; Single-block accumulator carry plus a loop counter. The accumulator back-edge
+;; value is defined in the block and only feeds successor phis, so EP relaxation
+;; may merge its back-edge copy with the header phi even though the value is also
+;; live on the exit edge. The counter back-edge value feeds the exit compare and
+;; must remain excluded. Both branch successor orderings exercise edge neutrality.
+(define (compiler-reg-self-loop-exit-live-phi-function [loop-first : bool]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (compiler-ir-test-symbol "self_loop_exit_live_phi")
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    6
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "loop")
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              0
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.I64 0)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 3)
+                  "loop"
+                  CompilerIrPhiInputList.Nil))
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                1
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.I64 0)
+                  "entry"
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.Var 4)
+                    "loop"
+                    CompilerIrPhiInputList.Nil))
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  2
+                  CompilerIrBinOp.Add
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.I64 1)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Mov
+                    3
+                    (CompilerIrValue.Var 2)
+                    (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      4
+                      CompilerIrBinOp.Add
+                      (CompilerIrValue.Var 1)
+                      (CompilerIrValue.I64 1)
+                      (compiler-reg-i64-ty))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        5
+                        CompilerIrBinOp.Lt
+                        (CompilerIrValue.Var 4)
+                        (CompilerIrValue.I64 10)
+                        (AstType.Bool))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Branch
+                          (CompilerIrValue.Var 5)
+                          (if loop-first
+                            "loop"
+                            "exit")
+                          (if loop-first
+                            "exit"
+                            "loop"))
+                        CompilerIrInstrList.Nil))))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil)))))
+
+(define (compiler-reg-self-loop-exit-live-phi-mask-shape-ok?
+  [mask : (Array i64)]) : bool
+  (and
+    (= (array-ref mask 0) 1)
+    (= (array-ref mask 3) 1)
+    (= (array-ref mask 1) 0)
+    (= (array-ref mask 4) 0)))
+
+(define (compiler-reg-self-loop-exit-live-phi-mask-ok?) : bool
+  (let
+    [loop-first : CompilerIrFunction
+      (compiler-reg-self-loop-exit-live-phi-function true)]
+    [exit-first : CompilerIrFunction
+      (compiler-reg-self-loop-exit-live-phi-function false)]
+    [loop-first-mask : (Array i64)
+      (compiler-reg-function-phi-touched-safe
+        loop-first
+        (compiler-live-analyze-function-edge-precise loop-first))]
+    [exit-first-mask : (Array i64)
+      (compiler-reg-function-phi-touched-safe
+        exit-first
+        (compiler-live-analyze-function-edge-precise exit-first))]
+    [fixed-register-mask : (Array i64)
+      (compiler-reg-function-phi-touched-safe-mode
+        loop-first
+        (compiler-live-analyze-function-edge-precise loop-first)
+        false)]
+    (and
+      (compiler-reg-self-loop-exit-live-phi-mask-shape-ok? loop-first-mask)
+      (compiler-reg-self-loop-exit-live-phi-mask-shape-ok? exit-first-mask)
+      (= (array-ref fixed-register-mask 0) 0)
+      (= (array-ref fixed-register-mask 3) 0))))
+
+(define (compiler-reg-destructive-straight-chain-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (compiler-ir-test-symbol "destructive_straight_chain")
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 40) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              1
+              CompilerIrBinOp.Add
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 3)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                2
+                CompilerIrBinOp.Sub
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-destructive-noncommutative-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (compiler-ir-test-symbol "destructive_noncommutative")
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 40) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.I64 3)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                2
+                CompilerIrBinOp.Sub
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.Var 1)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  3
+                  CompilerIrBinOp.Add
+                  (CompilerIrValue.Var 2)
+                  (CompilerIrValue.I64 1)
+                  (compiler-reg-i64-ty))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-destructive-commutative-rhs-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (compiler-ir-test-symbol "destructive_commutative_rhs")
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 40) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              1
+              CompilerIrBinOp.Add
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 3)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                2
+                CompilerIrBinOp.Add
+                (CompilerIrValue.I64 1)
+                (CompilerIrValue.Var 1)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-destructive-div-exclusion-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (compiler-ir-test-symbol "destructive_div_exclusion")
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 40) (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              1
+              CompilerIrBinOp.Div
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 2)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                2
+                CompilerIrBinOp.Add
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.I64 1)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-destructive-chain-ok?) : bool
+  (let
+    [straight : CompilerIrFunction
+      (compiler-reg-destructive-straight-chain-function)]
+    [straight-moves : CompilerRegMoveList
+      (compiler-reg-function-moves-with-destructive-and-casts straight false)]
+    [clobber-eligible : (Array i64) (array.make-array i64 3)]
+    [clobber-moves : CompilerRegMoveList
+      (begin
+        (compiler-reg-fill-i64-array clobber-eligible 1)
+        (array-set! clobber-eligible 1 0)
+        (compiler-reg-function-moves-with-destructive-and-casts-eligible
+          straight
+          false
+          clobber-eligible))]
+    [noncomm : CompilerIrFunction
+      (compiler-reg-destructive-noncommutative-function)]
+    [noncomm-moves : CompilerRegMoveList
+      (compiler-reg-function-moves-with-destructive-and-casts noncomm false)]
+    [commutative-rhs-moves : CompilerRegMoveList
+      (compiler-reg-function-moves-with-destructive-and-casts
+        (compiler-reg-destructive-commutative-rhs-function)
+        false)]
+    [div-moves : CompilerRegMoveList
+      (compiler-reg-function-moves-with-destructive-and-casts
+        (compiler-reg-destructive-div-exclusion-function)
+        false)]
+    (match (compiler-reg-plan-function-scalar straight)
+      [(CompilerRegPlan.Plan assignments _ _ _ _ _)
+        (and
+          (compiler-reg-move-list-contains-undirected? straight-moves 0 1)
+          (compiler-reg-move-list-contains-undirected? straight-moves 1 2)
+          (not (compiler-reg-move-list-contains-undirected? clobber-moves 0 1))
+          (not (compiler-reg-move-list-contains-undirected? clobber-moves 1 2))
+          (compiler-reg-same-location? assignments 0 1)
+          (compiler-reg-same-location? assignments 1 2)
+          (compiler-reg-move-list-contains-undirected? noncomm-moves 0 2)
+          (not (compiler-reg-move-list-contains-undirected? noncomm-moves 1 2))
+          (compiler-reg-move-list-contains-undirected?
+            commutative-rhs-moves
+            1
+            2)
+          (not (compiler-reg-move-list-contains-undirected? div-moves 0 1)))])))
+
 (define (compiler-reg-same-value-clobber-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     (compiler-ir-test-symbol "same_value_clobber")
@@ -30309,6 +31105,7 @@
                           0
                           1)
                         (compiler-reg-same-location? spill-assignments 4 5)
+                        (compiler-reg-destructive-chain-ok?)
                         (compiler-reg-coalesce-fixpoint-map-ok?)
                         (compiler-reg-coalesce-interference-reject-ok?)
                         (compiler-reg-coalesce-segmented-map-ok?)
@@ -31737,6 +32534,22 @@
     (test.assert-true
       (compiler-reg-vector-mask-homes-ok?)
       "expanded vector pool preserves vector and mask home reuse")))
+
+(cfg
+  test
+  (test
+    regalloc-self-loop-exit-live-phi
+    (test.assert-true
+      (compiler-reg-self-loop-exit-live-phi-mask-ok?)
+      "self-loop safety admits accumulator, excludes live counter, and ignores successor order")))
+
+(cfg
+  test
+  (test
+    regalloc-destructive-chain
+    (test.assert-true
+      (compiler-reg-destructive-chain-ok?)
+      "bounded destructive ties coalesce lhs/rhs chains and refuse clobber/noncomm-rhs/div")))
 
 (cfg
   test

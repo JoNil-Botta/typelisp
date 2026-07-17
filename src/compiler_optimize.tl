@@ -18964,38 +18964,80 @@
         uses
         skip)]))
 
+;; A switch chain can only start from a two-instruction compare-and-branch
+;; block. Most functions have none, so scan for that shape before paying for
+;; the use-count array, the CFG index, and the full rewrite walk.
+(define (opt-switch-block-is-compare-shaped? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (if (= (compiler-ir-instr-seq-count instrs) 2)
+        (match (compiler-ir-instr-seq-ref instrs 0)
+          [(CompilerIrInstr.BinOp eq-var op lhs rhs _)
+            (if (opt-binop-eq op CompilerIrBinOp.Eq)
+              (match (opt-switch-index-tag-from-values lhs rhs)
+                [(OptSwitchIndexTag.Some _ _)
+                  (match (compiler-ir-instr-seq-ref instrs 1)
+                    [(CompilerIrInstr.Branch (CompilerIrValue.Var cond-var) _ _)
+                      (= cond-var eq-var)]
+                    [_ false])]
+                [(OptSwitchIndexTag.No) false])
+              false)]
+          [_ false])
+        false)]))
+
+(define (opt-switch-blocks-have-compare? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-switch-block-is-compare-shaped? block)
+        true
+        (opt-switch-blocks-have-compare? (box-get rest)))]
+    [(CompilerIrBlockList.Array seq) (opt-switch-block-seq-has-compare? seq 0)]))
+
+(define (opt-switch-block-seq-has-compare?
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    false
+    (if (opt-switch-block-is-compare-shaped?
+      (compiler-ir-block-seq-ref blocks index))
+      true
+      (opt-switch-block-seq-has-compare? blocks (+ index 1)))))
+
 (define (opt-switch-form-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (let
-        [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
-        [index : OptCfgIndex (opt-cfg-index-build blocks)]
-        [rewrite : OptSwitchRewriteResult
-          (opt-switch-rewrite-blocks-from
-            blocks
-            blocks
-            index
-            uses
-            (OptLabelSet.Nil))]
-        (match rewrite
-          [(OptSwitchRewriteResult.Result rewritten _ changed)
-            (if changed
-              (let
-                [reachable : CompilerIrBlockList
-                  (opt-cfg-reachable-block-order rewritten)]
-                [next : CompilerIrFunction
-                  (CompilerIrFunction.Function
-                    name
-                    params
-                    ret-ty
-                    frame
-                    reachable)]
-                (match (opt-verify-function next)
-                  [(ResultCompilerOptimizeVerify.Ok)
-                    (OptFunctionPassResult.Result next true)]
-                  [(ResultCompilerOptimizeVerify.Err _)
-                    (OptFunctionPassResult.Result func false)]))
-              (OptFunctionPassResult.Result func false))]))]))
+      (if (not (opt-switch-blocks-have-compare? blocks))
+        (OptFunctionPassResult.Result func false)
+        (let
+          [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
+          [index : OptCfgIndex (opt-cfg-index-build blocks)]
+          [rewrite : OptSwitchRewriteResult
+            (opt-switch-rewrite-blocks-from
+              blocks
+              blocks
+              index
+              uses
+              (OptLabelSet.Nil))]
+          (match rewrite
+            [(OptSwitchRewriteResult.Result rewritten _ changed)
+              (if changed
+                (let
+                  [reachable : CompilerIrBlockList
+                    (opt-cfg-reachable-block-order rewritten)]
+                  [next : CompilerIrFunction
+                    (CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      frame
+                      reachable)]
+                  (match (opt-verify-function next)
+                    [(ResultCompilerOptimizeVerify.Ok)
+                      (OptFunctionPassResult.Result next true)]
+                    [(ResultCompilerOptimizeVerify.Err _)
+                      (OptFunctionPassResult.Result func false)]))
+                (OptFunctionPassResult.Result func false))])))]))
 
 (define (opt-switch-form-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match (opt-switch-form-function-pass func)

@@ -904,6 +904,32 @@
 (define (lower-test-generated-name-id [value : String]) : i64
   (ci.intern-generated-canonical-name value))
 
+;; Non-resetting stage snapshots inside lower.typecheck: the checked-program
+;; build's retention decomposes across the walk / clone augmentation / context
+;; extension stages. Detail rows carry absolute alloc-live and the running peak
+;; so analysis can diff stages without perturbing the phase-level peak math.
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-stage [stage : String]) : unit
+    (io.print-error
+      (string.append
+        "compile-profile-detail|typecheck.stage."
+        (string.append
+          stage
+          (string.append
+            "|"
+            (string.append
+              (string.int->string (profile.now-ms))
+              (string.append
+                "|"
+                (string.append
+                  (string.int->string (profile.alloc-live))
+                  (string.append
+                    "|"
+                    (string.append
+                      (string.int->string (profile.alloc-peak))
+                      "\n")))))))))))
+
 (cfg
   compile-profile
   (define (compiler-lower-profile-field [value : i64]) : String
@@ -6917,6 +6943,48 @@
           1)
         (lower-clone-handoff-generated-roots-ok? generated (box-get rest)))]))
 
+;; Expand roots in bounded chunks: the one-shot expansion's macro/CTFE working
+;; set scales with the whole root list (hundreds of MB of interpreter churn on
+;; a self-compile), but only one chunk's worth needs to be live at a time.
+;; Helpers are generated per type key, so chunking preserves the output union.
+(defenum LowerCloneRootsChunk
+  (Chunk CloneNameList CloneNameList))
+
+(define (lower-clone-name-list-reverse
+  [xs : CloneNameList]
+  [acc : CloneNameList]) : CloneNameList
+  (match xs
+    [(CloneNameList.Nil) acc]
+    [(CloneNameList.ConsId k h rest)
+      (lower-clone-name-list-reverse
+        (box-get rest)
+        (CloneNameList.ConsId k h (box acc)))]))
+
+(define (lower-clone-handoff-roots-take
+  [roots : CloneNameList]
+  [n : i64]
+  [acc : CloneNameList]) : LowerCloneRootsChunk
+  (match roots
+    [(CloneNameList.Nil)
+      (LowerCloneRootsChunk.Chunk
+        (CloneNameList.Nil)
+        (lower-clone-name-list-reverse acc (CloneNameList.Nil)))]
+    [_
+      (if (<= n 0)
+        (LowerCloneRootsChunk.Chunk
+          roots
+          (lower-clone-name-list-reverse acc (CloneNameList.Nil)))
+        (match roots
+          [(CloneNameList.Nil)
+            (LowerCloneRootsChunk.Chunk
+              (CloneNameList.Nil)
+              (lower-clone-name-list-reverse acc (CloneNameList.Nil)))]
+          [(CloneNameList.ConsId k h rest)
+            (lower-clone-handoff-roots-take
+              (box-get rest)
+              (- n 1)
+              (CloneNameList.ConsId k h (box acc)))]))]))
+
 (define (lower-clone-handoff-expand-roots
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -6927,39 +6995,55 @@
   [acc : AstDeclList]) : ResultMacroDecls
   (match roots
     [(CloneNameList.Nil) (ResultMacroDecls.Ok acc)]
-    [(CloneNameList.ConsId root-key-id helper-name-id _)
-      (match (lower-clone-handoff-expand-one
-        ctx
-        top-env
-        source-decls
-        entry-path
-        pools
-        roots)
-        [(ResultMacroDeclExpansion.Ok generated _)
-          (if (lower-clone-handoff-generated-roots-ok? generated roots)
-            (begin
-              (ast-node-pool-context-capture-active! pools)
-              (ResultMacroDecls.Ok (clone-decl-list-append acc generated)))
-            (ResultMacroDecls.Err
-              (box
-                (tc-diag-at-start
-                  (str_cat.str-cat
-                    "clone: stdlib handoff produced an invalid or conflicting helper for "
-                    (clone-name-key-string root-key-id)
-                    " (helper-count="
-                    (string.int->string
-                      (clone-helper-decl-count
-                        generated
-                        root-key-id
-                        helper-name-id))
-                    ", origin-count="
-                    (string.int->string
-                      (lower-clone-handoff-generated-origin-count
-                        generated
-                        root-key-id
-                        helper-name-id))
-                    ")")))))]
-        [(ResultMacroDeclExpansion.Err diag) (ResultMacroDecls.Err diag)])]))
+    [_
+      (match (lower-clone-handoff-roots-take roots 16 (CloneNameList.Nil))
+        [(LowerCloneRootsChunk.Chunk rest chunk)
+          (match (lower-clone-handoff-expand-one
+            ctx
+            top-env
+            source-decls
+            entry-path
+            pools
+            chunk)
+            [(ResultMacroDeclExpansion.Ok generated _)
+              (match chunk
+                [(CloneNameList.Nil)
+                  (ResultMacroDecls.Err
+                    (box
+                      (tc-diag-at-start
+                        "clone: stdlib handoff produced no helpers")))]
+                [(CloneNameList.ConsId root-key-id helper-name-id _)
+                  (if (lower-clone-handoff-generated-roots-ok? generated chunk)
+                    (begin
+                      (ast-node-pool-context-capture-active! pools)
+                      (lower-clone-handoff-expand-roots
+                        ctx
+                        top-env
+                        source-decls
+                        entry-path
+                        pools
+                        rest
+                        (clone-decl-list-append acc generated)))
+                    (ResultMacroDecls.Err
+                      (box
+                        (tc-diag-at-start
+                          (str_cat.str-cat
+                            "clone: stdlib handoff produced an invalid or conflicting helper for "
+                            (clone-name-key-string root-key-id)
+                            " (helper-count="
+                            (string.int->string
+                              (clone-helper-decl-count
+                                generated
+                                root-key-id
+                                helper-name-id))
+                            ", origin-count="
+                            (string.int->string
+                              (lower-clone-handoff-generated-origin-count
+                                generated
+                                root-key-id
+                                helper-name-id))
+                            ")")))))])]
+            [(ResultMacroDeclExpansion.Err diag) (ResultMacroDecls.Err diag)])])]))
 
 (define (lower-clone-handoff-augment
   [ctx : TcContext]
@@ -52274,6 +52358,8 @@
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (match (let
     [_start-early-exit-facts : unit (tc-body-early-exit-facts-start! pools)]
+    [_p-begin : unit
+      (cfg compile-profile (compiler-lower-profile-stage "begin"))]
     (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
       program
       paths
@@ -52282,6 +52368,8 @@
       pools))
     [(ResultCompilerTypecheckChecked.Ok _ source-ctx source-top-env)
       (let
+        [_p-walk : unit
+          (cfg compile-profile (compiler-lower-profile-stage "walk-done"))]
         [_finish-early-exit-facts : unit (tc-body-early-exit-facts-finish!)]
         [clone-roots : CloneNameList
           (tc-clone-root-collection-finish! source-ctx)]
@@ -52302,6 +52390,10 @@
             clone-able
             clone-roots
             pools)]
+        [_p-augment : unit
+          (cfg
+            compile-profile
+            (compiler-lower-profile-stage "clone-augment-done"))]
         [checked-program : AstProgram
           (match clone-augmentation
             [(ResultLowerCloneAugment.Ok augmented _) augmented]
@@ -52317,6 +52409,8 @@
                 checked-program)]
             [(ResultLowerCloneAugment.Err message)
               (ResultLowerCheckedContext.Err message)])]
+        [_p-extend : unit
+          (cfg compile-profile (compiler-lower-profile-stage "extend-done"))]
         [lower-names : LowerNameEnv
           (match checked-program
             [(AstProgram.Program decls-box)

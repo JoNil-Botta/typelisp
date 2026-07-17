@@ -187,7 +187,20 @@
 ;; Legacy/test adapter for compiler phases that still use the active pool
 ;; globals. State-owned reset/adopt operations must not call this helper.
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
-  (ast-node-pool-context-install! (compiler-driver-state-pool-context state)))
+  (begin
+    (array-set!
+      compiler-driver-active-state-pool-arena
+      0
+      (compiler-driver-state-owned-pool-arena state))
+    (ast-node-pool-context-install! (compiler-driver-state-pool-context state))))
+
+;; The most recently installed driver state's own pool arena, or 0 when no
+;; state is installed. The allocation snapshot reports this as `state-pool-arena`
+;; because the compatibility pool-global handle deliberately points at the 1x1
+;; detached compat pools (entry arena) once the source arena is detached, so
+;; `compiler-driver-node-pool-base-arena` cannot name the checked-program arena.
+(define compiler-driver-active-state-pool-arena : (Array i64)
+  (array.make-array i64 1))
 
 ;; Legacy/test adapter for the remaining load/typecheck/lower call graph.
 ;; State-owned table and persistent-arena maintenance uses the explicit
@@ -221,6 +234,11 @@
         phase
         "source-pools"
         (compiler-driver-node-pool-base-arena))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "state-pool-arena"
+        (array-ref compiler-driver-active-state-pool-arena 0))
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase

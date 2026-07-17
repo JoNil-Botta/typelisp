@@ -1683,11 +1683,49 @@
     [index : i64 (compiler-reg-xmm-family-index home)]
     (and (>= index 2) (<= index 15))))
 
+;; Per-function dense operand-home index for emission.
+;; compiler-backend-emit-function installs the index built ONCE from the
+;; function's FINAL (post-coloring) assignment list -- every re-plan stage
+;; (caller-save, loop-split, remat, scratch-vreg, slot coloring) is already
+;; folded into that list -- so each operand home query during emission is an
+;; O(1) array read instead of an O(list) early-exit walk. `active` gates the
+;; fast path: callers of the emit helpers outside whole-function emission
+;; (unit tests, closure-entry adapters) keep the original list walk. The rax
+;; override mirrors the single-entry delta that
+;; compiler-backend-rax-call-arg-assignments inserts for call-result
+;; forwarding: while that modified list flows through the call-arg emitters,
+;; `rax-override-var` names the one var whose home the insert pins to %rax
+;; (the lists agree on every other var, so the shared index stays exact).
+(define (compiler-backend-emit-assignment-index-empty) : CompilerRegAssignmentIndex
+  (compiler-reg-assignment-index-build CompilerRegAssignmentList.Nil 1))
+
+(define compiler-backend-emit-assignment-index : CompilerRegAssignmentIndex
+  (compiler-backend-emit-assignment-index-empty))
+(define compiler-backend-emit-assignment-index-active : bool
+  false)
+(define compiler-backend-rax-override-var : i64
+  -1)
+(define compiler-backend-rax-forward-pending-var : i64
+  -1)
+
+(define (compiler-backend-emit-assignment-lookup
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]) : CompilerRegMaybeLocation
+  (if compiler-backend-emit-assignment-index-active
+    (if (and
+      (>= compiler-backend-rax-override-var 0)
+      (= var compiler-backend-rax-override-var))
+      (CompilerRegMaybeLocation.Some (CompilerRegLocation.Register "%rax"))
+      (compiler-reg-assignment-index-lookup
+        compiler-backend-emit-assignment-index
+        var))
+    (compiler-reg-assignment-lookup assignments var)))
+
 (define (compiler-backend-vector-var-home
   [assignments : CompilerRegAssignmentList]
   [var : i64]
   [role : String]) : ResultBackendReg
-  (match (compiler-reg-assignment-lookup assignments var)
+  (match (compiler-backend-emit-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
@@ -1732,7 +1770,7 @@
   [assignments : CompilerRegAssignmentList]
   [var : i64]
   [role : String]) : ResultBackendReg
-  (match (compiler-reg-assignment-lookup assignments var)
+  (match (compiler-backend-emit-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
@@ -1755,7 +1793,7 @@
 (define (compiler-backend-mask-var-stack-operand
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : CompilerBackendMaybeStackOperand
-  (match (compiler-reg-assignment-lookup assignments var)
+  (match (compiler-backend-emit-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Spill offset)
@@ -2019,7 +2057,7 @@
     [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
-        (match (compiler-reg-assignment-lookup assignments id)
+        (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home) home]
@@ -2034,7 +2072,7 @@
     [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
-        (match (compiler-reg-assignment-lookup assignments id)
+        (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home)
@@ -2185,7 +2223,7 @@
     [(CompilerIrValue.Var var-id)
       (if (>= (compiler-backend-forwarded-addr-of-src var-id) 0)
         (CompilerBackendMaybeStackOperand.No)
-        (match (compiler-reg-assignment-lookup assignments var-id)
+        (match (compiler-backend-emit-assignment-lookup assignments var-id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Spill offset)
@@ -2829,7 +2867,7 @@
 (define (compiler-backend-vector-var-stack-operand
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : CompilerBackendMaybeStackOperand
-  (match (compiler-reg-assignment-lookup assignments var)
+  (match (compiler-backend-emit-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Spill offset)
@@ -7495,7 +7533,7 @@
         ", "
         reg
         "\n")
-      (match (compiler-reg-assignment-lookup assignments var-id)
+      (match (compiler-backend-emit-assignment-lookup assignments var-id)
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Register home)
@@ -7537,7 +7575,7 @@
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]
   [reg : String]) : String
-  (match (compiler-reg-assignment-lookup assignments var-id)
+  (match (compiler-backend-emit-assignment-lookup assignments var-id)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
@@ -7567,7 +7605,7 @@
   [reg : String]) : String
   (let
     [mov : String (compiler-backend-float-move ty)]
-    (match (compiler-reg-assignment-lookup assignments var-id)
+    (match (compiler-backend-emit-assignment-lookup assignments var-id)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Register home)
@@ -7615,7 +7653,7 @@
   [ty : AstType]) : String
   (let
     [mov : String (compiler-backend-float-move ty)]
-    (match (compiler-reg-assignment-lookup assignments var-id)
+    (match (compiler-backend-emit-assignment-lookup assignments var-id)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Register home)
@@ -9075,7 +9113,7 @@
   [value : CompilerIrValue]) : String
   (match value
     [(CompilerIrValue.Var id)
-      (match (compiler-reg-assignment-lookup assignments id)
+      (match (compiler-backend-emit-assignment-lookup assignments id)
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Register home)
@@ -9091,7 +9129,7 @@
   [value : CompilerIrValue]) : String
   (match value
     [(CompilerIrValue.Var id)
-      (match (compiler-reg-assignment-lookup assignments id)
+      (match (compiler-backend-emit-assignment-lookup assignments id)
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Spill offset)
@@ -9278,7 +9316,7 @@
   [id : i64]
   [ty : AstType]
   [reg : String]) : String
-  (match (compiler-reg-assignment-lookup assignments id)
+  (match (compiler-backend-emit-assignment-lookup assignments id)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
@@ -9357,7 +9395,7 @@
     [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
-        (match (compiler-reg-assignment-lookup assignments id)
+        (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home)
@@ -9668,7 +9706,7 @@
   [value : CompilerIrValue]) : CompilerBackendMaybeAsm
   (match (compiler-backend-immediate-operand value)
     [(CompilerBackendMaybeImmediate.Some imm)
-      (match (compiler-reg-assignment-lookup assignments var-id)
+      (match (compiler-backend-emit-assignment-lookup assignments var-id)
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Register home)
@@ -9729,7 +9767,7 @@
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]
   [xmm-reg : String]) : String
-  (match (compiler-reg-assignment-lookup assignments var-id)
+  (match (compiler-backend-emit-assignment-lookup assignments var-id)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register home)
@@ -10595,7 +10633,7 @@
         src
         compiler-backend-current-slot-vars
         assignments))
-    (match (compiler-reg-assignment-lookup assignments src)
+    (match (compiler-backend-emit-assignment-lookup assignments src)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Spill offset)
@@ -10646,7 +10684,7 @@
               (compiler-backend-group-word-sse? program-index ty 0)]
             [w1-sse : bool
               (compiler-backend-group-word-sse? program-index ty 1)]
-            (match (compiler-reg-assignment-lookup assignments dst)
+            (match (compiler-backend-emit-assignment-lookup assignments dst)
               [(CompilerRegMaybeLocation.Some location)
                 (match location
                   [(CompilerRegLocation.RegisterPair reg-a reg-b)
@@ -10820,7 +10858,7 @@
         (compiler-diagnostic-at-start
           ""
           "backend: register-group word index must be 0 or 1")))
-    (match (compiler-reg-assignment-lookup assignments var)
+    (match (compiler-backend-emit-assignment-lookup assignments var)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.RegisterPair reg-a reg-b)
@@ -11357,7 +11395,7 @@
           "%xmm0")])
     (match value
       [(CompilerIrValue.Var id)
-        (match (compiler-reg-assignment-lookup assignments id)
+        (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home)
@@ -14913,7 +14951,7 @@
     [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
-        (match (compiler-reg-assignment-lookup assignments id)
+        (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register r) r]
@@ -14931,7 +14969,7 @@
     [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
-        (match (compiler-reg-assignment-lookup assignments id)
+        (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Spill offset)
@@ -16606,7 +16644,7 @@
   [var-id : i64]) : String
   (if (>= (compiler-backend-forwarded-addr-of-src var-id) 0)
     ""
-    (match (compiler-reg-assignment-lookup assignments var-id)
+    (match (compiler-backend-emit-assignment-lookup assignments var-id)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Register home)
@@ -16922,7 +16960,7 @@
     [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
-        (match (compiler-reg-assignment-lookup assignments id)
+        (match (compiler-backend-emit-assignment-lookup assignments id)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register r) r]
@@ -17903,7 +17941,7 @@
     (let
       [slot : String (compiler-backend-addr-of-source-slot assignments src)]
       (ResultCompilerBackend.Ok
-        (match (compiler-reg-assignment-lookup assignments dst)
+        (match (compiler-backend-emit-assignment-lookup assignments dst)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home)
@@ -18538,7 +18576,7 @@
       (match param
         [(CompilerIrParam.Param _ _ var-id)
           (+
-            (match (compiler-reg-assignment-lookup assignments var-id)
+            (match (compiler-backend-emit-assignment-lookup assignments var-id)
               [(CompilerRegMaybeLocation.Some location)
                 (compiler-backend-param-register-exclude-location-count
                   location)]
@@ -18583,7 +18621,7 @@
             (box-get rest)
             assignments
             out
-            (match (compiler-reg-assignment-lookup assignments var-id)
+            (match (compiler-backend-emit-assignment-lookup assignments var-id)
               [(CompilerRegMaybeLocation.Some location)
                 (compiler-backend-param-register-exclude-fill-location
                   location
@@ -23922,7 +23960,7 @@
         [(CompilerIrValue.Var id)
           (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
             ""
-            (match (compiler-reg-assignment-lookup assignments id)
+            (match (compiler-backend-emit-assignment-lookup assignments id)
               [(CompilerRegMaybeLocation.Some loc)
                 (match loc
                   [(CompilerRegLocation.Register home) home]
@@ -24705,6 +24743,52 @@
       program-index
       vars)))
 
+;; Call compiler-backend-emit-call-args with the dense-index rax override
+;; engaged for exactly the dynamic extent of the arg emission: the caller has
+;; established that its `assignments` argument is the per-function list PLUS
+;; the single rax-forward insert (or equals the plain list when
+;; `override-var` is -1), and the override makes the shared index answer
+;; identically for that one pinned var. Reset on both result paths so the
+;; main emission spine always observes -1.
+(define (compiler-backend-emit-call-args-with-override
+  [override-var : i64]
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [c-abi? : bool]
+  [arg-index : i64]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]
+  [stack-idx : i64]
+  [planned-stage : String]
+  [func-diag : CompilerDiagnostic]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (let
+    [result : ResultCompilerBackend
+      (begin
+        (set! compiler-backend-rax-override-var override-var)
+        (compiler-backend-emit-call-args
+          target
+          assignments
+          args
+          types
+          c-abi?
+          arg-index
+          int-idx
+          float-idx
+          position
+          stack-idx
+          planned-stage
+          func-diag
+          program-index
+          vars))]
+    (begin
+      (set! compiler-backend-rax-override-var -1)
+      result)))
+
 (define (compiler-backend-call-leading-arg-uses-var?
   [args : CompilerIrCallArgs]
   [var : i64]) : bool
@@ -24959,9 +25043,9 @@
   [right : i64]) : bool
   (if (= left right)
     true
-    (match (compiler-reg-assignment-lookup assignments left)
+    (match (compiler-backend-emit-assignment-lookup assignments left)
       [(CompilerRegMaybeLocation.Some left-location)
-        (match (compiler-reg-assignment-lookup assignments right)
+        (match (compiler-backend-emit-assignment-lookup assignments right)
           [(CompilerRegMaybeLocation.Some right-location)
             (compiler-reg-location-eq? left-location right-location)]
           [(CompilerRegMaybeLocation.No) false])]
@@ -25005,7 +25089,7 @@
 (define (compiler-backend-var-parallel-resource0
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : i64
-  (match (compiler-reg-assignment-lookup assignments var)
+  (match (compiler-backend-emit-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register reg)
@@ -25020,7 +25104,7 @@
 (define (compiler-backend-var-parallel-resource1
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : i64
-  (match (compiler-reg-assignment-lookup assignments var)
+  (match (compiler-backend-emit-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.RegisterPair _ second)
@@ -25258,7 +25342,7 @@
     [planned : String]) : String
     (match value
       [(CompilerIrValue.Var var)
-        (match (compiler-reg-assignment-lookup assignments var)
+        (match (compiler-backend-emit-assignment-lookup assignments var)
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register home)
@@ -25282,7 +25366,7 @@
         (compiler-diagnostic-at-start
           ""
           "backend: phi temp save of forwarded addr-of dst (unexpected)")))
-    (match (compiler-reg-assignment-lookup assignments var-id)
+    (match (compiler-backend-emit-assignment-lookup assignments var-id)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Register home) (ResultCompilerBackend.Ok home)]
@@ -25800,11 +25884,11 @@
   [src-id : i64]) : CompilerBackendMaybeAsm
   (if (>= (compiler-backend-forwarded-addr-of-src src-id) 0)
     (CompilerBackendMaybeAsm.No)
-    (match (compiler-reg-assignment-lookup assignments dst)
+    (match (compiler-backend-emit-assignment-lookup assignments dst)
       [(CompilerRegMaybeLocation.Some dst-location)
         (match dst-location
           [(CompilerRegLocation.Register dst-home)
-            (match (compiler-reg-assignment-lookup assignments src-id)
+            (match (compiler-backend-emit-assignment-lookup assignments src-id)
               [(CompilerRegMaybeLocation.Some src-location)
                 (match src-location
                   [(CompilerRegLocation.Register src-home)
@@ -25839,7 +25923,7 @@
                     dst-home
                     "\n"))])]
           [(CompilerRegLocation.RegisterPair dst-lo dst-hi)
-            (match (compiler-reg-assignment-lookup assignments src-id)
+            (match (compiler-backend-emit-assignment-lookup assignments src-id)
               [(CompilerRegMaybeLocation.Some src-location)
                 (match src-location
                   [(CompilerRegLocation.RegisterPair src-lo src-hi)
@@ -25878,7 +25962,7 @@
               [(CompilerRegMaybeLocation.No) (CompilerBackendMaybeAsm.No)])]
           [(CompilerRegLocation.Remat _) (CompilerBackendMaybeAsm.No)]
           [(CompilerRegLocation.Spill dst-offset)
-            (match (compiler-reg-assignment-lookup assignments src-id)
+            (match (compiler-backend-emit-assignment-lookup assignments src-id)
               [(CompilerRegMaybeLocation.Some src-location)
                 (match src-location
                   [(CompilerRegLocation.Register src-home)
@@ -25892,7 +25976,7 @@
                   [_ (CompilerBackendMaybeAsm.No)])]
               [(CompilerRegMaybeLocation.No) (CompilerBackendMaybeAsm.No)])])]
       [(CompilerRegMaybeLocation.No)
-        (match (compiler-reg-assignment-lookup assignments src-id)
+        (match (compiler-backend-emit-assignment-lookup assignments src-id)
           [(CompilerRegMaybeLocation.Some src-location)
             (match src-location
               [(CompilerRegLocation.Register src-home)
@@ -27843,7 +27927,7 @@
 (define (compiler-backend-var-register-home
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : String
-  (match (compiler-reg-assignment-lookup assignments var)
+  (match (compiler-backend-emit-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.Register r) r]
@@ -27856,7 +27940,7 @@
   [value : CompilerIrValue]) : String
   (match value
     [(CompilerIrValue.Var id)
-      (match (compiler-reg-assignment-lookup assignments id)
+      (match (compiler-backend-emit-assignment-lookup assignments id)
         [(CompilerRegMaybeLocation.Some location)
           (match location
             [(CompilerRegLocation.Register home) home]
@@ -28004,7 +28088,7 @@
   [dst : i64]) : bool
   (and
     (compiler-backend-var-never-used? dst)
-    (match (compiler-reg-assignment-lookup assignments dst)
+    (match (compiler-backend-emit-assignment-lookup assignments dst)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           [(CompilerRegLocation.Spill _) true]
@@ -28196,7 +28280,8 @@
         param-types
         c-abi?
         program-index)]
-    (match (compiler-backend-emit-call-args
+    (match (compiler-backend-emit-call-args-with-override
+      compiler-backend-rax-forward-pending-var
       target
       arg-assignments
       args
@@ -28476,7 +28561,8 @@
         param-types
         c-abi?
         program-index)]
-    (match (compiler-backend-emit-call-args
+    (match (compiler-backend-emit-call-args-with-override
+      compiler-backend-rax-forward-pending-var
       target
       arg-assignments
       args
@@ -28632,6 +28718,15 @@
               param-types)
               arg-assignments
               assignments)]
+          ;; Dense-index override mirroring effective-arg-assignments: the
+          ;; rax-forward insert reaches the arg emitters exactly when the
+          ;; declared first arg accepts the forward.
+          [effective-arg-override : i64
+            (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+              program-index
+              param-types)
+              compiler-backend-rax-forward-pending-var
+              -1)]
           [c-abi? : bool
             (compiler-backend-extern-call-info-aggregate-params?
               extern-call-info)]
@@ -28652,7 +28747,8 @@
           ;; only real GP source/dest conflicts via a sound parallel move and otherwise
           ;; delegates to the byte-identical naive path (so conflict-free calls -- the
           ;; overwhelming common case -- are unchanged). Mirrors the tail-call path.
-          (match (compiler-backend-emit-call-args
+          (match (compiler-backend-emit-call-args-with-override
+            effective-arg-override
             target
             effective-arg-assignments
             args
@@ -29460,7 +29556,7 @@
           dst
           scratch-reg
           ty))]
-    (match (compiler-reg-assignment-lookup assignments dst)
+    (match (compiler-backend-emit-assignment-lookup assignments dst)
       [(CompilerRegMaybeLocation.Some location)
         (match location
           ;; Entry loads produce one pointer-sized word; aggregate register-pair
@@ -31933,6 +32029,16 @@
         program-index
         rax-var
         rax-ty)]
+    ;; Mirror of the guard inside compiler-backend-rax-call-arg-assignments:
+    ;; the var whose home the insert pins to %rax, or -1 when arg-assignments
+    ;; is the unmodified list. Published to the dense-index override only for
+    ;; the dynamic extent of a call that actually consumes arg-assignments.
+    [rax-forward-pending : i64
+      (if (and
+        (>= rax-var 0)
+        (compiler-backend-rax-call-arg-eligible? program-index rax-ty))
+        rax-var
+        -1)]
     [instr-diag : CompilerDiagnostic
       (compiler-backend-instr-diagnostic
         spans
@@ -31951,26 +32057,35 @@
     (match instr
       [(CompilerIrInstr.Call dst name args ty)
         (if (compiler-backend-call-leading-arg-uses-var? args rax-var)
-          (compiler-backend-emit-direct-call-with-arg-assignments
-            target
-            function
-            current-label
-            dst
-            name
-            args
-            ty
-            assignments
-            arg-assignments
-            (compiler-backend-scratch-plan-register-here
-              (compiler-backend-runtime-plan-scratch plan)
-              0)
-            types
-            global-types
-            plan
-            externs
-            program-index
-            vars
-            instr-diag)
+          (let
+            [rax-forward-result : ResultCompilerBackend
+              (begin
+                (set!
+                  compiler-backend-rax-forward-pending-var
+                  rax-forward-pending)
+                (compiler-backend-emit-direct-call-with-arg-assignments
+                  target
+                  function
+                  current-label
+                  dst
+                  name
+                  args
+                  ty
+                  assignments
+                  arg-assignments
+                  (compiler-backend-scratch-plan-register-here
+                    (compiler-backend-runtime-plan-scratch plan)
+                    0)
+                  types
+                  global-types
+                  plan
+                  externs
+                  program-index
+                  vars
+                  instr-diag))]
+            (begin
+              (set! compiler-backend-rax-forward-pending-var -1)
+              rax-forward-result))
           (compiler-backend-emit-instr
             target
             function
@@ -31992,26 +32107,35 @@
             func-diag))]
       [(CompilerIrInstr.CallIndirect dst func args ty)
         (if (compiler-backend-call-leading-arg-uses-var? args rax-var)
-          (compiler-backend-emit-indirect-call-with-arg-assignments
-            target
-            dst
-            func
-            args
-            ty
-            assignments
-            arg-assignments
-            (compiler-backend-scratch-plan-register-here
-              (compiler-backend-runtime-plan-scratch plan)
-              0)
-            (compiler-backend-scratch-plan-register-here
-              (compiler-backend-runtime-plan-scratch plan)
-              1)
-            types
-            functions
-            externs
-            program-index
-            vars
-            instr-diag)
+          (let
+            [rax-forward-result : ResultCompilerBackend
+              (begin
+                (set!
+                  compiler-backend-rax-forward-pending-var
+                  rax-forward-pending)
+                (compiler-backend-emit-indirect-call-with-arg-assignments
+                  target
+                  dst
+                  func
+                  args
+                  ty
+                  assignments
+                  arg-assignments
+                  (compiler-backend-scratch-plan-register-here
+                    (compiler-backend-runtime-plan-scratch plan)
+                    0)
+                  (compiler-backend-scratch-plan-register-here
+                    (compiler-backend-runtime-plan-scratch plan)
+                    1)
+                  types
+                  functions
+                  externs
+                  program-index
+                  vars
+                  instr-diag))]
+            (begin
+              (set! compiler-backend-rax-forward-pending-var -1)
+              rax-forward-result))
           (compiler-backend-emit-instr
             target
             function
@@ -34521,13 +34645,23 @@
         param-types)
         arg-assignments
         assignments)]
+    ;; Dense-index override mirroring effective-arg-assignments: the
+    ;; rax-forward insert reaches the arg emitters exactly when the declared
+    ;; first arg accepts the forward.
+    [effective-arg-override : i64
+      (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+        program-index
+        param-types)
+        compiler-backend-rax-forward-pending-var
+        -1)]
     [call-space : i64
       (compiler-backend-closure-call-arg-space
         target
         args
         param-types
         program-index)]
-    (match (compiler-backend-emit-call-args
+    (match (compiler-backend-emit-call-args-with-override
+      effective-arg-override
       target
       effective-arg-assignments
       args
@@ -38628,7 +38762,7 @@
               (compiler-diagnostic-at-start
                 ""
                 "backend: private AVX-512 SPMD call supports at most 8 varying value arguments")))
-          (match (compiler-reg-assignment-lookup assignments var-id)
+          (match (compiler-backend-emit-assignment-lookup assignments var-id)
             [(CompilerRegMaybeLocation.No) (ResultCompilerBackend.Ok "")]
             [(CompilerRegMaybeLocation.Some _)
               (match (compiler-backend-vector-var-reg
@@ -43863,6 +43997,26 @@
                 remap
                 scratch-vars
                 (compiler-reg-plan-assignments scratch-reg-plan))])]
+        ;; Dense O(1) operand-home index for emission, built ONCE per function
+        ;; from the final list above (caller-save / loop-split / remat /
+        ;; scratch-vreg / slot-coloring re-plans are all folded into it by this
+        ;; point, so no stage can go stale). Sized by scratch-vars -- the full
+        ;; var count the assignments and the emitted IR are keyed to -- matching
+        ;; the scavenge self-check idiom. Small functions skip the build: an
+        ;; early-exit walk of a short sorted list is already cheaper than the
+        ;; wrapper's array setup, so they stay on the list lookup (identical
+        ;; results) and pay no per-function array allocation.
+        [_emit-assignment-index : unit
+          (begin
+            (if (>= scratch-vars 64)
+              (begin
+                (set!
+                  compiler-backend-emit-assignment-index
+                  (compiler-reg-assignment-index-build assignments scratch-vars))
+                (set! compiler-backend-emit-assignment-index-active true))
+              (set! compiler-backend-emit-assignment-index-active false))
+            (set! compiler-backend-rax-override-var -1)
+            (set! compiler-backend-rax-forward-pending-var -1))]
         [scavenge-assignments
           : CompilerRegAssignmentList
           ;; Start ordinary scavenging from real IR homes. Planned scratch
@@ -44385,6 +44539,9 @@
 
 (define (compiler-backend-clear-function-emit-state!) : unit
   (begin
+    (set! compiler-backend-emit-assignment-index-active false)
+    (set! compiler-backend-rax-override-var -1)
+    (set! compiler-backend-rax-forward-pending-var -1)
     (compiler-backend-set-scavenge-ctx!
       (make-array i64 1)
       (make-array i64 1)

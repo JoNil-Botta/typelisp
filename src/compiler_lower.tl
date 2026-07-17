@@ -6769,6 +6769,49 @@
     helper-name-id
     cbi.compiler-builtin-id-fix-empty))
 
+;; Caches that may capture scratch-arena values produced by the handoff
+;; expansion. Each is a pure memo rebuilt on demand; resetting them before the
+;; scratch arena is destroyed mirrors the macro-walk boundary clears.
+(define (lower-clone-handoff-expansion-cache-clear!) : unit
+  (begin
+    (macro-generated-decls-memo-reset!)
+    (macro-generated-module-memo-reset!)
+    (tc-macro-helper-env-cache-reset!)
+    (tc-nominal-owner-cache-reset!)
+    (macro-alias-derived-cache-reset!)
+    (ctfe-module-macro-export-reset!)))
+
+;; The handoff expansion runs the full macro/CTFE machinery for every clone
+;; root in one shot. Its working set (CTFE values, env spines, memo entries) is
+;; dead once the generated helper declarations exist, but unlike the main macro
+;; walk it runs after macro_detach -- no later pool compaction retires that
+;; garbage, and on a self-compile it retained ~745MB in the persistent base
+;; arena for the rest of the compile. Run the expansion in a scratch arena and
+;; copy only the returned declarations out (the mark/rewind/clone-out shape of
+;; tc-check-fn-decl-scoped): node-pool growth and interned spellings already
+;; live in their persistent owners, type-node payloads are persisted at push
+;; time by ty-node-persist, and ast-program-copy-append-with-pools deep-copies
+;; the decl shells and any scratch-resident expr payloads, remapping the
+;; appended expr/type ids.
+(define (lower-clone-handoff-expansion-copy-out
+  [pools : AstNodePoolContext]
+  [raw : ResultMacroDeclExpansion]) : ResultMacroDeclExpansion
+  (match raw
+    [(ResultMacroDeclExpansion.Ok generated generated-paths)
+      (match (ast-program-copy-append-with-pools
+        pools
+        pools
+        (ast-program generated))
+        [(AstProgramCompaction copied _)
+          (match copied
+            [(AstProgram.Program decls-box)
+              (ResultMacroDeclExpansion.Ok
+                (box-get decls-box)
+                (lower-copy-paths-into-pools generated-paths pools))])])]
+    [(ResultMacroDeclExpansion.Err diag)
+      (ResultMacroDeclExpansion.Err
+        (box (compiler-diagnostic-copy (box-get diag))))]))
+
 (define (lower-clone-handoff-expand-one
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -6778,17 +6821,34 @@
   [roots : CloneNameList]) : ResultMacroDeclExpansion
   (let
     [request : AstDecl (lower-clone-handoff-request-decl ctx pools roots)]
-    (match (macro-expand-decl-with-path
-      (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
-      top-env
-      source-decls
-      ""
-      cbi.compiler-builtin-id-fix-empty
-      request
-      entry-path)
-      [(ResultMacroDeclExpansion.Ok generated generated-paths)
-        (ResultMacroDeclExpansion.Ok generated generated-paths)]
-      [(ResultMacroDeclExpansion.Err diag) (ResultMacroDeclExpansion.Err diag)])))
+    [enclosing : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [raw : ResultMacroDeclExpansion
+          (macro-expand-decl-with-path
+            (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)
+            top-env
+            source-decls
+            ""
+            cbi.compiler-builtin-id-fix-empty
+            request
+            entry-path)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (ast-node-pool-context-capture-active! pools)
+          (let
+            [escaped : ResultMacroDeclExpansion
+              (lower-clone-handoff-expansion-copy-out pools raw)]
+            (begin
+              (lower-clone-handoff-expansion-cache-clear!)
+              (unsafe
+                (arena.tl_arena_destroy scratch))
+              (ast-node-pool-context-install! pools)
+              escaped)))))))
 
 (define (lower-clone-handoff-source-helper-root-id
   [name-id : i64]

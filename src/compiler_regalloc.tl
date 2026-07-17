@@ -151,6 +151,37 @@
     compiler-reg-liveness-census-edge-precise
     0))
 
+(define (compiler-reg-instr-seq-has-phi?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ _ _) true]
+      [_ (compiler-reg-instr-seq-has-phi? instrs (+ index 1))])))
+
+(define (compiler-reg-block-seq-has-phi?
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    false
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (if (compiler-reg-instr-seq-has-phi? instrs 0)
+          true
+          (compiler-reg-block-seq-has-phi? blocks (+ index 1)))])))
+
+(define (compiler-reg-blocks-have-phi? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (compiler-reg-instr-seq-has-phi? instrs 0)
+            true
+            (compiler-reg-blocks-have-phi? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq) (compiler-reg-block-seq-has-phi? seq 0)]))
+
 (define (compiler-reg-liveness-handle-make
   [func : CompilerIrFunction]
   [need-edge-precise : bool]) : CompilerRegLivenessHandle
@@ -171,19 +202,29 @@
             "regalloc-liveness-census|baseline=1|edge-precise=0\n"))
         unit)
       (if need-edge-precise
-        (let
-          [edge-precise : CompilerFunctionLiveness
-            (compiler-live-analyze-function-edge-precise func)]
-          (begin
-            (cfg
-              (any regalloc-liveness-census test)
-              (set!
-                compiler-reg-liveness-census-edge-precise
-                (+ compiler-reg-liveness-census-edge-precise 1))
-              unit)
-            (CompilerRegLivenessHandle
-              baseline
-              (CompilerRegMaybeLiveness.Some edge-precise))))
+        (match func
+          [(CompilerIrFunction.Function _ _ _ _ blocks)
+            ;; Edge-precise liveness differs from the baseline only at Phi
+            ;; instructions (phi inputs attribute to predecessor edges instead
+            ;; of the phi block). A phi-free function has identical analyses,
+            ;; so reuse the baseline instead of running a second fixpoint.
+            (if (compiler-reg-blocks-have-phi? blocks)
+              (let
+                [edge-precise : CompilerFunctionLiveness
+                  (compiler-live-analyze-function-edge-precise func)]
+                (begin
+                  (cfg
+                    (any regalloc-liveness-census test)
+                    (set!
+                      compiler-reg-liveness-census-edge-precise
+                      (+ compiler-reg-liveness-census-edge-precise 1))
+                    unit)
+                  (CompilerRegLivenessHandle
+                    baseline
+                    (CompilerRegMaybeLiveness.Some edge-precise))))
+              (CompilerRegLivenessHandle
+                baseline
+                (CompilerRegMaybeLiveness.Some baseline)))])
         (CompilerRegLivenessHandle baseline (CompilerRegMaybeLiveness.No))))))
 
 (define (compiler-reg-liveness-handle-edge-precise
@@ -11097,6 +11138,13 @@
 ;; re-selected for the same region, so it converges; fuel (the integer register
 ;; count) bounds it. With a single candidate this is bit-identical to the old
 ;; one-shot behaviour (merging additions with the empty tail is the identity).
+(define (compiler-reg-depths-have-loop? [depths : (Array i64)] [index : i64]) : bool
+  (if (>= index (array-length depths))
+    false
+    (if (> (array-ref depths index) 0)
+      true
+      (compiler-reg-depths-have-loop? depths (+ index 1)))))
+
 (define (compiler-reg-loop-split-rewrite-one
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
@@ -11109,17 +11157,29 @@
       (compiler-reg-loop-split-noop blocks vars)
       "")
     (let
-      [liveness-handle : CompilerRegLivenessHandle
-        (compiler-reg-liveness-handle-make func false)]
-      (compiler-reg-loop-split-rewrite-fueled
-        abi
-        func
-        liveness-handle
-        blocks
-        vars
-        type-info
-        plan
-        (compiler-reg-callee-saved-integer-register-count-for-abi abi)))))
+      [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+      ;; Every candidate class (single-block self-loop/read-only, single-block
+      ;; phi, multi-block phi-carried) and the refused-preheader splice lives
+      ;; inside a natural loop. A function with no loop-depth above zero can
+      ;; produce none of them, so skip the liveness fixpoint, interval build,
+      ;; and coalesce map entirely for loop-free functions.
+      (if (not (compiler-reg-depths-have-loop? depths 0))
+        (CompilerRegLoopSplitRewriteResult.Result
+          (compiler-reg-loop-split-noop blocks vars)
+          "")
+        (let
+          [liveness-handle : CompilerRegLivenessHandle
+            (compiler-reg-liveness-handle-make func false)]
+          (compiler-reg-loop-split-rewrite-fueled
+            abi
+            func
+            liveness-handle
+            blocks
+            vars
+            type-info
+            plan
+            depths
+            (compiler-reg-callee-saved-integer-register-count-for-abi abi)))))))
 
 (define (compiler-reg-loop-split-rewrite-fueled
   [abi : CompilerRegTargetAbi]
@@ -11129,6 +11189,7 @@
   [vars : i64]
   [type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]
+  [depths : (Array i64)]
   [fuel : i64]) : CompilerRegLoopSplitRewriteResult
   (if (<= fuel 0)
     (CompilerRegLoopSplitRewriteResult.Result
@@ -11144,7 +11205,6 @@
         (compiler-reg-plan-assignments plan)]
       [group-vars : CompilerLiveI64Set
         (compiler-reg-function-group-vars func types)]
-      [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
       (match selection
         [(CompilerRegIntervalSelection.Selection _ intervals)
           (let
@@ -11285,6 +11345,8 @@
                                     new-vars
                                     type-info
                                     new-plan
+                                    (compiler-reg-function-loop-depths
+                                      new-blocks)
                                     (- fuel 1))]
                                 (match rest
                                   [(CompilerRegLoopSplitRewriteResult.Result
@@ -14309,6 +14371,8 @@
   [interval-index : CompilerRegIntervalIndex]
   [pending : (Array i64)]
   [evict-count : (Array i64)]
+  [heap : CompilerRegGreedyHeap]
+  [ref-counts : (Array i64)]
   [var : i64]
   [reg-index : i64]
   [word-index : i64]) : unit
@@ -14341,7 +14405,9 @@
                     occupancy
                     other)
                   (if (< other (array-length pending))
-                    (array-set! pending other 1)
+                    (begin
+                      (array-set! pending other 1)
+                      (compiler-reg-greedy-heap-push! heap ref-counts other))
                     unit)
                   (if (< other (array-length evict-count))
                     (array-set!
@@ -14357,6 +14423,8 @@
           interval-index
           pending
           evict-count
+          heap
+          ref-counts
           var
           reg-index
           (+ word-index 1))))))
@@ -14460,7 +14528,8 @@
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]
   [pending : (Array i64)]
-  [evict-count : (Array i64)]) : i64
+  [evict-count : (Array i64)]
+  [heap : CompilerRegGreedyHeap]) : i64
   (if (or
     (compiler-reg-greedy-already-assigned? assignments var)
     (compiler-live-set-contains? group-vars var))
@@ -14587,6 +14656,8 @@
                     interval-index
                     pending
                     evict-count
+                    heap
+                    ref-counts
                     var
                     ev
                     0)
@@ -14717,80 +14788,175 @@
           (set! v (+ v 1))))
       out)))
 
+;; Binary max-heap over (spill weight desc, var-id asc) -- the exact
+;; compiler-reg-greedy-weight-before? total order the O(n) pending-array scan
+;; selected, so pops are bit-identical while costing O(log n). The pending array
+;; stays authoritative for membership: entries it no longer marks are lazily
+;; discarded on pop, so evict-requeue never needs a decrease-key.
+(defstruct CompilerRegGreedyHeap
+  (arr (Array i64))
+  (len i64))
+
+(define (compiler-reg-greedy-heap-weight [ref-counts : (Array i64)] [v : i64]) : i64
+  (if (< v (array-length ref-counts))
+    (array-ref ref-counts v)
+    0))
+
+(define (compiler-reg-greedy-heap-better?
+  [ref-counts : (Array i64)]
+  [a : i64]
+  [b : i64]) : bool
+  (let
+    [wa : i64 (compiler-reg-greedy-heap-weight ref-counts a)]
+    [wb : i64 (compiler-reg-greedy-heap-weight ref-counts b)]
+    (if (> wa wb)
+      true
+      (if (= wa wb)
+        (< a b)
+        false))))
+
+(define (compiler-reg-greedy-heap-swap! [arr : (Array i64)] [a : i64] [b : i64]) : unit
+  (let
+    [t : i64 (array-ref arr a)]
+    (begin
+      (array-set! arr a (array-ref arr b))
+      (array-set! arr b t))))
+
+(define (compiler-reg-greedy-heap-sift-up!
+  [arr : (Array i64)]
+  [ref-counts : (Array i64)]
+  [index : i64]) : unit
+  (if (<= index 0)
+    unit
+    (let
+      [parent : i64 (/ (- index 1) 2)]
+      (if (compiler-reg-greedy-heap-better?
+        ref-counts
+        (array-ref arr index)
+        (array-ref arr parent))
+        (begin
+          (compiler-reg-greedy-heap-swap! arr index parent)
+          (compiler-reg-greedy-heap-sift-up! arr ref-counts parent))
+        unit))))
+
+(define (compiler-reg-greedy-heap-sift-down!
+  [arr : (Array i64)]
+  [ref-counts : (Array i64)]
+  [len : i64]
+  [index : i64]) : unit
+  (let
+    [left : i64 (+ (* index 2) 1)]
+    [right : i64 (+ (* index 2) 2)]
+    (if (>= left len)
+      unit
+      (let
+        [best : i64
+          (if (compiler-reg-greedy-heap-better?
+            ref-counts
+            (array-ref arr left)
+            (array-ref arr index))
+            left
+            index)]
+        [best2 : i64
+          (if (and
+            (< right len)
+            (compiler-reg-greedy-heap-better?
+              ref-counts
+              (array-ref arr right)
+              (array-ref arr best)))
+            right
+            best)]
+        (if (= best2 index)
+          unit
+          (begin
+            (compiler-reg-greedy-heap-swap! arr index best2)
+            (compiler-reg-greedy-heap-sift-down! arr ref-counts len best2)))))))
+
+(define (compiler-reg-greedy-heap-copy-from!
+  [next : (Array i64)]
+  [old : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (array-length old))
+    unit
+    (begin
+      (array-set! next index (array-ref old index))
+      (compiler-reg-greedy-heap-copy-from! next old (+ index 1)))))
+
+(define (compiler-reg-greedy-heap-grow! [heap : CompilerRegGreedyHeap]) : unit
+  (let
+    [old : (Array i64) (struct-get heap arr)]
+    [next : (Array i64) (array.make-array i64 (* (array-length old) 2))]
+    (begin
+      (compiler-reg-greedy-heap-copy-from! next old 0)
+      (set! (struct-get heap arr) next))))
+
+(define (compiler-reg-greedy-heap-push!
+  [heap : CompilerRegGreedyHeap]
+  [ref-counts : (Array i64)]
+  [v : i64]) : unit
+  (begin
+    (if (>= (struct-get heap len) (array-length (struct-get heap arr)))
+      (compiler-reg-greedy-heap-grow! heap)
+      unit)
+    (let
+      [index : i64 (struct-get heap len)]
+      (begin
+        (array-set! (struct-get heap arr) index v)
+        (set! (struct-get heap len) (+ index 1))
+        (compiler-reg-greedy-heap-sift-up!
+          (struct-get heap arr)
+          ref-counts
+          index)))))
+
+(define (compiler-reg-greedy-heap-pop!
+  [heap : CompilerRegGreedyHeap]
+  [ref-counts : (Array i64)]
+  [pending : (Array i64)]) : i64
+  (if (<= (struct-get heap len) 0)
+    (- 0 1)
+    (let
+      [arr : (Array i64) (struct-get heap arr)]
+      [top : i64 (array-ref arr 0)]
+      [last-index : i64 (- (struct-get heap len) 1)]
+      (begin
+        (array-set! arr 0 (array-ref arr last-index))
+        (set! (struct-get heap len) last-index)
+        (if (> last-index 0)
+          (compiler-reg-greedy-heap-sift-down! arr ref-counts last-index 0)
+          unit)
+        (if (and
+          (>= top 0)
+          (< top (array-length pending))
+          (= (array-ref pending top) 1))
+          top
+          (compiler-reg-greedy-heap-pop! heap ref-counts pending))))))
+
 ;; Seed the worklist: mark every collected root arr[i..count) pending. Non-roots
 ;; (group-var members, never-collected vars) stay pending=0 and are never popped.
 (define (compiler-reg-greedy-worklist-seed!
   [arr : (Array i64)]
   [i : i64]
   [count : i64]
-  [pending : (Array i64)]) : unit
+  [pending : (Array i64)]
+  [heap : CompilerRegGreedyHeap]
+  [ref-counts : (Array i64)]) : unit
   (if (>= i count)
     unit
     (begin
       (let
         [v : i64 (array-ref arr i)]
         (if (and (>= v 0) (< v (array-length pending)))
-          (array-set! pending v 1)
-          unit))
-      (compiler-reg-greedy-worklist-seed! arr (+ i 1) count pending))))
-
-;; Pick the highest-priority pending root: max spill weight, ties broken by lowest
-;; var index. This reproduces the compiler-reg-greedy-weight-before? total order
-;; the static sort produced, so with NO requeues the worklist pops exactly the
-;; sorted sequence -> byte-identical to the old forward pass. Returns -1 when the
-;; worklist is empty. O(n) per pop.
-(define (compiler-reg-greedy-worklist-pick!
-  [pending : (Array i64)]
-  [ref-counts : (Array i64)]
-  [n : i64]
-  [idx : i64]
-  [best : i64]
-  [best-w : i64]) : i64
-  (if (< idx 0)
-    (if (< idx n)
-      (array-ref pending idx)
-      best)
-    (let
-      [pending-n : i64 (array-length pending)]
-      [ref-n : i64 (array-length ref-counts)]
-      [limit : i64
-        (if (< n pending-n)
-          n
-          pending-n)]
-      [weighted-limit : i64
-        (if (< limit ref-n)
-          limit
-          ref-n)]
-      [pending-data : (Ptr i64)
-        (unsafe
-          (ptr-cast (array-data pending) : (Ptr i64)))]
-      [ref-data : (Ptr i64)
-        (unsafe
-          (ptr-cast (array-data ref-counts) : (Ptr i64)))]
-      [index : i64 idx]
-      [out-best : i64 best]
-      [out-best-w : i64 best-w]
-      (begin
-        (while (< index limit)
           (begin
-            (if (=
-              (unsafe
-                (ptr-read (ptr-offset pending-data index)))
-              1)
-              (let
-                [w : i64
-                  (if (< index weighted-limit)
-                    (unsafe
-                      (ptr-read (ptr-offset ref-data index)))
-                    0)]
-                (if (or (< out-best 0) (> w out-best-w))
-                  (begin
-                    (set! out-best index)
-                    (set! out-best-w w))
-                  unit))
-              unit)
-            (set! index (+ index 1))))
-        out-best))))
+            (array-set! pending v 1)
+            (compiler-reg-greedy-heap-push! heap ref-counts v))
+          unit))
+      (compiler-reg-greedy-worklist-seed!
+        arr
+        (+ i 1)
+        count
+        pending
+        heap
+        ref-counts))))
 
 ;; Re-entrant evict-and-requeue worklist loop (RAGreedy Component 1). Pop the
 ;; highest-weight pending root, dequeue it (pending=0), run selectOrSplit
@@ -14803,6 +14969,7 @@
 (define (compiler-reg-greedy-worklist-run!
   [pending : (Array i64)]
   [evict-count : (Array i64)]
+  [heap : CompilerRegGreedyHeap]
   [assignments : CompilerRegAssignmentTable]
   [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
@@ -14822,14 +14989,7 @@
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]) : unit
   (let
-    [v : i64
-      (compiler-reg-greedy-worklist-pick!
-        pending
-        ref-counts
-        n
-        0
-        (- 0 1)
-        (- 0 1))]
+    [v : i64 (compiler-reg-greedy-heap-pop! heap ref-counts pending)]
     (if (< v 0)
       unit
       (begin
@@ -14857,13 +15017,15 @@
               callee-regs
               caller-saved-count
               pending
-              evict-count)]
+              evict-count
+              heap)]
           (if (and (>= v 0) (< v (array-length stages)))
             (array-set! stages v stg)
             unit))
         (compiler-reg-greedy-worklist-run!
           pending
           evict-count
+          heap
           assignments
           occupancy
           interval-index
@@ -14921,15 +15083,24 @@
         n)]
     [pending : (Array i64) (array.make-array i64 cap)]
     [evict-count : (Array i64) (array.make-array i64 cap)]
+    [heap : CompilerRegGreedyHeap
+      (CompilerRegGreedyHeap
+        (array.make-array
+          i64
+          (if (< (- count i) 1)
+            1
+            (- count i)))
+        0)]
     [occupancy : CompilerRegGreedyOccupancy
       (compiler-reg-greedy-occupancy-make assignments reg-arr rcount)]
     (begin
       (compiler-reg-fill-i64-array pending 0)
       (compiler-reg-fill-i64-array evict-count 0)
-      (compiler-reg-greedy-worklist-seed! arr i count pending)
+      (compiler-reg-greedy-worklist-seed! arr i count pending heap ref-counts)
       (compiler-reg-greedy-worklist-run!
         pending
         evict-count
+        heap
         assignments
         occupancy
         interval-index
@@ -31023,7 +31194,64 @@
               [(CompilerRegEdgeCopyPlan.Plan _) true]
               [(CompilerRegEdgeCopyPlan.Refused _) false])
             (= (compiler-reg-liveness-census-baseline-count) 1)
-            (= (compiler-reg-liveness-census-edge-precise-count) 1)))))))
+            ;; The linear fixture is phi-free, so the edge-precise analysis is
+            ;; the baseline itself and no second fixpoint is computed.
+            (= (compiler-reg-liveness-census-edge-precise-count) 0)))))))
+
+(cfg
+  test
+  (define (compiler-reg-liveness-handle-phi-fixture) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      (compiler-ir-test-symbol "liveness_handle_phi")
+      CompilerIrParamList.Nil
+      (AstType.I64)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "loop"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                1
+                (CompilerIrPhiInputList.Cons
+                  (CompilerIrValue.Var 0)
+                  "entry"
+                  (box
+                    (CompilerIrPhiInputList.Cons
+                      (CompilerIrValue.Var 1)
+                      "loop"
+                      (box CompilerIrPhiInputList.Nil))))
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                CompilerIrInstrList.Nil)))
+          CompilerIrBlockList.Nil)))))
+
+(cfg
+  test
+  (define (compiler-reg-liveness-handle-phi-ok?) : bool
+    (begin
+      (compiler-reg-liveness-census-reset!)
+      (let
+        [_handle : CompilerRegLivenessHandle
+          (compiler-reg-liveness-handle-make
+            (compiler-reg-liveness-handle-phi-fixture)
+            true)]
+        (and
+          (= (compiler-reg-liveness-census-baseline-count) 1)
+          ;; Phi present: the second, edge-precise fixpoint is computed.
+          (= (compiler-reg-liveness-census-edge-precise-count) 1))))))
 
 (cfg
   test
@@ -31378,6 +31606,7 @@
     (compiler-reg-xmm-vector-class-reset-ok?)
     (compiler-reg-coalesce-ok?)
     (cfg test (compiler-reg-liveness-handle-ok?) true)
+    (cfg test (compiler-reg-liveness-handle-phi-ok?) true)
     (cfg test (compiler-reg-xmm-physical-ownership-ok?) true)
     (cfg test (compiler-reg-dense-mask-on-vector-homes-ok?) true)
     (compiler-reg-vector-mask-homes-ok?)

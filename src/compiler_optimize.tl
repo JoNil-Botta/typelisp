@@ -9192,6 +9192,22 @@
             "optimizer verify: unknown successor label")]
         [else (opt-verify-function-body-with-context func context)])]))
 
+;; Pipeline-level verification consolidation: the opt2 pipeline verifies the
+;; SSA function once per iteration before the loop-pass cluster and threads
+;; the result through `verified?`. Passes in the cluster then skip their own
+;; entry verify -- each pass in the cluster preserves IR validity for valid
+;; input, and every mutating pass still post-verifies its own rewrite when it
+;; changed something, so the per-pass entry verify only repeated the upstream
+;; result. Callers outside the pipeline (tests, standalone drivers) pass
+;; `false` and keep the defensive entry verify.
+(define (opt-verify-gate
+  [verified? : bool]
+  [func : CompilerIrFunction]
+  [context : OptCfgContext]) : ResultCompilerOptimizeVerify
+  (if verified?
+    (ResultCompilerOptimizeVerify.Ok)
+    (opt-verify-function-with-context func context)))
+
 (define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
@@ -13377,44 +13393,87 @@
       context
       (opt-cfg-natural-loops-with-context blocks context))))
 
-(define (opt-loop-preheaders-blocks-fixed
-  [blocks : CompilerIrBlockList]
-  [remaining : i64]) : CompilerIrBlockList
-  (if (<= remaining 0)
+(define (opt-loop-preheaders-blocks-once-with-context
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]) : OptLoopPreheadersResult
+  ;; `context` must be valid for `blocks` (the caller's pipeline context).
+  (opt-loop-preheaders-synthesize-loops
     blocks
-    (match (opt-loop-preheaders-blocks-once blocks)
+    context
+    (opt-cfg-natural-loops-with-context blocks context)))
+
+(define (opt-loop-preheaders-blocks-fixed-result
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [remaining : i64]
+  [any-changed : bool]
+  [first-round? : bool]) : OptLoopPreheadersResult
+  ;; The first round reuses the pipeline's CFG context (valid for `blocks`);
+  ;; only rounds after an actual synthesis (which rewrote the CFG) pay for a
+  ;; fresh context build.
+  (if (<= remaining 0)
+    (OptLoopPreheadersResult.Result blocks any-changed)
+    (match (if first-round?
+      (opt-loop-preheaders-blocks-once-with-context context blocks)
+      (opt-loop-preheaders-blocks-once blocks))
       [(OptLoopPreheadersResult.Result next changed)
         (if changed
-          (opt-loop-preheaders-blocks-fixed next (- remaining 1))
-          next)])))
+          (opt-loop-preheaders-blocks-fixed-result
+            next
+            context
+            (- remaining 1)
+            true
+            false)
+          (OptLoopPreheadersResult.Result next any-changed))])))
 
 (define (opt-loop-preheaders-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-loop-preheaders-blocks-fixed
+  (match (opt-loop-preheaders-blocks-fixed-result
     blocks
-    (+ 1 (compiler-ir-block-list-count blocks))))
+    (opt-cfg-context-build blocks)
+    (+ 1 (compiler-ir-block-list-count blocks))
+    false
+    true)
+    [(OptLoopPreheadersResult.Result next _) next]))
 
 (define (opt-loop-preheaders-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
-          (let
-            [next-blocks : CompilerIrBlockList
-              (opt-loop-preheaders-blocks blocks)]
-            [next : CompilerIrFunction
-              (CompilerIrFunction.Function name params ret-ty frame next-blocks)]
-            ;; Preheader synthesis may have inserted blocks, so build one fresh
-            ;; context for the rewritten CFG, reuse it for the post-pass verify,
-            ;; and hand it back for the next pass.
-            [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
-            (match (opt-verify-function-with-context next next-context)
-              [(ResultCompilerOptimizeVerify.Ok)
-                (OptFunctionCtxResult.Result next next-context)]
-              [(ResultCompilerOptimizeVerify.Err _)
-                (OptFunctionCtxResult.Result func context)]))])]
+          (match (opt-loop-preheaders-blocks-fixed-result
+            blocks
+            context
+            (+ 1 (compiler-ir-block-list-count blocks))
+            false
+            true)
+            [(OptLoopPreheadersResult.Result next-blocks preheaders-changed?)
+              (if (not preheaders-changed?)
+                ;; No preheader was synthesized: the input context still
+                ;; describes the unchanged CFG, so skip the context rebuild
+                ;; and the post-pass verify entirely.
+                (OptFunctionCtxResult.Result func context)
+                (let
+                  [next : CompilerIrFunction
+                    (CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      frame
+                      next-blocks)]
+                  ;; Preheader synthesis may have inserted blocks, so build one
+                  ;; fresh context for the rewritten CFG, reuse it for the
+                  ;; post-pass verify, and hand it back for the next pass.
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(ResultCompilerOptimizeVerify.Ok)
+                      (OptFunctionCtxResult.Result next next-context)]
+                    [(ResultCompilerOptimizeVerify.Err _)
+                      (OptFunctionCtxResult.Result func context)])))])])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -13423,6 +13482,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-loop-preheaders-function-with-context-result
         (opt-cfg-context-build blocks)
+        false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -14532,13 +14592,14 @@
 
 (define (opt-rotate-ssa-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (if (> (compiler-ir-block-list-count blocks) (opt-rotate-ssa-block-limit))
         (OptFunctionCtxResult.Result func context)
-        (match (opt-verify-function-with-context func context)
+        (match (opt-verify-gate verified? func context)
           [(ResultCompilerOptimizeVerify.Ok)
             (match (opt-rotate-ssa-loops
               blocks
@@ -15852,10 +15913,11 @@
 
 (define (opt-licm-function-with-context-result-and-direct-call-clean
   [context : OptCfgContext]
+  [verified? : bool]
   [direct-call-clean : opt_i64_i64_map.Map]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -15908,6 +15970,7 @@
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   (opt-licm-function-with-context-result-and-direct-call-clean
     context
+    false
     (opt_i64_i64_map.with-capacity 1)
     func))
 
@@ -15924,6 +15987,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-licm-function-with-context-result-and-direct-call-clean
         (opt-cfg-context-build blocks)
+        false
         direct-call-clean
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
@@ -17099,9 +17163,10 @@
 
 (define (opt-induction-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -17138,7 +17203,7 @@
 (define (opt-induction-function-with-context
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-induction-function-with-context-result context func)
+  (match (opt-induction-function-with-context-result context false func)
     [(OptFunctionCtxResult.Result next _) next]))
 
 (define (opt-induction-function [func : CompilerIrFunction]) : CompilerIrFunction
@@ -19354,10 +19419,18 @@
       (array-ref buckets (opt-gvn-bucket-index buckets key))
       key)))
 
-(define (opt-gvn-rewrite-instr
+;; Rewriting an instruction allocates only when the rewrite fires: scanning a
+;; sequence for changes is allocation-free, so unchanged blocks keep their
+;; original instruction arrays instead of paying for a cons-list rebuild and
+;; an Array->List->Array representation round trip per GVN call.
+(defenum OptMaybeInstr
+  (No)
+  (Some CompilerIrInstr))
+
+(define (opt-gvn-rewrite-instr-maybe
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
-  [instr : CompilerIrInstr]) : CompilerIrInstr
+  [instr : CompilerIrInstr]) : OptMaybeInstr
   (match instr
     [(CompilerIrInstr.BinOp dst op l r ty)
       (if (and
@@ -19366,17 +19439,19 @@
         (let
           [earlier : i64 (opt-gvn-lookup table (OptExprKey.BinKey op l r ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty)
-            instr))
-        instr)]
+            (OptMaybeInstr.Some
+              (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
     [(CompilerIrInstr.UnOp dst op v ty)
       (if (opt-gvn-value-stable? sources v)
         (let
           [earlier : i64 (opt-gvn-lookup table (OptExprKey.UnKey op v ty))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty)
-            instr))
-        instr)]
+            (OptMaybeInstr.Some
+              (CompilerIrInstr.Mov dst (CompilerIrValue.Var earlier) ty))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
     [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
       (if (and
         (opt-gvn-value-stable? sources leaf)
@@ -19385,24 +19460,41 @@
           [earlier : i64
             (opt-gvn-lookup table (OptExprKey.CpuIdKey leaf subleaf reg-index))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (CompilerIrInstr.Mov
-              dst
-              (CompilerIrValue.Var earlier)
-              (AstType.I64))
-            instr))
-        instr)]
+            (OptMaybeInstr.Some
+              (CompilerIrInstr.Mov
+                dst
+                (CompilerIrValue.Var earlier)
+                (AstType.I64)))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
     [(CompilerIrInstr.Xgetbv dst index)
       (if (opt-gvn-value-stable? sources index)
         (let
           [earlier : i64 (opt-gvn-lookup table (OptExprKey.XgetbvKey index))]
           (if (and (not (= earlier (- 0 1))) (not (= earlier dst)))
-            (CompilerIrInstr.Mov
-              dst
-              (CompilerIrValue.Var earlier)
-              (AstType.I64))
-            instr))
-        instr)]
-    [_ instr]))
+            (OptMaybeInstr.Some
+              (CompilerIrInstr.Mov
+                dst
+                (CompilerIrValue.Var earlier)
+                (AstType.I64)))
+            (OptMaybeInstr.No)))
+        (OptMaybeInstr.No))]
+    [_ (OptMaybeInstr.No)]))
+
+(define (opt-gvn-seq-rewrite-changed?
+  [table : OptGvnMap]
+  [sources : opt_i64_i64_map.Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (< index 0)
+    false
+    (match (opt-gvn-rewrite-instr-maybe
+      table
+      sources
+      (compiler-ir-instr-seq-ref instrs index))
+      [(OptMaybeInstr.Some _) true]
+      [(OptMaybeInstr.No)
+        (opt-gvn-seq-rewrite-changed? table sources instrs (- index 1))])))
 
 (define (opt-gvn-rewrite-instr-seq-from
   [table : OptGvnMap]
@@ -19418,10 +19510,12 @@
       instrs
       (- index 1)
       (compiler-ir-instr-cons
-        (opt-gvn-rewrite-instr
+        (match (opt-gvn-rewrite-instr-maybe
           table
           sources
           (compiler-ir-instr-seq-ref instrs index))
+          [(OptMaybeInstr.Some rewritten) rewritten]
+          [(OptMaybeInstr.No) (compiler-ir-instr-seq-ref instrs index)])
         out))))
 
 (define (opt-gvn-rewrite-instr-seq
@@ -19435,13 +19529,29 @@
     (- (compiler-ir-instr-seq-count instrs) 1)
     CompilerIrInstrList.Nil))
 
+;; A rewritten block carries the changed flag up to the dominator walk: when
+;; no instruction in the block changed, the original block (and its original
+;; instruction array) is reused untouched.
+(defenum OptGvnRewriteResult
+  (Result CompilerIrBlock bool))
+
 (define (opt-gvn-rewrite-block
   [table : OptGvnMap]
   [sources : opt_i64_i64_map.Map]
-  [block : CompilerIrBlock]) : CompilerIrBlock
+  [block : CompilerIrBlock]) : OptGvnRewriteResult
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-gvn-rewrite-instr-seq table sources instrs))]))
+      (if (opt-gvn-seq-rewrite-changed?
+        table
+        sources
+        instrs
+        (- (compiler-ir-instr-seq-count instrs) 1))
+        (OptGvnRewriteResult.Result
+          (compiler-ir-block
+            label
+            (opt-gvn-rewrite-instr-seq table sources instrs))
+          true)
+        (OptGvnRewriteResult.Result block false))]))
 
 (define (opt-gvn-dom-children [doms : OptDomInfo]) : OptCfgCsr
   (let
@@ -19492,7 +19602,7 @@
   [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
-  [id : i64]) : unit
+  [id : i64]) : i64
   (let
     [index : OptCfgIndex (struct-get context index)]
     [count : i64 (opt-cfg-index-block-count index)]
@@ -19500,35 +19610,43 @@
       (let
         [label : String (array-ref (struct-get index labels) id)]
         (match (opt-cfg-find-block blocks label)
-          [(OptMaybeBlock.No) unit]
+          [(OptMaybeBlock.No) 0]
           [(OptMaybeBlock.Some block)
             (match block
               [(CompilerIrBlock.Block _ instrs)
-                (let
-                  [rewritten : CompilerIrBlock
-                    (opt-gvn-rewrite-block table sources block)]
-                  (begin
-                    (array-set! out id (OptGvnBlockResult.SomeBlock rewritten))
-                    (let
-                      [changes : OptGvnScopeChanges
-                        (opt-gvn-record-scope-instr-seq-from
-                          sources
-                          id
-                          instrs
-                          0
-                          table
-                          (OptGvnScopeChanges.Nil))]
-                      (begin
-                        (opt-gvn-rewrite-children
-                          context
-                          children
-                          table
-                          sources
-                          blocks
+                (match (opt-gvn-rewrite-block table sources block)
+                  [(OptGvnRewriteResult.Result rewritten block-changed)
+                    (begin
+                      (if block-changed
+                        (array-set!
                           out
-                          id)
-                        (opt-gvn-table-restore! table changes)))))])]))
-      unit)))
+                          id
+                          (OptGvnBlockResult.SomeBlock rewritten))
+                        unit)
+                      (let
+                        [changes : OptGvnScopeChanges
+                          (opt-gvn-record-scope-instr-seq-from
+                            sources
+                            id
+                            instrs
+                            0
+                            table
+                            (OptGvnScopeChanges.Nil))]
+                        [children-changed : i64
+                          (opt-gvn-rewrite-children
+                            context
+                            children
+                            table
+                            sources
+                            blocks
+                            out
+                            id)]
+                        (begin
+                          (opt-gvn-table-restore! table changes)
+                          (if (or block-changed (= children-changed 1))
+                            1
+                            0))))])])]))
+      0)))
 
 (define (opt-gvn-rewrite-children
   [context : OptCfgContext]
@@ -19537,25 +19655,30 @@
   [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
-  [parent-id : i64]) : unit
+  [parent-id : i64]) : i64
   (let
     [offsets : (Array i64) (struct-get children offsets)]
     [edges : (Array i64) (struct-get children edges)]
     [edge : i64 (array-ref offsets parent-id)]
     [end : i64 (array-ref offsets (+ parent-id 1))]
+    [changed : i64 0]
     (begin
       (while (< edge end)
         (begin
-          (opt-gvn-rewrite-id
-            context
-            children
-            table
-            sources
-            blocks
-            out
-            (array-ref edges edge))
+          (if (=
+            (opt-gvn-rewrite-id
+              context
+              children
+              table
+              sources
+              blocks
+              out
+              (array-ref edges edge))
+            1)
+            (set! changed 1)
+            unit)
           (set! edge (+ edge 1))))
-      unit)))
+      changed)))
 
 (define (opt-gvn-rewrite-dom
   [context : OptCfgContext]
@@ -19570,22 +19693,26 @@
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
       (opt-gvn-block-results-fill-empty! out 0)
-      (match (opt-cfg-index-id index (struct-get context entry-label))
-        [(option_i64.Some entry-id)
-          (if (and
-            (>= entry-id 0)
-            (array-ref (struct-get index reachable) entry-id))
-            (opt-gvn-rewrite-id
-              context
-              children
-              table
-              sources
-              blocks
-              out
-              entry-id)
-            unit)]
-        [(option_i64.None) unit])
-      (opt-gvn-materialize-blocks doms out blocks))))
+      (let
+        [changed : i64
+          (match (opt-cfg-index-id index (struct-get context entry-label))
+            [(option_i64.Some entry-id)
+              (if (and
+                (>= entry-id 0)
+                (array-ref (struct-get index reachable) entry-id))
+                (opt-gvn-rewrite-id
+                  context
+                  children
+                  table
+                  sources
+                  blocks
+                  out
+                  entry-id)
+                0)]
+            [(option_i64.None) 0])]
+        (if (= changed 0)
+          blocks
+          (opt-gvn-materialize-blocks doms out blocks))))))
 
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
 ;; dominating value; existing copy propagation and DCE remove the dead copies.
@@ -25350,18 +25477,23 @@
 
 (define (opt-unroll-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match func
     [(CompilerIrFunction.Function _ _ _ _ prescan-blocks)
       (if (opt-unroll-blocks-have-candidate? prescan-blocks)
-        (opt-unroll-function-verified-with-context-result context func)
+        (opt-unroll-function-verified-with-context-result
+          context
+          verified?
+          func)
         (OptFunctionCtxResult.Result func context))]))
 
 (define (opt-unroll-function-verified-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -25401,6 +25533,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-unroll-function-with-context-result
         (opt-cfg-context-build blocks)
+        false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -26556,8 +26689,9 @@
 
 (define (opt-bce-version-function-verified-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -26593,12 +26727,16 @@
 
 (define (opt-bce-version-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (the entry verify reuses it).
   (match func
     [(CompilerIrFunction.Function _ _ _ _ prescan-blocks)
       (if (opt-bce-version-blocks-have-candidate? prescan-blocks)
-        (opt-bce-version-function-verified-with-context-result context func)
+        (opt-bce-version-function-verified-with-context-result
+          context
+          verified?
+          func)
         (OptFunctionCtxResult.Result func context))]))
 
 (define (opt-bce-version-function [func : CompilerIrFunction]) : CompilerIrFunction
@@ -26606,6 +26744,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-bce-version-function-with-context-result
         (opt-cfg-context-build blocks)
+        false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -26872,6 +27011,25 @@
                       ;; and dominance queries -- no rebuild between passes. Each
                       ;; pass that rewrites the CFG builds one fresh context for
                       ;; its output; the no-op majority reuses its input context.
+                      ;;
+                      ;; Verification is consolidated at the cluster head: one
+                      ;; full verify of the switch-form output, threaded through
+                      ;; `verified?`, replaces each cluster pass's entry verify.
+                      ;; Every mutating pass still post-verifies its own rewrite
+                      ;; (falling back to its input on rejection), so a verified
+                      ;; input stays verified across the chain.
+                      [loop-cluster-verified? : bool
+                        (and
+                          run-heavy?
+                          (opt-verify-ok?
+                            (opt-verify-function-with-context
+                              (CompilerIrFunction.Function
+                                name
+                                params
+                                ret-ty
+                                ssa-frame
+                                switch-blocks)
+                              switch-context)))]
                       [preheaders-result : OptFunctionCtxResult
                         (if run-heavy?
                           (let
@@ -26884,6 +27042,7 @@
                                 switch-blocks)]
                             (opt-loop-preheaders-function-with-context-result
                               switch-context
+                              loop-cluster-verified?
                               preheaders-input))
                           (OptFunctionCtxResult.Result
                             (CompilerIrFunction.Function
@@ -26913,6 +27072,7 @@
                         (if run-heavy?
                           (opt-rotate-ssa-function-with-context-result
                             preheaders-context
+                            loop-cluster-verified?
                             preheaders)
                           preheaders-result)]
                       [rotate-ssa : CompilerIrFunction
@@ -26935,6 +27095,7 @@
                         (if run-heavy?
                           (opt-scratch-reset-function-with-context-result
                             rotate-ssa-context
+                            loop-cluster-verified?
                             rotate-ssa)
                           rotate-ssa-result)]
                       [scratch-reset : CompilerIrFunction
@@ -26956,6 +27117,7 @@
                         (if run-heavy?
                           (opt-licm-function-with-context-result-and-direct-call-clean
                             scratch-reset-context
+                            loop-cluster-verified?
                             (struct-get summaries direct-call-clean)
                             scratch-reset)
                           scratch-reset-result)]
@@ -26976,6 +27138,7 @@
                         (if run-heavy?
                           (opt-induction-function-with-context-result
                             licm-context
+                            loop-cluster-verified?
                             licm)
                           licm-result)]
                       [induction : CompilerIrFunction
@@ -27003,6 +27166,7 @@
                         (if run-heavy?
                           (opt-bce-version-function-with-context-result
                             induction-context
+                            loop-cluster-verified?
                             induction)
                           induction-result)]
                       [bce-version : CompilerIrFunction
@@ -27029,6 +27193,7 @@
                         (if run-heavy?
                           (opt-unroll-function-with-context-result
                             bce-version-context
+                            loop-cluster-verified?
                             bce-version)
                           bce-version-result)]
                       [unrolled : CompilerIrFunction
@@ -49293,6 +49458,7 @@
     [blocks : CompilerIrBlockList (opt-rotate-ssa-test-blocks side-exit)]
     (match (opt-rotate-ssa-function-with-context-result
       (opt-cfg-context-build blocks)
+      false
       (opt-rotate-ssa-test-function blocks))
       [(OptFunctionCtxResult.Result next _) next])))
 
@@ -50980,8 +51146,9 @@
 
 (define (opt-scratch-reset-function-with-context-result
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -51016,6 +51183,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (opt-scratch-reset-function-with-context-result
         (opt-cfg-context-build blocks)
+        false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
@@ -51061,7 +51229,7 @@
         [input : CompilerIrFunction
           (CompilerIrFunction.Function name params ret-ty frame blocks)]
         [preheaders-result : OptFunctionCtxResult
-          (opt-loop-preheaders-function-with-context-result context input)]
+          (opt-loop-preheaders-function-with-context-result context false input)]
         [preheaders : CompilerIrFunction
           (match preheaders-result
             [(OptFunctionCtxResult.Result f _) f])]
@@ -51070,6 +51238,7 @@
             [(OptFunctionCtxResult.Result _ ctx) ctx])]
         (opt-scratch-reset-function-with-context-result
           preheaders-context
+          false
           preheaders))]))
 
 (define (opt-scratch-test-alloc) : CompilerIrInstr

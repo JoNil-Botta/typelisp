@@ -1675,6 +1675,136 @@
     (compiler-symbol-root-module-id)
     (sym_i64_env.sym-i64-empty)))
 
+(define (compiler-symbols-module-owner-map-add
+  [modules : sym_i64_env.SymI64Env]
+  [module-id : i64]
+  [owner-id : i64]) : sym_i64_env.SymI64Env
+  (if (or (< module-id 0) (sym_i64_env.sym-i64-contains-id modules module-id))
+    modules
+    (sym_i64_env.sym-i64-bind-id modules module-id owner-id)))
+
+(define (compiler-symbols-dotted-import-module-set-add-target
+  [modules : sym_i64_env.SymI64Env]
+  [target-module : i64]) : sym_i64_env.SymI64Env
+  (if (sym_i64_env.sym-i64-contains-id modules target-module)
+    modules
+    (let
+      [with-target : sym_i64_env.SymI64Env
+        (sym_i64_env.sym-i64-bind-id modules target-module target-module)]
+      [target-name : String (intern-str target-module)]
+      [with-source : sym_i64_env.SymI64Env
+        (match (intern-lookup target-name)
+          [(InternLookupFound source-id)
+            (compiler-symbols-module-owner-map-add
+              with-target
+              source-id
+              target-module)]
+          [(InternLookupMissing) with-target])]
+      [with-generated : sym_i64_env.SymI64Env
+        (match (intern-generated-canonical-lookup target-name)
+          [(InternLookupFound generated-id)
+            (compiler-symbols-module-owner-map-add
+              with-source
+              generated-id
+              target-module)]
+          [(InternLookupMissing) with-source])]
+      with-generated)))
+
+(define (compiler-symbols-dotted-suffix-owner-module-id
+  [modules : sym_i64_env.SymI64Env]
+  [path-owner-id : i64]) : i64
+  (if (< path-owner-id 0)
+    -1
+    (let
+      [owner-name : String (intern-str path-owner-id)]
+      [owner-len : i64 (string.string-length owner-name)]
+      [index : i64 0]
+      (begin
+        (while (< index owner-len)
+          (begin
+            (when
+              (= (string.string-ref owner-name index) '.')
+              (let
+                [suffix-id : i64
+                  (intern-slice
+                    owner-name
+                    (+ index 1)
+                    (- owner-len (+ index 1)))]
+                [suffix-owner : i64
+                  (sym_i64_env.sym-i64-lookup-id-or modules suffix-id -1)]
+                (when (>= suffix-owner 0) (return suffix-owner))))
+            (set! index (+ index 1))))
+        -1))))
+
+(defstruct CompilerSymbolsModuleSets
+  (macro-modules sym_i64_env.SymI64Env)
+  (dotted-modules sym_i64_env.SymI64Env))
+
+(define (compiler-symbols-module-sets-list
+  [decls : AstDeclList]
+  [module-id : i64]
+  [sets : CompilerSymbolsModuleSets]) : CompilerSymbolsModuleSets
+  (let
+    [macro-modules : sym_i64_env.SymI64Env (struct-get sets macro-modules)]
+    [dotted-modules : sym_i64_env.SymI64Env (struct-get sets dotted-modules)]
+    [cur-module : i64 module-id]
+    [index : i64 0]
+    [decl-count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    (begin
+      (while (< index decl-count)
+        (let
+          [decl : AstDecl
+            (array-ref (struct-get decls slots) (+ decl-offset index))]
+          (begin
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module next-module)]
+              [(AstDecl.Import
+                  (AstImportSpec.Spec
+                    _
+                    _
+                    (AstMaybeModuleName.Some target-module)
+                    _
+                    _))
+                (set!
+                  dotted-modules
+                  (compiler-symbols-dotted-import-module-set-add-target
+                    dotted-modules
+                    target-module))]
+              [(AstDecl.Import _) unit]
+              [(AstDecl.ModuleBody name body-box)
+                (let
+                  [nested : CompilerSymbolsModuleSets
+                    (compiler-symbols-module-sets-list
+                      (box-get body-box)
+                      name
+                      (CompilerSymbolsModuleSets macro-modules dotted-modules))]
+                  (begin
+                    (set! macro-modules (struct-get nested macro-modules))
+                    (set! dotted-modules (struct-get nested dotted-modules))))]
+              [(AstDecl.IncludeStr _ _) unit]
+              [(AstDecl.IncludeStrComptime _ _) unit]
+              [(AstDecl.IncludeStrLzss _ _) unit]
+              [(AstDecl.IncludeBin _ _) unit]
+              [(AstDecl.Test _ _ _) unit]
+              [_
+                (set!
+                  macro-modules
+                  (compiler-symbols-macro-module-set-add-decl
+                    macro-modules
+                    cur-module
+                    decl))])
+            (set! index (+ index 1)))))
+      (CompilerSymbolsModuleSets macro-modules dotted-modules))))
+
+(define (compiler-symbols-module-sets [decls : AstDeclList]) : CompilerSymbolsModuleSets
+  (compiler-symbols-module-sets-list
+    decls
+    (compiler-symbol-root-module-id)
+    (CompilerSymbolsModuleSets
+      (sym_i64_env.sym-i64-empty)
+      (sym_i64_env.sym-i64-empty))))
+
 ;; An explicit `module ... as alias` import resolves dotted uses through the
 ;; import target directly. It should not leave the module's legacy bare macro
 ;; alias in the importer.
@@ -2344,12 +2474,14 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [symbols : CompilerSymbols]
+  [dotted-modules : sym_i64_env.SymI64Env]
   [index : i64]
   [module-id : i64]) : ResultCompilerSymbols
   (let
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-symbols : CompilerSymbols symbols]
+    [cur-dotted-modules : sym_i64_env.SymI64Env dotted-modules]
     [cur-index : i64 index]
     [cur-module-id : i64 module-id]
     [result : ResultCompilerSymbols
@@ -2369,6 +2501,11 @@
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons path _) path]
                   [(AstDeclPathListStep.Nil) ""])]
+              [path-owner-id : i64
+                (ast-decl-path-list-owner-id
+                  (& cur-paths)
+                  0
+                  cbi.compiler-builtin-id-fix-empty)]
               [rest-paths : AstDeclPathList
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons _ path-rest)
@@ -2420,6 +2557,7 @@
                       body
                       body-paths
                       cur-symbols
+                      cur-dotted-modules
                       cur-index
                       name)
                       [(ResultCompilerSymbols.Ok next-symbols)
@@ -2457,7 +2595,34 @@
                           cur-symbols
                           decl
                           cur-index
-                          cur-module-id)
+                          (if (match decl
+                            [(AstDecl.DefEnum _ _ _) true]
+                            [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+                            [_ false])
+                            (let
+                              [exact-owner : i64
+                                (sym_i64_env.sym-i64-lookup-id-or
+                                  cur-dotted-modules
+                                  path-owner-id
+                                  -1)]
+                              (if (>= exact-owner 0)
+                                exact-owner
+                                (let
+                                  [suffix-owner : i64
+                                    (compiler-symbols-dotted-suffix-owner-module-id
+                                      cur-dotted-modules
+                                      path-owner-id)]
+                                  (if (>= suffix-owner 0)
+                                    (begin
+                                      (set!
+                                        cur-dotted-modules
+                                        (sym_i64_env.sym-i64-bind-id
+                                          cur-dotted-modules
+                                          path-owner-id
+                                          suffix-owner))
+                                      suffix-owner)
+                                    cur-module-id))))
+                            cur-module-id))
                         (match (compiler-symbols-add-decl-in-module
                           cur-symbols
                           cur-module-id
@@ -2507,6 +2672,8 @@
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
+        [module-sets : CompilerSymbolsModuleSets
+          (compiler-symbols-module-sets decls)]
         (match (build-compiler-symbol-list-with-paths-in-module
           decls
           paths
@@ -2514,16 +2681,19 @@
           paths
           (compiler-symbols-empty-with-decls
             (compiler-decl-list-index-count decls))
+          (struct-get module-sets dotted-modules)
           0
           (compiler-symbol-root-module-id))
           [(ResultCompilerSymbols.Ok symbols)
-            (ResultCompilerSymbols.Ok
-              (build-compiler-symbol-aliases-list
-                decls
-                decls
-                symbols
-                (compiler-symbol-root-module-id)
-                (compiler-symbols-macro-module-set decls)))]
+            (let
+              [aliased : CompilerSymbols
+                (build-compiler-symbol-aliases-list
+                  decls
+                  decls
+                  symbols
+                  (compiler-symbol-root-module-id)
+                  (struct-get module-sets macro-modules))]
+              (ResultCompilerSymbols.Ok aliased))]
           [(ResultCompilerSymbols.Err message)
             (ResultCompilerSymbols.Err message)]))]))
 

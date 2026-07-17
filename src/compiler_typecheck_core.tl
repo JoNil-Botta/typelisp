@@ -1390,6 +1390,7 @@
 (define (tc-typecheck-result-with-pool-check [result : ResultCompilerTypecheck]) : ResultCompilerTypecheck
   (begin
     (tc-fn-scratch-arena-release!)
+    (tc-decl-scratch-arena-release!)
     (if (ty-node-pool-exhausted?)
       (ResultCompilerTypecheck.Err (box (tc-ty-node-pool-exhausted-diagnostic)))
       result)))
@@ -1398,6 +1399,7 @@
   [result : ResultCompilerTypecheckChecked]) : ResultCompilerTypecheckChecked
   (begin
     (tc-fn-scratch-arena-release!)
+    (tc-decl-scratch-arena-release!)
     (if (ty-node-pool-exhausted?)
       (ResultCompilerTypecheckChecked.Err
         (box (tc-ty-node-pool-exhausted-diagnostic)))
@@ -66754,6 +66756,106 @@
               (tc-nominal-owner-cache-reset!)
               escaped)))))))
 
+;; Reusable scratch arena for per-declaration checks that are not function
+;; bodies (Def values, macros, externs, dispatches, enum/struct declarations).
+;; Same mark/rewind/clone-out shape as the function-body scratch above, but a
+;; SEPARATE arena so a function-body scope nested inside a declaration scope
+;; (a comptime/unsafe template wrapping a DefFn) never invalidates a live
+;; declaration mark. Released with the function-body scratch at each typecheck
+;; boundary.
+(define tc-decl-scratch-arena : i64
+  0)
+
+;; Open declaration scopes in the declaration scratch arena. ComptimeDecl and
+;; Unsafe recurse into the declaration dispatcher, so a template can nest
+;; another scoped declaration check inside this one; only the outermost scope
+;; may destroy the arena after an overflow (a nested destroy would leave the
+;; enclosing mark dangling).
+(define tc-decl-scratch-depth : i64
+  0)
+
+(define (tc-decl-scratch-arena-get) : i64
+  (if (= tc-decl-scratch-arena 0)
+    (let
+      [scratch : i64 (arena.tl_arena_make)]
+      (begin
+        (set! tc-decl-scratch-arena scratch)
+        scratch))
+    tc-decl-scratch-arena))
+
+(define (tc-decl-scratch-arena-release!) : unit
+  (if (= tc-decl-scratch-arena 0)
+    unit
+    (begin
+      (if (= (arena.tl_arena_current) tc-decl-scratch-arena)
+        (unsafe
+          (arena.tl_arena_set node-pool-base-arena))
+        unit)
+      (unsafe
+        (arena.tl_arena_destroy tc-decl-scratch-arena))
+      (set! tc-decl-scratch-arena 0))))
+
+;; Non-function declaration checks pin their transient env layers, CTFE eval
+;; trees, and partial caches in the persistent arena for the rest of the
+;; compile even though the check returns only unit. Run each such check in the
+;; shared declaration scratch arena and rewind it afterwards, cloning the error
+;; diagnostic out first (the same shape as tc-check-fn-decl-scoped). State that
+;; must persist is unaffected: env bindings are built by the module-env walk
+;; outside this scope, the interner owns new spellings at insertion, node pools
+;; grow in the persistent base arena, and cross-declaration caches live in
+;; dedicated persistent arenas. The one cross-declaration cache that cannot be
+;; rewound safely, the macro helper env, is rebuilt per declaration instead
+;; (reset at the end of this scope).
+(define (tc-check-decl-scoped
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [global-env : TcTypeEnv]
+  [decl : AstDecl]) : ResultTcUnit
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [scratch : i64 (tc-decl-scratch-arena-get)]
+    (begin
+      (set! tc-decl-scratch-depth (+ tc-decl-scratch-depth 1))
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        [raw : ResultTcUnit
+          (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)]
+        [scratch-head : i64 (arena.tl_arena_current)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (let
+            [escaped : ResultTcUnit
+              (match raw
+                [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err (clone message))])]
+            [new-enclosing : i64 (arena.tl_arena_current)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set scratch-head)
+                (arena.tl_region_reset mark)
+                (arena.tl_arena_set new-enclosing))
+              (set! tc-decl-scratch-depth (- tc-decl-scratch-depth 1))
+              (if (and
+                (= tc-decl-scratch-depth 0)
+                (not (= scratch scratch-head)))
+                (tc-decl-scratch-arena-release!)
+                unit)
+              ;; Single-entry name caches may hold strings allocated in the
+              ;; scratch that was just rewound; invalidate them before
+              ;; anything can compare against freed memory.
+              (tc-nominal-owner-cache-reset!)
+              ;; The macro helper env cache persists across declarations, but
+              ;; its spine is extended with per-check partial cache layers
+              ;; while a DefMacro body is checked; those layers (and any
+              ;; rewind-sensitive content reached through them) must not
+              ;; outlive this declaration, so rebuild the cache per
+              ;; declaration inside the scratch scope.
+              (tc-macro-helper-env-cache-reset!)
+              escaped)))))))
+
 (define (tc-check-decl-with-global-env
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -66765,31 +66867,6 @@
     ;; walk, so keep cache entries scoped to one checked declaration.
     (tc-nominal-owner-cache-reset!)
     (match decl
-      [(AstDecl.Def _ maybe-ty expr-box)
-        (match maybe-ty
-          [(AstMaybeType.Some want)
-            (match (tc-expr-with-expected-or-actual-id
-              ctx
-              global-env
-              expr-box
-              (tc-resolve-type ctx want))
-              [(ResultTcType.Ok got)
-                (match (tc-expect
-                  got
-                  (tc-resolve-type ctx want)
-                  "typecheck: value definition type mismatch")
-                  [(ResultTcUnit.Ok)
-                    (tc-ensure-region-value-can-flow-into
-                      global-env
-                      (tc-resolve-type ctx want)
-                      got
-                      "top-level value")]
-                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-              [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
-          [(AstMaybeType.No)
-            (match (tc-expr-id ctx global-env expr-box)
-              [(ResultTcType.Ok _) ResultTcUnit.Ok]
-              [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
       [(AstDecl.DefFn _ params ret body-box _)
         (match (tc-elide-function-signature params ret)
           [(ResultTcElidedSignature.Ok signature)
@@ -66800,68 +66877,114 @@
               (struct-get signature ret)
               body-box)]
           [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
-      [(AstDecl.DefMacro name params ret body-box)
-        (let
-          [body : AstExpr (ast-node-get body-box)]
-          (tc-check-defmacro name ctx top-env params ret body))]
-      [(AstDecl.Extern _ kind metadata ty)
-        (tc-check-extern-decl ctx kind (box-get metadata) ty)]
-      [(AstDecl.DefDispatch name variants)
-        (match (tc-dispatch-decl-type ctx name variants)
-          [(ResultTcType.Ok _) ResultTcUnit.Ok]
-          [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
-      [(AstDecl.DefEnum name cleanup variants)
-        (tc-check-cleanup-enum-decl
-          ctx
-          top-env
-          (tc-check-decl-scoped-name-id ctx name)
-          (ast-lifetime-list-new)
-          cleanup
-          variants)]
-      [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
-        (tc-check-cleanup-enum-decl
-          ctx
-          top-env
-          (tc-check-decl-scoped-name-id ctx name)
-          lifetimes
-          cleanup
-          variants)]
-      [(AstDecl.DefStruct name repr cleanup fields)
-        (tc-check-cleanup-struct-decl
-          ctx
-          top-env
-          (tc-check-decl-scoped-name-id ctx name)
-          repr
-          cleanup
-          fields)]
-      [(AstDecl.DefStructLifetimes name _ repr cleanup fields)
-        (tc-check-cleanup-struct-decl
-          ctx
-          top-env
-          (tc-check-decl-scoped-name-id ctx name)
-          repr
-          cleanup
-          fields)]
-      [(AstDecl.ComptimeDecl meta template-box)
-        (let
-          [template : AstDecl (box-get template-box)]
-          (match meta
-            [(AstGeneratedDeclMeta.Some _ _ _ _)
-              (tc-check-decl-with-global-env ctx top-env global-env template)]
-            [(AstGeneratedDeclMeta.No)
-              (match (tc-check-comptime-decl-purity ctx top-env template)
+      [_
+        (tc-check-decl-scoped ctx top-env global-env decl)])))
+
+(define (tc-check-nonfn-decl-with-global-env
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [global-env : TcTypeEnv]
+  [decl : AstDecl]) : ResultTcUnit
+  (match decl
+    [(AstDecl.Def _ maybe-ty expr-box)
+      (match maybe-ty
+        [(AstMaybeType.Some want)
+          (match (tc-expr-with-expected-or-actual-id
+            ctx
+            global-env
+            expr-box
+            (tc-resolve-type ctx want))
+            [(ResultTcType.Ok got)
+              (match (tc-expect
+                got
+                (tc-resolve-type ctx want)
+                "typecheck: value definition type mismatch")
                 [(ResultTcUnit.Ok)
-                  (tc-check-decl-with-global-env
-                    ctx
-                    top-env
+                  (tc-ensure-region-value-can-flow-into
                     global-env
-                    template)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]
-      [(AstDecl.Unsafe inner-box)
-        (let
-          [inner : AstDecl (box-get inner-box)]
-          (tc-check-decl-with-global-env ctx top-env global-env inner))]
-      [_ ResultTcUnit.Ok])))
+                    (tc-resolve-type ctx want)
+                    got
+                    "top-level value")]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+            [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
+        [(AstMaybeType.No)
+          (match (tc-expr-id ctx global-env expr-box)
+            [(ResultTcType.Ok _) ResultTcUnit.Ok]
+            [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
+    [(AstDecl.DefFn _ params ret body-box _)
+      ;; Unreachable via the dispatcher above; kept so a direct call can never
+      ;; silently skip a function body check.
+      (match (tc-elide-function-signature params ret)
+        [(ResultTcElidedSignature.Ok signature)
+          (tc-check-fn-decl-scoped
+            ctx
+            global-env
+            (struct-get signature params)
+            (struct-get signature ret)
+            body-box)]
+        [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
+    [(AstDecl.DefMacro name params ret body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (tc-check-defmacro name ctx top-env params ret body))]
+    [(AstDecl.Extern _ kind metadata ty)
+      (tc-check-extern-decl ctx kind (box-get metadata) ty)]
+    [(AstDecl.DefDispatch name variants)
+      (match (tc-dispatch-decl-type ctx name variants)
+        [(ResultTcType.Ok _) ResultTcUnit.Ok]
+        [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
+    [(AstDecl.DefEnum name cleanup variants)
+      (tc-check-cleanup-enum-decl
+        ctx
+        top-env
+        (tc-check-decl-scoped-name-id ctx name)
+        (ast-lifetime-list-new)
+        cleanup
+        variants)]
+    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
+      (tc-check-cleanup-enum-decl
+        ctx
+        top-env
+        (tc-check-decl-scoped-name-id ctx name)
+        lifetimes
+        cleanup
+        variants)]
+    [(AstDecl.DefStruct name repr cleanup fields)
+      (tc-check-cleanup-struct-decl
+        ctx
+        top-env
+        (tc-check-decl-scoped-name-id ctx name)
+        repr
+        cleanup
+        fields)]
+    [(AstDecl.DefStructLifetimes name _ repr cleanup fields)
+      (tc-check-cleanup-struct-decl
+        ctx
+        top-env
+        (tc-check-decl-scoped-name-id ctx name)
+        repr
+        cleanup
+        fields)]
+    [(AstDecl.ComptimeDecl meta template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match meta
+          [(AstGeneratedDeclMeta.Some _ _ _ _)
+            (tc-check-decl-with-global-env ctx top-env global-env template)]
+          [(AstGeneratedDeclMeta.No)
+            (match (tc-check-comptime-decl-purity ctx top-env template)
+              [(ResultTcUnit.Ok)
+                (tc-check-decl-with-global-env
+                  ctx
+                  top-env
+                  global-env
+                  template)]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]
+    [(AstDecl.Unsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tc-check-decl-with-global-env ctx top-env global-env inner))]
+    [_ ResultTcUnit.Ok]))
 
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (tc-check-decl-with-global-env
@@ -67807,6 +67930,7 @@
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin
     (tc-fn-scratch-arena-release!)
+    (tc-decl-scratch-arena-release!)
     (tc-body-early-exit-facts-abort!)
     (ctfe-builtin-reset!)
     (set! tc-stdlib-comptime-syntax-type-cache-generation -1)

@@ -1842,7 +1842,16 @@
       (ast-node-pools-state-install!
         (array-ref (struct-get pools expr-pool) 0)
         (array-ref (struct-get pools type-pool) 0))
-      (set! ast-node-pool-active-context pools)
+      ;; Update the persistent global struct's fields instead of assigning the
+      ;; struct value: the assignment heap-copies the struct in the CURRENT
+      ;; arena, leaving the global pointing into freed memory when the install
+      ;; runs inside a rewindable declaration/function scratch arena.
+      (set!
+        (struct-get ast-node-pool-active-context expr-pool)
+        (struct-get pools expr-pool))
+      (set!
+        (struct-get ast-node-pool-active-context type-pool)
+        (struct-get pools type-pool))
       (set! ast-node-pool-active-context-installed? true))))
 
 (define (ast-node-pool-context-expr-len [pools : AstNodePoolContext]) : i64

@@ -19,7 +19,7 @@
 ;;   control-flow edge.
 ;;
 ;; Out of scope: broad aggregate/String/array IR optimization.
-(import stdlib.io)
+(cfg compile-profile (import stdlib.io))
 (cfg compile-profile (import stdlib.profile))
 (import stdlib.array)
 (import stdlib.vector)
@@ -29829,6 +29829,472 @@
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
 
+;; --- Gep use-splitting for indexed memory operands --------------------------
+;;
+;; A Gep result feeding several memory operations (the quicksort swap: `g =
+;; Gep a, i; x = Load g; ...; Store g, y`) defeats the backend's single-use
+;; Gep+memop fusion, costing a lea per access. When EVERY use of a Gep is a
+;; Load/StorePtr address operand and the base/index are single-source (one
+;; definition each, so the address is identical at every use the Gep def
+;; dominates), clone the Gep per use: each Load/StorePtr gets its own
+;; single-use Gep, which the backend then fuses into an indexed memory
+;; operand. Non-address uses, non-SIB element scales, and multi-source
+;; bases/indices stay untouched. Verifier-gated with fallback like the other
+;; whole-function rewrites.
+;; One defining instruction per var (instruction destinations only; the
+;; caller seeds params): a var with exactly one source has a single,
+;; unchanging value wherever its def dominates, so an address derived from it
+;; is the same at every use.
+(define (opt-gep-split-defs-instrs!
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [counts : (Array i64)]) : unit
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    unit
+    (begin
+      (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
+        [(option_i64.Some dst)
+          (array-set! counts dst (+ (array-ref counts dst) 1))]
+        [(option_i64.None) unit])
+      (opt-gep-split-defs-instrs! instrs (+ index 1) counts))))
+
+(define (opt-gep-split-defs-blocks!
+  [blocks : CompilerIrBlockList]
+  [counts : (Array i64)]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-split-defs-instrs! instrs 0 counts)
+            (opt-gep-split-defs-blocks! (box-get rest) counts))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-gep-split-defs-blocks! (compiler-ir-block-seq-to-list seq) counts)]))
+
+(define (opt-gep-split-seed-params!
+  [params : CompilerIrParamList]
+  [counts : (Array i64)]) : unit
+  (match params
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param _ _ var)
+          (begin
+            (array-set! counts var (+ (array-ref counts var) 1))
+            (opt-gep-split-seed-params! (box-get rest) counts))])]
+    [(CompilerIrParamList.Array seq)
+      (opt-gep-split-seed-params! (compiler-ir-param-seq-to-list seq) counts)]))
+
+;; Memory-address uses only (Load src / StorePtr dst): counted per var so the
+;; all-uses-are-addresses test can compare against the total use count.
+(define (opt-gep-split-memuses-instrs!
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [memuses : (Array i64)]) : unit
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    unit
+    (begin
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.Load _ src _)
+          (match src
+            [(CompilerIrValue.Var v)
+              (array-set! memuses v (+ (array-ref memuses v) 1))]
+            [_ unit])]
+        [(CompilerIrInstr.StorePtr dst _ _)
+          (match dst
+            [(CompilerIrValue.Var v)
+              (array-set! memuses v (+ (array-ref memuses v) 1))]
+            [_ unit])]
+        ;; A Mov of the Gep result is replaced by a fresh Gep, so it counts as
+        ;; an address use too (its dst's role does not matter: the fresh Gep
+        ;; yields the same address value).
+        [(CompilerIrInstr.Mov _ src _)
+          (match src
+            [(CompilerIrValue.Var v)
+              (array-set! memuses v (+ (array-ref memuses v) 1))]
+            [_ unit])]
+        [_ unit])
+      (opt-gep-split-memuses-instrs! instrs (+ index 1) memuses))))
+
+(define (opt-gep-split-memuses-blocks!
+  [blocks : CompilerIrBlockList]
+  [memuses : (Array i64)]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-split-memuses-instrs! instrs 0 memuses)
+            (opt-gep-split-memuses-blocks! (box-get rest) memuses))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-gep-split-memuses-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        memuses)]))
+
+;; Record each SIB-scale Gep def's operands for cloning. marks[dst] = 1 means
+;; the parallel arrays hold a splittable Gep for dst.
+(define (opt-gep-split-geps-instrs!
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [bases : (Array CompilerIrValue)]
+  [offsets : (Array CompilerIrValue)]
+  [tys : (Array AstType)]
+  [marks : (Array i64)]) : unit
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    unit
+    (begin
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.Gep dst base offset elem-ty)
+          (let
+            [scale : i64 (opt-scratch-alloc-type-size elem-ty)]
+            (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
+              (begin
+                (array-set! bases dst base)
+                (array-set! offsets dst offset)
+                (array-set! tys dst elem-ty)
+                (array-set! marks dst 1))
+              unit))]
+        [_ unit])
+      (opt-gep-split-geps-instrs! instrs (+ index 1) bases offsets tys marks))))
+
+(define (opt-gep-split-geps-blocks!
+  [blocks : CompilerIrBlockList]
+  [bases : (Array CompilerIrValue)]
+  [offsets : (Array CompilerIrValue)]
+  [tys : (Array AstType)]
+  [marks : (Array i64)]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (begin
+            (opt-gep-split-geps-instrs! instrs 0 bases offsets tys marks)
+            (opt-gep-split-geps-blocks! (box-get rest) bases offsets tys marks))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-gep-split-geps-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        bases
+        offsets
+        tys
+        marks)]))
+
+;; A base/index operand is safe to re-evaluate at every use when it is not the
+;; Gep's own dst and has exactly one source (a literal is always fine).
+(define (opt-gep-split-source-ok?
+  [value : CompilerIrValue]
+  [self : i64]
+  [defs : (Array i64)]) : bool
+  (match value
+    [(CompilerIrValue.Var v) (and (!= v self) (= (array-ref defs v) 1))]
+    [_ true]))
+
+(define (opt-gep-split-candidate?
+  [v : i64]
+  [uses : (Array i64)]
+  [memuses : (Array i64)]
+  [defs : (Array i64)]
+  [marks : (Array i64)]
+  [bases : (Array CompilerIrValue)]
+  [offsets : (Array CompilerIrValue)]) : bool
+  (and
+    (= (array-ref marks v) 1)
+    (>= (array-ref uses v) 2)
+    ;; every use is a memory address (Load src / StorePtr dst): the total use
+    ;; count equals the address-use count.
+    (= (array-ref uses v) (array-ref memuses v))
+    (opt-gep-split-source-ok? (array-ref bases v) v defs)
+    (opt-gep-split-source-ok? (array-ref offsets v) v defs)))
+
+;; Compute the final candidate set: splittable Geps with >= 2 uses, all of
+;; them memory addresses, with single-source base/index. Fills every entry
+;; (no early exit) and returns whether any candidate exists.
+(define (opt-gep-split-candidates!
+  [cands : (Array i64)]
+  [uses : (Array i64)]
+  [memuses : (Array i64)]
+  [defs : (Array i64)]
+  [marks : (Array i64)]
+  [bases : (Array CompilerIrValue)]
+  [offsets : (Array CompilerIrValue)]
+  [v : i64]
+  [found : bool]) : bool
+  (if (< v 0)
+    found
+    (opt-gep-split-candidates!
+      cands
+      uses
+      memuses
+      defs
+      marks
+      bases
+      offsets
+      (- v 1)
+      (if (opt-gep-split-candidate? v uses memuses defs marks bases offsets)
+        (begin
+          (array-set! cands v 1)
+          true)
+        found))))
+
+;; One fresh single-use Gep immediately before its Load/StorePtr use.
+(define (opt-gep-split-rewrite-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [cands : (Array i64)]
+  [bases : (Array CompilerIrValue)]
+  [offsets : (Array CompilerIrValue)]
+  [tys : (Array AstType)]
+  [cell : (Array i64)]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(CompilerIrInstr.Load dst src ty)
+          (match src
+            [(CompilerIrValue.Var v)
+              (if (= (array-ref cands v) 1)
+                (let
+                  [fresh : i64 (opt-bce-version-alloc-var cell)]
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Gep
+                      fresh
+                      (array-ref bases v)
+                      (array-ref offsets v)
+                      (array-ref tys v))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Load dst (CompilerIrValue.Var fresh) ty)
+                      (opt-gep-split-rewrite-instrs
+                        instrs
+                        (+ index 1)
+                        cands
+                        bases
+                        offsets
+                        tys
+                        cell))))
+                (compiler-ir-instr-cons
+                  instr
+                  (opt-gep-split-rewrite-instrs
+                    instrs
+                    (+ index 1)
+                    cands
+                    bases
+                    offsets
+                    tys
+                    cell)))]
+            [_
+              (compiler-ir-instr-cons
+                instr
+                (opt-gep-split-rewrite-instrs
+                  instrs
+                  (+ index 1)
+                  cands
+                  bases
+                  offsets
+                  tys
+                  cell))])]
+        [(CompilerIrInstr.StorePtr dst value ty)
+          (match dst
+            [(CompilerIrValue.Var v)
+              (if (= (array-ref cands v) 1)
+                (let
+                  [fresh : i64 (opt-bce-version-alloc-var cell)]
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Gep
+                      fresh
+                      (array-ref bases v)
+                      (array-ref offsets v)
+                      (array-ref tys v))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.StorePtr
+                        (CompilerIrValue.Var fresh)
+                        value
+                        ty)
+                      (opt-gep-split-rewrite-instrs
+                        instrs
+                        (+ index 1)
+                        cands
+                        bases
+                        offsets
+                        tys
+                        cell))))
+                (compiler-ir-instr-cons
+                  instr
+                  (opt-gep-split-rewrite-instrs
+                    instrs
+                    (+ index 1)
+                    cands
+                    bases
+                    offsets
+                    tys
+                    cell)))]
+            [_
+              (compiler-ir-instr-cons
+                instr
+                (opt-gep-split-rewrite-instrs
+                  instrs
+                  (+ index 1)
+                  cands
+                  bases
+                  offsets
+                  tys
+                  cell))])]
+        [(CompilerIrInstr.Mov dst src mov-ty)
+          ;; `dst = Mov gep` becomes `dst = Gep base, offset`: the copy was
+          ;; just staging the address, so the fresh single-use Gep feeds the
+          ;; backend's indexed fusion directly.
+          (match src
+            [(CompilerIrValue.Var v)
+              (if (= (array-ref cands v) 1)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    dst
+                    (array-ref bases v)
+                    (array-ref offsets v)
+                    (array-ref tys v))
+                  (opt-gep-split-rewrite-instrs
+                    instrs
+                    (+ index 1)
+                    cands
+                    bases
+                    offsets
+                    tys
+                    cell))
+                (compiler-ir-instr-cons
+                  instr
+                  (opt-gep-split-rewrite-instrs
+                    instrs
+                    (+ index 1)
+                    cands
+                    bases
+                    offsets
+                    tys
+                    cell)))]
+            [_
+              (compiler-ir-instr-cons
+                instr
+                (opt-gep-split-rewrite-instrs
+                  instrs
+                  (+ index 1)
+                  cands
+                  bases
+                  offsets
+                  tys
+                  cell))])]
+        [_
+          (compiler-ir-instr-cons
+            instr
+            (opt-gep-split-rewrite-instrs
+              instrs
+              (+ index 1)
+              cands
+              bases
+              offsets
+              tys
+              cell))]))))
+
+(define (opt-gep-split-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [cands : (Array i64)]
+  [bases : (Array CompilerIrValue)]
+  [offsets : (Array CompilerIrValue)]
+  [tys : (Array AstType)]
+  [cell : (Array i64)]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              label
+              (opt-gep-split-rewrite-instrs
+                instrs
+                0
+                cands
+                bases
+                offsets
+                tys
+                cell))
+            (opt-gep-split-rewrite-blocks
+              (box-get rest)
+              cands
+              bases
+              offsets
+              tys
+              cell))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-gep-split-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        cands
+        bases
+        offsets
+        tys
+        cell)]))
+
+;; The experimental scratch-vreg planner (cfg-gated, CI-only) miscompiles the
+;; fused Gep+memop shapes this pass produces for opt-inline-slot-order (the
+;; Windows scratch-vreg bootstrap aborts with an array OOB compiling
+;; src/main.tl). Skip the pass under that cfg; the default planner emits the
+;; same clones correctly (326-test batch, benchmarks, and the Linux/Windows
+;; normal bootstraps all pass with the split enabled).
+(define (opt-gep-split-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (if (cfg scratch-vreg true false)
+    func
+    (opt-gep-split-function-inner func)))
+
+(define (opt-gep-split-function-inner [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
+        [memuses : (Array i64) (array.make-array i64 frame)]
+        [defs : (Array i64) (array.make-array i64 frame)]
+        [bases : (Array CompilerIrValue)
+          (array.make-array CompilerIrValue frame)]
+        [offsets : (Array CompilerIrValue)
+          (array.make-array CompilerIrValue frame)]
+        [tys : (Array AstType) (array.make-array AstType frame)]
+        [marks : (Array i64) (array.make-array i64 frame)]
+        [cands : (Array i64) (array.make-array i64 frame)]
+        [_uses : unit (opt-gep-split-memuses-blocks! blocks memuses)]
+        [_defs : unit
+          (begin
+            (opt-gep-split-seed-params! params defs)
+            (opt-gep-split-defs-blocks! blocks defs))]
+        [_geps : unit
+          (opt-gep-split-geps-blocks! blocks bases offsets tys marks)]
+        [any? : bool
+          (opt-gep-split-candidates!
+            cands
+            uses
+            memuses
+            defs
+            marks
+            bases
+            offsets
+            (- frame 1)
+            false)]
+        (if (not any?)
+          func
+          (let
+            [cell : (Array i64) (array.make-array i64 1)]
+            [_cell : unit (array-set! cell 0 frame)]
+            [next-blocks : CompilerIrBlockList
+              (opt-gep-split-rewrite-blocks blocks cands bases offsets tys cell)]
+            [next : CompilerIrFunction
+              (CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                (array-ref cell 0)
+                next-blocks)]
+            (match (opt-verify-function next)
+              [(ResultCompilerOptimizeVerify.Ok) next]
+              [(ResultCompilerOptimizeVerify.Err _) func]))))]))
+
 (define (optimize-function-once-with-summaries
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
@@ -30460,17 +30926,51 @@
                             name
                             _t-divrem-safety)
                           unit)]
+                      ;; Split multi-use Geps into per-use single-use Geps so
+                      ;; the backend's indexed-memory fusion fires on every
+                      ;; Load/StorePtr (the quicksort swap shape). DCE then
+                      ;; drops the now-unused original Gep defs.
+                      [_t-gep-split : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [gep-split : CompilerIrFunction
+                        (if run-heavy?
+                          (opt-gep-split-function
+                            (CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              unroll-frame
+                              divrem-safe))
+                          (CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            unroll-frame
+                            divrem-safe))]
+                      [_p-gep-split : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "gep_split"
+                            name
+                            _t-gep-split)
+                          unit)]
+                      [gep-split-frame : i64 (opt-function-frame gep-split)]
+                      [gep-split-blocks : CompilerIrBlockList
+                        (opt-function-blocks gep-split)]
                       [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [used : (Array i64)
-                        (opt-collect-blocks-uses-array unroll-frame divrem-safe)]
+                        (opt-collect-blocks-uses-array
+                          gep-split-frame
+                          gep-split-blocks)]
                       [dced : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           "dce"
                           name
                           params
                           ret-ty
-                          unroll-frame
-                          (opt-dce-block-list-array used divrem-safe))]
+                          gep-split-frame
+                          (opt-dce-block-list-array used gep-split-blocks))]
                       [_p-dce : unit
                         (cfg
                           compile-profile
@@ -30480,7 +30980,7 @@
                         name
                         params
                         ret-ty
-                        unroll-frame
+                        gep-split-frame
                         dced))]))]))])))
 
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
@@ -51935,6 +52435,100 @@
       [(not (= (opt-bce-version-test-block-checks out "then") 1)) 6]
       ;; the exit phi gained the parallel fast-edge input.
       [(not (= (opt-bce-version-test-exit-phi-inputs out "exit") 2)) 7]
+      [else 42])))
+
+;; --- Gep use-splitting self-tests --------------------------------------------
+(define (opt-gep-split-test-gep-count-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (opt-gep-split-test-gep-count-from
+      instrs
+      (+ index 1)
+      (+
+        acc
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.Gep _ _ _ _) 1]
+          [_ 0])))))
+
+(define (opt-gep-split-test-gep-count [blocks : CompilerIrBlockList]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (opt-gep-split-test-gep-count-from instrs 0 0)
+            (opt-gep-split-test-gep-count (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-gep-split-test-gep-count (compiler-ir-block-seq-to-list seq))]))
+
+;; One shared Gep feeding a Load and a StorePtr (the quicksort swap shape);
+;; `other-use` adds a BinOp consumer, which must leave the Gep untouched.
+(define (opt-gep-split-test-shared-blocks [other-use : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          3
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 0)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+          (compiler-ir-instr-cons
+            (if other-use
+              (CompilerIrInstr.BinOp
+                5
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.I64 1)
+                (AstType.I64))
+              (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64)))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 3)
+                (CompilerIrValue.Var 0)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+                (CompilerIrInstrList.Nil)))))))
+    (CompilerIrBlockList.Nil)))
+
+(define (compiler-optimize-gep-split-self-test) : i64
+  (let
+    [split : CompilerIrFunction
+      (opt-gep-split-function
+        (CompilerIrFunction.Function
+          (opt-test-symbol "gep_split_shared")
+          (opt-bce-version-test-params)
+          (AstType.I64)
+          8
+          (opt-gep-split-test-shared-blocks false)))]
+    [split-blocks : CompilerIrBlockList (opt-function-blocks split)]
+    [untouched : CompilerIrFunction
+      (opt-gep-split-function
+        (CompilerIrFunction.Function
+          (opt-test-symbol "gep_split_other_use")
+          (opt-bce-version-test-params)
+          (AstType.I64)
+          8
+          (opt-gep-split-test-shared-blocks true)))]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function split))) 1]
+      ;; the shared Gep is cloned per use (Load + StorePtr get one fresh
+      ;; single-use Gep each); the dead original is left for the pipeline's
+      ;; DCE, so the block holds 2 fresh + 1 dead = 3 Geps.
+      [(not (= (opt-gep-split-test-gep-count split-blocks) 3)) 2]
+      ;; a Gep with a non-address consumer (the BinOp) is not split.
+      [(not
+          (= (opt-gep-split-test-gep-count (opt-function-blocks untouched)) 1))
+        3]
+      [(not (opt-verify-ok? (opt-verify-function untouched))) 4]
       [else 42])))
 
 ;; --- multi-block versioning pipeline self-test --------------------------------------

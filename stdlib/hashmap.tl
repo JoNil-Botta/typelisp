@@ -3980,7 +3980,11 @@
     [first : i64 first-tombstone]
     (begin
       (while (< walked capacity)
-        (match (array-ref slots cursor)
+        (match (unsafe
+          (ptr-read
+            (ptr-offset
+              (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot))
+              cursor)))
           [(HashmapI64I64BackingEmpty)
             (return
               (HashmapI64I64BackingProbeAbsent
@@ -4403,7 +4407,11 @@
       ;; needs-grow? ran above, so the table holds at least one Empty slot:
       ;; the probe always terminates without a walked-count bound.
       (while true
-        (match (array-ref slots cursor)
+        (match (unsafe
+          (ptr-read
+            (ptr-offset
+              (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot))
+              cursor)))
           [(HashmapI64I64BackingEmpty)
             (let
               [index : i64
@@ -4531,7 +4539,11 @@
         (while (if (< walked capacity)
           (not done)
           false)
-          (match (array-ref slots cursor)
+          (match (unsafe
+            (ptr-read
+              (ptr-offset
+                (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot))
+                cursor)))
             [(HashmapI64I64BackingOccupied slot-key _ slot-hash)
               (if (if (= slot-hash hash)
                 (= slot-key key)
@@ -5827,7 +5839,13 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array-ref slots cursor)
+            (match (unsafe
+              (ptr-read
+                (ptr-offset
+                  (ptr-cast
+                    (array-data (struct-get map slots))
+                    : (Ptr HashmapI64I64BackingSlot))
+                  cursor)))
               [(HashmapI64I64BackingEmpty)
                 (return (HashmapI64I64BackingMissing))]
               [(HashmapI64I64BackingTombstone)
@@ -5916,6 +5934,11 @@
           (hashmap-i64-i64-backing-grow-capacity capacity-before))
         unit)
       (let
+        [data : (Ptr HashmapI64I64BackingSlot)
+          (unsafe
+            (ptr-cast
+              (array-data (struct-get map slots))
+              : (Ptr HashmapI64I64BackingSlot)))]
         [slots : (&mut map (Array HashmapI64I64BackingSlot))
           (&mut (struct-get map slots))]
         [capacity : i64 (array-length slots)]
@@ -5929,7 +5952,8 @@
             [first : i64 -1]
             (begin
               (while (< walked capacity)
-                (match (array-ref slots cursor)
+                (match (unsafe
+                  (ptr-read (ptr-offset data cursor)))
                   [(HashmapI64I64BackingEmpty)
                     (let
                       [index : i64

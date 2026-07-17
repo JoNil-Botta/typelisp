@@ -29250,20 +29250,10 @@
               0))]
         (<= net (opt-inline-cost-threshold))))))
 
-;; The tiny-predicate stitch is return-type agnostic: return values are
-;; collected as phi inputs and re-emitted at the continuation as a Mov or Phi
-;; typed by the call site's declared return type (the same mechanics the
-;; cost-based multiblock path uses for every SSA scalar). The gate only keeps
-;; out results whose call boundary the clone does not reproduce: owned String
-;; and aggregate results (which lower to sret), Unit (no value to stitch), and
-;; pointer-like scalars with cleanup semantics. Small integer scalars and Bool
-;; stitch exactly like the predicates this path was built for.
-(define (opt-inline-tiny-predicate-return-type? [ty : AstType]) : bool
-  (or
-    (opt-integer-type? ty)
-    (match ty
-      [(AstType.Bool) true]
-      [_ false])))
+(define (opt-inline-bool-type? [ty : AstType]) : bool
+  (match ty
+    [(AstType.Bool) true]
+    [_ false]))
 
 (define (opt-inline-tiny-predicate-instr-ok? [instr : CompilerIrInstr]) : bool
   (match instr
@@ -29359,7 +29349,7 @@
         [block-count : i64 (compiler-ir-block-list-count cblocks)]
         [instr-count : i64 (opt-inline-multiblock-cost-instrs cblocks)]
         (and
-          (opt-inline-tiny-predicate-return-type? ret)
+          (opt-inline-bool-type? ret)
           (not (opt-inline-census-address-taken? index census callee-name))
           (> (opt-inline-census-refcount index census callee-name) 1)
           (opt-inline-params-sequential? cparams 0)
@@ -41964,8 +41954,7 @@
   (inline-nonleaf i64)
   (external-helper i64)
   (inline-tiny-nonleaf-predicate i64)
-  (external-predicate i64)
-  (inline-tiny-i64-wrapper i64))
+  (external-predicate i64))
 
 (define (opt-inline-multi-test-symbols) : OptInlineMultiTestSymbols
   (OptInlineMultiTestSymbols
@@ -41978,8 +41967,7 @@
     (opt-test-symbol "inline_nonleaf")
     (opt-test-symbol "external_helper")
     (opt-test-symbol "inline_tiny_nonleaf_predicate")
-    (opt-test-symbol "external_predicate")
-    (opt-test-symbol "inline_tiny_i64_wrapper")))
+    (opt-test-symbol "external_predicate")))
 
 (define (opt-inline-branch-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -42165,142 +42153,6 @@
               2)
             (=
               (opt-count-direct-call-name-blocks blocks "inline_tiny_predicate")
-              0)
-            (opt-inline-structure-ok? blocks)))]
-      [(OptMaybeFunction.No) false])))
-
-(define (opt-inline-tiny-i64-wrapper-callee
-  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
-  (CompilerIrFunction.Function
-    (struct-get symbols inline-tiny-i64-wrapper)
-    (compiler-ir-param-cons
-      (CompilerIrParam.Param "value" (AstType.I64) 0)
-      (compiler-ir-param-cons
-        (CompilerIrParam.Param "fallback" (AstType.I64) 1)
-        CompilerIrParamList.Nil))
-    (AstType.I64)
-    3
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        "entry"
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.BinOp
-            2
-            (CompilerIrBinOp.Lt)
-            (CompilerIrValue.Var 0)
-            (CompilerIrValue.I64 0)
-            (AstType.Bool))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "neg" "pos")
-            CompilerIrInstrList.Nil)))
-      (compiler-ir-block-cons
-        (compiler-ir-block
-          "neg"
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Return
-              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
-            CompilerIrInstrList.Nil))
-        (compiler-ir-block-cons
-          (compiler-ir-block
-            "pos"
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Return
-                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
-              CompilerIrInstrList.Nil))
-          CompilerIrBlockList.Nil)))))
-
-(define (opt-inline-tiny-i64-wrapper-caller
-  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
-  (CompilerIrFunction.Function
-    (struct-get symbols main)
-    CompilerIrParamList.Nil
-    (AstType.I64)
-    2
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        "entry"
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.Call
-            0
-            (struct-get symbols inline-tiny-i64-wrapper)
-            (CompilerIrCallArgs.Two
-              (CompilerIrValue.I64 7)
-              (CompilerIrValue.I64 -1))
-            (AstType.I64))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Jump "second")
-            CompilerIrInstrList.Nil)))
-      (compiler-ir-block-cons
-        (compiler-ir-block
-          "second"
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Call
-              1
-              (struct-get symbols inline-tiny-i64-wrapper)
-              (CompilerIrCallArgs.Two
-                (CompilerIrValue.I64 12)
-                (CompilerIrValue.I64 3))
-              (AstType.I64))
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Return
-                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
-              CompilerIrInstrList.Nil)))
-        CompilerIrBlockList.Nil))))
-
-(define (opt-inline-tiny-i64-wrapper-functions
-  [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
-  (compiler-ir-function-cons
-    (opt-inline-tiny-i64-wrapper-caller symbols)
-    (compiler-ir-function-cons
-      (opt-inline-tiny-i64-wrapper-callee symbols)
-      CompilerIrFunctionList.Nil)))
-
-(define (compiler-optimize-inline-tiny-i64-wrapper-ok?) : bool
-  (let
-    [level0-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [level1-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [level2-symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
-    [level0 : CompilerIrFunctionList
-      (opt-inline-program-functions
-        (opt-inline-tiny-i64-wrapper-functions level0-symbols)
-        0)]
-    [level1 : CompilerIrFunctionList
-      (opt-inline-program-functions
-        (opt-inline-tiny-i64-wrapper-functions level1-symbols)
-        1)]
-    [level2 : CompilerIrFunctionList
-      (opt-inline-program-functions
-        (opt-inline-tiny-i64-wrapper-functions level2-symbols)
-        2)]
-    (match (opt-function-list-find level2 "main")
-      [(OptMaybeFunction.Some main)
-        (let
-          [blocks : CompilerIrBlockList (opt-function-blocks main)]
-          (and
-            (opt-inline-tiny-predicate-return-type? (AstType.Bool))
-            (opt-inline-tiny-predicate-return-type? (AstType.I64))
-            (opt-inline-tiny-predicate-return-type? (AstType.U8))
-            (not (opt-inline-tiny-predicate-return-type? (AstType.Unit)))
-            (not (opt-inline-tiny-predicate-return-type? (AstType.String)))
-            (not
-              (opt-inline-tiny-predicate-return-type?
-                (ast-ty-mut-ptr (AstType.I64))))
-            (=
-              (opt-count-direct-call-name-function-list
-                level0
-                "main"
-                "inline_tiny_i64_wrapper")
-              2)
-            (=
-              (opt-count-direct-call-name-function-list
-                level1
-                "main"
-                "inline_tiny_i64_wrapper")
-              2)
-            (=
-              (opt-count-direct-call-name-blocks
-                blocks
-                "inline_tiny_i64_wrapper")
               0)
             (opt-inline-structure-ok? blocks)))]
       [(OptMaybeFunction.No) false])))
@@ -43174,9 +43026,6 @@
                     (unless
                       (compiler-optimize-inline-multiblock-return-gate-ok?)
                       (return 49))
-                    (unless
-                      (compiler-optimize-inline-tiny-i64-wrapper-ok?)
-                      (return 50))
                     42))]
               [(OptMaybeFunction.No) 41])))]
       [(OptMaybeFunction.No) 43])))
@@ -48678,8 +48527,7 @@
           [(CompilerIrBlock.Block _ instrs)
             (cond
               ;; the sixteen chained *5 collapse into one *152587890625 ...
-              [(not (opt-affine-test-seq-has-mul-by? instrs 0 152587890625))
-                fail-mul]
+              [(not (opt-affine-test-seq-has-mul-by? instrs 0 152587890625)) fail-mul]
               ;; ... and DCE drops the orphaned intermediate pairs.
               [(> (opt-affine-test-seq-count-mul instrs 0 0) 1) fail-count]
               [else 42])])])))

@@ -13171,15 +13171,130 @@
         reachable
         doms)]))
 
+;; Allocation-free natural-loop scan for Array block lists: walks the block
+;; seq directly and reads each block's successor row from the context's CSR
+;; index instead of consing a seq->list copy and recomputing per-block
+;; successor sets from instructions. The CSR row holds exactly the
+;; deduplicated opt-cfg-block-successors-with-next set in reverse insertion
+;; order (opt-label-add prepends; opt-cfg-csr-fill-rows! reverses the row),
+;; so iterating blocks from last to first and each CSR row forward while
+;; front-consing emits loops in precisely the order the cons-list scan
+;; produced. Reachability and ids come from the same index the set scan
+;; consulted (the reachable set is built from this reachable array).
+(define (opt-cfg-natural-loop-edges-csr
+  [all-blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [pred-map : OptPredMap]
+  [reachable : OptLabelSet]
+  [doms : OptDomInfo]
+  [source-id : i64]
+  [source : String]
+  [edge : i64]
+  [end : i64]
+  [acc : OptNaturalLoopList]) : OptNaturalLoopList
+  (if (>= edge end)
+    acc
+    (let
+      [header-id : i64
+        (array-ref (struct-get (struct-get index succs) edges) edge)]
+      [next-acc : OptNaturalLoopList
+        (if (and
+          (>= header-id 0)
+          (< header-id (array-length (struct-get index reachable))))
+          (if (and
+            (array-ref (struct-get index reachable) header-id)
+            (opt-dom-info-dominates-id? doms header-id source-id))
+            (OptNaturalLoopList.Cons
+              (opt-natural-loop-build
+                all-blocks
+                pred-map
+                reachable
+                (array-ref (struct-get index labels) header-id)
+                source)
+              (box acc))
+            acc)
+          acc)]
+      (opt-cfg-natural-loop-edges-csr
+        all-blocks
+        index
+        pred-map
+        reachable
+        doms
+        source-id
+        source
+        (+ edge 1)
+        end
+        next-acc))))
+
+(define (opt-cfg-natural-loop-block-seq-csr
+  [all-blocks : CompilerIrBlockList]
+  [seq : CompilerIrBlockSeq]
+  [pos : i64]
+  [context : OptCfgContext]
+  [pred-map : OptPredMap]
+  [reachable : OptLabelSet]
+  [doms : OptDomInfo]
+  [acc : OptNaturalLoopList]) : OptNaturalLoopList
+  (if (< pos 0)
+    acc
+    (match (compiler-ir-block-seq-ref seq pos)
+      [(CompilerIrBlock.Block label _)
+        (let
+          [index : OptCfgIndex (struct-get context index)]
+          [next-acc : OptNaturalLoopList
+            (match (opt-cfg-index-id index label)
+              [(option_i64.Some source-id)
+                (if (and
+                  (>= source-id 0)
+                  (< source-id (array-length (struct-get index reachable))))
+                  (opt-cfg-natural-loop-edges-csr
+                    all-blocks
+                    index
+                    pred-map
+                    reachable
+                    doms
+                    source-id
+                    label
+                    (array-ref
+                      (struct-get (struct-get index succs) offsets)
+                      source-id)
+                    (array-ref
+                      (struct-get (struct-get index succs) offsets)
+                      (+ source-id 1))
+                    acc)
+                  acc)]
+              [(option_i64.None) acc])]
+          (opt-cfg-natural-loop-block-seq-csr
+            all-blocks
+            seq
+            (- pos 1)
+            context
+            pred-map
+            reachable
+            doms
+            next-acc))])))
+
 (define (opt-cfg-natural-loops-with-context
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]) : OptNaturalLoopList
-  (opt-cfg-natural-loop-blocks
-    blocks
-    blocks
-    (struct-get context pred-map)
-    (struct-get context reachable)
-    (struct-get context doms)))
+  (match blocks
+    [(CompilerIrBlockList.Array seq)
+      (opt-cfg-natural-loop-block-seq-csr
+        blocks
+        seq
+        (- (compiler-ir-block-seq-count seq) 1)
+        context
+        (struct-get context pred-map)
+        (struct-get context reachable)
+        (struct-get context doms)
+        (OptNaturalLoopList.Nil))]
+    [_
+      (opt-cfg-natural-loop-blocks
+        blocks
+        blocks
+        (struct-get context pred-map)
+        (struct-get context reachable)
+        (struct-get context doms))]))
 
 (define (opt-cfg-natural-loops [blocks : CompilerIrBlockList]) : OptNaturalLoopList
   (opt-cfg-natural-loops-with-context blocks (opt-cfg-context-build blocks)))
@@ -19008,6 +19123,22 @@
         (array-ref slots var)
         (OptSccpValue.Unknown))]))
 
+;; Whether any lattice slot still holds a Const at analysis end.
+;; opt-sccp-rewrite-value substitutes only OptSccpValue.Const hits, so when
+;; this is false the whole rewrite is the identity and the caller can skip
+;; rebuilding every block. Read once at analysis end: equivalent to tracking
+;; an any-const flag through the opt-sccp-env-set bind sites, but exact
+;; rather than conservative -- a Const later joined to Overdefined does not
+;; keep the rewrite alive.
+(define (opt-sccp-env-any-const? [env : OptSccpEnv] [index : i64]) : bool
+  (match env
+    [(OptSccpEnv.Env cap slots)
+      (if (>= index cap)
+        false
+        (match (array-ref slots index)
+          [(OptSccpValue.Const _ _) true]
+          [_ (opt-sccp-env-any-const? env (+ index 1))]))]))
+
 ;; Mutates the shared lattice array in place and returns the same env. The
 ;; environment is threaded linearly through the monotone analysis, so in-place
 ;; update is observationally identical to the old persistent cons/remove.
@@ -19394,6 +19525,37 @@
       (opt-sccp-env-from-params params (opt-sccp-env-make (+ max-var 1)))
       true)))
 
+;; Frame-sized variant: var ids are dense below the function's frame field
+;; (the lowerer's next-var counter, the same invariant regalloc relies on),
+;; so frame is an exact-or-larger upper bound for the walked max-var.
+;; opt-sccp-env-set silently drops out-of-range writes and out-of-range
+;; lookups return Unknown either way, so sizing by frame is
+;; behavior-identical to sizing by the whole-function max-var walks.
+(define (opt-sccp-initial-state-with-frame
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [frame : i64]) : OptSccpState
+  (let
+    [executable-count : i64
+      (opt-cfg-index-block-count (struct-get context index))]
+    [executable-flags : (Array bool) (array.make-array bool executable-count)]
+    [_clear-executable : unit
+      (opt-cfg-fill-bool! executable-flags executable-count false)]
+    [_entry : unit
+      (match (opt-cfg-index-id
+        (struct-get context index)
+        (struct-get context entry-label))
+        [(option_i64.Some entry-id)
+          (if (and (>= entry-id 0) (< entry-id executable-count))
+            (array-set! executable-flags entry-id true)
+            unit)]
+        [(option_i64.None) unit])]
+    (OptSccpState.State
+      (struct-get context index)
+      executable-flags
+      (opt-sccp-env-from-params params (opt-sccp-env-make frame))
+      true)))
+
 (define (opt-sccp-analyze-fixed
   [blocks : CompilerIrBlockList]
   [state : OptSccpState]
@@ -19419,6 +19581,18 @@
   (opt-sccp-analyze-fixed
     blocks
     (opt-sccp-initial-state context params blocks)
+    (+
+      (+ (compiler-ir-block-list-count blocks) 8)
+      (* 2 (compiler-ir-block-list-instruction-count blocks)))))
+
+(define (opt-sccp-analyze-with-frame
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : OptSccpState
+  (opt-sccp-analyze-fixed
+    blocks
+    (opt-sccp-initial-state-with-frame context params frame)
     (+
       (+ (compiler-ir-block-list-count blocks) 8)
       (* 2 (compiler-ir-block-list-instruction-count blocks)))))
@@ -19921,7 +20095,11 @@
     [context : OptCfgContext (opt-cfg-context-build blocks)]
     (match (opt-sccp-analyze context params blocks)
       [(OptSccpState.State _ _ env _)
-        (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))])))
+        (if (opt-sccp-env-any-const? env 0)
+          (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
+          ;; No constants bound anywhere: the rewrite is the identity, so
+          ;; the simplify sees the input blocks either way.
+          (opt-cfg-simplify-blocks blocks))])))
 
 (define (opt-sccp-blocks-with-context-result
   [context : OptCfgContext]
@@ -19929,11 +20107,64 @@
   [blocks : CompilerIrBlockList]) : OptBlockCtxResult
   (match (opt-sccp-analyze context params blocks)
     [(OptSccpState.State _ _ env _)
-      (opt-cfg-simplify-blocks-with-context-result
+      (if (opt-sccp-env-any-const? env 0)
+        (opt-cfg-simplify-blocks-with-context-result
+          (OptBlockCtxResult.Result
+            (opt-sccp-rewrite-blocks env blocks)
+            context
+            (not (opt-sccp-blocks-change-successors? env blocks))))
+        ;; No constants: the rewrite is the identity and no branch condition
+        ;; can have folded to a literal, so the context is valid as-is.
+        (opt-cfg-simplify-blocks-with-context-result
+          (OptBlockCtxResult.Result blocks context true)))]))
+
+;; Pipeline entry point that skips the nested cfg-simplify: the pipeline's own
+;; cfg pass runs immediately after sccp and canonicalizes once (literal
+;; branches folded, unreachable blocks filtered, phis cleaned -- a second
+;; application is a no-op), so simplifying here duplicated that stage
+;; back-to-back. opt-sccp-blocks-with-context-result keeps the nested
+;; simplify for the sccp self-test, which pins it. The context stays valid
+;; for the rewrite output exactly when no branch condition folded to a
+;; literal (opt-sccp-blocks-change-successors?).
+;; Pipeline entry point that skips the nested cfg-simplify: the pipeline's own
+;; cfg pass runs immediately after sccp and canonicalizes once (literal
+;; branches folded, unreachable blocks filtered, phis cleaned -- a second
+;; application is a no-op), so simplifying here duplicated that stage
+;; back-to-back. opt-sccp-blocks-with-context-result keeps the nested
+;; simplify for the sccp self-test, which pins it. The context stays valid
+;; for the rewrite output exactly when no branch condition folded to a
+;; literal (opt-sccp-blocks-change-successors?). The lattice env is sized by
+;; the function frame (dense var ids), skipping the max-var walks.
+(define (opt-sccp-blocks-with-context-result-raw
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : OptBlockCtxResult
+  (match (opt-sccp-analyze-with-frame context params blocks frame)
+    [(OptSccpState.State _ _ env _)
+      (if (opt-sccp-env-any-const? env 0)
         (OptBlockCtxResult.Result
           (opt-sccp-rewrite-blocks env blocks)
           context
-          (not (opt-sccp-blocks-change-successors? env blocks))))]))
+          (not (opt-sccp-blocks-change-successors? env blocks)))
+        ;; No constants: the rewrite is the identity and the context is
+        ;; valid as-is (no branch condition can have folded to a literal).
+        (OptBlockCtxResult.Result blocks context true))]))
+
+;; Non-heavy pipeline entry point: identical to opt-sccp-blocks (nested
+;; cfg-simplify included) but sizes the lattice env by the function frame
+;; instead of walking the whole function for max-var.
+(define (opt-sccp-blocks-with-frame
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : CompilerIrBlockList
+  (let
+    [context : OptCfgContext (opt-cfg-context-build blocks)]
+    (match (opt-sccp-analyze-with-frame context params blocks frame)
+      [(OptSccpState.State _ _ env _)
+        (if (opt-sccp-env-any-const? env 0)
+          (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
+          (opt-cfg-simplify-blocks blocks))])))
 
 (defenum OptFunctionPassResult
   (Result CompilerIrFunction bool))
@@ -31582,12 +31813,16 @@
                       [_t-sccp : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
                         (if run-heavy?
-                          (opt-sccp-blocks-with-context-result
+                          (opt-sccp-blocks-with-context-result-raw
                             ssa-context
                             params
-                            bounds-dom)
+                            bounds-dom
+                            ssa-frame)
                           (OptBlockCtxResult.Result
-                            (opt-sccp-blocks params bounds-dom)
+                            (opt-sccp-blocks-with-frame
+                              params
+                              bounds-dom
+                              ssa-frame)
                             (opt-cfg-context-empty)
                             false))]
                       [sccp : CompilerIrBlockList

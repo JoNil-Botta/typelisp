@@ -51463,6 +51463,353 @@
     [(TcBorrowCheckResult.Ok _) ResultTcUnit.Ok]
     [(TcBorrowCheckResult.Err message) (ResultTcUnit.Err message)]))
 
+;; --- borrow-check relevance gate --------------------------------------------
+;;
+;; The borrow checker can only fire on borrow-relevant constructs: `&` borrow
+;; creation, box-take consumption, `with-region` blocks, calls to functions
+;; whose signature mentions a region, and region-typed parameters/results
+;; (which seed borrowed places). A body with none of those checks out as a pure
+;; pass-through (measured: 72.6% of self-compile bodies), so the gate answers
+;; `Ok` without walking. A call whose recorded callee type (the body type
+;; facts from the tc-expr walk) contains no region keeps its Fallback lifetime
+;; handling, which cannot error either; a fact Miss stays conservative.
+(define (tc-borrow-gate-call-has-region? [func-id : i64]) : bool
+  (match (tc-body-type-fact-lookup func-id)
+    [(TcBodyTypeFact.Hit fn-ty) (tc-type-contains-any-region fn-ty)]
+    [(TcBodyTypeFact.Miss) true]))
+
+(define (tc-borrow-gate-expr-ty-has-region? [expr-id : i64]) : bool
+  (match (tc-body-type-fact-lookup expr-id)
+    [(TcBodyTypeFact.Hit ty) (tc-type-contains-any-region ty)]
+    [(TcBodyTypeFact.Miss) true]))
+
+(define (tc-borrow-gate-exprs-relevant? [ctx : TcContext] [exprs : AstExprList]) : bool
+  (let
+    [i : i64 0]
+    [count : i64 (ast-expr-list-len (& exprs))]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i count))
+        (if (tc-borrow-gate-expr-relevant?
+          ctx
+          (ast-node-get (ast-expr-list-get (& exprs) i 0)))
+          (set! found true)
+          (set! i (+ i 1))))
+      found)))
+
+(define (tc-borrow-gate-let-bindings-relevant?
+  [ctx : TcContext]
+  [bindings : AstLetBindingList]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len (& bindings)))
+    false
+    (match (ast-let-binding-list-get
+      (& bindings)
+      index
+      (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ maybe-ty init-box)
+        (or
+          (match maybe-ty
+            [(AstMaybeType.Some ty)
+              (tc-type-contains-any-region (tc-resolve-type ctx ty))]
+            [(AstMaybeType.No) false])
+          (tc-borrow-gate-expr-relevant? ctx (ast-node-get init-box))
+          (tc-borrow-gate-let-bindings-relevant? ctx bindings (+ index 1)))])))
+
+(define (tc-borrow-gate-match-arms-relevant?
+  [ctx : TcContext]
+  [arms : AstMatchArmList]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len (& arms)))
+    false
+    (match (ast-match-arm-list-get (& arms) index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm _ body-box)
+        (or
+          (tc-borrow-gate-expr-relevant? ctx (ast-node-get body-box))
+          (tc-borrow-gate-match-arms-relevant? ctx arms (+ index 1)))])))
+
+(define (tc-borrow-gate-resource-bindings-relevant?
+  [ctx : TcContext]
+  [bindings : AstResourceBindingList]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len (& bindings)))
+    false
+    (match (ast-resource-binding-list-get
+      (& bindings)
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ _ init-box)
+        (or
+          (tc-borrow-gate-expr-relevant? ctx (ast-node-get init-box))
+          (tc-borrow-gate-resource-bindings-relevant? ctx bindings (+ index 1)))])))
+
+(define (tc-borrow-gate-expr-relevant? [ctx : TcContext] [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.Literal _) false]
+    [(AstExpr.BinaryData _) false]
+    [(AstExpr.Var _) false]
+    [(AstExpr.Binary _ left-box right-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get left-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get right-box)))]
+    [(AstExpr.Unary _ inner-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.Call func-box args)
+      (or
+        (tc-borrow-gate-call-has-region? func-box)
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get func-box))
+        (tc-borrow-gate-exprs-relevant? ctx args))]
+    [(AstExpr.BracketClause items) (tc-borrow-gate-exprs-relevant? ctx items)]
+    [(AstExpr.TypeLiteral _) false]
+    [(AstExpr.Init _) false]
+    [(AstExpr.If cond-box then-box else-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get cond-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get then-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get else-box)))]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body-box)
+          (or
+            (tc-borrow-gate-let-bindings-relevant? ctx bindings 0)
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get body-box)))])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda params _ body-box)
+          (or
+            (tc-borrow-gate-params-relevant? ctx params)
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get body-box)))])]
+    [(AstExpr.Tuple exprs) (tc-borrow-gate-exprs-relevant? ctx exprs)]
+    [(AstExpr.TupleRef tuple-box _)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get tuple-box))]
+    [(AstExpr.Array exprs) (tc-borrow-gate-exprs-relevant? ctx exprs)]
+    [(AstExpr.DynArray exprs) (tc-borrow-gate-exprs-relevant? ctx exprs)]
+    [(AstExpr.MakeArray _ len-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get len-box))]
+    [(AstExpr.ArrayRef array-box index-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get array-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get index-box)))]
+    [(AstExpr.ArraySet array-box index-box value-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get array-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get index-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box)))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get array-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get live-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get index-box)))]
+    [(AstExpr.ArrayPush array-box value-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get array-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box)))]
+    [(AstExpr.StringRef str-box index-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get str-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get index-box)))]
+    [(AstExpr.While cond-box body-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get cond-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get body-box)))]
+    [(AstExpr.Begin exprs) (tc-borrow-gate-exprs-relevant? ctx exprs)]
+    [(AstExpr.Unsafe exprs) (tc-borrow-gate-exprs-relevant? ctx exprs)]
+    [(AstExpr.Set _ value-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box))]
+    [(AstExpr.Ann inner-box _)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.Cast inner-box _)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.Borrow _ _ _) true]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee-box arms)
+          (or
+            (tc-borrow-gate-expr-ty-has-region? scrutinee-box)
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get scrutinee-box))
+            (tc-borrow-gate-match-arms-relevant? ctx arms 0))])]
+    [(AstExpr.Foreach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach.Foreach _ _ start-box end-box body-box)
+          (or
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get start-box))
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get end-box))
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get body-box)))])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
+          (or
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get start-box))
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get end-box))
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get init-box))
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box)))])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan
+            _
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            value-box
+            body-box)
+          (or
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get start-box))
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get end-box))
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get init-box))
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box))
+            (tc-borrow-gate-expr-relevant? ctx (ast-node-get body-box)))])]
+    [(AstExpr.SpmdBroadcast value-box lane-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get lane-box)))]
+    [(AstExpr.SpmdShuffle value-box lane-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get lane-box)))]
+    [(AstExpr.SpmdProgramIndex) false]
+    [(AstExpr.SpmdProgramCount) false]
+    [(AstExpr.StructGet receiver-box _)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get receiver-box))]
+    [(AstExpr.StructSet receiver-box _ value-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get receiver-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box)))]
+    [(AstExpr.WithRegion _ _) true]
+    [(AstExpr.WithEscape scratch-box body)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get scratch-box))
+        (tc-borrow-gate-exprs-relevant? ctx body))]
+    [(AstExpr.WithScratch body) (tc-borrow-gate-exprs-relevant? ctx body)]
+    [(AstExpr.InArena arena-box body)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get arena-box))
+        (tc-borrow-gate-exprs-relevant? ctx body))]
+    [(AstExpr.WithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource.WithResource bindings body)
+          (or
+            (tc-borrow-gate-resource-bindings-relevant? ctx bindings 0)
+            (tc-borrow-gate-exprs-relevant? ctx body))])]
+    [(AstExpr.Box inner-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.BoxGet inner-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.BoxTake _) true]
+    [(AstExpr.BoxSet inner-box value-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box)))]
+    [(AstExpr.Comptime inner-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.Quote _) false]
+    [(AstExpr.Quasiquote _) false]
+    [(AstExpr.Unquote _) false]
+    [(AstExpr.UnquoteSplicing _) false]
+    [(AstExpr.Try inner-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.Return value-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box))]
+    [(AstExpr.Break) false]
+    [(AstExpr.Continue) false]
+    [(AstExpr.PtrNull _) false]
+    [(AstExpr.PtrNullCheck ptr-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get ptr-box))]
+    [(AstExpr.PtrAddrOf place-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get place-box))]
+    [(AstExpr.PtrRead ptr-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get ptr-box))]
+    [(AstExpr.PtrWrite ptr-box value-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get ptr-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box)))]
+    [(AstExpr.PtrOffset ptr-box offset-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get ptr-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get offset-box)))]
+    [(AstExpr.PtrCast ptr-box _)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get ptr-box))]
+    [(AstExpr.PtrToInt ptr-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get ptr-box))]
+    [(AstExpr.IntToPtr value-box _)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get value-box))]
+    [(AstExpr.StringData inner-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.StringFromBytes ptr-box len-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get ptr-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get len-box)))]
+    [(AstExpr.ArrayData inner-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get inner-box))]
+    [(AstExpr.ProgramArgc) false]
+    [(AstExpr.ProgramArgv) false]
+    [(AstExpr.ProgramEnvp) false]
+    [(AstExpr.CpuIdEax a-box b-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get a-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get b-box)))]
+    [(AstExpr.CpuIdEbx a-box b-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get a-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get b-box)))]
+    [(AstExpr.CpuIdEcx a-box b-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get a-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get b-box)))]
+    [(AstExpr.CpuIdEdx a-box b-box)
+      (or
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get a-box))
+        (tc-borrow-gate-expr-relevant? ctx (ast-node-get b-box)))]
+    [(AstExpr.Xgetbv index-box)
+      (tc-borrow-gate-expr-relevant? ctx (ast-node-get index-box))]
+    [(AstExpr.Syscall exprs) (tc-borrow-gate-exprs-relevant? ctx exprs)]
+    [_ true]))
+
+;; Region-typed parameters or results seed borrowed places, so the check must
+;; run whenever a param or the return type mentions a region.
+(define (tc-borrow-gate-params-relevant?
+  [ctx : TcContext]
+  [params : AstParamList]) : bool
+  (let
+    [i : i64 0]
+    [count : i64 (ast-param-list-len (& params))]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< i count))
+        (match (ast-param-list-get (& params) i (ast-param-fallback))
+          [(AstParam.Param _ ty _ _)
+            (if (tc-type-contains-any-region (tc-resolve-type ctx ty))
+              (set! found true)
+              (set! i (+ i 1)))])
+        unit)
+      found)))
+
+(define (tc-borrow-check-body-irrelevant?
+  [ctx : TcContext]
+  [params : AstParamList]
+  [ret : AstType]
+  [body-id : i64]) : bool
+  (if (tc-borrow-gate-params-relevant? ctx params)
+    false
+    (if (tc-type-contains-any-region (tc-resolve-type ctx ret))
+      false
+      (not (tc-borrow-gate-expr-relevant? ctx (ast-node-get body-id))))))
+
+(define (tc-borrow-check-body-id-with-ret
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [ret : AstType]
+  [body-id : i64]) : ResultTcUnit
+  (if (tc-borrow-check-body-irrelevant? ctx params ret body-id)
+    ResultTcUnit.Ok
+    (tc-borrow-check-body-id ctx env params body-id)))
+
 (define (tc-borrow-check-body-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -68014,7 +68361,12 @@
                       [(ResultTcUnit.Ok)
                         (let
                           [result : ResultTcUnit
-                            (tc-borrow-check-body-id ctx env params body-box)]
+                            (tc-borrow-check-body-id-with-ret
+                              ctx
+                              env
+                              params
+                              ret
+                              body-box)]
                           (begin
                             (match result
                               [(ResultTcUnit.Ok)

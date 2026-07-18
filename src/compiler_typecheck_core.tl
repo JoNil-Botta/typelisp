@@ -61749,6 +61749,7 @@
         env))))
 
 (define (macro-rewrite-generated-import-call-with-decl
+  [ctx : TcContext]
   [func-box : i64]
   [args : AstExprList]
   [env : CtfeEnv]
@@ -61756,9 +61757,14 @@
   [maybe-decl : MacroMaybeDecl]) : i64
   (match maybe-decl
     [(MacroMaybeDecl.Some _ _ _ params _ _)
-      (ast-expr-call
-        func-box
-        (macro-generated-import-type-args params args env))]
+      (let
+        [rewritten : i64
+          (ast-expr-call
+            func-box
+            (macro-generated-import-type-args params args env))]
+        (begin
+          (tc-context-capture-active-pools! ctx)
+          rewritten))]
     [(MacroMaybeDecl.No) fallback]))
 
 (define (macro-rewrite-generated-import-direct-call
@@ -61795,15 +61801,21 @@
                   (match maybe-decl
                     [(MacroMaybeDecl.Some _ _ _ _ _ _)
                       (macro-rewrite-generated-import-call-with-decl
+                        ctx
                         func-box
                         args
                         env
                         fallback
                         maybe-decl)]
                     [(MacroMaybeDecl.No)
-                      (ast-expr-call
-                        func-box
-                        (macro-generated-type-param-expr-list env args))])]
+                      (let
+                        [rewritten : i64
+                          (ast-expr-call
+                            func-box
+                            (macro-generated-type-param-expr-list env args))]
+                        (begin
+                          (tc-context-capture-active-pools! ctx)
+                          rewritten))])]
                 [(ResultMacroCallDecl.Err _) fallback])]
             [(TcMaybeNameId.No) fallback])))]
     [_ fallback]))
@@ -61835,6 +61847,7 @@
               (match maybe-decl
                 [(MacroMaybeDecl.Some _ _ _ _ _ _)
                   (macro-rewrite-generated-import-call-with-decl
+                    ctx
                     func-box
                     args
                     env

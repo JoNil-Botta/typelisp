@@ -861,12 +861,12 @@ fi
 
 # Plan P1 single-compilation invariant: three separate modules import the same
 # (vector i64) instantiation. The program-global memo materializes/typechecks
-# that identity exactly once, so the two later importers are memo hits. A global
-# counter cannot isolate a single identity, but with three identical imports at
-# least two of them must resolve through the memo, and at least one module must
-# have been materialized. The vector catalog currently exceeds the large-catalog
-# cutoff and is materialized in full, so ordinary typechecking validates all of
-# it and the separate partial-catalog shadow-validation counter remains zero.
+# that identity exactly once, so the two later importers are memo hits. Vector
+# contains uses the shared generated equality module, so the compilation
+# materializes exactly two identities: `(vector i64)` and `(eq.eq i64)`. The
+# vector catalog currently exceeds the large-catalog cutoff and is materialized
+# in full, so ordinary typechecking validates all of it and the separate
+# partial-catalog shadow-validation counter remains zero.
 assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_memo_hits" \
@@ -876,13 +876,13 @@ assert_profile_counter_eq_in \
 assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_materializations" \
-    1 \
+    2 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"
 assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_catalog_builds" \
-    1 \
+    2 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"
 assert_profile_counter_eq_in \

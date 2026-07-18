@@ -58,6 +58,7 @@ stdlib_eq_reference_reject|check-fail|tests/safety/stdlib_eq_reference_reject.tl
 stdlib_eq_ptr_reject|check-fail|tests/safety/stdlib_eq_ptr_reject.tl|-|eq: unsupported type
 stdlib_eq_mut_ptr_reject|check-fail|tests/safety/stdlib_eq_mut_ptr_reject.tl|-|eq: unsupported type
 stdlib_eq_function_reject|check-fail|tests/safety/stdlib_eq_function_reject.tl|-|eq: unsupported type
+vector_unsupported_equality_reject|check-fail|tests/safety/vector_unsupported_equality_reject.tl|-|eq: unsupported type
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
 unimported_print_reject|check-fail|tests/safety/unimported_print_reject.tl|-|unbound name print
 unimported_panic_reject|check-fail|tests/safety/unimported_panic_reject.tl|-|unbound name panic
@@ -110,7 +111,7 @@ vector_iter_shared_item_source_live_reject|check-fail|tests/safety/vector_iter_s
 vector_iter_shared_move_live_reject|check-fail|tests/safety/vector_iter_shared_move_live_reject.tl|-|cannot move borrowed place `values`
 vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_escape_reject.tl|-|reference value would escape lexical scope
 vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact/pop
-vector_full_noncloneable_pop_reject|check-fail|tests/safety/vector_full_noncloneable_pop_reject.tl|-|typecheck: clone unsupported type VectorFullRawHolder
+vector_full_unsupported_equality_nested_reject|check-fail|tests/safety/vector_full_unsupported_equality_nested_reject.tl|-|eq: unsupported type mutptr_i64
 clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper
 reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
 reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`

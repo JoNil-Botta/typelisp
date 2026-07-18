@@ -107,9 +107,8 @@ The committed `perf/spmd-avx512-retired-baseline.tsv` is keyed by a SHA-256 of
 the counter source, OS/kernel, CPU identity and logical CPU, ISA tokens,
 clang/as/ld versions, flags, and counter configuration. The 1000 ppm tolerance
 is enforced only for an exact fingerprint; other hosts are report-only.
-`spmd_mask/avx512` is supported by the lowerer; its retired-instruction
-baseline remains an `unsupported` placeholder until the fleet measurement in
-#5192 is recorded.
+The baseline includes every supported benchmark, including the measured
+`spmd_mask/avx512` row.
 Only a full 11-run measurement may update the baseline. The heavy hardware
 measurement is never part of required correctness CI; only fast mutation
 self-tests run there:

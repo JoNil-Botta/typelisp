@@ -24,6 +24,9 @@ falling back to scalar code.
   vector width 4/8): forces a masked/scalar tail. Exit 247.
 - `tail_i32_add.tl` — `foreach` add over `n = 7` `i32` lanes (below the i32
   width 8/16): all-tail, a different element width. Exit 91.
+- `foreach_bound_extremes.tl` - vectorizable zero-trip ranges with negative and
+  near-`INT64_MAX` endpoints exercise the hoisted vector-start overflow clamps;
+  a final eight-element range proves a full SIMD gang still runs. Exit 42.
 - `uniform_zip_i64.tl` - `foreach` zip over `n = 13` i64 lanes with
   `a[i] * b[i] + c[i] + r`: exercises vector multiply, a third array operand,
   uniform scalar broadcast, and tail handling.

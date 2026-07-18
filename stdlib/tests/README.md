@@ -170,11 +170,12 @@ Inline stdlib coverage:
   generated module API, including vector and array constructors, invalid ranges
   producing empty views, sub-slicing, fallback reads, value-threaded iteration,
   duplicate module-macro imports, and explicit array/vector copy boundaries.
-- `sort.tl` owns inline tests for generated stable in-place insertion sort over
+- `sort.tl` owns inline tests for generated stable hybrid merge sort over
   `(vector T)` modules, including scalar, String, and aggregate comparator
   cases, repeated generation deduplication, empty, single, already sorted,
-  reverse sorted, duplicate, negative-number, prefix, lexicographic string, and
-  stable equal-key ordering cases.
+  reverse sorted, duplicate, negative-number, prefix, lexicographic string,
+  large non-power-of-two input, a subquadratic comparison ceiling, and stable
+  equal-key ordering within and across merged runs.
 - `ffi.tl` owns inline tests for C string buffers: required byte counts,
   exact-capacity caller-owned copies, trailing NUL writes, too-small buffers,
   interior NUL rejection, and active-arena pointer allocation through

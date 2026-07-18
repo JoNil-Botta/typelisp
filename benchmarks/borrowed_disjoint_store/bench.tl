@@ -40,5 +40,4 @@
       (borrowed-disjoint-store-loop (& left) (&mut right) first-iterations)]
     [second : i64
       (borrowed-disjoint-store-loop (& left) (&mut right) second-iterations)]
-    (begin
-      (bit-and (+ first second) 255))))
+    (bit-and (+ first second) 255)))

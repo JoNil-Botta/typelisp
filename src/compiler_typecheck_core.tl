@@ -35071,7 +35071,10 @@
                 ""
                 cbi.compiler-builtin-id-fix-empty
                 (ctfe-layout-info-list-with-capacity
-                  (ctfe-metadata-decl-capacity decls)))))])]))
+                  ;; Spare slots let generated-module splices extend the cached
+                  ;; metadata additively (compiler-typecheck-ctfe-env-extend-
+                  ;; for-splice!) instead of forcing a whole-program rebuild.
+                  (+ (ctfe-metadata-decl-capacity decls) 256)))))])]))
 
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8
@@ -51233,6 +51236,67 @@
     (set! macro-expand-ctfe-env-has-metadata false)
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))))
 
+;; Additively extend the cached CTFE metadata with a spliced generated module's
+;; nominal declarations, avoiding the O(program) reflection/layout rebuild that
+;; compiler-typecheck-ctfe-env-cache-clear! forces on the next consumer. Only
+;; valid for an isolated generated-module splice: its names are fresh in their
+;; own namespace, so appending after the already-cached entries preserves the
+;; first-wins dedupe order a whole-program rebuild would produce. ctx must be
+;; the post-splice context whose registries already cover the spliced decls
+;; (the layout build resolves struct/enum layouts through them), and
+;; module/module-id the namespace active at the splice site, matching the
+;; module context a whole-program rebuild would attribute to any decl preceding
+;; the module's own marker. Returns false when the cache cannot be extended --
+;; not built yet, built without metadata while metadata is now required, or the
+;; reserved list capacity exhausted -- so the caller can fall back to the
+;; conservative clear.
+(define (compiler-typecheck-ctfe-env-extend-for-splice!
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [module-id : i64]) : bool
+  (if (not ctfe-needs-metadata)
+    true
+    (if (and macro-expand-ctfe-env-ready macro-expand-ctfe-env-has-metadata)
+      (let
+        [layouts : CtfeLayoutInfoList
+          (ctfe-env-layouts macro-expand-ctfe-env-value)]
+        [reflections : CtfeReflectInfoList
+          (ctfe-env-reflections macro-expand-ctfe-env-value)]
+        [needed : i64 (ctfe-metadata-decl-capacity decls)]
+        (if (and
+          (<= (+ (struct-get layouts len) needed)
+            (array.length (struct-get layouts slots)))
+          (<= (+ (struct-get reflections len) needed)
+            (array.length (struct-get reflections slots))))
+          (let
+            [next-layouts : CtfeLayoutInfoList
+              (tc-ctfe-layouts-from-decls
+                ctx
+                decls
+                module
+                module-id
+                layouts)]
+            [next-reflections : CtfeReflectInfoList
+              (ctfe-reflections-from-decls
+                decls
+                module
+                module-id
+                reflections)]
+            ;; The cached base env is always a bare metadata node (built by
+            ;; tc-ctfe-env and only ever rebase-copied), so rebuilding it from
+            ;; the extended lists drops no bindings.
+            (begin
+              (set!
+                macro-expand-ctfe-env-value
+                (ctfe-env-with-metadata-and-pools
+                  next-layouts
+                  next-reflections
+                  (ctfe-env-pools macro-expand-ctfe-env-value)))
+              true))
+          false))
+      false)))
+
 ;; Build the CTFE base env (reflection + layout metadata) once per expansion run
 ;; and reuse it across in-pass splice rebuilds (plan P2). A generated module can
 ;; materialize a struct or enum whose own metadata is immediately queried by a
@@ -65167,6 +65231,30 @@
                                       spliced-path-tail)]
                                   [splice-index : i64
                                     (compiler-decl-list-index-count out-rev)]
+                                  [generated-ext : MacroMaybeGeneratedModuleExtension
+                                    (macro-generated-module-extension
+                                      expanded
+                                      cur-module-id)]
+                                  ;; An isolated generated-module splice only
+                                  ;; appends fresh namespaced declarations, so
+                                  ;; the cached CTFE reflection/layout metadata
+                                  ;; can be extended additively with just those
+                                  ;; decls once the rebuilt context exists,
+                                  ;; instead of clearing the cache and paying an
+                                  ;; O(program) metadata rebuild per splice.
+                                  ;; Arbitrary splices keep the conservative
+                                  ;; clear below.
+                                  [defer-ctfe-extension : bool
+                                    (and
+                                      (macro-decls-reflection-relevant?
+                                        expanded)
+                                      (match generated-ext
+                                        [(MacroMaybeGeneratedModuleExtension.No)
+                                          false]
+                                        [(MacroMaybeGeneratedModuleExtension.Some
+                                            _
+                                            _)
+                                          true]))]
                                   (begin
                                     (if (and
                                       (macro-decls-registry-incremental-safe?
@@ -65183,8 +65271,10 @@
                                         unit
                                         (macro-live-registries-invalidate!))
                                       (macro-live-registries-invalidate!))
-                                    (if (macro-decls-reflection-relevant?
-                                      expanded)
+                                    (if (and
+                                      (macro-decls-reflection-relevant?
+                                        expanded)
+                                      (not defer-ctfe-extension))
                                       (compiler-typecheck-ctfe-env-cache-clear!)
                                       unit)
                                     ;; Generated Module catalogs are usually
@@ -65218,9 +65308,7 @@
                                       next-paths
                                       cur-module
                                       cur-module-id
-                                      (match (macro-generated-module-extension
-                                        expanded
-                                        cur-module-id)
+                                      (match generated-ext
                                         [(MacroMaybeGeneratedModuleExtension.No)
                                           (MacroSpliceEnvPlan.Refresh
                                             cur-top-env
@@ -65244,6 +65332,24 @@
                                           next-ctx
                                           next-top-env)
                                         (begin
+                                          ;; Extend the reused CTFE metadata
+                                          ;; with the spliced module's nominal
+                                          ;; declarations now that next-ctx
+                                          ;; carries the post-splice registries
+                                          ;; the layout build resolves through.
+                                          ;; On any inapplicability fall back to
+                                          ;; the established clear, which makes
+                                          ;; the next consumer rebuild the full
+                                          ;; metadata over the spliced program.
+                                          (if defer-ctfe-extension
+                                            (if (compiler-typecheck-ctfe-env-extend-for-splice!
+                                              next-ctx
+                                              expanded
+                                              cur-module
+                                              cur-module-id)
+                                              unit
+                                              (compiler-typecheck-ctfe-env-cache-clear!))
+                                            unit)
                                           (set! cur-ctx next-ctx)
                                           (set! cur-orig-decls next-decls)
                                           (set! cur-top-env next-top-env)

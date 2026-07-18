@@ -1076,7 +1076,7 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (compiler-cfg-enable
-      (compiler-cfg-enable-id
+      (compiler-cfg-enable
         (compiler-cfg-enable-id
           (compiler-cfg-enable-id
             (compiler-cfg-enable-id
@@ -1087,19 +1087,21 @@
                       (compiler-cfg-enable-id
                         (compiler-cfg-enable-id
                           (compiler-cfg-enable-id
-                            cfgs
-                            cbi.compiler-builtin-id-cfg-feature-ptr-addr-of)
-                          cbi.compiler-builtin-id-cfg-feature-str-view)
-                        cbi.compiler-builtin-id-cfg-feature-runtime-str-view-extern)
-                      cbi.compiler-builtin-id-cfg-feature-private-string-intrinsics)
-                    cbi.compiler-builtin-id-cfg-feature-compiler-private-string-intrinsics)
-                  cbi.compiler-builtin-id-cfg-array-helper-intrinsics)
-                cbi.compiler-builtin-id-cfg-feature-tl-memchr)
-              cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
-            cbi.compiler-builtin-id-cfg-feature-comptime-public-fields)
-          cbi.compiler-builtin-id-cfg-feature-cleanup-owner-reflection)
-        cbi.compiler-builtin-id-cfg-feature-tl-array-zero)
-      "feature-compiler-float-sqrt-intrinsic")))
+                            (compiler-cfg-enable-id
+                              cfgs
+                              cbi.compiler-builtin-id-cfg-feature-ptr-addr-of)
+                            cbi.compiler-builtin-id-cfg-feature-str-view)
+                          cbi.compiler-builtin-id-cfg-feature-runtime-str-view-extern)
+                        cbi.compiler-builtin-id-cfg-feature-private-string-intrinsics)
+                      cbi.compiler-builtin-id-cfg-feature-compiler-private-string-intrinsics)
+                    cbi.compiler-builtin-id-cfg-array-helper-intrinsics)
+                  cbi.compiler-builtin-id-cfg-feature-tl-memchr)
+                cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
+              cbi.compiler-builtin-id-cfg-feature-comptime-public-fields)
+            cbi.compiler-builtin-id-cfg-feature-cleanup-owner-reflection)
+          cbi.compiler-builtin-id-cfg-feature-tl-array-zero)
+        "feature-compiler-float-sqrt-intrinsic")
+      "feature-compiler-float-bitcast-intrinsics")))
 
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]

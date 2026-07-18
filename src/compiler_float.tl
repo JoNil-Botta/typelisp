@@ -43,12 +43,7 @@
   (io.float-f64-bits value))
 
 (define (compiler-float-f32-from-bits [bits : u32]) : f32
-  (let
-    [buf : (Array u32) (make-array u32 1)]
-    (begin
-      (array-set! buf 0 bits)
-      (unsafe
-        (ptr-read (ptr-cast (array-data buf) : (Ptr f32)))))))
+  (io.float-f32-from-bits bits))
 
 (define (compiler-float-f32-bits [value : f32]) : u32
   (io.float-f32-bits value))

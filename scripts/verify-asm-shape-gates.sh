@@ -169,6 +169,15 @@ check_divmagic_hoist() {
     assert_regex_count_at_least "$_digitsum" '^[[:space:]]+imulq \$10, %r[a-z0-9]+, %r[a-z0-9]+$' 1 divmagic-digitsum
 }
 
+check_wide_const_hoist() {
+    _asm=$(compile_gate wide_const_hoist tests/integration/wide_const_hoist.tl)
+    _leaf=$(function_body "$_asm" _tl_wide_const_hoist_wide_leaf)
+    _call=$(function_body "$_asm" _tl_wide_const_hoist_wide_call)
+    assert_fixed_count_eq "$_leaf" 'movabsq $2654435761' 1 wide-const-leaf
+    assert_regex_count_at_least "$_leaf" '^[[:space:]]+(imulq|xorq) %r[a-z0-9]+, %r[a-z0-9]+$' 2 wide-const-leaf
+    assert_fixed_count_eq "$_call" 'movq $2654435761' 2 wide-const-call-fallback
+}
+
 check_group_pair_home() {
     _asm=$(compile_gate group_pair_home tests/integration/group_pair_home.tl)
     _body=$(function_body "$_asm" _tl_group_pair_home_probe)
@@ -363,6 +372,7 @@ check_gep_value_direct() {
 }
 
 check_divmagic_hoist
+check_wide_const_hoist
 check_group_pair_home
 check_group_pair_phi_home
 check_csr_push_prologue

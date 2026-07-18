@@ -1859,6 +1859,14 @@
       "compiler-optimize-debug-verifier-self-test"
       (compiler-optimize-debug-verifier-self-test)
       42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-gep-split-self-test"
+      (compiler-optimize-gep-split-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dce-pack-self-test"
+      (compiler-optimize-dce-pack-self-test)
+      42)
     42))
 
 (define (main) : i64
@@ -1923,3 +1931,17 @@
     (compiler-optimize-debug-verifier-self-test)
     42
     "IR verifier failures include function, block, and instruction identity"))
+
+(test
+  gep-use-splitting
+  (test.assert-i64-eq
+    (compiler-optimize-gep-split-self-test)
+    42
+    "Gep use-splitting clones multi-use address Geps per memory use"))
+
+(test
+  dce-pack-retirement
+  (test.assert-i64-eq
+    (compiler-optimize-dce-pack-self-test)
+    42
+    "Pipeline DCE retires a Pack whose extractions all folded"))

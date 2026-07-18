@@ -46235,13 +46235,15 @@
     [(ResultLowerExpr.Ok scrut-lowered)
       (match scrut-lowered
         [(LowerExpr.Expr scrut-state scrut-value scrut-ty)
-          (match (lower-state-alloc-var scrut-state)
-            [(LowerAlloc.Alloc scrut-alloc scrut-var)
-              (match (lower-state-fresh-label
-                (lower-state-emit
-                  scrut-alloc
-                  (CompilerIrInstr.Mov scrut-var scrut-value scrut-ty))
-                "match_merge")
+          ;; Use the scrutinee var directly when it is already a var, like the
+          ;; tail path: a copying Mov into a fresh home makes a 2-word enum pay
+          ;; a Pack round-trip per copy.
+          (match (lower-tail-match-scrutinee-home
+            scrut-state
+            scrut-value
+            scrut-ty)
+            [(LowerScrutineeHome.Home home-state scrut-var)
+              (match (lower-state-fresh-label home-state "match_merge")
                 [(LowerLabel.Label merge-state merge-label)
                   (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
                     [(AstType.Enum _)
@@ -49649,6 +49651,29 @@
           [(ResultTcType.Err _) false]))]
     [_ false]))
 
+;; Where the scrutinee of a match should live: when it is already a var (the
+;; common case -- a local, an array-ref result, a call result) use that var
+;; directly instead of allocating a fresh one and emitting a group-copying
+;; Mov into it (a 2-word enum pays a Pack round-trip per copy).
+(defenum LowerScrutineeHome
+  (Home LowerState i64))
+
+(define (lower-tail-match-scrutinee-home
+  [state : LowerState]
+  [scrut-value : CompilerIrValue]
+  [scrut-ty : AstType]) : LowerScrutineeHome
+  (match scrut-value
+    [(CompilerIrValue.Var scrutinee-var)
+      (LowerScrutineeHome.Home state scrutinee-var)]
+    [_
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc.Alloc scrut-alloc scrut-var)
+          (LowerScrutineeHome.Home
+            (lower-state-emit
+              scrut-alloc
+              (CompilerIrInstr.Mov scrut-var scrut-value scrut-ty))
+            scrut-var)])]))
+
 (define (lower-tail-match
   [ctx : TcContext]
   [state : LowerState]
@@ -49665,109 +49690,107 @@
       [(ResultLowerExpr.Ok scrut-lowered)
         (match scrut-lowered
           [(LowerExpr.Expr scrut-state scrut-value scrut-ty)
-            (match (lower-state-alloc-var scrut-state)
-              [(LowerAlloc.Alloc scrut-alloc scrut-var)
-                (let
-                  [match-state : LowerState
-                    (lower-state-emit
-                      scrut-alloc
-                      (CompilerIrInstr.Mov scrut-var scrut-value scrut-ty))]
-                  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
-                    [(AstType.Enum _)
-                      (lower-tail-match-enum
-                        ctx
-                        match-state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arms
-                        ret-ty
-                        sret-var
-                        (TcMaybeNameId.No)
-                        false)]
-                    [(AstType.EnumArgs _ _)
-                      (lower-tail-match-enum
-                        ctx
-                        match-state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arms
-                        ret-ty
-                        sret-var
-                        (TcMaybeNameId.No)
-                        false)]
-                    [(AstType.Ref borrow-lifetime referent-box)
-                      (let
-                        [referent-ty : AstType
-                          (tc-type-strip-region
-                            (tc-resolve-type
-                              ctx
-                              (tc-context-type-get ctx referent-box)))]
-                        (match referent-ty
-                          [(AstType.Enum _)
-                            (lower-tail-match-enum
-                              ctx
-                              match-state
-                              env
-                              type-env
-                              scrut-var
-                              referent-ty
-                              arms
-                              ret-ty
-                              sret-var
-                              (TcMaybeNameId.Some borrow-lifetime)
-                              true)]
-                          [(AstType.EnumArgs _ _)
-                            (lower-tail-match-enum
-                              ctx
-                              match-state
-                              env
-                              type-env
-                              scrut-var
-                              referent-ty
-                              arms
-                              ret-ty
-                              sret-var
-                              (TcMaybeNameId.Some borrow-lifetime)
-                              true)]
-                          [_
-                            (lower-tail-match-arms
-                              ctx
-                              match-state
-                              env
-                              type-env
-                              scrut-var
-                              scrut-ty
-                              arms
-                              ret-ty
-                              sret-var)]))]
-                    [(AstType.VarArgs _ _)
-                      (lower-tail-match-enum
-                        ctx
-                        match-state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arms
-                        ret-ty
-                        sret-var
-                        (TcMaybeNameId.No)
-                        false)]
-                    [_
-                      (lower-tail-match-arms
-                        ctx
-                        match-state
-                        env
-                        type-env
-                        scrut-var
-                        scrut-ty
-                        arms
-                        ret-ty
-                        sret-var)]))])])]
+            (match (lower-tail-match-scrutinee-home
+              scrut-state
+              scrut-value
+              scrut-ty)
+              [(LowerScrutineeHome.Home match-state scrut-var)
+                (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+                  [(AstType.Enum _)
+                    (lower-tail-match-enum
+                      ctx
+                      match-state
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arms
+                      ret-ty
+                      sret-var
+                      (TcMaybeNameId.No)
+                      false)]
+                  [(AstType.EnumArgs _ _)
+                    (lower-tail-match-enum
+                      ctx
+                      match-state
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arms
+                      ret-ty
+                      sret-var
+                      (TcMaybeNameId.No)
+                      false)]
+                  [(AstType.Ref borrow-lifetime referent-box)
+                    (let
+                      [referent-ty : AstType
+                        (tc-type-strip-region
+                          (tc-resolve-type
+                            ctx
+                            (tc-context-type-get ctx referent-box)))]
+                      (match referent-ty
+                        [(AstType.Enum _)
+                          (lower-tail-match-enum
+                            ctx
+                            match-state
+                            env
+                            type-env
+                            scrut-var
+                            referent-ty
+                            arms
+                            ret-ty
+                            sret-var
+                            (TcMaybeNameId.Some borrow-lifetime)
+                            true)]
+                        [(AstType.EnumArgs _ _)
+                          (lower-tail-match-enum
+                            ctx
+                            match-state
+                            env
+                            type-env
+                            scrut-var
+                            referent-ty
+                            arms
+                            ret-ty
+                            sret-var
+                            (TcMaybeNameId.Some borrow-lifetime)
+                            true)]
+                        [_
+                          (lower-tail-match-arms
+                            ctx
+                            match-state
+                            env
+                            type-env
+                            scrut-var
+                            scrut-ty
+                            arms
+                            ret-ty
+                            sret-var)]))]
+                  [(AstType.VarArgs _ _)
+                    (lower-tail-match-enum
+                      ctx
+                      match-state
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arms
+                      ret-ty
+                      sret-var
+                      (TcMaybeNameId.No)
+                      false)]
+                  [_
+                    (lower-tail-match-arms
+                      ctx
+                      match-state
+                      env
+                      type-env
+                      scrut-var
+                      scrut-ty
+                      arms
+                      ret-ty
+                      sret-var)])])])]
       [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))
 
 (define (lower-tail-expr

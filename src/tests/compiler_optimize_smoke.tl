@@ -1617,84 +1617,256 @@
         6]
       [else 42])))
 
+(define (smoke-optimizer-named-failure-message-ok?) : bool
+  (string.eq
+    (compiler-optimize-self-test-failure-message "copy propagation" 7 42)
+    "optimizer self-test failed: copy propagation (expected 42, got 7)"))
+
 (define (smoke-optimizer-core-self-tests) : i64
-  (cond
-    [(not (= (compiler-optimize-self-test) 42)) 1]
-    [(not (= (compiler-optimize-typed-fold-self-test) 42)) 2]
-    [(not (= (smoke-noop-int-cast-mov-self-test) 42)) 3]
-    [(not (= (compiler-optimize-strength-self-test) 42)) 4]
-    [(not (= (compiler-optimize-dce-self-test) 42)) 5]
-    [(not (= (compiler-optimize-dce-mem-self-test) 42)) 6]
-    [(not (= (compiler-optimize-divrem-safety-self-test) 42)) 7]
-    [(not (= (compiler-optimize-const-divisor-self-test) 42)) 8]
-    [(not (= (compiler-optimize-cse-self-test) 42)) 9]
-    [(not (= (compiler-optimize-copy-self-test) 42)) 10]
-    [(not (= (compiler-optimize-bounds-self-test) 42)) 11]
-    [(not (= (compiler-optimize-bounds-dom-self-test) 42)) 12]
-    [(not (= (smoke-object-bounds-self-test) 42)) 13]
-    [(not (= (smoke-range-bce-self-test) 42)) 14]
-    [(not (= (smoke-ssa-iv-bce-self-test) 42)) 15]
-    [(not (= (smoke-nonlength-guard-bce-self-test) 42)) 16]
-    [(not (= (smoke-additive-bce-self-test) 42)) 17]
-    [(not (= (compiler-optimize-sccp-self-test) 42)) 18]
-    [else 42]))
+  (begin
+    (compiler-optimize-self-test-require!
+      "named failure message renderer"
+      (smoke-optimizer-named-failure-message-ok?))
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-self-test"
+      (compiler-optimize-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-typed-fold-self-test"
+      (compiler-optimize-typed-fold-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-noop-int-cast-mov-self-test"
+      (smoke-noop-int-cast-mov-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-strength-self-test"
+      (compiler-optimize-strength-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dce-self-test"
+      (compiler-optimize-dce-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dce-mem-self-test"
+      (compiler-optimize-dce-mem-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-divrem-safety-self-test"
+      (compiler-optimize-divrem-safety-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-const-divisor-self-test"
+      (compiler-optimize-const-divisor-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-cse-self-test"
+      (compiler-optimize-cse-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-copy-self-test"
+      (compiler-optimize-copy-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bounds-self-test"
+      (compiler-optimize-bounds-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bounds-dom-self-test"
+      (compiler-optimize-bounds-dom-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-object-bounds-self-test"
+      (smoke-object-bounds-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-range-bce-self-test"
+      (smoke-range-bce-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-ssa-iv-bce-self-test"
+      (smoke-ssa-iv-bce-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-nonlength-guard-bce-self-test"
+      (smoke-nonlength-guard-bce-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-additive-bce-self-test"
+      (smoke-additive-bce-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-sccp-self-test"
+      (compiler-optimize-sccp-self-test)
+      42)
+    42))
 
 (define (smoke-optimizer-loop-self-tests) : i64
-  (cond
-    [(not (= (compiler-optimize-global-value-number-self-test) 42)) 19]
-    [(not (= (compiler-optimize-cfg-self-test) 42)) 20]
-    [(not (= (compiler-optimize-switch-form-self-test) 42)) 21]
-    [(not (= (compiler-optimize-natural-loop-self-test) 42)) 22]
-    [(not (= (compiler-optimize-loop-rotation-self-test) 42)) 23]
-    [(not (= (compiler-optimize-rotate-ssa-self-test) 42)) 24]
-    [(not (= (compiler-optimize-licm-self-test) 42)) 25]
-    [(not (= (compiler-optimize-induction-self-test) 42)) 26]
-    [(not (= (compiler-optimize-unroll-self-test) 42)) 27]
-    [(not (= (compiler-optimize-affine-self-test) 42)) 28]
-    [(not (= (compiler-optimize-affine-pipeline-self-test) 42)) 29]
-    [(not (= (compiler-optimize-ssa-preexisting-phi-self-test) 42)) 30]
-    [(not (= (compiler-optimize-licm-multi-exit-self-test) 42)) 31]
-    [(not (= (compiler-optimize-bce-version-self-test) 42)) 32]
-    [(not (= (compiler-optimize-bce-version-pipeline-self-test) 42)) 33]
-    [(not (= (compiler-optimize-ssa-self-test) 42)) 34]
-    [(not (= (compiler-optimize-level-self-test) 42)) 35]
-    [else 42]))
+  (begin
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-global-value-number-self-test"
+      (compiler-optimize-global-value-number-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-cfg-self-test"
+      (compiler-optimize-cfg-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-switch-form-self-test"
+      (compiler-optimize-switch-form-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-natural-loop-self-test"
+      (compiler-optimize-natural-loop-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-loop-rotation-self-test"
+      (compiler-optimize-loop-rotation-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-rotate-ssa-self-test"
+      (compiler-optimize-rotate-ssa-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-self-test"
+      (compiler-optimize-licm-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-induction-self-test"
+      (compiler-optimize-induction-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-unroll-self-test"
+      (compiler-optimize-unroll-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-affine-self-test"
+      (compiler-optimize-affine-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-affine-pipeline-self-test"
+      (compiler-optimize-affine-pipeline-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-ssa-preexisting-phi-self-test"
+      (compiler-optimize-ssa-preexisting-phi-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-licm-multi-exit-self-test"
+      (compiler-optimize-licm-multi-exit-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-self-test"
+      (compiler-optimize-bce-version-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-pipeline-self-test"
+      (compiler-optimize-bce-version-pipeline-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-ssa-self-test"
+      (compiler-optimize-ssa-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-level-self-test"
+      (compiler-optimize-level-self-test)
+      42)
+    42))
 
 (define (smoke-optimizer-late-self-tests) : i64
-  (cond
-    [(not (= (compiler-optimize-callgraph-self-test) 42)) 36]
-    [(not (= (compiler-optimize-scc-self-test) 42)) 37]
-    [(not (= (compiler-optimize-inline-self-test) 42)) 38]
-    [(not (= (compiler-optimize-fixed-point-self-test) 42)) 39]
-    [(not (= (compiler-optimize-tailrec-self-test) 42)) 40]
-    [(not (= (compiler-optimize-global-dce-self-test) 42)) 41]
-    [(not (= (compiler-optimize-aggregate-candidate-self-test) 42)) 42]
-    [(not (= (compiler-optimize-aggregate-promote-self-test) 42)) 43]
-    [(not (= (compiler-optimize-aggregate-sroa-self-test) 42)) 44]
-    [(not (= (compiler-optimize-spans-self-test) 42)) 45]
-    [(not (= (compiler-optimize-gvn-self-test) 42)) 46]
-    [(not (= (smoke-heavy-pass-large-gvn-self-test) 42)) 47]
-    [(not (= (compiler-optimize-load-cse-self-test) 44)) 48]
-    [(not (= (compiler-optimize-dead-store-self-test) 42)) 49]
-    [(not (= (compiler-optimize-scratch-region-self-test) 42)) 50]
-    [(not (= (smoke-function-index-leaf-starts-self-test) 42)) 51]
-    [(not (= (compiler-optimize-bce-version-mb-self-test) 42)) 52]
-    [(not (= (compiler-optimize-bce-version-mb-negative-self-test) 42)) 53]
-    [(not (= (compiler-optimize-bce-version-mb-pipeline-self-test) 42)) 54]
-    [(not (= (compiler-optimize-bce-version-mb-partial-self-test) 42)) 55]
-    [(not (= (compiler-optimize-debug-verifier-self-test) 42)) 56]
-    [else 42]))
+  (begin
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-callgraph-self-test"
+      (compiler-optimize-callgraph-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-scc-self-test"
+      (compiler-optimize-scc-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-inline-self-test"
+      (compiler-optimize-inline-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-fixed-point-self-test"
+      (compiler-optimize-fixed-point-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-tailrec-self-test"
+      (compiler-optimize-tailrec-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-global-dce-self-test"
+      (compiler-optimize-global-dce-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-aggregate-candidate-self-test"
+      (compiler-optimize-aggregate-candidate-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-aggregate-promote-self-test"
+      (compiler-optimize-aggregate-promote-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-aggregate-sroa-self-test"
+      (compiler-optimize-aggregate-sroa-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-spans-self-test"
+      (compiler-optimize-spans-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-gvn-self-test"
+      (compiler-optimize-gvn-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-heavy-pass-large-gvn-self-test"
+      (smoke-heavy-pass-large-gvn-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-load-cse-self-test"
+      (compiler-optimize-load-cse-self-test)
+      44)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-dead-store-self-test"
+      (compiler-optimize-dead-store-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-scratch-region-self-test"
+      (compiler-optimize-scratch-region-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-function-index-leaf-starts-self-test"
+      (smoke-function-index-leaf-starts-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-self-test"
+      (compiler-optimize-bce-version-mb-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-negative-self-test"
+      (compiler-optimize-bce-version-mb-negative-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-pipeline-self-test"
+      (compiler-optimize-bce-version-mb-pipeline-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-partial-self-test"
+      (compiler-optimize-bce-version-mb-partial-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-debug-verifier-self-test"
+      (compiler-optimize-debug-verifier-self-test)
+      42)
+    42))
 
 (define (main) : i64
-  (let
-    [core : i64 (smoke-optimizer-core-self-tests)]
-    (if (not (= core 42))
-      core
-      (let
-        [loops : i64 (smoke-optimizer-loop-self-tests)]
-        (if (not (= loops 42))
-          loops
-          (smoke-optimizer-late-self-tests))))))
+  (begin
+    (smoke-optimizer-core-self-tests)
+    (smoke-optimizer-loop-self-tests)
+    (smoke-optimizer-late-self-tests)
+    42))
 
 (test
   load-cse-copybytes-forwarding

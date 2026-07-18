@@ -490,6 +490,7 @@ contains|_tl_compiler_optimize_global_value_number_self_test:
 contains|_tl_compiler_optimize_aggregate_sroa_self_test:
 contains|_tl_opt_cfg_dominators:
 contains|_tl_opt_verify_function:
+contains|optimizer self-test failed:
 end
 
 case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|skip|direct
@@ -513,7 +514,7 @@ end
 case|selfhost_compiler_regalloc|src/compiler_regalloc.tl|assembly|skip|direct
 contains|_tl_compiler_reg_plan_function:
 contains|_tl_compiler_regalloc_self_test:
-contains|regalloc: smoke mismatch
+contains|regalloc self-test failed:
 end
 
 case|selfhost_compiler_specialize|src/compiler_specialize.tl|assembly|skip|direct

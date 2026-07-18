@@ -5344,6 +5344,15 @@ rounding environment; the default environment is round-to-nearest, ties to
 even. Private float intrinsics are runtime-only; CTFE continues to reject
 non-finite construction and unsupported float operations.
 
+`stdlib.math` also provides freestanding `f64-sin`, `f64-cos`, `f64-tan` and
+binary32 counterparts. They share a full-finite-range `pi/2` reducer and use
+precision-specific polynomial kernels without allocation, extern calls, x87
+transcendentals, or an FMA requirement. In the default round-to-nearest mode,
+their maximum error is below 1.5 ULP. Sine and tangent preserve signed zero,
+cosine of either zero is exactly one, infinities produce NaN, and NaN inputs
+remain NaN. Floating exception flags and signaling-NaN payload behavior are
+not part of this initial contract.
+
 **Fixed-array element operations.** The public `Array` type is the fixed
 `(Array T N)` form. The core element operations are:
 

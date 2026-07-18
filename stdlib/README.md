@@ -230,10 +230,14 @@ use.
   value construction and sign copying; and `f64-scalbn` / `f32-scalbn`
   power-of-two scaling. `f64-sqrt` and `f32-sqrt` expose typed hardware square
   root, while the single-evaluation `sqrt` macro preserves an `f64` or `f32`
-  operand type. Bit and square-root helpers lower without allocation, runtime
-  calls, libm, or CRT dependencies. Remaining transcendental/libm-style
-  functions are added in separate freestanding slices. Import it with
-  `(import stdlib.math)`. See `MATH_LICENSES.md` for derived-code notices.
+  operand type. Full-range `f64-sin` / `f64-cos` / `f64-tan` and binary32
+  counterparts use a shared
+  allocation-free fdlibm/musl Payne-Hanek reducer across the full finite
+  exponent range. Results are below 1.5 ULP in default round-to-nearest mode;
+  signed-zero identities and NaN/infinity behavior follow IEEE-754. Bit,
+  square-root, and trigonometric helpers lower without allocation, runtime
+  calls, libm, or CRT dependencies. Import it with `(import stdlib.math)`.
+  See `MATH_LICENSES.md` for derived-code notices.
 - `option.tl`: module-emitting `(option T)` macro for absence-only results.
   Import it with `(import stdlib.option)` and instantiate with a module
   alias such as `(import (option i64) as option_i64)`. Each generated module

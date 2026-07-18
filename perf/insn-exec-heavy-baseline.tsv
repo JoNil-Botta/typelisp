@@ -1,11 +1,11 @@
 name	ir_count
-benchmark/typelisp/spmd_map	17206635512
+benchmark/typelisp/spmd_map	24579423186
 benchmark/c/spmd_map	3382228102
-benchmark/typelisp/spmd_mask	19664219054
+benchmark/typelisp/spmd_mask	14752278094
 benchmark/c/spmd_mask	7069833227
-benchmark/typelisp/spmd_short_tail	14020033353
+benchmark/typelisp/spmd_short_tail	20020030315
 benchmark/c/spmd_short_tail	2765007984
-benchmark/typelisp/spmd_zip	22124276558
+benchmark/typelisp/spmd_zip	31954660125
 benchmark/c/spmd_zip	10755056776
-benchmark/typelisp/string_scan	8725000420
+benchmark/typelisp/string_scan	24675001062
 benchmark/c/string_scan	4850001654

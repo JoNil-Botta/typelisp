@@ -6,9 +6,10 @@ are report-only and fingerprint both binaries and flags. They are intentionally
 not mixed into the checked cachegrind or host-keyed AVX-512 tables below; the
 current retired-instruction runners do not accept arbitrary ISPC binaries.
 
-`perf/insn-exec-baseline.tsv` is the committed cachegrind `Ir` baseline for the
-Linux per-PR performance gate. `perf/insn-exec-heavy-baseline.tsv` is the
-separate nightly baseline for benchmark cases that are too slow for every PR.
+`perf/insn-exec-baseline.tsv` and `perf/insn-exec-heavy-baseline.tsv` are the
+committed cachegrind `Ir` baselines for the required Linux per-PR performance
+gates. The first covers the default compiler and benchmark subset; the second
+covers the five heavier benchmark cases without rebuilding the branch compiler.
 
 Run this from Linux or WSL to refresh intentional count changes:
 
@@ -16,7 +17,7 @@ Run this from Linux or WSL to refresh intentional count changes:
 scripts/check-instruction-counts.sh --update-baseline
 ```
 
-Refresh the nightly heavy benchmark baseline with:
+Refresh the required heavy benchmark baseline with:
 
 ```sh
 scripts/check-instruction-counts.sh \
@@ -98,6 +99,13 @@ default per-PR subset is `self_compile` plus paired rows for `arith_loop`,
 `array_sum`, `borrowed_disjoint_store`, `hashmap_churn`, `hashmap_grow`,
 `hashmap_insert`, `hashmap_get`, `spmd_reduce`, `opt_quicksort`, `opt_crc32`, and
 `opt_bytecode_vm`, each with one cachegrind run.
+
+The same required Linux PR leg reuses its already bootstrapped stage2 compiler
+for a benchmark-only pass over `spmd_map`, `spmd_mask`, `spmd_zip`,
+`spmd_short_tail`, and `string_scan`, checked exactly against
+`perf/insn-exec-heavy-baseline.tsv`. This adds one `Linux heavy
+instruction-count baseline` gate row to the `ci-timing-Linux` artifact without
+repeating the compiler bootstrap.
 
 ## Host-keyed AVX-512 retired instructions
 
@@ -201,10 +209,10 @@ Manifest chunk ids are zero-based file ids. The required heavy chunk is
 reducing the batch size hides the memory behavior being measured. If a different
 output directory is useful for side-by-side runs, set `TYPELISP_COMPILE_RSS_OUT`.
 
-The heavy nightly workflow measures `spmd_map`, `spmd_mask`, `spmd_zip`,
+The required Linux PR gate measures `spmd_map`, `spmd_mask`, `spmd_zip`,
 `spmd_short_tail`, and `string_scan` as benchmark-only cases with one
-cachegrind run. Heavy improvements and regressions are visible in the scheduled
-workflow; accept intentional changes by committing an explicit
+cachegrind run. Heavy improvements and regressions therefore block the PR that
+introduces them; accept intentional changes by committing an explicit
 `perf/insn-exec-heavy-baseline.tsv` refresh.
 
 ## SPMD scalar/AVX2 mode matrix

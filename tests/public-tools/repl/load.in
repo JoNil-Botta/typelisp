@@ -1,0 +1,3 @@
+.load tests/public-tools/repl/load-declarations.tl
+.type loaded-answer
+.exit

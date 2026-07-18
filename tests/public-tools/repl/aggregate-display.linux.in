@@ -1,0 +1,6 @@
+.load tests/public-tools/repl/aggregate-declarations.tl
+repl-point
+repl-maybe
+(tuple 1 2)
+repl-fixed
+.exit

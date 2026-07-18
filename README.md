@@ -629,6 +629,10 @@ levels never change program semantics), `--manifest-path <file>`,
 `typelisp <command> --help` for command-specific help. The REPL remembers
 top-level declarations and evaluates bare expressions by compiling a scratch
 program through the real build/run pipeline — there is no interpreter.
+`.load <file>` adds a source file's declarations to the current session after
+checking the combined session. Scalar results are printed directly; structs,
+enums, tuples, and fixed arrays use the stable fallback `<value: Type>` because
+TypeLisp does not currently provide runtime reflection for their contents.
 
 ## Status
 

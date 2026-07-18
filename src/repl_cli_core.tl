@@ -13,6 +13,7 @@
 ;;   - `.exit`            ends the session.
 ;;   - `.help`            prints the command help to stdout.
 ;;   - `.type <expr>`     prints the inferred type without running code.
+;;   - `.load <file>`     loads declarations into the current session.
 ;;   - blank line         is skipped at the top level, and cancels a pending
 ;;                        multiline form (discarding the buffered input).
 ;;   - any other `.cmd`   reports an unknown command (to stderr).
@@ -39,6 +40,10 @@
   (No)
   (Expr String))
 
+(defenum ReplLoadCommand
+  (No)
+  (Path String))
+
 (defenum ReplLineResult
   (Line String String))
 
@@ -54,7 +59,7 @@
   "TypeLisp REPL. Type .help for commands.\n")
 
 (define (repl-help-text) : String
-  "TypeLisp REPL commands:\n  .help         Show this help\n  .type <expr>  Print the inferred type without running code\n  .exit         Exit the REPL\n")
+  "TypeLisp REPL commands:\n  .help         Show this help\n  .type <expr>  Print the inferred type without running code\n  .load <file>  Load declarations from a source file\n  .exit         Exit the REPL\n")
 
 (define (repl-stdout-write [text : String]) : unit
   (io.stdout-write (& text)))
@@ -159,6 +164,15 @@
         (ReplTypeCommand.Expr (repl-trim-left-from line 5))
         (ReplTypeCommand.No)))
     (ReplTypeCommand.No)))
+
+(define (repl-load-command [line : String]) : ReplLoadCommand
+  (if (repl-string-prefix? line ".load")
+    (if (= (string.string-length line) 5)
+      (ReplLoadCommand.Path "")
+      (if (repl-space? (string.string-ref line 5))
+        (ReplLoadCommand.Path (repl-trim-left-from line 5))
+        (ReplLoadCommand.No)))
+    (ReplLoadCommand.No)))
 
 (define (repl-type-list-render-spaced-at
   [types : (& types AstTypeList)]
@@ -383,8 +397,18 @@
 (define (repl-display-helpers-source [ty : AstType]) : String
   (match ty
     [(AstType.F64) (repl-f64-display-helpers-source)]
+    [(AstType.F32) (repl-f64-display-helpers-source)]
     [(AstType.Char) (repl-char-display-helpers-source)]
     [_ ""]))
+
+(define (repl-aggregate-display-body [ty : AstType] [expr-source : String]) : String
+  (string.append
+    "(begin\n  "
+    (string.append
+      expr-source
+      (string.append
+        "\n  (io.print-string \"<value: "
+        (string.append (repl-type-render ty) ">\")\n  (io.print-newline))")))))
 
 (define (repl-display-body [ty : AstType] [expr-source : String]) : ResultReplString
   (match ty
@@ -404,6 +428,11 @@
         (string.append
           "(__tl_repl_print_f64\n"
           (string.append expr-source "\n)")))]
+    [(AstType.F32)
+      (ResultReplString.Ok
+        (string.append
+          "(__tl_repl_print_f64\n(cast\n"
+          (string.append expr-source "\n: f64)\n)")))]
     [(AstType.Char)
       (ResultReplString.Ok
         (string.append
@@ -415,6 +444,18 @@
           "(begin\n  (io.print-string\n"
           (string.append expr-source "\n  )\n  (io.print-newline))")))]
     [(AstType.Unit) (ResultReplString.Ok expr-source)]
+    [(AstType.Tuple _)
+      (ResultReplString.Ok (repl-aggregate-display-body ty expr-source))]
+    [(AstType.Array _ _)
+      (ResultReplString.Ok (repl-aggregate-display-body ty expr-source))]
+    [(AstType.Enum _)
+      (ResultReplString.Ok (repl-aggregate-display-body ty expr-source))]
+    [(AstType.EnumArgs _ _)
+      (ResultReplString.Ok (repl-aggregate-display-body ty expr-source))]
+    [(AstType.Struct _)
+      (ResultReplString.Ok (repl-aggregate-display-body ty expr-source))]
+    [(AstType.StructArgs _ _)
+      (ResultReplString.Ok (repl-aggregate-display-body ty expr-source))]
     [_
       (ResultReplString.Err
         (string.append
@@ -556,6 +597,30 @@
 
 (define (repl-session-candidate [session-source : String] [input : String]) : String
   (string.append session-source (string.append input "\n")))
+
+(define (repl-handle-load-command [session-source : String] [path : String]) : String
+  (if (string.eq path "")
+    (begin
+      (repl-print-error-line "Error: .load expects a file path")
+      session-source)
+    (match (io.try-read-file (& path))
+      [(io.OkIoString source)
+        (let
+          [candidate : String (repl-session-candidate session-source source)]
+          (match (repl-typecheck-session-source candidate)
+            [(ResultCompilerTypecheck.Ok _)
+              (begin
+                (repl-stdout-write-line (string.append "Loaded " path))
+                candidate)]
+            [(ResultCompilerTypecheck.Err diag)
+              (begin
+                (repl-report-diagnostic (box-get diag))
+                session-source)]))]
+      [(io.ErrIoString error)
+        (begin
+          (repl-print-error-line
+            (string.append "Error: .load failed: " (io.error-message error)))
+          session-source)])))
 
 (define (repl-handle-input [session-source : String] [input : String]) : String
   (match (parse-ast-repl-source input)
@@ -801,17 +866,23 @@
             (repl-handle-type-command session-source expr-source)
             (ReplLineResult.Line session-source ""))]
         [(ReplTypeCommand.No)
-          (if (string.eq line ".help")
-            (begin
-              (repl-stdout-write (repl-help-text))
-              (ReplLineResult.Line session-source ""))
-            (if (repl-dot-command? line)
-              (begin
-                (repl-stderr-write
-                  (string.append "Unknown REPL command: " line))
-                (repl-stderr-write "\nType .help for commands.\n")
-                (ReplLineResult.Line session-source ""))
-              (repl-handle-source-line session-source pending line)))]))
+          (match (repl-load-command line)
+            [(ReplLoadCommand.Path path)
+              (ReplLineResult.Line
+                (repl-handle-load-command session-source path)
+                "")]
+            [(ReplLoadCommand.No)
+              (if (string.eq line ".help")
+                (begin
+                  (repl-stdout-write (repl-help-text))
+                  (ReplLineResult.Line session-source ""))
+                (if (repl-dot-command? line)
+                  (begin
+                    (repl-stderr-write
+                      (string.append "Unknown REPL command: " line))
+                    (repl-stderr-write "\nType .help for commands.\n")
+                    (ReplLineResult.Line session-source ""))
+                  (repl-handle-source-line session-source pending line)))])]))
     (repl-handle-source-line session-source pending line)))
 
 ;; The REPL loop: prompt, then read and dispatch until `.exit` or end of input.

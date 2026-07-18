@@ -350,6 +350,18 @@
   (Ok LowerMaskedMatchMasks)
   (Err (Box CompilerDiagnostic)))
 
+(defenum LowerMaskedEnumSource
+  (Source LowerState CompilerIrValue AstType))
+
+(defenum ResultLowerMaskedEnumSource
+  (No)
+  (Ok LowerMaskedEnumSource)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum ResultLowerMaskedEnumEnv
+  (Ok LowerState sym_i64_env.SymI64Env TcTypeEnv LowerIdSet)
+  (Err (Box CompilerDiagnostic)))
+
 (defenum LowerMaybeVectorReduce
   (No)
   (Array i64 CompilerIrVectorReduceOp AstType i64)
@@ -34336,9 +34348,6 @@
 (define (lower-avx2-masked-if-diagnostic) : String
   "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512")
 
-(define (lower-avx2-varying-match-diagnostic) : String
-  "lower: SPMD varying match is not supported in AVX2 backend mode; use scalar or avx512")
-
 (define (lower-avx2-varying-while-diagnostic) : String
   "lower: SPMD varying while is not supported in AVX2 backend mode; use scalar or avx512")
 
@@ -35423,16 +35432,20 @@
               index
               lane-locals
               right))]
-        ;; The masked-lane census records widths, not scalar types. Restrict
-        ;; multiply to the f32/i32-width gang; wider multiply shapes have
-        ;; separate support checks.
-        [lane32-arithmetic : bool
+        ;; The masked-lane census records widths, not scalar types. Admit the
+        ;; widths whose integer/float multiply opcodes already exist; a
+        ;; width-neutral expression inherits the enclosing array lane width.
+        [vector-mul-width : bool
           (and
-            (= operand-lanes (lower-simd-lanes-for-elem mode (AstType.F32)))
             (match op
               [(AstBinOp.Mul) true]
-              [_ false]))]
-        (if (or (lower-masked-vector-binop-supported? op) lane32-arithmetic)
+              [_ false])
+            (or
+              (= operand-lanes 0)
+              (= operand-lanes (lower-simd-lanes-for-elem mode (AstType.I64)))
+              (= operand-lanes (lower-simd-lanes-for-elem mode (AstType.I32)))
+              (= operand-lanes (lower-simd-lanes-for-elem mode (AstType.I16)))))]
+        (if (or (lower-masked-vector-binop-supported? op) vector-mul-width)
           operand-lanes
           -1))]
     [(AstExpr.Call func-box args)
@@ -37697,6 +37710,13 @@
         type-env
         index
         body)]
+    [varying-enum-match : bool
+      (lower-masked-vector-body-has-varying-enum-match?
+        ctx
+        env
+        type-env
+        index
+        body)]
     [bool-array-lane : bool
       (lower-masked-vector-body-has-bool-array-lane?
         ctx
@@ -37709,6 +37729,7 @@
     (if (or
       (and
         (lower-mode-avx512? mode)
+        (not varying-enum-match)
         (or
           varying-if
           varying-while
@@ -37717,8 +37738,12 @@
           out-of-line-call))
       (and
         (lower-mode-avx2? mode)
-        (or varying-if varying-while bool-array-lane)
-        (not varying-match)))
+        (or
+          varying-if
+          varying-while
+          varying-match
+          varying-enum-match
+          bool-array-lane)))
       (let
         [lanes : i64
           (lower-masked-vector-expr-lanes ctx mode env type-env index body)]
@@ -42252,6 +42277,121 @@
         expr
         "non-dynamic-array writes inside masked branches")]))
 
+;; AVX2 has no mask registers and this slice deliberately does not introduce
+;; enum gather IR. Keep a varying enum lane as the address of the gang's first
+;; contiguous element; tag and payload vectors are assembled below from
+;; active-lane-only scalar loads.
+(define (lower-avx2-masked-enum-source
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [index : String]
+  [index-var : i64]
+  [expr : AstExpr]) : ResultLowerMaskedEnumSource
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-avx2-masked-enum-source
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Ann inner-box _)
+      (lower-avx2-masked-enum-source
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Cast inner-box _)
+      (lower-avx2-masked-enum-source
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Var name)
+      (if (lower-id-set-contains? lane-locals name)
+        (match (tc-lookup-id type-env name)
+          [(ResultTcType.Ok ty)
+            (let
+              [resolved : AstType
+                (tc-type-without-regions (tc-resolve-type ctx ty))]
+              (if (lower-spmd-enum-type? resolved)
+                (let
+                  [base-var : i64
+                    (sym_i64_env.sym-i64-lookup-id-or
+                      env
+                      name
+                      (compiler-symbols-missing-handle))]
+                  (if (compiler-symbols-handle-found? base-var)
+                    (ResultLowerMaskedEnumSource.Ok
+                      (LowerMaskedEnumSource.Source
+                        state
+                        (CompilerIrValue.Var base-var)
+                        resolved))
+                    (ResultLowerMaskedEnumSource.Err
+                      (box
+                        (lower-diagnostic-at-expr
+                          expr
+                          "lower: varying enum source has no storage binding")))))
+                ResultLowerMaskedEnumSource.No))]
+          [(ResultTcType.Err message)
+            (ResultLowerMaskedEnumSource.Err
+              (box (lower-diagnostic-at-expr expr message)))])
+        ResultLowerMaskedEnumSource.No)]
+    [(AstExpr.ArrayRef arr-box idx-box)
+      (let
+        [arr : AstExpr (lower-context-expr-get ctx arr-box)]
+        [idx : AstExpr (lower-context-expr-get ctx idx-box)]
+        (match (lower-dynamic-array-var ctx env type-env arr)
+          [(LowerMaybeArrayVar.Some array-var elem-ty)
+            (let
+              [resolved : AstType
+                (tc-type-without-regions (tc-resolve-type ctx elem-ty))]
+              (if (lower-spmd-enum-type? resolved)
+                (match (lower-avx512-masked-index-value
+                  ctx
+                  state
+                  index
+                  index-var
+                  idx)
+                  [(ResultLowerExpr.Ok idx-lowered)
+                    (match idx-lowered
+                      [(LowerExpr.Expr idx-state idx-value _)
+                        (match (lower-array-data-pointer-value
+                          idx-state
+                          (CompilerIrValue.Var array-var))
+                          [(LowerExpr.Expr data-state data-ptr _)
+                            (match (lower-emit-elem-addr-gep
+                              ctx
+                              data-state
+                              data-ptr
+                              idx-value
+                              resolved)
+                              [(LowerExpr.Expr base-state base _)
+                                (ResultLowerMaskedEnumSource.Ok
+                                  (LowerMaskedEnumSource.Source
+                                    base-state
+                                    base
+                                    resolved))])])])]
+                  [(ResultLowerExpr.Err message)
+                    (ResultLowerMaskedEnumSource.Err message)])
+                ResultLowerMaskedEnumSource.No))]
+          [(LowerMaybeArrayVar.No) ResultLowerMaskedEnumSource.No]))]
+    [_ ResultLowerMaskedEnumSource.No]))
+
 (define (lower-avx512-masked-let-bindings
   [ctx : TcContext]
   [state : LowerState]
@@ -42297,20 +42437,22 @@
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
           [init : AstExpr (lower-context-expr-get ctx init-box)]
-          (match (lower-avx512-masked-expr
-            ctx
-            state
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            active-mask
-            lanes
-            init)
-            [(ResultLowerExpr.Ok lowered)
-              (match lowered
-                [(LowerExpr.Expr init-state init-value init-ty)
+          [enum-source : ResultLowerMaskedEnumSource
+            (if (lower-mode-avx2? (lower-state-mode state))
+              (lower-avx2-masked-enum-source
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                init)
+              ResultLowerMaskedEnumSource.No)]
+          (match enum-source
+            [(ResultLowerMaskedEnumSource.Ok source)
+              (match source
+                [(LowerMaskedEnumSource.Source init-state init-value init-ty)
                   (let
                     [binding-ty : AstType
                       (lower-let-binding-type ctx maybe-ty init-ty)]
@@ -42333,8 +42475,48 @@
                           (box
                             (lower-diagnostic-at-expr
                               init
-                              "lower: masked let init did not produce an IR variable")))]))])]
-            [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)]))])))
+                              "lower: varying enum source did not produce an IR variable")))]))])]
+            [(ResultLowerMaskedEnumSource.Err message)
+              (ResultLowerEnv.Err message)]
+            [(ResultLowerMaskedEnumSource.No)
+              (match (lower-avx512-masked-expr
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                init)
+                [(ResultLowerExpr.Ok lowered)
+                  (match lowered
+                    [(LowerExpr.Expr init-state init-value init-ty)
+                      (let
+                        [binding-ty : AstType
+                          (lower-let-binding-type ctx maybe-ty init-ty)]
+                        (match init-value
+                          [(CompilerIrValue.Var init-var)
+                            (lower-avx512-masked-let-bindings-at
+                              ctx
+                              init-state
+                              (sym_i64_env.sym-i64-bind-id env name init-var)
+                              (tc-bind-id type-env name binding-ty)
+                              (lower-id-set-insert lane-locals name)
+                              index
+                              index-var
+                              active-mask
+                              lanes
+                              bindings
+                              (+ binding-index 1))]
+                          [_
+                            (ResultLowerEnv.Err
+                              (box
+                                (lower-diagnostic-at-expr
+                                  init
+                                  "lower: masked let init did not produce an IR variable")))]))])]
+                [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)])]))])))
 
 (define (lower-avx512-masked-begin
   [ctx : TcContext]
@@ -42666,6 +42848,153 @@
                           (ResultLowerExpr.Err message)])])])])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
+(define (lower-avx2-masked-index-mod
+  [state : LowerState]
+  [index-var : i64]
+  [index-offset : i64]
+  [lanes : i64]
+  [divisor : i64]) : ResultLowerExpr
+  (let
+    [s : LowerState state]
+    [lane-id : CompilerIrValue CompilerIrValue.Unit]
+    [result : CompilerIrValue CompilerIrValue.Unit]
+    [lane : i64 0]
+    (begin
+      (match (lower-emit-lane-id s lanes (AstType.I64))
+        [(LowerExpr.Expr next-state value _)
+          (begin
+            (set! s next-state)
+            (set! lane-id value))])
+      (match (lower-emit-splat s (CompilerIrValue.I64 0) lanes (AstType.I64))
+        [(LowerExpr.Expr next-state value _)
+          (begin
+            (set! s next-state)
+            (set! result value))])
+      (while (< lane lanes)
+        (let
+          [one-lane : CompilerIrValue CompilerIrValue.Unit]
+          [lane-value : CompilerIrValue CompilerIrValue.Unit]
+          [lane-remainder : CompilerIrValue CompilerIrValue.Unit]
+          (begin
+            (match (lower-emit-splat
+              s
+              (CompilerIrValue.I64 lane)
+              lanes
+              (AstType.I64))
+              [(LowerExpr.Expr lane-state lane-splat _)
+                (match (lower-emit-vector-compare
+                  lane-state
+                  (CompilerIrBinOp.Eq)
+                  lane-id
+                  lane-splat
+                  lanes
+                  (AstType.I64))
+                  [(LowerExpr.Expr next-state value _)
+                    (begin
+                      (set! s next-state)
+                      (set! one-lane value))])])
+            (match (lower-emit-binop
+              s
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var index-var)
+              (CompilerIrValue.I64 (+ index-offset lane))
+              (AstType.I64))
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! lane-value value))])
+            (match (lower-emit-binop
+              s
+              (CompilerIrBinOp.Mod)
+              lane-value
+              (CompilerIrValue.I64 divisor)
+              (AstType.I64))
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! lane-remainder value))])
+            (match (lower-emit-splat s lane-remainder lanes (AstType.I64))
+              [(LowerExpr.Expr splat-state lane-vector _)
+                (match (lower-emit-select
+                  splat-state
+                  one-lane
+                  lane-vector
+                  result
+                  lanes
+                  (AstType.I64))
+                  [(LowerExpr.Expr next-state value _)
+                    (begin
+                      (set! s next-state)
+                      (set! result value))])])
+            (set! lane (+ lane 1)))))
+      (ResultLowerExpr.Ok (LowerExpr.Expr s result (AstType.I64))))))
+
+(define (lower-avx512-masked-vector-binop
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [expr : AstExpr]
+  [op : CompilerIrBinOp]
+  [left : AstExpr]
+  [right : AstExpr]) : ResultLowerExpr
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    expr)
+    [(ResultTcType.Ok result-ty)
+      (let
+        [lane-ty : AstType (tc-type-without-regions result-ty)]
+        (match (lower-avx512-masked-expr-expected
+          ctx
+          state
+          env
+          type-env
+          lane-locals
+          index
+          index-var
+          active-mask
+          lanes
+          left
+          lane-ty)
+          [(ResultLowerExpr.Ok left-lowered)
+            (match left-lowered
+              [(LowerExpr.Expr left-state left-value _)
+                (match (lower-avx512-masked-expr-expected
+                  ctx
+                  left-state
+                  env
+                  type-env
+                  lane-locals
+                  index
+                  index-var
+                  active-mask
+                  lanes
+                  right
+                  lane-ty)
+                  [(ResultLowerExpr.Ok right-lowered)
+                    (match right-lowered
+                      [(LowerExpr.Expr right-state right-value _)
+                        (ResultLowerExpr.Ok
+                          (lower-emit-vector-binop
+                            right-state
+                            op
+                            left-value
+                            right-value
+                            lanes
+                            lane-ty))])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
+    [(ResultTcType.Err message)
+      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr expr message)))]))
+
 (define (lower-avx512-masked-binary
   [ctx : TcContext]
   [state : LowerState]
@@ -42758,7 +43087,7 @@
                 [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
     [(AstBinOp.Add)
-      (match (lower-avx512-masked-expr
+      (lower-avx512-masked-vector-binop
         ctx
         state
         env
@@ -42768,37 +43097,12 @@
         index-var
         active-mask
         lanes
-        left)
-        [(ResultLowerExpr.Ok left-lowered)
-          (match left-lowered
-            [(LowerExpr.Expr left-state left-value left-ty)
-              (match (lower-avx512-masked-expr-expected
-                ctx
-                left-state
-                env
-                type-env
-                lane-locals
-                index
-                index-var
-                active-mask
-                lanes
-                right
-                left-ty)
-                [(ResultLowerExpr.Ok right-lowered)
-                  (match right-lowered
-                    [(LowerExpr.Expr right-state right-value _)
-                      (ResultLowerExpr.Ok
-                        (lower-emit-vector-binop
-                          right-state
-                          (CompilerIrBinOp.Add)
-                          left-value
-                          right-value
-                          lanes
-                          left-ty))])]
-                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+        expr
+        (CompilerIrBinOp.Add)
+        left
+        right)]
     [(AstBinOp.Sub)
-      (match (lower-avx512-masked-expr
+      (lower-avx512-masked-vector-binop
         ctx
         state
         env
@@ -42808,37 +43112,12 @@
         index-var
         active-mask
         lanes
-        left)
-        [(ResultLowerExpr.Ok left-lowered)
-          (match left-lowered
-            [(LowerExpr.Expr left-state left-value left-ty)
-              (match (lower-avx512-masked-expr-expected
-                ctx
-                left-state
-                env
-                type-env
-                lane-locals
-                index
-                index-var
-                active-mask
-                lanes
-                right
-                left-ty)
-                [(ResultLowerExpr.Ok right-lowered)
-                  (match right-lowered
-                    [(LowerExpr.Expr right-state right-value _)
-                      (ResultLowerExpr.Ok
-                        (lower-emit-vector-binop
-                          right-state
-                          (CompilerIrBinOp.Sub)
-                          left-value
-                          right-value
-                          lanes
-                          left-ty))])]
-                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+        expr
+        (CompilerIrBinOp.Sub)
+        left
+        right)]
     [(AstBinOp.BitAnd)
-      (match (lower-avx512-masked-expr
+      (lower-avx512-masked-vector-binop
         ctx
         state
         env
@@ -42848,37 +43127,12 @@
         index-var
         active-mask
         lanes
-        left)
-        [(ResultLowerExpr.Ok left-lowered)
-          (match left-lowered
-            [(LowerExpr.Expr left-state left-value left-ty)
-              (match (lower-avx512-masked-expr-expected
-                ctx
-                left-state
-                env
-                type-env
-                lane-locals
-                index
-                index-var
-                active-mask
-                lanes
-                right
-                left-ty)
-                [(ResultLowerExpr.Ok right-lowered)
-                  (match right-lowered
-                    [(LowerExpr.Expr right-state right-value _)
-                      (ResultLowerExpr.Ok
-                        (lower-emit-vector-binop
-                          right-state
-                          (CompilerIrBinOp.BitAnd)
-                          left-value
-                          right-value
-                          lanes
-                          left-ty))])]
-                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+        expr
+        (CompilerIrBinOp.BitAnd)
+        left
+        right)]
     [(AstBinOp.Mul)
-      (match (lower-avx512-masked-expr
+      (lower-avx512-masked-vector-binop
         ctx
         state
         env
@@ -42888,71 +43142,61 @@
         index-var
         active-mask
         lanes
-        left)
-        [(ResultLowerExpr.Ok left-lowered)
-          (match left-lowered
-            [(LowerExpr.Expr left-state left-value left-ty)
-              (match (lower-avx512-masked-expr-expected
-                ctx
-                left-state
-                env
-                type-env
-                lane-locals
-                index
-                index-var
-                active-mask
-                lanes
-                right
-                left-ty)
-                [(ResultLowerExpr.Ok right-lowered)
-                  (match right-lowered
-                    [(LowerExpr.Expr right-state right-value _)
-                      (ResultLowerExpr.Ok
-                        (lower-emit-vector-binop
-                          right-state
-                          (CompilerIrBinOp.Mul)
-                          left-value
-                          right-value
-                          lanes
-                          left-ty))])]
-                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
-        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+        expr
+        (CompilerIrBinOp.Mul)
+        left
+        right)]
     [(AstBinOp.Mod)
       (let
         [divisor : i64
           (lower-masked-vector-positive-power-two-literal ctx right)]
+        [positive-divisor : i64
+          (lower-masked-vector-index-literal-offset ctx right)]
         [index-offset : i64 (lower-masked-vector-index-offset ctx index left)]
-        (if (and (> divisor 0) (>= index-offset 0))
-          (match (lower-avx512-masked-expr
-            ctx
-            state
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            active-mask
+        (if (and
+          (lower-mode-avx2? (lower-state-mode state))
+          (> positive-divisor 0)
+          (>= index-offset 0)
+          (=
             lanes
-            left)
-            [(ResultLowerExpr.Ok left-lowered)
-              (match left-lowered
-                [(LowerExpr.Expr left-state left-value left-ty)
-                  (match (lower-emit-splat
-                    left-state
-                    (CompilerIrValue.I64 (- divisor 1))
-                    lanes
-                    left-ty)
-                    [(LowerExpr.Expr rhs-state rhs-value _)
-                      (ResultLowerExpr.Ok
-                        (lower-emit-vector-binop
-                          rhs-state
-                          (CompilerIrBinOp.BitAnd)
-                          left-value
-                          rhs-value
-                          lanes
-                          left-ty))])])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])
-          (lower-avx512-masked-unsupported expr "this binary operator")))]
+            (lower-simd-lanes-for-elem (lower-state-mode state) (AstType.I64))))
+          (lower-avx2-masked-index-mod
+            state
+            index-var
+            index-offset
+            lanes
+            positive-divisor)
+          (if (and (> divisor 0) (>= index-offset 0))
+            (match (lower-avx512-masked-expr
+              ctx
+              state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              left)
+              [(ResultLowerExpr.Ok left-lowered)
+                (match left-lowered
+                  [(LowerExpr.Expr left-state left-value left-ty)
+                    (match (lower-emit-splat
+                      left-state
+                      (CompilerIrValue.I64 (- divisor 1))
+                      lanes
+                      left-ty)
+                      [(LowerExpr.Expr rhs-state rhs-value _)
+                        (ResultLowerExpr.Ok
+                          (lower-emit-vector-binop
+                            rhs-state
+                            (CompilerIrBinOp.BitAnd)
+                            left-value
+                            rhs-value
+                            lanes
+                            left-ty))])])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])
+            (lower-avx512-masked-unsupported expr "this binary operator"))))]
     [(AstBinOp.Eq)
       (lower-avx512-masked-compare
         ctx
@@ -43098,6 +43342,852 @@
                       left-ty))])]
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+
+(define (lower-avx2-enum-mask-lane-type [lanes : i64]) : AstType
+  (cond
+    [(= lanes 4) (AstType.I64)]
+    [(= lanes 8) (AstType.I32)]
+    [(= lanes 16) (AstType.I16)]
+    [else (AstType.I8)]))
+
+(define (lower-avx2-enum-zero-value [ty : AstType]) : CompilerIrValue
+  (match (tc-type-without-regions ty)
+    [(AstType.F64) (CompilerIrValue.F64 (cast 0 : u64))]
+    [(AstType.F32) (CompilerIrValue.F64 (cast 0 : u64))]
+    [(AstType.Bool) (CompilerIrValue.Bool false)]
+    [_ (CompilerIrValue.I64 0)]))
+
+(define (lower-avx2-enum-zero-mask
+  [state : LowerState]
+  [lane-id : CompilerIrValue]
+  [lanes : i64]
+  [lane-ty : AstType]) : LowerExpr
+  (lower-emit-vector-compare
+    state
+    (CompilerIrBinOp.Ne)
+    lane-id
+    lane-id
+    lanes
+    lane-ty))
+
+(define (lower-avx2-enum-one-lane-mask
+  [state : LowerState]
+  [lane-id : CompilerIrValue]
+  [lane : i64]
+  [lanes : i64]
+  [lane-ty : AstType]) : LowerExpr
+  (match (lower-emit-splat state (CompilerIrValue.I64 lane) lanes lane-ty)
+    [(LowerExpr.Expr lane-state lane-value _)
+      (lower-emit-vector-compare
+        lane-state
+        (CompilerIrBinOp.Eq)
+        lane-id
+        lane-value
+        lanes
+        lane-ty)]))
+
+;; Guard the load in scalar control flow. This is required for both masked arms
+;; and the final partial gang: inactive lanes must not touch enum storage.
+(define (lower-avx2-enum-load-active-lane
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [offset : i64]
+  [active : CompilerIrValue]
+  [ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc slot-state slot-var)
+      (match (lower-state-fresh-label
+        (lower-state-emit
+          slot-state
+          (CompilerIrInstr.Mov slot-var (lower-avx2-enum-zero-value ty) ty))
+        "spmd_match_lane_load")
+        [(LowerLabel.Label load-label-state load-label)
+          (match (lower-state-fresh-label
+            load-label-state
+            "spmd_match_lane_join")
+            [(LowerLabel.Label join-label-state join-label)
+              (let
+                [load-state : LowerState
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      join-label-state
+                      (CompilerIrInstr.Branch active load-label join-label))
+                    load-label)]
+                (match (lower-load-at-offset load-state base offset ty)
+                  [(LowerExpr.Expr loaded-state loaded _)
+                    (LowerExpr.Expr
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          (lower-state-emit
+                            loaded-state
+                            (CompilerIrInstr.Mov slot-var loaded ty))
+                          (CompilerIrInstr.Jump join-label))
+                        join-label)
+                      (CompilerIrValue.Var slot-var)
+                      ty)]))])])]))
+
+(define (lower-avx2-enum-scalar-bool-lane-mask
+  [state : LowerState]
+  [condition : CompilerIrValue]
+  [one-lane-mask : CompilerIrValue]
+  [lanes : i64]
+  [lane-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc word-state word-var)
+      (match (lower-state-fresh-label
+        (lower-state-emit
+          word-state
+          (CompilerIrInstr.Mov word-var (CompilerIrValue.I64 0) lane-ty))
+        "spmd_match_lane_true")
+        [(LowerLabel.Label true-label-state true-label)
+          (match (lower-state-fresh-label
+            true-label-state
+            "spmd_match_lane_bool")
+            [(LowerLabel.Label join-label-state join-label)
+              (let
+                [true-state : LowerState
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      join-label-state
+                      (CompilerIrInstr.Branch condition true-label join-label))
+                    true-label)]
+                (match (lower-emit-splat
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      (lower-state-emit
+                        true-state
+                        (CompilerIrInstr.Mov
+                          word-var
+                          (CompilerIrValue.I64 -1)
+                          lane-ty))
+                      (CompilerIrInstr.Jump join-label))
+                    join-label)
+                  (CompilerIrValue.Var word-var)
+                  lanes
+                  lane-ty)
+                  [(LowerExpr.Expr splat-state splat-value _)
+                    (lower-emit-mask-binop
+                      splat-state
+                      (CompilerIrMaskBinOp.And)
+                      one-lane-mask
+                      splat-value
+                      lanes)]))])])]))
+
+;; Reconstruct one payload field as a varying vector without adding a gather
+;; opcode: load each active lane and select its splat into a one-lane mask.
+(define (lower-avx2-enum-field-vector
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [stride : i64]
+  [field-offset : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [field-ty : AstType]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [lane-ty : AstType (lower-avx2-enum-mask-lane-type lanes)]
+    [lane-id : CompilerIrValue CompilerIrValue.Unit]
+    [result : CompilerIrValue CompilerIrValue.Unit]
+    [lane : i64 0]
+    (begin
+      (match (lower-emit-lane-id s lanes lane-ty)
+        [(LowerExpr.Expr next-state value _)
+          (begin
+            (set! s next-state)
+            (set! lane-id value))])
+      (match (if (lower-type-bool? field-ty)
+        (lower-avx2-enum-zero-mask s lane-id lanes lane-ty)
+        (lower-emit-splat
+          s
+          (lower-avx2-enum-zero-value field-ty)
+          lanes
+          field-ty))
+        [(LowerExpr.Expr next-state value _)
+          (begin
+            (set! s next-state)
+            (set! result value))])
+      (while (< lane lanes)
+        (let
+          [one-lane : CompilerIrValue CompilerIrValue.Unit]
+          [lane-active-mask : CompilerIrValue CompilerIrValue.Unit]
+          [lane-active : CompilerIrValue CompilerIrValue.Unit]
+          [loaded : CompilerIrValue CompilerIrValue.Unit]
+          (begin
+            (match (lower-avx2-enum-one-lane-mask s lane-id lane lanes lane-ty)
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! one-lane value))])
+            (match (lower-emit-mask-binop
+              s
+              (CompilerIrMaskBinOp.And)
+              active-mask
+              one-lane
+              lanes)
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! lane-active-mask value))])
+            (match (lower-emit-mask-reduce
+              s
+              (CompilerIrMaskReduceOp.Any)
+              lane-active-mask
+              lanes)
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! lane-active value))])
+            (match (lower-avx2-enum-load-active-lane
+              s
+              base
+              (+ field-offset (* lane stride))
+              lane-active
+              field-ty)
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! loaded value))])
+            (if (lower-type-bool? field-ty)
+              (match (lower-avx2-enum-scalar-bool-lane-mask
+                s
+                loaded
+                one-lane
+                lanes
+                lane-ty)
+                [(LowerExpr.Expr lane-state lane-value _)
+                  (match (lower-emit-mask-binop
+                    lane-state
+                    (CompilerIrMaskBinOp.Or)
+                    result
+                    lane-value
+                    lanes)
+                    [(LowerExpr.Expr next-state value _)
+                      (begin
+                        (set! s next-state)
+                        (set! result value))])])
+              (match (lower-emit-splat s loaded lanes field-ty)
+                [(LowerExpr.Expr lane-state lane-value _)
+                  (match (lower-emit-select
+                    lane-state
+                    one-lane
+                    lane-value
+                    result
+                    lanes
+                    field-ty)
+                    [(LowerExpr.Expr next-state value _)
+                      (begin
+                        (set! s next-state)
+                        (set! result value))])]))
+            (set! lane (+ lane 1)))))
+      (LowerExpr.Expr s result field-ty))))
+
+(define (lower-avx2-enum-tag-arm-masks
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [stride : i64]
+  [active-mask : CompilerIrValue]
+  [lane-id : CompilerIrValue]
+  [lanes : i64]
+  [lane-ty : AstType]
+  [tag : i64]) : ResultLowerMaskedMatchMasks
+  (let
+    [s : LowerState state]
+    [arm-mask : CompilerIrValue CompilerIrValue.Unit]
+    [lane : i64 0]
+    (begin
+      (match (lower-avx2-enum-zero-mask s lane-id lanes lane-ty)
+        [(LowerExpr.Expr next-state value _)
+          (begin
+            (set! s next-state)
+            (set! arm-mask value))])
+      (while (< lane lanes)
+        (let
+          [one-lane : CompilerIrValue CompilerIrValue.Unit]
+          [lane-active-mask : CompilerIrValue CompilerIrValue.Unit]
+          [lane-active : CompilerIrValue CompilerIrValue.Unit]
+          [loaded-tag : CompilerIrValue CompilerIrValue.Unit]
+          [tag-eq : CompilerIrValue CompilerIrValue.Unit]
+          (begin
+            (match (lower-avx2-enum-one-lane-mask s lane-id lane lanes lane-ty)
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! one-lane value))])
+            (match (lower-emit-mask-binop
+              s
+              (CompilerIrMaskBinOp.And)
+              active-mask
+              one-lane
+              lanes)
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! lane-active-mask value))])
+            (match (lower-emit-mask-reduce
+              s
+              (CompilerIrMaskReduceOp.Any)
+              lane-active-mask
+              lanes)
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! lane-active value))])
+            (match (lower-avx2-enum-load-active-lane
+              s
+              base
+              (* lane stride)
+              lane-active
+              (AstType.I64))
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! loaded-tag value))])
+            (match (lower-emit-binop
+              s
+              (CompilerIrBinOp.Eq)
+              loaded-tag
+              (CompilerIrValue.I64 tag)
+              (AstType.I64))
+              [(LowerExpr.Expr next-state value _)
+                (begin
+                  (set! s next-state)
+                  (set! tag-eq value))])
+            (match (lower-avx2-enum-scalar-bool-lane-mask
+              s
+              tag-eq
+              one-lane
+              lanes
+              lane-ty)
+              [(LowerExpr.Expr lane-state lane-match _)
+                (match (lower-emit-mask-binop
+                  lane-state
+                  (CompilerIrMaskBinOp.Or)
+                  arm-mask
+                  lane-match
+                  lanes)
+                  [(LowerExpr.Expr next-state value _)
+                    (begin
+                      (set! s next-state)
+                      (set! arm-mask value))])])
+            (set! lane (+ lane 1)))))
+      (match (lower-emit-mask-binop
+        s
+        (CompilerIrMaskBinOp.And)
+        active-mask
+        arm-mask
+        lanes)
+        [(LowerExpr.Expr active-arm-state active-arm-mask _)
+          (match (lower-emit-mask-not active-arm-state active-arm-mask lanes)
+            [(LowerExpr.Expr not-state not-mask _)
+              (match (lower-emit-mask-binop
+                not-state
+                (CompilerIrMaskBinOp.And)
+                active-mask
+                not-mask
+                lanes)
+                [(LowerExpr.Expr rest-state rest-mask _)
+                  (ResultLowerMaskedMatchMasks.Ok
+                    (LowerMaskedMatchMasks.Masks
+                      rest-state
+                      active-arm-mask
+                      rest-mask))])])]))))
+
+(define (lower-avx2-enum-final-arm-masks
+  [state : LowerState]
+  [active-mask : CompilerIrValue]
+  [lane-id : CompilerIrValue]
+  [lanes : i64]
+  [lane-ty : AstType]) : ResultLowerMaskedMatchMasks
+  (match (lower-avx2-enum-zero-mask state lane-id lanes lane-ty)
+    [(LowerExpr.Expr next-state zero-mask _)
+      (ResultLowerMaskedMatchMasks.Ok
+        (LowerMaskedMatchMasks.Masks next-state active-mask zero-mask))]))
+
+(define (lower-avx2-enum-pattern-arm-masks
+  [ctx : TcContext]
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [enum-ty : AstType]
+  [active-mask : CompilerIrValue]
+  [lane-id : CompilerIrValue]
+  [lanes : i64]
+  [lane-ty : AstType]
+  [pattern : AstPattern]
+  [final? : bool]
+  [expr : AstExpr]) : ResultLowerMaskedMatchMasks
+  (if final?
+    (lower-avx2-enum-final-arm-masks state active-mask lane-id lanes lane-ty)
+    (match pattern
+      [(AstPattern.Binding name)
+        (let
+          [handle : i64
+            (lower-variant-handle-for-scrut-id-or
+              ctx
+              enum-ty
+              name
+              (compiler-symbols-missing-handle))]
+          (if (compiler-symbols-handle-found? handle)
+            (lower-avx2-enum-tag-arm-masks
+              state
+              base
+              (lower-type-size ctx enum-ty)
+              active-mask
+              lane-id
+              lanes
+              lane-ty
+              (compiler-registry-handle-child-index handle))
+            (ResultLowerMaskedMatchMasks.Err
+              (box
+                (lower-diagnostic-at-expr
+                  expr
+                  "lower: varying enum pattern has no registered variant")))))]
+      [(AstPattern.Variant name _)
+        (let
+          [handle : i64
+            (lower-variant-handle-for-scrut-id-or
+              ctx
+              enum-ty
+              name
+              (compiler-symbols-missing-handle))]
+          (if (compiler-symbols-handle-found? handle)
+            (lower-avx2-enum-tag-arm-masks
+              state
+              base
+              (lower-type-size ctx enum-ty)
+              active-mask
+              lane-id
+              lanes
+              lane-ty
+              (compiler-registry-handle-child-index handle))
+            (ResultLowerMaskedMatchMasks.Err
+              (box
+                (lower-diagnostic-at-expr
+                  expr
+                  "lower: varying enum pattern has no registered variant")))))]
+      [(AstPattern.Wildcard)
+        (lower-avx2-enum-final-arm-masks
+          state
+          active-mask
+          lane-id
+          lanes
+          lane-ty)]
+      [_
+        (ResultLowerMaskedMatchMasks.Err
+          (box
+            (lower-diagnostic-at-expr
+              expr
+              "lower: unsupported AVX2 varying enum match pattern")))])))
+
+(define (lower-avx2-enum-bind-payloads
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [base : CompilerIrValue]
+  [enum-ty : AstType]
+  [variant-name-id : i64]
+  [patterns : AstPatternList]
+  [fields : AstTypeList]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [pattern-index : i64]
+  [cursor : i64]
+  [expr : AstExpr]) : ResultLowerMaskedEnumEnv
+  (if (>= pattern-index (struct-get (& patterns) len))
+    (if (>= pattern-index (ast-type-list-len (& fields)))
+      (ResultLowerMaskedEnumEnv.Ok state env type-env lane-locals)
+      (ResultLowerMaskedEnumEnv.Err
+        (box
+          (lower-diagnostic-at-expr
+            expr
+            "lower: varying enum payload pattern arity mismatch"))))
+    (if (>= pattern-index (ast-type-list-len (& fields)))
+      (ResultLowerMaskedEnumEnv.Err
+        (box
+          (lower-diagnostic-at-expr
+            expr
+            "lower: varying enum payload pattern arity mismatch")))
+      (let
+        [pattern : AstPattern
+          (ast-pattern-list-get
+            (& patterns)
+            pattern-index
+            (ast-pattern-fallback))]
+        [field-node : i64
+          (ast-type-list-get (& fields) pattern-index (ast-type-id-fallback))]
+        [field-ty : AstType
+          (tc-type-without-regions
+            (tc-resolve-type ctx (tc-context-type-get ctx field-node)))]
+        [default-offset : i64
+          (lower-align-up cursor (lower-type-align ctx field-ty))]
+        [enum-id : i64 (lower-enum-type-name-id-or enum-ty -1)]
+        [enum-name : String (lower-enum-type-name-or-empty enum-ty)]
+        [variant-name : String (tc-env-key-name-text variant-name-id)]
+        [field-offset : i64
+          (lower-variant-payload-offset
+            ctx
+            (lower-state-mode state)
+            enum-id
+            enum-name
+            variant-name
+            variant-name-id
+            pattern-index
+            cursor
+            field-ty)]
+        [next-cursor : i64 (+ default-offset (lower-type-size ctx field-ty))]
+        (if (< field-offset 0)
+          (ResultLowerMaskedEnumEnv.Err
+            (box
+              (lower-diagnostic-at-expr
+                expr
+                "lower: varying enum payload layout is unavailable")))
+          (match pattern
+            [(AstPattern.Wildcard)
+              (lower-avx2-enum-bind-payloads
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                base
+                enum-ty
+                variant-name-id
+                patterns
+                fields
+                active-mask
+                lanes
+                (+ pattern-index 1)
+                next-cursor
+                expr)]
+            [(AstPattern.Binding name)
+              (match (lower-avx2-enum-field-vector
+                state
+                base
+                (lower-type-size ctx enum-ty)
+                field-offset
+                active-mask
+                lanes
+                field-ty)
+                [(LowerExpr.Expr next-state value _)
+                  (match value
+                    [(CompilerIrValue.Var field-var)
+                      (lower-avx2-enum-bind-payloads
+                        ctx
+                        next-state
+                        (sym_i64_env.sym-i64-bind-id env name field-var)
+                        (tc-bind-id type-env name field-ty)
+                        (lower-id-set-insert lane-locals name)
+                        base
+                        enum-ty
+                        variant-name-id
+                        patterns
+                        fields
+                        active-mask
+                        lanes
+                        (+ pattern-index 1)
+                        next-cursor
+                        expr)]
+                    [_
+                      (ResultLowerMaskedEnumEnv.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            expr
+                            "lower: varying enum payload did not produce an IR variable")))])])]
+            [(AstPattern.Var name _)
+              (match (lower-avx2-enum-field-vector
+                state
+                base
+                (lower-type-size ctx enum-ty)
+                field-offset
+                active-mask
+                lanes
+                field-ty)
+                [(LowerExpr.Expr next-state value _)
+                  (match value
+                    [(CompilerIrValue.Var field-var)
+                      (lower-avx2-enum-bind-payloads
+                        ctx
+                        next-state
+                        (sym_i64_env.sym-i64-bind-id env name field-var)
+                        (tc-bind-id type-env name field-ty)
+                        (lower-id-set-insert lane-locals name)
+                        base
+                        enum-ty
+                        variant-name-id
+                        patterns
+                        fields
+                        active-mask
+                        lanes
+                        (+ pattern-index 1)
+                        next-cursor
+                        expr)]
+                    [_
+                      (ResultLowerMaskedEnumEnv.Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            expr
+                            "lower: varying enum payload did not produce an IR variable")))])])]
+            [_
+              (ResultLowerMaskedEnumEnv.Err
+                (box
+                  (lower-diagnostic-at-expr
+                    expr
+                    "lower: AVX2 varying enum payload patterns support bindings and wildcards")))]))))))
+
+(define (lower-avx2-enum-bind-pattern
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [base : CompilerIrValue]
+  [enum-ty : AstType]
+  [pattern : AstPattern]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [expr : AstExpr]) : ResultLowerMaskedEnumEnv
+  (match pattern
+    [(AstPattern.Binding _)
+      (ResultLowerMaskedEnumEnv.Ok state env type-env lane-locals)]
+    [(AstPattern.Variant name patterns-box)
+      (let
+        [handle : i64
+          (lower-variant-handle-for-scrut-id-or
+            ctx
+            enum-ty
+            name
+            (compiler-symbols-missing-handle))]
+        (if (compiler-symbols-handle-found? handle)
+          (match (compiler-registries-variant-fields-indexed
+            (tc-context-symbols ctx)
+            handle)
+            [(ResultAstTypeList.Ok raw-fields)
+              (let
+                [variant-name-id : i64
+                  (lower-variant-handle-name-id-or ctx handle name)]
+                [fields : AstTypeList
+                  (lower-variant-payload-fields-for-handle
+                    ctx
+                    handle
+                    enum-ty
+                    raw-fields)]
+                (lower-avx2-enum-bind-payloads
+                  ctx
+                  state
+                  env
+                  type-env
+                  lane-locals
+                  base
+                  enum-ty
+                  variant-name-id
+                  (box-get patterns-box)
+                  fields
+                  active-mask
+                  lanes
+                  0
+                  8
+                  expr))]
+            [(ResultAstTypeList.Err message)
+              (ResultLowerMaskedEnumEnv.Err
+                (box (lower-diagnostic-at-expr expr message)))])
+          (ResultLowerMaskedEnumEnv.Err
+            (box
+              (lower-diagnostic-at-expr
+                expr
+                "lower: varying enum pattern has no registered variant")))))]
+    [(AstPattern.Wildcard)
+      (ResultLowerMaskedEnumEnv.Ok state env type-env lane-locals)]
+    [_
+      (ResultLowerMaskedEnumEnv.Err
+        (box
+          (lower-diagnostic-at-expr
+            expr
+            "lower: unsupported AVX2 varying enum match pattern")))]))
+
+(define (lower-avx2-enum-match-arms
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lane-id : CompilerIrValue]
+  [lanes : i64]
+  [lane-ty : AstType]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [base : CompilerIrValue]
+  [enum-ty : AstType]
+  [arms : AstMatchArmList]) : ResultLowerExpr
+  (if (ast-match-arm-list-empty? (& arms))
+    (lower-avx512-masked-unsupported
+      expr
+      "AVX2 varying enum match with no arms")
+    (match (ast-match-arm-list-get (& arms) 0 (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-box)
+        (let
+          [rest : AstMatchArmList (ast-match-arm-list-tail arms)]
+          [final? : bool (ast-match-arm-list-empty? (& rest))]
+          [body : AstExpr (lower-context-expr-get ctx body-box)]
+          (match (lower-avx2-enum-pattern-arm-masks
+            ctx
+            state
+            base
+            enum-ty
+            active-mask
+            lane-id
+            lanes
+            lane-ty
+            pattern
+            final?
+            expr)
+            [(ResultLowerMaskedMatchMasks.Ok masks)
+              (match masks
+                [(LowerMaskedMatchMasks.Masks mask-state arm-mask rest-mask)
+                  (match (lower-avx2-enum-bind-pattern
+                    ctx
+                    mask-state
+                    env
+                    type-env
+                    lane-locals
+                    base
+                    enum-ty
+                    pattern
+                    arm-mask
+                    lanes
+                    expr)
+                    [(ResultLowerMaskedEnumEnv.Ok
+                        bound-state
+                        bound-env
+                        bound-type-env
+                        bound-lane-locals)
+                      (match (lower-avx512-masked-expr-expected
+                        ctx
+                        bound-state
+                        bound-env
+                        bound-type-env
+                        bound-lane-locals
+                        index
+                        index-var
+                        arm-mask
+                        lanes
+                        body
+                        result-ty)
+                        [(ResultLowerExpr.Ok body-lowered)
+                          (match body-lowered
+                            [(LowerExpr.Expr body-state body-value body-ty)
+                              (if final?
+                                (ResultLowerExpr.Ok body-lowered)
+                                (match (lower-avx2-enum-match-arms
+                                  ctx
+                                  body-state
+                                  env
+                                  type-env
+                                  lane-locals
+                                  index
+                                  index-var
+                                  rest-mask
+                                  lane-id
+                                  lanes
+                                  lane-ty
+                                  result-ty
+                                  expr
+                                  base
+                                  enum-ty
+                                  rest)
+                                  [(ResultLowerExpr.Ok rest-lowered)
+                                    (match rest-lowered
+                                      [(LowerExpr.Expr
+                                          rest-state
+                                          rest-value
+                                          rest-ty)
+                                        (match body-ty
+                                          [(AstType.Unit)
+                                            (ResultLowerExpr.Ok
+                                              (LowerExpr.Expr
+                                                rest-state
+                                                CompilerIrValue.Unit
+                                                (AstType.Unit)))]
+                                          [_
+                                            (if (ast-type-eq?
+                                              (tc-type-without-regions body-ty)
+                                              (tc-type-without-regions rest-ty))
+                                              (lower-avx512-masked-match-select
+                                                rest-state
+                                                arm-mask
+                                                body-value
+                                                rest-mask
+                                                rest-value
+                                                lanes
+                                                body-ty
+                                                expr)
+                                              (lower-avx512-masked-unsupported
+                                                expr
+                                                "mixed AVX2 varying enum match arm result types"))])])]
+                                  [(ResultLowerExpr.Err message)
+                                    (ResultLowerExpr.Err message)]))])]
+                        [(ResultLowerExpr.Err message)
+                          (ResultLowerExpr.Err message)])]
+                    [(ResultLowerMaskedEnumEnv.Err message)
+                      (ResultLowerExpr.Err message)])])]
+            [(ResultLowerMaskedMatchMasks.Err message)
+              (ResultLowerExpr.Err message)]))])))
+
+(define (lower-avx2-masked-enum-match
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [scrutinee : AstExpr]
+  [arms : AstMatchArmList]) : ResultLowerExpr
+  (match (lower-avx2-masked-enum-source
+    ctx
+    state
+    env
+    type-env
+    lane-locals
+    index
+    index-var
+    scrutinee)
+    [(ResultLowerMaskedEnumSource.Ok source)
+      (match source
+        [(LowerMaskedEnumSource.Source source-state base enum-ty)
+          (let
+            [lane-ty : AstType (lower-avx2-enum-mask-lane-type lanes)]
+            (match (lower-emit-lane-id source-state lanes lane-ty)
+              [(LowerExpr.Expr lane-state lane-id _)
+                (lower-avx2-enum-match-arms
+                  ctx
+                  lane-state
+                  env
+                  type-env
+                  lane-locals
+                  index
+                  index-var
+                  active-mask
+                  lane-id
+                  lanes
+                  lane-ty
+                  result-ty
+                  expr
+                  base
+                  enum-ty
+                  arms)]))])]
+    [(ResultLowerMaskedEnumSource.Err message) (ResultLowerExpr.Err message)]
+    [(ResultLowerMaskedEnumSource.No)
+      (lower-avx512-masked-unsupported
+        expr
+        "an AVX2 varying enum match source outside a contiguous array lane")]))
 
 (define (lower-avx512-masked-match-literal-mask
   [state : LowerState]
@@ -43461,36 +44551,60 @@
   [expr : AstExpr]
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]) : ResultLowerExpr
-  (match (lower-avx512-masked-expr
-    ctx
-    state
-    env
-    type-env
-    lane-locals
-    index
-    index-var
-    active-mask
-    lanes
-    scrutinee)
-    [(ResultLowerExpr.Ok scrut-lowered)
-      (match scrut-lowered
-        [(LowerExpr.Expr scrut-state scrut-value scrut-ty)
-          (lower-avx512-masked-match-arms
-            ctx
-            scrut-state
-            env
-            type-env
-            lane-locals
-            index
-            index-var
-            active-mask
-            lanes
-            result-ty
-            expr
-            scrut-value
-            scrut-ty
-            arms)])]
-    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+  (if (and
+    (lower-mode-avx2? (lower-state-mode state))
+    (match (lower-expr-result-type-or-check
+      ctx
+      env
+      type-env
+      (lower-state-type-cache state)
+      scrutinee)
+      [(ResultTcType.Ok scrut-ty) (lower-spmd-enum-type? scrut-ty)]
+      [(ResultTcType.Err _) false]))
+    (lower-avx2-masked-enum-match
+      ctx
+      state
+      env
+      type-env
+      lane-locals
+      index
+      index-var
+      active-mask
+      lanes
+      result-ty
+      expr
+      scrutinee
+      arms)
+    (match (lower-avx512-masked-expr
+      ctx
+      state
+      env
+      type-env
+      lane-locals
+      index
+      index-var
+      active-mask
+      lanes
+      scrutinee)
+      [(ResultLowerExpr.Ok scrut-lowered)
+        (match scrut-lowered
+          [(LowerExpr.Expr scrut-state scrut-value scrut-ty)
+            (lower-avx512-masked-match-arms
+              ctx
+              scrut-state
+              env
+              type-env
+              lane-locals
+              index
+              index-var
+              active-mask
+              lanes
+              result-ty
+              expr
+              scrut-value
+              scrut-ty
+              arms)])]
+      [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
 
 (define (lower-spmd-ir-value-class [ty : AstType] [varying : bool]) : CompilerIrSpmdValueClass
   (if varying
@@ -46061,7 +47175,7 @@
                       (box
                         (lower-diagnostic-at-expr
                           body
-                          (lower-avx2-varying-match-diagnostic))))
+                          "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings")))
                     (lower-scalar-foreach-lowered
                       ctx
                       state
@@ -46085,7 +47199,7 @@
                       (lower-diagnostic-at-expr
                         body
                         (if (lower-mode-avx2? (lower-state-mode state))
-                          (lower-avx2-varying-match-diagnostic)
+                          "lower: SPMD varying match AVX2 lowering is not available for this match shape"
                           "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
                 [(lower-vector-body-has-spmd-shuffle? ctx body)
                   (ResultLowerExpr.Err

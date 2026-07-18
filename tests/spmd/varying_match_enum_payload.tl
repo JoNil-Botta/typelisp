@@ -1,5 +1,6 @@
-;; SPMD varying-match enum payload corpus (#3776): tag-only and payload arms
-;; inside a foreach body. The n = 13 length exercises mixed arms plus a tail.
+;; SPMD varying-match enum payload corpus (#3776, #5152): tag-only and payload
+;; arms inside a foreach body. The n = 13 length exercises mixed arms plus the
+;; AVX2 tail.
 (import stdlib.array)
 
 (defenum Choice

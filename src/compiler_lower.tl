@@ -28397,8 +28397,8 @@
 ;; A dynamic-array value is a pointer to inline fat storage `{data_ptr, length}`
 ;; with the i64 length at byte offset 8. `Gep` scales the index by the element
 ;; size, so index 1 with element type i64 addresses that length field, which a
-;; typed `Load` then reads. Dynamic-array calls and private string.string-length calls
-;; are intercepted; other `length` arguments fall back to the direct-call path.
+;; typed `Load` then reads. Dynamic-array calls plus core/private string-length
+;; calls are intercepted; other `length` arguments fall back to a direct call.
 (define (lower-array-length
   [ctx : TcContext]
   [state : LowerState]
@@ -28486,7 +28486,7 @@
       (lower-array-length-load ctx state env type-env arr)]
     [(ResultTcArrayReceiver.Err _)
       (if (and
-        (cbi.compiler-builtin-typecheck-string-length-id? source-id)
+        (cbi.compiler-builtin-lower-string-length-load-id? source-id)
         (lower-length-handle-type? ctx arr-ty))
         (lower-array-length-load ctx state env type-env arr)
         (lower-direct-call-id
@@ -54041,13 +54041,15 @@
     [items : (Array OneWord) (make-array OneWord n)]
     (array-length items)))")
 
-;; Private string length lowers to the same fat `{ptr, len}` length load as
-;; `array-length`: both lay out the i64 length at offset 8.
+;; Core and private string length lower to the same fat `{ptr, len}` length load
+;; as `array-length`: both lay out the i64 length at offset 8.
 (define (compiler-lower-string-length-source) : String
   "(define (str-len [s : String]) : i64 (__tl_string_length s))
 (define (str-len-alias [s : String]) : i64 (__tl_string_length s))
 (define (str-len-borrow [s : String]) : i64 (__tl_string_length (& s)))
 (define (str-len-alias-borrow [s : String]) : i64 (__tl_string_length (& s)))
+(define (core-str-len [s : String]) : i64 (length s))
+(define (core-str-len-borrow [s : (& s str)]) : i64 (length s))
 (define (main) : i64 0)")
 
 (define (compiler-lower-stdlib-string-wrapper-prune-source) : String
@@ -62634,7 +62636,25 @@
   (match (parse-ast-source (compiler-lower-string-length-source))
     [(ResultAstProgram.Ok program)
       (match (lower-compiler-program program)
-        [(ResultCompilerLower.Ok _ _) true]
+        [(ResultCompilerLower.Ok lowered _)
+          (match lowered
+            [(CompilerIrProgram.Program _ functions _)
+              (and
+                (>
+                  (lower-test-function-gep-offset-count
+                    functions
+                    "core-str-len"
+                    1)
+                  0)
+                (>
+                  (lower-test-function-gep-offset-count
+                    functions
+                    "core-str-len-borrow"
+                    1)
+                  0)
+                (=
+                  (lower-test-functions-direct-call-count functions "length")
+                  0))])]
         [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 

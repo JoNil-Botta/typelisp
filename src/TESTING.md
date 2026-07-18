@@ -295,9 +295,9 @@ seed (`target/stage0/typelisp.exe`) and use a `.exe` output path. The stage0
 publication smoke also prints this report when a section reader is available,
 but it remains a measurement report rather than a size budget gate.
 
-The six `src/compiler_embedded_stdlib_payload_[a-f].tl` shards are the canonical
-explicit build-input list. Editing a listed stdlib source changes the next
-compiler build directly; there is no generated source to refresh. Run
+`src/compiler_embedded_stdlib_payload.tl` is the canonical explicit build-input
+list. Editing a listed stdlib source changes the next compiler build directly;
+there is no generated source to refresh. Run
 `scripts/verify-embedded-stdlib-payload.sh` to check declaration completeness,
 deterministic output, one-byte source mutation propagation, and byte-for-byte
 decoding with a branch-built compiler.

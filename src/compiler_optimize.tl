@@ -14957,9 +14957,123 @@
   (Nil)
   (Cons i64 OptLicmPtrKind (Box OptLicmPtrEnv)))
 
+(defenum OptLicmRoot
+  (NoRoot)
+  (Fresh i64)
+  (Exclusive i64)
+  (Shared i64))
+
+(defenum OptMaybeLicmRoot
+  (No)
+  (Some OptLicmRoot))
+
+(defstruct OptLicmRootEnv
+  (map opt_i64_i64_map.Map))
+
+(defenum OptLicmStoreRootList
+  (Nil)
+  (Cons OptLicmRoot (Box OptLicmStoreRootList)))
+
 (defstruct OptLicmStoreState
   (summary OptLicmStoreSummary)
-  (ptrs OptLicmPtrEnv))
+  ;; Preserve the pre-root-aware store classification for candidates without a
+  ;; canonical checked/fresh root. `summary` excludes proven-rooted stores so a
+  ;; distinct checked root can use the stronger disjointness proof;
+  ;; `legacy-summary` includes every store so unrooted loads retain the exact
+  ;; old LICM decision instead of becoming more conservative.
+  (legacy-summary OptLicmStoreSummary)
+  (ptrs OptLicmPtrEnv)
+  (roots OptLicmRootEnv)
+  (store-roots OptLicmStoreRootList)
+  (any-call? bool))
+
+(define (opt-licm-root-env-with-capacity [capacity : i64]) : OptLicmRootEnv
+  (OptLicmRootEnv (opt_i64_i64_map.with-capacity capacity)))
+
+(define (opt-licm-root-encode [root : OptLicmRoot]) : i64
+  (match root
+    [(OptLicmRoot.NoRoot) -1]
+    [(OptLicmRoot.Fresh id) (+ (* id 3) 0)]
+    [(OptLicmRoot.Exclusive id) (+ (* id 3) 1)]
+    [(OptLicmRoot.Shared id) (+ (* id 3) 2)]))
+
+(define (opt-licm-root-decode [value : i64]) : OptLicmRoot
+  (if (< value 0)
+    (OptLicmRoot.NoRoot)
+    (let
+      [id : i64 (/ value 3)]
+      [tag : i64 (% value 3)]
+      (cond
+        [(= tag 0) (OptLicmRoot.Fresh id)]
+        [(= tag 1) (OptLicmRoot.Exclusive id)]
+        [else (OptLicmRoot.Shared id)]))))
+
+(define (opt-licm-root-eq? [a : OptLicmRoot] [b : OptLicmRoot]) : bool
+  (= (opt-licm-root-encode a) (opt-licm-root-encode b)))
+
+(define (opt-licm-root-env-remove! [env : OptLicmRootEnv] [var : i64]) : unit
+  (begin
+    (opt_i64_i64_map.remove-ref! (&mut (struct-get env map)) var)
+    unit))
+
+(define (opt-licm-root-env-bind!
+  [env : OptLicmRootEnv]
+  [var : i64]
+  [root : OptLicmRoot]) : unit
+  (match root
+    [(OptLicmRoot.NoRoot) (opt-licm-root-env-remove! env var)]
+    [_
+      (opt_i64_i64_map.insert-ref!
+        (&mut (struct-get env map))
+        var
+        (opt-licm-root-encode root))]))
+
+(define (opt-licm-root-env-lookup [env : OptLicmRootEnv] [var : i64]) : OptLicmRoot
+  (match (opt_i64_i64_map.get (& (struct-get env map)) var)
+    [(opt_i64_i64_map.LookupFound value) (opt-licm-root-decode value)]
+    [(opt_i64_i64_map.LookupMissing) (OptLicmRoot.NoRoot)]))
+
+(define (opt-licm-root-of-value
+  [env : OptLicmRootEnv]
+  [value : CompilerIrValue]) : OptLicmRoot
+  (match value
+    [(CompilerIrValue.Var var) (opt-licm-root-env-lookup env var)]
+    [_ (OptLicmRoot.NoRoot)]))
+
+(define (opt-licm-root-env-copy!
+  [env : OptLicmRootEnv]
+  [dst : i64]
+  [src : CompilerIrValue]) : unit
+  (opt-licm-root-env-bind! env dst (opt-licm-root-of-value env src)))
+
+(define (opt-licm-root-disjoint-store?
+  [store-root : OptLicmRoot]
+  [load-root : OptLicmRoot]) : bool
+  (match store-root
+    [(OptLicmRoot.Fresh store-id)
+      (match load-root
+        [(OptLicmRoot.Fresh load-id) (not (= store-id load-id))]
+        [(OptLicmRoot.Exclusive load-id) (not (= store-id load-id))]
+        [(OptLicmRoot.Shared load-id) (not (= store-id load-id))]
+        [(OptLicmRoot.NoRoot) false])]
+    [(OptLicmRoot.Exclusive store-id)
+      (match load-root
+        [(OptLicmRoot.Fresh load-id) (not (= store-id load-id))]
+        [(OptLicmRoot.Exclusive load-id) (not (= store-id load-id))]
+        [(OptLicmRoot.Shared load-id) (not (= store-id load-id))]
+        [(OptLicmRoot.NoRoot) false])]
+    [(OptLicmRoot.Shared _) false]
+    [(OptLicmRoot.NoRoot) false]))
+
+(define (opt-licm-store-roots-safe?
+  [stores : OptLicmStoreRootList]
+  [load-root : OptLicmRoot]) : bool
+  (match stores
+    [(OptLicmStoreRootList.Nil) true]
+    [(OptLicmStoreRootList.Cons store-root rest)
+      (and
+        (opt-licm-root-disjoint-store? store-root load-root)
+        (opt-licm-store-roots-safe? (box-get rest) load-root))]))
 
 (define (opt-licm-body-map-capacity [body-blocks : CompilerIrBlockList]) : i64
   (+ 1 (compiler-ir-block-list-instruction-count body-blocks)))
@@ -15188,12 +15302,96 @@
     blocks
     (opt-licm-type-env-add-params params (OptSsaVarTypes.Nil))))
 
+(define (opt-licm-param-root [ty : AstType] [var : i64]) : OptLicmRoot
+  (match ty
+    [(AstType.Ref _ _) (OptLicmRoot.Shared var)]
+    [(AstType.MutRef _ _) (OptLicmRoot.Exclusive var)]
+    [(AstType.Region _ inner)
+      (opt-licm-param-root (ast-node-pool-reader-type-get inner) var)]
+    [_ (OptLicmRoot.NoRoot)]))
+
+(define (opt-licm-root-env-seed-param!
+  [env : OptLicmRootEnv]
+  [param : CompilerIrParam]) : unit
+  (match param
+    [(CompilerIrParam.Param _ ty var)
+      (opt-licm-root-env-bind! env var (opt-licm-param-root ty var))]))
+
+(define (opt-licm-root-env-seed-params!
+  [env : OptLicmRootEnv]
+  [params : CompilerIrParamList]) : unit
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Array seq)
+      (opt-licm-root-env-seed-params! env (compiler-ir-param-seq-to-list seq))]
+    [(CompilerIrParamList.Cons param rest)
+      (begin
+        (opt-licm-root-env-seed-param! env param)
+        (opt-licm-root-env-seed-params! env (box-get rest)))]))
+
+(define (opt-licm-phi-root
+  [env : OptLicmRootEnv]
+  [inputs : CompilerIrPhiInputList]
+  [found : OptMaybeLicmRoot]) : OptMaybeLicmRoot
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) found]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-licm-phi-root env (compiler-ir-phi-input-seq-to-list seq) found)]
+    [(CompilerIrPhiInputList.Cons value _ rest)
+      (let
+        [root : OptLicmRoot (opt-licm-root-of-value env value)]
+        (match root
+          [(OptLicmRoot.NoRoot) (OptMaybeLicmRoot.No)]
+          [_
+            (match found
+              [(OptMaybeLicmRoot.No)
+                (opt-licm-phi-root
+                  env
+                  (box-get rest)
+                  (OptMaybeLicmRoot.Some root))]
+              [(OptMaybeLicmRoot.Some previous)
+                (if (opt-licm-root-eq? previous root)
+                  (opt-licm-phi-root env (box-get rest) found)
+                  (OptMaybeLicmRoot.No))])]))]))
+
+(define (opt-licm-root-env-update-instr!
+  [env : OptLicmRootEnv]
+  [instr : CompilerIrInstr]) : unit
+  (begin
+    (match (opt-instr-def-var instr)
+      [(option_i64.Some dst) (opt-licm-root-env-remove! env dst)]
+      [(option_i64.None) unit])
+    (match instr
+      [(CompilerIrInstr.Alloc dst _)
+        (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))]
+      [(CompilerIrInstr.Gep dst base _ _)
+        (opt-licm-root-env-copy! env dst base)]
+      [(CompilerIrInstr.Mov dst src _) (opt-licm-root-env-copy! env dst src)]
+      [(CompilerIrInstr.Cast dst src _ _) (opt-licm-root-env-copy! env dst src)]
+      [(CompilerIrInstr.Bitcast dst src _ _)
+        (opt-licm-root-env-copy! env dst src)]
+      [(CompilerIrInstr.Phi dst inputs _)
+        (match (opt-licm-phi-root env inputs (OptMaybeLicmRoot.No))
+          [(OptMaybeLicmRoot.No) unit]
+          [(OptMaybeLicmRoot.Some root) (opt-licm-root-env-bind! env dst root)])]
+      [(CompilerIrInstr.Call dst name _ _)
+        (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+          (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
+          unit)]
+      [_ unit])))
+
 (define (opt-licm-array-header-type? [ty : AstType]) : bool
   (match ty
     [(AstType.DynArray _) true]
     [(AstType.String) true]
     [(AstType.Str) true]
     [(AstType.Bytes) true]
+    [(AstType.Ref _ inner)
+      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
+    [(AstType.MutRef _ inner)
+      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
+    [(AstType.Region _ inner)
+      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
     [_ false]))
 
 (define (opt-licm-array-header-var? [types : OptSsaVarTypes] [var : i64]) : bool
@@ -15265,14 +15463,35 @@
     [_ (OptLicmPtrKind.Unknown)]))
 
 (define (opt-licm-store-state-empty) : OptLicmStoreState
-  (OptLicmStoreState (opt-licm-store-summary-empty) (OptLicmPtrEnv.Nil)))
+  (OptLicmStoreState
+    (opt-licm-store-summary-empty)
+    (opt-licm-store-summary-empty)
+    (OptLicmPtrEnv.Nil)
+    (opt-licm-root-env-with-capacity 17)
+    (OptLicmStoreRootList.Nil)
+    false))
+
+(define (opt-licm-store-state-with-provenance
+  [ptrs : OptLicmPtrEnv]
+  [roots : OptLicmRootEnv]) : OptLicmStoreState
+  (OptLicmStoreState
+    (opt-licm-store-summary-empty)
+    (opt-licm-store-summary-empty)
+    ptrs
+    roots
+    (OptLicmStoreRootList.Nil)
+    false))
 
 (define (opt-licm-store-state-add-summary
   [state : OptLicmStoreState]
   [summary : OptLicmStoreSummary]) : OptLicmStoreState
   (OptLicmStoreState
     (opt-licm-store-summary-merge (struct-get state summary) summary)
-    (struct-get state ptrs)))
+    (opt-licm-store-summary-merge (struct-get state legacy-summary) summary)
+    (struct-get state ptrs)
+    (struct-get state roots)
+    (struct-get state store-roots)
+    (struct-get state any-call?)))
 
 (define (opt-licm-store-state-bind-ptr
   [state : OptLicmStoreState]
@@ -15280,14 +15499,55 @@
   [kind : OptLicmPtrKind]) : OptLicmStoreState
   (OptLicmStoreState
     (struct-get state summary)
-    (opt-licm-ptr-bind (struct-get state ptrs) var kind)))
+    (struct-get state legacy-summary)
+    (opt-licm-ptr-bind (struct-get state ptrs) var kind)
+    (struct-get state roots)
+    (struct-get state store-roots)
+    (struct-get state any-call?)))
+
+(define (opt-licm-store-state-bind-root
+  [state : OptLicmStoreState]
+  [var : i64]
+  [root : OptLicmRoot]) : OptLicmStoreState
+  (begin
+    (opt-licm-root-env-bind! (struct-get state roots) var root)
+    state))
+
+(define (opt-licm-store-state-add-rooted-store
+  [state : OptLicmStoreState]
+  [root : OptLicmRoot]
+  [legacy-summary : OptLicmStoreSummary]) : OptLicmStoreState
+  (OptLicmStoreState
+    (struct-get state summary)
+    (opt-licm-store-summary-merge
+      (struct-get state legacy-summary)
+      legacy-summary)
+    (struct-get state ptrs)
+    (struct-get state roots)
+    (OptLicmStoreRootList.Cons root (box (struct-get state store-roots)))
+    (struct-get state any-call?)))
+
+(define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
+  (OptLicmStoreState
+    (struct-get state summary)
+    (struct-get state legacy-summary)
+    (struct-get state ptrs)
+    (struct-get state roots)
+    (struct-get state store-roots)
+    true))
 
 (define (opt-licm-store-state-invalidate-def
   [state : OptLicmStoreState]
   [var : i64]) : OptLicmStoreState
-  (OptLicmStoreState
-    (struct-get state summary)
-    (opt-licm-ptr-unbind (struct-get state ptrs) var)))
+  (begin
+    (opt-licm-root-env-remove! (struct-get state roots) var)
+    (OptLicmStoreState
+      (struct-get state summary)
+      (struct-get state legacy-summary)
+      (opt-licm-ptr-unbind (struct-get state ptrs) var)
+      (struct-get state roots)
+      (struct-get state store-roots)
+      (struct-get state any-call?))))
 
 (define (opt-licm-store-state-invalidate-instr
   [state : OptLicmStoreState]
@@ -15309,14 +15569,15 @@
         [_ (opt-licm-store-summary-header-or-unknown-store)])]
     [_ (opt-licm-store-summary-header-or-unknown-store)]))
 
-(define (opt-licm-store-state-instr
+(define (opt-licm-provenance-state-instr
   [types : OptSsaVarTypes]
   [state : OptLicmStoreState]
-  [direct-call-clean : opt_i64_i64_map.Map]
   [instr : CompilerIrInstr]) : OptLicmStoreState
   (let
     [invalid : OptLicmStoreState
       (opt-licm-store-state-invalidate-instr state instr)]
+    [_roots : unit
+      (opt-licm-root-env-update-instr! (struct-get invalid roots) instr)]
     (match instr
       [(CompilerIrInstr.Mov dst src _)
         (match src
@@ -15336,62 +15597,91 @@
           [(CompilerIrValue.Var ptr-var)
             (match (opt-licm-ptr-lookup (struct-get invalid ptrs) ptr-var)
               [(OptLicmPtrKind.DataSlot object)
-                (opt-licm-store-state-bind-ptr
-                  invalid
+                (opt-licm-store-state-bind-root
+                  (opt-licm-store-state-bind-ptr
+                    invalid
+                    dst
+                    (OptLicmPtrKind.DataBuffer object))
                   dst
-                  (OptLicmPtrKind.DataBuffer object))]
+                  (opt-licm-root-env-lookup (struct-get invalid roots) object))]
               [_ invalid])]
           [_ invalid])]
-      [(CompilerIrInstr.Alloc _ _) invalid]
+      [_ invalid])))
+
+(define (opt-licm-store-state-instr
+  [types : OptSsaVarTypes]
+  [state : OptLicmStoreState]
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [instr : CompilerIrInstr]) : OptLicmStoreState
+  (let
+    [provenance : OptLicmStoreState
+      (opt-licm-provenance-state-instr types state instr)]
+    (match instr
       [(CompilerIrInstr.Call _ name _ _)
         (opt-licm-store-state-add-summary
-          invalid
+          (opt-licm-store-state-mark-call provenance)
           (opt-licm-store-summary-for-direct-call direct-call-clean name))]
       [(CompilerIrInstr.CallIndirect _ _ _ _)
         (opt-licm-store-state-add-summary
-          invalid
+          (opt-licm-store-state-mark-call provenance)
           (opt-licm-store-summary-call-or-unknown))]
       [(CompilerIrInstr.CallIndirectC _ _ _ _)
         (opt-licm-store-state-add-summary
-          invalid
+          (opt-licm-store-state-mark-call provenance)
           (opt-licm-store-summary-call-or-unknown))]
       [(CompilerIrInstr.CallCAbiStoreResult payload-box)
         (match (box-get payload-box)
           [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _)
             (opt-licm-store-state-add-summary
-              invalid
+              (opt-licm-store-state-mark-call provenance)
               (opt-licm-store-summary-call-or-unknown))])]
       [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
         (match (box-get payload-box)
           [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
             (opt-licm-store-state-add-summary
-              invalid
+              (opt-licm-store-state-mark-call provenance)
               (opt-licm-store-summary-call-or-unknown))])]
       [(CompilerIrInstr.SpmdCall payload-box)
         (match (box-get payload-box)
           [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
             (opt-licm-store-state-add-summary
-              invalid
+              (opt-licm-store-state-mark-call provenance)
               (opt-licm-store-summary-call-or-unknown))])]
       [(CompilerIrInstr.TailCall name _ _)
         (opt-licm-store-state-add-summary
-          invalid
+          (opt-licm-store-state-mark-call provenance)
           (opt-licm-store-summary-for-direct-call direct-call-clean name))]
       [(CompilerIrInstr.TailCallIndirect _ _ _)
         (opt-licm-store-state-add-summary
-          invalid
+          (opt-licm-store-state-mark-call provenance)
           (opt-licm-store-summary-call-or-unknown))]
       [(CompilerIrInstr.StorePtr ptr _ _)
-        (opt-licm-store-state-add-summary
-          invalid
-          (opt-licm-store-summary-for-storeptr (struct-get invalid ptrs) ptr))]
+        (let
+          [root : OptLicmRoot
+            (opt-licm-root-of-value (struct-get provenance roots) ptr)]
+          [legacy-summary : OptLicmStoreSummary
+            (opt-licm-store-summary-for-storeptr
+              (struct-get provenance ptrs)
+              ptr)]
+          (match root
+            [(OptLicmRoot.Fresh _)
+              (opt-licm-store-state-add-rooted-store
+                provenance
+                root
+                legacy-summary)]
+            [(OptLicmRoot.Exclusive _)
+              (opt-licm-store-state-add-rooted-store
+                provenance
+                root
+                legacy-summary)]
+            [_ (opt-licm-store-state-add-summary provenance legacy-summary)]))]
       [(CompilerIrInstr.CopyBytes _ _ _)
         (opt-licm-store-state-add-summary
-          invalid
+          provenance
           (opt-licm-store-summary-header-or-unknown-store))]
       [_
         (opt-licm-store-state-add-summary
-          invalid
+          provenance
           (opt-licm-store-summary-from-effect (compiler-ir-instr-effect instr)))])))
 
 (define (opt-licm-store-state-instr-seq-from
@@ -15446,6 +15736,62 @@
         direct-call-clean
         state)]))
 
+(define (opt-licm-provenance-state-instr-seq-from
+  [types : OptSsaVarTypes]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [state : OptLicmStoreState]) : OptLicmStoreState
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    state
+    (opt-licm-provenance-state-instr-seq-from
+      types
+      instrs
+      (+ index 1)
+      (opt-licm-provenance-state-instr
+        types
+        state
+        (compiler-ir-instr-seq-ref instrs index)))))
+
+(define (opt-licm-provenance-state-blocks
+  [types : OptSsaVarTypes]
+  [blocks : CompilerIrBlockList]
+  [state : OptLicmStoreState]) : OptLicmStoreState
+  (match blocks
+    [(CompilerIrBlockList.Nil) state]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-licm-provenance-state-blocks
+            types
+            (box-get rest)
+            (opt-licm-provenance-state-instr-seq-from types instrs 0 state))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-licm-provenance-state-blocks
+        types
+        (compiler-ir-block-seq-to-list seq)
+        state)]))
+
+;; Collect canonical checked-reference/fresh-allocation roots for the whole
+;; verified SSA function. A second pass resolves same-root Phi joins whose
+;; backedge or later-listed predecessor was not known on the first pass; an
+;; unresolved/mixed join remains unrooted and therefore conservative.
+(define (opt-licm-provenance-state-from-function
+  [params : CompilerIrParamList]
+  [types : OptSsaVarTypes]
+  [blocks : CompilerIrBlockList]) : OptLicmStoreState
+  (let
+    ;; Rooted pointer values are sparse even in functions with large SSA
+    ;; frames. Starting this map at the full frame size retained hundreds of
+    ;; megabytes across compiler optimization; let the generated hashmap grow
+    ;; only when a function actually carries many checked/fresh roots.
+    [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
+    [_params : unit (opt-licm-root-env-seed-params! roots params)]
+    [initial : OptLicmStoreState
+      (opt-licm-store-state-with-provenance (OptLicmPtrEnv.Nil) roots)]
+    [first : OptLicmStoreState
+      (opt-licm-provenance-state-blocks types blocks initial)]
+    (opt-licm-provenance-state-blocks types blocks first)))
+
 (define (opt-licm-store-summary-blocks
   [blocks : CompilerIrBlockList]
   [summary : OptLicmStoreSummary]) : OptLicmStoreSummary
@@ -15454,8 +15800,36 @@
       (OptSsaVarTypes.Nil)
       blocks
       (opt_i64_i64_map.with-capacity 1)
-      (OptLicmStoreState summary (OptLicmPtrEnv.Nil)))
-    summary))
+      (OptLicmStoreState
+        summary
+        summary
+        (OptLicmPtrEnv.Nil)
+        (opt-licm-root-env-with-capacity 17)
+        (OptLicmStoreRootList.Nil)
+        false))
+    legacy-summary))
+
+(define (opt-licm-memory-safe?
+  [root-summary : OptLicmStoreSummary]
+  [legacy-summary : OptLicmStoreSummary]
+  [store-roots : OptLicmStoreRootList]
+  [any-call? : bool]
+  [load-root : OptLicmRoot]
+  [legacy-special-safe? : bool]) : bool
+  (match load-root
+    [(OptLicmRoot.NoRoot)
+      (or (opt-licm-store-summary-clean? legacy-summary) legacy-special-safe?)]
+    [_
+      (and
+        (not any-call?)
+        (or
+          ;; Root identity is a coarse object-level fact. Preserve the older,
+          ;; more precise descriptor-header proof when stores touch only data
+          ;; elements of that same object.
+          legacy-special-safe?
+          (and
+            (opt-licm-store-summary-clean? root-summary)
+            (opt-licm-store-roots-safe? store-roots load-root))))]))
 
 (define (opt-licm-candidate?
   [loop-defs : opt_i64_i64_map.Map]
@@ -15463,7 +15837,11 @@
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
+  [legacy-store-summary : OptLicmStoreSummary]
   [ptrs : OptLicmPtrEnv]
+  [roots : OptLicmRootEnv]
+  [store-roots : OptLicmStoreRootList]
+  [any-call? : bool]
   [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.BinOp _ op lhs rhs _)
@@ -15476,20 +15854,28 @@
       (and
         (opt-gvn-stable-var? sources dst)
         (opt-licm-values-invariant? loop-defs hoisted base offset)
-        (or
-          (opt-licm-store-summary-clean? store-summary)
+        (opt-licm-memory-safe?
+          store-summary
+          legacy-store-summary
+          store-roots
+          any-call?
+          (opt-licm-root-of-value roots base)
           (and
-            (opt-licm-store-summary-header-load-safe? store-summary)
+            (opt-licm-store-summary-header-load-safe? legacy-store-summary)
             (opt-licm-header-slot-gep? types base offset ty))))]
     [(CompilerIrInstr.Load dst src _)
       (and
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources src)
         (opt-licm-value-invariant? loop-defs hoisted src)
-        (or
-          (opt-licm-store-summary-clean? store-summary)
+        (opt-licm-memory-safe?
+          store-summary
+          legacy-store-summary
+          store-roots
+          any-call?
+          (opt-licm-root-of-value roots src)
           (and
-            (opt-licm-store-summary-header-load-safe? store-summary)
+            (opt-licm-store-summary-header-load-safe? legacy-store-summary)
             (opt-licm-header-slot-source? ptrs src))))]
     [_ false]))
 
@@ -15507,7 +15893,11 @@
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
+  [legacy-store-summary : OptLicmStoreSummary]
   [ptrs : OptLicmPtrEnv]
+  [roots : OptLicmRootEnv]
+  [store-roots : OptLicmStoreRootList]
+  [any-call? : bool]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult.Result
@@ -15523,7 +15913,11 @@
         sources
         types
         store-summary
+        legacy-store-summary
         ptrs
+        roots
+        store-roots
+        any-call?
         instr)
         (match (opt-licm-filter-instr-seq-from
           loop-defs
@@ -15532,7 +15926,11 @@
           sources
           types
           store-summary
+          legacy-store-summary
           ptrs
+          roots
+          store-roots
+          any-call?
           (opt-licm-add-hoisted-def hoisted instr))
           [(OptLicmInstrsResult.Result kept moved next-hoisted _)
             (OptLicmInstrsResult.Result
@@ -15547,7 +15945,11 @@
           sources
           types
           store-summary
+          legacy-store-summary
           ptrs
+          roots
+          store-roots
+          any-call?
           hoisted)
           [(OptLicmInstrsResult.Result kept moved next-hoisted changed)
             (OptLicmInstrsResult.Result
@@ -15562,7 +15964,11 @@
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
+  [legacy-store-summary : OptLicmStoreSummary]
   [ptrs : OptLicmPtrEnv]
+  [roots : OptLicmRootEnv]
+  [store-roots : OptLicmStoreRootList]
+  [any-call? : bool]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     loop-defs
@@ -15571,7 +15977,11 @@
     sources
     types
     store-summary
+    legacy-store-summary
     ptrs
+    roots
+    store-roots
+    any-call?
     hoisted))
 
 (define (opt-licm-filter-body-blocks
@@ -15580,7 +15990,11 @@
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
+  [legacy-store-summary : OptLicmStoreSummary]
   [ptrs : OptLicmPtrEnv]
+  [roots : OptLicmRootEnv]
+  [store-roots : OptLicmStoreRootList]
+  [any-call? : bool]
   [hoisted : opt_i64_i64_map.Map]) : OptLicmBlocksResult
   (match blocks
     [(CompilerIrBlockList.Nil)
@@ -15598,7 +16012,11 @@
             sources
             types
             store-summary
+            legacy-store-summary
             ptrs
+            roots
+            store-roots
+            any-call?
             hoisted)
             [(OptLicmInstrsResult.Result kept moved next-hoisted block-changed)
               (match (opt-licm-filter-body-blocks
@@ -15607,7 +16025,11 @@
                 sources
                 types
                 store-summary
+                legacy-store-summary
                 ptrs
+                roots
+                store-roots
+                any-call?
                 next-hoisted)
                 [(OptLicmBlocksResult.Result
                     rest-blocks
@@ -15628,7 +16050,11 @@
         sources
         types
         store-summary
+        legacy-store-summary
         ptrs
+        roots
+        store-roots
+        any-call?
         hoisted)]))
 
 (define (opt-licm-replace-body-blocks
@@ -16069,6 +16495,7 @@
   [index : OptCfgIndex]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
+  [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]) : OptLicmLoopApplyResult
@@ -16087,8 +16514,19 @@
             types
             body-blocks
             direct-call-clean
-            (opt-licm-store-state-empty))]
+            (opt-licm-store-state-with-provenance
+              (struct-get provenance ptrs)
+              (struct-get provenance roots)))]
         [raw-summary : OptLicmStoreSummary (struct-get store-state summary)]
+        [raw-legacy-summary : OptLicmStoreSummary
+          (struct-get store-state legacy-summary)]
+        [side-exit-kind : i64
+          (opt-licm-loop-side-exit-kind
+            blocks
+            (opt-natural-loop-header loop)
+            (opt-natural-loop-latch loop)
+            (opt-natural-loop-body loop)
+            body-blocks)]
         ;; Measured (cachegrind, three rounds): hoisting invariant loads out
         ;; of PROBE-SHAPED loops -- every side exit an early RETURN, trips
         ;; averaging one or two iterations -- is pure register pressure: the
@@ -16102,26 +16540,33 @@
         ;; aborting runtime call also qualifies), by folding a header-store
         ;; poison into the summary. Pure BinOp/UnOp hoisting is unaffected.
         [store-summary : OptLicmStoreSummary
-          (if (=
-            (opt-licm-loop-side-exit-kind
-              blocks
-              (opt-natural-loop-header loop)
-              (opt-natural-loop-latch loop)
-              (opt-natural-loop-body loop)
-              body-blocks)
-            1)
+          (if (= side-exit-kind 1)
             (opt-licm-store-summary-merge
               raw-summary
               (opt-licm-store-summary-header-or-unknown-store))
             raw-summary)]
+        [legacy-store-summary : OptLicmStoreSummary
+          (if (= side-exit-kind 1)
+            (opt-licm-store-summary-merge
+              raw-legacy-summary
+              (opt-licm-store-summary-header-or-unknown-store))
+            raw-legacy-summary)]
         [ptrs : OptLicmPtrEnv (struct-get store-state ptrs)]
+        [roots : OptLicmRootEnv (struct-get store-state roots)]
+        [store-roots : OptLicmStoreRootList
+          (struct-get store-state store-roots)]
+        [any-call? : bool (struct-get store-state any-call?)]
         (match (opt-licm-filter-body-blocks
           loop-defs
           body-blocks
           sources
           types
           store-summary
+          legacy-store-summary
           ptrs
+          roots
+          store-roots
+          any-call?
           (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             (if changed
@@ -16158,6 +16603,7 @@
   [index : OptCfgIndex]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
+  [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : OptLicmLoopApplyResult
@@ -16168,6 +16614,7 @@
         index
         sources
         types
+        provenance
         direct-call-clean
         blocks
         loop)
@@ -16176,6 +16623,7 @@
             index
             sources
             types
+            provenance
             direct-call-clean
             (box-get rest)
             loop-blocks)
@@ -16188,14 +16636,17 @@
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
+  [provenance : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : OptLicmLoopApplyResult
   (opt-licm-apply-loops
     (struct-get context index)
     sources
     types
+    provenance
     direct-call-clean
-    (opt-cfg-natural-loops-with-context blocks context)
+    loops
     blocks))
 
 (define (opt-licm-function-with-context-result-and-direct-call-clean
@@ -16217,38 +16668,56 @@
                   (opt_i64_i64_map.with-capacity 64)))]
             [types : OptSsaVarTypes
               (opt-licm-type-env-from-function params blocks)]
-            (match (opt-licm-blocks-with-context-and-direct-call-clean
-              context
-              sources
-              types
-              direct-call-clean
-              blocks)
-              [(OptLicmLoopApplyResult.Result hoisted-blocks licm-changed?)
-                (if (not licm-changed?)
-                  ;; Nothing hoisted: the input context still describes the
-                  ;; unchanged CFG, so skip the context rebuild and the
-                  ;; post-pass verify entirely.
-                  (OptFunctionCtxResult.Result func context)
-                  (let
-                    [hoisted : CompilerIrFunction
-                      (CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        frame
-                        hoisted-blocks)]
-                    ;; LICM may hoist into a synthesized preheader edge, so build
-                    ;; one fresh context for the rewritten CFG, reuse it for the
-                    ;; post-pass verify, and hand it back for the next pass.
-                    [hoisted-context : OptCfgContext
-                      (opt-cfg-context-build hoisted-blocks)]
-                    (match (opt-verify-function-with-context
-                      hoisted
-                      hoisted-context)
-                      [(ResultCompilerOptimizeVerify.Ok)
-                        (OptFunctionCtxResult.Result hoisted hoisted-context)]
-                      [(ResultCompilerOptimizeVerify.Err _)
-                        (OptFunctionCtxResult.Result func context)])))]))])]
+            [loops : OptNaturalLoopList
+              (opt-cfg-natural-loops-with-context blocks context)]
+            (match loops
+              [(OptNaturalLoopList.Nil)
+                (OptFunctionCtxResult.Result func context)]
+              [_
+                (let
+                  [provenance : OptLicmStoreState
+                    (opt-licm-provenance-state-from-function
+                      params
+                      types
+                      blocks)]
+                  (match (opt-licm-blocks-with-context-and-direct-call-clean
+                    context
+                    sources
+                    types
+                    provenance
+                    direct-call-clean
+                    loops
+                    blocks)
+                    [(OptLicmLoopApplyResult.Result
+                        hoisted-blocks
+                        licm-changed?)
+                      (if (not licm-changed?)
+                        ;; Nothing hoisted: the input context still describes the
+                        ;; unchanged CFG, so skip the context rebuild and the
+                        ;; post-pass verify entirely.
+                        (OptFunctionCtxResult.Result func context)
+                        (let
+                          [hoisted : CompilerIrFunction
+                            (CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              frame
+                              hoisted-blocks)]
+                          ;; LICM may hoist into a synthesized preheader edge, so build
+                          ;; one fresh context for the rewritten CFG, reuse it for the
+                          ;; post-pass verify, and hand it back for the next pass.
+                          [hoisted-context : OptCfgContext
+                            (opt-cfg-context-build hoisted-blocks)]
+                          (match (opt-verify-function-with-context
+                            hoisted
+                            hoisted-context)
+                            [(ResultCompilerOptimizeVerify.Ok)
+                              (OptFunctionCtxResult.Result
+                                hoisted
+                                hoisted-context)]
+                            [(ResultCompilerOptimizeVerify.Err _)
+                              (OptFunctionCtxResult.Result func context)])))]))]))])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -50996,6 +51465,557 @@
               (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
             (CompilerIrInstrList.Nil)))
         (CompilerIrFunctionList.Nil)))))
+
+(cfg
+  test
+  (define (opt-licm-checked-root-params
+    [read-ty : AstType]
+    [write-ty : AstType]
+    [other-ty : AstType]) : CompilerIrParamList
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "cond" (AstType.Bool) 0)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "read" read-ty 1)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "write" write-ty 2)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "raw" (AstType.U64) 3)
+            (compiler-ir-param-cons
+              (CompilerIrParam.Param "other" other-ty 4)
+              (CompilerIrParamList.Nil))))))))
+
+(cfg
+  test
+  (define (opt-licm-checked-root-function
+    [read-ty : AstType]
+    [write-ty : AstType]
+    [other-ty : AstType]
+    [blocks : CompilerIrBlockList]) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      (opt-test-symbol "licm_checked_root")
+      (opt-licm-checked-root-params read-ty write-ty other-ty)
+      (AstType.I64)
+      32
+      blocks)))
+
+(cfg
+  test
+  (define (opt-licm-checked-root-barrier [mode : i64]) : CompilerIrInstrList
+    (cond
+      [(= mode 1)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.CopyBytes
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 3)
+            8)
+          (CompilerIrInstrList.Nil))]
+      [(= mode 2)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Call
+            11
+            (opt-test-symbol "touch")
+            (CompilerIrCallArgs.Nil)
+            (AstType.I64))
+          (CompilerIrInstrList.Nil))]
+      [else (CompilerIrInstrList.Nil)])))
+
+(cfg
+  test
+  (define (opt-licm-checked-root-loop-tail) : CompilerIrInstrList
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        7
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 6)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "body" "exit")
+        (CompilerIrInstrList.Nil)))))
+
+(cfg
+  test
+  (define (opt-licm-checked-root-blocks
+    [load-base : i64]
+    [store-base : i64]
+    [barrier-mode : i64]) : CompilerIrBlockList
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "loop")
+            (CompilerIrInstrList.Nil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              6
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 5)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 7)
+                  "body"
+                  (CompilerIrPhiInputList.Nil)))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                8
+                (CompilerIrValue.Var load-base)
+                (CompilerIrValue.I64 0)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 9 (CompilerIrValue.Var 8) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    10
+                    (CompilerIrValue.Var store-base)
+                    (CompilerIrValue.I64 0)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.StorePtr
+                      (CompilerIrValue.Var 10)
+                      (CompilerIrValue.I64 9)
+                      (AstType.I64))
+                    (opt-aggregate-instr-list-append
+                      (opt-licm-checked-root-barrier barrier-mode)
+                      (opt-licm-checked-root-loop-tail))))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "body"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
+                (CompilerIrInstrList.Nil)))
+            (CompilerIrBlockList.Nil)))))))
+
+(cfg
+  test
+  (define (opt-licm-checked-root-fresh-blocks) : CompilerIrBlockList
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Call
+              12
+              (opt-test-symbol "tl_alloc")
+              (CompilerIrCallArgs.Nil)
+              (AstType.U64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstrList.Nil)))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              6
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 5)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 7)
+                  "body"
+                  (CompilerIrPhiInputList.Nil)))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                8
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.I64 0)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 9 (CompilerIrValue.Var 8) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    10
+                    (CompilerIrValue.Var 12)
+                    (CompilerIrValue.I64 0)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.StorePtr
+                      (CompilerIrValue.Var 10)
+                      (CompilerIrValue.I64 9)
+                      (AstType.I64))
+                    (opt-licm-checked-root-loop-tail)))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "body"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
+                (CompilerIrInstrList.Nil)))
+            (CompilerIrBlockList.Nil)))))))
+
+(cfg
+  test
+  (define (opt-licm-checked-root-fresh-header-blocks) : CompilerIrBlockList
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Call
+              12
+              (opt-test-symbol "tl_alloc")
+              (CompilerIrCallArgs.One (CompilerIrValue.I64 16))
+              (AstType.DynArray 0))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstrList.Nil)))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              6
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 5)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 7)
+                  "body"
+                  (CompilerIrPhiInputList.Nil)))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                8
+                (CompilerIrValue.Var 12)
+                (CompilerIrValue.I64 1)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 9 (CompilerIrValue.Var 8) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    10
+                    (CompilerIrValue.Var 12)
+                    (CompilerIrValue.I64 0)
+                    (AstType.U8))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Load
+                      11
+                      (CompilerIrValue.Var 10)
+                      (AstType.U64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Gep
+                        13
+                        (CompilerIrValue.Var 11)
+                        (CompilerIrValue.Var 6)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.StorePtr
+                          (CompilerIrValue.Var 13)
+                          (CompilerIrValue.I64 9)
+                          (AstType.I64))
+                        (opt-licm-checked-root-loop-tail)))))))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "body"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "loop")
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
+                (CompilerIrInstrList.Nil)))
+            (CompilerIrBlockList.Nil)))))))
+
+(cfg
+  test
+  (define (opt-licm-checked-root-join-blocks [mixed? : bool]) : CompilerIrBlockList
+    (let
+      [ref-ty : AstType (ast-ty-ref 0 (AstType.I64))]
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "left"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 5 (CompilerIrValue.Var 1) ref-ty)
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstrList.Nil))))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "right"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Mov
+                  6
+                  (CompilerIrValue.Var
+                    (if mixed?
+                      4
+                      1))
+                  ref-ty)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Jump "join")
+                  (CompilerIrInstrList.Nil))))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "join"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    7
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.Var 5)
+                      "left"
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Var 6)
+                        "right"
+                        (CompilerIrPhiInputList.Nil)))
+                    ref-ty)
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      8
+                      (CompilerIrValue.I64 0)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstrList.Nil)))))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "loop"
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Phi
+                      9
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Var 8)
+                        "join"
+                        (compiler-ir-phi-input-cons
+                          (CompilerIrValue.Var 10)
+                          "body"
+                          (CompilerIrPhiInputList.Nil)))
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Gep
+                        11
+                        (CompilerIrValue.Var 7)
+                        (CompilerIrValue.I64 0)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Load
+                          12
+                          (CompilerIrValue.Var 11)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Gep
+                            13
+                            (CompilerIrValue.Var 2)
+                            (CompilerIrValue.I64 0)
+                            (AstType.I64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.StorePtr
+                              (CompilerIrValue.Var 13)
+                              (CompilerIrValue.I64 9)
+                              (AstType.I64))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.BinOp
+                                10
+                                (CompilerIrBinOp.Add)
+                                (CompilerIrValue.Var 9)
+                                (CompilerIrValue.I64 1)
+                                (AstType.I64))
+                              (compiler-ir-instr-cons
+                                (CompilerIrInstr.Branch
+                                  (CompilerIrValue.Var 0)
+                                  "body"
+                                  "exit")
+                                (CompilerIrInstrList.Nil)))))))))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    "body"
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump "loop")
+                      (CompilerIrInstrList.Nil)))
+                  (compiler-ir-block-cons
+                    (compiler-ir-block
+                      "exit"
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Return
+                          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 12)))
+                        (CompilerIrInstrList.Nil)))
+                    (CompilerIrBlockList.Nil)))))))))))
+
+(cfg
+  test
+  (define (opt-licm-summary-memory-barrier? [instr : CompilerIrInstr]) : bool
+    (not (opt-licm-store-summary-clean? (opt-licm-summary-for-instr instr)))))
+
+(cfg
+  test
+  (define (compiler-optimize-licm-checked-root-self-test) : i64
+    (let
+      [ref-ty : AstType (ast-ty-ref 0 (AstType.I64))]
+      [mut-ref-ty : AstType (ast-ty-mut-ref 0 (AstType.I64))]
+      [ref-distinct-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 2 0)))]
+      [ref-distinct : CompilerIrBlockList
+        (opt-function-blocks ref-distinct-func)]
+      [mut-distinct-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            mut-ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 2 0)))]
+      [mut-distinct : CompilerIrBlockList
+        (opt-function-blocks mut-distinct-func)]
+      [same-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            mut-ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 1 0)))]
+      [same : CompilerIrBlockList (opt-function-blocks same-func)]
+      [shared-store-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 4 0)))]
+      [shared-store : CompilerIrBlockList
+        (opt-function-blocks shared-store-func)]
+      [raw-store-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 3 0)))]
+      [raw-store : CompilerIrBlockList (opt-function-blocks raw-store-func)]
+      [copybytes-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 2 1)))]
+      [copybytes : CompilerIrBlockList (opt-function-blocks copybytes-func)]
+      [call-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-blocks 1 2 2)))]
+      [call-blocks : CompilerIrBlockList (opt-function-blocks call-func)]
+      [fresh-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-fresh-blocks)))]
+      [fresh : CompilerIrBlockList (opt-function-blocks fresh-func)]
+      [fresh-header-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-fresh-header-blocks)))]
+      [fresh-header : CompilerIrBlockList
+        (opt-function-blocks fresh-header-func)]
+      [join-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-join-blocks false)))]
+      [join-blocks : CompilerIrBlockList (opt-function-blocks join-func)]
+      [mixed-join-func : CompilerIrFunction
+        (opt-licm-function
+          (opt-licm-checked-root-function
+            ref-ty
+            mut-ref-ty
+            ref-ty
+            (opt-licm-checked-root-join-blocks true)))]
+      [mixed-join : CompilerIrBlockList (opt-function-blocks mixed-join-func)]
+      (cond
+        [(not (opt-verify-ok? (opt-verify-function ref-distinct-func))) 1]
+        [(not (= (opt-count-load-label-blocks ref-distinct "entry") 1)) 2]
+        [(not (= (opt-count-load-label-blocks ref-distinct "loop") 0)) 3]
+        [(not (opt-verify-ok? (opt-verify-function mut-distinct-func))) 4]
+        [(not (= (opt-count-load-label-blocks mut-distinct "entry") 1)) 5]
+        [(not (= (opt-count-load-label-blocks mut-distinct "loop") 0)) 6]
+        [(not (= (opt-count-load-label-blocks same "loop") 1)) 7]
+        [(not (= (opt-count-load-label-blocks shared-store "loop") 1)) 8]
+        [(not (= (opt-count-load-label-blocks raw-store "loop") 1)) 9]
+        [(not (= (opt-count-load-label-blocks copybytes "loop") 1)) 10]
+        [(not (= (opt-count-load-label-blocks call-blocks "loop") 1)) 11]
+        [(not (opt-verify-ok? (opt-verify-function fresh-func))) 12]
+        [(not (= (opt-count-load-label-blocks fresh "entry") 1)) 13]
+        [(not (= (opt-count-load-label-blocks fresh "loop") 0)) 14]
+        [(not (opt-verify-ok? (opt-verify-function join-func))) 15]
+        [(not (= (opt-count-load-label-blocks join-blocks "join") 1)) 16]
+        [(not (= (opt-count-load-label-blocks join-blocks "loop") 0)) 17]
+        [(not (= (opt-count-load-label-blocks mixed-join "loop") 1)) 18]
+        [(not
+            (opt-licm-summary-memory-barrier?
+              (CompilerIrInstr.Store
+                (opt-test-symbol "global")
+                (CompilerIrValue.I64 1)
+                (AstType.I64))))
+          19]
+        [(not
+            (opt-licm-summary-memory-barrier?
+              (ir-instr-vector-store
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.I64 0)
+                (CompilerIrValue.I64 1)
+                4
+                (AstType.I64))))
+          20]
+        [(not
+            (opt-licm-summary-memory-barrier?
+              (ir-instr-predicated-store
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.I64 0)
+                (CompilerIrValue.I64 1)
+                (CompilerIrValue.I64 15)
+                4
+                (AstType.I64))))
+          21]
+        [(not
+            (opt-licm-summary-memory-barrier?
+              (CompilerIrInstr.Syscall 90 (CompilerIrCallArgs.Nil))))
+          22]
+        [(not (opt-verify-ok? (opt-verify-function fresh-header-func))) 23]
+        [(not (= (opt-count-load-label-blocks fresh-header "entry") 2)) 24]
+        [(not (= (opt-count-load-label-blocks fresh-header "loop") 0)) 25]
+        [else 42]))))
 
 (define (compiler-optimize-licm-self-test) : i64
   (let

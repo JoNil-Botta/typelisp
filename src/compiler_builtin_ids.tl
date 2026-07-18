@@ -134,6 +134,10 @@
   -1)
 (define compiler-builtin-id-tl-private-float-sqrt : i64
   -1)
+(define compiler-builtin-id-tl-private-float-to-bits : i64
+  -1)
+(define compiler-builtin-id-tl-private-float-from-bits : i64
+  -1)
 (define compiler-builtin-id-string-length : i64
   -1)
 (define compiler-builtin-id-length : i64
@@ -616,7 +620,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 297)]
+    [ids : (Array i64) (make-array i64 299)]
     [ctfe-ids : (Array i64) (make-array i64 216)]
     [i : i64 0]
     (begin
@@ -624,7 +628,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 297)
+      (while (< i 299)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -1080,6 +1084,8 @@
     (state-set! state 294 compiler-builtin-id-tl-tlci-call-macro-entry)
     (state-set! state 295 compiler-builtin-id-cfg-feature-tl-array-zero)
     (state-set! state 296 compiler-builtin-id-tl-private-float-sqrt)
+    (state-set! state 297 compiler-builtin-id-tl-private-float-to-bits)
+    (state-set! state 298 compiler-builtin-id-tl-private-float-from-bits)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1462,6 +1468,8 @@
     (set! compiler-builtin-id-tl-tlci-call-macro-entry (state-ref state 294))
     (set! compiler-builtin-id-cfg-feature-tl-array-zero (state-ref state 295))
     (set! compiler-builtin-id-tl-private-float-sqrt (state-ref state 296))
+    (set! compiler-builtin-id-tl-private-float-to-bits (state-ref state 297))
+    (set! compiler-builtin-id-tl-private-float-from-bits (state-ref state 298))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -1951,6 +1959,12 @@
     (set!
       compiler-builtin-id-tl-private-float-sqrt
       (compiler-builtin-resolve-name insert-missing "__tl_float_sqrt"))
+    (set!
+      compiler-builtin-id-tl-private-float-to-bits
+      (compiler-builtin-resolve-name insert-missing "__tl_float_to_bits"))
+    (set!
+      compiler-builtin-id-tl-private-float-from-bits
+      (compiler-builtin-resolve-name insert-missing "__tl_float_from_bits"))
     (set!
       compiler-builtin-id-string-length
       (compiler-builtin-resolve-name insert-missing "string-length"))
@@ -3144,6 +3158,21 @@
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-private-float-sqrt)))
 
+(define (compiler-builtin-lower-float-to-bits-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-private-float-to-bits)))
+
+(define (compiler-builtin-lower-float-from-bits-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-private-float-from-bits)))
+
+(define (compiler-builtin-lower-float-bitcast-id? [name-id : i64]) : bool
+  (or
+    (compiler-builtin-lower-float-to-bits-id? name-id)
+    (compiler-builtin-lower-float-from-bits-id? name-id)))
+
 (define (compiler-builtin-typecheck-string-length-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
@@ -3181,6 +3210,9 @@
 
 (define (compiler-builtin-typecheck-float-sqrt-id? [name-id : i64]) : bool
   (compiler-builtin-lower-float-sqrt-id? name-id))
+
+(define (compiler-builtin-typecheck-float-bitcast-id? [name-id : i64]) : bool
+  (compiler-builtin-lower-float-bitcast-id? name-id))
 
 (define (compiler-builtin-typecheck-tls-current-arena-id? [name-id : i64]) : bool
   (compiler-builtin-lower-tls-current-arena-id? name-id))

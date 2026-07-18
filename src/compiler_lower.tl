@@ -18424,6 +18424,31 @@
           origin
           "lower: __tl_float_sqrt expects exactly one argument")))))
 
+(define (lower-float-bitcast-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [arg : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
+      (match (lower-expr ctx state env type-env arg)
+        [(ResultLowerExpr.Ok lowered)
+          (match lowered
+            [(LowerExpr.Expr arg-state arg-value arg-ty)
+              (ResultLowerExpr.Ok
+                (lower-bitcast-value arg-state arg-value arg-ty result-ty))])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+    (ResultLowerExpr.Err
+      (box
+        (lower-diagnostic-at-expr
+          origin
+          "lower: float bitcast expects exactly one argument")))))
+
 ;; Lower `(clone x)`: the canonical deep-copy / arena-escape. A String
 ;; copies its buffer through `tl_substring`; tuple, fixed-array, and dynamic-
 ;; array values allocate fresh storage and recursively clone each element; Box
@@ -28207,6 +28232,18 @@
                             builtin-available
                             (cbi.compiler-builtin-lower-float-sqrt-id? name-id))
                           (lower-float-sqrt-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            result-ty
+                            origin)]
+                        [(and
+                            builtin-available
+                            (cbi.compiler-builtin-lower-float-bitcast-id?
+                              name-id))
+                          (lower-float-bitcast-call
                             ctx
                             state
                             env
@@ -55417,6 +55454,13 @@
 (define (core-str-len-borrow [s : (& s str)]) : i64 (length s))
 (define (main) : i64 0)")
 
+(define (compiler-lower-float-bitcast-source) : String
+  "(define (f64-bits [value : f64]) : u64 (__tl_float_to_bits value))
+(define (f32-bits [value : f32]) : u32 (__tl_float_to_bits value))
+(define (f64-from [bits : u64]) : f64 (__tl_float_from_bits bits))
+(define (f32-from [bits : u32]) : f32 (__tl_float_from_bits bits))
+(define (main) : i64 0)")
+
 (define (compiler-lower-stdlib-string-wrapper-prune-source) : String
   "(module stdlib.string)
 (define (string.string-length [text : (& text str)]) : i64 0)
@@ -64077,6 +64121,29 @@
         [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-lower-float-bitcast-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-float-bitcast-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-function-bitcast-count functions "f64-bits") 1)
+            (= (lower-test-function-bitcast-count functions "f32-bits") 1)
+            (= (lower-test-function-bitcast-count functions "f64-from") 1)
+            (= (lower-test-function-bitcast-count functions "f32-from") 1)
+            (= (lower-test-functions-call-count functions "tl_alloc") 0)
+            (=
+              (lower-test-functions-direct-call-count
+                functions
+                "__tl_float_to_bits")
+              0)
+            (=
+              (lower-test-functions-direct-call-count
+                functions
+                "__tl_float_from_bits")
+              0))])]
+    [(ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-string-runtime-ok?) : bool
   (match (parse-ast-source (compiler-lower-string-runtime-source))
     [(ResultAstProgram.Ok program)
@@ -64244,6 +64311,9 @@
     [ok : bool true]
     (begin
       (if (compiler-lower-string-length-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-float-bitcast-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-stdlib-string-wrapper-prune-ok?)

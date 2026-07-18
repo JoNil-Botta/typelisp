@@ -5323,7 +5323,17 @@ and both have return type `never` (section 9).
 Public CPU capability checks use `stdlib.cpu`. The private polymorphic
 `__tl_float_sqrt` intrinsic accepts exactly one `f64` or `f32` and lowers to
 SSE2 `sqrtsd` or `sqrtss`. Results follow the active MXCSR rounding mode and
-the instruction's IEEE-754 special-value behavior.
+the instruction's IEEE-754 special-value behavior. The private polymorphic
+`__tl_float_to_bits` and `__tl_float_from_bits` intrinsics reinterpret
+`f64`/`u64` or `f32`/`u32` values without conversion. They lower to the
+existing register bitcast operation and never allocate or call a runtime
+symbol. Public typed wrappers, classification/sign helpers, exact special
+values, and `scalbn`-style power-of-two scaling live in `stdlib.math`.
+Float bit reinterpretation preserves every bit, including signed zero and NaN
+payloads. The scaling helpers follow IEEE-754 arithmetic under the active
+rounding environment; the default environment is round-to-nearest, ties to
+even. Private float intrinsics are runtime-only; CTFE continues to reject
+non-finite construction and unsupported float operations.
 
 **Fixed-array element operations.** The public `Array` type is the fixed
 `(Array T N)` form. The core element operations are:

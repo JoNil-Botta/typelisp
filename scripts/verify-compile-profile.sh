@@ -533,8 +533,8 @@ fi
 # A source selfhost compile exercises the compiler's embedded canonical stdlib
 # payloads. On Windows it is the allocation boundary that small new modules
 # (such as the clone declaration-macro handoff) previously crossed. The macro
-# walk now starts in the compact destination and grows its 1.5M-node pool once;
-# typecheck starts in a fresh 1.5M-node destination. Keep those phase-specific
+# walk now starts in the compact destination and grows its 25-page node pool
+# once; typecheck starts in a fresh 25-page destination. Keep those phase-specific
 # capacities exact so an extra grow still consumes the headroom this probe
 # protects.
 if [ "$NL_HOST_OS" = windows ]; then
@@ -557,13 +557,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.capacity" \
-        3145728 \
+        3276800 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.typecheck.capacity" \
-        1572864 \
+        1638400 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \

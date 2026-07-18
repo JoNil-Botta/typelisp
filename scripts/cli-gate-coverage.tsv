@@ -47,8 +47,8 @@
 # count	duplicates	all	groups	9
 # count	duplicates	all	rows	18
 # child-corpus	public-lsp-corpus	all	tests/public-tools/lsp	*.in.json	-	63
-# child-corpus	public-repl-corpus	windows	tests/public-tools/repl	*.in	*.linux.in	13
-# child-corpus	public-repl-corpus	linux	tests/public-tools/repl	*.in	-	19
+# child-corpus	public-repl-corpus	windows	tests/public-tools/repl	*.in	*.linux.in	14
+# child-corpus	public-repl-corpus	linux	tests/public-tools/repl	*.in	-	21
 # child-corpus	public-repl-corpus	linux	tests/public-tools/selfhost-repl	*.linux.in	-	17
 # Register annotated source files with: # source<TAB>repository/relative/path.sh
 schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	environment	expected_status	stdout	stderr	effects	canonical_owner	duplicate_reason

@@ -6678,13 +6678,17 @@ Linux native build/run uses `as` and `ld`. Windows native build/run uses
 `clang --target=x86_64-pc-windows-msvc` and `lld-link`, links against the
 CRT, and emits a console `.exe`.
 
-`typelisp repl` supports `.help`, `.type <expr>`, and `.exit`. Top-level
-declarations are remembered for later commands. `.type` parses and
+`typelisp repl` supports `.help`, `.type <expr>`, `.load <file>`, and `.exit`.
+Top-level declarations are remembered for later commands. `.load` reads a
+source file, checks its declarations together with the current session, and
+commits them only when the combined session is valid. `.type` parses and
 typechecks the expression against the current session and prints the
 inferred type without compiling or running native code. Bare expressions are
 typechecked against the current session, compiled into a scratch `main`, run
 through the source build/run path, and discarded without becoming session
-declarations.
+declarations. Scalar results are printed directly. Struct, enum, tuple, and
+fixed-array results are evaluated and use the explicit `<value: Type>` fallback
+until runtime aggregate reflection is available.
 
 ---
 

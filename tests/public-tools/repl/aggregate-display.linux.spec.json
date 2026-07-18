@@ -1,0 +1,11 @@
+{
+  "exit": 0,
+  "stdout_contains": [
+    "Loaded tests/public-tools/repl/aggregate-declarations.tl",
+    "<value: ReplPoint>",
+    "<value: ReplMaybe>",
+    "<value: (Tuple i32 i32)>",
+    "<value: (Array i64 2)>"
+  ],
+  "stderr_exact": ""
+}

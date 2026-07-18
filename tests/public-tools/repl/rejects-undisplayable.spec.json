@@ -1,5 +1,0 @@
-{
-  "exit": 0,
-  "stdout_exact": "TypeLisp REPL. Type .help for commands.\ntl> tl> ",
-  "stderr_contains": ["cannot display a value of type"]
-}

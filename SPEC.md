@@ -858,6 +858,11 @@ produced-type checking to the expanded form. `: Module` and `: Decls` are not
 runtime types, cannot appear in value positions, and are valid only as macro
 result annotations.
 
+The legacy `comptime-decl` and `comptime-decls` source forms are removed.
+Parsers reject either spelling in declaration or expression position with a
+migration diagnostic directing callers to a `defmacro` whose result is
+`Module` or `Decls`.
+
 Module-scope expansion runs before ordinary typechecking:
 
 1. Parse the module, collect source imports, and resolve/load imported
@@ -6412,7 +6417,6 @@ in documentation passes.
 | Dotted module imports everywhere | Migration in progress: source/docs use dotted imports as the canonical form; legacy path imports remain accepted only for compatibility fixtures and remaining #4035 source/smoke migration work before #2454 removes the syntax. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
-| Removal of legacy `comptime-decl` forms | Stdlib well-known declarations now use plain declarations; legacy syntax remains accepted as parser/typechecker compatibility pending final removal. |
 | Compiled comptime execution from embedded/package `tlci` images | In progress: embedded-stdlib compilation without an explicit stdlib root maps the production image and resolves macro identities through its native registration catalog, with observable hit/miss/failure/fallback counters. CTFE still executes transformer bodies, explicit stdlib roots stay on the source path, and the differential gate requires byte-identical assembly between routes. |
 | Package registry, semantic-version solving, workspaces | Deferred by design: deterministic git-pinned dependencies with lockfile replay. |
 | Richer LSP/IDE features | Binding-aware read/write document highlights, hierarchical document symbols (members, variants, locals, and macro-generated declarations), semantic tokens, references/rename through standard methods, and workspace indexing remain pending. |

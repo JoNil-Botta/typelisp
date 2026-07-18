@@ -52,6 +52,34 @@ checker currently applies a 0.5% self-compile tolerance
 (`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5000`), but intentional exact changes
 should still be reported and ratcheted rather than treated as runner noise.
 
+## CI wall-clock compile budgets
+
+Linux pull-request CI also gates the four selfhost compile rows already
+recorded by `scripts/check-build-invariance.sh` in
+`target/ci-timing/linux.tsv`. The gate adds no compiler invocations. It applies
+generous absolute caps to catch uniform slowdowns and a scale-independent ratio
+to catch disproportionate opt2 work:
+
+| build-invariance row | cap |
+| --- | ---: |
+| `opt2-built:selfhost_main_opt1` | 25,000 ms |
+| `opt1-built:selfhost_main_opt1` | 35,000 ms |
+| `opt2-built:selfhost_main_opt2` | 55,000 ms |
+| `opt1-built:selfhost_main_opt2` | 90,000 ms |
+
+The `opt2-built:selfhost_main_opt2` /
+`opt1-built:selfhost_main_opt1` ratio must be at most 2.5. The checker fails
+closed on missing, duplicate, malformed, or unsuccessful rows:
+
+```sh
+scripts/check-ci-timing-budgets.sh target/ci-timing/linux.tsv
+scripts/check-ci-timing-budgets.sh --self-test
+```
+
+Use `scripts/benchmark-compile-cli.sh` for phase-level local investigation when
+the wall-clock gate fails. There is intentionally no retry path; the headroom,
+absolute caps, and ratio provide flake resistance without masking regressions.
+
 Comparison benchmark rows are split by implementation. TypeLisp-generated
 executables use `benchmark/typelisp/<name>` and the paired deterministic
 `clang -O2` C baseline uses `benchmark/c/<name>`. A selected benchmark case must

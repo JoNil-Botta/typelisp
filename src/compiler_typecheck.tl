@@ -902,9 +902,12 @@
     [p : Point (Point 40 2)]
     (+ (struct-get p x) (from-maybe (Some (struct-get p y))))))")
 
-(define (compiler-typecheck-comptime-decl-source) : String
-  "(comptime-decl (defstruct Point (x i64) (y i64)))
-(comptime-decl (defenum Maybe (None) (Some i64)))
+(define (compiler-typecheck-generated-nominal-source) : String
+  "(defmacro (generate-nominals) : Decls
+  `(begin
+    (defstruct Point (x i64) (y i64))
+    (defenum Maybe (None) (Some i64))))
+(generate-nominals)
 (define (main) : i64
   (let
     [p : Point (Point 40 2)]
@@ -913,24 +916,13 @@
       [None 0])))")
 
 (define (compiler-typecheck-generated-decl-source) : String
-  "(comptime-decl (:generated point-family Point \"i64\")
-  (defstruct Point (x i64)))
-(comptime-decl (:generated make-point-family make-point \"i64\")
-  (define (make-point [x : i64]) : Point (Point x)))
+  "(defmacro (generate-point-api) : Decls
+  `(begin
+    (defstruct Point (x i64))
+    (define (make-point [x : i64]) : Point (Point x))))
+(generate-point-api)
 (define (main) : i64
   (struct-get (make-point 7) x))")
-
-(define (compiler-typecheck-generated-decl-duplicate-visible-source) : String
-  "(comptime-decl (:generated point-family Point \"left\")
-  (defstruct Point (x i64)))
-(comptime-decl (:generated point-family Point \"right\")
-  (defstruct Point (x i64)))
-(define (main) : i64 0)")
-
-(define (compiler-typecheck-generated-decl-bad-source) : String
-  "(comptime-decl (:generated bad-family bad-generated \"i64\")
-  (define (bad-generated) : i64 true))
-(define (main) : i64 0)")
 
 (define (compiler-typecheck-generated-key
   [generator : String]
@@ -953,30 +945,6 @@
             (string.eq context-note want-context)]
           [(CompilerDiagnosticNoteNil) false]))]
     [(CompilerDiagnosticNoteNil) false]))
-
-(define (compiler-typecheck-generated-diagnostic-ok?) : bool
-  (match (typecheck-compiler-source
-    (compiler-typecheck-generated-decl-bad-source))
-    [(ResultCompilerTypecheck.Ok _) false]
-    [(ResultCompilerTypecheck.Err diag)
-      (let
-        [message-ok : bool
-          (string.eq
-            (compiler-diagnostic-message (box-get diag))
-            "typecheck: return type mismatch: expected i64, found bool")]
-        [path-ok : bool
-          (string.eq (compiler-diagnostic-path (box-get diag)) "")]
-        [line-ok : bool (= (compiler-diagnostic-line (box-get diag)) 2)]
-        [col-ok : bool (= (compiler-diagnostic-col (box-get diag)) 33)]
-        [notes-ok : bool
-          (compiler-typecheck-generated-notes-ok?
-            (compiler-diagnostic-notes (box-get diag))
-            (compiler-typecheck-generated-key
-              "bad-family"
-              "bad-generated"
-              "i64")
-            "generated declaration: bad-generated from bad-family")]
-        (and message-ok path-ok line-ok col-ok notes-ok))]))
 
 (define (compiler-typecheck-generated-fallback-diagnostic-ok?) : bool
   (let
@@ -2232,22 +2200,10 @@
       (if (compiler-typecheck-ok? (compiler-typecheck-nominal-source))
         unit
         (set! ok false))
-      (if (compiler-typecheck-ok? (compiler-typecheck-comptime-decl-source))
+      (if (compiler-typecheck-ok? (compiler-typecheck-generated-nominal-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok? (compiler-typecheck-generated-decl-source))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-error-ok?
-        (compiler-typecheck-generated-decl-duplicate-visible-source)
-        (string.append
-          "symbols: duplicate type declaration Point (generated identity: "
-          (string.append
-            (compiler-typecheck-generated-key "point-family" "Point" "right")
-            ")")))
-        unit
-        (set! ok false))
-      (if (compiler-typecheck-generated-diagnostic-ok?)
         unit
         (set! ok false))
       (if (compiler-typecheck-generated-fallback-diagnostic-ok?)
@@ -3087,12 +3043,11 @@
   (fd i64 (:cleanup c/close-fd)))
 (define (main [h : FileHandle]) : i64 (struct-get h fd))")
 
-(define (compiler-typecheck-cleanup-struct-comptime-source) : String
+(define (compiler-typecheck-cleanup-struct-metadata-source) : String
   "(define (close-fd [fd : i64]) : unit unit)
-(comptime-decl
-  (defstruct FileHandle
-    (:cleanup cleanup-file-handle)
-    (fd i64 (:cleanup close-fd))))
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
 (define (main [h : FileHandle]) : i64 (struct-get h fd))")
 
 (define (compiler-typecheck-cleanup-struct-ordinary-store-source) : String
@@ -3167,7 +3122,7 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
-        (compiler-typecheck-cleanup-struct-comptime-source))
+        (compiler-typecheck-cleanup-struct-metadata-source))
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6289,7 +6244,7 @@
       (compiler-typecheck-ok? (compiler-typecheck-type-valued-comptime-source))
       (compiler-typecheck-error-ok?
         "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
-        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead")
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use defmacro to generate concrete declarations instead")
       (compiler-typecheck-ok-with-cfg?
         "(define (main) : bool (comptime (array-dynamic? (type (__tl_dyn-array i64)))))"
         private-cfg)
@@ -6339,22 +6294,6 @@
   (ExprListNil)
   (ExprListCons Expr (Box ExprList)))"))
 
-(define (compiler-typecheck-stdlib-comptime-wrapper-expr-source) : String
-  "(module stdlib.comptime)
-(comptime-decl
-  (defenum Expr
-    (ExprBool bool)
-    (ExprInt i64)
-    (ExprVar String)
-    (ExprSplice (Box Expr))
-    (ExprIf (Box Expr) (Box Expr) (Box Expr))
-    (ExprCall (Box Expr) ExprList)
-    (ExprBegin ExprList)
-    (ExprQuote (Box Expr))
-    (ExprQuasiquote (Box Expr))
-    (ExprUnquote (Box Expr))
-    (ExprUnquoteSplicing (Box Expr))))")
-
 (define (compiler-typecheck-stdlib-comptime-surface-tests-ok?) : bool
   (and
     (compiler-typecheck-error-ok?
@@ -6362,10 +6301,7 @@
       "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected variant ExprBool at index 0")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stdlib-comptime-bad-expr-list-source)
-      "typecheck: stdlib well-known type mismatch for stdlib.comptime.ExprList: expected defstruct")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-stdlib-comptime-wrapper-expr-source)
-      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected plain stdlib.comptime well-known declaration")))
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.ExprList: expected defstruct")))
 
 (define (compiler-typecheck-comptime-tests-ok?) : bool
   (and
@@ -7400,10 +7336,6 @@
 (defmacro (bad) : Expr (helper))
 (define (main) : i64 0)")
 
-(define (compiler-typecheck-comptime-decl-unsafe-template-source) : String
-  "(comptime-decl (define (bad) : i64 (unsafe 1)))
-(define (main) : i64 0)")
-
 (define (compiler-typecheck-quote-source) : String
   "(define (mk [e : Expr]) : Expr `(if ,e true false))
 (define (body [xs : ExprList]) : Expr `(begin ,@xs))
@@ -7451,10 +7383,7 @@
       "typecheck: comptime purity rejects extern reference io.read-file; reference path: bad -> io.read-file")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-transitive-extern-source)
-      "typecheck: comptime purity rejects extern reference raw-read; reference path: bad -> helper -> raw-read")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-comptime-decl-unsafe-template-source)
-      "typecheck: comptime purity rejects unsafe block; reference path: comptime-decl -> unsafe")))
+      "typecheck: comptime purity rejects extern reference raw-read; reference path: bad -> helper -> raw-read")))
 
 ;; --- macro expansion phase --------------------------------------------------
 ;; A macro call in an evaluated position is expanded before typechecking; the
@@ -10166,9 +10095,8 @@
   "(module main)
 (unsafe (extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c)))")
 
-(define (compiler-typecheck-comptime-decl-origin-source) : String
-  "(comptime-decl
-  (defstruct RefBox (:lifetimes a a) (value (& a i64))))")
+(define (compiler-typecheck-generated-decl-origin-source) : String
+  "(defstruct RefBox (:lifetimes a a) (value (& a i64)))")
 
 (define (compiler-typecheck-module-body-decl-origin-source) : String
   "(module nested
@@ -10267,10 +10195,10 @@
       2
       9)
     (compiler-typecheck-error-location-ok?
-      (compiler-typecheck-comptime-decl-origin-source)
+      (compiler-typecheck-generated-decl-origin-source)
       "typecheck: duplicate lifetime parameter"
-      2
-      3)
+      1
+      1)
     (compiler-typecheck-error-location-ok?
       (compiler-typecheck-module-body-decl-origin-source)
       "typecheck: defdispatch requires exactly one scalar variant"

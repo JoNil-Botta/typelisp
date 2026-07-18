@@ -376,7 +376,7 @@
   (avx2 BadFunction)
   (avx512 BadFunction))
 (unsafe (define (BadUnsafe) : i64 0))
-(comptime-decl (define bad-comptime : i64 1))")
+(define bad-comptime : i64 1)")
 
 (define (lint-driver-smoke-name-case-binders-source) : String
   "(defenum Choice (Some i64) (None))

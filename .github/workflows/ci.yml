@@ -102,6 +102,11 @@ jobs:
           TYPELISP_CI_TIMING: '1'
         run: scripts/ci-verify.sh
 
+      - name: Enforce Linux CI timing budgets
+        if: runner.os == 'Linux'
+        shell: bash
+        run: scripts/check-ci-timing-budgets.sh target/ci-timing/linux.tsv
+
       - name: Upload CI timing artifact
         if: always()
         uses: actions/upload-artifact@v4

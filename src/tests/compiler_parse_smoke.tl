@@ -22,8 +22,7 @@
       (match (parse-ast-source
         "(module alpha)
 (unsafe (extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c)))
-(comptime-decl
-  (defstruct RefBox (:lifetimes a a) (value (& a i64))))")
+(defstruct RefBox (:lifetimes a a) (value (& a i64)))")
         [(ResultAstProgram.Ok (AstProgram.Program decls-box))
           (let
             [decls : AstDeclList (box-get decls-box)]
@@ -65,8 +64,8 @@
                     9)
                   (compiler-parse-test-decl-origin-start-ok?
                     (compiler-parse-decl-origin-span (& tail2) 0)
-                    4
-                    3)
+                    3
+                    1)
                   (compiler-parse-test-decl-origin-start-ok?
                     (compiler-parse-decl-origin-span (& replacement) 0)
                     1
@@ -76,8 +75,8 @@
                     [_ false])
                   (compiler-parse-test-decl-origin-start-ok?
                     (compiler-parse-decl-origin-span (& replacement) 2)
-                    4
-                    3)
+                    3
+                    1)
                   (compiler-parse-test-decl-origin-start-ok?
                     (compiler-parse-decl-origin-span (& alias2) 0)
                     1
@@ -87,8 +86,8 @@
                     [_ false])
                   (compiler-parse-test-decl-origin-start-ok?
                     (compiler-parse-decl-origin-span (& alias2) 2)
-                    4
-                    3)))
+                    3
+                    1)))
               (reader.sp-node-pool-truncate! mark)
               (compiler-parse-decl-origin-cache-reset!)
               (set!
@@ -180,6 +179,21 @@
             [_ false])))]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-parse-removed-declaration-errors-ok?) : bool
+  (and
+    (compiler-parse-error-ok?
+      "(comptime-decl (define value : i64 1))"
+      (parse-ast-removed-declaration-message))
+    (compiler-parse-error-ok?
+      "(comptime-decls (define value : i64 1))"
+      (parse-ast-removed-declaration-message))
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (comptime-decl (define value : i64 1)))"
+      (parse-ast-removed-declaration-message))
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (comptime-decls (define value : i64 1)))"
+      (parse-ast-removed-declaration-message))))
+
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -187,6 +201,7 @@
       (= (compiler-diagnostic-self-test) 42)
       (compiler-parse-test-decl-origin-records-ok?)
       (compiler-parse-member-origin-boundary-ok?)
-      (compiler-parse-name-id-provenance-ok?))
+      (compiler-parse-name-id-provenance-ok?)
+      (compiler-parse-removed-declaration-errors-ok?))
       (compiler-parse-smoke)
       1)))

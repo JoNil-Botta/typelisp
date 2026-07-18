@@ -44,7 +44,7 @@ one change.
   public parse/typecheck/load entry point plus the tests that prove path/span
   metadata survives through that boundary.
 
-## Generated and comptime declaration origin policy
+## Generated declaration origin policy
 
 Generated/comptime diagnostics follow the structured-diagnostic model from
 [#1580](https://github.com/JoNil-Botta/typelisp/issues/1580) while respecting
@@ -64,8 +64,6 @@ the staged string-result audit from
   expression span, preserve the same generated notes and use the phase fallback
   span at line 1, column 1. Do not invent virtual generated filenames or source
   maps in this compatibility layer.
-- Plain `comptime-decl` payloads without `:generated` metadata use the same
-  primary-location rules but do not receive generated-origin notes.
 - `compiler_symbols.tl` still reports `ErrCompilerSymbols String`, so duplicate
   symbol diagnostics currently retain the generated context as a suffix. This
   is a documented compatibility bridge until that public symbols boundary is

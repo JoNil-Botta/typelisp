@@ -180,7 +180,24 @@
     CompilerRegistries
     String
     i64
-    AstNodePoolContext))
+    AstNodePoolContext
+    ci.InternSourceNameSessionHandle))
+
+(define (tc-context-new
+  [program : AstProgram]
+  [symbols : CompilerSymbols]
+  [registries : CompilerRegistries]
+  [module : String]
+  [module-id : i64]
+  [pools : AstNodePoolContext]) : TcContext
+  (TcContext
+    program
+    symbols
+    registries
+    module
+    module-id
+    pools
+    (ci.intern-source-name-session-capture-active-handle)))
 
 (defenum ResultTcType
   (Ok AstType)
@@ -1128,25 +1145,29 @@
   [module : String]
   [module-id : i64]) : TcContext
   (match ctx
-    [(TcContext program symbols registries _ _ pools)
-      (TcContext program symbols registries module module-id pools)]))
+    [(TcContext program symbols registries _ _ pools source-names)
+      (TcContext program symbols registries module module-id pools source-names)]))
 
 (define (tc-context-with-program [ctx : TcContext] [program : AstProgram]) : TcContext
   (match ctx
-    [(TcContext _ symbols registries module module-id pools)
-      (TcContext program symbols registries module module-id pools)]))
+    [(TcContext _ symbols registries module module-id pools source-names)
+      (TcContext program symbols registries module module-id pools source-names)]))
 
 (define (tc-context-module [ctx : TcContext]) : String
   (match ctx
-    [(TcContext _ _ _ module _ _) module]))
+    [(TcContext _ _ _ module _ _ _) module]))
 
 (define (tc-context-module-id [ctx : TcContext]) : i64
   (match ctx
-    [(TcContext _ _ _ _ module-id _) module-id]))
+    [(TcContext _ _ _ _ module-id _ _) module-id]))
 
 (define (tc-context-pools [ctx : TcContext]) : AstNodePoolContext
   (match ctx
-    [(TcContext _ _ _ _ _ pools) pools]))
+    [(TcContext _ _ _ _ _ pools _) pools]))
+
+(define (tc-context-source-names [ctx : TcContext]) : ci.InternSourceNameSessionHandle
+  (match ctx
+    [(TcContext _ _ _ _ _ _ source-names) source-names]))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
   (if (ast-node-pool-compat-context-active?)
@@ -12118,7 +12139,7 @@
 
 (define (tc-imported-module-identity-id? [ctx : TcContext] [target-id : i64]) : bool
   (match ctx
-    [(TcContext program _ _ current-module current-module-id _)
+    [(TcContext program _ _ current-module current-module-id _ _)
       (match program
         [(AstProgram.Program decls-box)
           (begin
@@ -12331,7 +12352,7 @@
   [base-id : i64]
   [base : String]) : bool
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-value-id-or
@@ -12598,7 +12619,7 @@
 
 (define (tc-context-imports-stdlib-string? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ module module-id _)
+    [(TcContext program _ _ module module-id _ _)
       (match program
         [(AstProgram.Program decls-box)
           (tc-decl-list-module-imports-stdlib-string?
@@ -13246,7 +13267,7 @@
         [base-start : i64 (+ first-dot 1)]
         [base : String (string.substring name base-start (- n base-start))]
         (match ctx
-          [(TcContext program _ _ _ current-module-id _)
+          [(TcContext program _ _ _ current-module-id _ _)
             (match program
               [(AstProgram.Program decls-box)
                 (match (macro-import-alias-target-cached-id
@@ -13551,7 +13572,7 @@
   [_name : String]
   [name-id : i64]) : option_i64.Option
   (match ctx
-    [(TcContext _ _ registries _ module-id _)
+    [(TcContext _ _ registries _ module-id _ _)
       (let
         [registry-id : i64 (compiler-registries-identity registries)]
         [cached-handle : i64
@@ -13587,7 +13608,7 @@
   [module-id : i64]) : option_i64.Option
   (if (tc-enum-qualified-variant-lookup-name-id? name-id)
     (match ctx
-      [(TcContext _ _ registries module _ _)
+      [(TcContext _ _ registries module _ _ _)
         (let
           [registry-id : i64 (compiler-registries-identity registries)]
           [cached : i64
@@ -13860,7 +13881,7 @@
   [ctx : TcContext]
   [qualifier-id : i64]) : i64
   (match ctx
-    [(TcContext program _ _ _ current-module-id _)
+    [(TcContext program _ _ _ current-module-id _ _)
       (match program
         [(AstProgram.Program decls-box)
           (macro-resolve-qualified-module-id
@@ -14289,7 +14310,7 @@
     [(ResultTcString.Ok cached) (ResultTcString.Ok cached)]
     [(ResultTcString.Err _)
       (match ctx
-        [(TcContext program symbols _ _ _ _)
+        [(TcContext program symbols _ _ _ _ _)
           (match (compiler-symbols-owner-name-at-index
             symbols
             (compiler-symbol-handle-index handle))
@@ -14458,7 +14479,7 @@
   [name : String]
   [name-id : i64]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module module-id _)
+    [(TcContext _ symbols _ module module-id _ _)
       (let
         [current-dotted-id : i64
           (tc-current-module-dotted-name-id ctx name name-id)]
@@ -14613,7 +14634,7 @@
   [name-id : i64]
   [lifetimes : AstLifetimeList]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module module-id _)
+    [(TcContext _ symbols _ module module-id _ _)
       (let
         [current-dotted-id : i64
           (tc-current-module-dotted-name-id ctx name name-id)]
@@ -14817,7 +14838,7 @@
 
 (define (tc-nominal-lifetimes-id [ctx : TcContext] [name-id : i64]) : ResultTcLifetimeList
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-id-or
@@ -22462,7 +22483,7 @@
 ;; instead of building and interning the qualified string.
 (define (tc-constructor-name-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols registries module ctx-module-id _)
+    [(TcContext _ symbols registries module ctx-module-id _ _)
       (let
         [module-id : i64
           (if (> (string.string-length module) 0)
@@ -28449,7 +28470,7 @@
 
 (define (tc-spmd-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _ _)
+    [(TcContext program _ _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
@@ -32724,15 +32745,15 @@
 
 (define (tc-context-program [ctx : TcContext]) : AstProgram
   (match ctx
-    [(TcContext program _ _ _ _ _) program]))
+    [(TcContext program _ _ _ _ _ _) program]))
 
 (define (tc-context-symbols [ctx : TcContext]) : CompilerSymbols
   (match ctx
-    [(TcContext _ symbols _ _ _ _) symbols]))
+    [(TcContext _ symbols _ _ _ _ _) symbols]))
 
 (define (tc-context-registries [ctx : TcContext]) : CompilerRegistries
   (match ctx
-    [(TcContext _ _ registries _ _ _) registries]))
+    [(TcContext _ _ registries _ _ _ _) registries]))
 
 ;; Enum queries are frequent during macro expansion, and the generated-name
 ;; compatibility path cannot always use CompilerSymbols. Index the flat
@@ -33386,7 +33407,7 @@
 
 (define (tc-struct-decl-id [ctx : TcContext] [struct-name-id : i64]) : ResultTcStructDecl
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-id-or
@@ -33450,7 +33471,7 @@
 
 (define (tc-enum-decl-id [ctx : TcContext] [enum-name-id : i64]) : ResultTcEnumDecl
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-id-or
@@ -35016,7 +35037,7 @@
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx
-    [(TcContext program _ _ _ _ _)
+    [(TcContext program _ _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (let
@@ -35046,11 +35067,14 @@
   (if macro-expand-ctfe-env-ready
     (ctfe-env-rebase-pools macro-expand-ctfe-env-value (tc-context-pools ctx))
     (if ctfe-needs-metadata
-      (ctfe-env-with-metadata-and-pools
+      (ctfe-env-with-metadata-and-pools-and-source-names
         (tc-ctfe-layouts ctx)
         (ctfe-reflections-from-program (tc-context-program ctx))
-        (tc-context-pools ctx))
-      (ctfe-env-empty-with-pools (tc-context-pools ctx)))))
+        (tc-context-pools ctx)
+        (tc-context-source-names ctx))
+      (ctfe-env-empty-with-pools-and-source-names
+        (tc-context-pools ctx)
+        (tc-context-source-names ctx)))))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -60722,7 +60746,7 @@
                 arg
                 (tc-source-slash-qualified-message name))))
           (match ctx
-            [(TcContext program _ _ current-module current-module-id _)
+            [(TcContext program _ _ current-module current-module-id _ _)
               (match program
                 [(AstProgram.Program decls-box)
                   (match (macro-import-alias-target-cached-id
@@ -61725,6 +61749,7 @@
         env))))
 
 (define (macro-rewrite-generated-import-call-with-decl
+  [ctx : TcContext]
   [func-box : i64]
   [args : AstExprList]
   [env : CtfeEnv]
@@ -61732,9 +61757,14 @@
   [maybe-decl : MacroMaybeDecl]) : i64
   (match maybe-decl
     [(MacroMaybeDecl.Some _ _ _ params _ _)
-      (ast-expr-call
-        func-box
-        (macro-generated-import-type-args params args env))]
+      (let
+        [rewritten : i64
+          (ast-expr-call
+            func-box
+            (macro-generated-import-type-args params args env))]
+        (begin
+          (tc-context-capture-active-pools! ctx)
+          rewritten))]
     [(MacroMaybeDecl.No) fallback]))
 
 (define (macro-rewrite-generated-import-direct-call
@@ -61771,15 +61801,21 @@
                   (match maybe-decl
                     [(MacroMaybeDecl.Some _ _ _ _ _ _)
                       (macro-rewrite-generated-import-call-with-decl
+                        ctx
                         func-box
                         args
                         env
                         fallback
                         maybe-decl)]
                     [(MacroMaybeDecl.No)
-                      (ast-expr-call
-                        func-box
-                        (macro-generated-type-param-expr-list env args))])]
+                      (let
+                        [rewritten : i64
+                          (ast-expr-call
+                            func-box
+                            (macro-generated-type-param-expr-list env args))]
+                        (begin
+                          (tc-context-capture-active-pools! ctx)
+                          rewritten))])]
                 [(ResultMacroCallDecl.Err _) fallback])]
             [(TcMaybeNameId.No) fallback])))]
     [_ fallback]))
@@ -61811,6 +61847,7 @@
               (match maybe-decl
                 [(MacroMaybeDecl.Some _ _ _ _ _ _)
                   (macro-rewrite-generated-import-call-with-decl
+                    ctx
                     func-box
                     args
                     env
@@ -62026,13 +62063,20 @@
     (macro-core-for-var callee)
     (ast-expr-cons arg (ast-expr-list-new))))
 
-(define (macro-core-for-source-name-id [name : String]) : i64
-  (match (ci.intern-lookup name)
-    [(ci.InternLookupFound source-id) source-id]
-    [(ci.InternLookupMissing) (tc-generated-name-id name)]))
+(define (macro-core-for-source-name-id [ctx : TcContext] [name : String]) : i64
+  (ctfe-string-syntax-name-id
+    (tc-context-source-names ctx)
+    name
+    (tc-generated-name-id name)))
 
-(define (macro-core-for-qualified-value-id [module-id : i64] [name : String]) : i64
-  (macro-hygiene-global-id module-id (macro-core-for-source-name-id name) false))
+(define (macro-core-for-qualified-value-id
+  [ctx : TcContext]
+  [module-id : i64]
+  [name : String]) : i64
+  (macro-hygiene-global-id
+    module-id
+    (macro-core-for-source-name-id ctx name)
+    false))
 
 (define (macro-core-for-nominal-module-id [ty : AstType]) : i64
   (match (tc-type-strip-region ty)
@@ -62132,7 +62176,7 @@
     (tc-source-variant-handle-for-enum-id-or
       ctx
       enum-id
-      (macro-core-for-source-name-id name)
+      (macro-core-for-source-name-id ctx name)
       (compiler-symbols-missing-handle))))
 
 (define (macro-core-for-item-type
@@ -62151,7 +62195,7 @@
       (tc-source-variant-handle-for-enum-id-or
         ctx
         enum-id
-        (macro-core-for-source-name-id "Item")
+        (macro-core-for-source-name-id ctx "Item")
         (compiler-symbols-missing-handle))]
     (if (not (compiler-symbols-handle-found? handle))
       (ResultMacroCoreForType.Err
@@ -62275,8 +62319,9 @@
         [next-display : String
           (compiler-symbol-module-key module-name next-base)]
         [constructor-id : i64
-          (macro-core-for-qualified-value-id module-id constructor-name)]
-        [next-id : i64 (macro-core-for-qualified-value-id module-id next-base)]
+          (macro-core-for-qualified-value-id ctx module-id constructor-name)]
+        [next-id : i64
+          (macro-core-for-qualified-value-id ctx module-id next-base)]
         (match (macro-core-for-function-return
           ctx
           env
@@ -62550,11 +62595,11 @@
                   (ast-pattern-list-new))]
               [done-pattern : AstPattern
                 (ast-pat-variant-id
-                  (macro-core-for-source-name-id "Done")
+                  (macro-core-for-source-name-id ctx "Done")
                   (ast-pattern-list-new))]
               [item-pattern : AstPattern
                 (ast-pat-variant-id
-                  (macro-core-for-source-name-id "Item")
+                  (macro-core-for-source-name-id ctx "Item")
                   item-patterns)]
               [arms : AstMatchArmList (ast-match-arm-list-with-capacity 2)]
               [next-call : i64
@@ -66554,7 +66599,8 @@
                 next-registries
                 ""
                 cbi.compiler-builtin-id-fix-empty
-                pools)]
+                pools
+                (tc-context-source-names cur-ctx))]
             (begin
               (set! macro-expand-active-module "")
               (macro-expand-set-macro-names! macro-live-prescan-visible-names)
@@ -67298,6 +67344,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
@@ -67392,7 +67439,8 @@
                                 registries
                                 ""
                                 cbi.compiler-builtin-id-fix-empty
-                                pools)]
+                                pools
+                                source-names)]
                             (match (tc-stdlib-comptime-surface-ok-for-macro ctx)
                               [(ResultTcUnit.Ok)
                                 (match (tc-build-top-env ctx active-program)
@@ -67663,10 +67711,11 @@
             (ResultMacroMaterializeImport.Err
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
-(define (macro-expand-program-with-paths-and-pools-roots-cfg
+(define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
@@ -67703,6 +67752,7 @@
       program
       paths
       pools
+      source-names
       stdlib-roots
       cfgs)
       [(ResultMacroExpand.Ok expanded expanded-paths)
@@ -67733,6 +67783,20 @@
           (macro-expand-allocation-profile-snapshot! 0)
           (macro-expand-scratch-release!)
           (ResultMacroExpand.Err diag))])))
+
+(define (macro-expand-program-with-paths-and-pools-roots-cfg
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
+    program
+    paths
+    pools
+    (ci.intern-source-name-session-capture-active-handle)
+    stdlib-roots
+    cfgs))
 
 ;; Expansion + build-once env boundary (plan P2). Runs the single demand-driven
 ;; expansion pass (which builds the CTFE base env exactly once and reuses it
@@ -69479,12 +69543,13 @@
                               (set! done true))]))))]))]))
       result)))
 
-(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
+(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
   (begin
     (tc-nominal-owner-cache-reset!)
     (tc-install-pools! pools)
@@ -69503,7 +69568,8 @@
                   registries
                   ""
                   cbi.compiler-builtin-id-fix-empty
-                  pools)]
+                  pools
+                  source-names)]
               (match (tc-stdlib-comptime-surface-ok ctx)
                 [(ResultTcUnit.Ok)
                   (match (tc-program-source-types-policy-ok ctx program paths)
@@ -69549,6 +69615,20 @@
       [(ResultCompilerSymbolsDiagnostic.Err diag)
         (ResultCompilerTypecheckChecked.Err diag)])))
 
+(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools
+    (ci.intern-source-name-session-capture-active-handle)))
+
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -69573,19 +69653,35 @@
       stdlib-roots
       cache-scope)))
 
+(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
+  (tc-typecheck-checked-result-with-pool-check
+    (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names
+      program
+      paths
+      stdlib-roots
+      cache-scope
+      pools
+      source-names)))
+
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
-  (tc-typecheck-checked-result-with-pool-check
-    (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
-      program
-      paths
-      stdlib-roots
-      cache-scope
-      pools)))
+  (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools
+    (ci.intern-source-name-session-capture-active-handle)))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked
   [program : AstProgram]

@@ -50,8 +50,8 @@
   (key String)
   (value Json))
 
-(import (vector.vector Json) as jvec)
-(import (vector.vector JsonMember) as jmvec)
+(import (vector.vector Json core) as jvec)
+(import (vector.vector JsonMember core) as jmvec)
 
 ;: Convert builder elements `[0, index]` into a public JSON list.
 (define (vec-to-list-from

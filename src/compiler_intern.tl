@@ -442,6 +442,35 @@
   (persistent-arena (Array i64))
   (persistent-arena-floor-mark (Array i64)))
 
+;; An immutable source-name lookup capability. The arrays are owned by one
+;; intern state; the cells let resolution reject a capability after that state
+;; is reset without consulting whichever compatibility table is active.
+(defstruct InternSourceNameSession
+  (table-id-cell (Array i64))
+  (reset-generation-cell (Array i64))
+  (pool-slots (Array String))
+  (map-id-slots (Array InternId))
+  (map-hash-slots (Array i64))
+  (map-ready-cell (Array bool))
+  (table-id i64)
+  (reset-generation i64)
+  (source-count i64))
+
+(defstruct InternSourceNameSessionHandle
+  (address i64))
+
+(defstruct InternSyntaxTextIdentity
+  (table-id i64)
+  (reset-generation i64)
+  (id i64))
+
+(defenum InternSourceNameResolution
+  (ParsedIdentity i64)
+  (GeneratedIdentity i64 InternLookup)
+  (WrongOwner)
+  (StaleGeneration)
+  (InvalidIdentity))
+
 (define (intern-compat-state-new) : InternCompatState
   (let
     [table-id : (Array i64) (make-array i64 1)]
@@ -988,8 +1017,10 @@
 ;; Deterministic per (compiler, input) counters that drive the redundant-
 ;; interning elimination work: hash-words counts every string hash (the real
 ;; cost), and the entry counters attribute those hashes to intern/intern-slice/
-;; intern-lookup. `compiler_intern` is import-free, so it only exposes reset and
-;; value accessors; the driver (which owns `io`) prints them at compile end.
+;; intern-lookup. The render counter records each successful intern-str call;
+;; invalid IDs stay separate so diagnostics cannot hide semantic render work.
+;; `compiler_intern` is import-free, so it only exposes reset and value
+;; accessors; the driver (which owns `io`) prints them at compile end.
 (cfg
   compile-profile
   (define intern-profile-hash-words-count : i64
@@ -1009,6 +1040,10 @@
 (cfg
   compile-profile
   (define intern-profile-generated-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-render-count : i64
     0))
 (cfg
   compile-profile
@@ -1052,6 +1087,7 @@
       (set! intern-profile-slice-count 0)
       (set! intern-profile-lookup-count 0)
       (set! intern-profile-generated-count 0)
+      (set! intern-profile-render-count 0)
       (set! intern-profile-invalid-str-count 0)
       (set! intern-profile-invalid-str-last-id 0)
       (set! intern-profile-source-bytes-count 0)
@@ -1085,6 +1121,11 @@
   compile-profile
   (define (intern-profile-generated-value) : i64
     intern-profile-generated-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-render-value) : i64
+    intern-profile-render-count))
 
 (cfg
   compile-profile
@@ -1989,6 +2030,150 @@
     (intern-lookup-content name)
     (InternLookupMissing)))
 
+;; Capture the source-name boundary from an explicitly owned intern state. The
+;; caller chooses when parsing is complete, so generated strings can resolve
+;; only against names that existed at that boundary.
+(define (intern-source-name-session-from-state [state : InternCompatState]) : InternSourceNameSession
+  (InternSourceNameSession
+    (struct-get state table-id)
+    (struct-get state reset-generation)
+    (struct-get state pool-slots)
+    (struct-get state map-id-slots)
+    (struct-get state map-hash-slots)
+    (struct-get state map-ready)
+    (intern-compat-state-table-id state)
+    (intern-compat-state-generation state)
+    (intern-compat-state-pool-len state)))
+
+;; Compatibility adapter for standalone compiler APIs. Production driver jobs
+;; pass `intern-source-name-session-from-state` explicitly.
+(define (intern-source-name-session-capture-active) : InternSourceNameSession
+  (let
+    [table-id-cell : (Array i64) (make-array i64 1)]
+    [generation-cell : (Array i64) (make-array i64 1)]
+    [map-ready-cell : (Array bool) (make-array bool 1)]
+    (begin
+      (array-set! table-id-cell 0 (intern-active-table-id))
+      (array-set! generation-cell 0 intern-reset-generation)
+      (array-set! map-ready-cell 0 intern-map-ready)
+      (InternSourceNameSession
+        table-id-cell
+        generation-cell
+        intern-pool-slots
+        intern-map-id-slots
+        intern-map-hash-slots
+        map-ready-cell
+        (intern-active-table-id)
+        intern-reset-generation
+        intern-pool-count))))
+
+(define (intern-source-name-session-handle [session : InternSourceNameSession]) : InternSourceNameSessionHandle
+  (let
+    [previous-arena : i64 (tl_arena_current)]
+    (begin
+      (unsafe
+        (tl_arena_set intern-persistent-arena))
+      (let
+        [cell : (Array InternSourceNameSession)
+          (make-array InternSourceNameSession 1)]
+        (begin
+          (array-set! cell 0 session)
+          (unsafe
+            (tl_arena_set previous-arena))
+          (InternSourceNameSessionHandle
+            (cast
+              (unsafe
+                (ptr->int
+                  (ptr-cast (array-data cell) : (Ptr InternSourceNameSession))))
+              : i64)))))))
+
+(define (intern-source-name-session-handle-session
+  [handle : InternSourceNameSessionHandle]) : InternSourceNameSession
+  (unsafe
+    (ptr-read
+      (int->ptr
+        (cast (struct-get handle address) : u64)
+        : (Ptr InternSourceNameSession)))))
+
+(define (intern-source-name-session-capture-active-handle) : InternSourceNameSessionHandle
+  (intern-source-name-session-handle
+    (intern-source-name-session-capture-active)))
+
+(define (intern-source-name-session-identity
+  [session : InternSourceNameSession]
+  [id : i64]) : InternSyntaxTextIdentity
+  (InternSyntaxTextIdentity
+    (struct-get session table-id)
+    (struct-get session reset-generation)
+    id))
+
+(define (intern-source-name-session-lookup
+  [session : InternSourceNameSession]
+  [name : String]) : InternLookup
+  (if (array-ref (struct-get session map-ready-cell) 0)
+    (let
+      [ids : (Array InternId) (struct-get session map-id-slots)]
+      [hashes : (Array i64) (struct-get session map-hash-slots)]
+      [pool : (Array String) (struct-get session pool-slots)]
+      [capacity : i64 (array-length ids)]
+      [hash : i64 (intern-hash name)]
+      [cursor : i64 (intern-bucket hash capacity)]
+      [steps : i64 0]
+      (begin
+        (while (< steps capacity)
+          (let
+            [stored : InternId (array-ref ids cursor)]
+            (if (intern-id-slot-empty? stored)
+              (return (InternLookupMissing))
+              (let
+                [slot-id : i64 (intern-id-slot-decode stored)]
+                (if (and
+                  (= (array-ref hashes cursor) hash)
+                  (intern-private-string-eq (array-ref pool slot-id) name))
+                  (if (< slot-id (struct-get session source-count))
+                    (return (InternLookupFound slot-id))
+                    (return (InternLookupMissing)))
+                  (begin
+                    (set! cursor (intern-bucket (+ cursor 1) capacity))
+                    (set! steps (+ steps 1))))))))
+        (InternLookupMissing)))
+    (InternLookupMissing)))
+
+(define (intern-source-name-session-resolve
+  [session : InternSourceNameSession]
+  [identity : InternSyntaxTextIdentity]
+  [text : String]) : InternSourceNameResolution
+  (cond
+    [(not (= (struct-get identity table-id) (struct-get session table-id)))
+      (InternSourceNameResolution.WrongOwner)]
+    [(not
+        (=
+          (array-ref (struct-get session table-id-cell) 0)
+          (struct-get session table-id)))
+      (InternSourceNameResolution.WrongOwner)]
+    [(not
+        (=
+          (struct-get identity reset-generation)
+          (struct-get session reset-generation)))
+      (InternSourceNameResolution.StaleGeneration)]
+    [(not
+        (=
+          (array-ref (struct-get session reset-generation-cell) 0)
+          (struct-get session reset-generation)))
+      (InternSourceNameResolution.StaleGeneration)]
+    [(or
+        (< (struct-get identity id) 0)
+        (>=
+          (struct-get identity id)
+          (array-length (struct-get session pool-slots))))
+      (InternSourceNameResolution.InvalidIdentity)]
+    [(< (struct-get identity id) (struct-get session source-count))
+      (InternSourceNameResolution.ParsedIdentity (struct-get identity id))]
+    [else
+      (InternSourceNameResolution.GeneratedIdentity
+        (struct-get identity id)
+        (intern-source-name-session-lookup session text))]))
+
 ;: Recover the original String for an interned id.
 (define (intern-str [id : i64]) : String
   (cfg
@@ -2000,7 +2185,9 @@
           (+ intern-profile-invalid-str-count 1))
         (set! intern-profile-invalid-str-last-id id)
         "<invalid-intern-id>")
-      (array-ref intern-pool-slots id))
+      (begin
+        (set! intern-profile-render-count (+ intern-profile-render-count 1))
+        (array-ref intern-pool-slots id)))
     (array-ref intern-pool-slots id)))
 
 (define (intern-generation) : i64
@@ -2410,6 +2597,120 @@
             (intern-persistent-arena-reset!)
             ok))))))
 
+(define (intern-source-name-session-tests-ok?) : bool
+  (let
+    [state-a : InternCompatState (intern-compat-state-new)]
+    [state-b : InternCompatState (intern-compat-state-new)]
+    [equal-id : i64 (intern-compat-state-intern state-a "equal")]
+    [empty-id : i64 (intern-compat-state-intern state-a "")]
+    [qualified-id : i64 (intern-compat-state-intern state-a "pkg/module.name")]
+    [hygiene-id : i64 (intern-compat-state-intern state-a "local#hygiene")]
+    [source-mark : i64 (intern-compat-state-pool-len state-a)]
+    [session-a : InternSourceNameSession
+      (intern-source-name-session-from-state state-a)]
+    [session-b : InternSourceNameSession
+      (begin
+        (intern-compat-state-intern state-b "equal")
+        (intern-source-name-session-from-state state-b))]
+    [generated-id : i64 (- (intern-capacity) 1)]
+    [generated-a : InternSyntaxTextIdentity
+      (intern-source-name-session-identity session-a generated-id)]
+    [parsed-a : InternSyntaxTextIdentity
+      (intern-source-name-session-identity session-a equal-id)]
+    [_late-source-id : i64
+      (intern-compat-state-intern state-a "after-boundary")]
+    [ok : bool true]
+    (begin
+      (match (intern-source-name-session-resolve session-a parsed-a "different")
+        [(InternSourceNameResolution.ParsedIdentity id)
+          (unless (= id equal-id) (set! ok false))]
+        [_ (set! ok false)])
+      (match (intern-source-name-session-resolve session-a generated-a "equal")
+        [(InternSourceNameResolution.GeneratedIdentity id lookup)
+          (begin
+            (unless (= id generated-id) (set! ok false))
+            (match lookup
+              [(InternLookupFound source-id)
+                (unless (= source-id equal-id) (set! ok false))]
+              [(InternLookupMissing) (set! ok false)]))]
+        [_ (set! ok false)])
+      (match (intern-source-name-session-resolve
+        session-a
+        generated-a
+        "missing")
+        [(InternSourceNameResolution.GeneratedIdentity id lookup)
+          (begin
+            (unless (= id generated-id) (set! ok false))
+            (match lookup
+              [(InternLookupMissing) unit]
+              [(InternLookupFound _) (set! ok false)]))]
+        [_ (set! ok false)])
+      (match (intern-source-name-session-resolve
+        session-a
+        generated-a
+        "after-boundary")
+        [(InternSourceNameResolution.GeneratedIdentity _ lookup)
+          (match lookup
+            [(InternLookupMissing) unit]
+            [(InternLookupFound _) (set! ok false)])]
+        [_ (set! ok false)])
+      (match (intern-source-name-session-resolve session-a generated-a "")
+        [(InternSourceNameResolution.GeneratedIdentity _ lookup)
+          (match lookup
+            [(InternLookupFound id) (unless (= id empty-id) (set! ok false))]
+            [(InternLookupMissing) (set! ok false)])]
+        [_ (set! ok false)])
+      (match (intern-source-name-session-resolve
+        session-a
+        generated-a
+        "pkg/module.name")
+        [(InternSourceNameResolution.GeneratedIdentity _ lookup)
+          (match lookup
+            [(InternLookupFound id)
+              (unless (= id qualified-id) (set! ok false))]
+            [(InternLookupMissing) (set! ok false)])]
+        [_ (set! ok false)])
+      (match (intern-source-name-session-resolve
+        session-a
+        generated-a
+        "local#hygiene")
+        [(InternSourceNameResolution.GeneratedIdentity _ lookup)
+          (match lookup
+            [(InternLookupFound id) (unless (= id hygiene-id) (set! ok false))]
+            [(InternLookupMissing) (set! ok false)])]
+        [_ (set! ok false)])
+      (match (intern-source-name-session-resolve session-b parsed-a "equal")
+        [(InternSourceNameResolution.WrongOwner) unit]
+        [_ (set! ok false)])
+      (match (intern-source-name-session-resolve
+        session-a
+        (InternSyntaxTextIdentity
+          (struct-get session-a table-id)
+          (struct-get session-a reset-generation)
+          -1)
+        "equal")
+        [(InternSourceNameResolution.InvalidIdentity) unit]
+        [_ (set! ok false)])
+      (intern-compat-state-reset-to! state-a source-mark)
+      (match (intern-source-name-session-resolve session-a generated-a "equal")
+        [(InternSourceNameResolution.StaleGeneration) unit]
+        [_ (set! ok false)])
+      (let
+        [next-session : InternSourceNameSession
+          (intern-source-name-session-from-state state-a)]
+        [next-generated : InternSyntaxTextIdentity
+          (intern-source-name-session-identity next-session generated-id)]
+        (match (intern-source-name-session-resolve
+          next-session
+          next-generated
+          "equal")
+          [(InternSourceNameResolution.GeneratedIdentity _ lookup)
+            (match lookup
+              [(InternLookupFound id) (unless (= id equal-id) (set! ok false))]
+              [(InternLookupMissing) (set! ok false)])]
+          [_ (set! ok false)]))
+      ok)))
+
 (define (intern-qualified-metadata-tests-ok?) : bool
   (begin
     (intern-reset!)
@@ -2491,5 +2792,6 @@
         (unless (intern-persistent-arena-tests-ok?) (set! ok false))
         (unless (intern-reset-to-tests-ok?) (set! ok false))
         (unless (intern-persistent-floor-reset-tests-ok?) (set! ok false))
+        (unless (intern-source-name-session-tests-ok?) (set! ok false))
         (intern-reset!)
         ok))))

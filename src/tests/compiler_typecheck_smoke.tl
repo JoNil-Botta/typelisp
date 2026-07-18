@@ -1385,7 +1385,7 @@
 (defmacro (json-vector-user) : Module
   `(begin
     (module generated.json_vector_user)
-    (import (vector json.Json) as jvec)
+    (import (vector json.Json core) as jvec)
     (define (score) : i64
       (let
         [items : jvec.Vec (jvec.new)]

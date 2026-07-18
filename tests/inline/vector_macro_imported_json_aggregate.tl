@@ -3,8 +3,8 @@
 (import stdlib.test)
 (import stdlib.json)
 (import stdlib.vector)
-(import (vector json.Json) as jvec)
-(import (vector json.JsonMember) as mvec)
+(import (vector json.Json core) as jvec)
+(import (vector json.JsonMember core) as mvec)
 
 (test
   vector-macro-imported-json-aggregate
@@ -17,8 +17,9 @@
         1
         "generated json aggregate vector length")
       (let
-        [snapshot : (Array json.JsonMember) (mvec.to-array (& members))]
-        (match (struct-get (array-ref snapshot 0) value)
+        [member : json.JsonMember
+          (mvec.get (& members) 0 (json.JsonMember "" json.JsonNull))]
+        (match (struct-get member value)
           [(json.JsonBool value)
             (test.assert-true value "generated json aggregate payload")]
           [_ (test.assert-true false "generated json aggregate wrong payload")])))))

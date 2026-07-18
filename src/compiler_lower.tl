@@ -893,6 +893,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-lower-profile-start-intern-render : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-lower-profile-detail-start-ms : i64
     0))
 
@@ -943,6 +947,9 @@
       (set!
         compiler-lower-profile-start-intern-generated
         (ci.intern-profile-generated-value))
+      (set!
+        compiler-lower-profile-start-intern-render
+        (ci.intern-profile-render-value))
       (profile.alloc-reset-peak))))
 
 (cfg
@@ -1003,6 +1010,22 @@
                       (-
                         (ci.intern-profile-slice-value)
                         compiler-lower-profile-start-intern-slice))
+                    "\n"))))))
+        (cfg
+          compile-profile-summary
+          unit
+          (io.print-error
+            (string.append
+              "compile-profile-detail|intern.lower_phase.render|"
+              (string.append
+                phase
+                (string.append
+                  "|"
+                  (string.append
+                    (string.int->string
+                      (-
+                        (ci.intern-profile-render-value)
+                        compiler-lower-profile-start-intern-render))
                     "\n"))))))
         (cfg
           compile-profile-summary
@@ -15020,7 +15043,7 @@
                           fail-label
                           scrut-reg-group?)
                         (match ctx
-                          [(TcContext _ symbols registries _ _ _)
+                          [(TcContext _ symbols registries _ _ _ _)
                             (let
                               [handle : i64
                                 (lower-variant-handle-for-scrut-id-or
@@ -15390,7 +15413,7 @@
                   [nested-args : AstPatternList (box-get nested-args-box)]
                   [nested-name-str : String (tc-env-key-name-text nested-name)]
                   (match ctx
-                    [(TcContext _ symbols registries _ _ _)
+                    [(TcContext _ symbols registries _ _ _ _)
                       (let
                         [handle : i64
                           (lower-variant-handle-for-scrut-id-or
@@ -15888,7 +15911,7 @@
 
 (define (lower-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _ _)
+    [(TcContext program _ _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (lower-program-imports-atomic? (box-get decls-box))])]))
@@ -16733,7 +16756,7 @@
   [enum-name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ _ _ _ _)
+    [(TcContext _ _ _ _ _ _ _)
       (match (tc-context-enum-variants-id ctx enum-name-id enum-name)
         [(ResultAstVariantDefList.Ok variants)
           (match (lower-reserve-heap-storage
@@ -17930,7 +17953,7 @@
   [return-info : TcResultInfo]
   [payload : CompilerIrValue]) : ResultLowerState
   (match ctx
-    [(TcContext _ _ registries _ _ _)
+    [(TcContext _ _ registries _ _ _ _)
       (let
         [enum-name-id : i64 (tc-result-info-enum-id return-info)]
         [enum-name : String (tc-nominal-name-id-display enum-name-id)]
@@ -18073,7 +18096,7 @@
   [return-info : TcResultInfo]
   [origin : AstExpr]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ registries _ _ _)
+    [(TcContext _ _ registries _ _ _ _)
       (let
         [ok-id : i64 (tc-result-info-ok-id operand-info)]
         [ok-name : String
@@ -18184,7 +18207,7 @@
 
 (define (lower-top-level-value-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols _ module module-id _)
+    [(TcContext _ symbols _ module module-id _ _)
       (compiler-symbols-handle-found?
         (if (and
           (> (string.string-length module) 0)
@@ -18201,7 +18224,7 @@
 
 (define (lower-top-level-callable-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols _ module module-id _)
+    [(TcContext _ symbols _ module module-id _ _)
       (let
         [handle : i64
           (if (and
@@ -18248,7 +18271,7 @@
   [source-id : i64]
   [lookup-id : i64]) : i64
   (match ctx
-    [(TcContext _ _ _ module module-id _)
+    [(TcContext _ _ _ module module-id _ _)
       (if (and
         (> (string.string-length module) 0)
         (not (tc-name-qualified-id? source-id))
@@ -19800,7 +19823,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
@@ -19934,7 +19957,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
@@ -48155,7 +48178,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _ _)
+    [(TcContext _ symbols registries _ _ _ _)
       (let
         [variant-name : String (tc-env-key-name-text variant-name-id)]
         [resolved-scrut-ty : AstType
@@ -48347,7 +48370,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _ _)
+    [(TcContext _ symbols registries _ _ _ _)
       (let
         [variant-name : String (tc-env-key-name-text variant-name-id)]
         [resolved-scrut-ty : AstType
@@ -50478,7 +50501,7 @@
   [borrow-lifetime : TcMaybeNameId]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _ _)
+    [(TcContext _ symbols registries _ _ _ _)
       (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
         [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err
@@ -50607,7 +50630,7 @@
   [borrow-lifetime : TcMaybeNameId]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _ _)
+    [(TcContext _ symbols registries _ _ _ _)
       (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
         [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err
@@ -53728,7 +53751,7 @@
 ;; declarations have never been checked by tc-check-decls (they are trusted
 ;; compiler output), so building them before typecheck only forced a redundant
 ;; symbols/registries/top-env construction and a shadow expression typecheck.
-(define (lower-typecheck-clone-and-lower
+(define (lower-typecheck-clone-and-lower-with-source-names
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -53738,15 +53761,17 @@
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerLower
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
   (match (let
     [_start-early-exit-facts : unit (tc-body-early-exit-facts-start! pools)]
-    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
+    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
       program
       paths
       stdlib-roots
       cache-scope
-      pools))
+      pools
+      source-names))
     [(ResultCompilerTypecheckChecked.Ok _ source-ctx source-top-env)
       (let
         [_finish-early-exit-facts : unit (tc-body-early-exit-facts-finish!)]
@@ -53887,14 +53912,39 @@
         (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
         (ResultCompilerLower.Err diag))]))
 
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
+(define (lower-typecheck-clone-and-lower
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [keep-plan : LowerDeclKeepPlan]
+  [escaped-names : LowerNameEnv]
+  [needs-specialization : bool]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-typecheck-clone-and-lower-with-source-names
+    entry-path
+    program
+    paths
+    keep-plan
+    escaped-names
+    needs-specialization
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    (ci.intern-source-name-session-capture-active-handle)))
+
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerLower
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
   (begin
     (cfg compile-profile (compiler-lower-profile-start))
     (let
@@ -54005,7 +54055,7 @@
                           unit)]
                       [_commit-dest : unit
                         (lower-checked-dest-pools-commit! source-pools)]
-                      (lower-typecheck-clone-and-lower
+                      (lower-typecheck-clone-and-lower-with-source-names
                         source-entry-path
                         source-program
                         source-paths
@@ -54015,21 +54065,23 @@
                         mode
                         stdlib-roots
                         source-cache-scope
-                        source-pools)))])))]
+                        source-pools
+                        source-names)))])))]
         [(ResultSpecProgramWithPaths.Err diag)
           (begin
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
             (ResultCompilerLower.Err
               (box (lower-diagnostic-with-path (box-get diag) entry-path))))]))))
 
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerLower
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
   (let
     [prev-active : bool lower-entry-main-module-active]
     [prev-module : String lower-entry-main-module]
@@ -54040,20 +54092,39 @@
       (lower-entry-main-selection-install! selection)
       (let
         [result : ResultCompilerLower
-          (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
+          (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
             entry-path
             program
             paths
             mode
             stdlib-roots
             cache-scope
-            pools)]
+            pools
+            source-names)]
         (begin
           (lower-entry-main-selection-restore!
             prev-active
             prev-module
             prev-module-id)
           result)))))
+
+(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    (ci.intern-source-name-session-capture-active-handle)))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache
   [entry-path : String]
@@ -54071,14 +54142,15 @@
     cache-scope
     (ast-node-pool-context-capture-active)))
 
-(define (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+(define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
-  [pools : AstNodePoolContext]) : ResultCompilerLower
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
   (begin
     (cfg compile-profile (compiler-lower-profile-start))
     (tc-agg-caches-reset!)
@@ -54138,10 +54210,11 @@
             (if detach-before-macro?
               (lower-checked-dest-pools-rollover-for-macro!)
               unit)]
-          (match (macro-expand-program-with-paths-and-pools-roots-cfg
+          (match (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
             macro-program
             macro-paths
             committed-macro-pools
+            source-names
             stdlib-roots
             (typecheck-compiler-source-language-cfgs))
             [(ResultMacroExpand.Ok expanded expanded-paths)
@@ -54214,14 +54287,15 @@
                         compile-profile
                         (compiler-lower-profile-finish "macro_detach"))
                       unit)]
-                  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+                  (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
                     detached-entry-path
                     detached-program
                     detached-paths
                     mode
                     stdlib-roots
                     detached-cache-scope
-                    committed-pools)))]
+                    committed-pools
+                    source-names)))]
             [(ResultMacroExpand.Err diag)
               (begin
                 (cfg
@@ -54238,6 +54312,24 @@
           (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
           (ResultCompilerLower.Err
             (box (lower-diagnostic-with-path (box-get diag) entry-path))))])))
+
+(define (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
+  (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    (ci.intern-source-name-session-capture-active-handle)))
 
 (define (lower-compiler-program-with-decl-paths-mode
   [entry-path : String]

@@ -17,6 +17,9 @@
 ;# bounds-checked get/set, push, and their storage/growth helpers. Core mode
 ;# does not construct iterator, clone/pop, conversion, map/fold, reverse, or
 ;# contains declarations, so non-cloneable aggregate elements remain usable.
+;# Full mode instantiates `stdlib.eq` structural equality for `contains?`;
+;# element types unsupported by generated equality can still use core mode
+;# when containment and the other full helpers are not required.
 ;#
 ;# Generated family metadata is type-agnostic. Struct and enum element
 ;# instantiations use the same `(Array T)` storage and `array-ref`/`array-set!`
@@ -70,25 +73,7 @@
 ;#       (svec.push (&mut words) "x")
 ;#       (+ (ivec.len (& v)) (svec.len (& words))))))
 ;# ```
-;: Local string equality fallback used when bootstrapping with a compiler that
-;: does not yet expose private string intrinsics.
-(cfg
-  (not feature-compiler-private-string-intrinsics)
-  (define (string-eq [a : String] [b : String]) : bool
-    (let
-      [n : i64 (string-length a)]
-      [i : i64 0]
-      [same : bool (= n (string-length b))]
-      (begin
-        (while (if same
-          (< i n)
-          false)
-          (begin
-            (if (= (string-ref a i) (string-ref b i))
-              unit
-              (set! same false))
-            (set! i (+ i 1))))
-        same))))
+(import stdlib.eq)
 
 ;: Emit a generated growable vector module for element type `T`.
 ;:
@@ -96,7 +81,8 @@
 ;: `Vec`, `new`, `with-capacity`, `len`, `capacity`, `get`,
 ;: `set`, and `push` plus their shared storage/growth helpers. Core mode is
 ;: suitable for append-oriented compiler-private collections and does not
-;: instantiate clone-dependent operations such as `pop`.
+;: instantiate clone-dependent operations such as `pop` or generated equality
+;: for `contains?`.
 (defmacro (vector [T : type] [capabilities : Expr ...]) : Module
   (let
     [capability-count : i64 (expr-list-length capabilities)]
@@ -409,76 +395,9 @@
                 (match kind
                   ["string" (expr-var "str")]
                   [_ `,T])]
-              [eq-body : Expr
-                (match kind
-                  ["string"
-                    `(cfg
-                      feature-compiler-private-string-intrinsics
-                      (__tl_string_eq a b)
-                      (let
-                        [n : i64 (string-length a)]
-                        [i : i64 0]
-                        [same : bool (= n (string-length b))]
-                        (begin
-                          (while (if same
-                            (< i n)
-                            false)
-                            (begin
-                              (if (= (string-ref a i) (string-ref b i))
-                                unit
-                                (set! same false))
-                              (set! i (+ i 1))))
-                          same)))]
-                  ["i64" `(= a b)]
-                  ["i32" `(= a b)]
-                  ["i16" `(= a b)]
-                  ["i8" `(= a b)]
-                  ["u64" `(= a b)]
-                  ["u32" `(= a b)]
-                  ["u16" `(= a b)]
-                  ["u8" `(= a b)]
-                  ["bool" `(= a b)]
-                  ["char" `(= a b)]
-                  ["f64" `(= a b)]
-                  ["f32" `(= a b)]
-                  [_ `false])]
-              [contains-hit : Expr
-                (match kind
-                  ["string"
-                    `(cfg
-                      feature-compiler-private-string-intrinsics
-                      (__tl_string_eq (array-ref (slots v) index) (& x))
-                      (let
-                        [n : i64 (string-length (array-ref (slots v) index))]
-                        [i : i64 0]
-                        [same : bool (= n (string-length (& x)))]
-                        (begin
-                          (while (if same
-                            (< i n)
-                            false)
-                            (begin
-                              (if (=
-                                (string-ref (array-ref (slots v) index) i)
-                                (string-ref (& x) i))
-                                unit
-                                (set! same false))
-                              (set! i (+ i 1))))
-                          same)))]
-                  ["i64" `(value-eq? (array-ref (slots v) index) x)]
-                  ["i32" `(value-eq? (array-ref (slots v) index) x)]
-                  ["i16" `(value-eq? (array-ref (slots v) index) x)]
-                  ["i8" `(value-eq? (array-ref (slots v) index) x)]
-                  ["u64" `(value-eq? (array-ref (slots v) index) x)]
-                  ["u32" `(value-eq? (array-ref (slots v) index) x)]
-                  ["u16" `(value-eq? (array-ref (slots v) index) x)]
-                  ["u8" `(value-eq? (array-ref (slots v) index) x)]
-                  ["bool" `(value-eq? (array-ref (slots v) index) x)]
-                  ["char" `(value-eq? (array-ref (slots v) index) x)]
-                  ["f64" `(value-eq? (array-ref (slots v) index) x)]
-                  ["f32" `(value-eq? (array-ref (slots v) index) x)]
-                  [_ `false])]
               `(begin
                 (module ,module-name)
+                (import (eq.eq ,T) as value_eq)
                 ,@core
                 (defenum ,pop-name
                   (Empty)
@@ -694,15 +613,13 @@
                       out)))
                 (define (map [v : (& v ,vec-name)] [mapper : (-> ,T ,T)]) : ,vec-name
                   (map-from v 0 mapper))
-                (define (value-eq? [a : ,T] [b : ,T]) : bool
-                  ,eq-body)
                 (define (contains-from?
                   [v : (& v ,vec-name)]
                   [x : ,T]
                   [index : i64]) : bool
                   (if (>= index (len v))
                     false
-                    (if ,contains-hit
+                    (if (value_eq.eq (array-ref (slots v) index) x)
                       true
                       (contains-from? v x (+ index 1)))))
                 (define (contains? [v : (& v ,vec-name)] [x : ,T]) : bool

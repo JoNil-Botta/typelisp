@@ -52703,6 +52703,175 @@
             out))))
     (macro-decl-path-list-prefix-rev-current-suffix prefix-rev suffix)))
 
+(defstruct MacroSpliceDeclView
+  (view AstDeclList)
+  (tail AstDeclList))
+
+(defstruct MacroSplicePathView
+  (view AstDeclPathList)
+  (tail AstDeclPathList))
+
+;; Whole-program view and walk tail for a forced splice, built in ONE backing
+;; array per list with the shape [reversed prefix | spliced decls | remaining
+;; decls]. The previous construction (append of the spliced decls onto the
+;; tail, then reverse + append for the prefix, which always missed the prepend
+;; headroom fast path) materialized three full-program arrays per list per
+;; splice and dominated the macro scratch arena (~5MB per splice on a
+;; self-compile). The tail shares the view's backing array, so each segment is
+;; copied exactly once.
+(define (macro-splice-decl-view-build
+  [prefix-rev : AstDeclList]
+  [middle : AstDeclList]
+  [suffix : AstDeclList]) : MacroSpliceDeclView
+  (let
+    [prefix-count : i64 (ast-decl-list-len (& prefix-rev))]
+    [middle-count : i64 (ast-decl-list-len (& middle))]
+    [suffix-count : i64 (ast-decl-list-len (& suffix))]
+    (let
+      [total : i64 (+ prefix-count (+ middle-count suffix-count))]
+      [slots : (Array AstDecl)
+        (array.make-array AstDecl (if (< total 1) 1 total))]
+      [index : i64 0]
+      (begin
+        (while (< index prefix-count)
+          (begin
+            (array-set!
+              slots
+              (- (- prefix-count 1) index)
+              (ast-decl-list-ref prefix-rev index))
+            (set! index (+ index 1))))
+        (set! index 0)
+        (while (< index middle-count)
+          (begin
+            (array-set!
+              slots
+              (+ prefix-count index)
+              (ast-decl-list-ref middle index))
+            (set! index (+ index 1))))
+        (set! index 0)
+        (while (< index suffix-count)
+          (begin
+            (array-set!
+              slots
+              (+ prefix-count (+ middle-count index))
+              (ast-decl-list-ref suffix index))
+            (set! index (+ index 1))))
+        (MacroSpliceDeclView
+          (AstDeclList slots 0 total true)
+          (AstDeclList slots prefix-count (+ middle-count suffix-count) true))))))
+
+(define (macro-splice-path-view-build
+  [prefix-rev : AstDeclPathList]
+  [middle : AstDeclPathList]
+  [suffix : AstDeclPathList]) : MacroSplicePathView
+  (let
+    [prefix-count : i64 (ast-decl-path-list-len (& prefix-rev))]
+    [middle-count : i64 (ast-decl-path-list-len (& middle))]
+    [suffix-count : i64 (ast-decl-path-list-len (& suffix))]
+    (let
+      [total : i64 (+ prefix-count (+ middle-count suffix-count))]
+      [cap : i64 (if (< total 1) 1 total)]
+      [slots : (Array String) (array.make-array String cap)]
+      [owner-ids : (Array i64) (array.make-array i64 cap)]
+      [index : i64 0]
+      (begin
+        (while (< index prefix-count)
+          (begin
+            (array-set!
+              slots
+              (- (- prefix-count 1) index)
+              (ast-decl-path-list-get (& prefix-rev) index ""))
+            (array-set!
+              owner-ids
+              (- (- prefix-count 1) index)
+              (ast-decl-path-list-owner-id
+                (& prefix-rev)
+                index
+                cbi.compiler-builtin-id-fix-empty))
+            (set! index (+ index 1))))
+        (set! index 0)
+        (while (< index middle-count)
+          (begin
+            (array-set!
+              slots
+              (+ prefix-count index)
+              (ast-decl-path-list-get (& middle) index ""))
+            (array-set!
+              owner-ids
+              (+ prefix-count index)
+              (ast-decl-path-list-owner-id
+                (& middle)
+                index
+                cbi.compiler-builtin-id-fix-empty))
+            (set! index (+ index 1))))
+        (set! index 0)
+        (while (< index suffix-count)
+          (begin
+            (array-set!
+              slots
+              (+ prefix-count (+ middle-count index))
+              (ast-decl-path-list-get (& suffix) index ""))
+            (array-set!
+              owner-ids
+              (+ prefix-count (+ middle-count index))
+              (ast-decl-path-list-owner-id
+                (& suffix)
+                index
+                cbi.compiler-builtin-id-fix-empty))
+            (set! index (+ index 1))))
+        (MacroSplicePathView
+          (AstDeclPathList slots owner-ids 0 total true)
+          (AstDeclPathList
+            slots
+            owner-ids
+            prefix-count
+            (+ middle-count suffix-count)
+            true))))))
+
+(define (macro-scratch-splice-decl-view-build
+  [prefix-rev : AstDeclList]
+  [middle : AstDeclList]
+  [suffix : AstDeclList]) : MacroSpliceDeclView
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : MacroSpliceDeclView
+            (macro-splice-decl-view-build prefix-rev middle suffix)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-splice-decl-view-build prefix-rev middle suffix)))
+
+(define (macro-scratch-splice-path-view-build
+  [prefix-rev : AstDeclPathList]
+  [middle : AstDeclPathList]
+  [suffix : AstDeclPathList]) : MacroSplicePathView
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : MacroSplicePathView
+            (macro-splice-path-view-build prefix-rev middle suffix)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-splice-path-view-build prefix-rev middle suffix)))
+
 (define (macro-scratch-decl-list-filter-path
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -65213,22 +65382,29 @@
                                         (& expanded-paths)
                                         cur-materialize-seen
                                         cur-module-id))]
-                                  [spliced-tail : AstDeclList
-                                    (macro-scratch-decl-list-append
+                                  ;; Build the whole-program view and the walk
+                                  ;; tail in one shared backing array per list
+                                  ;; instead of append + reverse + append
+                                  ;; copies (~5MB of scratch per splice on a
+                                  ;; self-compile).
+                                  [splice-decl-view : MacroSpliceDeclView
+                                    (macro-scratch-splice-decl-view-build
+                                      out-rev
                                       expanded
                                       rest)]
-                                  [spliced-path-tail : AstDeclPathList
-                                    (macro-scratch-decl-path-list-append
+                                  [splice-path-view : MacroSplicePathView
+                                    (macro-scratch-splice-path-view-build
+                                      out-paths-rev
                                       expanded-paths
                                       rest-paths)]
+                                  [spliced-tail : AstDeclList
+                                    (struct-get splice-decl-view tail)]
+                                  [spliced-path-tail : AstDeclPathList
+                                    (struct-get splice-path-view tail)]
                                   [next-decls : AstDeclList
-                                    (macro-scratch-decl-list-prefix-rev-current-suffix
-                                      out-rev
-                                      spliced-tail)]
+                                    (struct-get splice-decl-view view)]
                                   [next-paths : AstDeclPathList
-                                    (macro-scratch-decl-path-list-prefix-rev-current-suffix
-                                      out-paths-rev
-                                      spliced-path-tail)]
+                                    (struct-get splice-path-view view)]
                                   [splice-index : i64
                                     (compiler-decl-list-index-count out-rev)]
                                   [generated-ext : MacroMaybeGeneratedModuleExtension

@@ -618,11 +618,7 @@
   [module-id : i64]
   [struct-name-id : i64]
   [field-name-id : i64]) : i64
-  (if (or
-    (< module-id 0)
-    (and
-      (< module-id (intern-capacity))
-      (= (string.string-length (intern-str module-id)) 0)))
+  (if (or (< module-id 0) (= module-id cbi.compiler-builtin-id-fix-empty))
     (compiler-composite-pair-key-id struct-name-id field-name-id)
     (compiler-composite-triple-key-id module-id struct-name-id field-name-id)))
 
@@ -642,11 +638,7 @@
   -1)
 
 (define (compiler-symbol-root-module-id? [module-id : i64]) : bool
-  (or
-    (< module-id 0)
-    (and
-      (< module-id (intern-capacity))
-      (= (string.string-length (intern-str module-id)) 0))))
+  (or (< module-id 0) (= module-id cbi.compiler-builtin-id-fix-empty)))
 
 (define (compiler-symbol-module-key-by-id [module-id : i64] [name-id : i64]) : String
   (let
@@ -963,14 +955,10 @@
               handle)))]
       [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
-(define (compiler-symbols-comptime-module? [module : String]) : bool
-  (string.eq module "stdlib.comptime"))
-
 (define (compiler-symbols-comptime-module-id? [module-id : i64]) : bool
   (and
-    (not (compiler-symbol-root-module-id? module-id))
-    (< module-id (intern-capacity))
-    (compiler-symbols-comptime-module? (intern-str module-id))))
+    (>= module-id 0)
+    (= module-id cbi.compiler-builtin-id-fix-stdlib_dot_comptime)))
 
 (define (compiler-symbols-add-type-in-module-id
   [symbols : CompilerSymbols]
@@ -4975,6 +4963,35 @@
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-symbols-module-id-identity-ok?) : bool
+  (let
+    [generated-empty-id : i64 (intern-generated-canonical-name "")]
+    [generated-comptime-id : i64
+      (intern-generated-canonical-name "stdlib.comptime")]
+    [struct-id : i64 cbi.compiler-builtin-id-fix-Point]
+    [field-id : i64 cbi.compiler-builtin-id-fix-x]
+    (and
+      (compiler-symbol-root-module-id? (compiler-symbol-root-module-id))
+      (compiler-symbol-root-module-id? cbi.compiler-builtin-id-fix-empty)
+      (not (compiler-symbol-root-module-id? generated-empty-id))
+      (compiler-symbols-comptime-module-id?
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime)
+      (not
+        (compiler-symbols-comptime-module-id? (compiler-symbol-root-module-id)))
+      (not (compiler-symbols-comptime-module-id? generated-comptime-id))
+      (=
+        (compiler-struct-field-key-id-in-module-by-id
+          cbi.compiler-builtin-id-fix-empty
+          struct-id
+          field-id)
+        (compiler-composite-pair-key-id struct-id field-id))
+      (=
+        (compiler-struct-field-key-id-in-module-by-id
+          generated-empty-id
+          struct-id
+          field-id)
+        (compiler-composite-triple-key-id generated-empty-id struct-id field-id)))))
+
 (define (compiler-symbols-self-test) : i64
   (begin
     (cbi.compiler-builtin-refresh!)
@@ -5065,6 +5082,9 @@
                       unit
                       (set! ok false))
                     (if (compiler-symbols-dotted-variant-id-paths-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-module-id-identity-ok?)
                       unit
                       (set! ok false))
                     (if ok

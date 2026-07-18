@@ -22653,28 +22653,152 @@
     " argument"
     " arguments"))
 
+(define (tc-call-arity-count-message
+  [func : AstExpr]
+  [expected : i64]
+  [actual : i64]) : String
+  (string.append
+    (tc-call-arity-message-prefix)
+    (string.append
+      (tc-call-arity-callee-name func)
+      (string.append
+        " expected "
+        (string.append
+          (string.int->string expected)
+          (string.append
+            (tc-call-arity-argument-word expected)
+            (string.append
+              ", got "
+              (string.append
+                (string.int->string actual)
+                (tc-call-arity-argument-word actual)))))))))
+
 (define (tc-call-arity-message
   [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]) : String
+  (tc-call-arity-count-message
+    func
+    (tc-type-list-len params)
+    (tc-expr-list-len args)))
+
+(define (tc-call-fixed-arity-message
+  [func : AstExpr]
+  [args : AstExprList]
+  [expected : i64]) : String
+  (tc-call-arity-count-message func expected (tc-expr-list-len args)))
+
+(define (tc-call-arity-invariant-message [phase : String]) : String
+  (str_cat.str-cat "typecheck: internal " phase " call arity invariant failed"))
+
+(define (tc-call-direct-value-handle [ctx : TcContext] [func : AstExpr]) : i64
   (let
-    [expected : i64 (tc-type-list-len params)]
-    [actual : i64 (tc-expr-list-len args)]
-    (string.append
-      (tc-call-arity-message-prefix)
-      (string.append
-        (tc-call-arity-callee-name func)
-        (string.append
-          " expected "
-          (string.append
-            (string.int->string expected)
-            (string.append
-              (tc-call-arity-argument-word expected)
-              (string.append
-                ", got "
-                (string.append
-                  (string.int->string actual)
-                  (tc-call-arity-argument-word actual))))))))))
+    [name-id : i64 (tc-expr-var-name-id func)]
+    (if (< name-id 0)
+      (compiler-symbols-missing-handle)
+      (let
+        [lookup-id : i64 (tc-env-name-key-id name-id)]
+        (if (or
+          (macro-hygiene-global-id? name-id)
+          (tc-name-qualified-id? name-id))
+          (compiler-symbols-lookup-value-id-or
+            (tc-context-symbols ctx)
+            lookup-id
+            (compiler-symbols-missing-handle))
+          (compiler-symbols-lookup-value-in-module-id-or
+            (tc-context-symbols ctx)
+            (tc-context-module-id ctx)
+            lookup-id
+            (compiler-symbols-missing-handle)))))))
+
+(define (tc-call-param-list-name-at
+  [params : (& params AstParamList)]
+  [index : i64]) : TcMaybeNameId
+  (if (or (< index 0) (>= index (ast-param-list-len params)))
+    TcMaybeNameId.No
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _ _) (TcMaybeNameId.Some name)])))
+
+(define (tc-call-field-list-name-at
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : TcMaybeNameId
+  (if (or (< index 0) (>= index (ast-field-def-list-len fields)))
+    TcMaybeNameId.No
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def name _ _) (TcMaybeNameId.Some name)])))
+
+(define (tc-call-decl-param-name-at [decl : AstDecl] [index : i64]) : TcMaybeNameId
+  (match decl
+    [(AstDecl.DefFn _ params _ _ _)
+      (tc-call-param-list-name-at (& params) index)]
+    [(AstDecl.DefStruct _ _ _ fields)
+      (tc-call-field-list-name-at (& fields) index)]
+    [(AstDecl.DefStructLifetimes _ _ _ _ fields)
+      (tc-call-field-list-name-at (& fields) index)]
+    [(AstDecl.Unsafe inner-box)
+      (tc-call-decl-param-name-at (box-get inner-box) index)]
+    [(AstDecl.ComptimeDecl _ inner-box)
+      (tc-call-decl-param-name-at (box-get inner-box) index)]
+    [_ TcMaybeNameId.No]))
+
+(define (tc-call-parameter-name-at
+  [ctx : TcContext]
+  [func : AstExpr]
+  [index : i64]) : TcMaybeNameId
+  (match (ast-expr-unspan func)
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda params _ _)
+          (tc-call-param-list-name-at (& params) index)])]
+    [_
+      (let
+        [handle : i64 (tc-call-direct-value-handle ctx func)]
+        (if (compiler-symbols-handle-found? handle)
+          (match (compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            (compiler-symbol-handle-index handle))
+            [(ResultAstDecl.Ok decl) (tc-call-decl-param-name-at decl index)]
+            [(ResultAstDecl.Err _) TcMaybeNameId.No])
+          TcMaybeNameId.No))]))
+
+(define (tc-call-argument-message-prefix
+  [ctx : TcContext]
+  [func : AstExpr]
+  [index : i64]) : String
+  (str_cat.str-cat
+    "typecheck: call `"
+    (tc-call-arity-callee-name func)
+    "` argument "
+    (string.int->string (+ index 1))
+    (match (tc-call-parameter-name-at ctx func index)
+      [(TcMaybeNameId.Some name-id)
+        (str_cat.str-cat " (parameter `" (tc-hygiene-name-text-id name-id) "`)")]
+      [(TcMaybeNameId.No) ""])
+    " type mismatch"))
+
+(define (tc-call-argument-mismatch-message
+  [ctx : TcContext]
+  [func : AstExpr]
+  [index : i64]
+  [actual : AstType]
+  [expected : AstType]) : String
+  (tc-type-mismatch-message
+    actual
+    expected
+    (tc-call-argument-message-prefix ctx func index)))
+
+(define (tc-call-argument-expected-text-message
+  [ctx : TcContext]
+  [func : AstExpr]
+  [index : i64]
+  [actual : AstType]
+  [expected : String]) : String
+  (str_cat.str-cat
+    (tc-call-argument-message-prefix ctx func index)
+    ": expected "
+    expected
+    ", found "
+    (tc-type-render (tc-type-without-regions actual))))
 
 ;; Deferred arity-mismatch message. tc-call-arity-message is real work (two
 ;; list-length walks, callee-name unspan/intern, two string.int->string division loops,
@@ -22685,14 +22809,20 @@
 ;; that build, with byte-identical output for accepted programs and identical
 ;; diagnostics for rejected ones.
 (defenum TcArityMessage
-  (Literal)
   (Detailed AstExpr AstExprList AstTypeList))
 
 (define (tc-arity-message-text [arity-msg : TcArityMessage]) : String
   (match arity-msg
-    [(TcArityMessage.Literal) "typecheck: arity mismatch"]
     [(TcArityMessage.Detailed func args params)
       (tc-call-arity-message func args params)]))
+
+(define (tc-argument-message-prefix-text
+  [ctx : TcContext]
+  [arity-msg : TcArityMessage]
+  [index : i64]) : String
+  (match arity-msg
+    [(TcArityMessage.Detailed func _ _)
+      (tc-call-argument-message-prefix ctx func index)]))
 
 (define (tc-nullary-variant-call-expr
   [ctx : TcContext]
@@ -22720,7 +22850,11 @@
               [(ResultAstTypeList.Ok fields)
                 (if (ast-type-list-empty? (& fields))
                   (ResultTcType.Ok (tc-tag-active-region env ret))
-                  (ResultTcType.Err "typecheck: arity mismatch"))]
+                  (ResultTcType.Err
+                    (tc-call-arity-count-message
+                      func
+                      (ast-type-list-len (& fields))
+                      0)))]
               [(ResultAstTypeList.Err message) (ResultTcType.Err message)])
             (ResultTcType.Err "typecheck: call target is not a function"))
           (if (tc-name-qualified-id? enum-name-id)
@@ -22838,6 +22972,9 @@
       (ast-ty-consume (tc-lifetime-subst-type subst (ty-node-get inner)))]
     [_ ty]))
 
+(define (tc-call-lifetime-subst-mismatch-message) : String
+  "typecheck: internal call lifetime substitution mismatch")
+
 (define (tc-infer-lifetime-name
   [params : AstLifetimeList]
   [subst : TcLifetimeSubst]
@@ -22847,7 +22984,7 @@
     (tc-lifetime-subst-bind subst formal actual)
     (if (= formal actual)
       (ResultTcLifetimeSubst.Ok subst)
-      (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch"))))
+      (ResultTcLifetimeSubst.Err (tc-call-lifetime-subst-mismatch-message)))))
 
 (define (tc-infer-lifetime-list
   [params : AstLifetimeList]
@@ -22856,7 +22993,7 @@
   [actual : AstLifetimeList]) : ResultTcLifetimeSubst
   (if (= (ast-lifetime-list-len (& formal)) (ast-lifetime-list-len (& actual)))
     (tc-infer-lifetime-list-at params subst (& formal) (& actual) 0)
-    (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")))
+    (ResultTcLifetimeSubst.Err (tc-call-lifetime-subst-mismatch-message))))
 
 (define (tc-infer-lifetime-list-at
   [params : AstLifetimeList]
@@ -22902,7 +23039,9 @@
                   (ty-node-get actual-inner))]
               [(ResultTcLifetimeSubst.Err message)
                 (ResultTcLifetimeSubst.Err message)])]
-          [_ (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")])]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
       [(AstType.MutRef formal-lifetime formal-inner)
         (match got
           [(AstType.MutRef actual-lifetime actual-inner)
@@ -22920,7 +23059,9 @@
                   (ty-node-get actual-inner))]
               [(ResultTcLifetimeSubst.Err message)
                 (ResultTcLifetimeSubst.Err message)])]
-          [_ (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")])]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
       [(AstType.EnumArgs formal-name formal-lifetimes)
         (match got
           [(AstType.EnumArgs actual-name actual-lifetimes)
@@ -22930,8 +23071,11 @@
                 subst
                 (box-get formal-lifetimes)
                 (box-get actual-lifetimes))
-              (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch"))]
-          [_ (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")])]
+              (ResultTcLifetimeSubst.Err
+                (tc-call-lifetime-subst-mismatch-message)))]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
       [(AstType.StructArgs formal-name formal-lifetimes)
         (match got
           [(AstType.StructArgs actual-name actual-lifetimes)
@@ -22941,8 +23085,11 @@
                 subst
                 (box-get formal-lifetimes)
                 (box-get actual-lifetimes))
-              (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch"))]
-          [_ (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")])]
+              (ResultTcLifetimeSubst.Err
+                (tc-call-lifetime-subst-mismatch-message)))]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
       [(AstType.Tuple formal-elems)
         (match got
           [(AstType.Tuple actual-elems)
@@ -22952,7 +23099,9 @@
               subst
               (box-get formal-elems)
               (box-get actual-elems))]
-          [_ (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")])]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
       [(AstType.Array formal-elem formal-len)
         (match got
           [(AstType.Array actual-elem actual-len)
@@ -22963,8 +23112,11 @@
                 subst
                 (ty-node-get formal-elem)
                 (ty-node-get actual-elem))
-              (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch"))]
-          [_ (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")])]
+              (ResultTcLifetimeSubst.Err
+                (tc-call-lifetime-subst-mismatch-message)))]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
       [(AstType.DynArray formal-elem)
         (match got
           [(AstType.DynArray actual-elem)
@@ -22974,7 +23126,9 @@
               subst
               (ty-node-get formal-elem)
               (ty-node-get actual-elem))]
-          [_ (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")])]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
       [(AstType.Box formal-elem)
         (match got
           [(AstType.Box actual-elem)
@@ -22984,11 +23138,13 @@
               subst
               (ty-node-get formal-elem)
               (ty-node-get actual-elem))]
-          [_ (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")])]
+          [_
+            (ResultTcLifetimeSubst.Err
+              (tc-call-lifetime-subst-mismatch-message))])]
       [_
         (if (tc-type-compatible? want got)
           (ResultTcLifetimeSubst.Ok subst)
-          (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch"))])))
+          (ResultTcLifetimeSubst.Err (tc-call-lifetime-subst-mismatch-message)))])))
 
 (define (tc-infer-lifetime-subst-from-type-list
   [ctx : TcContext]
@@ -23004,7 +23160,7 @@
       (& formal)
       (& actual)
       0)
-    (ResultTcLifetimeSubst.Err "typecheck: argument type mismatch")))
+    (ResultTcLifetimeSubst.Err (tc-call-lifetime-subst-mismatch-message))))
 
 (define (tc-infer-lifetime-subst-from-type-list-at
   [ctx : TcContext]
@@ -23289,6 +23445,7 @@
 (define (tc-infer-call-lifetime-subst
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
   [lifetimes : AstLifetimeList]
@@ -23296,6 +23453,9 @@
   (tc-infer-call-lifetime-subst-at
     ctx
     env
+    func
+    args
+    params
     (& args)
     (& params)
     0
@@ -23305,6 +23465,9 @@
 (define (tc-infer-call-lifetime-subst-at
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
+  [all-args : AstExprList]
+  [all-params : AstTypeList]
   [args : (& args AstExprList)]
   [params : (& params AstTypeList)]
   [index : i64]
@@ -23313,9 +23476,11 @@
   (if (>= index (struct-get args len))
     (if (>= index (ast-type-list-len params))
       (ResultTcLifetimeSubst.Ok subst)
-      (ResultTcLifetimeSubst.Err "typecheck: arity mismatch"))
+      (ResultTcLifetimeSubst.Err
+        (tc-call-arity-message func all-args all-params)))
     (if (>= index (ast-type-list-len params))
-      (ResultTcLifetimeSubst.Err "typecheck: arity mismatch")
+      (ResultTcLifetimeSubst.Err
+        (tc-call-arity-message func all-args all-params))
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [want : AstType
@@ -23326,6 +23491,9 @@
           (tc-infer-call-lifetime-subst-at
             ctx
             env
+            func
+            all-args
+            all-params
             args
             params
             (+ index 1)
@@ -23343,21 +23511,31 @@
                   (tc-infer-call-lifetime-subst-at
                     ctx
                     env
+                    func
+                    all-args
+                    all-params
                     args
                     params
                     (+ index 1)
                     lifetimes
                     next-subst)]
-                [(ResultTcLifetimeSubst.Err message)
+                [(ResultTcLifetimeSubst.Err _message)
                   (ResultTcLifetimeSubst.Err
-                    (tc-locate-error-at-expr arg message))])]
+                    (tc-locate-error-at-expr
+                      arg
+                      (tc-call-argument-mismatch-message
+                        ctx
+                        func
+                        index
+                        got
+                        want)))])]
             [(ResultTcType.Err message)
               (ResultTcLifetimeSubst.Err (tc-locate-error-at-expr arg message))]))))))
 
 (define (tc-call-lifetime-constructor-type
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [_func : AstExpr]
+  [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
   [ret : AstType]
@@ -23371,6 +23549,7 @@
     (match (tc-infer-call-lifetime-subst
       ctx
       env
+      func
       args
       params
       lifetimes
@@ -23384,6 +23563,7 @@
           (match (tc-check-call-args
             ctx
             env
+            func
             args
             resolved-params
             allow-region-args
@@ -23402,6 +23582,7 @@
 (define (tc-call-lifetime-function-type
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
   [ret : AstType]
@@ -23411,6 +23592,7 @@
   (match (tc-infer-call-lifetime-subst
     ctx
     env
+    func
     args
     params
     lifetimes
@@ -23423,6 +23605,7 @@
         (match (tc-check-call-args
           ctx
           env
+          func
           args
           resolved-params
           allow-region-args
@@ -23907,18 +24090,26 @@
         "typecheck: raw C function pointer cannot be used as a TypeLisp function value"))
     ResultTcUnit.Ok))
 
-(define (tc-call-varargs-tail-args [args : AstExprList] [params : AstTypeList]) : ResultTcExprList
-  (tc-call-varargs-tail-args-at (& args) (& params) 0))
+(define (tc-call-varargs-tail-args
+  [func : AstExpr]
+  [args : AstExprList]
+  [params : AstTypeList]) : ResultTcExprList
+  (tc-call-varargs-tail-args-at func (& args) (& params) 0))
 
 (define (tc-call-varargs-tail-args-at
+  [func : AstExpr]
   [args : (& args AstExprList)]
   [params : (& params AstTypeList)]
   [index : i64]) : ResultTcExprList
   (if (>= index (ast-type-list-len params))
     (ResultTcExprList.Ok (ast-expr-list-tail-from-ref args index))
     (if (< index (struct-get args len))
-      (tc-call-varargs-tail-args-at args params (+ index 1))
-      (ResultTcExprList.Err "typecheck: arity mismatch"))))
+      (tc-call-varargs-tail-args-at func args params (+ index 1))
+      (ResultTcExprList.Err
+        (tc-call-arity-count-message
+          func
+          (ast-type-list-len params)
+          (struct-get args len))))))
 
 (define (tc-type-list-append [a : AstTypeList] [b : AstTypeList]) : AstTypeList
   (let
@@ -23993,10 +24184,11 @@
 (define (tc-call-extern-varargs-params
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
   [abi : AstExternAbi]) : ResultTcTypeList
-  (match (tc-call-varargs-tail-args args params)
+  (match (tc-call-varargs-tail-args func args params)
     [(ResultTcExprList.Ok tail-args)
       (if (ast-extern-abi-c-varargs-open? abi)
         (match (tc-call-open-varargs-tail-types ctx env tail-args)
@@ -24024,7 +24216,7 @@
   (match (tc-call-extern-abi ctx func)
     [(TcMaybeExternAbi.Some abi)
       (if (tc-call-dynamic-c-varargs-abi? abi)
-        (match (tc-call-extern-varargs-params ctx env args params abi)
+        (match (tc-call-extern-varargs-params ctx env func args params abi)
           [(ResultTcTypeList.Ok expanded-params)
             (tc-call-function-type-normal
               ctx
@@ -25225,6 +25417,7 @@
             (match (tc-check-call-args
               ctx
               env
+              func
               args
               params
               allow-region-args
@@ -25279,6 +25472,7 @@
                 (tc-call-lifetime-function-type
                   ctx
                   env
+                  func
                   args
                   params
                   ret
@@ -25350,7 +25544,7 @@
                     arg
                     got
                     want
-                    "typecheck: argument type mismatch")
+                    (tc-argument-message-prefix-text ctx arity-msg index))
                     [(ResultTcUnit.Ok)
                       (match (tc-raw-c-fnptr-flow-ok
                         ctx
@@ -25413,6 +25607,7 @@
 (define (tc-check-call-args
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
   [allow-region-args : bool]
@@ -25425,47 +25620,8 @@
     params
     allow-region-args
     constructor-target
-    (TcArityMessage.Literal)
+    (TcArityMessage.Detailed func args params)
     c-abi-args))
-
-(define (tc-check-args
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [args : AstExprList]
-  [params : AstTypeList]) : ResultTcUnit
-  (match (tc-normalize-dotted-local-field-expr-list! env args)
-    [(ResultTcUnit.Ok) (tc-check-args-at ctx env (& args) (& params) 0)]
-    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
-
-(define (tc-check-args-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [args : (& args AstExprList)]
-  [params : (& params AstTypeList)]
-  [index : i64]) : ResultTcUnit
-  (if (>= index (struct-get args len))
-    (if (>= index (ast-type-list-len params))
-      ResultTcUnit.Ok
-      (ResultTcUnit.Err "typecheck: arity mismatch"))
-    (if (>= index (ast-type-list-len params))
-      (ResultTcUnit.Err "typecheck: arity mismatch")
-      (let
-        [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
-        [want : AstType
-          (ast-type-strip-consuming-param
-            (ty-node-get
-              (ast-type-list-get params index (ast-type-id-fallback))))]
-        (match (tc-expr-with-expected-or-actual ctx env arg want)
-          [(ResultTcType.Ok got)
-            (match (tc-expect-at-expr
-              arg
-              got
-              want
-              "typecheck: argument type mismatch")
-              [(ResultTcUnit.Ok)
-                (tc-check-args-at ctx env args params (+ index 1))]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-          [(ResultTcType.Err message) (ResultTcUnit.Err message)])))))
 
 (define (tc-call-expr-ordinary
   [ctx : TcContext]
@@ -25534,7 +25690,7 @@
                       func
                       enum-name
                       (ty-node-get inner))
-                    (ResultTcType.Err "typecheck: arity mismatch"))]
+                    (ResultTcType.Err (tc-call-fixed-arity-message func args 0)))]
                 [(AstType.EnumArgs enum-name _)
                   (if (ast-expr-list-empty? (& args))
                     (tc-nullary-variant-call-expr
@@ -25543,17 +25699,17 @@
                       func
                       enum-name
                       (ty-node-get inner))
-                    (ResultTcType.Err "typecheck: arity mismatch"))]
+                    (ResultTcType.Err (tc-call-fixed-arity-message func args 0)))]
                 [_
                   (ResultTcType.Err "typecheck: call target is not a function")])]
             [(AstType.Enum enum-name)
               (if (ast-expr-list-empty? (& args))
                 (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
-                (ResultTcType.Err "typecheck: arity mismatch"))]
+                (ResultTcType.Err (tc-call-fixed-arity-message func args 0)))]
             [(AstType.EnumArgs enum-name _)
               (if (ast-expr-list-empty? (& args))
                 (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
-                (ResultTcType.Err "typecheck: arity mismatch"))]
+                (ResultTcType.Err (tc-call-fixed-arity-message func args 0)))]
             [_ (ResultTcType.Err "typecheck: call target is not a function")])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]))
 
@@ -25750,7 +25906,8 @@
                         func
                         enum-name
                         (ty-node-get inner))
-                      (ResultTcType.Err "typecheck: arity mismatch"))]
+                      (ResultTcType.Err
+                        (tc-call-fixed-arity-message func args 0)))]
                   [(AstType.EnumArgs enum-name _)
                     (if (ast-expr-list-empty? (& args))
                       (tc-nullary-variant-call-expr
@@ -25759,18 +25916,19 @@
                         func
                         enum-name
                         (ty-node-get inner))
-                      (ResultTcType.Err "typecheck: arity mismatch"))]
+                      (ResultTcType.Err
+                        (tc-call-fixed-arity-message func args 0)))]
                   [_
                     (ResultTcType.Err
                       "typecheck: call target is not a function")])]
               [(AstType.Enum enum-name)
                 (if (ast-expr-list-empty? (& args))
                   (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
-                  (ResultTcType.Err "typecheck: arity mismatch"))]
+                  (ResultTcType.Err (tc-call-fixed-arity-message func args 0)))]
               [(AstType.EnumArgs enum-name _)
                 (if (ast-expr-list-empty? (& args))
                   (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
-                  (ResultTcType.Err "typecheck: arity mismatch"))]
+                  (ResultTcType.Err (tc-call-fixed-arity-message func args 0)))]
               [_ (ResultTcType.Err "typecheck: call target is not a function")])]
           [(ResultTcType.Err message) (ResultTcType.Err message)])])))
 
@@ -25802,15 +25960,20 @@
                     (not (tc-name-bound-id? env name-id)))
                   (tc-layout-query-runtime-call name args)]
                 [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
-                  (tc-one-length-handle-builtin-call ctx env args (AstType.I64))]
+                  (tc-one-length-handle-builtin-call
+                    ctx
+                    env
+                    func
+                    args
+                    (AstType.I64))]
                 [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
                   (tc-array-length-call ctx env name-id func args)]
                 [(and
                     (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
                     (not (tc-name-bound-id? env name-id)))
-                  (tc-string-ref-call ctx env args)]
+                  (tc-string-ref-call ctx env func args)]
                 [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
-                  (tc-string-ref-call ctx env args)]
+                  (tc-string-ref-call ctx env func args)]
                 [(and
                     (tc-atomic-pointer-name? name)
                     (not (tc-name-bound-id? env name-id)))
@@ -25824,17 +25987,19 @@
                 [(and
                     (tc-borrowed-string-builtin-id? name-id)
                     (tc-default-builtin-unshadowed-id? env name-id))
-                  (tc-borrowed-string-builtin-call ctx env name-id args)]
+                  (tc-borrowed-string-builtin-call ctx env func name-id args)]
                 [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
                   (tc-borrowed-string-builtin-call
                     ctx
                     env
+                    func
                     cbi.compiler-builtin-id-tl-private-string-eq
                     args)]
                 [(tc-string-to-int-helper-call-id? env lookup-id)
                   (tc-borrowed-string-builtin-call
                     ctx
                     env
+                    func
                     cbi.compiler-builtin-id-tl-private-string-to-int
                     args)]
                 [(and
@@ -25886,25 +26051,43 @@
 (define (tc-check-string-handle-arg
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [arg : AstExpr]
-  [message : String]) : ResultTcUnit
+  [func : AstExpr]
+  [index : i64]
+  [arg : AstExpr]) : ResultTcUnit
   (match (tc-expr ctx env arg)
     [(ResultTcType.Ok arg-ty)
       (if (tc-string-handle-type? arg-ty)
         ResultTcUnit.Ok
-        (ResultTcUnit.Err (tc-locate-error-at-expr arg message)))]
+        (ResultTcUnit.Err
+          (tc-locate-error-at-expr
+            arg
+            (tc-call-argument-expected-text-message
+              ctx
+              func
+              index
+              arg-ty
+              "String or (& str)"))))]
     [(ResultTcType.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-check-length-handle-arg
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [arg : AstExpr]
-  [message : String]) : ResultTcUnit
+  [func : AstExpr]
+  [index : i64]
+  [arg : AstExpr]) : ResultTcUnit
   (match (tc-expr ctx env arg)
     [(ResultTcType.Ok arg-ty)
       (if (tc-length-handle-type? arg-ty)
         ResultTcUnit.Ok
-        (ResultTcUnit.Err (tc-locate-error-at-expr arg message)))]
+        (ResultTcUnit.Err
+          (tc-locate-error-at-expr
+            arg
+            (tc-call-argument-expected-text-message
+              ctx
+              func
+              index
+              arg-ty
+              "String, (& str), (& bytes), or (&mut bytes)"))))]
     [(ResultTcType.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-check-exact-arg
@@ -25920,65 +26103,53 @@
 (define (tc-one-string-handle-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
   (if (= (struct-get (& args) len) 1)
     (let
       [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-      (match (tc-check-string-handle-arg
-        ctx
-        env
-        arg
-        "typecheck: argument type mismatch")
+      (match (tc-check-string-handle-arg ctx env func 0 arg)
         [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: arity mismatch")))
+    (ResultTcType.Err (tc-call-fixed-arity-message func args 1))))
 
 (define (tc-one-length-handle-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
   (if (= (struct-get (& args) len) 1)
     (let
       [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-      (match (tc-check-length-handle-arg
-        ctx
-        env
-        arg
-        "typecheck: argument type mismatch")
+      (match (tc-check-length-handle-arg ctx env func 0 arg)
         [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: arity mismatch")))
+    (ResultTcType.Err (tc-call-fixed-arity-message func args 1))))
 
 (define (tc-two-string-handle-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
   (if (= (struct-get (& args) len) 2)
     (let
       [left : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [right : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
-      (match (tc-check-string-handle-arg
-        ctx
-        env
-        left
-        "typecheck: argument type mismatch")
+      (match (tc-check-string-handle-arg ctx env func 0 left)
         [(ResultTcUnit.Ok)
-          (match (tc-check-string-handle-arg
-            ctx
-            env
-            right
-            "typecheck: argument type mismatch")
+          (match (tc-check-string-handle-arg ctx env func 1 right)
             [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: arity mismatch")))
+    (ResultTcType.Err (tc-call-fixed-arity-message func args 2))))
 
 (define (tc-string-i64-i64-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
   (if (= (struct-get (& args) len) 3)
@@ -25986,61 +26157,55 @@
       [text : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [start : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
       [len : AstExpr (ast-node-get (ast-expr-list-get (& args) 2 0))]
-      (match (tc-check-string-handle-arg
-        ctx
-        env
-        text
-        "typecheck: argument type mismatch")
+      (match (tc-check-string-handle-arg ctx env func 0 text)
         [(ResultTcUnit.Ok)
           (match (tc-check-exact-arg
             ctx
             env
             start
             (AstType.I64)
-            "typecheck: argument type mismatch")
+            (tc-call-argument-message-prefix ctx func 1))
             [(ResultTcUnit.Ok)
               (match (tc-check-exact-arg
                 ctx
                 env
                 len
                 (AstType.I64)
-                "typecheck: argument type mismatch")
+                (tc-call-argument-message-prefix ctx func 2))
                 [(ResultTcUnit.Ok)
                   (ResultTcType.Ok (tc-tag-active-region env ret))]
                 [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: arity mismatch")))
+    (ResultTcType.Err (tc-call-fixed-arity-message func args 3))))
 
 (define (tc-string-i64-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
   (if (= (struct-get (& args) len) 2)
     (let
       [text : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
       [value : AstExpr (ast-node-get (ast-expr-list-get (& args) 1 0))]
-      (match (tc-check-string-handle-arg
-        ctx
-        env
-        text
-        "typecheck: argument type mismatch")
+      (match (tc-check-string-handle-arg ctx env func 0 text)
         [(ResultTcUnit.Ok)
           (match (tc-check-exact-arg
             ctx
             env
             value
             (AstType.I64)
-            "typecheck: argument type mismatch")
+            (tc-call-argument-message-prefix ctx func 1))
             [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: arity mismatch")))
+    (ResultTcType.Err (tc-call-fixed-arity-message func args 2))))
 
 (define (tc-i64-string-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]
   [ret : AstType]) : ResultTcType
   (if (= (struct-get (& args) len) 2)
@@ -26052,17 +26217,13 @@
         env
         value
         (AstType.I64)
-        "typecheck: argument type mismatch")
+        (tc-call-argument-message-prefix ctx func 0))
         [(ResultTcUnit.Ok)
-          (match (tc-check-string-handle-arg
-            ctx
-            env
-            text
-            "typecheck: argument type mismatch")
+          (match (tc-check-string-handle-arg ctx env func 1 text)
             [(ResultTcUnit.Ok) (ResultTcType.Ok (tc-tag-active-region env ret))]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: arity mismatch")))
+    (ResultTcType.Err (tc-call-fixed-arity-message func args 2))))
 
 (define (tc-string-length-helper-call-id?
   [ctx : TcContext]
@@ -26174,12 +26335,13 @@
 (define (tc-borrowed-string-builtin-call
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [name-id : i64]
   [args : AstExprList]) : ResultTcType
   (if (cbi.compiler-builtin-typecheck-string-eq-id? name-id)
-    (tc-two-string-handle-builtin-call ctx env args (AstType.Bool))
+    (tc-two-string-handle-builtin-call ctx env func args (AstType.Bool))
     (if (cbi.compiler-builtin-typecheck-string-to-int-id? name-id)
-      (tc-one-string-handle-builtin-call ctx env args (AstType.I64))
+      (tc-one-string-handle-builtin-call ctx env func args (AstType.I64))
       (ResultTcType.Err "typecheck: unknown borrowed string builtin"))))
 
 ;; Typecheck the private `(__tl_string_ref s i)` intrinsic: a String plus any
@@ -26188,6 +26350,7 @@
 (define (tc-string-ref-call
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [func : AstExpr]
   [args : AstExprList]) : ResultTcType
   (if (= (struct-get (& args) len) 2)
     (let
@@ -26200,11 +26363,27 @@
               [(ResultTcType.Ok index-ty)
                 (if (tc-integer-type? index-ty)
                   (ResultTcType.Ok (AstType.Char))
-                  (ResultTcType.Err "typecheck: string index must be integer"))]
+                  (ResultTcType.Err
+                    (tc-locate-error-at-expr
+                      index
+                      (tc-call-argument-expected-text-message
+                        ctx
+                        func
+                        1
+                        index-ty
+                        "integer"))))]
               [(ResultTcType.Err message) (ResultTcType.Err message)])
-            (ResultTcType.Err "typecheck: string-ref requires String"))]
+            (ResultTcType.Err
+              (tc-locate-error-at-expr
+                str
+                (tc-call-argument-expected-text-message
+                  ctx
+                  func
+                  0
+                  str-ty
+                  "String or (& str)"))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
-    (ResultTcType.Err "typecheck: arity mismatch")))
+    (ResultTcType.Err (tc-call-fixed-arity-message func args 2))))
 
 (define (tc-length-string-call
   [ctx : TcContext]
@@ -26229,7 +26408,17 @@
         (return (tc-call-expr-ordinary ctx env func args)))
       (if (tc-length-handle-type? arg-ty)
         (ResultTcType.Ok (AstType.I64))
-        (ResultTcType.Err "typecheck: argument type mismatch")))))
+        (let
+          [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+          (ResultTcType.Err
+            (tc-locate-error-at-expr
+              arg
+              (tc-call-argument-expected-text-message
+                ctx
+                func
+                0
+                arg-ty
+                "String, (& str), (& bytes), or (&mut bytes)"))))))))
 
 (define (tc-array-length-non-array-call
   [ctx : TcContext]
@@ -26251,10 +26440,21 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [func : AstExpr]
-  [args : AstExprList]) : ResultTcType
+  [args : AstExprList]
+  [arg-ty : AstType]) : ResultTcType
   (if (cbi.compiler-builtin-typecheck-string-length-id? name-id)
     (if (tc-default-builtin-unshadowed-id? env name-id)
-      (ResultTcType.Err "typecheck: argument type mismatch")
+      (let
+        [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+        (ResultTcType.Err
+          (tc-locate-error-at-expr
+            arg
+            (tc-call-argument-expected-text-message
+              ctx
+              func
+              0
+              arg-ty
+              "String or (& str)"))))
       (tc-call-expr-ordinary ctx env func args))
     (ResultTcType.Ok (AstType.I64))))
 
@@ -26289,12 +26489,12 @@
         [(ResultTcType.Ok arg-ty)
           (match (tc-array-length-receiver ctx arg-ty)
             [(ResultTcArrayReceiver.Ok _)
-              (tc-array-length-array-call ctx env name-id func args)]
+              (tc-array-length-array-call ctx env name-id func args arg-ty)]
             [(ResultTcArrayReceiver.Err _)
               (tc-array-length-non-array-call ctx env name-id func args arg-ty)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (if (cbi.compiler-builtin-typecheck-array-length-id? name-id)
-      (ResultTcType.Err "typecheck: arity mismatch")
+      (ResultTcType.Err (tc-call-fixed-arity-message func args 1))
       (tc-call-expr-ordinary ctx env func args))))
 
 (define (tc-layout-query-name? [name : String]) : bool
@@ -26661,15 +26861,20 @@
                   (not (tc-name-bound-id? env name-id)))
                 (tc-layout-query-runtime-call name args)]
               [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
-                (tc-one-length-handle-builtin-call ctx env args (AstType.I64))]
+                (tc-one-length-handle-builtin-call
+                  ctx
+                  env
+                  func
+                  args
+                  (AstType.I64))]
               [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
                 (tc-array-length-call ctx env name-id func args)]
               [(and
                   (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
                   (not (tc-name-bound-id? env name-id)))
-                (tc-string-ref-call ctx env args)]
+                (tc-string-ref-call ctx env func args)]
               [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
-                (tc-string-ref-call ctx env args)]
+                (tc-string-ref-call ctx env func args)]
               [(and
                   (tc-atomic-pointer-name? name)
                   (not (tc-name-bound-id? env name-id)))
@@ -26687,23 +26892,26 @@
               [(and
                   (tc-borrowed-string-builtin-id? name-id)
                   (tc-default-builtin-unshadowed-id? env name-id))
-                (tc-borrowed-string-builtin-call ctx env name-id args)]
+                (tc-borrowed-string-builtin-call ctx env func name-id args)]
               [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
                 (tc-borrowed-string-builtin-call
                   ctx
                   env
+                  func
                   cbi.compiler-builtin-id-tl-private-string-eq
                   args)]
               [(tc-string-copy-helper-call-id? ctx env name-id lookup-id)
                 (tc-two-string-handle-builtin-call
                   ctx
                   env
+                  func
                   args
                   (AstType.String))]
               [(tc-string-to-int-helper-call-id? env lookup-id)
                 (tc-borrowed-string-builtin-call
                   ctx
                   env
+                  func
                   cbi.compiler-builtin-id-tl-private-string-to-int
                   args)]
               [(and
@@ -26755,15 +26963,20 @@
                     (not (tc-name-bound-id? env name-id)))
                   (tc-layout-query-runtime-call name args)]
                 [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
-                  (tc-one-length-handle-builtin-call ctx env args (AstType.I64))]
+                  (tc-one-length-handle-builtin-call
+                    ctx
+                    env
+                    func
+                    args
+                    (AstType.I64))]
                 [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
                   (tc-array-length-call ctx env name-id func args)]
                 [(and
                     (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
                     (not (tc-name-bound-id? env name-id)))
-                  (tc-string-ref-call ctx env args)]
+                  (tc-string-ref-call ctx env func args)]
                 [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
-                  (tc-string-ref-call ctx env args)]
+                  (tc-string-ref-call ctx env func args)]
                 [(and
                     (tc-atomic-pointer-name? name)
                     (not (tc-name-bound-id? env name-id)))
@@ -26782,23 +26995,26 @@
                 [(and
                     (tc-borrowed-string-builtin-id? name-id)
                     (tc-default-builtin-unshadowed-id? env name-id))
-                  (tc-borrowed-string-builtin-call ctx env name-id args)]
+                  (tc-borrowed-string-builtin-call ctx env func name-id args)]
                 [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
                   (tc-borrowed-string-builtin-call
                     ctx
                     env
+                    func
                     cbi.compiler-builtin-id-tl-private-string-eq
                     args)]
                 [(tc-string-copy-helper-call-id? ctx env name-id lookup-id)
                   (tc-two-string-handle-builtin-call
                     ctx
                     env
+                    func
                     args
                     (AstType.String))]
                 [(tc-string-to-int-helper-call-id? env lookup-id)
                   (tc-borrowed-string-builtin-call
                     ctx
                     env
+                    func
                     cbi.compiler-builtin-id-tl-private-string-to-int
                     args)]
                 [(and
@@ -28063,6 +28279,7 @@
   [ctx : TcContext]
   [caller-env : TcTypeEnv]
   [caller-spmd-env : TcSpmdEnv]
+  [func : AstExpr]
   [helper-ctx : TcContext]
   [helper-env : TcTypeEnv]
   [helper-spmd-env : TcSpmdEnv]
@@ -28073,6 +28290,7 @@
     ctx
     caller-env
     caller-spmd-env
+    func
     helper-ctx
     helper-env
     helper-spmd-env
@@ -28085,6 +28303,7 @@
   [ctx : TcContext]
   [caller-env : TcTypeEnv]
   [caller-spmd-env : TcSpmdEnv]
+  [func : AstExpr]
   [helper-ctx : TcContext]
   [helper-env : TcTypeEnv]
   [helper-spmd-env : TcSpmdEnv]
@@ -28101,9 +28320,17 @@
             helper-env
             helper-spmd-env
             seen-class))
-        (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch"))]
+        (ResultTcSpmdInlineCallState.Err
+          (tc-call-arity-count-message
+            func
+            (ast-param-list-len params)
+            (struct-get args len))))]
     [(>= index (struct-get args len))
-      (ResultTcSpmdInlineCallState.Err "typecheck: arity mismatch")]
+      (ResultTcSpmdInlineCallState.Err
+        (tc-call-arity-count-message
+          func
+          (ast-param-list-len params)
+          (struct-get args len)))]
     [else
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
@@ -28126,6 +28353,7 @@
                           ctx
                           caller-env
                           next-caller-spmd-env
+                          func
                           helper-ctx
                           (tc-bind-id helper-env param-name bound-ty)
                           (tc-spmd-env-bind-role-id
@@ -28407,6 +28635,7 @@
               ctx
               env
               spmd-env
+              func
               helper-ctx
               base-env
               base-spmd-env
@@ -28495,6 +28724,7 @@
               ctx
               env
               spmd-env
+              func
               helper-ctx
               base-env
               base-spmd-env
@@ -44749,9 +44979,9 @@
   (if (>= index (struct-get exprs len))
     (if (>= index (ast-type-list-len types))
       (TcMoveResult.Ok moved)
-      (TcMoveResult.Err "typecheck: arity mismatch"))
+      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check")))
     (if (>= index (ast-type-list-len types))
-      (TcMoveResult.Err "typecheck: arity mismatch")
+      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check"))
       (let
         [head : i64 (ast-expr-list-get exprs index 0)]
         [head-expr : AstExpr (ast-node-get head)]
@@ -44810,9 +45040,9 @@
   (if (>= index (struct-get exprs len))
     (if (>= index (ast-type-list-len types))
       (TcMoveResult.Ok moved)
-      (TcMoveResult.Err "typecheck: arity mismatch"))
+      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check")))
     (if (>= index (ast-type-list-len types))
-      (TcMoveResult.Err "typecheck: arity mismatch")
+      (TcMoveResult.Err (tc-call-arity-invariant-message "move-check"))
       (let
         [head : i64 (ast-expr-list-get exprs index 0)]
         [head-expr : AstExpr (ast-node-get head)]
@@ -44994,6 +45224,7 @@
             (match (tc-infer-call-lifetime-subst
               ctx
               env
+              func
               args
               params
               lifetimes
@@ -45542,6 +45773,7 @@
                       (match (tc-call-extern-varargs-params
                         ctx
                         env
+                        func
                         args
                         params
                         abi)
@@ -48137,9 +48369,9 @@
   (if (>= index (struct-get exprs len))
     (if (>= index (ast-type-list-len types))
       (TcBorrowCheckResult.Ok borrowed)
-      (TcBorrowCheckResult.Err "typecheck: arity mismatch"))
+      (TcBorrowCheckResult.Err (tc-call-arity-invariant-message "borrow-check")))
     (if (>= index (ast-type-list-len types))
-      (TcBorrowCheckResult.Err "typecheck: arity mismatch")
+      (TcBorrowCheckResult.Err (tc-call-arity-invariant-message "borrow-check"))
       (let
         [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
         [ty : AstType
@@ -48263,10 +48495,13 @@
           (if reserved
             (tc-borrow-check-activate-two-phase-mut-borrows borrowed call-expr)
             (TcBorrowCheckResult.Ok borrowed))
-          (TcBorrowCheckResult.Err "typecheck: arity mismatch"))))
+          (TcBorrowCheckResult.Err
+            (tc-call-arity-invariant-message "borrow-check")))))
     (when
       (>= index (ast-type-list-len types))
-      (return (TcBorrowCheckResult.Err "typecheck: arity mismatch")))
+      (return
+        (TcBorrowCheckResult.Err
+          (tc-call-arity-invariant-message "borrow-check"))))
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
       [raw-ty : AstType
@@ -48416,9 +48651,9 @@
   (if (>= index (struct-get args len))
     (if (>= index (ast-type-list-len types))
       (TcBorrowCheckResult.Ok borrowed)
-      (TcBorrowCheckResult.Err "typecheck: arity mismatch"))
+      (TcBorrowCheckResult.Err (tc-call-arity-invariant-message "borrow-check")))
     (if (>= index (ast-type-list-len types))
-      (TcBorrowCheckResult.Err "typecheck: arity mismatch")
+      (TcBorrowCheckResult.Err (tc-call-arity-invariant-message "borrow-check"))
       (let
         [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [ty : AstType
@@ -49837,6 +50072,7 @@
                       (match (tc-call-extern-varargs-params
                         ctx
                         env
+                        func
                         args
                         params
                         abi)

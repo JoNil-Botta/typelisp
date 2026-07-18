@@ -67,9 +67,9 @@ recorded in its row name (`self_compile/compile_cli_opt1`).
 The checker builds a fresh full CLI stage1 and stage2 under
 `target/instruction-count-check` and measures that fixed stage2 compiler. The
 default per-PR subset is `self_compile` plus paired rows for `arith_loop`,
-`array_sum`, `hashmap_churn`, `hashmap_grow`, `hashmap_insert`, `hashmap_get`,
-`spmd_reduce`, `opt_quicksort`, `opt_crc32`, and `opt_bytecode_vm`, each with one
-cachegrind run.
+`array_sum`, `borrowed_disjoint_store`, `hashmap_churn`, `hashmap_grow`,
+`hashmap_insert`, `hashmap_get`, `spmd_reduce`, `opt_quicksort`, `opt_crc32`, and
+`opt_bytecode_vm`, each with one cachegrind run.
 
 ## Host-keyed AVX-512 retired instructions
 

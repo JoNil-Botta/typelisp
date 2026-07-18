@@ -20524,7 +20524,7 @@
     [gvn : CompilerIrBlockList
       (opt-gvn-rewrite-dom context table sources blocks)]
     [hs : OptLoadHeaderSet (opt-load-header-set-from-function params gvn)]
-    (opt-load-gvn-blocks-with-context context sources hs gvn)))
+    (opt-load-gvn-blocks-with-context context sources hs params gvn)))
 
 (define (opt-gvn-blocks
   [params : CompilerIrParamList]
@@ -25182,6 +25182,7 @@
   [hs : OptLoadHeaderSet]
   [dead-kinds : OptLoadPtrKinds]
   [load-kinds : OptLoadPtrKinds]
+  [load-facts : OptAliasFacts]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
@@ -25212,7 +25213,8 @@
             hs
             (opt-load-cse-empty-state-for-size-with-kinds
               (compiler-ir-instr-seq-count work)
-              load-kinds)
+              load-kinds
+              load-facts)
             work)
           (opt-bounds-instr-seq-rewrite! work)
           (CompilerIrBlock.Block label work)))]))
@@ -25221,11 +25223,18 @@
   [hs : OptLoadHeaderSet]
   [dead-kinds : OptLoadPtrKinds]
   [load-kinds : OptLoadPtrKinds]
+  [entry-label : String]
+  [seed-facts : OptAliasFacts]
   [scan-work : (Array i64)]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (if (opt-block-scan-skippable? scan-work block)
     block
-    (optimize-block-hs-full hs dead-kinds load-kinds block)))
+    (optimize-block-hs-full
+      hs
+      dead-kinds
+      load-kinds
+      (optimize-block-entry-facts block entry-label seed-facts)
+      block)))
 
 (define (optimize-block-hs
   [hs : OptLoadHeaderSet]
@@ -25237,13 +25246,26 @@
       hs
       (opt-load-kinds-empty)
       (opt-load-kinds-empty)
+      (opt-alias-empty)
       block)))
 
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (optimize-block-hs (opt-load-header-set-empty) (array.make-array i64 0) block))
 
+(define (optimize-block-entry-facts
+  [block : CompilerIrBlock]
+  [entry-label : String]
+  [seed-facts : OptAliasFacts]) : OptAliasFacts
+  (match block
+    [(CompilerIrBlock.Block label _)
+      (if (string.eq label entry-label)
+        seed-facts
+        (opt-alias-empty))]))
+
 (define (optimize-block-seq-hs
   [hs : OptLoadHeaderSet]
+  [entry-label : String]
+  [seed-facts : OptAliasFacts]
   [scan-work : (Array i64)]
   [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
   (let
@@ -25252,19 +25274,27 @@
     [index : i64 0]
     (begin
       (while (< index count)
-        (begin
-          (array-set!
-            slots
-            index
-            (optimize-block-hs
-              hs
-              scan-work
-              (compiler-ir-block-seq-ref blocks index)))
-          (set! index (+ index 1))))
+        (let
+          [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
+          (begin
+            (array-set!
+              slots
+              index
+              (optimize-block-hs-with-kinds
+                hs
+                (opt-load-kinds-empty)
+                (opt-load-kinds-empty)
+                entry-label
+                seed-facts
+                scan-work
+                block))
+            (set! index (+ index 1)))))
       (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
 
 (define (optimize-block-seq-hs-dense
   [hs : OptLoadHeaderSet]
+  [entry-label : String]
+  [seed-facts : OptAliasFacts]
   [scan-work : (Array i64)]
   [frame : i64]
   [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
@@ -25277,6 +25307,7 @@
       (while (< index count)
         (let
           [generation : i64 (+ (* index 2) 1)]
+          [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
           (begin
             (array-set!
               slots
@@ -25291,22 +25322,39 @@
                   work
                   (+ generation 1)
                   opt-load-cse-kinds-cap-floor)
+                entry-label
+                seed-facts
                 scan-work
-                (compiler-ir-block-seq-ref blocks index)))
+                block))
             (set! index (+ index 1)))))
       (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
 
 (define (optimize-block-list-hs
   [hs : OptLoadHeaderSet]
+  [entry-label : String]
+  [seed-facts : OptAliasFacts]
   [scan-work : (Array i64)]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-ir-block-cons
-        (optimize-block-hs hs scan-work block)
-        (optimize-block-list-hs hs scan-work (box-get rest)))]
-    [(CompilerIrBlockList.Array seq) (optimize-block-seq-hs hs scan-work seq)]))
+        (optimize-block-hs-with-kinds
+          hs
+          (opt-load-kinds-empty)
+          (opt-load-kinds-empty)
+          entry-label
+          seed-facts
+          scan-work
+          block)
+        (optimize-block-list-hs
+          hs
+          entry-label
+          seed-facts
+          scan-work
+          (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (optimize-block-seq-hs hs entry-label seed-facts scan-work seq)]))
 
 ;; GAP4: the header-typed handle set feeds gep classification; build it from
 ;; the whole function so the block-local pass sees params and cross-block defs.
@@ -25320,15 +25368,25 @@
   (let
     [hs : OptLoadHeaderSet
       (opt-load-header-set-from-function-with-size params blocks frame)]
+    [entry-label : String (opt-cfg-entry-label blocks)]
+    [seed-facts : OptAliasFacts (opt-alias-seed-params params)]
     [scan-work : (Array i64) (array.make-array i64 frame)]
     (match blocks
       [(CompilerIrBlockList.Array seq)
-        (optimize-block-seq-hs-dense hs scan-work frame seq)]
-      [_ (optimize-block-list-hs hs scan-work blocks)])))
+        (optimize-block-seq-hs-dense
+          hs
+          entry-label
+          seed-facts
+          scan-work
+          frame
+          seq)]
+      [_ (optimize-block-list-hs hs entry-label seed-facts scan-work blocks)])))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (optimize-block-list-hs
     (opt-load-header-set-empty)
+    "entry"
+    (opt-alias-empty)
     (array.make-array i64 0)
     blocks))
 
@@ -47133,6 +47191,15 @@
       (CompilerIrParam.Param "ptr" (AstType.I64) 1)
       (CompilerIrParamList.Nil))))
 
+(define (opt-gvn-checked-ref-cond-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "cond" (AstType.Bool) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "read" (ast-ty-ref 0 (AstType.I64)) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "write" (ast-ty-mut-ref 0 (AstType.I64)) 2)
+        (CompilerIrParamList.Nil)))))
+
 (define (opt-gvn-function
   [name : String]
   [params : CompilerIrParamList]
@@ -47325,6 +47392,54 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Jump "join")
           (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "else"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "join")
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "join"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 4 (CompilerIrValue.Var 1) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+                (CompilerIrInstrList.Nil))))
+          (CompilerIrBlockList.Nil))))))
+
+(define (opt-gvn-checked-ref-store-path-blocks [lose-root? : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "then" "else")
+          (CompilerIrInstrList.Nil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "then"
+        (if lose-root?
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 99) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.I64 9)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "join")
+                (CompilerIrInstrList.Nil))))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.I64 9)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "join")
+              (CompilerIrInstrList.Nil)))))
       (compiler-ir-block-cons
         (compiler-ir-block
           "else"
@@ -47694,6 +47809,14 @@
       (opt-gvn-blocks
         (opt-gvn-pointer-cond-params)
         (opt-gvn-load-call-path-blocks))]
+    [checked-ref-store-path : CompilerIrBlockList
+      (opt-gvn-blocks
+        (opt-gvn-checked-ref-cond-params)
+        (opt-gvn-checked-ref-store-path-blocks false))]
+    [checked-ref-root-loss : CompilerIrBlockList
+      (opt-gvn-blocks
+        (opt-gvn-checked-ref-cond-params)
+        (opt-gvn-checked-ref-store-path-blocks true))]
     [load-address-redef : CompilerIrBlockList
       (opt-gvn-blocks
         (opt-gvn-pointer-params)
@@ -47772,6 +47895,12 @@
           [(OptMaybeGlobalExprKey.Some _) true]
           [(OptMaybeGlobalExprKey.No) false])
         28]
+      [(not (= (opt-count-load-blocks checked-ref-store-path) 1)) 29]
+      [(not (= (opt-blocks-mov-src-var checked-ref-store-path 4 (- 0 1)) 3)) 30]
+      [(not (= (opt-count-load-blocks checked-ref-root-loss) 2)) 31]
+      [(not
+          (= (opt-blocks-mov-src-var checked-ref-root-loss 4 (- 0 1)) (- 0 1)))
+        32]
       [else 42])))
 
 ;; Regression fixture for the global-GVN stale-global-read miscompile: the
@@ -53715,12 +53844,16 @@
 ;; and conservative invalidation, proves the conservatism with self-tests, and
 ;; feeds the local redundant-load CSE consumer.
 ;;
-;; A fact binds an IR temporary (var id) to one of four deliberately
+;; A fact binds an IR temporary (var id) to one of six deliberately
 ;; conservative kinds:
 ;;   - Unique       : a freshly allocated root no other tracked pointer aliases
+;;   - ExclusiveRef : a checked mutable-reference parameter root; no other
+;;                    checked root in the function may alias it
+;;   - SharedRef    : a checked immutable-reference parameter root; another
+;;                    SharedRef root MAY designate the same storage
 ;;   - Derived base : a pointer derived from root/base var `base` by safe
 ;;                    pointer arithmetic (Gep); it aliases only that root's
-;;                    allocation
+;;                    allocation/reference storage
 ;;   - MayAlias     : unknown provenance; may alias anything tracked
 ;;   - Invalidated  : a previously known fact a memory effect explicitly cleared
 ;;
@@ -53732,6 +53865,8 @@
 ;; assuming C-style noalias. Control-flow joins intersect the per-edge sets.
 (defenum OptAliasKind
   (Unique)
+  (ExclusiveRef)
+  (SharedRef)
   (Derived i64)
   (MayAlias)
   (Invalidated))
@@ -53751,15 +53886,19 @@
 (define (opt-alias-kind-encode [kind : OptAliasKind]) : i64
   (match kind
     [(OptAliasKind.Unique) -1]
-    [(OptAliasKind.MayAlias) -2]
-    [(OptAliasKind.Invalidated) -3]
+    [(OptAliasKind.ExclusiveRef) -2]
+    [(OptAliasKind.SharedRef) -3]
+    [(OptAliasKind.MayAlias) -4]
+    [(OptAliasKind.Invalidated) -5]
     [(OptAliasKind.Derived root) root]))
 
 (define (opt-alias-kind-decode [value : i64]) : OptAliasKind
   (cond
     [(>= value 0) (OptAliasKind.Derived value)]
     [(= value -1) (OptAliasKind.Unique)]
-    [(= value -2) (OptAliasKind.MayAlias)]
+    [(= value -2) (OptAliasKind.ExclusiveRef)]
+    [(= value -3) (OptAliasKind.SharedRef)]
+    [(= value -4) (OptAliasKind.MayAlias)]
     [else (OptAliasKind.Invalidated)]))
 
 (defenum OptMaybeAliasKind
@@ -53771,6 +53910,14 @@
     [(OptAliasKind.Unique)
       (match b
         [(OptAliasKind.Unique) true]
+        [_ false])]
+    [(OptAliasKind.ExclusiveRef)
+      (match b
+        [(OptAliasKind.ExclusiveRef) true]
+        [_ false])]
+    [(OptAliasKind.SharedRef)
+      (match b
+        [(OptAliasKind.SharedRef) true]
         [_ false])]
     [(OptAliasKind.Derived ba)
       (match b
@@ -53820,17 +53967,38 @@
 (define (opt-alias-mark-unique [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.Unique)))
 
+(define (opt-alias-mark-exclusive-ref [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+  (opt-alias-bind facts var (OptAliasKind.ExclusiveRef)))
+
+(define (opt-alias-mark-shared-ref [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
+  (opt-alias-bind facts var (OptAliasKind.SharedRef)))
+
 (define (opt-alias-mark-may-alias [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.MayAlias)))
 
 (define (opt-alias-mark-invalidated [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.Invalidated)))
 
-;; Copy a value's fact onto `dst` (Mov/Cast of a tracked var). An untracked
-;; source conservatively yields a MayAlias destination.
+;; Copy a value's fact onto `dst` (Mov/Cast of a tracked var). Root facts become
+;; Derived(root) so aliases of one root retain one canonical identity; blindly
+;; copying Unique/ExclusiveRef would incorrectly make the copy look disjoint.
+;; An untracked source conservatively yields a MayAlias destination.
 (define (opt-alias-copy-var [facts : OptAliasFacts] [dst : i64] [src : i64]) : OptAliasFacts
   (match (opt-alias-lookup facts src)
-    [(OptMaybeAliasKind.Some kind) (opt-alias-bind facts dst kind)]
+    [(OptMaybeAliasKind.Some kind)
+      (if (= dst src)
+        facts
+        (match kind
+          [(OptAliasKind.Unique)
+            (opt-alias-bind facts dst (OptAliasKind.Derived src))]
+          [(OptAliasKind.ExclusiveRef)
+            (opt-alias-bind facts dst (OptAliasKind.Derived src))]
+          [(OptAliasKind.SharedRef)
+            (opt-alias-bind facts dst (OptAliasKind.Derived src))]
+          [(OptAliasKind.Derived root)
+            (opt-alias-bind facts dst (OptAliasKind.Derived root))]
+          [(OptAliasKind.MayAlias) (opt-alias-mark-may-alias facts dst)]
+          [(OptAliasKind.Invalidated) (opt-alias-mark-may-alias facts dst)]))]
     [(OptMaybeAliasKind.No) (opt-alias-mark-may-alias facts dst)]))
 
 ;; Derive `dst` through safe pointer arithmetic (Gep) from base var `base`.
@@ -53841,6 +54009,10 @@
     [(OptMaybeAliasKind.Some kind)
       (match kind
         [(OptAliasKind.Unique)
+          (opt-alias-bind facts dst (OptAliasKind.Derived base))]
+        [(OptAliasKind.ExclusiveRef)
+          (opt-alias-bind facts dst (OptAliasKind.Derived base))]
+        [(OptAliasKind.SharedRef)
           (opt-alias-bind facts dst (OptAliasKind.Derived base))]
         [(OptAliasKind.Derived root)
           (opt-alias-bind facts dst (OptAliasKind.Derived root))]
@@ -53860,6 +54032,114 @@
   (match (opt-alias-lookup facts var)
     [(OptMaybeAliasKind.No) true]
     [(OptMaybeAliasKind.Some _) false]))
+
+(defenum OptAliasRoot
+  (NoRoot)
+  (Fresh i64)
+  (Exclusive i64)
+  (Shared i64))
+
+(define (opt-alias-root-from-kind
+  [facts : OptAliasFacts]
+  [var : i64]
+  [kind : OptAliasKind]) : OptAliasRoot
+  (match kind
+    [(OptAliasKind.Unique) (OptAliasRoot.Fresh var)]
+    [(OptAliasKind.ExclusiveRef) (OptAliasRoot.Exclusive var)]
+    [(OptAliasKind.SharedRef) (OptAliasRoot.Shared var)]
+    [(OptAliasKind.Derived root)
+      (match (opt-alias-lookup facts root)
+        [(OptMaybeAliasKind.Some root-kind)
+          (match root-kind
+            [(OptAliasKind.Unique) (OptAliasRoot.Fresh root)]
+            [(OptAliasKind.ExclusiveRef) (OptAliasRoot.Exclusive root)]
+            [(OptAliasKind.SharedRef) (OptAliasRoot.Shared root)]
+            [_ (OptAliasRoot.NoRoot)])]
+        [(OptMaybeAliasKind.No) (OptAliasRoot.NoRoot)])]
+    [(OptAliasKind.MayAlias) (OptAliasRoot.NoRoot)]
+    [(OptAliasKind.Invalidated) (OptAliasRoot.NoRoot)]))
+
+(define (opt-alias-root-of-var [facts : OptAliasFacts] [var : i64]) : OptAliasRoot
+  (match (opt-alias-lookup facts var)
+    [(OptMaybeAliasKind.Some kind) (opt-alias-root-from-kind facts var kind)]
+    [(OptMaybeAliasKind.No) (OptAliasRoot.NoRoot)]))
+
+(define (opt-alias-root-of-value
+  [facts : OptAliasFacts]
+  [value : CompilerIrValue]) : OptAliasRoot
+  (match value
+    [(CompilerIrValue.Var var) (opt-alias-root-of-var facts var)]
+    [_ (OptAliasRoot.NoRoot)]))
+
+;; Only fresh allocations and checked mutable-reference roots prove a write
+;; target disjoint from a DIFFERENT tracked root. SharedRef roots deliberately
+;; do not: separate immutable-reference parameters may alias each other.
+(define (opt-alias-store-root-disjoint?
+  [store-root : OptAliasRoot]
+  [entry-root : OptAliasRoot]) : bool
+  (match store-root
+    [(OptAliasRoot.Fresh store-id)
+      (match entry-root
+        [(OptAliasRoot.Fresh entry-id) (not (= store-id entry-id))]
+        [(OptAliasRoot.Exclusive entry-id) (not (= store-id entry-id))]
+        [(OptAliasRoot.Shared entry-id) (not (= store-id entry-id))]
+        [(OptAliasRoot.NoRoot) false])]
+    [(OptAliasRoot.Exclusive store-id)
+      (match entry-root
+        [(OptAliasRoot.Fresh entry-id) (not (= store-id entry-id))]
+        [(OptAliasRoot.Exclusive entry-id) (not (= store-id entry-id))]
+        [(OptAliasRoot.Shared entry-id) (not (= store-id entry-id))]
+        [(OptAliasRoot.NoRoot) false])]
+    [(OptAliasRoot.Shared _) false]
+    [(OptAliasRoot.NoRoot) false]))
+
+(defenum OptAliasParamRootKind
+  (NotCheckedRef)
+  (SharedCheckedRef)
+  (ExclusiveCheckedRef))
+
+(define (opt-alias-param-root-kind [ty : AstType]) : OptAliasParamRootKind
+  (match ty
+    [(AstType.Ref _ _) (OptAliasParamRootKind.SharedCheckedRef)]
+    [(AstType.MutRef _ _) (OptAliasParamRootKind.ExclusiveCheckedRef)]
+    [(AstType.Region _ inner)
+      (opt-alias-param-root-kind (ast-node-pool-reader-type-get inner))]
+    [_ (OptAliasParamRootKind.NotCheckedRef)]))
+
+(define (opt-alias-seed-param [facts : OptAliasFacts] [param : CompilerIrParam]) : OptAliasFacts
+  (match param
+    [(CompilerIrParam.Param _ ty var)
+      (match (opt-alias-param-root-kind ty)
+        [(OptAliasParamRootKind.SharedCheckedRef)
+          (opt-alias-mark-shared-ref facts var)]
+        [(OptAliasParamRootKind.ExclusiveCheckedRef)
+          (opt-alias-mark-exclusive-ref facts var)]
+        [(OptAliasParamRootKind.NotCheckedRef) facts])]))
+
+(define (opt-alias-seed-param-seq
+  [params : CompilerIrParamSeq]
+  [index : i64]
+  [facts : OptAliasFacts]) : OptAliasFacts
+  (if (>= index (compiler-ir-param-seq-count params))
+    facts
+    (opt-alias-seed-param-seq
+      params
+      (+ index 1)
+      (opt-alias-seed-param facts (compiler-ir-param-seq-ref params index)))))
+
+(define (opt-alias-seed-params-from
+  [params : CompilerIrParamList]
+  [facts : OptAliasFacts]) : OptAliasFacts
+  (match params
+    [(CompilerIrParamList.Nil) facts]
+    [(CompilerIrParamList.Array seq) (opt-alias-seed-param-seq seq 0 facts)]
+    [(CompilerIrParamList.Cons param rest)
+      (opt-alias-seed-params-from
+        (box-get rest)
+        (opt-alias-seed-param facts param))]))
+
+(define (opt-alias-seed-params [params : CompilerIrParamList]) : OptAliasFacts
+  (opt-alias-seed-params-from params (opt-alias-empty)))
 
 ;; Conservative control-flow join: keep only facts that appear with an
 ;; identical kind on both incoming edges.
@@ -53970,39 +54250,59 @@
     [(CompilerIrValue.Var src) (opt-alias-copy-var facts dst src)]
     [_ (opt-alias-mark-may-alias facts dst)]))
 
-;; Transfer function for one instruction. Memory-mutating/unknown instructions
-;; clear all facts; otherwise pure value-producers (re)bind only their
-;; destination and the surrounding facts survive.
+;; Value/provenance transfer independent of memory invalidation. Every
+;; definition first removes an older binding for the reused var id; recognized
+;; pointer producers then bind the new value. This matters in the pre-SSA local
+;; pipeline, where a scalar BinOp may reuse a former pointer var id.
+(define (opt-alias-update-value-facts
+  [facts : OptAliasFacts]
+  [instr : CompilerIrInstr]) : OptAliasFacts
+  (let
+    [base : OptAliasFacts
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst) (opt-alias-remove-var facts dst)]
+        [(option_i64.None) facts])]
+    (match instr
+      [(CompilerIrInstr.Alloc dst _) (opt-alias-mark-unique base dst)]
+      [(CompilerIrInstr.Gep dst source _ _)
+        (opt-alias-update-gep base dst source)]
+      [(CompilerIrInstr.Mov dst value _) (opt-alias-update-copy base dst value)]
+      [(CompilerIrInstr.Cast dst value _ _)
+        (opt-alias-update-copy base dst value)]
+      [(CompilerIrInstr.Bitcast dst value _ _)
+        (opt-alias-update-copy base dst value)]
+      ;; A direct runtime allocation call is a barrier for all cached loads, but
+      ;; its returned pointer is nevertheless a fresh root for subsequent
+      ;; scalar-store filtering.
+      [(CompilerIrInstr.Call dst name _ _)
+        (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+          (opt-alias-mark-unique base dst)
+          base)]
+      [(CompilerIrInstr.Load dst _ _) (opt-alias-mark-may-alias base dst)]
+      [(CompilerIrInstr.EntryArgv dst) (opt-alias-mark-may-alias base dst)]
+      [(CompilerIrInstr.EntryEnvp dst) (opt-alias-mark-may-alias base dst)]
+      [(CompilerIrInstr.AddrOf dst _) (opt-alias-mark-may-alias base dst)]
+      [(CompilerIrInstr.VectorLoad dst _ _ _ _)
+        (opt-alias-mark-may-alias base dst)]
+      [(CompilerIrInstr.PredicatedLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+            (opt-alias-mark-may-alias base dst)])]
+      [(CompilerIrInstr.GatherLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+            (opt-alias-mark-may-alias base dst)])]
+      [_ base])))
+
+;; Transfer function for the scratch/report alias consumer. Memory-mutating or
+;; unknown instructions still clear every fact; load GVN uses the provenance-
+;; preserving transfer defined beside its pointer-kind model below.
 (define (opt-alias-update-facts
   [facts : OptAliasFacts]
   [instr : CompilerIrInstr]) : OptAliasFacts
   (if (opt-alias-instr-clears-all? instr)
     (opt-alias-empty)
-    (match instr
-      [(CompilerIrInstr.Alloc dst _) (opt-alias-mark-unique facts dst)]
-      [(CompilerIrInstr.Gep dst base _ _) (opt-alias-update-gep facts dst base)]
-      [(CompilerIrInstr.Mov dst value _)
-        (opt-alias-update-copy facts dst value)]
-      [(CompilerIrInstr.Cast dst value _ _)
-        (opt-alias-update-copy facts dst value)]
-      [(CompilerIrInstr.Bitcast dst value _ _)
-        (opt-alias-update-copy facts dst value)]
-      [(CompilerIrInstr.Load dst _ _) (opt-alias-mark-may-alias facts dst)]
-      [(CompilerIrInstr.EntryArgc dst) (opt-alias-remove-var facts dst)]
-      [(CompilerIrInstr.EntryArgv dst) (opt-alias-mark-may-alias facts dst)]
-      [(CompilerIrInstr.EntryEnvp dst) (opt-alias-mark-may-alias facts dst)]
-      [(CompilerIrInstr.AddrOf dst _) (opt-alias-mark-may-alias facts dst)]
-      [(CompilerIrInstr.VectorLoad dst _ _ _ _)
-        (opt-alias-mark-may-alias facts dst)]
-      [(CompilerIrInstr.PredicatedLoad payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
-            (opt-alias-mark-may-alias facts dst)])]
-      [(CompilerIrInstr.GatherLoad payload-box)
-        (match (box-get payload-box)
-          [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
-            (opt-alias-mark-may-alias facts dst)])]
-      [_ facts])))
+    (opt-alias-update-value-facts facts instr)))
 
 (define (opt-alias-run [facts : OptAliasFacts] [instrs : CompilerIrInstrList]) : OptAliasFacts
   (match instrs
@@ -54131,6 +54431,8 @@
     [(OptMaybeAliasKind.Some kind)
       (match kind
         [(OptAliasKind.Unique) (opt-scratch-root-list-contains? roots var)]
+        [(OptAliasKind.ExclusiveRef) false]
+        [(OptAliasKind.SharedRef) false]
         [(OptAliasKind.Derived root)
           (opt-scratch-root-list-contains? roots root)]
         [(OptAliasKind.MayAlias) false]
@@ -55731,12 +56033,25 @@
         false
         (= (array-ref items var) 1))]))
 
+;; A checked reference to an array/string descriptor addresses that descriptor
+;; directly, so its parameter var is a header base for GEP/load classification
+;; just like a by-value descriptor var.
+(define (opt-load-header-param-type? [ty : AstType]) : bool
+  (match ty
+    [(AstType.Ref _ inner)
+      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
+    [(AstType.MutRef _ inner)
+      (opt-licm-array-header-type? (ast-node-pool-reader-type-get inner))]
+    [(AstType.Region _ inner)
+      (opt-load-header-param-type? (ast-node-pool-reader-type-get inner))]
+    [_ (opt-licm-array-header-type? ty)]))
+
 (define (opt-load-header-set-add-param
   [param : CompilerIrParam]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
   (match param
     [(CompilerIrParam.Param _ ty var)
-      (opt-load-header-set-mark set var (opt-licm-array-header-type? ty))]))
+      (opt-load-header-set-mark set var (opt-load-header-param-type? ty))]))
 
 (define (opt-load-header-set-add-param-seq
   [params : CompilerIrParamSeq]
@@ -56477,6 +56792,31 @@
           [_ invalidated])]
       [_ invalidated])))
 
+;; Load-GVN treats alias roots as pointer VALUE provenance, not as cached
+;; memory contents. Calls/stores still clear the load table, but they do not
+;; make an unchanged checked-reference parameter stop being exclusive. A load
+;; from byte offset 0 of a recognized descriptor header is the descriptor's
+;; data pointer and inherits the descriptor's canonical checked/allocation
+;; root; ordinary loads remain MayAlias.
+(define (opt-load-alias-update-facts
+  [facts : OptAliasFacts]
+  [kinds : OptLoadPtrKinds]
+  [instr : CompilerIrInstr]) : OptAliasFacts
+  (match instr
+    [(CompilerIrInstr.Load dst src ty)
+      (let
+        [base : OptAliasFacts (opt-alias-remove-var facts dst)]
+        (match src
+          [(CompilerIrValue.Var ptr)
+            (match (opt-load-kinds-lookup kinds ptr)
+              [(OptLoadLocField _ off _ header?)
+                (if (and header? (= off 0) (= (opt-load-loc-type-size ty) 8))
+                  (opt-alias-derive-var base dst ptr)
+                  (opt-alias-mark-may-alias base dst))]
+              [_ (opt-alias-mark-may-alias base dst)])]
+          [_ (opt-alias-mark-may-alias base dst)]))]
+    [_ (opt-alias-update-value-facts facts instr)]))
+
 ;; Load-table keys. Raw keys are address-value identity (with an element flag
 ;; for the keep rules); Field keys are canonical (base var, byte offset,
 ;; loaded type, header-typed base) so distinct gep temps of the same slot CSE.
@@ -56779,7 +57119,12 @@
     (> bwidth 0)
     (or (<= (+ alo awidth) blo) (<= (+ blo bwidth) alo))))
 
-(define (opt-load-entry-survives-store?
+(define (opt-load-key-alias-root [facts : OptAliasFacts] [key : OptLoadKey]) : OptAliasRoot
+  (match key
+    [(OptLoadKey.Raw value _ _) (opt-alias-root-of-value facts value)]
+    [(OptLoadKey.Field base _ _ _) (opt-alias-root-of-var facts base)]))
+
+(define (opt-load-entry-survives-store-location?
   [class : OptLoadStoreClass]
   [entry : OptLoadEntry]) : bool
   (match class
@@ -56807,15 +57152,29 @@
               (opt-load-loc-type-size ety)))])]
     [(OptLoadStoreUnknown) false]))
 
+(define (opt-load-entry-survives-store?
+  [facts : OptAliasFacts]
+  [store-root : OptAliasRoot]
+  [class : OptLoadStoreClass]
+  [entry : OptLoadEntry]) : bool
+  (or
+    (opt-alias-store-root-disjoint?
+      store-root
+      (opt-load-key-alias-root facts (opt-load-entry-key entry)))
+    (opt-load-entry-survives-store-location? class entry)))
+
 (define (opt-load-table-filter-store
   [table : OptLoadTable]
+  [facts : OptAliasFacts]
+  [store-root : OptAliasRoot]
   [class : OptLoadStoreClass]) : OptLoadTable
   (match table
     [(OptLoadTable.Nil) (OptLoadTable.Nil)]
     [(OptLoadTable.Cons entry rest)
       (let
-        [tail : OptLoadTable (opt-load-table-filter-store (box-get rest) class)]
-        (if (opt-load-entry-survives-store? class entry)
+        [tail : OptLoadTable
+          (opt-load-table-filter-store (box-get rest) facts store-root class)]
+        (if (opt-load-entry-survives-store? facts store-root class entry)
           (OptLoadTable.Cons entry (box tail))
           tail))]))
 
@@ -57172,7 +57531,7 @@
   (match state
     [(OptLoadCseState.State facts table kinds table-cap)
       (OptLoadCseState.State
-        (opt-alias-update-facts facts instr)
+        (opt-load-alias-update-facts facts kinds instr)
         (match (opt-instr-def-var instr)
           [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
           [(option_i64.None) table])
@@ -57188,7 +57547,7 @@
   (match state
     [(OptLoadCseState.State facts _ kinds table-cap)
       (OptLoadCseState.State
-        (opt-alias-update-facts facts instr)
+        (opt-load-alias-update-facts facts kinds instr)
         (OptLoadTable.Nil)
         (opt-load-kinds-step kinds hs instr)
         table-cap)]))
@@ -57212,14 +57571,17 @@
       (let
         [width : i64 (opt-load-loc-type-size ty)]
         [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
-        [facts2 : OptAliasFacts (opt-alias-update-facts facts instr)]
+        [store-root : OptAliasRoot (opt-alias-root-of-value facts ptr)]
+        [facts2 : OptAliasFacts (opt-load-alias-update-facts facts kinds instr)]
+        [filtered : OptLoadTable
+          (opt-load-table-filter-store table facts store-root class)]
         (match class
           [(OptLoadStoreUnknown)
-            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds table-cap)]
+            ;; Unknown offset/location still preserves entries rooted at a
+            ;; different exclusive checked or fresh allocation root.
+            (OptLoadCseState.State facts2 filtered kinds table-cap)]
           [_
             (let
-              [filtered : OptLoadTable
-                (opt-load-table-filter-store table class)]
               [key : OptLoadKey (opt-load-key-for-address kinds ptr ty)]
               [forwardable? : bool
                 (if gated?
@@ -57260,20 +57622,17 @@
       (let
         [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
         [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
-        [facts2 : OptAliasFacts (opt-alias-update-facts facts instr)]
+        [store-root : OptAliasRoot (opt-alias-root-of-value facts dst)]
+        [facts2 : OptAliasFacts (opt-load-alias-update-facts facts kinds instr)]
+        [filtered : OptLoadTable
+          (opt-load-table-filter-store table facts store-root class)]
         (match class
           [(OptLoadStoreUnknown)
-            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds table-cap)]
+            (OptLoadCseState.State facts2 filtered kinds table-cap)]
           [(OptLoadStoreElement)
-            (OptLoadCseState.State
-              facts2
-              (opt-load-table-filter-store table class)
-              kinds
-              table-cap)]
+            (OptLoadCseState.State facts2 filtered kinds table-cap)]
           [(OptLoadStoreField dst-base dst-off _ dst-header?)
             (let
-              [filtered : OptLoadTable
-                (opt-load-table-filter-store table class)]
               [copied : OptLoadTable
                 (match src-class
                   [(OptLoadStoreField src-base src-off _ src-header?)
@@ -57335,7 +57694,7 @@
               [new-instr : CompilerIrInstr (CompilerIrInstr.Mov dst earlier ty)]
               (OptLoadCseResult.Result
                 (OptLoadCseState.State
-                  (opt-alias-update-facts facts new-instr)
+                  (opt-load-alias-update-facts facts kinds new-instr)
                   table2
                   (opt-load-kinds-step kinds hs new-instr)
                   table-cap)
@@ -57346,7 +57705,7 @@
                 (and eligible? (not (opt-load-key-uses-var? key dst)))]
               (OptLoadCseResult.Result
                 (OptLoadCseState.State
-                  (opt-alias-update-facts facts instr)
+                  (opt-load-alias-update-facts facts kinds instr)
                   (if record?
                     (opt-load-table-bind
                       table2
@@ -57415,16 +57774,22 @@
 (defenum OptLoadGvnBlockRewrite
   (Rewrite OptLoadCseState CompilerIrInstrList))
 
-(define (opt-load-cse-empty-state-with-caps [table-cap : i64] [kinds-cap : i64]) : OptLoadCseState
+(define (opt-load-cse-state-with-caps-and-facts
+  [table-cap : i64]
+  [kinds-cap : i64]
+  [facts : OptAliasFacts]) : OptLoadCseState
   (begin
     (cfg
       compile-profile
       (compiler-opt-load-cse-profile-note-table-cap table-cap))
     (OptLoadCseState.State
-      (opt-alias-empty)
+      facts
       (OptLoadTable.Nil)
       (opt-load-kinds-empty-with-cap kinds-cap)
       table-cap)))
+
+(define (opt-load-cse-empty-state-with-caps [table-cap : i64] [kinds-cap : i64]) : OptLoadCseState
+  (opt-load-cse-state-with-caps-and-facts table-cap kinds-cap (opt-alias-empty)))
 
 (define (opt-load-cse-empty-state-for-size [instr-count : i64]) : OptLoadCseState
   (opt-load-cse-empty-state-with-caps
@@ -57433,7 +57798,8 @@
 
 (define (opt-load-cse-empty-state-for-size-with-kinds
   [instr-count : i64]
-  [kinds : OptLoadPtrKinds]) : OptLoadCseState
+  [kinds : OptLoadPtrKinds]
+  [facts : OptAliasFacts]) : OptLoadCseState
   (let
     [table-cap : i64 (opt-load-cse-table-cap-for-size instr-count)]
     (begin
@@ -57441,7 +57807,7 @@
         compile-profile
         (compiler-opt-load-cse-profile-note-table-cap table-cap))
       (OptLoadCseState.State
-        (opt-alias-empty)
+        facts
         (OptLoadTable.Nil)
         (opt-load-kinds-set-cap
           kinds
@@ -57689,6 +58055,7 @@
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
+  [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [index : OptCfgIndex (struct-get context index)]
@@ -57698,8 +58065,12 @@
     [processed : (Array bool) (array.make-array bool count)]
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     [empty-state : OptLoadCseState
-      (opt-load-cse-empty-state-for-size
-        (compiler-ir-block-list-instruction-count blocks))]
+      (opt-load-cse-state-with-caps-and-facts
+        (opt-load-cse-table-cap-for-size
+          (compiler-ir-block-list-instruction-count blocks))
+        (opt-load-cse-kinds-cap-for-size
+          (compiler-ir-block-list-instruction-count blocks))
+        (opt-alias-seed-params params))]
     (begin
       (opt-load-state-array-fill-empty! exit-states count)
       (opt-cfg-fill-bool! processed count false)
@@ -57845,6 +58216,8 @@
       (opt-alias-intersect (opt-alias-join-facts-a) (opt-alias-join-facts-b))]
     [invalidated : OptAliasFacts
       (opt-alias-mark-invalidated (opt-alias-mark-unique (opt-alias-empty) 0) 0)]
+    [seeded : OptAliasFacts
+      (opt-alias-seed-params (opt-load-cse-mixed-ref-params))]
     (cond
       [(not (opt-alias-contains? unique 0 (OptAliasKind.Unique))) 1]
       [(not (opt-alias-contains? unique 1 (OptAliasKind.Derived 0))) 2]
@@ -57857,13 +58230,15 @@
       [(not (opt-alias-instr-clears-all? (opt-alias-sample-store))) 9]
       [(not (= (opt-alias-facts-len called) 0)) 10]
       [(not (opt-alias-instr-clears-all? (opt-alias-sample-tail-call))) 11]
-      [(not (opt-alias-contains? copied 1 (OptAliasKind.Unique))) 12]
+      [(not (opt-alias-contains? copied 1 (OptAliasKind.Derived 0))) 12]
       [(not (opt-alias-contains? copied 2 (OptAliasKind.MayAlias))) 13]
       [(not (= (opt-alias-facts-len joined) 1)) 14]
       [(not (opt-alias-contains? joined 0 (OptAliasKind.Unique))) 15]
       [(opt-alias-contains? joined 1 (OptAliasKind.Derived 0)) 16]
       [(opt-alias-instr-clears-all? (opt-alias-sample-binop)) 17]
       [(not (opt-alias-contains? invalidated 0 (OptAliasKind.Invalidated))) 18]
+      [(not (opt-alias-contains? seeded 0 (OptAliasKind.SharedRef))) 19]
+      [(not (opt-alias-contains? seeded 1 (OptAliasKind.ExclusiveRef))) 20]
       [else 42])))
 
 (define (opt-load-cse-run [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -57887,6 +58262,52 @@
         (CompilerIrBlockList.Nil)))
     (opt-load-cse-empty-state-for-size (compiler-ir-instr-list-count instrs))
     instrs))
+
+(define (opt-load-cse-run-with-params
+  [params : CompilerIrParamList]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (opt-load-cse-instrs
+    (opt-load-header-set-from-function
+      params
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        (CompilerIrBlockList.Nil)))
+    (opt-load-cse-state-with-caps-and-facts
+      (opt-load-cse-table-cap-for-size (compiler-ir-instr-list-count instrs))
+      (opt-load-cse-kinds-cap-for-size (compiler-ir-instr-list-count instrs))
+      (opt-alias-seed-params params))
+    instrs))
+
+(define (opt-load-cse-mixed-ref-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "read" (ast-ty-ref 0 (AstType.I64)) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "write" (ast-ty-mut-ref 0 (AstType.I64)) 1)
+      (CompilerIrParamList.Nil))))
+
+(define (opt-load-cse-shared-ref-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "left" (ast-ty-ref 0 (AstType.I64)) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "right" (ast-ty-ref 0 (AstType.I64)) 1)
+      (CompilerIrParamList.Nil))))
+
+(define (opt-load-cse-exclusive-ref-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "left" (ast-ty-mut-ref 0 (AstType.I64)) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "right" (ast-ty-mut-ref 0 (AstType.I64)) 1)
+      (CompilerIrParamList.Nil))))
+
+(define (opt-load-cse-descriptor-ref-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param
+      "xs"
+      (ast-ty-mut-ref 0 (ast-ty-dyn-array (AstType.I64)))
+      0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "write" (ast-ty-mut-ref 0 (AstType.I64)) 1)
+      (CompilerIrParamList.Nil))))
 
 (define (opt-dead-store-run-with-array-param [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (compiler-ir-instr-seq-to-list
@@ -58568,6 +58989,174 @@
                 (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
                 (CompilerIrInstrList.Nil)))))))))
 
+(define (opt-load-cse-disjoint-checked-root-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 0)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 9)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 5 (CompilerIrValue.Var 2) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-load-cse-same-checked-root-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 0)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 9)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 5 (CompilerIrValue.Var 2) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-load-cse-fresh-tl-alloc-root-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Call
+      4
+      (opt-test-symbol "tl_alloc")
+      (CompilerIrCallArgs.Nil)
+      (AstType.U64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        5
+        (CompilerIrValue.Var 4)
+        (CompilerIrValue.I64 0)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 0)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.I64 9)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 6 (CompilerIrValue.Var 2) (AstType.I64))
+              (CompilerIrInstrList.Nil))))))))
+
+(define (opt-load-cse-disjoint-copybytes-root-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 0)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.CopyBytes
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Var 99)
+            8)
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 5 (CompilerIrValue.Var 2) (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-load-cse-cast-derived-store-root-instrs) : CompilerIrInstrList
+  (let
+    [ref-ty : AstType (ast-ty-mut-ref 0 (AstType.I64))]
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        2
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 4 (CompilerIrValue.Var 1) ref-ty)
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Bitcast
+              5
+              (CompilerIrValue.Var 4)
+              ref-ty
+              (AstType.U64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                6
+                (CompilerIrValue.Var 5)
+                (CompilerIrValue.I64 0)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.StorePtr
+                  (CompilerIrValue.Var 6)
+                  (CompilerIrValue.I64 9)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Load 7 (CompilerIrValue.Var 2) (AstType.I64))
+                  (CompilerIrInstrList.Nil))))))))))
+
+(define (opt-load-cse-descriptor-data-root-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.U64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.U64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.I64 0)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              6
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.I64 0)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 6)
+                (CompilerIrValue.I64 9)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 7 (CompilerIrValue.Var 4) (AstType.I64))
+                (CompilerIrInstrList.Nil)))))))))
+
 (define (opt-load-cse-cap-self-test?) : bool
   (let
     [key0 : OptLoadKey
@@ -58665,6 +59254,34 @@
       (opt-load-cse-run (opt-load-cse-copybytes-forward-instrs))]
     [copybytes-overlap : CompilerIrInstrList
       (opt-load-cse-run (opt-load-cse-copybytes-overlap-instrs))]
+    [checked-distinct : CompilerIrInstrList
+      (opt-load-cse-run-with-params
+        (opt-load-cse-mixed-ref-params)
+        (opt-load-cse-disjoint-checked-root-instrs))]
+    [checked-shared-alias : CompilerIrInstrList
+      (opt-load-cse-run-with-params
+        (opt-load-cse-shared-ref-params)
+        (opt-load-cse-disjoint-checked-root-instrs))]
+    [checked-same-root : CompilerIrInstrList
+      (opt-load-cse-run-with-params
+        (opt-load-cse-exclusive-ref-params)
+        (opt-load-cse-same-checked-root-instrs))]
+    [fresh-tl-alloc-root : CompilerIrInstrList
+      (opt-load-cse-run-with-params
+        (opt-load-cse-mixed-ref-params)
+        (opt-load-cse-fresh-tl-alloc-root-instrs))]
+    [checked-copybytes : CompilerIrInstrList
+      (opt-load-cse-run-with-params
+        (opt-load-cse-mixed-ref-params)
+        (opt-load-cse-disjoint-copybytes-root-instrs))]
+    [checked-cast-root : CompilerIrInstrList
+      (opt-load-cse-run-with-params
+        (opt-load-cse-mixed-ref-params)
+        (opt-load-cse-cast-derived-store-root-instrs))]
+    [descriptor-data-root : CompilerIrInstrList
+      (opt-load-cse-run-with-params
+        (opt-load-cse-descriptor-ref-params)
+        (opt-load-cse-descriptor-data-root-instrs))]
     [global-store : bool
       (opt-load-cse-barrier-blocked?
         (CompilerIrInstr.Store
@@ -58781,4 +59398,32 @@
       [(not (= (opt-count-load-instrs copybytes-overlap) 2)) 42]
       [(not (= (opt-count-mov-dst-instrs copybytes-overlap 5) 0)) 43]
       [(not (opt-load-cse-cap-self-test?)) 45]
+      [(not (= (opt-count-load-instrs checked-distinct) 1)) 46]
+      [(not
+          (= (opt-count-mov-dst-var-src checked-distinct 5 3 (AstType.I64)) 1))
+        47]
+      [(not (= (opt-count-load-instrs checked-shared-alias) 2)) 48]
+      [(not (= (opt-count-mov-dst-instrs checked-shared-alias 5) 0)) 49]
+      [(not (= (opt-count-load-instrs checked-same-root) 1)) 50]
+      [(not (= (opt-count-mov-dst-i64-src checked-same-root 5 9) 1)) 51]
+      [(not (= (opt-count-load-instrs fresh-tl-alloc-root) 1)) 52]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src fresh-tl-alloc-root 6 3 (AstType.I64))
+            1))
+        53]
+      [(not (= (opt-count-load-instrs checked-copybytes) 1)) 54]
+      [(not
+          (= (opt-count-mov-dst-var-src checked-copybytes 5 3 (AstType.I64)) 1))
+        55]
+      [(not (= (opt-count-load-instrs checked-cast-root) 1)) 56]
+      [(not
+          (= (opt-count-mov-dst-var-src checked-cast-root 7 3 (AstType.I64)) 1))
+        57]
+      [(not (= (opt-count-load-instrs descriptor-data-root) 2)) 58]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src descriptor-data-root 7 5 (AstType.I64))
+            1))
+        59]
       [else 44])))

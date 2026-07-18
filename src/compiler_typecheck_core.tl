@@ -1390,6 +1390,7 @@
 (define (tc-typecheck-result-with-pool-check [result : ResultCompilerTypecheck]) : ResultCompilerTypecheck
   (begin
     (tc-fn-scratch-arena-release!)
+    (tc-decl-scratch-arena-release!)
     (if (ty-node-pool-exhausted?)
       (ResultCompilerTypecheck.Err (box (tc-ty-node-pool-exhausted-diagnostic)))
       result)))
@@ -1398,6 +1399,7 @@
   [result : ResultCompilerTypecheckChecked]) : ResultCompilerTypecheckChecked
   (begin
     (tc-fn-scratch-arena-release!)
+    (tc-decl-scratch-arena-release!)
     (if (ty-node-pool-exhausted?)
       (ResultCompilerTypecheckChecked.Err
         (box (tc-ty-node-pool-exhausted-diagnostic)))
@@ -35069,7 +35071,10 @@
                 ""
                 cbi.compiler-builtin-id-fix-empty
                 (ctfe-layout-info-list-with-capacity
-                  (ctfe-metadata-decl-capacity decls)))))])]))
+                  ;; Spare slots let generated-module splices extend the cached
+                  ;; metadata additively (compiler-typecheck-ctfe-env-extend-
+                  ;; for-splice!) instead of forcing a whole-program rebuild.
+                  (+ (ctfe-metadata-decl-capacity decls) 256)))))])]))
 
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
 ;; a single compile (same program/symbols/registries), but is requested up to ~8
@@ -51275,6 +51280,60 @@
     (set! macro-expand-ctfe-env-has-metadata false)
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))))
 
+;; Additively extend the cached CTFE metadata with a spliced generated module's
+;; nominal declarations, avoiding the O(program) reflection/layout rebuild that
+;; compiler-typecheck-ctfe-env-cache-clear! forces on the next consumer. Only
+;; valid for an isolated generated-module splice: its names are fresh in their
+;; own namespace, so appending after the already-cached entries preserves the
+;; first-wins dedupe order a whole-program rebuild would produce. ctx must be
+;; the post-splice context whose registries already cover the spliced decls
+;; (the layout build resolves struct/enum layouts through them), and
+;; module/module-id the namespace active at the splice site, matching the
+;; module context a whole-program rebuild would attribute to any decl preceding
+;; the module's own marker. Returns false when the cache cannot be extended --
+;; not built yet, built without metadata while metadata is now required, or the
+;; reserved list capacity exhausted -- so the caller can fall back to the
+;; conservative clear.
+(define (compiler-typecheck-ctfe-env-extend-for-splice!
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [module-id : i64]) : bool
+  (if (not ctfe-needs-metadata)
+    true
+    (if (and macro-expand-ctfe-env-ready macro-expand-ctfe-env-has-metadata)
+      (let
+        [layouts : CtfeLayoutInfoList
+          (ctfe-env-layouts macro-expand-ctfe-env-value)]
+        [reflections : CtfeReflectInfoList
+          (ctfe-env-reflections macro-expand-ctfe-env-value)]
+        [needed : i64 (ctfe-metadata-decl-capacity decls)]
+        (if (and
+          (<=
+            (+ (struct-get layouts len) needed)
+            (array.length (struct-get layouts slots)))
+          (<=
+            (+ (struct-get reflections len) needed)
+            (array.length (struct-get reflections slots))))
+          (let
+            [next-layouts : CtfeLayoutInfoList
+              (tc-ctfe-layouts-from-decls ctx decls module module-id layouts)]
+            [next-reflections : CtfeReflectInfoList
+              (ctfe-reflections-from-decls decls module module-id reflections)]
+            ;; The cached base env is always a bare metadata node (built by
+            ;; tc-ctfe-env and only ever rebase-copied), so rebuilding it from
+            ;; the extended lists drops no bindings.
+            (begin
+              (set!
+                macro-expand-ctfe-env-value
+                (ctfe-env-with-metadata-and-pools
+                  next-layouts
+                  next-reflections
+                  (ctfe-env-pools macro-expand-ctfe-env-value)))
+              true))
+          false))
+      false)))
+
 ;; Build the CTFE base env (reflection + layout metadata) once per expansion run
 ;; and reuse it across in-pass splice rebuilds (plan P2). A generated module can
 ;; materialize a struct or enum whose own metadata is immediately queried by a
@@ -52680,6 +52739,180 @@
               (arena.tl_arena_set enclosing))
             out))))
     (macro-decl-path-list-prefix-rev-current-suffix prefix-rev suffix)))
+
+(defstruct MacroSpliceDeclView
+  (view AstDeclList)
+  (tail AstDeclList))
+
+(defstruct MacroSplicePathView
+  (view AstDeclPathList)
+  (tail AstDeclPathList))
+
+;; Whole-program view and walk tail for a forced splice, built in ONE backing
+;; array per list with the shape [reversed prefix | spliced decls | remaining
+;; decls]. The previous construction (append of the spliced decls onto the
+;; tail, then reverse + append for the prefix, which always missed the prepend
+;; headroom fast path) materialized three full-program arrays per list per
+;; splice and dominated the macro scratch arena (~5MB per splice on a
+;; self-compile). The tail shares the view's backing array, so each segment is
+;; copied exactly once.
+(define (macro-splice-decl-view-build
+  [prefix-rev : AstDeclList]
+  [middle : AstDeclList]
+  [suffix : AstDeclList]) : MacroSpliceDeclView
+  (let
+    [prefix-count : i64 (ast-decl-list-len (& prefix-rev))]
+    [middle-count : i64 (ast-decl-list-len (& middle))]
+    [suffix-count : i64 (ast-decl-list-len (& suffix))]
+    [total : i64 (+ prefix-count (+ middle-count suffix-count))]
+    [slots : (Array AstDecl)
+      (array.make-array
+        AstDecl
+        (if (< total 1)
+          1
+          total))]
+    [index : i64 0]
+    (begin
+      (while (< index prefix-count)
+        (begin
+          (array-set!
+            slots
+            (- (- prefix-count 1) index)
+            (ast-decl-list-ref prefix-rev index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index middle-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count index)
+            (ast-decl-list-ref middle index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index suffix-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count (+ middle-count index))
+            (ast-decl-list-ref suffix index))
+          (set! index (+ index 1))))
+      (MacroSpliceDeclView
+        (AstDeclList slots 0 total true)
+        (AstDeclList slots prefix-count (+ middle-count suffix-count) true)))))
+
+(define (macro-splice-path-view-build
+  [prefix-rev : AstDeclPathList]
+  [middle : AstDeclPathList]
+  [suffix : AstDeclPathList]) : MacroSplicePathView
+  (let
+    [prefix-count : i64 (ast-decl-path-list-len (& prefix-rev))]
+    [middle-count : i64 (ast-decl-path-list-len (& middle))]
+    [suffix-count : i64 (ast-decl-path-list-len (& suffix))]
+    [total : i64 (+ prefix-count (+ middle-count suffix-count))]
+    [cap : i64
+      (if (< total 1)
+        1
+        total)]
+    [slots : (Array String) (array.make-array String cap)]
+    [owner-ids : (Array i64) (array.make-array i64 cap)]
+    [index : i64 0]
+    (begin
+      (while (< index prefix-count)
+        (begin
+          (array-set!
+            slots
+            (- (- prefix-count 1) index)
+            (ast-decl-path-list-get (& prefix-rev) index ""))
+          (array-set!
+            owner-ids
+            (- (- prefix-count 1) index)
+            (ast-decl-path-list-owner-id
+              (& prefix-rev)
+              index
+              cbi.compiler-builtin-id-fix-empty))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index middle-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count index)
+            (ast-decl-path-list-get (& middle) index ""))
+          (array-set!
+            owner-ids
+            (+ prefix-count index)
+            (ast-decl-path-list-owner-id
+              (& middle)
+              index
+              cbi.compiler-builtin-id-fix-empty))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index suffix-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count (+ middle-count index))
+            (ast-decl-path-list-get (& suffix) index ""))
+          (array-set!
+            owner-ids
+            (+ prefix-count (+ middle-count index))
+            (ast-decl-path-list-owner-id
+              (& suffix)
+              index
+              cbi.compiler-builtin-id-fix-empty))
+          (set! index (+ index 1))))
+      (MacroSplicePathView
+        (AstDeclPathList slots owner-ids 0 total true)
+        (AstDeclPathList
+          slots
+          owner-ids
+          prefix-count
+          (+ middle-count suffix-count)
+          true)))))
+
+(define (macro-scratch-splice-decl-view-build
+  [prefix-rev : AstDeclList]
+  [middle : AstDeclList]
+  [suffix : AstDeclList]) : MacroSpliceDeclView
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : MacroSpliceDeclView
+            (macro-splice-decl-view-build prefix-rev middle suffix)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-splice-decl-view-build prefix-rev middle suffix)))
+
+(define (macro-scratch-splice-path-view-build
+  [prefix-rev : AstDeclPathList]
+  [middle : AstDeclPathList]
+  [suffix : AstDeclPathList]) : MacroSplicePathView
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : MacroSplicePathView
+            (macro-splice-path-view-build prefix-rev middle suffix)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-splice-path-view-build prefix-rev middle suffix)))
 
 (define (macro-scratch-decl-list-filter-path
   [decls : AstDeclList]
@@ -65965,24 +66198,55 @@
                                         (& expanded-paths)
                                         cur-materialize-seen
                                         cur-module-id))]
-                                  [spliced-tail : AstDeclList
-                                    (macro-scratch-decl-list-append
+                                  ;; Build the whole-program view and the walk
+                                  ;; tail in one shared backing array per list
+                                  ;; instead of append + reverse + append
+                                  ;; copies (~5MB of scratch per splice on a
+                                  ;; self-compile).
+                                  [splice-decl-view : MacroSpliceDeclView
+                                    (macro-scratch-splice-decl-view-build
+                                      out-rev
                                       expanded
                                       rest)]
-                                  [spliced-path-tail : AstDeclPathList
-                                    (macro-scratch-decl-path-list-append
+                                  [splice-path-view : MacroSplicePathView
+                                    (macro-scratch-splice-path-view-build
+                                      out-paths-rev
                                       expanded-paths
                                       rest-paths)]
+                                  [spliced-tail : AstDeclList
+                                    (struct-get splice-decl-view tail)]
+                                  [spliced-path-tail : AstDeclPathList
+                                    (struct-get splice-path-view tail)]
                                   [next-decls : AstDeclList
-                                    (macro-scratch-decl-list-prefix-rev-current-suffix
-                                      out-rev
-                                      spliced-tail)]
+                                    (struct-get splice-decl-view view)]
                                   [next-paths : AstDeclPathList
-                                    (macro-scratch-decl-path-list-prefix-rev-current-suffix
-                                      out-paths-rev
-                                      spliced-path-tail)]
+                                    (struct-get splice-path-view view)]
                                   [splice-index : i64
                                     (compiler-decl-list-index-count out-rev)]
+                                  [generated-ext : MacroMaybeGeneratedModuleExtension
+                                    (macro-generated-module-extension
+                                      expanded
+                                      cur-module-id)]
+                                  ;; An isolated generated-module splice only
+                                  ;; appends fresh namespaced declarations, so
+                                  ;; the cached CTFE reflection/layout metadata
+                                  ;; can be extended additively with just those
+                                  ;; decls once the rebuilt context exists,
+                                  ;; instead of clearing the cache and paying an
+                                  ;; O(program) metadata rebuild per splice.
+                                  ;; Arbitrary splices keep the conservative
+                                  ;; clear below.
+                                  [defer-ctfe-extension : bool
+                                    (and
+                                      (macro-decls-reflection-relevant?
+                                        expanded)
+                                      (match generated-ext
+                                        [(MacroMaybeGeneratedModuleExtension.No)
+                                          false]
+                                        [(MacroMaybeGeneratedModuleExtension.Some
+                                            _
+                                            _)
+                                          true]))]
                                   (begin
                                     (if (and
                                       (macro-decls-registry-incremental-safe?
@@ -65999,8 +66263,10 @@
                                         unit
                                         (macro-live-registries-invalidate!))
                                       (macro-live-registries-invalidate!))
-                                    (if (macro-decls-reflection-relevant?
-                                      expanded)
+                                    (if (and
+                                      (macro-decls-reflection-relevant?
+                                        expanded)
+                                      (not defer-ctfe-extension))
                                       (compiler-typecheck-ctfe-env-cache-clear!)
                                       unit)
                                     ;; Generated Module catalogs are usually
@@ -66034,9 +66300,7 @@
                                       next-paths
                                       cur-module
                                       cur-module-id
-                                      (match (macro-generated-module-extension
-                                        expanded
-                                        cur-module-id)
+                                      (match generated-ext
                                         [(MacroMaybeGeneratedModuleExtension.No)
                                           (MacroSpliceEnvPlan.Refresh
                                             cur-top-env
@@ -66060,6 +66324,24 @@
                                           next-ctx
                                           next-top-env)
                                         (begin
+                                          ;; Extend the reused CTFE metadata
+                                          ;; with the spliced module's nominal
+                                          ;; declarations now that next-ctx
+                                          ;; carries the post-splice registries
+                                          ;; the layout build resolves through.
+                                          ;; On any inapplicability fall back to
+                                          ;; the established clear, which makes
+                                          ;; the next consumer rebuild the full
+                                          ;; metadata over the spliced program.
+                                          (if defer-ctfe-extension
+                                            (if (compiler-typecheck-ctfe-env-extend-for-splice!
+                                              next-ctx
+                                              expanded
+                                              cur-module
+                                              cur-module-id)
+                                              unit
+                                              (compiler-typecheck-ctfe-env-cache-clear!))
+                                            unit)
                                           (set! cur-ctx next-ctx)
                                           (set! cur-orig-decls next-decls)
                                           (set! cur-top-env next-top-env)
@@ -67572,6 +67854,106 @@
               (tc-nominal-owner-cache-reset!)
               escaped)))))))
 
+;; Reusable scratch arena for per-declaration checks that are not function
+;; bodies (Def values, macros, externs, dispatches, enum/struct declarations).
+;; Same mark/rewind/clone-out shape as the function-body scratch above, but a
+;; SEPARATE arena so a function-body scope nested inside a declaration scope
+;; (a comptime/unsafe template wrapping a DefFn) never invalidates a live
+;; declaration mark. Released with the function-body scratch at each typecheck
+;; boundary.
+(define tc-decl-scratch-arena : i64
+  0)
+
+;; Open declaration scopes in the declaration scratch arena. ComptimeDecl and
+;; Unsafe recurse into the declaration dispatcher, so a template can nest
+;; another scoped declaration check inside this one; only the outermost scope
+;; may destroy the arena after an overflow (a nested destroy would leave the
+;; enclosing mark dangling).
+(define tc-decl-scratch-depth : i64
+  0)
+
+(define (tc-decl-scratch-arena-get) : i64
+  (if (= tc-decl-scratch-arena 0)
+    (let
+      [scratch : i64 (arena.tl_arena_make)]
+      (begin
+        (set! tc-decl-scratch-arena scratch)
+        scratch))
+    tc-decl-scratch-arena))
+
+(define (tc-decl-scratch-arena-release!) : unit
+  (if (= tc-decl-scratch-arena 0)
+    unit
+    (begin
+      (if (= (arena.tl_arena_current) tc-decl-scratch-arena)
+        (unsafe
+          (arena.tl_arena_set node-pool-base-arena))
+        unit)
+      (unsafe
+        (arena.tl_arena_destroy tc-decl-scratch-arena))
+      (set! tc-decl-scratch-arena 0))))
+
+;; Non-function declaration checks pin their transient env layers, CTFE eval
+;; trees, and partial caches in the persistent arena for the rest of the
+;; compile even though the check returns only unit. Run each such check in the
+;; shared declaration scratch arena and rewind it afterwards, cloning the error
+;; diagnostic out first (the same shape as tc-check-fn-decl-scoped). State that
+;; must persist is unaffected: env bindings are built by the module-env walk
+;; outside this scope, the interner owns new spellings at insertion, node pools
+;; grow in the persistent base arena, and cross-declaration caches live in
+;; dedicated persistent arenas. The one cross-declaration cache that cannot be
+;; rewound safely, the macro helper env, is rebuilt per declaration instead
+;; (reset at the end of this scope).
+(define (tc-check-decl-scoped
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [global-env : TcTypeEnv]
+  [decl : AstDecl]) : ResultTcUnit
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [scratch : i64 (tc-decl-scratch-arena-get)]
+    (begin
+      (set! tc-decl-scratch-depth (+ tc-decl-scratch-depth 1))
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        [raw : ResultTcUnit
+          (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)]
+        [scratch-head : i64 (arena.tl_arena_current)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (let
+            [escaped : ResultTcUnit
+              (match raw
+                [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err (clone message))])]
+            [new-enclosing : i64 (arena.tl_arena_current)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set scratch-head)
+                (arena.tl_region_reset mark)
+                (arena.tl_arena_set new-enclosing))
+              (set! tc-decl-scratch-depth (- tc-decl-scratch-depth 1))
+              (if (and
+                (= tc-decl-scratch-depth 0)
+                (not (= scratch scratch-head)))
+                (tc-decl-scratch-arena-release!)
+                unit)
+              ;; Single-entry name caches may hold strings allocated in the
+              ;; scratch that was just rewound; invalidate them before
+              ;; anything can compare against freed memory.
+              (tc-nominal-owner-cache-reset!)
+              ;; The macro helper env cache persists across declarations, but
+              ;; its spine is extended with per-check partial cache layers
+              ;; while a DefMacro body is checked; those layers (and any
+              ;; rewind-sensitive content reached through them) must not
+              ;; outlive this declaration, so rebuild the cache per
+              ;; declaration inside the scratch scope.
+              (tc-macro-helper-env-cache-reset!)
+              escaped)))))))
+
 (define (tc-check-decl-with-global-env
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -67583,31 +67965,6 @@
     ;; walk, so keep cache entries scoped to one checked declaration.
     (tc-nominal-owner-cache-reset!)
     (match decl
-      [(AstDecl.Def _ maybe-ty expr-box)
-        (match maybe-ty
-          [(AstMaybeType.Some want)
-            (match (tc-expr-with-expected-or-actual-id
-              ctx
-              global-env
-              expr-box
-              (tc-resolve-type ctx want))
-              [(ResultTcType.Ok got)
-                (match (tc-expect
-                  got
-                  (tc-resolve-type ctx want)
-                  "typecheck: value definition type mismatch")
-                  [(ResultTcUnit.Ok)
-                    (tc-ensure-region-value-can-flow-into
-                      global-env
-                      (tc-resolve-type ctx want)
-                      got
-                      "top-level value")]
-                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-              [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
-          [(AstMaybeType.No)
-            (match (tc-expr-id ctx global-env expr-box)
-              [(ResultTcType.Ok _) ResultTcUnit.Ok]
-              [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
       [(AstDecl.DefFn _ params ret body-box _)
         (match (tc-elide-function-signature params ret)
           [(ResultTcElidedSignature.Ok signature)
@@ -67618,68 +67975,109 @@
               (struct-get signature ret)
               body-box)]
           [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
-      [(AstDecl.DefMacro name params ret body-box)
-        (let
-          [body : AstExpr (ast-node-get body-box)]
-          (tc-check-defmacro name ctx top-env params ret body))]
-      [(AstDecl.Extern _ kind metadata ty)
-        (tc-check-extern-decl ctx kind (box-get metadata) ty)]
-      [(AstDecl.DefDispatch name variants)
-        (match (tc-dispatch-decl-type ctx name variants)
-          [(ResultTcType.Ok _) ResultTcUnit.Ok]
-          [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
-      [(AstDecl.DefEnum name cleanup variants)
-        (tc-check-cleanup-enum-decl
-          ctx
-          top-env
-          (tc-check-decl-scoped-name-id ctx name)
-          (ast-lifetime-list-new)
-          cleanup
-          variants)]
-      [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
-        (tc-check-cleanup-enum-decl
-          ctx
-          top-env
-          (tc-check-decl-scoped-name-id ctx name)
-          lifetimes
-          cleanup
-          variants)]
-      [(AstDecl.DefStruct name repr cleanup fields)
-        (tc-check-cleanup-struct-decl
-          ctx
-          top-env
-          (tc-check-decl-scoped-name-id ctx name)
-          repr
-          cleanup
-          fields)]
-      [(AstDecl.DefStructLifetimes name _ repr cleanup fields)
-        (tc-check-cleanup-struct-decl
-          ctx
-          top-env
-          (tc-check-decl-scoped-name-id ctx name)
-          repr
-          cleanup
-          fields)]
-      [(AstDecl.ComptimeDecl meta template-box)
-        (let
-          [template : AstDecl (box-get template-box)]
-          (match meta
-            [(AstGeneratedDeclMeta.Some _ _ _ _)
-              (tc-check-decl-with-global-env ctx top-env global-env template)]
-            [(AstGeneratedDeclMeta.No)
-              (match (tc-check-comptime-decl-purity ctx top-env template)
+      [_ (tc-check-decl-scoped ctx top-env global-env decl)])))
+
+(define (tc-check-nonfn-decl-with-global-env
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [global-env : TcTypeEnv]
+  [decl : AstDecl]) : ResultTcUnit
+  (match decl
+    [(AstDecl.Def _ maybe-ty expr-box)
+      (match maybe-ty
+        [(AstMaybeType.Some want)
+          (match (tc-expr-with-expected-or-actual-id
+            ctx
+            global-env
+            expr-box
+            (tc-resolve-type ctx want))
+            [(ResultTcType.Ok got)
+              (match (tc-expect
+                got
+                (tc-resolve-type ctx want)
+                "typecheck: value definition type mismatch")
                 [(ResultTcUnit.Ok)
-                  (tc-check-decl-with-global-env
-                    ctx
-                    top-env
+                  (tc-ensure-region-value-can-flow-into
                     global-env
-                    template)]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]
-      [(AstDecl.Unsafe inner-box)
-        (let
-          [inner : AstDecl (box-get inner-box)]
-          (tc-check-decl-with-global-env ctx top-env global-env inner))]
-      [_ ResultTcUnit.Ok])))
+                    (tc-resolve-type ctx want)
+                    got
+                    "top-level value")]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+            [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
+        [(AstMaybeType.No)
+          (match (tc-expr-id ctx global-env expr-box)
+            [(ResultTcType.Ok _) ResultTcUnit.Ok]
+            [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
+    [(AstDecl.DefFn _ params ret body-box _)
+      ;; Unreachable via the dispatcher above; kept so a direct call can never
+      ;; silently skip a function body check.
+      (match (tc-elide-function-signature params ret)
+        [(ResultTcElidedSignature.Ok signature)
+          (tc-check-fn-decl-scoped
+            ctx
+            global-env
+            (struct-get signature params)
+            (struct-get signature ret)
+            body-box)]
+        [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
+    [(AstDecl.DefMacro name params ret body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (tc-check-defmacro name ctx top-env params ret body))]
+    [(AstDecl.Extern _ kind metadata ty)
+      (tc-check-extern-decl ctx kind (box-get metadata) ty)]
+    [(AstDecl.DefDispatch name variants)
+      (match (tc-dispatch-decl-type ctx name variants)
+        [(ResultTcType.Ok _) ResultTcUnit.Ok]
+        [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
+    [(AstDecl.DefEnum name cleanup variants)
+      (tc-check-cleanup-enum-decl
+        ctx
+        top-env
+        (tc-check-decl-scoped-name-id ctx name)
+        (ast-lifetime-list-new)
+        cleanup
+        variants)]
+    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
+      (tc-check-cleanup-enum-decl
+        ctx
+        top-env
+        (tc-check-decl-scoped-name-id ctx name)
+        lifetimes
+        cleanup
+        variants)]
+    [(AstDecl.DefStruct name repr cleanup fields)
+      (tc-check-cleanup-struct-decl
+        ctx
+        top-env
+        (tc-check-decl-scoped-name-id ctx name)
+        repr
+        cleanup
+        fields)]
+    [(AstDecl.DefStructLifetimes name _ repr cleanup fields)
+      (tc-check-cleanup-struct-decl
+        ctx
+        top-env
+        (tc-check-decl-scoped-name-id ctx name)
+        repr
+        cleanup
+        fields)]
+    [(AstDecl.ComptimeDecl meta template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match meta
+          [(AstGeneratedDeclMeta.Some _ _ _ _)
+            (tc-check-decl-with-global-env ctx top-env global-env template)]
+          [(AstGeneratedDeclMeta.No)
+            (match (tc-check-comptime-decl-purity ctx top-env template)
+              [(ResultTcUnit.Ok)
+                (tc-check-decl-with-global-env ctx top-env global-env template)]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]
+    [(AstDecl.Unsafe inner-box)
+      (let
+        [inner : AstDecl (box-get inner-box)]
+        (tc-check-decl-with-global-env ctx top-env global-env inner))]
+    [_ ResultTcUnit.Ok]))
 
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (tc-check-decl-with-global-env
@@ -68625,6 +69023,7 @@
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin
     (tc-fn-scratch-arena-release!)
+    (tc-decl-scratch-arena-release!)
     (tc-body-early-exit-facts-abort!)
     (ctfe-builtin-reset!)
     (set! tc-stdlib-comptime-syntax-type-cache-generation -1)

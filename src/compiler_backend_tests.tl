@@ -6588,25 +6588,26 @@
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
     (compiler-backend-emit-instrs
-      (CompilerBackendTarget.Linux)
-      "_tl_test"
-      (ci.intern "test")
-      blocks
-      "entry"
+      (CompilerBackendEmissionContext
+        (CompilerBackendTarget.Linux)
+        "_tl_test"
+        (ci.intern "test")
+        blocks
+        "entry"
+        CompilerRegAssignmentList.Nil
+        vars
+        CompilerRegVarTypeList.Nil
+        (CompilerBackendGlobalTypeList.Nil)
+        (AstType.I64)
+        (compiler-backend-runtime-helper-full-plan)
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil
+        program-index
+        (compiler-source-spans-empty)
+        (compiler-diagnostic-at-start "" "")
+        use-counts)
       (CompilerBackendMaybeLabel.No)
       instrs
-      CompilerRegAssignmentList.Nil
-      vars
-      CompilerRegVarTypeList.Nil
-      (CompilerBackendGlobalTypeList.Nil)
-      (AstType.I64)
-      (compiler-backend-runtime-helper-full-plan)
-      CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil
-      program-index
-      (compiler-source-spans-empty)
-      (compiler-diagnostic-at-start "" "")
-      use-counts
       (text_buf.empty))))
 
 (define (compiler-backend-emit-rax-forward-test-instrs
@@ -6736,27 +6737,28 @@
         compiler-backend-long-block-instr-count
         blocks)]
     (match (compiler-backend-emit-instrs
-      (CompilerBackendTarget.Linux)
-      "_tl_test"
-      (ci.intern "test")
-      blocks
-      "entry"
+      (CompilerBackendEmissionContext
+        (CompilerBackendTarget.Linux)
+        "_tl_test"
+        (ci.intern "test")
+        blocks
+        "entry"
+        CompilerRegAssignmentList.Nil
+        compiler-backend-long-block-instr-count
+        CompilerRegVarTypeList.Nil
+        (CompilerBackendGlobalTypeList.Nil)
+        (AstType.I64)
+        (compiler-backend-runtime-helper-full-plan)
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)
+        (compiler-source-spans-empty)
+        (compiler-diagnostic-at-start "" "")
+        use-counts)
       (CompilerBackendMaybeLabel.No)
       instrs
-      CompilerRegAssignmentList.Nil
-      compiler-backend-long-block-instr-count
-      CompilerRegVarTypeList.Nil
-      (CompilerBackendGlobalTypeList.Nil)
-      (AstType.I64)
-      (compiler-backend-runtime-helper-full-plan)
-      CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil
-      (compiler-backend-program-index-build
-        CompilerIrFunctionList.Nil
-        CompilerIrExternList.Nil)
-      (compiler-source-spans-empty)
-      (compiler-diagnostic-at-start "" "")
-      use-counts
       (text_buf.empty))
       [(ResultCompilerBackend.Ok asm)
         (and
@@ -7760,27 +7762,28 @@
     [use-counts : (Array i64)
       (compiler-backend-function-use-counts vars blocks)]
     (compiler-backend-emit-instrs
-      (CompilerBackendTarget.Linux)
-      "_tl_test"
-      (ci.intern "test")
-      blocks
-      "entry"
+      (CompilerBackendEmissionContext
+        (CompilerBackendTarget.Linux)
+        "_tl_test"
+        (ci.intern "test")
+        blocks
+        "entry"
+        assignments
+        vars
+        CompilerRegVarTypeList.Nil
+        (CompilerBackendGlobalTypeList.Nil)
+        (AstType.I64)
+        (compiler-backend-runtime-helper-full-plan)
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)
+        (compiler-source-spans-empty)
+        (compiler-diagnostic-at-start "" "")
+        use-counts)
       (CompilerBackendMaybeLabel.No)
       entry-instrs
-      assignments
-      vars
-      CompilerRegVarTypeList.Nil
-      (CompilerBackendGlobalTypeList.Nil)
-      (AstType.I64)
-      (compiler-backend-runtime-helper-full-plan)
-      CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil
-      (compiler-backend-program-index-build
-        CompilerIrFunctionList.Nil
-        CompilerIrExternList.Nil)
-      (compiler-source-spans-empty)
-      (compiler-diagnostic-at-start "" "")
-      use-counts
       (text_buf.empty))))
 
 (define (compiler-backend-single-phi-return-entry-instrs) : CompilerIrInstrList
@@ -8013,27 +8016,28 @@
     [blocks : CompilerIrBlockList (compiler-backend-mov-phi-copy-blocks)]
     [use-counts : (Array i64) (compiler-backend-function-use-counts 3 blocks)]
     (match (compiler-backend-emit-instrs
-      (CompilerBackendTarget.Linux)
-      "_tl_test"
-      (ci.intern "test")
-      blocks
-      "entry"
+      (CompilerBackendEmissionContext
+        (CompilerBackendTarget.Linux)
+        "_tl_test"
+        (ci.intern "test")
+        blocks
+        "entry"
+        (compiler-backend-mov-phi-copy-assignments)
+        3
+        CompilerRegVarTypeList.Nil
+        (CompilerBackendGlobalTypeList.Nil)
+        (AstType.I64)
+        (compiler-backend-runtime-helper-full-plan)
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)
+        (compiler-source-spans-empty)
+        (compiler-diagnostic-at-start "" "")
+        use-counts)
       (CompilerBackendMaybeLabel.No)
       (compiler-backend-mov-phi-copy-entry-instrs)
-      (compiler-backend-mov-phi-copy-assignments)
-      3
-      CompilerRegVarTypeList.Nil
-      (CompilerBackendGlobalTypeList.Nil)
-      (AstType.I64)
-      (compiler-backend-runtime-helper-full-plan)
-      CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil
-      (compiler-backend-program-index-build
-        CompilerIrFunctionList.Nil
-        CompilerIrExternList.Nil)
-      (compiler-source-spans-empty)
-      (compiler-diagnostic-at-start "" "")
-      use-counts
       (text_buf.empty))
       [(ResultCompilerBackend.Ok asm)
         (and
@@ -11900,61 +11904,63 @@
         (set! compiler-backend-emit-instrs-continue-pending false)
         (set! compiler-backend-identity-tail-forwarder-active false))]
     (match (compiler-backend-emit-instr
-      (CompilerBackendTarget.Linux)
-      "_tl_test"
-      (ci.intern "test")
-      CompilerIrBlockList.Nil
-      "entry"
-      (CompilerBackendMaybeLabel.No)
-      instr
-      CompilerRegAssignmentList.Nil
-      vars
-      CompilerRegVarTypeList.Nil
-      (CompilerBackendGlobalTypeList.Nil)
-      (AstType.I64)
-      (CompilerBackendRuntimePlan.Plan
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        false
-        (CompilerBackendRuntimeTailPlan false false false))
-      CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil
-      (compiler-backend-program-index-build
+      (CompilerBackendEmissionContext
+        (CompilerBackendTarget.Linux)
+        "_tl_test"
+        (ci.intern "test")
+        CompilerIrBlockList.Nil
+        "entry"
+        CompilerRegAssignmentList.Nil
+        vars
+        CompilerRegVarTypeList.Nil
+        (CompilerBackendGlobalTypeList.Nil)
+        (AstType.I64)
+        (CompilerBackendRuntimePlan.Plan
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          (CompilerBackendRuntimeTailPlan false false false))
         CompilerIrFunctionList.Nil
-        CompilerIrExternList.Nil)
-      (compiler-source-spans-empty)
-      (compiler-diagnostic-at-start "" ""))
+        CompilerIrExternList.Nil
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)
+        (compiler-source-spans-empty)
+        (compiler-diagnostic-at-start "" "")
+        (array.make-array i64 0))
+      (CompilerBackendMaybeLabel.No)
+      instr)
       [(ResultCompilerBackend.Ok asm)
         (let
           [hit : bool (compiler-backend-string-contains? asm needle)]
@@ -12062,27 +12068,28 @@
     [_addr-forward : unit
       (compiler-backend-addr-of-forwarding-enable! vars blocks use-counts)]
     (match (compiler-backend-emit-instrs
-      (CompilerBackendTarget.Linux)
-      "_tl_test"
-      (ci.intern "test")
-      blocks
-      "entry"
+      (CompilerBackendEmissionContext
+        (CompilerBackendTarget.Linux)
+        "_tl_test"
+        (ci.intern "test")
+        blocks
+        "entry"
+        assignments
+        vars
+        CompilerRegVarTypeList.Nil
+        (CompilerBackendGlobalTypeList.Nil)
+        (AstType.I64)
+        (compiler-backend-runtime-helper-full-plan)
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)
+        (compiler-source-spans-empty)
+        (compiler-diagnostic-at-start "" "")
+        use-counts)
       (CompilerBackendMaybeLabel.No)
       instrs
-      assignments
-      vars
-      CompilerRegVarTypeList.Nil
-      (CompilerBackendGlobalTypeList.Nil)
-      (AstType.I64)
-      (compiler-backend-runtime-helper-full-plan)
-      CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil
-      (compiler-backend-program-index-build
-        CompilerIrFunctionList.Nil
-        CompilerIrExternList.Nil)
-      (compiler-source-spans-empty)
-      (compiler-diagnostic-at-start "" "")
-      use-counts
       (text_buf.empty))
       [(ResultCompilerBackend.Ok asm)
         (let

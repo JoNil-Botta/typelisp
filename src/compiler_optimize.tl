@@ -12491,8 +12491,14 @@
 
 (define (opt-global-value-number-function-with-context
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-verify-function-with-context func context)
+  ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+  ;; The opt2 pipeline threads the loop-cluster verification through
+  ;; `verified?`: every cluster pass post-verifies its own rewrite (falling
+  ;; back to its verified input on rejection), so a verified cluster input
+  ;; reaches this pass still verified and the entry verify is skipped.
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -12509,6 +12515,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (opt-global-value-number-function-with-context
         (opt-cfg-context-build blocks)
+        false
         func)]))
 
 (define (opt-cfg-foldable-branch-instr? [instr : CompilerIrInstr]) : bool
@@ -21501,25 +21508,76 @@
         out
         (compiler-ir-block-seq-to-list seq))]))
 
+;; Cheap any-Div/Mod pre-scan for the divrem-safety pass (allocation-free: no
+;; facts, no copies, returns at the first hit). The pass can only rewrite
+;; CompilerIrBinOp.Div / CompilerIrBinOp.Mod ops -- opt-divrem-rewrite-op is
+;; identity for every other op -- so a function containing neither op is
+;; returned unchanged, exactly the content the full pass materializes for it
+;; (no block rewrite can fire), without building the SSA facts, the per-block
+;; fact/result arrays, or the per-block rewrite copies.
+(define (opt-divrem-instr-has-divmod? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp _ op _ _ _)
+      (match op
+        [(CompilerIrBinOp.Div) true]
+        [(CompilerIrBinOp.Mod) true]
+        [_ false])]
+    [_ false]))
+
+(define (opt-divrem-instr-seq-has-divmod?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-divrem-instr-has-divmod? (compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-divrem-instr-seq-has-divmod? instrs (+ index 1)))))
+
+(define (opt-divrem-block-seq-has-divmod?
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    false
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (if (opt-divrem-instr-seq-has-divmod? instrs 0)
+          true
+          (opt-divrem-block-seq-has-divmod? blocks (+ index 1)))])))
+
+(define (opt-divrem-blocks-have-divmod? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-divrem-instr-seq-has-divmod? instrs 0)
+            true
+            (opt-divrem-blocks-have-divmod? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq) (opt-divrem-block-seq-has-divmod? seq 0)]))
+
 (define (opt-divrem-safety-blocks-with-context
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (let
-    [index : OptCfgIndex (struct-get context index)]
-    [count : i64 (opt-cfg-index-block-count index)]
-    [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
-    [types : OptSsaVarTypes
-      (match ssa-facts
-        [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
-    [facts : (Array OptDivRemFacts) (array.make-array OptDivRemFacts count)]
-    [out : (Array OptDivRemBlockResult)
-      (array.make-array OptDivRemBlockResult count)]
-    (begin
-      (opt-divrem-facts-fill-empty! facts 0)
-      (opt-divrem-results-fill-empty! out 0)
-      (opt-divrem-process-rpo! context blocks types facts out 0)
-      (opt-divrem-materialize-blocks context out blocks))))
+  (if (not (opt-divrem-blocks-have-divmod? blocks))
+    ;; No Div/Mod op anywhere: every rewrite is identity, so the pass output
+    ;; equals the input; skip the SSA facts build and the per-block copies.
+    blocks
+    (let
+      [index : OptCfgIndex (struct-get context index)]
+      [count : i64 (opt-cfg-index-block-count index)]
+      [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+      [types : OptSsaVarTypes
+        (match ssa-facts
+          [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
+      [facts : (Array OptDivRemFacts) (array.make-array OptDivRemFacts count)]
+      [out : (Array OptDivRemBlockResult)
+        (array.make-array OptDivRemBlockResult count)]
+      (begin
+        (opt-divrem-facts-fill-empty! facts 0)
+        (opt-divrem-results-fill-empty! out 0)
+        (opt-divrem-process-rpo! context blocks types facts out 0)
+        (opt-divrem-materialize-blocks context out blocks)))))
 
 (define (opt-divrem-safety-blocks
   [params : CompilerIrParamList]
@@ -30863,6 +30921,10 @@
                       ;; consistent with the promoted blocks. It reuses the
                       ;; context unroll handed back: unroll's output
                       ;; blocks are global_gvn's input blocks unchanged.
+                      ;; Its entry verify rides the loop-cluster verification:
+                      ;; every pass in between post-verifies its own rewrite
+                      ;; (falling back to its verified input), so a verified
+                      ;; cluster input arrives here still verified.
                       [_t-global : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [global : CompilerIrFunction
                         (compiler-opt-debug-observe-function
@@ -30870,6 +30932,7 @@
                           (if run-heavy?
                             (opt-global-value-number-function-with-context
                               unroll-context
+                              loop-cluster-verified?
                               (CompilerIrFunction.Function
                                 name
                                 params
@@ -58815,41 +58878,105 @@
             empty-state
             (+ slot 1)))))))
 
+;; Cheap at-least-two-loads pre-scan for the cross-block load GVN
+;; (allocation-free, exits at the second load). The pass can only rewrite a
+;; Load whose address matches an earlier dominating load --
+;; opt-load-cse-dispatch returns every non-Load instruction unchanged and all
+;; load-table value entries originate from loads -- so with fewer than two
+;; Load instructions in the function no lookup can ever hit, the materialized
+;; output equals the input, and the whole-function empty state plus the three
+;; per-block arrays are wasted work.
+(define (opt-load-gvn-instr-load? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Load _ _ _) true]
+    [_ false]))
+
+(define (opt-load-gvn-instr-seq-loads-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [seen : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    seen
+    (if (>= seen 2)
+      seen
+      (opt-load-gvn-instr-seq-loads-from
+        instrs
+        (+ index 1)
+        (if (opt-load-gvn-instr-load? (compiler-ir-instr-seq-ref instrs index))
+          (+ seen 1)
+          seen)))))
+
+(define (opt-load-gvn-block-seq-two-loads?
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [seen : i64]) : bool
+  (if (>= seen 2)
+    true
+    (if (>= index (compiler-ir-block-seq-count blocks))
+      false
+      (match (compiler-ir-block-seq-ref blocks index)
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-load-gvn-block-seq-two-loads?
+            blocks
+            (+ index 1)
+            (opt-load-gvn-instr-seq-loads-from instrs 0 seen))]))))
+
+(define (opt-load-gvn-blocks-have-two-loads?
+  [blocks : CompilerIrBlockList]
+  [seen : i64]) : bool
+  (if (>= seen 2)
+    true
+    (match blocks
+      [(CompilerIrBlockList.Nil) false]
+      [(CompilerIrBlockList.Cons block rest)
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-load-gvn-blocks-have-two-loads?
+              (box-get rest)
+              (opt-load-gvn-instr-seq-loads-from instrs 0 seen))])]
+      [(CompilerIrBlockList.Array seq)
+        (opt-load-gvn-block-seq-two-loads? seq 0 seen)])))
+
 (define (opt-load-gvn-blocks-with-context
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (let
-    [index : OptCfgIndex (struct-get context index)]
-    [count : i64 (opt-cfg-index-block-count index)]
-    [exit-states : (Array OptMaybeLoadCseState)
-      (array.make-array OptMaybeLoadCseState count)]
-    [processed : (Array bool) (array.make-array bool count)]
-    [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
-    [empty-state : OptLoadCseState
-      (opt-load-cse-state-with-caps-and-facts
-        (opt-load-cse-table-cap-for-size
-          (compiler-ir-block-list-instruction-count blocks))
-        (opt-load-cse-kinds-cap-for-size
-          (compiler-ir-block-list-instruction-count blocks))
-        (opt-alias-seed-params params))]
-    (begin
-      (opt-load-state-array-fill-empty! exit-states count)
-      (opt-cfg-fill-bool! processed count false)
-      (opt-gvn-block-results-fill-empty! out 0)
-      (opt-load-gvn-process-rpo
-        context
-        hs
-        sources
-        blocks
-        exit-states
-        processed
-        out
-        empty-state
-        0)
-      (opt-gvn-materialize-blocks (struct-get context doms) out blocks))))
+  (if (not (opt-load-gvn-blocks-have-two-loads? blocks 0))
+    ;; Fewer than two loads: no rewrite can fire, so the pass output equals
+    ;; the input; skip the empty state and the per-block arrays.
+    blocks
+    (let
+      [index : OptCfgIndex (struct-get context index)]
+      [count : i64 (opt-cfg-index-block-count index)]
+      [exit-states : (Array OptMaybeLoadCseState)
+        (array.make-array OptMaybeLoadCseState count)]
+      [processed : (Array bool) (array.make-array bool count)]
+      [out : (Array OptGvnBlockResult)
+        (array.make-array OptGvnBlockResult count)]
+      [empty-state : OptLoadCseState
+        (opt-load-cse-state-with-caps-and-facts
+          (opt-load-cse-table-cap-for-size
+            (compiler-ir-block-list-instruction-count blocks))
+          (opt-load-cse-kinds-cap-for-size
+            (compiler-ir-block-list-instruction-count blocks))
+          (opt-alias-seed-params params))]
+      (begin
+        (opt-load-state-array-fill-empty! exit-states count)
+        (opt-cfg-fill-bool! processed count false)
+        (opt-gvn-block-results-fill-empty! out 0)
+        (opt-load-gvn-process-rpo
+          context
+          hs
+          sources
+          blocks
+          exit-states
+          processed
+          out
+          empty-state
+          0)
+        (opt-gvn-materialize-blocks (struct-get context doms) out blocks)))))
 
 ;; --- noalias fact model self-test -------------------------------------------
 (define (opt-alias-test-unique-instrs) : CompilerIrInstrList

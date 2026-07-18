@@ -8915,6 +8915,45 @@
             coalesce)
           counts))]))
 
+;; One-pass spill weights for the scalar-opt2 greedy: the remat walk accumulates
+;; the exact raw use/def counts the plain spill-weights walk computes (same
+;; adds, plus the def-status tracking), so the two per-function walks collapse
+;; into one. Returns the same combined array as
+;; (combine (merge (remat-discounted weights)) (merge (raw weights))).
+(define (compiler-reg-function-spill-weights-combined
+  [func : CompilerIrFunction]
+  [coalesce : CompilerRegCoalesceMap]
+  [vars : i64]) : (Array i64)
+  (match func
+    [(CompilerIrFunction.Function _ _ _ fn-vars blocks)
+      (let
+        [raw : (Array i64) (array.make-array i64 fn-vars)]
+        [def-status : (Array i64) (array.make-array i64 fn-vars)]
+        [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+        [allow-invariant-loads : bool
+          (compiler-reg-remat-invariant-loads-ok? func)]
+        (begin
+          (compiler-reg-fill-i64-array raw 0)
+          (compiler-reg-fill-i64-array def-status 0)
+          (compiler-reg-ref-counts-blocks-weighted-remat!
+            raw
+            def-status
+            blocks
+            depths
+            0
+            allow-invariant-loads)
+          (let
+            [discounted : (Array i64) (array.make-array i64 fn-vars)]
+            (begin
+              (compiler-reg-copy-i64-array! discounted raw 0)
+              (compiler-reg-remat-discount-single-def-spill-weights!
+                discounted
+                def-status
+                coalesce)
+              (compiler-reg-greedy-combine-spill-weights
+                (compiler-reg-merge-ref-counts coalesce discounted vars)
+                (compiler-reg-merge-ref-counts coalesce raw vars))))))]))
+
 (define (compiler-reg-interval-index-var-has-segments?
   [index : CompilerRegIntervalIndex]
   [var : i64]) : bool
@@ -17909,24 +17948,32 @@
     ;; a precision error here can only mis-coalesce (caught by the fixpoint), never
     ;; under-approximate allocation interference.
     [coalesce-index : CompilerRegIntervalIndex
-      (if allow-caller-saved-zero-call
-        ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
-        ;; by the coalescing segment index AND the live-out-input phi exclusion.
-        (let
-          [ep-liveness : CompilerFunctionLiveness
-            (compiler-reg-liveness-handle-edge-precise liveness-handle)]
-          (compiler-reg-hybrid-coalesce-index
-            interval-index
-            (compiler-reg-live-interval-selection-ep func ep-liveness)
-            ;; Exclude unsafe live-out inputs while admitting proven self-loop
-            ;; back-edge-only values. Fixed div/mod or variable-shift functions
-            ;; retain the conservative guard: relaxing an otherwise unrelated
-            ;; carry can reshape fixed-home pressure differently on SysV/Win64.
-            (compiler-reg-function-phi-touched-safe-mode
-              func
-              ep-liveness
-              (= (compiler-live-set-word-count destructive-fixed-points) 0))))
-        interval-index)]
+      (match moves
+        [(CompilerRegMoveList.Nil) interval-index]
+        [_
+          (if allow-caller-saved-zero-call
+            ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
+            ;; by the coalescing segment index AND the live-out-input phi exclusion.
+            ;; Skipped entirely when there are no moves to coalesce (the Nil arm
+            ;; above): the map build below returns the empty map without reading
+            ;; this index, so the plan is unchanged and the EP interval
+            ;; selection + safe-mode exclusion are provably dead work for
+            ;; move-free functions.
+            (let
+              [ep-liveness : CompilerFunctionLiveness
+                (compiler-reg-liveness-handle-edge-precise liveness-handle)]
+              (compiler-reg-hybrid-coalesce-index
+                interval-index
+                (compiler-reg-live-interval-selection-ep func ep-liveness)
+                ;; Exclude unsafe live-out inputs while admitting proven self-loop
+                ;; back-edge-only values. Fixed div/mod or variable-shift functions
+                ;; retain the conservative guard: relaxing an otherwise unrelated
+                ;; carry can reshape fixed-home pressure differently on SysV/Win64.
+                (compiler-reg-function-phi-touched-safe-mode
+                  func
+                  ep-liveness
+                  (= (compiler-live-set-word-count destructive-fixed-points) 0))))
+            interval-index)])]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build
@@ -18076,15 +18123,10 @@
         ;; weight is combined with the RAW use-density as a tie-break (combine-
         ;; spill-weights) so that among equal-discounted values the genuinely
         ;; coldest one spills, not an arbitrary tied one.
-        (compiler-reg-greedy-combine-spill-weights
-          (compiler-reg-merge-ref-counts
-            coalesce
-            (compiler-reg-function-spill-weights-remat func coalesce)
-            (array-length (struct-get interval-index starts)))
-          (compiler-reg-merge-ref-counts
-            coalesce
-            (compiler-reg-function-spill-weights func)
-            (array-length (struct-get interval-index starts))))
+        (compiler-reg-function-spill-weights-combined
+          func
+          coalesce
+          (array-length (struct-get interval-index starts)))
         (array.make-array i64 0))]
     ;; The greedy's per-register clobber restriction (15c) reuses the kind
     ;; point sets bound above: `clobber-points` IS the kind-0 set, and
@@ -18217,20 +18259,39 @@
     [mask-vars : CompilerLiveI64Set
       (match vector-mask-defs
         [(CompilerLiveUseDef.Def _ vars) vars])]
+    ;; Scalar-only functions (no vector or mask IR values) have no special
+    ;; candidates at all: the select-false preference walk, both special-candidate
+    ;; interval filters, the vector greedy, and the mask fixed-candidate pass all
+    ;; return their inputs unchanged, so skip the whole vector/mask prep chain.
+    [vector-mask-empty? : bool
+      (and
+        (= (compiler-live-set-count vector-vars) 0)
+        (= (compiler-live-set-count mask-vars) 0))]
     [vector-candidate-vars : CompilerLiveI64Set
-      (if mask-vars-use-vector-registers
-        (compiler-live-set-union vector-vars mask-vars)
-        vector-vars)]
+      (if vector-mask-empty?
+        vector-vars
+        (if mask-vars-use-vector-registers
+          (compiler-live-set-union vector-vars mask-vars)
+          vector-vars))]
     [mask-candidate-vars : CompilerLiveI64Set
-      (if mask-vars-use-vector-registers
-        (compiler-live-set-empty)
-        mask-vars)]
+      (if vector-mask-empty?
+        mask-vars
+        (if mask-vars-use-vector-registers
+          (compiler-live-set-empty)
+          mask-vars))]
     [vector-preferences : (Array i64)
-      (compiler-reg-function-select-false-preferences
-        func
-        (array-length (struct-get interval-index starts)))]
+      (if vector-mask-empty?
+        (array.make-array i64 0)
+        (compiler-reg-function-select-false-preferences
+          func
+          (array-length (struct-get interval-index starts))))]
     [vector-candidates : CompilerRegIntervalList
-      (compiler-reg-special-candidates intervals vector-candidate-vars blocked)]
+      (if vector-mask-empty?
+        CompilerRegIntervalList.Nil
+        (compiler-reg-special-candidates
+          intervals
+          vector-candidate-vars
+          blocked))]
     [_vector-class-reset : unit
       (compiler-reg-unassign-special-candidates!
         scalar-assignments
@@ -18240,32 +18301,43 @@
       ;; Vectors share the XMM physical bank and the scalar greedy's ABI
       ;; clobber rule. `%vecN` is an allocator-only class spelling; backend
       ;; save/restore sees the same physical N through the overlap helper.
-      (compiler-reg-greedy-state
-        vector-candidates
-        (compiler-reg-vector-registers-for-abi abi)
-        scalar-assignments
-        interval-index
-        (compiler-live-set-empty)
-        (compiler-live-set-empty)
-        (array.make-array i64 0)
-        vector-preferences
-        (array.make-array i64 0)
-        xmm-call-points
-        div-points
-        shift-points
-        (compiler-reg-vector-callee-registers-for-abi abi)
-        (compiler-reg-xmm-caller-register-count-for-abi abi))]
+      (if vector-mask-empty?
+        (CompilerRegAssignState.State
+          CompilerRegActiveList.Nil
+          scalar-assignments)
+        (compiler-reg-greedy-state
+          vector-candidates
+          (compiler-reg-vector-registers-for-abi abi)
+          scalar-assignments
+          interval-index
+          (compiler-live-set-empty)
+          (compiler-live-set-empty)
+          (array.make-array i64 0)
+          vector-preferences
+          (array.make-array i64 0)
+          xmm-call-points
+          div-points
+          shift-points
+          (compiler-reg-vector-callee-registers-for-abi abi)
+          (compiler-reg-xmm-caller-register-count-for-abi abi)))]
     [vector-assignments : CompilerRegAssignmentTable
       (match vector-state
         [(CompilerRegAssignState.State _ assignments) assignments])]
     [mask-state : CompilerRegAssignState
-      (compiler-reg-assign-fixed-candidates
-        (compiler-reg-special-candidates intervals mask-candidate-vars blocked)
-        (compiler-reg-mask-registers)
-        CompilerRegActiveList.Nil
-        vector-assignments
-        (array.make-array i64 0)
-        interval-index)]
+      (if vector-mask-empty?
+        (CompilerRegAssignState.State
+          CompilerRegActiveList.Nil
+          vector-assignments)
+        (compiler-reg-assign-fixed-candidates
+          (compiler-reg-special-candidates
+            intervals
+            mask-candidate-vars
+            blocked)
+          (compiler-reg-mask-registers)
+          CompilerRegActiveList.Nil
+          vector-assignments
+          (array.make-array i64 0)
+          interval-index))]
     [assignments : CompilerRegAssignmentTable
       (match mask-state
         [(CompilerRegAssignState.State _ found) found])]

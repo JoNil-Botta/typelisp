@@ -1593,7 +1593,10 @@
             ""
             cbi.compiler-builtin-id-fix-empty
             (ctfe-reflect-info-list-with-capacity
-              (ctfe-metadata-decl-capacity decls)))))]))
+              ;; Spare slots let generated-module splices extend the cached
+              ;; metadata additively (compiler-typecheck-ctfe-env-extend-for-
+              ;; splice!) instead of forcing a whole-program rebuild.
+              (+ (ctfe-metadata-decl-capacity decls) 256)))))]))
 
 ;; Result of evaluating a sub-expression: either a value (carrying the remaining
 ;; fuel) or a diagnostic. Fuel is threaded so each evaluation step decrements a

@@ -132,7 +132,7 @@
 ;: The compiler expands this prelude macro directly, just as it does the hot
 ;: `and`, `or`, and `cond` prelude macros. The wildcard signature is the
 ;: bootstrap-compatible representation of its mixed binding/body operands.
-(defmacro (for [forms : Expr ...]) : unit
+(defmacro (for [_forms : Expr ...]) : unit
   ;; Published seed compilers typecheck this declaration before the branch-built
   ;; fast expander exists. The branch compiler always intercepts calls; `unit`
   ;; keeps that seed bootstrap pass source-compatible.

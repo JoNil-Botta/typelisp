@@ -83,11 +83,9 @@
   [module : String]
   [names : (&mut names svec.Vec)]) : unit
   (match decl
-    [(AstDecl.DefMacro name _ _ _)
+    [(AstDecl.DefMacro decl-meta name _ _ _)
       (embedded-stdlib-tlci-push-name! names module name)]
     [(AstDecl.Unsafe inner)
-      (embedded-stdlib-tlci-collect-decl! (box-get inner) module names)]
-    [(AstDecl.ComptimeDecl _ inner)
       (embedded-stdlib-tlci-collect-decl! (box-get inner) module names)]
     [(AstDecl.ModuleBody nested body)
       (embedded-stdlib-tlci-collect-decls!

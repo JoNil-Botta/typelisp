@@ -526,7 +526,7 @@
       (let
         [rest : AstDeclList rest]
         (match (ast-decl-unwrapped decl)
-          [(AstDecl.Extern _ _ metadata _)
+          [(AstDecl.Extern decl-meta _ _ metadata _)
             (let
               [metadata-items : AstExternLinkInputList
                 (ast-extern-metadata-link-inputs (box-get metadata))]

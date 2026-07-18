@@ -2709,23 +2709,23 @@
                       (if (string.eq (tc-env-key-name-text name-id) name)
                         name-id
                         -1)]
-                    [(AstDecl.Def name-id _ value)
+                    [(AstDecl.Def decl-meta name-id _ value)
                       (if (string.eq (tc-env-key-name-text name-id) name)
                         name-id
                         (compiler-typecheck-smoke-expr-parsed-id value name))]
-                    [(AstDecl.DefFn name-id _ _ body _)
+                    [(AstDecl.DefFn decl-meta name-id _ _ body _)
                       (if (string.eq (tc-env-key-name-text name-id) name)
                         name-id
                         (compiler-typecheck-smoke-expr-parsed-id body name))]
-                    [(AstDecl.DefMacro name-id _ _ body)
+                    [(AstDecl.DefMacro decl-meta name-id _ _ body)
                       (if (string.eq (tc-env-key-name-text name-id) name)
                         name-id
                         (compiler-typecheck-smoke-expr-parsed-id body name))]
-                    [(AstDecl.DefStruct name-id _ _ _)
+                    [(AstDecl.DefStruct decl-meta name-id _ _ _)
                       (if (string.eq (tc-env-key-name-text name-id) name)
                         name-id
                         -1)]
-                    [(AstDecl.DefEnum name-id _ _)
+                    [(AstDecl.DefEnum decl-meta name-id _ _)
                       (if (string.eq (tc-env-key-name-text name-id) name)
                         name-id
                         -1)]

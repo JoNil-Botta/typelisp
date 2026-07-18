@@ -2801,20 +2801,20 @@
   compile-profile
   (define (compiler-tc-decl-profile-record [decl : AstDecl]) : unit
     (match decl
-      [(AstDecl.Def _ _ _)
+      [(AstDecl.Def decl-meta _ _ _)
         (begin
           (compiler-tc-decl-profile-count-def)
           (compiler-tc-decl-profile-add-def-expr))]
-      [(AstDecl.DefFn name _ _ _ _)
+      [(AstDecl.DefFn decl-meta name _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-fn)
           (compiler-tc-decl-profile-add-fn-expr-named
             (tc-env-key-name-text name)))]
-      [(AstDecl.DefMacro _ _ _ _)
+      [(AstDecl.DefMacro decl-meta _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-macro)
           (compiler-tc-decl-profile-add-macro))]
-      [(AstDecl.Extern _ _ _ _)
+      [(AstDecl.Extern decl-meta _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-extern)
           (compiler-tc-decl-profile-add-extern))]
@@ -3124,36 +3124,35 @@
           with-context))]
     [(AstGeneratedDeclMeta.No) diag]))
 
+(define (tc-decl-location-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
+  (match decl
+    [(AstDecl.Def decl-meta _ _ expr-box)
+      (let
+        [expr : AstExpr (ast-node-get expr-box)]
+        (tc-expr-diag expr message))]
+    [(AstDecl.DefFn decl-meta _ _ _ body-box _)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (tc-expr-diag body message))]
+    [(AstDecl.DefMacro decl-meta _ _ _ body-box)
+      (let
+        [body : AstExpr (ast-node-get body-box)]
+        (tc-expr-diag body message))]
+    [(AstDecl.Test _ _ span)
+      (tc-canonical-diagnostic
+        (compiler-diagnostic-from-ast-span "" span message))]
+    [(AstDecl.Unsafe inner-box)
+      (tc-decl-location-diag (box-get inner-box) message)]
+    [_ (tc-diag-at-start message)]))
+
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
   (if (tc-rich-error? message)
     (tc-rich-error-diag message)
     (if (tc-located-error? message)
       (tc-located-error-diag message)
-      (match decl
-        [(AstDecl.Def _ _ expr-box)
-          (let
-            [expr : AstExpr (ast-node-get expr-box)]
-            (tc-expr-diag expr message))]
-        [(AstDecl.DefFn _ _ _ body-box _)
-          (let
-            [body : AstExpr (ast-node-get body-box)]
-            (tc-expr-diag body message))]
-        [(AstDecl.DefMacro _ _ _ body-box)
-          (let
-            [body : AstExpr (ast-node-get body-box)]
-            (tc-expr-diag body message))]
-        [(AstDecl.Test _ _ span)
-          (tc-canonical-diagnostic
-            (compiler-diagnostic-from-ast-span "" span message))]
-        [(AstDecl.Unsafe inner-box)
-          (let
-            [inner : AstDecl (box-get inner-box)]
-            (tc-decl-diag inner message))]
-        [(AstDecl.ComptimeDecl meta template-box)
-          (let
-            [template : AstDecl (box-get template-box)]
-            (tc-generated-decl-diag meta (tc-decl-diag template message)))]
-        [_ (tc-diag-at-start message)]))))
+      (tc-generated-decl-diag
+        (ast-decl-generated-meta decl)
+        (tc-decl-location-diag decl message)))))
 
 (define (tc-decl-diag-with-maybe-origin
   [origin : CompilerParseMaybeDeclSpan]
@@ -7375,26 +7374,20 @@
 
 (define (tc-stdlib-comptime-raw-type-name [decl : AstDecl]) : TcMaybeString
   (match decl
-    [(AstDecl.ComptimeDecl _ template-box)
-      (tc-stdlib-comptime-raw-type-name (box-get template-box))]
     [(AstDecl.Unsafe inner-box)
       (tc-stdlib-comptime-raw-type-name (box-get inner-box))]
-    [(AstDecl.DefEnum name _ _)
+    [(AstDecl.DefEnum decl-meta name _ _)
       (TcMaybeString.Some (tc-env-key-name-text name))]
-    [(AstDecl.DefEnumLifetimes name _ _ _)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
       (TcMaybeString.Some (tc-env-key-name-text name))]
-    [(AstDecl.DefStruct name _ _ _)
+    [(AstDecl.DefStruct decl-meta name _ _ _)
       (TcMaybeString.Some (tc-env-key-name-text name))]
-    [(AstDecl.DefStructLifetimes name _ _ _ _)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
       (TcMaybeString.Some (tc-env-key-name-text name))]
     [_ (TcMaybeString.No)]))
 
 (define (tc-stdlib-comptime-raw-comptime-decl? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDecl.ComptimeDecl _ _) true]
-    [(AstDecl.Unsafe inner-box)
-      (tc-stdlib-comptime-raw-comptime-decl? (box-get inner-box))]
-    [_ false]))
+  (ast-decl-comptime-only? decl))
 
 (define (tc-stdlib-check-comptime-declaration-surface-decl
   [module : String]
@@ -7724,7 +7717,7 @@
         (compiler-symbol-handle-index handle))
         [(ResultAstDecl.Ok decl)
           (match decl
-            [(AstDecl.DefStruct _ _ _ fields)
+            [(AstDecl.DefStruct decl-meta _ _ _ fields)
               (tc-stdlib-check-field-specs
                 (tc-context-with-module-id
                   ctx
@@ -7757,7 +7750,7 @@
         (compiler-symbol-handle-index handle))
         [(ResultAstDecl.Ok decl)
           (match decl
-            [(AstDecl.DefEnum _ _ variants)
+            [(AstDecl.DefEnum decl-meta _ _ variants)
               (tc-stdlib-check-variant-specs
                 (tc-context-with-module-id
                   ctx
@@ -12103,11 +12096,13 @@
               (match (ast-decl-list-ref decls index)
                 [(AstDecl.Module next-module) (set! current-module next-module)]
                 [_ unit])]
-            [(AstDecl.Import _)
+            [(AstDecl.Import decl-meta _)
               ;; Copy only module/import declarations whose scalar and String
               ;; payloads are consumed. All other declarations stay borrowed.
               (match (ast-decl-list-ref decls index)
-                [(AstDecl.Import (AstImportSpec.Spec _ _ expected _ _))
+                [(AstDecl.Import
+                    decl-meta
+                    (AstImportSpec.Spec _ _ expected _ _))
                   (if (= current-module current-module-id)
                     (match expected
                       [(AstMaybeModuleName.Some target)
@@ -12257,7 +12252,7 @@
   [base : String]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.DefFn name params ret _ _)
+    [(AstDecl.DefFn decl-meta name params ret _ _)
       (and
         (string.eq (tc-env-key-name-text name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.I64))
@@ -12273,7 +12268,7 @@
   [base : String]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.DefFn name params ret _ _)
+    [(AstDecl.DefFn decl-meta name params ret _ _)
       (and
         (string.eq (tc-env-key-name-text name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.Char))
@@ -12294,7 +12289,7 @@
   [base : String]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.DefFn name params ret _ _)
+    [(AstDecl.DefFn decl-meta name params ret _ _)
       (and
         (string.eq (tc-env-key-name-text name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.Bool))
@@ -12315,7 +12310,7 @@
   [base : String]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.DefFn name params ret _ _)
+    [(AstDecl.DefFn decl-meta name params ret _ _)
       (and
         (string.eq (tc-env-key-name-text name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.String))
@@ -12494,7 +12489,7 @@
                   (array-set! counts slot (+ (array-ref counts slot) 1))
                   (match (ast-decl-unwrapped
                     (array-ref decl-slots (+ decl-offset i)))
-                    [(AstDecl.Import _)
+                    [(AstDecl.Import decl-meta _)
                       (array-set!
                         import-counts
                         slot
@@ -12531,7 +12526,7 @@
                         (array-set! ends slot (+ cursor 1))
                         (match (ast-decl-unwrapped
                           (array-ref decl-slots (+ decl-offset i)))
-                          [(AstDecl.Import _)
+                          [(AstDecl.Import decl-meta _)
                             (let
                               [import-cursor : i64 (array-ref import-ends slot)]
                               (begin
@@ -12587,6 +12582,7 @@
                   (struct-get decls offset)
                   (array-ref tc-module-decl-index-positions j)))
                 [(AstDecl.Import
+                    decl-meta
                     (AstImportSpec.Spec
                       _
                       _
@@ -14218,7 +14214,7 @@
       (let
         [rest : AstDeclList rest]
         (match decl
-          [(AstDecl.Import _)
+          [(AstDecl.Import decl-meta _)
             (tc-nominal-owner-name-list rest target index module)]
           [(AstDecl.IncludeStr _ _)
             (tc-nominal-owner-name-list rest target index module)]
@@ -14251,59 +14247,26 @@
                   module)))]
           [(AstDecl.Test _ _ _)
             (tc-nominal-owner-name-list rest target index module)]
-          [(AstDecl.DefEnum name _ _)
+          [(AstDecl.DefEnum decl-meta name _ _)
             (if (= target index)
               (ResultTcString.Ok
                 (compiler-symbol-module-key module (tc-env-key-name-text name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDecl.DefEnumLifetimes name _ _ _)
+          [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
             (if (= target index)
               (ResultTcString.Ok
                 (compiler-symbol-module-key module (tc-env-key-name-text name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDecl.DefStruct name _ _ _)
+          [(AstDecl.DefStruct decl-meta name _ _ _)
             (if (= target index)
               (ResultTcString.Ok
                 (compiler-symbol-module-key module (tc-env-key-name-text name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDecl.DefStructLifetimes name _ _ _ _)
+          [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
             (if (= target index)
               (ResultTcString.Ok
                 (compiler-symbol-module-key module (tc-env-key-name-text name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefEnum name _ _)
-                  (if (= target index)
-                    (ResultTcString.Ok
-                      (compiler-symbol-module-key
-                        module
-                        (tc-env-key-name-text name)))
-                    (tc-nominal-owner-name-list rest target (+ index 1) module))]
-                [(AstDecl.DefEnumLifetimes name _ _ _)
-                  (if (= target index)
-                    (ResultTcString.Ok
-                      (compiler-symbol-module-key
-                        module
-                        (tc-env-key-name-text name)))
-                    (tc-nominal-owner-name-list rest target (+ index 1) module))]
-                [(AstDecl.DefStruct name _ _ _)
-                  (if (= target index)
-                    (ResultTcString.Ok
-                      (compiler-symbol-module-key
-                        module
-                        (tc-env-key-name-text name)))
-                    (tc-nominal-owner-name-list rest target (+ index 1) module))]
-                [(AstDecl.DefStructLifetimes name _ _ _ _)
-                  (if (= target index)
-                    (ResultTcString.Ok
-                      (compiler-symbol-module-key
-                        module
-                        (tc-env-key-name-text name)))
-                    (tc-nominal-owner-name-list rest target (+ index 1) module))]
-                [_ (tc-nominal-owner-name-list rest target (+ index 1) module)]))]
           [_ (tc-nominal-owner-name-list rest target (+ index 1) module)]))]))
 
 (define (tc-nominal-owner-name-scan
@@ -14395,10 +14358,10 @@
 
 (define (tc-decl-nominal-name-id-matches? [decl : AstDecl] [name-id : i64]) : bool
   (match decl
-    [(AstDecl.DefEnum name _ _) (= name name-id)]
-    [(AstDecl.DefEnumLifetimes name _ _ _) (= name name-id)]
-    [(AstDecl.DefStruct name _ _ _) (= name name-id)]
-    [(AstDecl.DefStructLifetimes name _ _ _ _) (= name name-id)]
+    [(AstDecl.DefEnum decl-meta name _ _) (= name name-id)]
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ _) (= name name-id)]
+    [(AstDecl.DefStruct decl-meta name _ _ _) (= name name-id)]
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _) (= name name-id)]
     [_ false]))
 
 (define (tc-symbols-unique-nominal-name-id?
@@ -14777,12 +14740,13 @@
 
 (define (tc-nominal-lifetimes-from-decl [decl : AstDecl]) : ResultTcLifetimeList
   (match decl
-    [(AstDecl.DefEnum _ _ _) (ResultTcLifetimeList.Ok (ast-lifetime-list-new))]
-    [(AstDecl.DefEnumLifetimes _ lifetimes _ _)
-      (ResultTcLifetimeList.Ok lifetimes)]
-    [(AstDecl.DefStruct _ _ _ _)
+    [(AstDecl.DefEnum decl-meta _ _ _)
       (ResultTcLifetimeList.Ok (ast-lifetime-list-new))]
-    [(AstDecl.DefStructLifetimes _ lifetimes _ _ _)
+    [(AstDecl.DefEnumLifetimes decl-meta _ lifetimes _ _)
+      (ResultTcLifetimeList.Ok lifetimes)]
+    [(AstDecl.DefStruct decl-meta _ _ _ _)
+      (ResultTcLifetimeList.Ok (ast-lifetime-list-new))]
+    [(AstDecl.DefStructLifetimes decl-meta _ lifetimes _ _ _)
       (ResultTcLifetimeList.Ok lifetimes)]
     [_ (ResultTcLifetimeList.Err "typecheck: nominal type not found")]))
 
@@ -14802,30 +14766,25 @@
   [lookup-id : i64]
   [module-id : i64]) : ResultTcLifetimeList
   (match decl
-    [(AstDecl.DefEnum name _ _)
+    [(AstDecl.DefEnum decl-meta name _ _)
       (if (tc-nominal-decl-name-id-matches? lookup-id module-id name)
         (ResultTcLifetimeList.Ok (ast-lifetime-list-new))
         (ResultTcLifetimeList.Err "typecheck: nominal type not found"))]
-    [(AstDecl.DefEnumLifetimes name lifetimes _ _)
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes _ _)
       (if (tc-nominal-decl-name-id-matches? lookup-id module-id name)
         (ResultTcLifetimeList.Ok lifetimes)
         (ResultTcLifetimeList.Err "typecheck: nominal type not found"))]
-    [(AstDecl.DefStruct name _ _ _)
+    [(AstDecl.DefStruct decl-meta name _ _ _)
       (if (tc-nominal-decl-name-id-matches? lookup-id module-id name)
         (ResultTcLifetimeList.Ok (ast-lifetime-list-new))
         (ResultTcLifetimeList.Err "typecheck: nominal type not found"))]
-    [(AstDecl.DefStructLifetimes name lifetimes _ _ _)
+    [(AstDecl.DefStructLifetimes decl-meta name lifetimes _ _ _)
       (if (tc-nominal-decl-name-id-matches? lookup-id module-id name)
         (ResultTcLifetimeList.Ok lifetimes)
         (ResultTcLifetimeList.Err "typecheck: nominal type not found"))]
     [(AstDecl.Unsafe inner-box)
       (tc-program-nominal-lifetimes-from-decl
         (box-get inner-box)
-        lookup-id
-        module-id)]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (tc-program-nominal-lifetimes-from-decl
-        (box-get template-box)
         lookup-id
         module-id)]
     [_ (ResultTcLifetimeList.Err "typecheck: nominal type not found")]))
@@ -16286,7 +16245,7 @@
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
   (match decl
-    [(AstDecl.Def _ maybe-ty expr-box)
+    [(AstDecl.Def decl-meta _ maybe-ty expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
@@ -16299,7 +16258,7 @@
                   (tc-source-expr-spmd-broadcast-scope-ok expr false)]
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDecl.DefFn _ params ret body-box _)
+    [(AstDecl.DefFn decl-meta _ params ret body-box _)
       (match (tc-elide-function-signature params ret)
         [(ResultTcElidedSignature.Ok signature)
           (let
@@ -16324,7 +16283,7 @@
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
         [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
-    [(AstDecl.DefMacro _ params ret body-box)
+    [(AstDecl.DefMacro decl-meta _ params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match (tc-source-macro-param-list-policy-ok ctx params)
@@ -16337,13 +16296,13 @@
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDecl.Extern _ _ _ ty) (tc-source-type-policy-ok ctx ty)]
-    [(AstDecl.DefEnum name _ variants)
+    [(AstDecl.Extern decl-meta _ _ _ ty) (tc-source-type-policy-ok ctx ty)]
+    [(AstDecl.DefEnum decl-meta name _ variants)
       (match (tc-source-variant-list-policy-ok ctx variants)
         [(ResultTcUnit.Ok)
           (tc-source-default-aggregate-layout-finite-ok ctx name)]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(AstDecl.DefEnumLifetimes name lifetimes _ variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes _ variants)
       (if (tc-lifetime-list-duplicates? lifetimes)
         (ResultTcUnit.Err "typecheck: duplicate lifetime parameter")
         (match (tc-source-variant-list-lifetimes-policy-ok
@@ -16353,7 +16312,7 @@
           [(ResultTcUnit.Ok)
             (tc-source-default-aggregate-layout-finite-ok ctx name)]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDecl.DefStruct name repr cleanup fields)
+    [(AstDecl.DefStruct decl-meta name repr cleanup fields)
       (match (tc-source-field-list-policy-ok ctx fields)
         [(ResultTcUnit.Ok)
           (if (and (ast-struct-repr-c? repr) (ast-struct-cleanup? cleanup))
@@ -16364,7 +16323,7 @@
                   (tc-env-key-name-text name))))
             (tc-source-default-struct-layout-finite-ok ctx name repr))]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(AstDecl.DefStructLifetimes name lifetimes repr cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta name lifetimes repr cleanup fields)
       (if (tc-lifetime-list-duplicates? lifetimes)
         (ResultTcUnit.Err "typecheck: duplicate lifetime parameter")
         (match (tc-source-field-list-lifetimes-policy-ok ctx lifetimes fields)
@@ -16377,7 +16336,7 @@
                     (tc-env-key-name-text name))))
               (tc-source-default-struct-layout-finite-ok ctx name repr))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDecl.DefDispatch _ variants)
+    [(AstDecl.DefDispatch decl-meta _ variants)
       (if (!= (tc-dispatch-variant-list-scalar-count variants) 1)
         (ResultTcUnit.Err
           "typecheck: defdispatch requires exactly one scalar variant")
@@ -16396,7 +16355,7 @@
     [(AstDecl.IncludeBin _ _)
       (ResultTcUnit.Err
         "typecheck: include-bin must be expanded by compiler loader")]
-    [(AstDecl.Import _) ResultTcUnit.Ok]
+    [(AstDecl.Import decl-meta _) ResultTcUnit.Ok]
     [(AstDecl.Module _) ResultTcUnit.Ok]
     ;; Module bodies are traversed by the declaration-list diagnostic adapter,
     ;; which retains their nested list origin and owning path.
@@ -16408,11 +16367,7 @@
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (tc-source-decl-policy-ok ctx inner))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (tc-source-decl-policy-ok ctx template))]))
+        (tc-source-decl-policy-ok ctx inner))]))
 
 (defenum ResultTcSourcePolicyDiagnostic
   (Ok)
@@ -19824,7 +19779,7 @@
 
 (define (tc-top-decl-type [ctx : TcContext] [decl : AstDecl]) : ResultTcType
   (match decl
-    [(AstDecl.Def _ maybe-ty expr-box)
+    [(AstDecl.Def decl-meta _ maybe-ty expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (match maybe-ty
@@ -19836,7 +19791,7 @@
               [_
                 (ResultTcType.Err
                   "typecheck: top-level value requires annotation")])]))]
-    [(AstDecl.DefFn _ params ret _ _)
+    [(AstDecl.DefFn decl-meta _ params ret _ _)
       (match (tc-elide-function-signature params ret)
         [(ResultTcElidedSignature.Ok signature)
           (ResultTcType.Ok
@@ -19844,8 +19799,9 @@
               (tc-param-type-list ctx (struct-get signature params))
               (tc-resolve-type ctx (struct-get signature ret))))]
         [(ResultTcElidedSignature.Err message) (ResultTcType.Err message)])]
-    [(AstDecl.Extern _ _ _ ty) (ResultTcType.Ok (tc-resolve-type ctx ty))]
-    [(AstDecl.DefDispatch name variants)
+    [(AstDecl.Extern decl-meta _ _ _ ty)
+      (ResultTcType.Ok (tc-resolve-type ctx ty))]
+    [(AstDecl.DefDispatch decl-meta name variants)
       (tc-dispatch-decl-type ctx name variants)]
     [(AstDecl.Unsafe inner-box)
       (let
@@ -19866,7 +19822,7 @@
   [env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcType
   (match decl
-    [(AstDecl.Def _ maybe-ty expr-box)
+    [(AstDecl.Def decl-meta _ maybe-ty expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (match maybe-ty
@@ -20074,7 +20030,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDecl.DefFn name _ _ _ _)
+          [(AstDecl.DefFn decl-meta name _ _ _ _)
             (match (tc-top-decl-type
               (tc-context-with-module-id ctx module module-id)
               inner)
@@ -20085,7 +20041,7 @@
                     (tc-module-name-id-by-id module-id name)
                     ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-          [(AstDecl.Extern name kind _ _)
+          [(AstDecl.Extern decl-meta name kind _ _)
             (let
               [extern-ctx : TcContext
                 (tc-context-with-module-id ctx module module-id)]
@@ -20103,7 +20059,7 @@
                         ty)))]
                 [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
           [_ (ResultTcEnv.Ok env)]))]
-    [(AstDecl.Def name _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (match (tc-top-decl-type-with-env
         (tc-context-with-module-id ctx module module-id)
         env
@@ -20112,7 +20068,7 @@
           (ResultTcEnv.Ok
             (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (match (tc-top-decl-type
         (tc-context-with-module-id ctx module module-id)
         decl)
@@ -20120,7 +20076,7 @@
           (ResultTcEnv.Ok
             (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (match (tc-top-decl-type
         (tc-context-with-module-id ctx module module-id)
         decl)
@@ -20128,8 +20084,8 @@
           (ResultTcEnv.Ok
             (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.DefMacro _ _ _ _) (ResultTcEnv.Ok env)]
-    [(AstDecl.Extern name kind _ _)
+    [(AstDecl.DefMacro decl-meta _ _ _ _) (ResultTcEnv.Ok env)]
+    [(AstDecl.Extern decl-meta name kind _ _)
       (let
         [extern-ctx : TcContext
           (tc-context-with-module-id ctx module module-id)]
@@ -20143,7 +20099,7 @@
                   ty)
                 (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDecl.DefEnum name cleanup variants)
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [enum-ty : AstType
           (AstType.Enum (tc-module-name-id-by-id module-id name))]
@@ -20162,7 +20118,7 @@
                 cleanup
                 enum-ty))]
           [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (let
         [enum-ty : AstType
           (ast-ty-enum-args (tc-module-name-id-by-id module-id name) lifetimes)]
@@ -20181,7 +20137,7 @@
                 cleanup
                 enum-ty))]
           [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDecl.DefStruct name _ cleanup fields)
+    [(AstDecl.DefStruct decl-meta name _ cleanup fields)
       (let
         [struct-ty : AstType
           (AstType.Struct (tc-module-name-id-by-id module-id name))]
@@ -20200,7 +20156,7 @@
             module-id
             cleanup
             struct-ty)))]
-    [(AstDecl.DefStructLifetimes name lifetimes _ cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta name lifetimes _ cleanup fields)
       (let
         [struct-ty : AstType
           (ast-ty-struct-args
@@ -20221,11 +20177,7 @@
             module-id
             cleanup
             struct-ty)))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (tc-build-top-env-bind-decl-in-module ctx env module module-id template))]
-    [(AstDecl.Import _) (ResultTcEnv.Ok env)]
+    [(AstDecl.Import decl-meta _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeStr _ _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeStrComptime _ _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeStrLzss _ _) (ResultTcEnv.Ok env)]
@@ -20440,7 +20392,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDecl.DefFn name _ _ _ _)
+          [(AstDecl.DefFn decl-meta name _ _ _ _)
             (match (tc-import-alias-source-value-type env module name)
               [(ResultTcType.Ok ty)
                 (ResultTcEnv.Ok
@@ -20454,7 +20406,7 @@
                     name
                     ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-          [(AstDecl.Extern name kind _ _)
+          [(AstDecl.Extern decl-meta name kind _ _)
             (let
               [extern-ctx : TcContext
                 (tc-context-with-module-id ctx (intern-str module) module)]
@@ -20482,7 +20434,7 @@
                         ty)))]
                 [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
           [_ (ResultTcEnv.Ok env)]))]
-    [(AstDecl.Def name _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (match (tc-import-alias-source-value-type env module name)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok
@@ -20496,7 +20448,7 @@
               name
               ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (match (tc-import-alias-source-value-type env module name)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok
@@ -20510,7 +20462,7 @@
               name
               ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (match (tc-import-alias-source-value-type env module name)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok
@@ -20524,7 +20476,7 @@
               name
               ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.Extern name kind _ _)
+    [(AstDecl.Extern decl-meta name kind _ _)
       (let
         [extern-ctx : TcContext
           (tc-context-with-module-id ctx (intern-str module) module)]
@@ -20551,7 +20503,7 @@
                   name
                   ty)))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDecl.DefEnum name cleanup variants)
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [scoped-name-id : i64 (tc-module-name-id-by-id module name)]
         [enum-ty : AstType (AstType.Enum scoped-name-id)]
@@ -20574,7 +20526,7 @@
             import-unqualified
             cleanup
             enum-ty)))]
-    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (let
         [scoped-name-id : i64 (tc-module-name-id-by-id module name)]
         [enum-ty : AstType (ast-ty-enum-args scoped-name-id lifetimes)]
@@ -20597,7 +20549,7 @@
             import-unqualified
             cleanup
             enum-ty)))]
-    [(AstDecl.DefStruct name _ cleanup fields)
+    [(AstDecl.DefStruct decl-meta name _ cleanup fields)
       (let
         [struct-ty : AstType
           (AstType.Struct (tc-module-name-id-by-id module name))]
@@ -20622,7 +20574,7 @@
                 cleanup
                 struct-ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDecl.DefStructLifetimes name lifetimes _ cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta name lifetimes _ cleanup fields)
       (let
         [struct-ty : AstType
           (ast-ty-struct-args (tc-module-name-id-by-id module name) lifetimes)]
@@ -20647,17 +20599,6 @@
                 cleanup
                 struct-ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (tc-bind-import-alias-decl-in-module
-          ctx
-          env
-          alias
-          importer-module
-          import-unqualified
-          module
-          template))]
     [_ (ResultTcEnv.Ok env)]))
 
 (define (tc-bind-import-alias-module-list
@@ -20688,7 +20629,7 @@
                   (begin
                     (set! cur-module-id next-module)
                     (set! cur rest))]
-                [(AstDecl.Import _) (set! cur rest)]
+                [(AstDecl.Import decl-meta _) (set! cur rest)]
                 [(AstDecl.IncludeStr _ _) (set! cur rest)]
                 [(AstDecl.IncludeStrComptime _ _) (set! cur rest)]
                 [(AstDecl.IncludeStrLzss _ _) (set! cur rest)]
@@ -20813,6 +20754,7 @@
                     (set! cur-module-id next-module)
                     (set! cur rest))]
                 [(AstDecl.Import
+                    decl-meta
                     (AstImportSpec.Spec
                       _
                       _
@@ -20996,12 +20938,12 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDecl.DefFn name _ _ _ _)
+          [(AstDecl.DefFn decl-meta name _ _ _ _)
             (match (tc-top-decl-type ctx inner)
               [(ResultTcType.Ok ty)
                 (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-          [(AstDecl.Extern name kind _ _)
+          [(AstDecl.Extern decl-meta name kind _ _)
             (match (tc-top-decl-type ctx inner)
               [(ResultTcType.Ok ty)
                 (ResultTcEnv.Ok
@@ -21010,19 +20952,19 @@
                     (tc-bind-unsafe-id env name ty)))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [_ (ResultTcEnv.Ok env)]))]
-    [(AstDecl.Def name _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (match (tc-top-decl-type-with-env ctx env decl)
         [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (match (tc-top-decl-type ctx decl)
         [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (match (tc-top-decl-type ctx decl)
         [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.Extern name kind _ _)
+    [(AstDecl.Extern decl-meta name kind _ _)
       (match (tc-top-decl-type ctx decl)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok
@@ -21030,7 +20972,7 @@
               (tc-bind-c-abi-fnptr-id env name ty)
               (tc-bind-id env name ty)))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.DefEnum name cleanup variants)
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [name-str : String (tc-env-key-name-text name)]
         [scoped-name : i64
@@ -21047,7 +20989,7 @@
               variants)
             cleanup
             enum-ty)))]
-    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (let
         [name-str : String (tc-env-key-name-text name)]
         [scoped-name : i64
@@ -21064,7 +21006,7 @@
               variants)
             cleanup
             enum-ty)))]
-    [(AstDecl.DefStruct name _ cleanup fields)
+    [(AstDecl.DefStruct decl-meta name _ cleanup fields)
       (let
         [struct-ty : AstType
           (AstType.Struct
@@ -21076,7 +21018,7 @@
             (tc-bind-id env name constructor-ty)
             cleanup
             struct-ty)))]
-    [(AstDecl.DefStructLifetimes name lifetimes _ cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta name lifetimes _ cleanup fields)
       (let
         [struct-ty : AstType
           (ast-ty-struct-args
@@ -21090,6 +21032,7 @@
             cleanup
             struct-ty)))]
     [(AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec
           _
           _
@@ -21108,10 +21051,6 @@
               (tc-context-module-id ctx)
               true)])
         (ResultTcEnv.Ok env))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (tc-module-local-env-add-decl ctx env template))]
     [_ (ResultTcEnv.Ok env)]))
 
 (define (tc-module-local-env-list
@@ -22731,15 +22670,13 @@
 
 (define (tc-call-decl-param-name-at [decl : AstDecl] [index : i64]) : TcMaybeNameId
   (match decl
-    [(AstDecl.DefFn _ params _ _ _)
+    [(AstDecl.DefFn decl-meta _ params _ _ _)
       (tc-call-param-list-name-at (& params) index)]
-    [(AstDecl.DefStruct _ _ _ fields)
+    [(AstDecl.DefStruct decl-meta _ _ _ fields)
       (tc-call-field-list-name-at (& fields) index)]
-    [(AstDecl.DefStructLifetimes _ _ _ _ fields)
+    [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
       (tc-call-field-list-name-at (& fields) index)]
     [(AstDecl.Unsafe inner-box)
-      (tc-call-decl-param-name-at (box-get inner-box) index)]
-    [(AstDecl.ComptimeDecl _ inner-box)
       (tc-call-decl-param-name-at (box-get inner-box) index)]
     [_ TcMaybeNameId.No]))
 
@@ -23645,7 +23582,7 @@
       (match (compiler-symbols-decl-at-index
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle))
-        [(ResultAstDecl.Ok (AstDecl.Extern _ kind metadata _))
+        [(ResultAstDecl.Ok (AstDecl.Extern decl-meta _ kind metadata _))
           (match kind
             [(AstExternKind.Function)
               (TcMaybeExternAbi.Some
@@ -26574,9 +26511,9 @@
 
 (define (tc-clone-root-collection-decl-key [module-id : i64] [decl : AstDecl]) : i64
   (match (ast-decl-unwrapped decl)
-    [(AstDecl.Def name _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
     [_ -1]))
 
@@ -28194,7 +28131,7 @@
   [module-id : i64]
   [decl : AstDecl]) : ResultTcSpmdInlineHelper
   (match decl
-    [(AstDecl.DefFn _ params ret body-box _)
+    [(AstDecl.DefFn decl-meta _ params ret body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (ResultTcSpmdInlineHelper.Ok
@@ -28203,10 +28140,6 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (tc-spmd-inline-helper-from-decl name-id module-id inner))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (tc-spmd-inline-helper-from-decl name-id module-id template))]
     [_ (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No))]))
 
 (define (tc-spmd-inline-helper-lookup
@@ -28466,7 +28399,7 @@
       (let
         [rest : AstDeclList rest]
         (match decl
-          [(AstDecl.Import (AstImportSpec.Spec _ path _ _ _))
+          [(AstDecl.Import decl-meta (AstImportSpec.Spec _ path _ _ _))
             (or
               (tc-spmd-atomic-import-path? path)
               (tc-spmd-program-imports-atomic? rest))]
@@ -28504,7 +28437,7 @@
       (compiler-symbol-handle-index handle))
       [(ResultAstDecl.Ok decl)
         (match decl
-          [(AstDecl.Extern _ kind metadata _)
+          [(AstDecl.Extern decl-meta _ kind metadata _)
             (match kind
               [(AstExternKind.Function)
                 (let
@@ -32821,17 +32754,10 @@
   [decl : AstDecl]
   [position : i64]) : unit
   (match decl
-    [(AstDecl.DefEnum name _ _)
+    [(AstDecl.DefEnum decl-meta name _ _)
       (tc-program-enum-index-bind-name! positions module-id name position)]
-    [(AstDecl.DefEnumLifetimes name _ _ _)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
       (tc-program-enum-index-bind-name! positions module-id name position)]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (match (box-get template-box)
-        [(AstDecl.DefEnum name _ _)
-          (tc-program-enum-index-bind-name! positions module-id name position)]
-        [(AstDecl.DefEnumLifetimes name _ _ _)
-          (tc-program-enum-index-bind-name! positions module-id name position)]
-        [_ unit])]
     [_ unit]))
 
 (define (tc-program-enum-index-ensure! [decls : AstDeclList]) : unit
@@ -32881,17 +32807,10 @@
   [decl : AstDecl]
   [enum-name : String]) : ResultAstVariantDefList
   (match decl
-    [(AstDecl.DefEnum _ _ variants) (ResultAstVariantDefList.Ok variants)]
-    [(AstDecl.DefEnumLifetimes _ _ _ variants)
+    [(AstDecl.DefEnum decl-meta _ _ variants)
       (ResultAstVariantDefList.Ok variants)]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (match (box-get template-box)
-        [(AstDecl.DefEnum _ _ variants) (ResultAstVariantDefList.Ok variants)]
-        [(AstDecl.DefEnumLifetimes _ _ _ variants)
-          (ResultAstVariantDefList.Ok variants)]
-        [_
-          (ResultAstVariantDefList.Err
-            (string.append "typecheck: unknown enum " enum-name))])]
+    [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
+      (ResultAstVariantDefList.Ok variants)]
     [_
       (ResultAstVariantDefList.Err
         (string.append "typecheck: unknown enum " enum-name))]))
@@ -32937,9 +32856,9 @@
           (compiler-symbol-handle-index handle))
           [(ResultAstDecl.Ok decl)
             (match decl
-              [(AstDecl.DefEnum _ _ variants)
+              [(AstDecl.DefEnum decl-meta _ _ variants)
                 (ResultAstVariantDefList.Ok variants)]
-              [(AstDecl.DefEnumLifetimes _ _ _ variants)
+              [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
                 (ResultAstVariantDefList.Ok variants)]
               [_
                 (ResultAstVariantDefList.Err
@@ -32965,8 +32884,9 @@
       (compiler-symbol-handle-index handle))
       [(ResultAstDecl.Ok decl)
         (match decl
-          [(AstDecl.DefEnum _ _ variants) (ResultAstVariantDefList.Ok variants)]
-          [(AstDecl.DefEnumLifetimes _ _ _ variants)
+          [(AstDecl.DefEnum decl-meta _ _ variants)
+            (ResultAstVariantDefList.Ok variants)]
+          [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
             (ResultAstVariantDefList.Ok variants)]
           [_
             (ResultAstVariantDefList.Err
@@ -33440,9 +33360,15 @@
               (compiler-symbol-handle-index handle))
               [(ResultAstDecl.Ok decl)
                 (match decl
-                  [(AstDecl.DefStruct _ repr cleanup fields)
+                  [(AstDecl.DefStruct decl-meta _ repr cleanup fields)
                     (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
-                  [(AstDecl.DefStructLifetimes _ _ repr cleanup fields)
+                  [(AstDecl.DefStructLifetimes
+                      decl-meta
+                      _
+                      _
+                      repr
+                      cleanup
+                      fields)
                     (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
                   [_
                     (ResultTcStructDecl.Err
@@ -33470,9 +33396,9 @@
       (compiler-symbol-handle-index handle))
       [(ResultAstDecl.Ok decl)
         (match decl
-          [(AstDecl.DefStruct _ repr cleanup fields)
+          [(AstDecl.DefStruct decl-meta _ repr cleanup fields)
             (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
-          [(AstDecl.DefStructLifetimes _ _ repr cleanup fields)
+          [(AstDecl.DefStructLifetimes decl-meta _ _ repr cleanup fields)
             (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
           [_
             (ResultTcStructDecl.Err
@@ -33498,9 +33424,9 @@
               (compiler-symbol-handle-index handle))
               [(ResultAstDecl.Ok decl)
                 (match decl
-                  [(AstDecl.DefEnum _ cleanup variants)
+                  [(AstDecl.DefEnum decl-meta _ cleanup variants)
                     (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
-                  [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
+                  [(AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
                     (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
                   [_
                     (ResultTcEnumDecl.Err
@@ -34968,13 +34894,13 @@
   [module-id : i64]
   [template : AstDecl]) : CtfeLayoutInfoList
   (match template
-    [(AstDecl.DefStruct name _ _ _)
+    [(AstDecl.DefStruct decl-meta name _ _ _)
       (tc-ctfe-layouts-add-struct ctx layouts module module-id name)]
-    [(AstDecl.DefStructLifetimes name _ _ _ _)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
       (tc-ctfe-layouts-add-struct ctx layouts module module-id name)]
-    [(AstDecl.DefEnum name _ _)
+    [(AstDecl.DefEnum decl-meta name _ _)
       (tc-ctfe-layouts-add-enum ctx layouts module module-id name)]
-    [(AstDecl.DefEnumLifetimes name _ _ _)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
       (tc-ctfe-layouts-add-enum ctx layouts module module-id name)]
     [_ layouts]))
 
@@ -34995,18 +34921,17 @@
         (begin
           (if (match (ast-decl-list-ref-borrowed (& decls) index)
             [(AstDecl.Module _) true]
-            [(AstDecl.DefStruct _ _ _ _) true]
-            [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
-            [(AstDecl.DefEnum _ _ _) true]
-            [(AstDecl.DefEnumLifetimes _ _ _ _) true]
-            [(AstDecl.ComptimeDecl _ _) true]
+            [(AstDecl.DefStruct decl-meta _ _ _ _) true]
+            [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
+            [(AstDecl.DefEnum decl-meta _ _ _) true]
+            [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) true]
             [_ false])
             (match (ast-decl-list-ref decls index)
               [(AstDecl.Module next-module)
                 (begin
                   (set! current-module (intern-str next-module))
                   (set! current-module-id next-module))]
-              [(AstDecl.DefStruct name _ _ _)
+              [(AstDecl.DefStruct decl-meta name _ _ _)
                 (set!
                   current-layouts
                   (tc-ctfe-layouts-add-struct
@@ -35015,7 +34940,7 @@
                     current-module
                     current-module-id
                     name))]
-              [(AstDecl.DefStructLifetimes name _ _ _ _)
+              [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
                 (set!
                   current-layouts
                   (tc-ctfe-layouts-add-struct
@@ -35024,7 +34949,7 @@
                     current-module
                     current-module-id
                     name))]
-              [(AstDecl.DefEnum name _ _)
+              [(AstDecl.DefEnum decl-meta name _ _)
                 (set!
                   current-layouts
                   (tc-ctfe-layouts-add-enum
@@ -35033,7 +34958,7 @@
                     current-module
                     current-module-id
                     name))]
-              [(AstDecl.DefEnumLifetimes name _ _ _)
+              [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
                 (set!
                   current-layouts
                   (tc-ctfe-layouts-add-enum
@@ -35042,15 +34967,6 @@
                     current-module
                     current-module-id
                     name))]
-              [(AstDecl.ComptimeDecl _ template-box)
-                (set!
-                  current-layouts
-                  (tc-ctfe-layouts-add-template
-                    ctx
-                    current-layouts
-                    current-module
-                    current-module-id
-                    (box-get template-box)))]
               [_ unit])
             unit)
           (set! index (+ index 1))))
@@ -35384,7 +35300,7 @@
       (let
         [rest : AstDeclList rest]
         (match decl
-          [(AstDecl.Import _)
+          [(AstDecl.Import decl-meta _)
             (tc-variant-owner-name-list rest target index module)]
           [(AstDecl.IncludeStr _ _)
             (tc-variant-owner-name-list rest target index module)]
@@ -35402,33 +35318,15 @@
               (intern-str next-module))]
           [(AstDecl.Test _ _ _)
             (tc-variant-owner-name-list rest target index module)]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (if (= target index)
-                (match template
-                  [(AstDecl.DefEnum name _ _)
-                    (ResultTcString.Ok
-                      (compiler-symbol-module-key
-                        module
-                        (tc-env-key-name-text name)))]
-                  [(AstDecl.DefEnumLifetimes name _ _ _)
-                    (ResultTcString.Ok
-                      (compiler-symbol-module-key
-                        module
-                        (tc-env-key-name-text name)))]
-                  [_
-                    (ResultTcString.Err "typecheck: variant owner is not enum")])
-                (tc-variant-owner-name-list rest target (+ index 1) module)))]
           [_
             (if (= target index)
               (match decl
-                [(AstDecl.DefEnum name _ _)
+                [(AstDecl.DefEnum decl-meta name _ _)
                   (ResultTcString.Ok
                     (compiler-symbol-module-key
                       module
                       (tc-env-key-name-text name)))]
-                [(AstDecl.DefEnumLifetimes name _ _ _)
+                [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
                   (ResultTcString.Ok
                     (compiler-symbol-module-key
                       module
@@ -37499,13 +37397,13 @@
         (compiler-symbol-handle-index enum-handle))
         [(ResultAstDecl.Ok decl)
           (match decl
-            [(AstDecl.DefEnum _ _ variants)
+            [(AstDecl.DefEnum decl-meta _ _ variants)
               (tc-variant-handle-in-list-at
                 enum-handle
                 variant-id
                 (& variants)
                 0)]
-            [(AstDecl.DefEnumLifetimes _ _ _ variants)
+            [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
               (tc-variant-handle-in-list-at
                 enum-handle
                 variant-id
@@ -41026,16 +40924,12 @@
   (match summary
     [(CompilerTypecheckSummary values functions externs)
       (match decl
-        [(AstDecl.Def _ _ _)
+        [(AstDecl.Def decl-meta _ _ _)
           (CompilerTypecheckSummary (+ values 1) functions externs)]
-        [(AstDecl.DefFn _ _ _ _ _)
+        [(AstDecl.DefFn decl-meta _ _ _ _ _)
           (CompilerTypecheckSummary values (+ functions 1) externs)]
-        [(AstDecl.Extern _ _ _ _)
+        [(AstDecl.Extern decl-meta _ _ _ _)
           (CompilerTypecheckSummary values functions (+ externs 1))]
-        [(AstDecl.ComptimeDecl _ template-box)
-          (let
-            [template : AstDecl (box-get template-box)]
-            (tc-summary-add-decl summary template))]
         [(AstDecl.Unsafe inner-box)
           (let
             [inner : AstDecl (box-get inner-box)]
@@ -42417,11 +42311,11 @@
   [seen : TcStringList]
   [decl : AstDecl]) : ResultTcUnit
   (match decl
-    [(AstDecl.Def _ _ expr-box)
+    [(AstDecl.Def decl-meta _ _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (tc-comptime-purity-expr ctx env TcStringList.Nil chain seen expr))]
-    [(AstDecl.DefFn _ params _ body-box _)
+    [(AstDecl.DefFn decl-meta _ params _ body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (tc-comptime-purity-expr
@@ -42431,14 +42325,14 @@
           chain
           seen
           body))]
-    [(AstDecl.DefMacro _ _ _ _) ResultTcUnit.Ok]
-    [(AstDecl.Extern name _ _ _)
+    [(AstDecl.DefMacro decl-meta _ _ _ _) ResultTcUnit.Ok]
+    [(AstDecl.Extern decl-meta name _ _ _)
       (tc-comptime-purity-error
         (AstExpr.Var name)
         chain
         (tc-env-key-name-text name)
         (str_cat.str-cat "extern reference " (tc-env-key-name-text name)))]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (tc-comptime-purity-error
         (AstExpr.Var name)
         chain
@@ -42451,10 +42345,6 @@
         (str_cat.str-cat
           "typecheck: comptime purity rejects unsafe declaration; reference path: "
           (tc-comptime-purity-chain-render chain)))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (tc-comptime-purity-decl ctx env chain seen template))]
     [_ ResultTcUnit.Ok]))
 
 (define (tc-check-defmacro-purity
@@ -51436,25 +51326,23 @@
 ;; after proving that registry remapping preserves its semantics.
 (define (macro-decl-registry-incremental-safe? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Def _ _ _) true]
-    [(AstDecl.DefFn _ _ _ _ _) true]
-    [(AstDecl.Extern _ _ _ _) true]
-    [(AstDecl.DefEnum _ _ _) true]
-    [(AstDecl.DefEnumLifetimes _ _ _ _) true]
-    [(AstDecl.DefStruct _ _ _ _) true]
-    [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
-    [(AstDecl.DefDispatch _ _) true]
+    [(AstDecl.Def decl-meta _ _ _) true]
+    [(AstDecl.DefFn decl-meta _ _ _ _ _) true]
+    [(AstDecl.Extern decl-meta _ _ _ _) true]
+    [(AstDecl.DefEnum decl-meta _ _ _) true]
+    [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) true]
+    [(AstDecl.DefStruct decl-meta _ _ _ _) true]
+    [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
+    [(AstDecl.DefDispatch decl-meta _ _) true]
     [(AstDecl.Test _ _ _) true]
-    [(AstDecl.Import _) false]
+    [(AstDecl.Import decl-meta _) false]
     [(AstDecl.IncludeStr _ _) false]
     [(AstDecl.IncludeStrComptime _ _) false]
     [(AstDecl.IncludeStrLzss _ _) false]
     [(AstDecl.IncludeBin _ _) false]
-    [(AstDecl.DefMacro _ _ _ _) false]
+    [(AstDecl.DefMacro decl-meta _ _ _ _) false]
     [(AstDecl.Unsafe inner-box)
       (macro-decl-registry-incremental-safe? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-registry-incremental-safe? (box-get template-box))]
     [_ false]))
 
 (define (macro-decls-registry-incremental-safe? [decls : AstDeclList]) : bool
@@ -51474,6 +51362,7 @@
   [module-id : i64]) : bool
   (match decl
     [(AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec
           _
           _
@@ -51486,10 +51375,6 @@
     [(AstDecl.Unsafe inner-box)
       (macro-decl-has-unqualified-import-of-module?
         (box-get inner-box)
-        module-id)]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-has-unqualified-import-of-module?
-        (box-get template-box)
         module-id)]
     [(AstDecl.ModuleBody _ body-box)
       (macro-decls-have-unqualified-import-of-module?
@@ -53399,20 +53284,16 @@
 
 (define (macro-decl-import-placeholder? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ _ _))
       (macro-import-placeholder-kind? kind)]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-import-placeholder? (box-get template-box))]
     [_ false]))
 
 (define (macro-decl-module-import-placeholder? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ _ _))
       (match kind
         [(AstImportKind.Macro _ _) true]
         [_ false])]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-module-import-placeholder? (box-get template-box))]
     [_ false]))
 
 (define (macro-wrap-generated-decl
@@ -53421,7 +53302,7 @@
   [key : String]) : AstDecl
   (match decl
     [(AstDecl.Module _) decl]
-    [(AstDecl.Import _)
+    [(AstDecl.Import decl-meta _)
       (ast-decl-comptime-decl-with-meta
         (macro-generated-meta generator "import" key)
         decl)]
@@ -53510,8 +53391,9 @@
   [decl : AstDecl]
   [definition-module : i64]) : AstDecl
   (match decl
-    [(AstDecl.Import (AstImportSpec.Spec kind path target alias span))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind path target alias span))
       (AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec
           (macro-generated-context-import-kind kind definition-module)
           path
@@ -53520,10 +53402,6 @@
           span))]
     [(AstDecl.Unsafe inner-box)
       (ast-decl-unsafe
-        (macro-generated-context-decl (box-get inner-box) definition-module))]
-    [(AstDecl.ComptimeDecl meta inner-box)
-      (ast-decl-comptime-decl-with-meta
-        meta
         (macro-generated-context-decl (box-get inner-box) definition-module))]
     [(AstDecl.ModuleBody name body-box)
       (ast-decl-module-body-id
@@ -53552,42 +53430,20 @@
       out)))
 
 (define (macro-decl-generated-key? [decl : AstDecl] [key : String]) : bool
-  (match decl
-    [(AstDecl.ComptimeDecl meta template-box)
-      (match meta
-        [(AstGeneratedDeclMeta.Some _ _ _ meta-key)
-          (if (string.eq meta-key key)
-            true
-            (macro-decl-generated-key? (box-get template-box) key))]
-        [(AstGeneratedDeclMeta.No)
-          (macro-decl-generated-key? (box-get template-box) key)])]
-    [(AstDecl.Unsafe inner-box)
-      (macro-decl-generated-key? (box-get inner-box) key)]
-    [_ false]))
+  (match (ast-decl-generated-meta decl)
+    [(AstGeneratedDeclMeta.Some _ _ _ meta-key) (string.eq meta-key key)]
+    [(AstGeneratedDeclMeta.No) false]))
 
 (define (macro-decl-generated-import-placeholder?
   [decl : AstDecl]
   [key : String]) : bool
-  (match decl
-    [(AstDecl.ComptimeDecl meta template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (match meta
-          [(AstGeneratedDeclMeta.Some _ _ _ meta-key)
-            (if (string.eq meta-key key)
-              (macro-decl-import-placeholder? template)
-              (macro-decl-generated-import-placeholder? template key))]
-          [(AstGeneratedDeclMeta.No)
-            (macro-decl-generated-import-placeholder? template key)]))]
-    [(AstDecl.Unsafe inner-box)
-      (macro-decl-generated-import-placeholder? (box-get inner-box) key)]
-    [_ false]))
+  (and
+    (macro-decl-generated-key? decl key)
+    (macro-decl-import-placeholder? decl)))
 
 (define (macro-decl-import? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Import _) true]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-import? (box-get template-box))]
+    [(AstDecl.Import decl-meta _) true]
     [(AstDecl.Unsafe inner-box) (macro-decl-import? (box-get inner-box))]
     [_ false]))
 
@@ -54135,9 +53991,7 @@
 ;; per-declaration gen-decl-eq? comparison gen-register-generated-decl applies
 ;; in gen-normalize: unwrap the generated-meta wrappers and compare templates.
 (define (macro-generated-decls-splice-template [decl : AstDecl]) : AstDecl
-  (match decl
-    [(AstDecl.ComptimeDecl _ template-box) (box-get template-box)]
-    [_ decl]))
+  decl)
 
 (define (macro-generated-decls-splice-equal?
   [a : AstDeclList]
@@ -54215,14 +54069,9 @@
                 (compiler-diagnostic-primary-span located))))))]))
 
 (define (macro-decl-generated? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDecl.ComptimeDecl meta template-box)
-      (match meta
-        [(AstGeneratedDeclMeta.Some _ _ _ _) true]
-        [(AstGeneratedDeclMeta.No)
-          (macro-decl-generated? (box-get template-box))])]
-    [(AstDecl.Unsafe inner-box) (macro-decl-generated? (box-get inner-box))]
-    [_ false]))
+  (match (ast-decl-generated-meta decl)
+    [(AstGeneratedDeclMeta.Some _ _ _ _) true]
+    [(AstGeneratedDeclMeta.No) false]))
 
 (define (macro-generated-visible-name [decl : AstDecl]) : SpecMaybeString
   (if (and (macro-decl-generated? decl) (not (macro-decl-import? decl)))
@@ -55902,14 +55751,12 @@
   [module-id : i64]
   [acc : TcNameIdList]) : TcNameIdList
   (match decl
-    [(AstDecl.DefMacro name _ _ _)
+    [(AstDecl.DefMacro decl-meta name _ _ _)
       (begin
         (ctfe-module-macro-export-add-id! module-id name)
         (tc-name-id-list-add acc name))]
     [(AstDecl.Unsafe inner-box)
       (macro-collect-decl-name (box-get inner-box) module-id acc)]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-collect-decl-name (box-get template-box) module-id acc)]
     [_ acc]))
 
 (define (macro-collect-macro-names [decls : AstDeclList] [acc : TcNameIdList]) : TcNameIdList
@@ -56378,7 +56225,7 @@
   [module : String]
   [acc : TcStringList]) : TcStringList
   (match decl
-    [(AstDecl.DefMacro name _ _ body-box)
+    [(AstDecl.DefMacro decl-meta name _ _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         [name-str : String (tc-env-key-name-text name)]
@@ -56387,8 +56234,6 @@
           acc))]
     [(AstDecl.Unsafe inner-box)
       (macro-collect-expr-type-decl-name (box-get inner-box) module acc)]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-collect-expr-type-decl-name (box-get template-box) module acc)]
     [_ acc]))
 
 (define (macro-collect-expr-type-macro-names-in
@@ -57985,7 +57830,7 @@
   [module-id : i64]
   [declaration-id : i64]) : MacroMaybeDecl
   (match decl
-    [(AstDecl.DefMacro name params ret body-box)
+    [(AstDecl.DefMacro decl-meta name params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (MacroMaybeDecl.Some name module-id declaration-id params ret body))]
@@ -57993,10 +57838,6 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (macro-decl-from-decl inner module-id declaration-id))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (macro-decl-from-decl template module-id declaration-id))]
     [_ (MacroMaybeDecl.No)]))
 
 ;; Resolve a macro decl from its symbol-table index in O(1). The symbols decls
@@ -58005,7 +57846,7 @@
 ;; writes the array slot and registers the handle with one shared `index`,
 ;; skipping the identical Import/IncludeStr/IncludeBin/Export/Module/Test set
 ;; that the old linear scan skipped. The array already stores the unwrapped decl
-;; (compiler-symbol-indexed-decl peels AstDecl.Unsafe/AstDecl.ComptimeDecl the same
+;; (compiler-symbol-indexed-decl peels AstDecl.Unsafe the same
 ;; way macro-decl-from-decl does), so direct module lookups return the identical
 ;; MacroMaybeDecl.Some the previous O(decls) macro-find-decl-by-index walk produced.
 (define (macro-decl-owner-module-or
@@ -58061,7 +57902,8 @@
   [decl : AstDecl]
   [alias-id : i64]) : TcMaybeNameId
   (match (ast-decl-unwrapped decl)
-    [(AstDecl.Import spec) (macro-import-alias-target-from-spec spec alias-id)]
+    [(AstDecl.Import decl-meta spec)
+      (macro-import-alias-target-from-spec spec alias-id)]
     [_ (TcMaybeNameId.No)]))
 
 (define (macro-import-alias-target-ids
@@ -58494,7 +58336,9 @@
           (begin
             (match (ast-decl-unwrapped decl)
               [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-              [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
+              [(AstDecl.Import
+                  decl-meta
+                  (AstImportSpec.Spec _ _ expected maybe-alias _))
                 (match maybe-alias
                   [(AstMaybeImportAlias.Some alias)
                     (if (and
@@ -58570,7 +58414,9 @@
         (begin
           (match (ast-decl-unwrapped (array-ref decl-slots (+ decl-offset i)))
             [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-            [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
+            [(AstDecl.Import
+                decl-meta
+                (AstImportSpec.Spec _ _ expected maybe-alias _))
               (match maybe-alias
                 [(AstMaybeImportAlias.Some alias)
                   (if (= alias cbi.compiler-builtin-id-fix-empty)
@@ -58773,7 +58619,9 @@
         (begin
           (match (ast-decl-unwrapped (array-ref decl-slots (+ decl-offset i)))
             [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-            [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
+            [(AstDecl.Import
+                decl-meta
+                (AstImportSpec.Spec _ _ expected maybe-alias _))
               (match maybe-alias
                 [(AstMaybeImportAlias.Some alias)
                   (let
@@ -61152,8 +61000,11 @@
   [env : CtfeEnv]
   [decl : AstDecl]) : AstDecl
   (match decl
-    [(AstDecl.Import (AstImportSpec.Spec kind path expected alias span))
+    [(AstDecl.Import
+        decl-meta
+        (AstImportSpec.Spec kind path expected alias span))
       (AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec
           (macro-rewrite-generated-import-kind
             ctx
@@ -61169,17 +61020,6 @@
           span))]
     [(AstDecl.Unsafe inner-box)
       (ast-decl-unsafe
-        (macro-rewrite-generated-import-decl
-          ctx
-          orig-decls
-          module
-          module-id
-          definition-module-id
-          env
-          (box-get inner-box)))]
-    [(AstDecl.ComptimeDecl meta inner-box)
-      (ast-decl-comptime-decl-with-meta
-        meta
         (macro-rewrite-generated-import-decl
           ctx
           orig-decls
@@ -63291,14 +63131,14 @@
   (let
     [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
     (match decl
-      [(AstDecl.Def name maybe-ty expr-box)
+      [(AstDecl.Def decl-meta name maybe-ty expr-box)
         (let
           [expr : AstExpr (ast-node-get expr-box)]
           (match (macro-expand-expr ctx global-env decls 0 expr)
             [(ResultMacroExpr.Ok nexpr)
               (ResultMacroDecl.Ok (ast-decl-def-id name maybe-ty nexpr))]
             [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
-      [(AstDecl.DefFn name params ret body-box metadata)
+      [(AstDecl.DefFn decl-meta name params ret body-box metadata)
         (let
           [body : AstExpr (ast-node-get body-box)]
           [params-env : TcTypeEnv (tc-bind-params ctx global-env params)]
@@ -63310,7 +63150,7 @@
                 (ast-decl-def-fn-metadata-id name params ret nbody metadata))]
             [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
       [(AstDecl.Test _ _ _) (ResultMacroDecl.Ok decl)]
-      [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+      [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ _ _))
         (match kind
           [(AstImportKind.Macro call-id _)
             (macro-expand-module-call-position ctx decls call-id true)]
@@ -63353,6 +63193,7 @@
         [_ alias])]
     (ast-decl-cons
       (AstDecl.Import
+        ast-decl-meta-runtime
         (AstImportSpec.Spec
           (AstImportKind.Module)
           target-module
@@ -63363,7 +63204,7 @@
 
 (define (macro-module-import-marker-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ _ _))
       (match kind
         [(AstImportKind.Module) true]
         [_ false])]
@@ -63422,6 +63263,7 @@
     [(AstDeclListStep.Cons decl _)
       (match decl
         [(AstDecl.Import
+            decl-meta
             (AstImportSpec.Spec
               _
               _
@@ -63526,38 +63368,7 @@
   [decl : AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
   (match decl
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (match template
-          [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias span))
-            (match kind
-              [(AstImportKind.Macro call-id context)
-                (match (macro-existing-module-import-target
-                  ctx
-                  top-env
-                  orig-decls
-                  module
-                  module-id
-                  call-id
-                  context)
-                  [(TcMaybeNameId.Some target-module-id)
-                    (let
-                      [target-module : String (intern-str target-module-id)]
-                      [expanded : AstDeclList
-                        (macro-module-import-marker-decls
-                          target-module
-                          target-module-id
-                          alias
-                          (box-get span))]
-                      (ResultMacroDeclExpansion.Ok
-                        expanded
-                        (macro-paths-for-decls expanded decl-path)))]
-                  [(TcMaybeNameId.No)
-                    (macro-single-decl-expansion decl decl-path)])]
-              [_ (macro-single-decl-expansion decl decl-path)])]
-          [_ (macro-single-decl-expansion decl decl-path)]))]
-    [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias span))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ alias span))
       (match kind
         [(AstImportKind.Macro call-id context)
           (match (macro-existing-module-import-target
@@ -64434,60 +64245,7 @@
   [decl : AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
   (match decl
-    [(AstDecl.ComptimeDecl meta template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (match template
-          [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias span))
-            (if (macro-import-placeholder-kind? kind)
-              (match kind
-                [(AstImportKind.Macro call-id context)
-                  (macro-expand-module-import
-                    ctx
-                    top-env
-                    orig-decls
-                    module
-                    module-id
-                    call-id
-                    context
-                    alias
-                    (box-get span)
-                    decl-path)]
-                [(AstImportKind.MacroDecls call-id context)
-                  (macro-expand-decls-splice
-                    ctx
-                    top-env
-                    orig-decls
-                    module
-                    module-id
-                    call-id
-                    context
-                    decl-path)]
-                [_ (macro-single-decl-expansion decl decl-path)])
-              (macro-single-decl-expansion decl decl-path))]
-          [_
-            (let
-              [decl-ctx : TcContext
-                (tc-context-with-module-id ctx module module-id)]
-              (if (not (macro-decl-uses-macro? decl-ctx orig-decls template))
-                (macro-single-decl-expansion decl decl-path)
-                (match (macro-env-for-module ctx top-env module module-id)
-                  [(ResultTcEnv.Ok local-env)
-                    (match (macro-expand-decl
-                      decl-ctx
-                      local-env
-                      orig-decls
-                      template)
-                      [(ResultMacroDecl.Ok expanded)
-                        (macro-single-decl-expansion
-                          (ast-decl-comptime-decl-with-meta meta expanded)
-                          decl-path)]
-                      [(ResultMacroDecl.Err diag)
-                        (ResultMacroDeclExpansion.Err diag)])]
-                  [(ResultTcEnv.Err message)
-                    (ResultMacroDeclExpansion.Err
-                      (box (tc-decl-diag template message)))])))]))]
-    [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias span))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ alias span))
       (match kind
         [(AstImportKind.Macro call-id context)
           (macro-expand-module-import
@@ -64515,14 +64273,18 @@
     [_
       (let
         [decl-ctx : TcContext (tc-context-with-module-id ctx module module-id)]
-        [uses-macro : bool (macro-decl-uses-macro? decl-ctx orig-decls decl)]
+        [template : AstDecl (ast-decl-with-meta ast-decl-meta-runtime decl)]
+        [uses-macro : bool
+          (macro-decl-uses-macro? decl-ctx orig-decls template)]
         (if (not uses-macro)
           (macro-single-decl-expansion decl decl-path)
           (match (macro-env-for-module ctx top-env module module-id)
             [(ResultTcEnv.Ok local-env)
-              (match (macro-expand-decl decl-ctx local-env orig-decls decl)
+              (match (macro-expand-decl decl-ctx local-env orig-decls template)
                 [(ResultMacroDecl.Ok expanded)
-                  (macro-single-decl-expansion expanded decl-path)]
+                  (macro-single-decl-expansion
+                    (ast-decl-with-meta (ast-decl-meta decl) expanded)
+                    decl-path)]
                 [(ResultMacroDecl.Err diag) (ResultMacroDeclExpansion.Err diag)])]
             [(ResultTcEnv.Err message)
               (ResultMacroDeclExpansion.Err (box (tc-decl-diag decl message)))])))]))
@@ -64533,18 +64295,12 @@
     (not (tc-string-prefix? key "generated:"))))
 
 (define (macro-decl-generated-identity [decl : AstDecl]) : CompilerMaybeString
-  (match decl
-    [(AstDecl.ComptimeDecl meta template-box)
-      (match meta
-        [(AstGeneratedDeclMeta.Some _ _ _ key)
-          (if (macro-module-generated-key? key)
-            (CompilerSomeString key)
-            (macro-decl-generated-identity (box-get template-box)))]
-        [(AstGeneratedDeclMeta.No)
-          (macro-decl-generated-identity (box-get template-box))])]
-    [(AstDecl.Unsafe inner-box)
-      (macro-decl-generated-identity (box-get inner-box))]
-    [_ CompilerNoString]))
+  (match (ast-decl-generated-meta decl)
+    [(AstGeneratedDeclMeta.Some _ _ _ key)
+      (if (macro-module-generated-key? key)
+        (CompilerSomeString key)
+        CompilerNoString)]
+    [(AstGeneratedDeclMeta.No) CompilerNoString]))
 
 (define (macro-module-generated-identity-in
   [decls : AstDeclList]
@@ -64597,6 +64353,7 @@
             importer-module-id
             next-module)]
         [(AstDecl.Import
+            decl-meta
             (AstImportSpec.Spec
               kind
               _
@@ -65060,19 +64817,18 @@
   [decls : AstDeclList]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Def _ _ expr-box) (macro-node-uses-macro? ctx decls expr-box)]
-    [(AstDecl.DefFn _ _ _ body-box _)
+    [(AstDecl.Def decl-meta _ _ expr-box)
+      (macro-node-uses-macro? ctx decls expr-box)]
+    [(AstDecl.DefFn decl-meta _ _ _ body-box _)
       (macro-node-uses-macro? ctx decls body-box)]
     [(AstDecl.Test _ _ _) true]
-    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ _ _))
       (match kind
         [(AstImportKind.Macro _ _) true]
         [(AstImportKind.MacroDecls _ _) true]
         [_ false])]
     [(AstDecl.Unsafe inner-box)
       (macro-decl-uses-macro? ctx decls (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-uses-macro? ctx decls (box-get template-box))]
     [_ false]))
 
 ;; Cheap, ctx-free, allocation-free over-approximation of "could the expander
@@ -65497,13 +65253,15 @@
 ;; path (which shares or expands import placeholders, splices, defmacro, unsafe,
 ;; comptime templates, etc. correctly).
 (define (macro-decl-cannot-fire? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDecl.Def _ _ expr-box)
-      (not (macro-expr-might-fire? (ast-node-get expr-box)))]
-    [(AstDecl.DefFn _ _ _ body-box _)
-      (not (macro-expr-might-fire? (ast-node-get body-box)))]
-    [(AstDecl.Test _ _ _) false]
-    [_ false]))
+  (if (ast-decl-comptime-only? decl)
+    false
+    (match decl
+      [(AstDecl.Def decl-meta _ _ expr-box)
+        (not (macro-expr-might-fire? (ast-node-get expr-box)))]
+      [(AstDecl.DefFn decl-meta _ _ _ body-box _)
+        (not (macro-expr-might-fire? (ast-node-get body-box)))]
+      [(AstDecl.Test _ _ _) false]
+      [_ false])))
 
 ;; Whether the program contains any `(type T)` literal (AstExpr.TypeLiteral). ALL
 ;; CTFE reflection/layout queries (ctfe-reflect-resolve-type for a `(type T)`,
@@ -65690,14 +65448,15 @@
 
 (define (ctfe-decl-has-type-literal? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Def _ _ expr-box) (ctfe-node-has-type-literal? expr-box)]
-    [(AstDecl.DefFn _ _ _ body-box _) (ctfe-node-has-type-literal? body-box)]
+    [(AstDecl.Def decl-meta _ _ expr-box)
+      (ctfe-node-has-type-literal? expr-box)]
+    [(AstDecl.DefFn decl-meta _ _ _ body-box _)
+      (ctfe-node-has-type-literal? body-box)]
     [(AstDecl.Test _ expr-box _) (ctfe-node-has-type-literal? expr-box)]
-    [(AstDecl.DefMacro _ _ _ body-box) (ctfe-node-has-type-literal? body-box)]
+    [(AstDecl.DefMacro decl-meta _ _ _ body-box)
+      (ctfe-node-has-type-literal? body-box)]
     [(AstDecl.Unsafe inner-box)
       (ctfe-decl-has-type-literal? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (ctfe-decl-has-type-literal? (box-get template-box))]
     [(AstDecl.ModuleBody _ body-box)
       (ctfe-program-has-type-literal? (box-get body-box))]
     [_ false]))
@@ -65715,14 +65474,12 @@
 ;; environment so the cache still avoids whole-program metadata walks.
 (define (macro-decl-reflection-relevant? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.DefEnum _ _ _) true]
-    [(AstDecl.DefEnumLifetimes _ _ _ _) true]
-    [(AstDecl.DefStruct _ _ _ _) true]
-    [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+    [(AstDecl.DefEnum decl-meta _ _ _) true]
+    [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) true]
+    [(AstDecl.DefStruct decl-meta _ _ _ _) true]
+    [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
     [(AstDecl.Unsafe inner-box)
       (macro-decl-reflection-relevant? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-reflection-relevant? (box-get template-box))]
     [(AstDecl.ModuleBody _ body-box)
       (macro-decls-reflection-relevant? (box-get body-box))]
     [_ false]))
@@ -66550,17 +66307,17 @@
 
 (define (macro-decl-needs-expansion? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Def _ _ expr-box)
+    [(AstDecl.Def decl-meta _ _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (macro-expr-needs-compat-expansion? expr))]
-    [(AstDecl.DefFn _ _ _ body-box _)
+    [(AstDecl.DefFn decl-meta _ _ _ body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (macro-expr-needs-compat-expansion? body))]
-    [(AstDecl.DefMacro _ _ _ _) true]
+    [(AstDecl.DefMacro decl-meta _ _ _ _) true]
     [(AstDecl.Test _ _ _) false]
-    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ _ _))
       (match kind
         [(AstImportKind.Macro _ _) true]
         [(AstImportKind.MacroDecls _ _) true]
@@ -66569,23 +66326,15 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (macro-decl-needs-expansion? inner))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (macro-decl-needs-expansion? template))]
     [_ false]))
 
 (define (macro-decl-has-defmacro? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.DefMacro _ _ _ _) true]
+    [(AstDecl.DefMacro decl-meta _ _ _ _) true]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (macro-decl-has-defmacro? inner))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (macro-decl-has-defmacro? template))]
     [_ false]))
 
 ;; Whether a program needs the macro expansion pass.
@@ -66609,14 +66358,12 @@
 
 (define (macro-decl-might-fire-expression-macro? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Def _ _ expr-box)
+    [(AstDecl.Def decl-meta _ _ expr-box)
       (macro-expr-might-fire? (ast-node-get expr-box))]
-    [(AstDecl.DefFn _ _ _ body-box _)
+    [(AstDecl.DefFn decl-meta _ _ _ body-box _)
       (macro-expr-might-fire? (ast-node-get body-box))]
     [(AstDecl.Unsafe inner-box)
       (macro-decl-might-fire-expression-macro? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-might-fire-expression-macro? (box-get template-box))]
     [_ false]))
 
 (define (macro-program-might-fire-expression-macro? [decls : AstDeclList]) : bool
@@ -66645,12 +66392,10 @@
 
 (define (macro-decl-has-summary-macro-import? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Import (AstImportSpec.Spec kind _ target _ _))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ target _ _))
       (macro-import-target-has-summary-macro? kind target)]
     [(AstDecl.Unsafe inner-box)
       (macro-decl-has-summary-macro-import? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-has-summary-macro-import? (box-get template-box))]
     [_ false]))
 
 (define (macro-program-has-summary-macro-import? [decls : AstDeclList]) : bool
@@ -66855,29 +66600,25 @@
   (Err (Box CompilerDiagnostic)))
 
 (define (macro-generated-normal-import [decl : AstDecl]) : MacroMaybeGeneratedNormalImport
-  (match decl
-    [(AstDecl.ComptimeDecl meta template-box)
+  (match (ast-decl-generated-meta decl)
+    [(AstGeneratedDeclMeta.Some _ _ _ _)
       (let
-        [template : AstDecl (box-get template-box)]
-        (match meta
-          [(AstGeneratedDeclMeta.Some _ _ _ _)
-            (match template
-              [(AstDecl.Import
-                  (AstImportSpec.Spec kind import-path expected alias span))
-                (if (macro-import-placeholder-kind? kind)
-                  (MacroMaybeGeneratedNormalImport.No)
-                  (MacroMaybeGeneratedNormalImport.Some
-                    kind
-                    import-path
-                    expected
-                    alias
-                    (box-get span)
-                    template))]
-              [_ (MacroMaybeGeneratedNormalImport.No)])]
-          [(AstGeneratedDeclMeta.No) (macro-generated-normal-import template)]))]
-    [(AstDecl.Unsafe inner-box)
-      (macro-generated-normal-import (box-get inner-box))]
-    [_ (MacroMaybeGeneratedNormalImport.No)]))
+        [template : AstDecl (ast-decl-unwrapped decl)]
+        (match template
+          [(AstDecl.Import
+              decl-meta
+              (AstImportSpec.Spec kind import-path expected alias span))
+            (if (macro-import-placeholder-kind? kind)
+              (MacroMaybeGeneratedNormalImport.No)
+              (MacroMaybeGeneratedNormalImport.Some
+                kind
+                import-path
+                expected
+                alias
+                (box-get span)
+                template))]
+          [_ (MacroMaybeGeneratedNormalImport.No)]))]
+    [(AstGeneratedDeclMeta.No) (MacroMaybeGeneratedNormalImport.No)]))
 
 (define (macro-materialize-seen-from
   [decls : (& decls AstDeclList)]
@@ -67858,16 +67599,16 @@
 ;; bodies (Def values, macros, externs, dispatches, enum/struct declarations).
 ;; Same mark/rewind/clone-out shape as the function-body scratch above, but a
 ;; SEPARATE arena so a function-body scope nested inside a declaration scope
-;; (a comptime/unsafe template wrapping a DefFn) never invalidates a live
+;; (a comptime/unsafe template containing a DefFn) never invalidates a live
 ;; declaration mark. Released with the function-body scratch at each typecheck
 ;; boundary.
 (define tc-decl-scratch-arena : i64
   0)
 
 ;; Open outer declaration scopes in the declaration scratch arena.
-;; ComptimeDecl and Unsafe recurse into the declaration dispatcher; nested
-;; checks stay inside the outer scope so only that scope rewinds or destroys
-;; the arena.
+;; Compile-time metadata and Unsafe recurse into the declaration dispatcher;
+;; nested checks stay inside the outer scope so only that scope rewinds or
+;; destroys the arena.
 (define tc-decl-scratch-depth : i64
   0)
 
@@ -67909,10 +67650,10 @@
   [global-env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcUnit
   (if (> tc-decl-scratch-depth 0)
-    ;; ComptimeDecl/Unsafe recursively dispatches its template. Keep nested
-    ;; checks in the outer declaration scope: an inner rewind would also free
-    ;; an error cloned into that same scratch arena, while the outer scope
-    ;; already provides the required reclamation boundary.
+    ;; Compile-time metadata and Unsafe recursively dispatch their template.
+    ;; Keep nested checks in the outer declaration scope: an inner rewind would
+    ;; also free an error cloned into that same scratch arena, while the outer
+    ;; scope already provides the required reclamation boundary.
     (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)
     (let
       [enclosing : i64 (arena.tl_arena_current)]
@@ -67960,7 +67701,7 @@
                 (tc-macro-helper-env-cache-reset!)
                 escaped))))))))
 
-(define (tc-check-decl-with-global-env
+(define (tc-check-decl-with-global-env-inner
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [global-env : TcTypeEnv]
@@ -67971,7 +67712,7 @@
     ;; walk, so keep cache entries scoped to one checked declaration.
     (tc-nominal-owner-cache-reset!)
     (match decl
-      [(AstDecl.DefFn _ params ret body-box _)
+      [(AstDecl.DefFn decl-meta _ params ret body-box _)
         (match (tc-elide-function-signature params ret)
           [(ResultTcElidedSignature.Ok signature)
             (tc-check-fn-decl-scoped
@@ -67989,7 +67730,7 @@
   [global-env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcUnit
   (match decl
-    [(AstDecl.Def _ maybe-ty expr-box)
+    [(AstDecl.Def decl-meta _ maybe-ty expr-box)
       (match maybe-ty
         [(AstMaybeType.Some want)
           (match (tc-expr-with-expected-or-actual-id
@@ -68014,7 +67755,7 @@
           (match (tc-expr-id ctx global-env expr-box)
             [(ResultTcType.Ok _) ResultTcUnit.Ok]
             [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
-    [(AstDecl.DefFn _ params ret body-box _)
+    [(AstDecl.DefFn decl-meta _ params ret body-box _)
       ;; Unreachable via the dispatcher above; kept so a direct call can never
       ;; silently skip a function body check.
       (match (tc-elide-function-signature params ret)
@@ -68026,17 +67767,17 @@
             (struct-get signature ret)
             body-box)]
         [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
-    [(AstDecl.DefMacro name params ret body-box)
+    [(AstDecl.DefMacro decl-meta name params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (tc-check-defmacro name ctx top-env params ret body))]
-    [(AstDecl.Extern _ kind metadata ty)
+    [(AstDecl.Extern decl-meta _ kind metadata ty)
       (tc-check-extern-decl ctx kind (box-get metadata) ty)]
-    [(AstDecl.DefDispatch name variants)
+    [(AstDecl.DefDispatch decl-meta name variants)
       (match (tc-dispatch-decl-type ctx name variants)
         [(ResultTcType.Ok _) ResultTcUnit.Ok]
         [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
-    [(AstDecl.DefEnum name cleanup variants)
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
       (tc-check-cleanup-enum-decl
         ctx
         top-env
@@ -68044,7 +67785,7 @@
         (ast-lifetime-list-new)
         cleanup
         variants)]
-    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (tc-check-cleanup-enum-decl
         ctx
         top-env
@@ -68052,7 +67793,7 @@
         lifetimes
         cleanup
         variants)]
-    [(AstDecl.DefStruct name repr cleanup fields)
+    [(AstDecl.DefStruct decl-meta name repr cleanup fields)
       (tc-check-cleanup-struct-decl
         ctx
         top-env
@@ -68060,7 +67801,7 @@
         repr
         cleanup
         fields)]
-    [(AstDecl.DefStructLifetimes name _ repr cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta name _ repr cleanup fields)
       (tc-check-cleanup-struct-decl
         ctx
         top-env
@@ -68068,22 +67809,33 @@
         repr
         cleanup
         fields)]
-    [(AstDecl.ComptimeDecl meta template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (match meta
-          [(AstGeneratedDeclMeta.Some _ _ _ _)
-            (tc-check-decl-with-global-env ctx top-env global-env template)]
-          [(AstGeneratedDeclMeta.No)
-            (match (tc-check-comptime-decl-purity ctx top-env template)
-              [(ResultTcUnit.Ok)
-                (tc-check-decl-with-global-env ctx top-env global-env template)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tc-check-decl-with-global-env ctx top-env global-env inner))]
     [_ ResultTcUnit.Ok]))
+
+(define (tc-check-decl-with-global-env
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [global-env : TcTypeEnv]
+  [decl : AstDecl]) : ResultTcUnit
+  (if (ast-decl-comptime-only? decl)
+    (let
+      [template : AstDecl (ast-decl-with-meta ast-decl-meta-runtime decl)]
+      (match (ast-decl-generated-meta decl)
+        [(AstGeneratedDeclMeta.Some _ _ _ _)
+          (tc-check-decl-with-global-env-inner ctx top-env global-env template)]
+        [(AstGeneratedDeclMeta.No)
+          (match (tc-check-comptime-decl-purity ctx top-env template)
+            [(ResultTcUnit.Ok)
+              (tc-check-decl-with-global-env-inner
+                ctx
+                top-env
+                global-env
+                template)]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))
+    (tc-check-decl-with-global-env-inner ctx top-env global-env decl)))
 
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (tc-check-decl-with-global-env
@@ -68190,29 +67942,29 @@
         [rest : AstDeclPathList rest]
         (tc-decl-path-list-last rest path))]))
 
-(define (tc-prefix-decl-key [decl : AstDecl]) : String
+(define (tc-prefix-decl-key-inner [decl : AstDecl]) : String
   (match decl
     [(AstDecl.Module name)
       (str_cat.str-cat "module:" (tc-env-key-name-text name))]
     [(AstDecl.ModuleBody name _)
       (str_cat.str-cat "module-body:" (tc-env-key-name-text name))]
-    [(AstDecl.Def name _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (str_cat.str-cat "def:" (tc-env-key-name-text name))]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (str_cat.str-cat "fn:" (tc-env-key-name-text name))]
-    [(AstDecl.DefMacro name _ _ _)
+    [(AstDecl.DefMacro decl-meta name _ _ _)
       (str_cat.str-cat "macro:" (tc-env-key-name-text name))]
-    [(AstDecl.Extern name _ _ _)
+    [(AstDecl.Extern decl-meta name _ _ _)
       (str_cat.str-cat "extern:" (tc-env-key-name-text name))]
-    [(AstDecl.DefEnum name _ _)
+    [(AstDecl.DefEnum decl-meta name _ _)
       (str_cat.str-cat "enum:" (tc-env-key-name-text name))]
-    [(AstDecl.DefEnumLifetimes name _ _ _)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
       (str_cat.str-cat "enum-lifetimes:" (tc-env-key-name-text name))]
-    [(AstDecl.DefStruct name _ _ _)
+    [(AstDecl.DefStruct decl-meta name _ _ _)
       (str_cat.str-cat "struct:" (tc-env-key-name-text name))]
-    [(AstDecl.DefStructLifetimes name _ _ _ _)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
       (str_cat.str-cat "struct-lifetimes:" (tc-env-key-name-text name))]
-    [(AstDecl.Import _) "import"]
+    [(AstDecl.Import decl-meta _) "import"]
     [(AstDecl.IncludeStr name _)
       (str_cat.str-cat "include-str:" (tc-env-key-name-text name))]
     [(AstDecl.IncludeStrComptime name _)
@@ -68221,14 +67973,17 @@
       (str_cat.str-cat "include-str-lzss:" (tc-env-key-name-text name))]
     [(AstDecl.IncludeBin name _)
       (str_cat.str-cat "include-bin:" (tc-env-key-name-text name))]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (str_cat.str-cat "dispatch:" (tc-env-key-name-text name))]
     [(AstDecl.Test name _ _)
       (str_cat.str-cat "test:" (tc-env-key-name-text name))]
     [(AstDecl.Unsafe inner)
-      (str_cat.str-cat "unsafe:" (tc-prefix-decl-key (box-get inner)))]
-    [(AstDecl.ComptimeDecl _ inner)
-      (str_cat.str-cat "comptime:" (tc-prefix-decl-key (box-get inner)))]))
+      (str_cat.str-cat "unsafe:" (tc-prefix-decl-key-inner (box-get inner)))]))
+
+(define (tc-prefix-decl-key [decl : AstDecl]) : String
+  (if (ast-decl-comptime-only? decl)
+    (str_cat.str-cat "comptime:" (tc-prefix-decl-key-inner decl))
+    (tc-prefix-decl-key-inner decl)))
 
 (define (tc-prefix-key-add [key : String] [decl-path : String] [decl : AstDecl]) : String
   (str_cat.str-cat
@@ -68593,7 +68348,7 @@
 (define (tc-generated-clone-decl-with-path? [decl : AstDecl] [path : String]) : bool
   (if (string.eq path "")
     (match decl
-      [(AstDecl.DefFn name _ _ _ _)
+      [(AstDecl.DefFn decl-meta name _ _ _ _)
         (tc-generated-clone-name? (tc-env-key-name-text name))]
       [_ false])
     false))

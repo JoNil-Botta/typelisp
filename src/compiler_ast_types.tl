@@ -2157,6 +2157,19 @@
   (No)
   (Some String String AstExprList String))
 
+(defenum AstDeclMetaValue
+  (Runtime)
+  (Comptime AstGeneratedDeclMeta))
+
+;; Keep the per-declaration metadata field pointer-sized. An inline tagged
+;; AstDeclMeta adds both a tag and a payload word to every AstDecl slot, while
+;; only compile-time declarations need storage for the tagged state.
+(defstruct AstDeclMeta
+  (value (Box AstDeclMetaValue)))
+
+(define ast-decl-meta-runtime : AstDeclMeta
+  (AstDeclMeta (box AstDeclMetaValue.Runtime)))
+
 ;; `AstExternMetadata` is 72 B while the other `AstDecl.Extern` fields total
 ;; 40 B. Keeping it inline made Extern the 120 B layout ceiling for every
 ;; declaration slot, including the whole-program vectors rebuilt around macro
@@ -2165,28 +2178,33 @@
 (defenum AstDecl
   (Module i64)
   (ModuleBody i64 (Box AstDeclList))
-  (Def i64 AstMaybeType i64)
-  (DefFn i64 AstParamList AstType i64 AstFnMetadata)
-  (DefMacro i64 AstMacroParamList AstType i64)
-  (Extern i64 AstExternKind (Box AstExternMetadata) AstType)
-  (DefEnum i64 AstEnumCleanup AstVariantDefList)
-  (DefEnumLifetimes i64 AstLifetimeList AstEnumCleanup AstVariantDefList)
-  (DefStruct i64 AstStructRepr AstStructCleanup AstFieldDefList)
+  (Def AstDeclMeta i64 AstMaybeType i64)
+  (DefFn AstDeclMeta i64 AstParamList AstType i64 AstFnMetadata)
+  (DefMacro AstDeclMeta i64 AstMacroParamList AstType i64)
+  (Extern AstDeclMeta i64 AstExternKind (Box AstExternMetadata) AstType)
+  (DefEnum AstDeclMeta i64 AstEnumCleanup AstVariantDefList)
+  (DefEnumLifetimes
+    AstDeclMeta
+    i64
+    AstLifetimeList
+    AstEnumCleanup
+    AstVariantDefList)
+  (DefStruct AstDeclMeta i64 AstStructRepr AstStructCleanup AstFieldDefList)
   (DefStructLifetimes
+    AstDeclMeta
     i64
     AstLifetimeList
     AstStructRepr
     AstStructCleanup
     AstFieldDefList)
-  (Import AstImportSpec)
+  (Import AstDeclMeta AstImportSpec)
   (IncludeStr i64 String)
   (IncludeStrComptime i64 String)
   (IncludeStrLzss i64 String)
   (IncludeBin i64 String)
-  (DefDispatch i64 AstDispatchVariantList)
+  (DefDispatch AstDeclMeta i64 AstDispatchVariantList)
   (Test i64 i64 AstSourceSpan)
-  (Unsafe (Box AstDecl))
-  (ComptimeDecl AstGeneratedDeclMeta (Box AstDecl)))
+  (Unsafe (Box AstDecl)))
 
 (defstruct AstDeclList
   (slots (Array AstDecl))
@@ -4880,14 +4898,20 @@
   (AstDecl.ModuleBody name (box body)))
 
 (define (ast-decl-def-id [name : i64] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
-  (AstDecl.Def name maybe-ty value))
+  (AstDecl.Def ast-decl-meta-runtime name maybe-ty value))
 
 (define (ast-decl-def-fn-id
   [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDecl.DefFn name params ret body (ast-fn-metadata AstFnExport.No)))
+  (AstDecl.DefFn
+    ast-decl-meta-runtime
+    name
+    params
+    ret
+    body
+    (ast-fn-metadata AstFnExport.No)))
 
 (define (ast-decl-def-fn-export-id
   [name : i64]
@@ -4895,7 +4919,13 @@
   [ret : AstType]
   [body : i64]
   [export : AstFnExport]) : AstDecl
-  (AstDecl.DefFn name params ret body (ast-fn-metadata export)))
+  (AstDecl.DefFn
+    ast-decl-meta-runtime
+    name
+    params
+    ret
+    body
+    (ast-fn-metadata export)))
 
 (define (ast-decl-def-fn-metadata-id
   [name : i64]
@@ -4903,41 +4933,52 @@
   [ret : AstType]
   [body : i64]
   [metadata : AstFnMetadata]) : AstDecl
-  (AstDecl.DefFn name params ret body (ast-fn-metadata-clone metadata)))
+  (AstDecl.DefFn
+    ast-decl-meta-runtime
+    name
+    params
+    ret
+    body
+    (ast-fn-metadata-clone metadata)))
 
 (define (ast-decl-def-macro-id
   [name : i64]
   [params : AstMacroParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDecl.DefMacro name params ret body))
+  (AstDecl.DefMacro ast-decl-meta-runtime name params ret body))
 
 (define (ast-decl-extern-id
   [name : i64]
   [kind : AstExternKind]
   [metadata : AstExternMetadata]
   [ty : AstType]) : AstDecl
-  (AstDecl.Extern name kind (box metadata) ty))
+  (AstDecl.Extern ast-decl-meta-runtime name kind (box metadata) ty))
 
 (define (ast-decl-def-enum-id
   [name : i64]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
-  (AstDecl.DefEnum name cleanup variants))
+  (AstDecl.DefEnum ast-decl-meta-runtime name cleanup variants))
 
 (define (ast-decl-def-enum-lifetimes-id
   [name : i64]
   [lifetimes : AstLifetimeList]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
-  (AstDecl.DefEnumLifetimes name lifetimes cleanup variants))
+  (AstDecl.DefEnumLifetimes
+    ast-decl-meta-runtime
+    name
+    lifetimes
+    cleanup
+    variants))
 
 (define (ast-decl-def-struct-id
   [name : i64]
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
-  (AstDecl.DefStruct name repr cleanup fields))
+  (AstDecl.DefStruct ast-decl-meta-runtime name repr cleanup fields))
 
 (define (ast-decl-def-struct-lifetimes-id
   [name : i64]
@@ -4945,12 +4986,18 @@
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
-  (AstDecl.DefStructLifetimes name lifetimes repr cleanup fields))
+  (AstDecl.DefStructLifetimes
+    ast-decl-meta-runtime
+    name
+    lifetimes
+    repr
+    cleanup
+    fields))
 
 (define (ast-decl-def-dispatch-id
   [name : i64]
   [variants : AstDispatchVariantList]) : AstDecl
-  (AstDecl.DefDispatch name variants))
+  (AstDecl.DefDispatch ast-decl-meta-runtime name variants))
 
 (define (ast-decl-test-id [name : i64] [body : i64] [span : AstSourceSpan]) : AstDecl
   (AstDecl.Test name body span))
@@ -4958,19 +5005,70 @@
 (define (ast-decl-unsafe [inner : AstDecl]) : AstDecl
   (AstDecl.Unsafe (box inner)))
 
+(define (ast-decl-meta [decl : AstDecl]) : AstDeclMeta
+  (match decl
+    [(AstDecl.Def decl-meta _ _ _) decl-meta]
+    [(AstDecl.DefFn decl-meta _ _ _ _ _) decl-meta]
+    [(AstDecl.DefMacro decl-meta _ _ _ _) decl-meta]
+    [(AstDecl.Extern decl-meta _ _ _ _) decl-meta]
+    [(AstDecl.DefEnum decl-meta _ _ _) decl-meta]
+    [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) decl-meta]
+    [(AstDecl.DefStruct decl-meta _ _ _ _) decl-meta]
+    [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) decl-meta]
+    [(AstDecl.DefDispatch decl-meta _ _) decl-meta]
+    [(AstDecl.Import decl-meta _) decl-meta]
+    [(AstDecl.Unsafe inner-box) (ast-decl-meta (box-get inner-box))]
+    [_ ast-decl-meta-runtime]))
+
+(define (ast-decl-generated-meta [decl : AstDecl]) : AstGeneratedDeclMeta
+  (match (box-get (struct-get (ast-decl-meta decl) value))
+    [(AstDeclMetaValue.Runtime) AstGeneratedDeclMeta.No]
+    [(AstDeclMetaValue.Comptime meta) meta]))
+
+(define (ast-decl-comptime-only? [decl : AstDecl]) : bool
+  (match (box-get (struct-get (ast-decl-meta decl) value))
+    [(AstDeclMetaValue.Runtime) false]
+    [(AstDeclMetaValue.Comptime _) true]))
+
+(define (ast-decl-with-meta [meta : AstDeclMeta] [inner : AstDecl]) : AstDecl
+  (match inner
+    [(AstDecl.Def _ name maybe-ty value) (AstDecl.Def meta name maybe-ty value)]
+    [(AstDecl.DefFn _ name params ret body fn-meta)
+      (AstDecl.DefFn meta name params ret body fn-meta)]
+    [(AstDecl.DefMacro _ name params ret body)
+      (AstDecl.DefMacro meta name params ret body)]
+    [(AstDecl.Extern _ name kind extern-meta ty)
+      (AstDecl.Extern meta name kind extern-meta ty)]
+    [(AstDecl.DefEnum _ name cleanup variants)
+      (AstDecl.DefEnum meta name cleanup variants)]
+    [(AstDecl.DefEnumLifetimes _ name lifetimes cleanup variants)
+      (AstDecl.DefEnumLifetimes meta name lifetimes cleanup variants)]
+    [(AstDecl.DefStruct _ name repr cleanup fields)
+      (AstDecl.DefStruct meta name repr cleanup fields)]
+    [(AstDecl.DefStructLifetimes _ name lifetimes repr cleanup fields)
+      (AstDecl.DefStructLifetimes meta name lifetimes repr cleanup fields)]
+    [(AstDecl.DefDispatch _ name variants)
+      (AstDecl.DefDispatch meta name variants)]
+    [(AstDecl.Import _ spec) (AstDecl.Import meta spec)]
+    [(AstDecl.Unsafe inner-box)
+      (AstDecl.Unsafe (box (ast-decl-with-meta meta (box-get inner-box))))]
+    [_ inner]))
+
 (define (ast-decl-comptime-decl [inner : AstDecl]) : AstDecl
-  (AstDecl.ComptimeDecl AstGeneratedDeclMeta.No (box inner)))
+  (ast-decl-with-meta
+    (AstDeclMeta (box (AstDeclMetaValue.Comptime AstGeneratedDeclMeta.No)))
+    inner))
 
 (define (ast-decl-comptime-decl-with-meta
   [meta : AstGeneratedDeclMeta]
   [inner : AstDecl]) : AstDecl
-  (AstDecl.ComptimeDecl meta (box inner)))
+  (ast-decl-with-meta
+    (AstDeclMeta (box (AstDeclMetaValue.Comptime meta)))
+    inner))
 
 (define (ast-decl-unwrapped [decl : AstDecl]) : AstDecl
   (match decl
     [(AstDecl.Unsafe inner-box) (ast-decl-unwrapped (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (ast-decl-unwrapped (box-get template-box))]
     [_ decl]))
 
 (define (ast-decl-path-list-with-capacity [capacity : i64]) : AstDeclPathList
@@ -6391,6 +6489,17 @@
         (ast-compaction-remap-expr-list remap args)
         (ast-compaction-copy-string key))]))
 
+(define (ast-compaction-remap-decl-meta
+  [remap : AstProgramCompactionRemap]
+  [meta : AstDeclMeta]) : AstDeclMeta
+  (match (box-get (struct-get meta value))
+    [(AstDeclMetaValue.Runtime) ast-decl-meta-runtime]
+    [(AstDeclMetaValue.Comptime generated)
+      (AstDeclMeta
+        (box
+          (AstDeclMetaValue.Comptime
+            (ast-compaction-remap-generated-meta remap generated))))]))
+
 (define (ast-compaction-remap-decl
   [remap : AstProgramCompactionRemap]
   [decl : AstDecl]) : AstDecl
@@ -6400,56 +6509,66 @@
       (AstDecl.ModuleBody
         name
         (box (ast-compaction-remap-decl-list remap (box-get body))))]
-    [(AstDecl.Def name maybe-ty value)
+    [(AstDecl.Def decl-meta name maybe-ty value)
       (AstDecl.Def
+        (ast-compaction-remap-decl-meta remap decl-meta)
         name
         (ast-compaction-remap-maybe-type remap maybe-ty)
         (ast-compaction-remap-expr-id remap value))]
-    [(AstDecl.DefFn name params ret body metadata)
+    [(AstDecl.DefFn decl-meta name params ret body metadata)
       (AstDecl.DefFn
+        (ast-compaction-remap-decl-meta remap decl-meta)
         name
         (ast-compaction-remap-param-list remap params)
         (ast-compaction-remap-type remap ret)
         (ast-compaction-remap-expr-id remap body)
         (ast-fn-metadata-clone metadata))]
-    [(AstDecl.DefMacro name params ret body)
+    [(AstDecl.DefMacro decl-meta name params ret body)
       (AstDecl.DefMacro
+        (ast-compaction-remap-decl-meta remap decl-meta)
         name
         (ast-compaction-remap-macro-param-list remap params)
         (ast-compaction-remap-type remap ret)
         (ast-compaction-remap-expr-id remap body))]
-    [(AstDecl.Extern name kind metadata ty)
+    [(AstDecl.Extern decl-meta name kind metadata ty)
       (AstDecl.Extern
+        (ast-compaction-remap-decl-meta remap decl-meta)
         name
         kind
         (box (ast-compaction-remap-extern-metadata remap (box-get metadata)))
         (ast-compaction-remap-type remap ty))]
-    [(AstDecl.DefEnum name cleanup variants)
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
       (AstDecl.DefEnum
+        (ast-compaction-remap-decl-meta remap decl-meta)
         name
         (ast-compaction-remap-enum-cleanup cleanup)
         (ast-compaction-remap-variant-def-list remap variants))]
-    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (AstDecl.DefEnumLifetimes
+        (ast-compaction-remap-decl-meta remap decl-meta)
         name
         (ast-compaction-remap-lifetime-list lifetimes)
         (ast-compaction-remap-enum-cleanup cleanup)
         (ast-compaction-remap-variant-def-list remap variants))]
-    [(AstDecl.DefStruct name repr cleanup fields)
+    [(AstDecl.DefStruct decl-meta name repr cleanup fields)
       (AstDecl.DefStruct
+        (ast-compaction-remap-decl-meta remap decl-meta)
         name
         repr
         (ast-compaction-remap-struct-cleanup cleanup)
         (ast-compaction-remap-field-def-list remap fields))]
-    [(AstDecl.DefStructLifetimes name lifetimes repr cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta name lifetimes repr cleanup fields)
       (AstDecl.DefStructLifetimes
+        (ast-compaction-remap-decl-meta remap decl-meta)
         name
         (ast-compaction-remap-lifetime-list lifetimes)
         repr
         (ast-compaction-remap-struct-cleanup cleanup)
         (ast-compaction-remap-field-def-list remap fields))]
-    [(AstDecl.Import spec)
-      (AstDecl.Import (ast-compaction-remap-import-spec remap spec))]
+    [(AstDecl.Import decl-meta spec)
+      (AstDecl.Import
+        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-import-spec remap spec))]
     [(AstDecl.IncludeStr name path)
       (AstDecl.IncludeStr name (ast-compaction-copy-string path))]
     [(AstDecl.IncludeStrComptime name path)
@@ -6458,18 +6577,15 @@
       (AstDecl.IncludeStrLzss name (ast-compaction-copy-string path))]
     [(AstDecl.IncludeBin name path)
       (AstDecl.IncludeBin name (ast-compaction-copy-string path))]
-    [(AstDecl.DefDispatch name variants)
+    [(AstDecl.DefDispatch decl-meta name variants)
       (AstDecl.DefDispatch
+        (ast-compaction-remap-decl-meta remap decl-meta)
         name
         (ast-compaction-remap-dispatch-variant-list variants))]
     [(AstDecl.Test name body span)
       (AstDecl.Test name (ast-compaction-remap-expr-id remap body) span)]
     [(AstDecl.Unsafe inner)
-      (AstDecl.Unsafe (box (ast-compaction-remap-decl remap (box-get inner))))]
-    [(AstDecl.ComptimeDecl meta inner)
-      (AstDecl.ComptimeDecl
-        (ast-compaction-remap-generated-meta remap meta)
-        (box (ast-compaction-remap-decl remap (box-get inner))))]))
+      (AstDecl.Unsafe (box (ast-compaction-remap-decl remap (box-get inner))))]))
 
 (define (ast-compaction-remap-decl-list
   [remap : AstProgramCompactionRemap]
@@ -6723,24 +6839,23 @@
 
 (define (ast-decl-tag [decl : AstDecl]) : i64
   (match decl
-    [(AstDecl.Def _ _ _) 1]
-    [(AstDecl.DefFn _ _ _ _ _) 2]
-    [(AstDecl.DefMacro _ _ _ _) 10]
-    [(AstDecl.Extern _ _ _ _) 3]
-    [(AstDecl.DefEnum _ _ _) 4]
-    [(AstDecl.DefStruct _ _ _ _) 5]
-    [(AstDecl.Import _) 6]
+    [(AstDecl.Def decl-meta _ _ _) 1]
+    [(AstDecl.DefFn decl-meta _ _ _ _ _) 2]
+    [(AstDecl.DefMacro decl-meta _ _ _ _) 10]
+    [(AstDecl.Extern decl-meta _ _ _ _) 3]
+    [(AstDecl.DefEnum decl-meta _ _ _) 4]
+    [(AstDecl.DefStruct decl-meta _ _ _ _) 5]
+    [(AstDecl.Import decl-meta _) 6]
     [(AstDecl.Test _ _ _) 7]
-    [(AstDecl.ComptimeDecl _ _) 8]
     [(AstDecl.Module _) 9]
     [(AstDecl.ModuleBody _ _) 18]
     [(AstDecl.IncludeStr _ _) 12]
     [(AstDecl.IncludeStrComptime _ _) 19]
     [(AstDecl.IncludeStrLzss _ _) 20]
     [(AstDecl.Unsafe _) 13]
-    [(AstDecl.DefEnumLifetimes _ _ _ _) 14]
-    [(AstDecl.DefStructLifetimes _ _ _ _ _) 15]
-    [(AstDecl.DefDispatch _ _) 16]
+    [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) 14]
+    [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) 15]
+    [(AstDecl.DefDispatch decl-meta _ _) 16]
     [(AstDecl.IncludeBin _ _) 17]))
 
 (define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
@@ -7250,7 +7365,7 @@
   [want-name-id : i64]
   [want-value : i64]) : bool
   (match decl
-    [(AstDecl.Def name _ value-box)
+    [(AstDecl.Def decl-meta name _ value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (and
@@ -7267,12 +7382,9 @@
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (match inner
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (compiler-ast-decl-def-lit-ok? template generated-name-id 7))]
-          [_ false]))]
+        (and
+          (ast-decl-comptime-only? inner)
+          (compiler-ast-decl-def-lit-ok? inner generated-name-id 7)))]
     [_ false]))
 
 (define (compiler-ast-decl-program-box-smoke?) : bool

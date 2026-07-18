@@ -2813,7 +2813,7 @@
     [(AstGeneratedDeclMeta.Some _ _ args _)
       (lint-expr-list-uses-import? args alias module-name)]))
 
-(define (lint-decl-uses-import?
+(define (lint-decl-uses-import-inner?
   [decl : AstDecl]
   [alias : String]
   [module-name : String]) : bool
@@ -2821,63 +2821,72 @@
     [(AstDecl.Module _) false]
     [(AstDecl.ModuleBody _ body)
       (lint-decl-list-uses-import? (box-get body) alias module-name)]
-    [(AstDecl.Def _ maybe-ty body)
+    [(AstDecl.Def decl-meta _ maybe-ty body)
       (if (lint-maybe-type-uses-import? maybe-ty alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get body) alias module-name))]
-    [(AstDecl.DefFn _ params ret body _)
+    [(AstDecl.DefFn decl-meta _ params ret body _)
       (if (lint-param-list-uses-import? params alias module-name)
         true
         (if (lint-type-uses-import? ret alias module-name)
           true
           (lint-expr-uses-import? (ast-node-get body) alias module-name)))]
-    [(AstDecl.DefMacro _ params ret body)
+    [(AstDecl.DefMacro decl-meta _ params ret body)
       (if (lint-macro-param-list-uses-import? params alias module-name)
         true
         (if (lint-type-uses-import? ret alias module-name)
           true
           (lint-expr-uses-import? (ast-node-get body) alias module-name)))]
-    [(AstDecl.Extern _ _ meta ty)
+    [(AstDecl.Extern decl-meta _ _ meta ty)
       (if (lint-extern-metadata-uses-import? (box-get meta) alias module-name)
         true
         (lint-type-uses-import? ty alias module-name))]
-    [(AstDecl.DefEnum _ cleanup variants)
+    [(AstDecl.DefEnum decl-meta _ cleanup variants)
       (if (lint-enum-cleanup-uses-import? cleanup alias module-name)
         true
         (lint-variant-def-list-uses-import? variants alias module-name))]
-    [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
       (if (lint-enum-cleanup-uses-import? cleanup alias module-name)
         true
         (lint-variant-def-list-uses-import? variants alias module-name))]
-    [(AstDecl.DefStruct _ _ cleanup fields)
+    [(AstDecl.DefStruct decl-meta _ _ cleanup fields)
       (if (lint-struct-cleanup-uses-import? cleanup alias module-name)
         true
         (lint-field-def-list-uses-import? fields alias module-name))]
-    [(AstDecl.DefStructLifetimes _ _ _ cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup fields)
       (if (lint-struct-cleanup-uses-import? cleanup alias module-name)
         true
         (lint-field-def-list-uses-import? fields alias module-name))]
     [(AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
       (lint-expr-uses-import? (ast-node-get call-expr) alias module-name)]
     [(AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec (AstImportKind.MacroDecls call-expr _) _ _ _ _))
       (lint-expr-uses-import? (ast-node-get call-expr) alias module-name)]
-    [(AstDecl.Import _) false]
+    [(AstDecl.Import decl-meta _) false]
     [(AstDecl.IncludeStr _ _) false]
     [(AstDecl.IncludeStrComptime _ _) false]
     [(AstDecl.IncludeStrLzss _ _) false]
     [(AstDecl.IncludeBin _ _) false]
-    [(AstDecl.DefDispatch _ variants)
+    [(AstDecl.DefDispatch decl-meta _ variants)
       (lint-dispatch-variant-list-uses-import? variants alias module-name)]
     [(AstDecl.Test _ body _)
       (lint-expr-uses-import? (ast-node-get body) alias module-name)]
     [(AstDecl.Unsafe inner)
-      (lint-decl-uses-import? (box-get inner) alias module-name)]
-    [(AstDecl.ComptimeDecl meta inner)
-      (if (lint-generated-decl-meta-uses-import? meta alias module-name)
-        true
-        (lint-decl-uses-import? (box-get inner) alias module-name))]))
+      (lint-decl-uses-import? (box-get inner) alias module-name)]))
+
+(define (lint-decl-uses-import?
+  [decl : AstDecl]
+  [alias : String]
+  [module-name : String]) : bool
+  (if (lint-generated-decl-meta-uses-import?
+    (ast-decl-generated-meta decl)
+    alias
+    module-name)
+    true
+    (lint-decl-uses-import-inner? decl alias module-name)))
 
 (define (lint-decl-list-uses-import?
   [decls : AstDeclList]
@@ -3071,7 +3080,7 @@
           all-decls
           rest
           (match decl
-            [(AstDecl.Import spec)
+            [(AstDecl.Import decl-meta spec)
               (lint-unused-import-add-if-needed source all-decls spec acc)]
             [_ acc])))]))
 
@@ -3845,13 +3854,11 @@
   [decl : AstDecl]
   [shapes : LintCopyOnUpdateStructList]) : LintCopyOnUpdateStructList
   (match decl
-    [(AstDecl.DefStruct name _ _ fields)
+    [(AstDecl.DefStruct decl-meta name _ _ fields)
       (lint-copy-on-update-add-struct name fields shapes)]
-    [(AstDecl.DefStructLifetimes name _ _ _ fields)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ fields)
       (lint-copy-on-update-add-struct name fields shapes)]
     [(AstDecl.Unsafe inner)
-      (lint-copy-on-update-collect-structs-in-decl (box-get inner) shapes)]
-    [(AstDecl.ComptimeDecl _ inner)
       (lint-copy-on-update-collect-structs-in-decl (box-get inner) shapes)]
     [_ shapes]))
 
@@ -3870,14 +3877,14 @@
   [shapes : LintCopyOnUpdateStructList]
   [acc : LintFindings]) : LintFindings
   (match decl
-    [(AstDecl.Def _ _ body)
+    [(AstDecl.Def decl-meta _ _ body)
       (struct-get
         (lint-copy-on-update-expr
           (ast-node-get body)
           (LintCopyOnUpdateState shapes LintCopyOnUpdateLocalList.Nil acc)
           (lint-no-span))
         findings)]
-    [(AstDecl.DefFn _ params _ body _)
+    [(AstDecl.DefFn decl-meta _ params _ body _)
       (struct-get
         (lint-copy-on-update-expr
           (ast-node-get body)
@@ -3890,7 +3897,7 @@
             acc)
           (lint-no-span))
         findings)]
-    [(AstDecl.DefMacro _ params _ body)
+    [(AstDecl.DefMacro decl-meta _ params _ body)
       (struct-get
         (lint-copy-on-update-expr
           (ast-node-get body)
@@ -3911,8 +3918,6 @@
           (lint-no-span))
         findings)]
     [(AstDecl.Unsafe inner)
-      (lint-copy-on-update-structs-in-decl (box-get inner) shapes acc)]
-    [(AstDecl.ComptimeDecl _ inner)
       (lint-copy-on-update-structs-in-decl (box-get inner) shapes acc)]
     [_ acc]))
 
@@ -4907,17 +4912,15 @@
 
 (define (lint-prefer-dotted-field-decl [decl : AstDecl] [acc : LintFindings]) : LintFindings
   (match decl
-    [(AstDecl.Def _ _ body)
+    [(AstDecl.Def decl-meta _ _ body)
       (lint-prefer-dotted-field-expr (ast-node-get body) (lint-no-span) acc)]
-    [(AstDecl.DefFn _ _ _ body _)
+    [(AstDecl.DefFn decl-meta _ _ _ body _)
       (lint-prefer-dotted-field-expr (ast-node-get body) (lint-no-span) acc)]
-    [(AstDecl.DefMacro _ _ _ body)
+    [(AstDecl.DefMacro decl-meta _ _ _ body)
       (lint-prefer-dotted-field-expr (ast-node-get body) (lint-no-span) acc)]
     [(AstDecl.Test _ body _)
       (lint-prefer-dotted-field-expr (ast-node-get body) (lint-no-span) acc)]
     [(AstDecl.Unsafe inner) (lint-prefer-dotted-field-decl (box-get inner) acc)]
-    [(AstDecl.ComptimeDecl _ inner)
-      (lint-prefer-dotted-field-decl (box-get inner) acc)]
     [(AstDecl.ModuleBody _ body)
       (lint-prefer-dotted-field-decl-list (box-get body) acc)]
     [_ acc]))
@@ -5932,14 +5935,14 @@
   [decl : AstDecl]
   [acc : LintFindings]) : LintFindings
   (match decl
-    [(AstDecl.Def _ _ body)
+    [(AstDecl.Def decl-meta _ _ body)
       (lint-single-element-array-finalize-state
         (lint-single-element-array-expr
           (ast-node-get body)
           (LintSingleElementArrayState
             LintSingleElementArrayCandidateList.Nil
             acc)))]
-    [(AstDecl.DefFn _ params _ body _)
+    [(AstDecl.DefFn decl-meta _ params _ body _)
       (let
         [body-span : AstSourceSpan (lint-no-effect-span (ast-node-get body))]
         [param-candidates : LintSingleElementArrayCandidateList
@@ -5959,8 +5962,6 @@
             LintSingleElementArrayCandidateList.Nil
             acc)))]
     [(AstDecl.Unsafe inner)
-      (lint-single-element-array-cells-in-decl (box-get inner) acc)]
-    [(AstDecl.ComptimeDecl _ inner)
       (lint-single-element-array-cells-in-decl (box-get inner) acc)]
     [_ acc]))
 
@@ -6522,14 +6523,14 @@
 
 (define (lint-unused-assignments-in-decl [decl : AstDecl] [acc : LintFindings]) : LintFindings
   (match decl
-    [(AstDecl.Def _ _ body)
+    [(AstDecl.Def decl-meta _ _ body)
       (struct-get
         (lint-unused-assignment-expr
           (ast-node-get body)
           (lint-unused-assignment-state-empty LintNameList.Nil acc)
           (lint-no-span))
         findings)]
-    [(AstDecl.DefFn _ params _ body _)
+    [(AstDecl.DefFn decl-meta _ params _ body _)
       (struct-get
         (lint-unused-assignment-expr
           (ast-node-get body)
@@ -6538,7 +6539,7 @@
             acc)
           (lint-no-span))
         findings)]
-    [(AstDecl.DefMacro _ params _ body)
+    [(AstDecl.DefMacro decl-meta _ params _ body)
       (struct-get
         (lint-unused-assignment-expr
           (ast-node-get body)
@@ -6555,8 +6556,6 @@
           (lint-no-span))
         findings)]
     [(AstDecl.Unsafe inner)
-      (lint-unused-assignments-in-decl (box-get inner) acc)]
-    [(AstDecl.ComptimeDecl _ inner)
       (lint-unused-assignments-in-decl (box-get inner) acc)]
     [_ acc]))
 
@@ -7114,15 +7113,15 @@
   [decl : AstDecl]
   [state : LintNameCaseDeclState]) : LintNameCaseDeclState
   (match decl
-    [(AstDecl.Def name _ body)
+    [(AstDecl.Def decl-meta name _ body)
       (lint-name-case-decl-state-after-body
         (lint-name-case-decl-state-add state "define" (intern-str name) false 0)
         body)]
-    [(AstDecl.DefFn name _ _ body _)
+    [(AstDecl.DefFn decl-meta name _ _ body _)
       (lint-name-case-decl-state-after-body
         (lint-name-case-decl-state-add state "define" (intern-str name) true 1)
         body)]
-    [(AstDecl.DefMacro name _ _ body)
+    [(AstDecl.DefMacro decl-meta name _ _ body)
       (lint-name-case-decl-state-after-body
         (lint-name-case-decl-state-add
           state
@@ -7131,36 +7130,34 @@
           true
           1)
         body)]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (lint-name-case-decl-state-add
         state
         "defdispatch"
         (intern-str name)
         false
         1)]
-    [(AstDecl.DefStruct name _ _ _)
+    [(AstDecl.DefStruct decl-meta name _ _ _)
       (lint-name-case-decl-state-add
         state
         "defstruct"
         (intern-str name)
         false
         2)]
-    [(AstDecl.DefStructLifetimes name _ _ _ _)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
       (lint-name-case-decl-state-add
         state
         "defstruct"
         (intern-str name)
         false
         2)]
-    [(AstDecl.DefEnum name _ _)
+    [(AstDecl.DefEnum decl-meta name _ _)
       (lint-name-case-decl-state-add state "defenum" (intern-str name) false 2)]
-    [(AstDecl.DefEnumLifetimes name _ _ _)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
       (lint-name-case-decl-state-add state "defenum" (intern-str name) false 2)]
     [(AstDecl.ModuleBody _ body)
       (lint-name-case-in-decl-list (box-get body) state)]
     [(AstDecl.Unsafe inner) (lint-name-case-in-decl (box-get inner) state)]
-    [(AstDecl.ComptimeDecl _ inner)
-      (lint-name-case-in-decl (box-get inner) state)]
     [_ state]))
 
 (define (lint-name-case-in-decl-list
@@ -7471,12 +7468,12 @@
       (lint-redundant-function-name-state-with-module
         state
         (lint-module-default-alias (intern-str name)))]
-    [(AstDecl.DefFn name _ _ body _)
+    [(AstDecl.DefFn decl-meta name _ _ body _)
       (lint-redundant-function-name-add
         state
         (intern-qualified-base name)
         (lint-no-effect-span (ast-node-get body)))]
-    [(AstDecl.DefMacro name _ _ body)
+    [(AstDecl.DefMacro decl-meta name _ _ body)
       (lint-redundant-function-name-macro-expr
         (ast-node-get body)
         (lint-redundant-function-name-add
@@ -7484,8 +7481,6 @@
           (intern-qualified-base name)
           (lint-no-effect-span (ast-node-get body))))]
     [(AstDecl.Unsafe inner)
-      (lint-redundant-function-name-decl (box-get inner) state)]
-    [(AstDecl.ComptimeDecl _ inner)
       (lint-redundant-function-name-decl (box-get inner) state)]
     [_ state]))
 
@@ -9077,7 +9072,7 @@
   [name-case : bool]
   [report-unused : bool]) : LintFindings
   (match decl
-    [(AstDecl.Def _ maybe-ty body)
+    [(AstDecl.Def decl-meta _ maybe-ty body)
       (struct-get
         (lint-unused-variable-expr
           (ast-node-get body)
@@ -9091,7 +9086,7 @@
               report-unused))
           (lint-no-effect-span (ast-node-get body)))
         findings)]
-    [(AstDecl.DefFn name params ret body _)
+    [(AstDecl.DefFn decl-meta name params ret body _)
       (lint-unused-variable-decl-with-param-frame
         source
         "(define ("
@@ -9102,7 +9097,7 @@
         acc
         name-case
         report-unused)]
-    [(AstDecl.DefMacro name params ret body)
+    [(AstDecl.DefMacro decl-meta name params ret body)
       (lint-unused-variable-decl-with-macro-param-frame
         source
         "(defmacro ("
@@ -9126,13 +9121,6 @@
           (lint-no-effect-span (ast-node-get body)))
         findings)]
     [(AstDecl.Unsafe inner)
-      (lint-unused-variables-in-decl
-        source
-        (box-get inner)
-        acc
-        name-case
-        report-unused)]
-    [(AstDecl.ComptimeDecl _ inner)
       (lint-unused-variables-in-decl
         source
         (box-get inner)
@@ -10360,15 +10348,15 @@
 ;: Walk the body expression(s) carried by a declaration, if any.
 (define (lint-walk-decl [decl : AstDecl] [threshold : i64] [acc : LintFindings]) : LintFindings
   (match decl
-    [(AstDecl.Def _ _ body-box)
+    [(AstDecl.Def decl-meta _ _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (lint-walk-expr body threshold acc))]
-    [(AstDecl.DefFn _ _ _ body-box _)
+    [(AstDecl.DefFn decl-meta _ _ _ body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (lint-walk-tail-expr body threshold acc))]
-    [(AstDecl.DefMacro _ _ _ body-box)
+    [(AstDecl.DefMacro decl-meta _ _ _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (lint-walk-tail-expr body threshold acc))]
@@ -10380,24 +10368,20 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (lint-walk-decl inner threshold acc))]
-    [(AstDecl.ComptimeDecl _ inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (lint-walk-decl inner threshold acc))]
     [(AstDecl.ModuleBody _ body-box)
       (lint-walk-decl-list (box-get body-box) threshold acc)]
     [(AstDecl.Module _) acc]
-    [(AstDecl.Extern _ _ _ _) acc]
-    [(AstDecl.DefEnum _ _ _) acc]
-    [(AstDecl.DefEnumLifetimes _ _ _ _) acc]
-    [(AstDecl.DefStruct _ _ _ _) acc]
-    [(AstDecl.DefStructLifetimes _ _ _ _ _) acc]
-    [(AstDecl.DefDispatch _ _) acc]
+    [(AstDecl.Extern decl-meta _ _ _ _) acc]
+    [(AstDecl.DefEnum decl-meta _ _ _) acc]
+    [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) acc]
+    [(AstDecl.DefStruct decl-meta _ _ _ _) acc]
+    [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) acc]
+    [(AstDecl.DefDispatch decl-meta _ _) acc]
     [(AstDecl.IncludeStr _ _) acc]
     [(AstDecl.IncludeStrComptime _ _) acc]
     [(AstDecl.IncludeStrLzss _ _) acc]
     [(AstDecl.IncludeBin _ _) acc]
-    [(AstDecl.Import _) acc]))
+    [(AstDecl.Import decl-meta _) acc]))
 
 ;: Walk every declaration body in `decls`.
 (define (lint-walk-decl-list

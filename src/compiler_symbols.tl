@@ -101,17 +101,15 @@
 
 (define (compiler-symbols-decl-maybe-span [decl : AstDecl]) : CompilerSymbolsMaybeSpan
   (match decl
-    [(AstDecl.Def _ _ body)
+    [(AstDecl.Def decl-meta _ _ body)
       (compiler-symbols-expr-maybe-span (ast-node-get body))]
-    [(AstDecl.DefFn _ _ _ body _)
+    [(AstDecl.DefFn decl-meta _ _ _ body _)
       (compiler-symbols-expr-maybe-span (ast-node-get body))]
-    [(AstDecl.DefMacro _ _ _ body)
+    [(AstDecl.DefMacro decl-meta _ _ _ body)
       (compiler-symbols-expr-maybe-span (ast-node-get body))]
     [(AstDecl.Test _ _ span) (CompilerSymbolsMaybeSpan.Some span)]
     [(AstDecl.Unsafe inner-box)
       (compiler-symbols-decl-maybe-span (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (compiler-symbols-decl-maybe-span (box-get template-box))]
     [_ CompilerSymbolsMaybeSpan.No]))
 
 (define (compiler-symbols-note-last-error! [decl : AstDecl] [path : String]) : unit
@@ -435,7 +433,7 @@
             (array-ref (struct-get decls slots) (+ decl-offset index))]
           (begin
             (match decl
-              [(AstDecl.Import _) unit]
+              [(AstDecl.Import decl-meta _) unit]
               [(AstDecl.Module _) unit]
               [(AstDecl.ModuleBody _ body-box)
                 (set!
@@ -1267,19 +1265,19 @@
         cleanup-name
         (compiler-symbol-make-handle (compiler-symbol-kind-enum-cleanup) index))]))
 
-(define (compiler-symbols-add-decl-in-module
+(define (compiler-symbols-add-decl-in-module-inner
   [symbols : CompilerSymbols]
   [module-id : i64]
   [decl : AstDecl]
   [index : i64]) : ResultCompilerSymbols
   (match decl
-    [(AstDecl.Def name _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (compiler-symbols-add-value-in-module-id
         symbols
         module-id
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-value-define) index))]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (compiler-symbols-add-value-in-module-id
         symbols
         module-id
@@ -1287,25 +1285,25 @@
         (compiler-symbol-make-handle
           (compiler-symbol-kind-function-define)
           index))]
-    [(AstDecl.DefMacro name _ _ _)
+    [(AstDecl.DefMacro decl-meta name _ _ _)
       (compiler-symbols-add-macro-in-module-id
         symbols
         module-id
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
-    [(AstDecl.Extern name _ _ _)
+    [(AstDecl.Extern decl-meta name _ _ _)
       (compiler-symbols-add-value-in-module-id
         symbols
         module-id
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (compiler-symbols-add-value-in-module-id
         symbols
         module-id
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
-    [(AstDecl.DefEnum name cleanup variants)
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
       (match (compiler-symbols-add-type-in-module-id
         symbols
         module-id
@@ -1329,7 +1327,7 @@
               (ResultCompilerSymbols.Err message)])]
         [(ResultCompilerSymbols.Err message)
           (ResultCompilerSymbols.Err message)])]
-    [(AstDecl.DefEnumLifetimes name _ cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
       (match (compiler-symbols-add-type-in-module-id
         symbols
         module-id
@@ -1353,7 +1351,7 @@
               (ResultCompilerSymbols.Err message)])]
         [(ResultCompilerSymbols.Err message)
           (ResultCompilerSymbols.Err message)])]
-    [(AstDecl.DefStruct name _ cleanup _)
+    [(AstDecl.DefStruct decl-meta name _ cleanup _)
       (match (compiler-symbols-add-type-in-module-id
         symbols
         module-id
@@ -1375,7 +1373,7 @@
               (ResultCompilerSymbols.Err message)])]
         [(ResultCompilerSymbols.Err message)
           (ResultCompilerSymbols.Err message)])]
-    [(AstDecl.DefStructLifetimes name _ _ cleanup _)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ cleanup _)
       (match (compiler-symbols-add-type-in-module-id
         symbols
         module-id
@@ -1401,7 +1399,7 @@
     [(AstDecl.IncludeStrComptime _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.IncludeStrLzss _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.IncludeBin _ _) (ResultCompilerSymbols.Ok symbols)]
-    [(AstDecl.Import _) (ResultCompilerSymbols.Ok symbols)]
+    [(AstDecl.Import decl-meta _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Module _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.ModuleBody name body-box)
       (build-compiler-symbol-list-in-module
@@ -1414,19 +1412,24 @@
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (compiler-symbols-add-decl-in-module symbols module-id inner index))]
-    [(AstDecl.ComptimeDecl meta template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (match (compiler-symbols-add-decl-in-module
-          symbols
-          module-id
-          template
-          index)
-          [(ResultCompilerSymbols.Ok next) (ResultCompilerSymbols.Ok next)]
-          [(ResultCompilerSymbols.Err message)
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-with-generated-context message meta))]))]))
+        (compiler-symbols-add-decl-in-module symbols module-id inner index))]))
+
+(define (compiler-symbols-add-decl-in-module
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [decl : AstDecl]
+  [index : i64]) : ResultCompilerSymbols
+  (match (compiler-symbols-add-decl-in-module-inner
+    symbols
+    module-id
+    decl
+    index)
+    [(ResultCompilerSymbols.Ok next) (ResultCompilerSymbols.Ok next)]
+    [(ResultCompilerSymbols.Err message)
+      (ResultCompilerSymbols.Err
+        (compiler-symbols-with-generated-context
+          message
+          (ast-decl-generated-meta decl)))]))
 
 (define (compiler-symbols-add-variant-value-aliases
   [symbols : CompilerSymbols]
@@ -1498,34 +1501,34 @@
   [decl : AstDecl]
   [index : i64]) : CompilerSymbols
   (match decl
-    [(AstDecl.Def name _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (compiler-symbols-add-value-alias-key-id
         symbols
         (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle (compiler-symbol-kind-value-define) index))]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (compiler-symbols-add-value-alias-key-id
         symbols
         (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle
           (compiler-symbol-kind-function-define)
           index))]
-    [(AstDecl.DefMacro name _ _ _)
+    [(AstDecl.DefMacro decl-meta name _ _ _)
       (compiler-symbols-add-macro-alias-key-id
         symbols
         (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
-    [(AstDecl.Extern name _ _ _)
+    [(AstDecl.Extern decl-meta name _ _ _)
       (compiler-symbols-add-value-alias-key-id
         symbols
         (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (compiler-symbols-add-value-alias-key-id
         symbols
         (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
-    [(AstDecl.DefEnum name cleanup variants)
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
       (compiler-symbols-add-enum-cleanup-alias
         (compiler-symbols-add-variant-value-aliases
           (compiler-symbols-add-type-alias-key-id
@@ -1540,7 +1543,7 @@
         alias-id
         cleanup
         index)]
-    [(AstDecl.DefEnumLifetimes name _ cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
       (compiler-symbols-add-enum-cleanup-alias
         (compiler-symbols-add-variant-value-aliases
           (compiler-symbols-add-type-alias-key-id
@@ -1555,7 +1558,7 @@
         alias-id
         cleanup
         index)]
-    [(AstDecl.DefStruct name _ cleanup _)
+    [(AstDecl.DefStruct decl-meta name _ cleanup _)
       (compiler-symbols-add-struct-cleanup-alias
         (compiler-symbols-add-value-alias-key-id
           (compiler-symbols-add-type-alias-key-id
@@ -1567,7 +1570,7 @@
         alias-id
         cleanup
         index)]
-    [(AstDecl.DefStructLifetimes name _ _ cleanup _)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ cleanup _)
       (compiler-symbols-add-struct-cleanup-alias
         (compiler-symbols-add-value-alias-key-id
           (compiler-symbols-add-type-alias-key-id
@@ -1579,14 +1582,6 @@
         alias-id
         cleanup
         index)]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (compiler-symbols-add-decl-alias-in-module
-          symbols
-          alias-id
-          template
-          index))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1599,15 +1594,11 @@
   [decl : AstDecl]
   [index : i64]) : CompilerSymbols
   (match decl
-    [(AstDecl.DefMacro name _ _ _)
+    [(AstDecl.DefMacro decl-meta name _ _ _)
       (compiler-symbols-remove-macro-alias-if-handle
         symbols
         name
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (compiler-symbols-remove-decl-macro-alias symbols template index))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1619,14 +1610,10 @@
   [module-id : i64]
   [decl : AstDecl]) : sym_i64_env.SymI64Env
   (match decl
-    [(AstDecl.DefMacro _ _ _ _)
+    [(AstDecl.DefMacro decl-meta _ _ _ _)
       (if (sym_i64_env.sym-i64-contains-id modules module-id)
         modules
         (sym_i64_env.sym-i64-bind-id modules module-id 1))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (compiler-symbols-macro-module-set-add-decl modules module-id template))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1653,7 +1640,7 @@
           (begin
             (match decl
               [(AstDecl.Module next-module) (set! cur-module next-module)]
-              [(AstDecl.Import _) unit]
+              [(AstDecl.Import decl-meta _) unit]
               [(AstDecl.IncludeStr _ _) unit]
               [(AstDecl.IncludeStrComptime _ _) unit]
               [(AstDecl.IncludeStrLzss _ _) unit]
@@ -1760,6 +1747,7 @@
             (match decl
               [(AstDecl.Module next-module) (set! cur-module next-module)]
               [(AstDecl.Import
+                  decl-meta
                   (AstImportSpec.Spec
                     _
                     _
@@ -1771,7 +1759,7 @@
                   (compiler-symbols-dotted-import-module-set-add-target
                     dotted-modules
                     target-module))]
-              [(AstDecl.Import _) unit]
+              [(AstDecl.Import decl-meta _) unit]
               [(AstDecl.ModuleBody name body-box)
                 (let
                   [nested : CompilerSymbolsModuleSets
@@ -1873,7 +1861,7 @@
       (while (< position decl-count)
         (begin
           (match (array-ref slots (+ decl-offset position))
-            [(AstDecl.Import _) unit]
+            [(AstDecl.Import decl-meta _) unit]
             [(AstDecl.IncludeStr _ _) unit]
             [(AstDecl.IncludeStrComptime _ _) unit]
             [(AstDecl.IncludeStrLzss _ _) unit]
@@ -2017,6 +2005,7 @@
           [next-symbols : CompilerSymbols
             (match decl
               [(AstDecl.Import
+                  decl-meta
                   (AstImportSpec.Spec
                     _
                     _
@@ -2067,7 +2056,7 @@
 
 (define (compiler-symbol-decl-counts-for-index? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Import _) false]
+    [(AstDecl.Import decl-meta _) false]
     [(AstDecl.IncludeStr _ _) false]
     [(AstDecl.IncludeStrComptime _ _) false]
     [(AstDecl.IncludeStrLzss _ _) false]
@@ -2199,7 +2188,7 @@
   [index : i64]
   [decl-path : String]) : CompilerMaybeString
   (match decl
-    [(AstDecl.Def name _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (compiler-symbols-duplicate-value-message-with-paths
         symbols
         all-decls
@@ -2208,7 +2197,7 @@
         name
         index
         decl-path)]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (compiler-symbols-duplicate-value-message-with-paths
         symbols
         all-decls
@@ -2217,7 +2206,7 @@
         name
         index
         decl-path)]
-    [(AstDecl.Extern name _ _ _)
+    [(AstDecl.Extern decl-meta name _ _ _)
       (compiler-symbols-duplicate-value-message-with-paths
         symbols
         all-decls
@@ -2226,7 +2215,7 @@
         name
         index
         decl-path)]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (compiler-symbols-duplicate-value-message-with-paths
         symbols
         all-decls
@@ -2246,25 +2235,10 @@
           inner
           index
           decl-path))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
-          symbols
-          all-decls
-          all-paths
-          module-id
-          template
-          index
-          decl-path))]
     [_ CompilerNoString]))
 
 (define (compiler-symbol-indexed-decl [decl : AstDecl]) : AstDecl
   (match decl
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        template)]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -2273,44 +2247,45 @@
 
 (define (compiler-symbol-owner-name-for-decl [decl : AstDecl] [module-id : i64]) : String
   (match decl
-    [(AstDecl.Def name _ _) (compiler-symbol-module-key-by-id module-id name)]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (compiler-symbol-module-key-by-id module-id name)]
-    [(AstDecl.Extern name _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (compiler-symbol-module-key-by-id module-id name)]
-    [(AstDecl.DefMacro name _ _ _)
+    [(AstDecl.Extern decl-meta name _ _ _)
       (compiler-symbol-module-key-by-id module-id name)]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefMacro decl-meta name _ _ _)
       (compiler-symbol-module-key-by-id module-id name)]
-    [(AstDecl.DefEnum name _ _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (compiler-symbol-module-key-by-id module-id name)]
-    [(AstDecl.DefEnumLifetimes name _ _ _)
+    [(AstDecl.DefEnum decl-meta name _ _)
       (compiler-symbol-module-key-by-id module-id name)]
-    [(AstDecl.DefStruct name _ _ _)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
       (compiler-symbol-module-key-by-id module-id name)]
-    [(AstDecl.DefStructLifetimes name _ _ _ _)
+    [(AstDecl.DefStruct decl-meta name _ _ _)
+      (compiler-symbol-module-key-by-id module-id name)]
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
       (compiler-symbol-module-key-by-id module-id name)]
     [_ ""]))
 
 (define (compiler-symbol-owner-id-for-decl [decl : AstDecl] [module-id : i64]) : i64
   (match decl
-    [(AstDecl.Def name _ _)
+    [(AstDecl.Def decl-meta name _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
-    [(AstDecl.Extern name _ _ _)
+    [(AstDecl.Extern decl-meta name _ _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
-    [(AstDecl.DefMacro name _ _ _)
+    [(AstDecl.DefMacro decl-meta name _ _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
-    [(AstDecl.DefDispatch name _)
+    [(AstDecl.DefDispatch decl-meta name _)
       (compiler-symbol-module-key-id-by-id module-id name)]
-    [(AstDecl.DefEnum name _ _)
+    [(AstDecl.DefEnum decl-meta name _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
-    [(AstDecl.DefEnumLifetimes name _ _ _)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
-    [(AstDecl.DefStruct name _ _ _)
+    [(AstDecl.DefStruct decl-meta name _ _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
-    [(AstDecl.DefStructLifetimes name _ _ _ _)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
       (compiler-symbol-module-key-id-by-id module-id name)]
     [_ -1]))
 
@@ -2382,7 +2357,7 @@
       (let
         [rest : AstDeclList rest]
         (match decl
-          [(AstDecl.Import _)
+          [(AstDecl.Import decl-meta _)
             (build-compiler-symbol-list-in-module
               all-decls
               rest
@@ -2514,7 +2489,7 @@
                       path-rest)]
                   [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
               (match decl
-                [(AstDecl.Import _)
+                [(AstDecl.Import decl-meta _)
                   (begin
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths))]
@@ -2595,10 +2570,17 @@
                           cur-symbols
                           decl
                           cur-index
-                          (if (match decl
-                            [(AstDecl.DefEnum _ _ _) true]
-                            [(AstDecl.DefEnumLifetimes _ _ _ _) true]
-                            [_ false])
+                          (if (and
+                            ;; Generated enum metadata used to sit on an outer
+                            ;; wrapper, so only source enums participated in
+                            ;; dotted path-owner reassignment. Preserve that
+                            ;; ownership boundary now that metadata is inline.
+                            (not (ast-decl-comptime-only? decl))
+                            (match decl
+                              [(AstDecl.DefEnum decl-meta _ _ _) true]
+                              [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _)
+                                true]
+                              [_ false]))
                             (let
                               [exact-owner : i64
                                 (sym_i64_env.sym-i64-lookup-id-or
@@ -2976,7 +2958,7 @@
   [decl : AstDecl]
   [index : i64]) : CompilerRegistries
   (match decl
-    [(AstDecl.DefEnum name _ variants)
+    [(AstDecl.DefEnum decl-meta name _ variants)
       (compiler-registries-add-variant-aliases-list
         registries
         alias-id
@@ -2984,7 +2966,7 @@
         variants
         index
         0)]
-    [(AstDecl.DefEnumLifetimes name _ _ variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ variants)
       (compiler-registries-add-variant-aliases-list
         registries
         alias-id
@@ -2992,7 +2974,7 @@
         variants
         index
         0)]
-    [(AstDecl.DefStruct name _ _ fields)
+    [(AstDecl.DefStruct decl-meta name _ _ fields)
       (compiler-registries-add-field-aliases-list
         registries
         alias-id
@@ -3000,7 +2982,7 @@
         fields
         index
         0)]
-    [(AstDecl.DefStructLifetimes name _ _ _ fields)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ fields)
       (compiler-registries-add-field-aliases-list
         registries
         alias-id
@@ -3008,14 +2990,6 @@
         fields
         index
         0)]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (compiler-registries-add-decl-alias-in-module
-          registries
-          alias-id
-          template
-          index))]
     [_ registries]))
 
 (define (compiler-registries-add-module-aliases-indexed
@@ -3076,6 +3050,7 @@
               [next-registries : CompilerRegistries
                 (match decl
                   [(AstDecl.Import
+                      decl-meta
                       (AstImportSpec.Spec
                         _
                         _
@@ -3229,7 +3204,7 @@
               (array-ref (struct-get decls slots) (+ decl-offset position))]
             [decl-path : String (ast-decl-path-list-get (& paths) position "")]
             (match decl
-              [(AstDecl.Import _) (set! position (+ position 1))]
+              [(AstDecl.Import decl-meta _) (set! position (+ position 1))]
               [(AstDecl.IncludeStr _ _) (set! position (+ position 1))]
               [(AstDecl.IncludeStrComptime _ _) (set! position (+ position 1))]
               [(AstDecl.IncludeStrLzss _ _) (set! position (+ position 1))]
@@ -3266,7 +3241,7 @@
                         (set! result (ResultCompilerRegistries.Err message))
                         (set! done true))]))]
               [(AstDecl.Test _ _ _) (set! position (+ position 1))]
-              [(AstDecl.DefEnum name _ variants)
+              [(AstDecl.DefEnum decl-meta name _ variants)
                 (match (build-compiler-variant-registry-list-in-module
                   variants
                   cur-registries
@@ -3284,7 +3259,7 @@
                     (begin
                       (set! result (ResultCompilerRegistries.Err message))
                       (set! done true))])]
-              [(AstDecl.DefEnumLifetimes name _ _ variants)
+              [(AstDecl.DefEnumLifetimes decl-meta name _ _ variants)
                 (match (build-compiler-variant-registry-list-in-module
                   variants
                   cur-registries
@@ -3302,7 +3277,7 @@
                     (begin
                       (set! result (ResultCompilerRegistries.Err message))
                       (set! done true))])]
-              [(AstDecl.DefStruct name _ _ fields)
+              [(AstDecl.DefStruct decl-meta name _ _ fields)
                 (match (build-compiler-field-registry-list
                   fields
                   cur-registries
@@ -3321,7 +3296,7 @@
                     (begin
                       (set! result (ResultCompilerRegistries.Err message))
                       (set! done true))])]
-              [(AstDecl.DefStructLifetimes name _ _ _ fields)
+              [(AstDecl.DefStructLifetimes decl-meta name _ _ _ fields)
                 (match (build-compiler-field-registry-list
                   fields
                   cur-registries
@@ -3340,88 +3315,6 @@
                     (begin
                       (set! result (ResultCompilerRegistries.Err message))
                       (set! done true))])]
-              [(AstDecl.ComptimeDecl _ template-box)
-                (let
-                  [template : AstDecl (box-get template-box)]
-                  (match template
-                    [(AstDecl.DefEnum name _ variants)
-                      (match (build-compiler-variant-registry-list-in-module
-                        variants
-                        cur-registries
-                        cur-module-id
-                        decl-path
-                        name
-                        cur-index
-                        0)
-                        [(ResultCompilerRegistries.Ok next-registries)
-                          (begin
-                            (set! position (+ position 1))
-                            (set! cur-registries next-registries)
-                            (set! cur-index (+ cur-index 1)))]
-                        [(ResultCompilerRegistries.Err message)
-                          (begin
-                            (set! result (ResultCompilerRegistries.Err message))
-                            (set! done true))])]
-                    [(AstDecl.DefEnumLifetimes name _ _ variants)
-                      (match (build-compiler-variant-registry-list-in-module
-                        variants
-                        cur-registries
-                        cur-module-id
-                        decl-path
-                        name
-                        cur-index
-                        0)
-                        [(ResultCompilerRegistries.Ok next-registries)
-                          (begin
-                            (set! position (+ position 1))
-                            (set! cur-registries next-registries)
-                            (set! cur-index (+ cur-index 1)))]
-                        [(ResultCompilerRegistries.Err message)
-                          (begin
-                            (set! result (ResultCompilerRegistries.Err message))
-                            (set! done true))])]
-                    [(AstDecl.DefStruct name _ _ fields)
-                      (match (build-compiler-field-registry-list
-                        fields
-                        cur-registries
-                        (sym_i64_env.sym-i64-empty)
-                        cur-module-id
-                        decl-path
-                        name
-                        cur-index
-                        0)
-                        [(ResultCompilerRegistries.Ok next-registries)
-                          (begin
-                            (set! position (+ position 1))
-                            (set! cur-registries next-registries)
-                            (set! cur-index (+ cur-index 1)))]
-                        [(ResultCompilerRegistries.Err message)
-                          (begin
-                            (set! result (ResultCompilerRegistries.Err message))
-                            (set! done true))])]
-                    [(AstDecl.DefStructLifetimes name _ _ _ fields)
-                      (match (build-compiler-field-registry-list
-                        fields
-                        cur-registries
-                        (sym_i64_env.sym-i64-empty)
-                        cur-module-id
-                        decl-path
-                        name
-                        cur-index
-                        0)
-                        [(ResultCompilerRegistries.Ok next-registries)
-                          (begin
-                            (set! position (+ position 1))
-                            (set! cur-registries next-registries)
-                            (set! cur-index (+ cur-index 1)))]
-                        [(ResultCompilerRegistries.Err message)
-                          (begin
-                            (set! result (ResultCompilerRegistries.Err message))
-                            (set! done true))])]
-                    [_
-                      (begin
-                        (set! position (+ position 1))
-                        (set! cur-index (+ cur-index 1)))]))]
               [_
                 (begin
                   (set! position (+ position 1))
@@ -3591,7 +3484,7 @@
             (array-ref (struct-get decls slots) (+ decl-offset slot))]
           (begin
             (match decl
-              [(AstDecl.Import _) unit]
+              [(AstDecl.Import decl-meta _) unit]
               [(AstDecl.IncludeStr _ _) unit]
               [(AstDecl.IncludeStrComptime _ _) unit]
               [(AstDecl.IncludeStrLzss _ _) unit]
@@ -3602,10 +3495,6 @@
                 (if (= target logical-index)
                   (return
                     (match decl
-                      [(AstDecl.ComptimeDecl _ template-box)
-                        (let
-                          [template : AstDecl (box-get template-box)]
-                          (ResultAstDecl.Ok template))]
                       [(AstDecl.Unsafe inner-box)
                         (let
                           [inner : AstDecl (box-get inner-box)]
@@ -3678,12 +3567,12 @@
     (compiler-registry-handle-owner-index handle))
     [(ResultAstDecl.Ok decl)
       (match decl
-        [(AstDecl.DefEnum _ _ variants)
+        [(AstDecl.DefEnum decl-meta _ _ variants)
           (compiler-variant-types-at-index
             variants
             (compiler-registry-handle-child-index handle)
             0)]
-        [(AstDecl.DefEnumLifetimes _ _ _ variants)
+        [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
           (compiler-variant-types-at-index
             variants
             (compiler-registry-handle-child-index handle)
@@ -3699,12 +3588,12 @@
     (compiler-registry-handle-owner-index handle))
     [(ResultAstDecl.Ok decl)
       (match decl
-        [(AstDecl.DefEnum _ _ variants)
+        [(AstDecl.DefEnum decl-meta _ _ variants)
           (compiler-variant-types-at-index
             variants
             (compiler-registry-handle-child-index handle)
             0)]
-        [(AstDecl.DefEnumLifetimes _ _ _ variants)
+        [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
           (compiler-variant-types-at-index
             variants
             (compiler-registry-handle-child-index handle)
@@ -3720,12 +3609,12 @@
     (compiler-registry-handle-owner-index handle))
     [(ResultAstDecl.Ok decl)
       (match decl
-        [(AstDecl.DefEnum _ _ variants)
+        [(AstDecl.DefEnum decl-meta _ _ variants)
           (compiler-variant-name-id-at-index
             variants
             (compiler-registry-handle-child-index handle)
             0)]
-        [(AstDecl.DefEnumLifetimes _ _ _ variants)
+        [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
           (compiler-variant-name-id-at-index
             variants
             (compiler-registry-handle-child-index handle)
@@ -3741,12 +3630,12 @@
     (compiler-registry-handle-owner-index handle))
     [(ResultAstDecl.Ok decl)
       (match decl
-        [(AstDecl.DefStruct _ _ _ fields)
+        [(AstDecl.DefStruct decl-meta _ _ _ fields)
           (compiler-field-type-at-index
             fields
             (compiler-registry-handle-child-index handle)
             0)]
-        [(AstDecl.DefStructLifetimes _ _ _ _ fields)
+        [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
           (compiler-field-type-at-index
             fields
             (compiler-registry-handle-child-index handle)
@@ -3762,12 +3651,12 @@
     (compiler-registry-handle-owner-index handle))
     [(ResultAstDecl.Ok decl)
       (match decl
-        [(AstDecl.DefStruct _ _ _ fields)
+        [(AstDecl.DefStruct decl-meta _ _ _ fields)
           (compiler-field-type-at-index
             fields
             (compiler-registry-handle-child-index handle)
             0)]
-        [(AstDecl.DefStructLifetimes _ _ _ _ fields)
+        [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
           (compiler-field-type-at-index
             fields
             (compiler-registry-handle-child-index handle)
@@ -3781,15 +3670,15 @@
   (match (compiler-symbols-decl-at-index symbols target)
     [(ResultAstDecl.Ok decl)
       (match decl
-        [(AstDecl.Def name _ _) name]
-        [(AstDecl.DefFn name _ _ _ _) name]
-        [(AstDecl.DefMacro name _ _ _) name]
-        [(AstDecl.Extern name _ _ _) name]
-        [(AstDecl.DefDispatch name _) name]
-        [(AstDecl.DefEnum name _ _) name]
-        [(AstDecl.DefEnumLifetimes name _ _ _) name]
-        [(AstDecl.DefStruct name _ _ _) name]
-        [(AstDecl.DefStructLifetimes name _ _ _ _) name]
+        [(AstDecl.Def decl-meta name _ _) name]
+        [(AstDecl.DefFn decl-meta name _ _ _ _) name]
+        [(AstDecl.DefMacro decl-meta name _ _ _) name]
+        [(AstDecl.Extern decl-meta name _ _ _) name]
+        [(AstDecl.DefDispatch decl-meta name _) name]
+        [(AstDecl.DefEnum decl-meta name _ _) name]
+        [(AstDecl.DefEnumLifetimes decl-meta name _ _ _) name]
+        [(AstDecl.DefStruct decl-meta name _ _ _) name]
+        [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _) name]
         [_ -1])]
     [(ResultAstDecl.Err _) -1]))
 
@@ -3809,11 +3698,11 @@
   (match (compiler-symbols-decl-at-index symbols owner-index)
     [(ResultAstDecl.Ok decl)
       (match decl
-        [(AstDecl.DefEnum _ _ variants)
+        [(AstDecl.DefEnum decl-meta _ _ variants)
           (compiler-symbols-option-or
             (compiler-variant-name-id-at-index variants variant-index 0)
             -1)]
-        [(AstDecl.DefEnumLifetimes _ _ _ variants)
+        [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
           (compiler-symbols-option-or
             (compiler-variant-name-id-at-index variants variant-index 0)
             -1)]
@@ -3835,9 +3724,9 @@
   (match (compiler-symbols-decl-at-index symbols owner-index)
     [(ResultAstDecl.Ok decl)
       (match decl
-        [(AstDecl.DefStruct _ _ _ fields)
+        [(AstDecl.DefStruct decl-meta _ _ _ fields)
           (compiler-field-name-id-at-index fields field-index)]
-        [(AstDecl.DefStructLifetimes _ _ _ _ fields)
+        [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
           (compiler-field-name-id-at-index fields field-index)]
         [_ -1])]
     [(ResultAstDecl.Err _) -1]))
@@ -3853,7 +3742,7 @@
   [symbols : CompilerSymbols]
   [target : i64]) : i64
   (match (compiler-symbols-decl-at-index symbols target)
-    [(ResultAstDecl.Ok (AstDecl.Def _ _ value))
+    [(ResultAstDecl.Ok (AstDecl.Def decl-meta _ _ value))
       (compiler-symbols-expr-source-id (ast-node-get value))]
     [(ResultAstDecl.Ok _) -1]
     [(ResultAstDecl.Err _) -1]))
@@ -4815,6 +4704,7 @@
           (while (< index count)
             (match (ast-decl-list-get (& decls) index (ast-decl-fallback))
               [(AstDecl.Import
+                  decl-meta
                   (AstImportSpec.Spec
                     _
                     _

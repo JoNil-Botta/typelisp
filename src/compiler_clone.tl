@@ -204,6 +204,7 @@
             (ast-decl-list-get (& decls) index (ast-decl-fallback)))
             [(AstDecl.Module next-module) (set! current-module-id next-module)]
             [(AstDecl.Import
+                decl-meta
                 (AstImportSpec.Spec
                   _
                   _
@@ -515,7 +516,7 @@
             (match (ast-decl-unwrapped decl)
               [(AstDecl.Module next-module)
                 (set! current-module-id next-module)]
-              [(AstDecl.DefEnum name _ variants)
+              [(AstDecl.DefEnum decl-meta name _ variants)
                 (if (clone-variant-list-able?
                   pools
                   variants
@@ -527,7 +528,7 @@
                       out
                       (clone-name-key-id-in-module current-module-id name)))
                   unit)]
-              [(AstDecl.DefStruct name _ _ fields)
+              [(AstDecl.DefStruct decl-meta name _ _ fields)
                 (if (clone-struct-fields-able?
                   pools
                   fields
@@ -570,13 +571,13 @@
             (match (ast-decl-unwrapped decl)
               [(AstDecl.Module next-module)
                 (set! current-module-id next-module)]
-              [(AstDecl.DefEnum name _ _)
+              [(AstDecl.DefEnum decl-meta name _ _)
                 (set!
                   out
                   (clone-name-set-insert-id
                     out
                     (clone-name-key-id-in-module current-module-id name)))]
-              [(AstDecl.DefStruct name _ _ _)
+              [(AstDecl.DefStruct decl-meta name _ _ _)
                 (set!
                   out
                   (clone-name-set-insert-id
@@ -741,7 +742,7 @@
                   (begin
                     (set! current-module-id next-module)
                     (set! cur rest))]
-                [(AstDecl.DefEnum decl-name _ variants)
+                [(AstDecl.DefEnum decl-meta decl-name _ variants)
                   (if (=
                     (clone-name-key-id-in-module current-module-id decl-name)
                     name-key-id)
@@ -757,7 +758,7 @@
                           current-module-id))
                       (set! done true))
                     (set! cur rest))]
-                [(AstDecl.DefStruct decl-name _ _ fields)
+                [(AstDecl.DefStruct decl-meta decl-name _ _ fields)
                   (if (=
                     (clone-name-key-id-in-module current-module-id decl-name)
                     name-key-id)
@@ -935,7 +936,7 @@
             root-key-id
             helper-name-id
             next-module)]
-        [(AstDecl.DefFn name _ _ _ _)
+        [(AstDecl.DefFn decl-meta name _ _ _ _)
           (+
             (if (and
               (=

@@ -356,12 +356,10 @@
 
 (define (typecheck-compiler-source-decl-has-stdlib-import? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Import (AstImportSpec.Spec kind path _ _ _))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind path _ _ _))
       (typecheck-compiler-source-stdlib-import-kind? kind path)]
     [(AstDecl.Unsafe inner-box)
       (typecheck-compiler-source-decl-has-stdlib-import? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (typecheck-compiler-source-decl-has-stdlib-import? (box-get template-box))]
     [_ false]))
 
 (define (typecheck-compiler-source-decls-have-stdlib-import?

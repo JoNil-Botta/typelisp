@@ -360,7 +360,7 @@
   [decl : AstDecl]
   [examples : (&mut examples doc_macro_import_example_vec.Vec)]) : unit
   (match decl
-    [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias _))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ alias _))
       (match kind
         [(AstImportKind.Macro call-id _)
           (doc-macro-import-example-push!
@@ -368,8 +368,6 @@
             (doc-import-alias-string alias)
             (doc-macro-import-form call-id alias))]
         [_ unit])]
-    [(AstDecl.ComptimeDecl _ inner-box)
-      (doc-macro-import-examples-from-decl (box-get inner-box) examples)]
     [(AstDecl.Unsafe inner-box)
       (doc-macro-import-examples-from-decl (box-get inner-box) examples)]
     [(AstDecl.ModuleBody _ body-box)
@@ -466,7 +464,7 @@
   [macro-examples : doc_macro_import_example_vec.Vec]
   [targets : (&mut targets doc_generated_target_example_vec.Vec)]) : unit
   (match decl
-    [(AstDecl.Import (AstImportSpec.Spec kind _ expected alias _))
+    [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ expected alias _))
       (match kind
         [(AstImportKind.Module)
           (match expected
@@ -482,11 +480,6 @@
                   form))]
             [(AstMaybeModuleName.No) unit])]
         [_ unit])]
-    [(AstDecl.ComptimeDecl _ inner-box)
-      (doc-generated-target-examples-from-decl
-        (box-get inner-box)
-        macro-examples
-        targets)]
     [(AstDecl.Unsafe inner-box)
       (doc-generated-target-examples-from-decl
         (box-get inner-box)
@@ -732,42 +725,42 @@
 
 (define (doc-ast-decl-item [decl : AstDecl]) : DocMaybeItem
   (match decl
-    [(AstDecl.Def name maybe-ty _)
+    [(AstDecl.Def decl-meta name maybe-ty _)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.Define)
           (intern-str name)
           ""
           (doc-ast-define-signature name maybe-ty)))]
-    [(AstDecl.DefFn name params ret _ _)
+    [(AstDecl.DefFn decl-meta name params ret _ _)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.Function)
           (intern-str name)
           ""
           (doc-ast-function-signature name params ret)))]
-    [(AstDecl.DefMacro name params ret _)
+    [(AstDecl.DefMacro decl-meta name params ret _)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefMacro)
           (intern-str name)
           ""
           (doc-ast-macro-signature name params ret)))]
-    [(AstDecl.Extern name _ _ ty)
+    [(AstDecl.Extern decl-meta name _ _ ty)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.Extern)
           (intern-str name)
           ""
           (doc-ast-extern-signature name ty)))]
-    [(AstDecl.DefEnum name _ variants)
+    [(AstDecl.DefEnum decl-meta name _ variants)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefEnum)
           (intern-str name)
           ""
           (doc-ast-enum-signature name "" variants)))]
-    [(AstDecl.DefEnumLifetimes name lifetimes _ variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes _ variants)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefEnum)
@@ -777,14 +770,14 @@
             name
             (doc-ast-lifetime-list-source lifetimes)
             variants)))]
-    [(AstDecl.DefStruct name _ _ fields)
+    [(AstDecl.DefStruct decl-meta name _ _ fields)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefStruct)
           (intern-str name)
           ""
           (doc-ast-struct-signature name "" fields)))]
-    [(AstDecl.DefStructLifetimes name lifetimes _ _ fields)
+    [(AstDecl.DefStructLifetimes decl-meta name lifetimes _ _ fields)
       (DocMaybeItem.Some
         (doc_extract.DocItem.Item
           (doc_extract.DocItemKind.DefStruct)
@@ -794,21 +787,13 @@
             name
             (doc-ast-lifetime-list-source lifetimes)
             fields)))]
-    [(AstDecl.ComptimeDecl _ inner-box) (doc-ast-decl-item (box-get inner-box))]
     [(AstDecl.Unsafe inner-box) (doc-ast-decl-item (box-get inner-box))]
     [_ (DocMaybeItem.No)]))
 
 (define (doc-ast-generated-decl-item [decl : AstDecl]) : DocMaybeItem
-  (match decl
-    [(AstDecl.ComptimeDecl meta inner-box)
-      (match meta
-        [(AstGeneratedDeclMeta.Some _ _ _ _)
-          (doc-ast-decl-item (box-get inner-box))]
-        [(AstGeneratedDeclMeta.No)
-          (doc-ast-generated-decl-item (box-get inner-box))])]
-    [(AstDecl.Unsafe inner-box)
-      (doc-ast-generated-decl-item (box-get inner-box))]
-    [_ (DocMaybeItem.No)]))
+  (match (ast-decl-generated-meta decl)
+    [(AstGeneratedDeclMeta.Some _ _ _ _) (doc-ast-decl-item decl)]
+    [(AstGeneratedDeclMeta.No) (DocMaybeItem.No)]))
 
 (define (doc-generated-import-item [form : String]) : doc_extract.DocItem
   (doc_extract.DocItem.Item
@@ -1093,7 +1078,7 @@
     "(defmacro (catalog [T : type (:kind i64 struct)]) : Module unit)")
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (match (ast-decl-list-step (box-get decls-box))
-        [(AstDeclListStep.Cons (AstDecl.DefMacro _ params _ _) rest)
+        [(AstDeclListStep.Cons (AstDecl.DefMacro decl-meta _ params _ _) rest)
           (and
             (match (ast-decl-list-step rest)
               [(AstDeclListStep.Nil) true]

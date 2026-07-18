@@ -368,7 +368,7 @@
       (match (ast.ast-decl-list-step (box-get decls-box))
         [(ast.AstDeclListStep.Cons first rest-box)
           (match first
-            [(ast.AstDecl.Def _ maybe-ty first-body)
+            [(ast.AstDecl.Def _ _ maybe-ty first-body)
               (match (ast.ast-decl-list-step rest-box)
                 [(ast.AstDeclListStep.Cons second tail-box)
                   (match second
@@ -404,7 +404,7 @@
                         (match (ast.ast-decl-list-step tail-box)
                           [(ast.AstDeclListStep.Cons third final-box)
                             (match third
-                              [(ast.AstDecl.Def _ _ make-body)
+                              [(ast.AstDecl.Def _ _ _ make-body)
                                 (and
                                   (not (= make-body source-make))
                                   (match (ast.ast-node-pool-context-expr-get
@@ -515,7 +515,7 @@
                 (match (ast.ast-decl-list-step (box-get decls-box))
                   [(ast.AstDeclListStep.Cons first _)
                     (match first
-                      [(ast.AstDecl.Def _ maybe-ty body)
+                      [(ast.AstDecl.Def _ _ maybe-ty body)
                         (match maybe-ty
                           [(ast.AstMaybeType.Some ty)
                             (match ty
@@ -577,7 +577,7 @@
               (match (ast.ast-decl-list-step (box-get decls-box))
                 [(ast.AstDeclListStep.Cons decl rest)
                   (match decl
-                    [(ast.AstDecl.Def _ maybe-type body)
+                    [(ast.AstDecl.Def _ _ maybe-type body)
                       (and
                         (compiler-ast-context-expr-int-lit? out-pools body 222)
                         (match maybe-type
@@ -621,7 +621,7 @@
             (match (ast.ast-decl-list-step (box-get decls-box))
               [(ast.AstDeclListStep.Cons decl _)
                 (match decl
-                  [(ast.AstDecl.Def _ _ body)
+                  [(ast.AstDecl.Def _ _ _ body)
                     (match (ast.ast-node-pool-context-expr-get out-pools body)
                       [(ast.AstExpr.Borrow mutable lifetime inner)
                         (and
@@ -647,7 +647,7 @@
   [pools : ast.AstNodePoolContext]
   [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.Def _ maybe-ty value)
+    [(ast.AstDecl.Def _ _ maybe-ty value)
       (and
         (match maybe-ty
           [(ast.AstMaybeType.Some ty)
@@ -670,7 +670,7 @@
   [pools : ast.AstNodePoolContext]
   [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.Def _ ast.AstMaybeType.No value)
+    [(ast.AstDecl.Def _ _ ast.AstMaybeType.No value)
       (match (ast.ast-node-pool-context-expr-get pools value)
         [(ast.AstExpr.BinaryData text) (string.eq text "bytes")]
         [_ false])]
@@ -679,6 +679,7 @@
 (define (compiler-ast-compaction-import-ok? [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Import
+        _
         (ast.AstImportSpec.Spec
           (ast.AstImportKind.Path)
           path
@@ -714,7 +715,7 @@
   [decl : ast.AstDecl]
   [decls-kind? : bool]) : bool
   (match decl
-    [(ast.AstDecl.Import (ast.AstImportSpec.Spec kind _ _ _ _))
+    [(ast.AstDecl.Import _ (ast.AstImportSpec.Spec kind _ _ _ _))
       (match kind
         [(ast.AstImportKind.Macro call _)
           (and
@@ -727,7 +728,7 @@
 
 (define (compiler-ast-compaction-extern-ok? [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.Extern _ _ metadata _)
+    [(ast.AstDecl.Extern _ _ _ metadata _)
       (match (box-get metadata)
         [(ast.AstExternMetadata.Metadata (ast.AstExternAbi.C) symbol links true)
           (and
@@ -743,7 +744,7 @@
 
 (define (compiler-ast-compaction-dispatch-ok? [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.DefDispatch _ variants)
+    [(ast.AstDecl.DefDispatch _ _ variants)
       (match (ast.ast-dispatch-variant-list-get
         (& variants)
         0
@@ -755,7 +756,7 @@
 
 (define (compiler-ast-compaction-lifetimes-ok? [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.DefStructLifetimes _ lifetimes _ _ _)
+    [(ast.AstDecl.DefStructLifetimes _ _ lifetimes _ _ _)
       (=
         (ast.ast-lifetime-list-get (& lifetimes) 0 (ast.ast-lifetime-fallback))
         cbi.compiler-builtin-id-fix-n)]
@@ -846,6 +847,7 @@
             (ast.ast-decl-def-id bin-name-id ast.AstMaybeType.No binary-expr)
             (ast.ast-decl-cons
               (ast.AstDecl.Import
+                ast.ast-decl-meta-runtime
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Path)
                   "pkg/path"
@@ -866,6 +868,7 @@
                   (ast.AstType.I64))
                 (ast.ast-decl-cons
                   (ast.AstDecl.Import
+                    ast.ast-decl-meta-runtime
                     (ast.AstImportSpec.Spec
                       (ast.AstImportKind.Macro
                         macro-call
@@ -876,6 +879,7 @@
                       (box (ast.ast-source-span 2 1 2 1))))
                   (ast.ast-decl-cons
                     (ast.AstDecl.Import
+                      ast.ast-decl-meta-runtime
                       (ast.AstImportSpec.Spec
                         (ast.AstImportKind.MacroDecls
                           macro-call
@@ -888,6 +892,7 @@
                       (ast.ast-decl-def-dispatch-id dispatch-name-id variants)
                       (ast.ast-decl-cons
                         (ast.AstDecl.DefStructLifetimes
+                          ast.ast-decl-meta-runtime
                           0
                           lifetimes
                           (ast.AstStructRepr.Default)

@@ -109,7 +109,7 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match (ast-decl-list-get (& decls) 0 (ast-decl-fallback))
-          [(AstDecl.DefStruct _ _ _ fields)
+          [(AstDecl.DefStruct decl-meta _ _ _ fields)
             (let
               [span : AstSourceSpan
                 (compiler-parse-field-def-list-span-get
@@ -147,7 +147,7 @@
               (compiler-parse-test-name-id? name "parsed.module")]
             [_ false])
           (match (ast-decl-list-get (& decls) 1 (ast-decl-fallback))
-            [(AstDecl.DefStruct name _ _ fields)
+            [(AstDecl.DefStruct decl-meta name _ _ fields)
               (and
                 (compiler-parse-test-name-id? name "ParsedType")
                 (match (ast-field-def-list-get
@@ -158,7 +158,7 @@
                     (compiler-parse-test-name-id? field "parsed-field")]))]
             [_ false])
           (match (ast-decl-list-get (& decls) 2 (ast-decl-fallback))
-            [(AstDecl.DefFn name params ret _ _)
+            [(AstDecl.DefFn decl-meta name params ret _ _)
               (and
                 (compiler-parse-test-name-id? name "parsed-fn")
                 (match (ast-param-list-get (& params) 0 (ast-param-fallback))

@@ -46615,6 +46615,29 @@
       (CompilerIrMaybeValue.Some (CompilerIrValue.I64 value)))
     (CompilerIrInstrList.Nil)))
 
+(define (opt-global-dce-large-return-step [idx : i64] [value : i64]) : CompilerIrInstrList
+  (if (>= idx 9)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Return
+        (CompilerIrMaybeValue.Some (CompilerIrValue.I64 value)))
+      (CompilerIrInstrList.Nil))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Mov idx (CompilerIrValue.I64 value) (AstType.I64))
+      (opt-global-dce-large-return-step (+ idx 1) value))))
+
+;; A direct-called fixture callee whose call-free body exceeds the opt1
+;; tiny-leaf cap, so the level-1 pruning assertions keep an out-of-line
+;; callee to observe instead of watching it get inlined away.
+(define (opt-global-dce-large-callee [name : i64] [value : i64]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    name
+    (CompilerIrParamList.Nil)
+    (AstType.I64)
+    10
+    (compiler-ir-block-cons
+      (compiler-ir-block "entry" (opt-global-dce-large-return-step 0 value))
+      (CompilerIrBlockList.Nil))))
+
 (define (opt-global-dce-program [symbols : OptGlobalDceTestSymbols]) : CompilerIrProgram
   (CompilerIrProgram.Program
     (compiler-ir-global-cons
@@ -46648,9 +46671,7 @@
         (struct-get symbols main)
         (opt-global-dce-main-instrs symbols))
       (compiler-ir-function-cons
-        (opt-test-function-symbol
-          (struct-get symbols helper)
-          (opt-global-dce-return-instrs 7))
+        (opt-global-dce-large-callee (struct-get symbols helper) 7)
         (compiler-ir-function-cons
           (opt-test-function-symbol
             (struct-get symbols dead)
@@ -47992,7 +48013,9 @@
       (opt-inline-function-instrs (opt-inline-level-functions 2) "main")]
     (and
       (= (opt-count-direct-call-name level0 "inline_add") 1)
-      (= (opt-count-direct-call-name level1 "inline_add") 1)
+      ;; Level 1 runs the call-free tiny-leaf pass, which admits the
+      ;; inline_add fixture; only level 0 leaves the call in place.
+      (= (opt-count-direct-call-name level1 "inline_add") 0)
       (= (opt-count-direct-call-name level2 "inline_add") 0))))
 
 (define (compiler-optimize-inline-self-recursive-ok?) : bool

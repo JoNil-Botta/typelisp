@@ -19533,6 +19533,25 @@
           context
           (not (opt-sccp-blocks-change-successors? env blocks))))]))
 
+;; Pipeline entry point that skips the nested cfg-simplify: the pipeline's own
+;; cfg pass runs immediately after sccp and canonicalizes once (literal
+;; branches folded, unreachable blocks filtered, phis cleaned -- a second
+;; application is a no-op), so simplifying here duplicated that stage
+;; back-to-back. opt-sccp-blocks-with-context-result keeps the nested
+;; simplify for the sccp self-test, which pins it. The context stays valid
+;; for the rewrite output exactly when no branch condition folded to a
+;; literal (opt-sccp-blocks-change-successors?).
+(define (opt-sccp-blocks-with-context-result-raw
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptBlockCtxResult
+  (match (opt-sccp-analyze context params blocks)
+    [(OptSccpState.State _ _ env _)
+      (OptBlockCtxResult.Result
+        (opt-sccp-rewrite-blocks env blocks)
+        context
+        (not (opt-sccp-blocks-change-successors? env blocks)))]))
+
 (defenum OptFunctionPassResult
   (Result CompilerIrFunction bool))
 
@@ -31180,7 +31199,7 @@
                       [_t-sccp : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
                         (if run-heavy?
-                          (opt-sccp-blocks-with-context-result
+                          (opt-sccp-blocks-with-context-result-raw
                             ssa-context
                             params
                             bounds-dom)

@@ -60731,11 +60731,215 @@
           (set! i (+ i 1))))
       unit)))
 
+;; --- loop-header descriptor-entry carry ---------------------------------------
+;;
+;; A descriptor field load (array length/data pointer) reads memory provably
+;; outside every data buffer, so a loop that only writes element memory
+;; (scaled/element stores of a data pointer) cannot change it. When a loop
+;; header's back edge arrives unprocessed in the RPO sweep, the entry table
+;; keeps those header-typed entries whose base var is single-source instead
+;; of resetting to the empty table -- provided a static scan proves the loop
+;; has no calls, barriers, or stores that are not provably element-based.
+;; Keep only descriptor-field entries whose base var is single-source.
+(define (opt-load-table-filter-descriptor-stable
+  [table : OptLoadTable]
+  [sources : opt_i64_i64_map.Map]) : OptLoadTable
+  (match table
+    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
+    [(OptLoadTable.Cons entry rest)
+      (let
+        [tail : OptLoadTable
+          (opt-load-table-filter-descriptor-stable (box-get rest) sources)]
+        (match (opt-load-entry-key entry)
+          [(OptLoadKey.Field base _ _ header?)
+            (if (and header? (opt-gvn-stable-var? sources base))
+              (OptLoadTable.Cons entry (box tail))
+              tail)]
+          [_ tail]))]))
+
+;; Find the (single, SSA) instruction defining `var` anywhere in the function.
+(define (opt-load-gvn-find-def-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : OptMaybeInstr
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptMaybeInstr.No)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (if (= (opt-gvn-instr-dst instr) var)
+        (OptMaybeInstr.Some instr)
+        (opt-load-gvn-find-def-instrs instrs (+ index 1) var)))))
+
+(define (opt-load-gvn-find-def [blocks : CompilerIrBlockList] [var : i64]) : OptMaybeInstr
+  (match blocks
+    [(CompilerIrBlockList.Nil) (OptMaybeInstr.No)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (match (opt-load-gvn-find-def-instrs instrs 0 var)
+            [(OptMaybeInstr.Some instr) (OptMaybeInstr.Some instr)]
+            [(OptMaybeInstr.No) (opt-load-gvn-find-def (box-get rest) var)])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-load-gvn-find-def (compiler-ir-block-seq-to-list seq) var)]))
+
+;; Is `var` provably an element (data-buffer) address? A gep of an element
+;; base stays in the buffer; a load of a header descriptor's first word is the
+;; data pointer (the element root); phis and movs chase through. Depth-capped
+;; against non-SSA cycles.
+(define (opt-load-gvn-element-base?
+  [hs : OptLoadHeaderSet]
+  [blocks : CompilerIrBlockList]
+  [var : i64]
+  [depth : i64]) : bool
+  (if (>= depth 8)
+    false
+    (match (opt-load-gvn-find-def blocks var)
+      [(OptMaybeInstr.Some instr)
+        (match instr
+          [(CompilerIrInstr.Gep _ base _ _)
+            (match base
+              [(CompilerIrValue.Var bvar)
+                (opt-load-gvn-element-base? hs blocks bvar (+ depth 1))]
+              [_ false])]
+          [(CompilerIrInstr.Mov _ src _)
+            (match src
+              [(CompilerIrValue.Var svar)
+                (opt-load-gvn-element-base? hs blocks svar (+ depth 1))]
+              [_ false])]
+          [(CompilerIrInstr.Load _ src _)
+            (match src
+              [(CompilerIrValue.Var pvar)
+                (if (opt-load-header-var? hs pvar)
+                  true
+                  (match (opt-load-gvn-find-def blocks pvar)
+                    [(OptMaybeInstr.Some addr-def)
+                      (match addr-def
+                        [(CompilerIrInstr.Gep _ gbase goff _)
+                          (and
+                            (match gbase
+                              [(CompilerIrValue.Var dvar)
+                                (opt-load-header-var? hs dvar)]
+                              [_ false])
+                            (match goff
+                              [(CompilerIrValue.I64 0) true]
+                              [_ false]))]
+                        [_ false])]
+                    [(OptMaybeInstr.No) false]))]
+              [_ false])]
+          [(CompilerIrInstr.Phi _ inputs _)
+            (opt-load-gvn-element-base-phi? hs blocks inputs (+ depth 1))]
+          [_ false])]
+      [(OptMaybeInstr.No) false])))
+
+(define (opt-load-gvn-element-base-phi?
+  [hs : OptLoadHeaderSet]
+  [blocks : CompilerIrBlockList]
+  [inputs : CompilerIrPhiInputList]
+  [depth : i64]) : bool
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) true]
+    [(CompilerIrPhiInputList.Cons value _ rest)
+      (match value
+        [(CompilerIrValue.Var v)
+          (if (opt-load-gvn-element-base? hs blocks v depth)
+            (opt-load-gvn-element-base-phi? hs blocks (box-get rest) depth)
+            false)]
+        [_ false])]
+    ;; force-cons normalizes the array form away.
+    [(CompilerIrPhiInputList.Array _) true]))
+
+;; Scan one instruction for loop-carry safety: calls and clear-alls are out,
+;; stores must be element-based.
+(define (opt-load-gvn-loop-safe-instr?
+  [hs : OptLoadHeaderSet]
+  [blocks : CompilerIrBlockList]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.StorePtr ptr _ _)
+      (match ptr
+        [(CompilerIrValue.Var pvar)
+          (opt-load-gvn-element-base? hs blocks pvar 0)]
+        [_ false])]
+    [(CompilerIrInstr.Store _ _ _) false]
+    [(CompilerIrInstr.VectorStore _) false]
+    [(CompilerIrInstr.PredicatedStore _) false]
+    [(CompilerIrInstr.CopyBytes _ _ _) false]
+    [_ (not (opt-alias-instr-clears-all? instr))]))
+
+;; Scan the loop body's blocks.
+(define (opt-load-gvn-loop-safe-blocks?
+  [hs : OptLoadHeaderSet]
+  [all-blocks : CompilerIrBlockList]
+  [body : CompilerIrBlockList]) : bool
+  (match body
+    [(CompilerIrBlockList.Nil) true]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-load-gvn-loop-safe-instr-seq? hs all-blocks instrs 0)
+            (opt-load-gvn-loop-safe-blocks? hs all-blocks (box-get rest))
+            false)])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-load-gvn-loop-safe-blocks?
+        hs
+        all-blocks
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-load-gvn-loop-safe-instr-seq?
+  [hs : OptLoadHeaderSet]
+  [all-blocks : CompilerIrBlockList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (if (opt-load-gvn-loop-safe-instr?
+      hs
+      all-blocks
+      (compiler-ir-instr-seq-ref instrs index))
+      (opt-load-gvn-loop-safe-instr-seq? hs all-blocks instrs (+ index 1))
+      false)))
+
+;; Header label -> proven loop-carry-safe.
+(defenum OptLoadGvnLoopSafeList
+  (Nil)
+  (Cons String (Box OptLoadGvnLoopSafeList)))
+
+(define (opt-load-gvn-loop-safe-contains?
+  [safe : OptLoadGvnLoopSafeList]
+  [label : String]) : bool
+  (match safe
+    [(OptLoadGvnLoopSafeList.Nil) false]
+    [(OptLoadGvnLoopSafeList.Cons name rest)
+      (if (string.eq name label)
+        true
+        (opt-load-gvn-loop-safe-contains? (box-get rest) label))]))
+
+(define (opt-load-gvn-loop-safe-collect
+  [hs : OptLoadHeaderSet]
+  [blocks : CompilerIrBlockList]
+  [loops : OptNaturalLoopList]) : OptLoadGvnLoopSafeList
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptLoadGvnLoopSafeList.Nil)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (let
+        [tail : OptLoadGvnLoopSafeList
+          (opt-load-gvn-loop-safe-collect hs blocks (box-get rest))]
+        (if (opt-load-gvn-loop-safe-blocks?
+          hs
+          blocks
+          (opt-natural-loop-body-blocks loop))
+          (OptLoadGvnLoopSafeList.Cons
+            (opt-natural-loop-header loop)
+            (box tail))
+          tail))]))
+
 (define (opt-load-gvn-entry-from-preds
   [index : OptCfgIndex]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [sources : opt_i64_i64_map.Map]
+  [loop-safe : OptLoadGvnLoopSafeList]
+  [label : String]
   [empty-state : OptLoadCseState]
   [edge : i64]
   [end : i64]
@@ -60746,14 +60950,19 @@
     (if saw-unprocessed
       ;; A back edge arrived unprocessed: memory contents along it are unknown,
       ;; so the table and alias facts come from empty-state, but stable kinds
-      ;; are value properties the back edge cannot change -- keep them.
+      ;; are value properties the back edge cannot change -- keep them. A loop
+      ;; proven to write only element memory also keeps its descriptor-field
+      ;; entries (header-typed, stable base): those loads live outside every
+      ;; data buffer, so the loop's stores cannot reach them.
       (match acc
-        [(OptLoadCseState.State _ _ acc-kinds _)
+        [(OptLoadCseState.State _ acc-table acc-kinds _)
           (match empty-state
             [(OptLoadCseState.State empty-facts empty-table _ empty-cap)
               (OptLoadCseState.State
                 empty-facts
-                empty-table
+                (if (opt-load-gvn-loop-safe-contains? loop-safe label)
+                  (opt-load-table-filter-descriptor-stable acc-table sources)
+                  empty-table)
                 (opt-load-kinds-filter-stable acc-kinds sources)
                 empty-cap)])])
       acc)
@@ -60765,6 +60974,8 @@
           exit-states
           processed
           sources
+          loop-safe
+          label
           empty-state
           (+ edge 1)
           end
@@ -60777,6 +60988,8 @@
             exit-states
             processed
             sources
+            loop-safe
+            label
             empty-state
             (+ edge 1)
             end
@@ -60790,6 +61003,8 @@
                 exit-states
                 processed
                 sources
+                loop-safe
+                label
                 empty-state
                 (+ edge 1)
                 end
@@ -60804,6 +61019,8 @@
                 exit-states
                 processed
                 sources
+                loop-safe
+                label
                 empty-state
                 (+ edge 1)
                 end
@@ -60816,6 +61033,7 @@
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [sources : opt_i64_i64_map.Map]
+  [loop-safe : OptLoadGvnLoopSafeList]
   [empty-state : OptLoadCseState]
   [id : i64]) : OptLoadCseState
   (let
@@ -60831,6 +61049,8 @@
             exit-states
             processed
             sources
+            loop-safe
+            (opt-cfg-index-label index id)
             empty-state
             (array-ref (struct-get preds offsets) id)
             (array-ref (struct-get preds offsets) (+ id 1))
@@ -60884,6 +61104,7 @@
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
+  [loop-safe : OptLoadGvnLoopSafeList]
   [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
@@ -60899,6 +61120,7 @@
         exit-states
         processed
         sources
+        loop-safe
         empty-state
         id)]
     (match (opt-cfg-find-block blocks label)
@@ -60924,6 +61146,7 @@
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
+  [loop-safe : OptLoadGvnLoopSafeList]
   [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
@@ -60942,6 +61165,7 @@
             context
             hs
             sources
+            loop-safe
             blocks
             exit-states
             processed
@@ -60952,6 +61176,7 @@
             context
             hs
             sources
+            loop-safe
             blocks
             exit-states
             processed
@@ -61019,6 +61244,11 @@
       [processed : (Array bool) (array.make-array bool count)]
       [out : (Array OptGvnBlockResult)
         (array.make-array OptGvnBlockResult count)]
+      [loop-safe : OptLoadGvnLoopSafeList
+        (opt-load-gvn-loop-safe-collect
+          hs
+          blocks
+          (opt-cfg-natural-loops-with-context blocks context))]
       [empty-state : OptLoadCseState
         (opt-load-cse-state-with-caps-and-facts
           (opt-load-cse-table-cap-for-size
@@ -61034,6 +61264,7 @@
           context
           hs
           sources
+          loop-safe
           blocks
           exit-states
           processed

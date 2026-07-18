@@ -67864,11 +67864,10 @@
 (define tc-decl-scratch-arena : i64
   0)
 
-;; Open declaration scopes in the declaration scratch arena. ComptimeDecl and
-;; Unsafe recurse into the declaration dispatcher, so a template can nest
-;; another scoped declaration check inside this one; only the outermost scope
-;; may destroy the arena after an overflow (a nested destroy would leave the
-;; enclosing mark dangling).
+;; Open outer declaration scopes in the declaration scratch arena.
+;; ComptimeDecl and Unsafe recurse into the declaration dispatcher; nested
+;; checks stay inside the outer scope so only that scope rewinds or destroys
+;; the arena.
 (define tc-decl-scratch-depth : i64
   0)
 
@@ -67909,50 +67908,57 @@
   [top-env : TcTypeEnv]
   [global-env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcUnit
-  (let
-    [enclosing : i64 (arena.tl_arena_current)]
-    [scratch : i64 (tc-decl-scratch-arena-get)]
-    (begin
-      (set! tc-decl-scratch-depth (+ tc-decl-scratch-depth 1))
-      (unsafe
-        (arena.tl_arena_set scratch))
-      (let
-        [mark : i64 (arena.tl_region_mark)]
-        [raw : ResultTcUnit
-          (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)]
-        [scratch-head : i64 (arena.tl_arena_current)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set enclosing))
-          (let
-            [escaped : ResultTcUnit
-              (match raw
-                [(ResultTcUnit.Ok) ResultTcUnit.Ok]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err (clone message))])]
-            [new-enclosing : i64 (arena.tl_arena_current)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set scratch-head)
-                (arena.tl_region_reset mark)
-                (arena.tl_arena_set new-enclosing))
-              (set! tc-decl-scratch-depth (- tc-decl-scratch-depth 1))
-              (if (and
-                (= tc-decl-scratch-depth 0)
-                (not (= scratch scratch-head)))
-                (tc-decl-scratch-arena-release!)
-                unit)
-              ;; Single-entry name caches may hold strings allocated in the
-              ;; scratch that was just rewound; invalidate them before
-              ;; anything can compare against freed memory.
-              (tc-nominal-owner-cache-reset!)
-              ;; The macro helper env cache persists across declarations, but
-              ;; its spine is extended with per-check partial cache layers
-              ;; while a DefMacro body is checked; those layers (and any
-              ;; rewind-sensitive content reached through them) must not
-              ;; outlive this declaration, so rebuild the cache per
-              ;; declaration inside the scratch scope.
-              (tc-macro-helper-env-cache-reset!)
-              escaped)))))))
+  (if (> tc-decl-scratch-depth 0)
+    ;; ComptimeDecl/Unsafe recursively dispatches its template. Keep nested
+    ;; checks in the outer declaration scope: an inner rewind would also free
+    ;; an error cloned into that same scratch arena, while the outer scope
+    ;; already provides the required reclamation boundary.
+    (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (tc-decl-scratch-arena-get)]
+      (begin
+        (set! tc-decl-scratch-depth (+ tc-decl-scratch-depth 1))
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [mark : i64 (arena.tl_region_mark)]
+          [raw : ResultTcUnit
+            (tc-check-nonfn-decl-with-global-env ctx top-env global-env decl)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            (let
+              [escaped : ResultTcUnit
+                (match raw
+                  [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+                  [(ResultTcUnit.Err message)
+                    (ResultTcUnit.Err (clone message))])]
+              [new-enclosing : i64 (arena.tl_arena_current)]
+              (begin
+                (unsafe
+                  (arena.tl_arena_set scratch-head)
+                  (arena.tl_region_reset mark)
+                  (arena.tl_arena_set new-enclosing))
+                (set! tc-decl-scratch-depth (- tc-decl-scratch-depth 1))
+                (if (and
+                  (= tc-decl-scratch-depth 0)
+                  (not (= scratch scratch-head)))
+                  (tc-decl-scratch-arena-release!)
+                  unit)
+                ;; Single-entry name caches may hold strings allocated in the
+                ;; scratch that was just rewound; invalidate them before
+                ;; anything can compare against freed memory.
+                (tc-nominal-owner-cache-reset!)
+                ;; The macro helper env cache persists across declarations, but
+                ;; its spine is extended with per-check partial cache layers
+                ;; while a DefMacro body is checked; those layers (and any
+                ;; rewind-sensitive content reached through them) must not
+                ;; outlive this declaration, so rebuild the cache per
+                ;; declaration inside the scratch scope.
+                (tc-macro-helper-env-cache-reset!)
+                escaped))))))))
 
 (define (tc-check-decl-with-global-env
   [ctx : TcContext]

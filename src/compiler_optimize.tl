@@ -48227,6 +48227,37 @@
                 (CompilerIrInstrList.Nil))))
           (CompilerIrBlockList.Nil))))))
 
+(define (opt-gvn-single-load-store-forward-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Alloc 0 (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            1
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 0)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.I64 9)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "use")
+              (CompilerIrInstrList.Nil))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 3 (CompilerIrValue.Var 1) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+            (CompilerIrInstrList.Nil))))
+      (CompilerIrBlockList.Nil))))
+
 (define (opt-gvn-load-call-path-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -48538,6 +48569,10 @@
       (opt-gvn-blocks
         (opt-gvn-pointer-cond-params)
         (opt-gvn-load-store-path-blocks))]
+    [single-load-store-forward : CompilerIrBlockList
+      (opt-gvn-blocks
+        (CompilerIrParamList.Nil)
+        (opt-gvn-single-load-store-forward-blocks))]
     [load-call-path : CompilerIrBlockList
       (opt-gvn-blocks
         (opt-gvn-pointer-cond-params)
@@ -48634,6 +48669,12 @@
       [(not
           (= (opt-blocks-mov-src-var checked-ref-root-loss 4 (- 0 1)) (- 0 1)))
         32]
+      [(not (= (opt-count-load-blocks single-load-store-forward) 0)) 33]
+      [(not
+          (=
+            (opt-blocks-mov-dst-i64-value single-load-store-forward 3 (- 0 1))
+            9))
+        34]
       [else 42])))
 
 ;; Regression fixture for the global-GVN stale-global-read miscompile: the
@@ -58878,64 +58919,47 @@
             empty-state
             (+ slot 1)))))))
 
-;; Cheap at-least-two-loads pre-scan for the cross-block load GVN
-;; (allocation-free, exits at the second load). The pass can only rewrite a
-;; Load whose address matches an earlier dominating load --
-;; opt-load-cse-dispatch returns every non-Load instruction unchanged and all
-;; load-table value entries originate from loads -- so with fewer than two
-;; Load instructions in the function no lookup can ever hit, the materialized
-;; output equals the input, and the whole-function empty state plus the three
-;; per-block arrays are wasted work.
+;; Cheap any-Load pre-scan for the cross-block load GVN (allocation-free,
+;; exits at the first load). The pass can only rewrite a Load, so a function
+;; containing no loads is returned unchanged and avoids the whole-function
+;; empty state plus the three per-block arrays. One load is enough to run the
+;; pass: StorePtr can seed the value table for a later load through
+;; store-to-load forwarding.
 (define (opt-load-gvn-instr-load? [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.Load _ _ _) true]
     [_ false]))
 
-(define (opt-load-gvn-instr-seq-loads-from
+(define (opt-load-gvn-instr-seq-has-load?
   [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [seen : i64]) : i64
+  [index : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    seen
-    (if (>= seen 2)
-      seen
-      (opt-load-gvn-instr-seq-loads-from
-        instrs
-        (+ index 1)
-        (if (opt-load-gvn-instr-load? (compiler-ir-instr-seq-ref instrs index))
-          (+ seen 1)
-          seen)))))
+    false
+    (if (opt-load-gvn-instr-load? (compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-load-gvn-instr-seq-has-load? instrs (+ index 1)))))
 
-(define (opt-load-gvn-block-seq-two-loads?
+(define (opt-load-gvn-block-seq-has-load?
   [blocks : CompilerIrBlockSeq]
-  [index : i64]
-  [seen : i64]) : bool
-  (if (>= seen 2)
-    true
-    (if (>= index (compiler-ir-block-seq-count blocks))
-      false
-      (match (compiler-ir-block-seq-ref blocks index)
-        [(CompilerIrBlock.Block _ instrs)
-          (opt-load-gvn-block-seq-two-loads?
-            blocks
-            (+ index 1)
-            (opt-load-gvn-instr-seq-loads-from instrs 0 seen))]))))
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    false
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (if (opt-load-gvn-instr-seq-has-load? instrs 0)
+          true
+          (opt-load-gvn-block-seq-has-load? blocks (+ index 1)))])))
 
-(define (opt-load-gvn-blocks-have-two-loads?
-  [blocks : CompilerIrBlockList]
-  [seen : i64]) : bool
-  (if (>= seen 2)
-    true
-    (match blocks
-      [(CompilerIrBlockList.Nil) false]
-      [(CompilerIrBlockList.Cons block rest)
-        (match block
-          [(CompilerIrBlock.Block _ instrs)
-            (opt-load-gvn-blocks-have-two-loads?
-              (box-get rest)
-              (opt-load-gvn-instr-seq-loads-from instrs 0 seen))])]
-      [(CompilerIrBlockList.Array seq)
-        (opt-load-gvn-block-seq-two-loads? seq 0 seen)])))
+(define (opt-load-gvn-blocks-have-load? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-load-gvn-instr-seq-has-load? instrs 0)
+            true
+            (opt-load-gvn-blocks-have-load? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq) (opt-load-gvn-block-seq-has-load? seq 0)]))
 
 (define (opt-load-gvn-blocks-with-context
   [context : OptCfgContext]
@@ -58943,9 +58967,9 @@
   [hs : OptLoadHeaderSet]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (if (not (opt-load-gvn-blocks-have-two-loads? blocks 0))
-    ;; Fewer than two loads: no rewrite can fire, so the pass output equals
-    ;; the input; skip the empty state and the per-block arrays.
+  (if (not (opt-load-gvn-blocks-have-load? blocks))
+    ;; No loads: no rewrite can fire, so the pass output equals the input; skip
+    ;; the empty state and the per-block arrays.
     blocks
     (let
       [index : OptCfgIndex (struct-get context index)]

@@ -30353,6 +30353,144 @@
               [(ResultCompilerOptimizeVerify.Ok) next]
               [(ResultCompilerOptimizeVerify.Err _) func]))))]))
 
+;; Sink a compare whose only block-local use is the block's final Branch to
+;; the instruction right before that Branch. The backend fuses a
+;; compare+branch pair (cmp;jcc) only when they are adjacent, and a
+;; loop-closing compare is often separated from its branch by a flag-safe
+;; pointer-increment Gep (the counted-fill shape), forcing the
+;; setl/movzbq/test/jne materialization instead. The move is pure scheduling:
+;; it fires only when no intervening instruction reads the compare's result
+;; or redefines its operands.
+;;
+;; Scan backward from the branch for the cond var's definition. Returns the
+;; defining compare's index, or -1 if a use of the cond var or a non-compare
+;; definition comes first.
+(define (opt-cmp-sink-find-compare
+  [instrs : CompilerIrInstrSeq]
+  [cond-var : i64]
+  [index : i64]) : i64
+  (if (< index 0)
+    (- 0 1)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(CompilerIrInstr.BinOp dst op lhs rhs _)
+          (if (= dst cond-var)
+            (if (opt-bool-branch-compare-op? op)
+              index
+              (- 0 1))
+            (if (or
+              (opt-value-is-var? lhs cond-var)
+              (opt-value-is-var? rhs cond-var))
+              (- 0 1)
+              (opt-cmp-sink-find-compare instrs cond-var (- index 1))))]
+        [_
+          (if (or
+            (= (opt-gvn-instr-dst instr) cond-var)
+            (opt-cmp-sink-instr-uses-var? instr cond-var))
+            (- 0 1)
+            (opt-cmp-sink-find-compare instrs cond-var (- index 1)))]))))
+
+;; Conservative operand-position use check for the instructions that can sit
+;; between a loop-closing compare and its branch (Mov/Gep/Load/Cast/Bitcast/
+;; UnOp/BinOp and other non-terminators). Unknown kinds count as using the var.
+(define (opt-cmp-sink-instr-uses-var? [instr : CompilerIrInstr] [var : i64]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ src _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.Gep _ base offset _)
+      (or (opt-value-is-var? base var) (opt-value-is-var? offset var))]
+    [(CompilerIrInstr.Load _ src _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.Cast _ src _ _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.Bitcast _ src _ _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.UnOp _ _ src _) (opt-value-is-var? src var)]
+    [(CompilerIrInstr.BinOp _ _ lhs rhs _)
+      (or (opt-value-is-var? lhs var) (opt-value-is-var? rhs var))]
+    [_ true]))
+
+;; Every instruction strictly between `def-index` and the block's final
+;; Branch must leave the compare's operands (and its result) untouched.
+(define (opt-cmp-sink-clear?
+  [instrs : CompilerIrInstrSeq]
+  [def-index : i64]
+  [last : i64]
+  [cond-var : i64]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : bool
+  (if (>= def-index last)
+    true
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs def-index)]
+      [dst : i64 (opt-gvn-instr-dst instr)]
+      (if (or
+        (= dst cond-var)
+        (opt-value-is-var? lhs dst)
+        (opt-value-is-var? rhs dst))
+        false
+        (opt-cmp-sink-clear? instrs (+ def-index 1) last cond-var lhs rhs)))))
+
+(define (opt-cmp-sink-move-onto
+  [instrs : CompilerIrInstrSeq]
+  [def-index : i64]
+  [index : i64]
+  [out : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (< index 0)
+    out
+    (opt-cmp-sink-move-onto
+      instrs
+      def-index
+      (- index 1)
+      (if (= index def-index)
+        out
+        (compiler-ir-instr-cons (compiler-ir-instr-seq-ref instrs index) out)))))
+
+(define (opt-cmp-sink-block [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 3)
+          block
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch (CompilerIrValue.Var cond-var) _ _)
+              (let
+                [def-index : i64
+                  (opt-cmp-sink-find-compare instrs cond-var (- count 2))]
+                (if (or (< def-index 0) (= def-index (- count 2)))
+                  block
+                  (match (compiler-ir-instr-seq-ref instrs def-index)
+                    [(CompilerIrInstr.BinOp _ _ lhs rhs _)
+                      (if (opt-cmp-sink-clear?
+                        instrs
+                        (+ def-index 1)
+                        (- count 1)
+                        cond-var
+                        lhs
+                        rhs)
+                        (compiler-ir-block
+                          label
+                          (opt-cmp-sink-move-onto
+                            instrs
+                            def-index
+                            (- count 2)
+                            (compiler-ir-instr-cons
+                              (compiler-ir-instr-seq-ref instrs def-index)
+                              (compiler-ir-instr-cons
+                                (compiler-ir-instr-seq-ref instrs (- count 1))
+                                CompilerIrInstrList.Nil))))
+                        block)]
+                    [_ block])))]
+            [_ block])))]))
+
+(define (opt-cmp-sink-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-cmp-sink-block block)
+        (opt-cmp-sink-blocks (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-cmp-sink-blocks (compiler-ir-block-seq-to-list seq))]))
+
 (define (optimize-function-once-with-summaries
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
@@ -30372,6 +30510,14 @@
               compile-profile
               (compiler-opt-profile-pass-finish "tailrec" name _t-tailrec)
               unit)]
+          ;; Substitute proven constant-global operands up front so the local
+          ;; folds below see literals: a mask global otherwise keeps its `and`
+          ;; alive into the loop cluster, pushing an otherwise-unrollable body
+          ;; past the unroll size gate (the opt_crc32 shape). The map is shared
+          ;; with the later divisor-targeted rewrite and empty in the common
+          ;; case, which makes this a length check per function.
+          [const-global-blocks : CompilerIrBlockList
+            (opt-const-divisor-rewrite-summary-blocks summaries blocks)]
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
           [folded : CompilerIrBlockList
             (compiler-opt-debug-observe-blocks
@@ -30380,7 +30526,10 @@
               params
               ret-ty
               frame
-              (optimize-block-list-for-function frame params blocks))]
+              (optimize-block-list-for-function
+                frame
+                params
+                const-global-blocks))]
           [_p-fold : unit
             (cfg
               compile-profile
@@ -31021,11 +31170,25 @@
                       [gep-split-frame : i64 (opt-function-frame gep-split)]
                       [gep-split-blocks : CompilerIrBlockList
                         (opt-function-blocks gep-split)]
+                      [_t-cmp-sink : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      ;; Sink loop-closing compares next to their branches so
+                      ;; the backend's compare+branch fusion fires past the
+                      ;; flag-safe pointer-increment Gep (the counted-fill
+                      ;; shape's setl/movzbq/test/jne becomes cmp;jcc).
+                      [cmp-sink : CompilerIrBlockList
+                        (opt-cmp-sink-blocks gep-split-blocks)]
+                      [_p-cmp-sink : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "cmp_sink"
+                            name
+                            _t-cmp-sink)
+                          unit)]
                       [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [used : (Array i64)
-                        (opt-collect-blocks-uses-array
-                          gep-split-frame
-                          gep-split-blocks)]
+                        (opt-collect-blocks-uses-array gep-split-frame cmp-sink)]
                       [dced : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           "dce"
@@ -31033,7 +31196,7 @@
                           params
                           ret-ty
                           gep-split-frame
-                          (opt-dce-block-list-array used gep-split-blocks))]
+                          (opt-dce-block-list-array used cmp-sink))]
                       [_p-dce : unit
                         (cfg
                           compile-profile
@@ -42540,6 +42703,118 @@
         (unless (= (opt-count-words-blocks optimized-blocks) 0) (return 1))
         (unless (= (opt-count-packs-blocks optimized-blocks) 0) (return 2))
         42)]))
+
+(define (opt-instr-compare-dst? [instr : CompilerIrInstr] [dst : i64]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp d op _ _ _)
+      (and (= d dst) (opt-bool-branch-compare-op? op))]
+    [_ false]))
+
+(define (opt-block-instr-at [block : CompilerIrBlock] [index : i64]) : CompilerIrInstr
+  (match block
+    [(CompilerIrBlock.Block _ instrs) (compiler-ir-instr-seq-ref instrs index)]))
+
+(define (opt-block-instr-count [block : CompilerIrBlock]) : i64
+  (match block
+    [(CompilerIrBlock.Block _ instrs) (compiler-ir-instr-seq-count instrs)]))
+
+;; The counted-fill shape: the loop-closing compare sits one flag-safe
+;; pointer-increment Gep away from its branch. Sinking moves it adjacent so
+;; the backend can fuse cmp;jcc.
+(define (opt-cmp-sink-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "loop"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          5
+          (CompilerIrBinOp.Lt)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.Bool))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            6
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 8)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "t" "f")
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "t"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "f"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrBlockList.Nil)))))
+
+;; Same shape, but the intervening instruction redefines a compare operand:
+;; the compare must stay put.
+(define (opt-cmp-sink-blocked-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "loop"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          5
+          (CompilerIrBinOp.Lt)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.Bool))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            0
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "t" "f")
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "t"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "f"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+            (CompilerIrInstrList.Nil)))
+        (CompilerIrBlockList.Nil)))))
+
+;; Returns 42 only when the movable compare lands right before the branch and
+;; the operand-clobbering one stays at index 0.
+(define (compiler-optimize-cmp-sink-self-test) : i64
+  (match (opt-cmp-sink-blocks (opt-cmp-sink-test-blocks))
+    [(CompilerIrBlockList.Cons moved _)
+      (match (opt-cmp-sink-blocks (opt-cmp-sink-blocked-test-blocks))
+        [(CompilerIrBlockList.Cons stayed _)
+          (begin
+            (unless
+              (opt-instr-compare-dst?
+                (opt-block-instr-at moved (- (opt-block-instr-count moved) 2))
+                5)
+              (return 1))
+            (unless
+              (opt-instr-compare-dst? (opt-block-instr-at stayed 0) 5)
+              (return 2))
+            42)]
+        [_ 3])]
+    [_ 4]))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
 ;; is absent or its lhs is not a var. Used to inspect copy-propagation rewrites.
@@ -57119,7 +57394,11 @@
 (defenum OptLoadLocKind
   (OptLoadLocUnknown)
   (OptLoadLocElement)
-  (OptLoadLocField i64 i64 i64 bool))
+  (OptLoadLocField i64 i64 i64 bool)
+  ;; A variable-index element pointer: base var, index var, element width,
+  ;; header-typed base. Lets identical index geps of the same array share one
+  ;; load key (the constant-offset Field cannot represent a var offset).
+  (OptLoadLocScaledField i64 i64 i64 bool))
 
 (define opt-load-loc-kind-base-scale : i64
   4294967296)
@@ -57136,7 +57415,8 @@
 (define opt-load-loc-field-width-limit : i64
   512)
 
-;; Encoding: 0 unknown, 1 element, field = 2 + h*4 + w*8 + off*4096 + B*2^32.
+;; Encoding: 0 unknown, 1 element, field = 2 + h*4 + w*8 + off*4096 + B*2^32
+;; (always even), scaled-field = 3 + h*4 + w*8 + idx*4096 + B*2^32 (always odd).
 (define (opt-load-loc-kind-encode [kind : OptLoadLocKind]) : i64
   (match kind
     [(OptLoadLocUnknown) 0]
@@ -57152,12 +57432,34 @@
             (* width opt-load-loc-kind-width-scale)
             (+
               (* off opt-load-loc-kind-offset-scale)
+              (* base opt-load-loc-kind-base-scale)))))]
+    [(OptLoadLocScaledField base index width header?)
+      (+
+        3
+        (+
+          (if header?
+            opt-load-loc-kind-header-scale
+            0)
+          (+
+            (* width opt-load-loc-kind-width-scale)
+            (+
+              (* index opt-load-loc-kind-offset-scale)
               (* base opt-load-loc-kind-base-scale)))))]))
 
 (define (opt-load-loc-kind-decode [value : i64]) : OptLoadLocKind
   (cond
     [(= value 0) (OptLoadLocUnknown)]
     [(= value 1) (OptLoadLocElement)]
+    [(= (% value 2) 1)
+      (OptLoadLocScaledField
+        (/ value opt-load-loc-kind-base-scale)
+        (%
+          (/ value opt-load-loc-kind-offset-scale)
+          opt-load-loc-field-offset-limit)
+        (%
+          (/ value opt-load-loc-kind-width-scale)
+          opt-load-loc-field-width-limit)
+        (= (% (/ value opt-load-loc-kind-header-scale) 2) 1))]
     [else
       (OptLoadLocField
         (/ value opt-load-loc-kind-base-scale)
@@ -57184,6 +57486,25 @@
     (> width 0)
     (< width opt-load-loc-field-width-limit))
     (OptLoadLocField base off width header?)
+    (begin
+      (cfg compile-profile (compiler-opt-load-cse-profile-note-field-key-drop))
+      (OptLoadLocUnknown))))
+
+;; Range-checked ScaledField constructor (same packing limits, index in the
+;; offset slot).
+(define (opt-load-loc-scaled-field-checked
+  [base : i64]
+  [index : i64]
+  [width : i64]
+  [header? : bool]) : OptLoadLocKind
+  (if (and
+    (>= base 0)
+    (< base opt-load-loc-field-base-limit)
+    (>= index 0)
+    (< index opt-load-loc-field-offset-limit)
+    (> width 0)
+    (< width opt-load-loc-field-width-limit))
+    (OptLoadLocScaledField base index width header?)
     (begin
       (cfg compile-profile (compiler-opt-load-cse-profile-note-field-key-drop))
       (OptLoadLocUnknown))))
@@ -57313,6 +57634,36 @@
       (opt_i64_i64_map.insert-ref! (&mut out) base next-count)
       out)))
 
+;; Adjust the refcount of every var a kind references (Field: its base;
+;; ScaledField: base and index). Keeps the base-reference sweep correct for
+;; redefinitions of either.
+(define (opt-load-kinds-ref-add-kind
+  [refs : opt_i64_i64_map.Map]
+  [kind : OptLoadLocKind]
+  [delta : i64]) : opt_i64_i64_map.Map
+  (match kind
+    [(OptLoadLocField base _ _ _) (opt-load-kinds-ref-add refs base delta)]
+    [(OptLoadLocScaledField base index _ _)
+      (opt-load-kinds-ref-add
+        (opt-load-kinds-ref-add refs base delta)
+        index
+        delta)]
+    [_ refs]))
+
+(define (opt-load-kinds-dense-ref-add-kind!
+  [work : OptLoadKindsDenseWork]
+  [generation : i64]
+  [kind : OptLoadLocKind]
+  [delta : i64]) : unit
+  (match kind
+    [(OptLoadLocField base _ _ _)
+      (opt-load-kinds-dense-ref-add! work generation base delta)]
+    [(OptLoadLocScaledField base index _ _)
+      (begin
+        (opt-load-kinds-dense-ref-add! work generation base delta)
+        (opt-load-kinds-dense-ref-add! work generation index delta))]
+    [_ unit]))
+
 ;; Remove a var's binding (refcount-adjusting). Absent vars return unchanged.
 (define (opt-load-kinds-remove [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
   (match kinds
@@ -57327,10 +57678,10 @@
                   (opt_i64_i64_map.remove-ref! (&mut out) var)
                   out))]
             [refs2 : opt_i64_i64_map.Map
-              (match (opt-load-loc-kind-decode old-value)
-                [(OptLoadLocField base _ _ _)
-                  (opt-load-kinds-ref-add refs base (- 0 1))]
-                [_ refs])]
+              (opt-load-kinds-ref-add-kind
+                refs
+                (opt-load-loc-kind-decode old-value)
+                (- 0 1))]
             (OptLoadPtrKinds.Sparse map2 refs2 cap))]
         [(opt_i64_i64_map.LookupMissing) kinds])]
     [(OptLoadPtrKinds.Dense work generation len cap)
@@ -57345,10 +57696,11 @@
           [last-pos : i64 (- len 1)]
           [last-var : i64 (array-ref (struct-get work active) last-pos)]
           (begin
-            (match (opt-load-loc-kind-decode old-value)
-              [(OptLoadLocField base _ _ _)
-                (opt-load-kinds-dense-ref-add! work generation base (- 0 1))]
-              [_ unit])
+            (opt-load-kinds-dense-ref-add-kind!
+              work
+              generation
+              (opt-load-loc-kind-decode old-value)
+              (- 0 1))
             (if (not (= pos last-pos))
               (begin
                 (array-set! (struct-get work active) pos last-var)
@@ -57387,10 +57739,7 @@
                     removed)
                   (let
                     [refs2 : opt_i64_i64_map.Map
-                      (match kind
-                        [(OptLoadLocField base _ _ _)
-                          (opt-load-kinds-ref-add refs base 1)]
-                        [_ refs])]
+                      (opt-load-kinds-ref-add-kind refs kind 1)]
                     (begin
                       (cfg
                         compile-profile
@@ -57423,10 +57772,7 @@
                     (compiler-opt-load-cse-profile-note-kinds-cap-hit)))
                 removed)
               (begin
-                (match kind
-                  [(OptLoadLocField base _ _ _)
-                    (opt-load-kinds-dense-ref-add! work generation base 1)]
-                  [_ unit])
+                (opt-load-kinds-dense-ref-add-kind! work generation kind 1)
                 (array-set! (struct-get work active) len var)
                 (array-set! (struct-get work positions) var len)
                 (array-set!
@@ -57460,6 +57806,13 @@
                   base
                   index)
                 (opt-load-kinds-dense-drop-base-from kinds base (+ index 1)))]
+            [(OptLoadLocScaledField found-base found-index _ _)
+              (if (or (= found-base base) (= found-index base))
+                (opt-load-kinds-dense-drop-base-from
+                  (opt-load-kinds-remove kinds bound-var)
+                  base
+                  index)
+                (opt-load-kinds-dense-drop-base-from kinds base (+ index 1)))]
             [_ (opt-load-kinds-dense-drop-base-from kinds base (+ index 1))])))]
     [_ kinds]))
 
@@ -57484,6 +57837,8 @@
                         [drop? : bool
                           (match (opt-load-loc-kind-decode value)
                             [(OptLoadLocField base _ _ _) (= base var)]
+                            [(OptLoadLocScaledField base index _ _)
+                              (or (= base var) (= index var))]
                             [_ false])]
                         (if drop?
                           unit
@@ -57492,12 +57847,12 @@
                               (&mut out)
                               bound-var
                               value)
-                            (match (opt-load-loc-kind-decode value)
-                              [(OptLoadLocField base _ _ _)
-                                (set!
-                                  out-refs
-                                  (opt-load-kinds-ref-add out-refs base 1))]
-                              [_ unit]))))]
+                            (set!
+                              out-refs
+                              (opt-load-kinds-ref-add-kind
+                                out-refs
+                                (opt-load-loc-kind-decode value)
+                                1)))))]
                     [(opt_i64_i64_map.EntryNone) unit])
                   (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
               (OptLoadPtrKinds.Sparse out out-refs cap))))]
@@ -57539,10 +57894,12 @@
                 [(opt_i64_i64_map.EntrySome var value)
                   (begin
                     (opt_i64_i64_map.insert-ref! (&mut out) var value)
-                    (match (opt-load-loc-kind-decode value)
-                      [(OptLoadLocField base _ _ _)
-                        (set! out-refs (opt-load-kinds-ref-add out-refs base 1))]
-                      [_ unit]))]
+                    (set!
+                      out-refs
+                      (opt-load-kinds-ref-add-kind
+                        out-refs
+                        (opt-load-loc-kind-decode value)
+                        1)))]
                 [(opt_i64_i64_map.EntryNone) unit])
               (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
           (OptLoadPtrKinds.Sparse out out-refs cap)))]
@@ -57586,6 +57943,54 @@
     [(OptLoadPtrKinds.Dense _ _ _ _)
       (opt-load-kinds-intersect (opt-load-kinds-clone a) b)]))
 
+;; A (var, kind) binding that no unseen back edge can kill: the var and every
+;; var its kind references are single-source, so nothing anywhere redefines
+;; them and the value property is loop-invariant.
+(define (opt-load-kind-binding-gvn-stable?
+  [sources : opt_i64_i64_map.Map]
+  [var : i64]
+  [kind : OptLoadLocKind]) : bool
+  (and
+    (opt-gvn-stable-var? sources var)
+    (match kind
+      [(OptLoadLocUnknown) false]
+      [(OptLoadLocElement) true]
+      [(OptLoadLocField base _ _ _) (opt-gvn-stable-var? sources base)]
+      [(OptLoadLocScaledField base index _ _)
+        (and
+          (opt-gvn-stable-var? sources base)
+          (opt-gvn-stable-var? sources index))])))
+
+;; Loop-header join when a predecessor is still unprocessed in the RPO sweep
+;; (a back edge): the load table and alias facts must be dropped -- memory
+;; contents and non-SSA redefinitions along the unseen edge are unknown -- but
+;; a single-source var's kind is a property of its VALUE, which the back edge
+;; cannot change, so those bindings carry into the loop.
+(define (opt-load-kinds-filter-stable
+  [kinds : OptLoadPtrKinds]
+  [sources : opt_i64_i64_map.Map]) : OptLoadPtrKinds
+  (match kinds
+    [(OptLoadPtrKinds.Sparse map _ cap)
+      (let
+        [out : OptLoadPtrKinds (opt-load-kinds-empty-with-cap cap)]
+        [capacity : i64 (opt_i64_i64_map.capacity (& map))]
+        [i : i64 (opt_i64_i64_map.next-occupied (& map) 0)]
+        (begin
+          (while (< i capacity)
+            (begin
+              (match (opt_i64_i64_map.entry-at (& map) i)
+                [(opt_i64_i64_map.EntrySome var value)
+                  (let
+                    [kind : OptLoadLocKind (opt-load-loc-kind-decode value)]
+                    (if (opt-load-kind-binding-gvn-stable? sources var kind)
+                      (set! out (opt-load-kinds-bind out var kind))
+                      unit))]
+                [(opt_i64_i64_map.EntryNone) unit])
+              (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
+          out))]
+    [(OptLoadPtrKinds.Dense _ _ _ _)
+      (opt-load-kinds-filter-stable (opt-load-kinds-clone kinds) sources)]))
+
 ;; Kind transfer for one instruction: redefinitions first (own binding + the
 ;; base-reference sweep), then the deriving arms.
 (define (opt-load-kinds-step
@@ -57603,7 +58008,20 @@
           [(CompilerIrValue.Var bvar)
             (match (opt-load-kinds-lookup invalidated bvar)
               [(OptLoadLocElement)
-                (opt-load-kinds-bind invalidated dst (OptLoadLocElement))]
+                (match offset
+                  ;; A variable index into an element base yields a scaled
+                  ;; element pointer, so identical index geps of the same
+                  ;; array share one load key.
+                  [(CompilerIrValue.Var index-var)
+                    (opt-load-kinds-bind
+                      invalidated
+                      dst
+                      (opt-load-loc-scaled-field-checked
+                        bvar
+                        index-var
+                        (opt-load-loc-type-size ty)
+                        false))]
+                  [_ (opt-load-kinds-bind invalidated dst (OptLoadLocElement))])]
               [(OptLoadLocField b0 o0 _ h0)
                 (match offset
                   [(CompilerIrValue.I64 k)
@@ -57615,6 +58033,19 @@
                           dst
                           (opt-load-loc-field-checked b0 (+ o0 (* k sz)) sz h0))
                         invalidated))]
+                  [(CompilerIrValue.Var index-var)
+                    ;; Only a zero-offset field base is a provable element
+                    ;; base; a nonzero offset would be lost by the scaled key.
+                    (if (= o0 0)
+                      (opt-load-kinds-bind
+                        invalidated
+                        dst
+                        (opt-load-loc-scaled-field-checked
+                          b0
+                          index-var
+                          (opt-load-loc-type-size ty)
+                          h0))
+                      invalidated)]
                   [_ invalidated])]
               [(OptLoadLocUnknown)
                 ;; `Gep dst dst ...` must not bind Field(dst,...): the base
@@ -57633,7 +58064,8 @@
                             sz
                             (opt-load-header-var? hs bvar)))
                         invalidated))]
-                  [_ invalidated])])]
+                  [_ invalidated])]
+              [(OptLoadLocScaledField _ _ _ _) invalidated])]
           [_ invalidated])]
       [(CompilerIrInstr.Load dst src ty)
         (match src
@@ -57643,7 +58075,14 @@
                 (if (and header? (= off 0) (= (opt-load-loc-type-size ty) 8))
                   (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
                   invalidated)]
-              [_ invalidated])]
+              [_
+                (if (and
+                  (opt-load-header-var? hs p)
+                  (= (opt-load-loc-type-size ty) 8))
+                  ;; A header var's first word is the data pointer (the element
+                  ;; base), whether or not the var already has a Field kind.
+                  (opt-load-kinds-bind invalidated dst (OptLoadLocElement))
+                  invalidated)])]
           [_ invalidated])]
       [(CompilerIrInstr.Mov dst src _)
         (match src
@@ -57656,7 +58095,12 @@
                 (opt-load-kinds-bind
                   invalidated
                   dst
-                  (OptLoadLocField base off width header?))])]
+                  (OptLoadLocField base off width header?))]
+              [(OptLoadLocScaledField base index width header?)
+                (opt-load-kinds-bind
+                  invalidated
+                  dst
+                  (OptLoadLocScaledField base index width header?))])]
           [_ invalidated])]
       [_ invalidated])))
 
@@ -57690,7 +58134,12 @@
 ;; loaded type, header-typed base) so distinct gep temps of the same slot CSE.
 (defenum OptLoadKey
   (Raw CompilerIrValue AstType bool)
-  (Field i64 i64 AstType bool))
+  (Field i64 i64 AstType bool)
+  ;; A variable-index element address: base var, index var, gep element type
+  ;; (the scale), header-typed base. The var-offset analog of Field -- two
+  ;; structurally identical index geps of the same array key alike even though
+  ;; each is a distinct temp var (the Raw key would not CSE them).
+  (ScaledField i64 i64 AstType bool))
 
 (defenum OptLoadEntry
   (Entry OptLoadKey CompilerIrValue))
@@ -57741,17 +58190,34 @@
               (if bh
                 1
                 0)))]
+        [_ false])]
+    [(OptLoadKey.ScaledField abase aindex aty ah)
+      (match b
+        [(OptLoadKey.ScaledField bbase bindex bty bh)
+          (and
+            (= abase bbase)
+            (= aindex bindex)
+            (opt-type-eq aty bty)
+            (=
+              (if ah
+                1
+                0)
+              (if bh
+                1
+                0)))]
         [_ false])]))
 
 (define (opt-load-key-uses-var? [key : OptLoadKey] [var : i64]) : bool
   (match key
     [(OptLoadKey.Raw value _ _) (opt-value-is-var? value var)]
-    [(OptLoadKey.Field base _ _ _) (= base var)]))
+    [(OptLoadKey.Field base _ _ _) (= base var)]
+    [(OptLoadKey.ScaledField base index _ _) (or (= base var) (= index var))]))
 
 (define (opt-load-key-type [key : OptLoadKey]) : AstType
   (match key
     [(OptLoadKey.Raw _ ty _) ty]
-    [(OptLoadKey.Field _ _ ty _) ty]))
+    [(OptLoadKey.Field _ _ ty _) ty]
+    [(OptLoadKey.ScaledField _ _ ty _) ty]))
 
 ;; Canonical key for an address value under the current pointer kinds.
 (define (opt-load-key-for-address
@@ -57763,6 +58229,8 @@
       (match (opt-load-kinds-lookup kinds p)
         [(OptLoadLocField base off _ header?)
           (OptLoadKey.Field base off ty header?)]
+        [(OptLoadLocScaledField base index _ header?)
+          (OptLoadKey.ScaledField base index ty header?)]
         [(OptLoadLocElement) (OptLoadKey.Raw addr ty true)]
         [(OptLoadLocUnknown) (OptLoadKey.Raw addr ty false)])]
     [_ (OptLoadKey.Raw addr ty false)]))
@@ -57990,7 +58458,10 @@
 (define (opt-load-key-alias-root [facts : OptAliasFacts] [key : OptLoadKey]) : OptAliasRoot
   (match key
     [(OptLoadKey.Raw value _ _) (opt-alias-root-of-value facts value)]
-    [(OptLoadKey.Field base _ _ _) (opt-alias-root-of-var facts base)]))
+    [(OptLoadKey.Field base _ _ _) (opt-alias-root-of-var facts base)]
+    ;; A scaled element address lives in the base var's buffer: rooting it at
+    ;; the base is what lets an exclusive-allocation store root clear it.
+    [(OptLoadKey.ScaledField base _ _ _) (opt-alias-root-of-var facts base)]))
 
 (define (opt-load-entry-survives-store-location?
   [class : OptLoadStoreClass]
@@ -58017,7 +58488,10 @@
               slo
               swidth
               eoff
-              (opt-load-loc-type-size ety)))])]
+              (opt-load-loc-type-size ety)))]
+        ;; A var-offset key cannot prove disjointness from any store: drop
+        ;; (conservative, matching a generic Raw).
+        [(OptLoadKey.ScaledField _ _ _ _) false])]
     [(OptLoadStoreUnknown) false]))
 
 (define (opt-load-entry-survives-store?
@@ -58060,6 +58534,9 @@
           [(OptLoadLocElement) (OptLoadStoreElement)]
           [(OptLoadLocField base off _ header?)
             (OptLoadStoreField base off width header?)]
+          ;; A var-offset store's target cannot be classified precisely:
+          ;; clear the table (conservative, like an unknown store).
+          [(OptLoadLocScaledField _ _ _ _) (OptLoadStoreUnknown)]
           [(OptLoadLocUnknown) (OptLoadStoreUnknown)])]
       [_ (OptLoadStoreUnknown)])))
 
@@ -58348,7 +58825,11 @@
   [key : OptLoadKey]) : bool
   (match key
     [(OptLoadKey.Raw value _ _) (opt-gvn-value-stable? sources value)]
-    [(OptLoadKey.Field base _ _ _) (opt-gvn-stable-var? sources base)]))
+    [(OptLoadKey.Field base _ _ _) (opt-gvn-stable-var? sources base)]
+    [(OptLoadKey.ScaledField base index _ _)
+      (and
+        (opt-gvn-stable-var? sources base)
+        (opt-gvn-stable-var? sources index))]))
 
 (define (opt-load-value-gvn-stable?
   [sources : opt_i64_i64_map.Map]
@@ -58744,13 +59225,28 @@
   [index : OptCfgIndex]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
+  [sources : opt_i64_i64_map.Map]
   [empty-state : OptLoadCseState]
   [edge : i64]
   [end : i64]
   [has-state : bool]
+  [saw-unprocessed : bool]
   [acc : OptLoadCseState]) : OptLoadCseState
   (if (>= edge end)
-    acc
+    (if saw-unprocessed
+      ;; A back edge arrived unprocessed: memory contents along it are unknown,
+      ;; so the table and alias facts come from empty-state, but stable kinds
+      ;; are value properties the back edge cannot change -- keep them.
+      (match acc
+        [(OptLoadCseState.State _ _ acc-kinds _)
+          (match empty-state
+            [(OptLoadCseState.State empty-facts empty-table _ empty-cap)
+              (OptLoadCseState.State
+                empty-facts
+                empty-table
+                (opt-load-kinds-filter-stable acc-kinds sources)
+                empty-cap)])])
+      acc)
     (let
       [pred : i64 (array-ref (struct-get (struct-get index preds) edges) edge)]
       (if (not (array-ref (struct-get index reachable) pred))
@@ -58758,32 +59254,58 @@
           index
           exit-states
           processed
+          sources
           empty-state
           (+ edge 1)
           end
           has-state
+          saw-unprocessed
           acc)
         (if (not (array-ref processed pred))
-          empty-state
+          (opt-load-gvn-entry-from-preds
+            index
+            exit-states
+            processed
+            sources
+            empty-state
+            (+ edge 1)
+            end
+            has-state
+            true
+            acc)
           (match (array-ref exit-states pred)
             [(OptMaybeLoadCseState.Some pred-state)
               (opt-load-gvn-entry-from-preds
                 index
                 exit-states
                 processed
+                sources
                 empty-state
                 (+ edge 1)
                 end
                 true
+                saw-unprocessed
                 (if has-state
                   (opt-load-cse-state-intersect acc pred-state)
                   (opt-load-cse-state-clone-facts pred-state)))]
-            [(OptMaybeLoadCseState.No) empty-state]))))))
+            [(OptMaybeLoadCseState.No)
+              (opt-load-gvn-entry-from-preds
+                index
+                exit-states
+                processed
+                sources
+                empty-state
+                (+ edge 1)
+                end
+                has-state
+                true
+                acc)]))))))
 
 (define (opt-load-gvn-entry-state
   [context : OptCfgContext]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
+  [sources : opt_i64_i64_map.Map]
   [empty-state : OptLoadCseState]
   [id : i64]) : OptLoadCseState
   (let
@@ -58798,9 +59320,11 @@
             index
             exit-states
             processed
+            sources
             empty-state
             (array-ref (struct-get preds offsets) id)
             (array-ref (struct-get preds offsets) (+ id 1))
+            false
             false
             empty-state))]
       [(option_i64.None) empty-state])))
@@ -58860,7 +59384,13 @@
     [index : OptCfgIndex (struct-get context index)]
     [label : String (opt-cfg-index-label index id)]
     [entry-state : OptLoadCseState
-      (opt-load-gvn-entry-state context exit-states processed empty-state id)]
+      (opt-load-gvn-entry-state
+        context
+        exit-states
+        processed
+        sources
+        empty-state
+        id)]
     (match (opt-cfg-find-block blocks label)
       [(OptMaybeBlock.No) unit]
       [(OptMaybeBlock.Some block)

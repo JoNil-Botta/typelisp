@@ -538,6 +538,65 @@
         [_ false])]
     [(ResultAstProgramDiagnostic.Err _) false]))
 
+(define (lazy-preload-observer-state-isolation-ok?) : bool
+  (match (compiler-load-parse-source-diagnostic-escaping
+    "src/lazy_preload_observer_state_isolation.tl"
+    "(module demand.isolation)
+(define (main) : i64 (subject.same))"
+    (compiler-cfg-empty))
+    [(ResultAstProgramDiagnostic.Ok (AstProgram.Program decls))
+      (let
+        [previous-state : CompilerLoadSessionState
+          compiler-load-active-session-state]
+        [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+        [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+        [alias : i64 cbi.compiler-builtin-id-fix-subject]
+        [member : i64 cbi.compiler-builtin-id-fix-same]
+        [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        [_select-b : unit (compiler-load-session-state-use! state-b)]
+        [_begin-a : unit
+          (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+            state-a
+            alias
+            cbi.compiler-builtin-id-fix-empty)]
+        [_begin-b : unit
+          (compiler-load-session-state-lazy-qualified-observer-begin-pair!
+            state-b
+            alias
+            cbi.compiler-builtin-id-fix-empty)]
+        [demand : CompilerLoadLazyAliasDemand
+          (compiler-load-session-state-lazy-import-preload-demand
+            state-a
+            true
+            (AstMaybeImportAlias.Some alias)
+            (box-get decls)
+            pools)]
+        [observed-a : CompilerLoadLazyQualifiedObserverResult
+          (compiler-load-session-state-lazy-qualified-observer-end-pair!
+            state-a)]
+        [b-still-active : bool
+          (compiler-load-session-state-lazy-qualified-observer-active? state-b)]
+        [observed-b : CompilerLoadLazyQualifiedObserverResult
+          (compiler-load-session-state-lazy-qualified-observer-end-pair!
+            state-b)]
+        [ok : bool
+          (and
+            (struct-get demand qualified)
+            (not (struct-get demand unknown))
+            (sym_i64_env.sym-i64-contains-id (struct-get demand members) member)
+            (sym_i64_env.sym-i64-contains-id
+              (struct-get observed-a primary-members)
+              member)
+            b-still-active
+            (not
+              (sym_i64_env.sym-i64-contains-id
+                (struct-get observed-b primary-members)
+                member)))]
+        (begin
+          (compiler-load-session-state-use! previous-state)
+          ok))]
+    [(ResultAstProgramDiagnostic.Err _) false]))
+
 (define (main) : i64
   (begin
     (unless
@@ -608,4 +667,7 @@
     (unless
       (structural-member-demand-unknown-ok?)
       (return (io.panic "structural member unknown demand mismatch")))
+    (unless
+      (lazy-preload-observer-state-isolation-ok?)
+      (return (io.panic "lazy preload observer isolation smoke mismatch")))
     42))

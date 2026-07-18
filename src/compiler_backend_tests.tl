@@ -4367,6 +4367,11 @@
       (CompilerRegAssignment.Assignment 6 (CompilerRegLocation.Register "%rdi"))
       (compiler-backend-callee-save-assignments5))))
 
+(define (compiler-backend-win64-callee-save-rbp-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 7 (CompilerRegLocation.Register "%rbp"))
+    (compiler-backend-win64-callee-save-full-assignments)))
+
 (define (compiler-backend-win64-xmm-full-assignments-at [idx : i64]) : CompilerRegAssignmentList
   (if (>= idx 10)
     CompilerRegAssignmentList.Nil
@@ -4554,6 +4559,83 @@
     [_linux : unit (compiler-backend-set-current-fn-linux!)]
     ok))
 
+(define (compiler-backend-win64-fpo-seh-prologue-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-win64-callee-save-rbp-assignments)]
+    [push-regs : (Array String) (compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (compiler-backend-fill-push-csr-regs! assignments push-regs)]
+    [frame : i64
+      (compiler-backend-frame-size (compiler-backend-frame-slots 1 assignments))]
+    [prologue : String
+      (compiler-backend-emit-function-entry-fpo-windows
+        "_tl_win64_fpo"
+        frame
+        assignments
+        1
+        push-regs
+        push-count)]
+    [safe-body : String
+      "    movq %r12, -16(%rbp)
+    movq -8(%rbp), %rax
+    leaq -72(%rbp), %rsp
+    popq %rbp
+    popq %rdi
+    popq %rsi
+    popq %rbx
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+"]
+    [safe-rebased : String
+      (compiler-backend-rsp-rebase-full
+        safe-body
+        frame
+        true
+        push-regs
+        push-count
+        1)]
+    [safe-ok : bool compiler-backend-rsp-rebase-last-ok]
+    [_unsafe : String
+      (compiler-backend-rsp-rebase-full
+        "    pushq %rax
+    popq %rax
+    leave
+    ret
+"
+        32
+        true
+        compiler-backend-rsp-rebase-no-push
+        0
+        1)]
+    [unsafe-rejected : bool (not compiler-backend-rsp-rebase-last-ok)]
+    [ok : bool
+      (and
+        (= push-count 8)
+        (= (compiler-backend-frame-slots 1 assignments) 9)
+        (compiler-backend-string-contains?
+          (compiler-backend-emit-save-callee-regs assignments 1)
+          "    movq %rbp, -72(%rbp)\n")
+        (= (compiler-backend-string-count prologue "    pushq %") 8)
+        (= (compiler-backend-string-count prologue "    .seh_pushreg %") 8)
+        (compiler-backend-string-contains? prologue "    pushq %rbp\n")
+        (compiler-backend-string-contains? prologue "    .seh_pushreg %rbp\n")
+        (compiler-backend-string-contains? prologue "    .seh_stackalloc 88\n")
+        (compiler-backend-string-contains? prologue "    .seh_endprologue\n")
+        (not (compiler-backend-string-contains? prologue ".seh_setframe"))
+        (not (compiler-backend-string-contains? prologue "movq %rsp, %rbp"))
+        safe-ok
+        (not (compiler-backend-string-contains? safe-rebased "(%rbp)"))
+        (compiler-backend-string-contains? safe-rebased "    popq %rbp\n")
+        unsafe-rejected)]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
 (define (compiler-backend-win64-xmm-callee-save-homes-ok?) : bool
   (let
     [_win : unit (compiler-backend-set-current-fn-win64!)]
@@ -4638,9 +4720,9 @@
         (= frame 240)
         (= (compiler-backend-frame-slots 3 sparse) 30)
         (= (compiler-backend-frame-slots-with-groups 3 sparse true) 36)
-        (= (compiler-backend-frame-slots-emergency-max 3 true) 36)
-        (= (compiler-backend-win64-xmm-callee-slot-offset 3 0) -96)
-        (= (compiler-backend-win64-xmm-callee-slot-offset 3 9) -240)
+        (= (compiler-backend-frame-slots-emergency-max 3 true) 38)
+        (= (compiler-backend-win64-xmm-callee-slot-offset sparse 3 0) -96)
+        (= (compiler-backend-win64-xmm-callee-slot-offset sparse 3 9) -240)
         (= (compiler-backend-group-word0-slot 0 3 sparse) -256)
         (= (compiler-backend-group-word1-slot 0 3 sparse) -248)
         (string.eq
@@ -8467,14 +8549,13 @@
           (compiler-backend-string-contains? asm ".globl main\n")
           (not (compiler-backend-string-contains? asm "\n_start:\n"))
           (not (compiler-backend-string-contains? asm "syscall\n"))
-          ;; Win64 keeps %rbp for the frame, but M-G3 stage-1 rsp-rebase
-          ;; makes local param slots rsp-relative; the positive incoming
-          ;; stack-arg 48(%rbp) stays on %rbp.
+          ;; Win64 FPO rebases both local slots and the positive incoming
+          ;; stack argument against the constant post-prologue %rsp.
           (compiler-backend-string-contains? asm "    movq %rcx, 88(%rsp)\n")
           (compiler-backend-string-contains? asm "    movq %rdx, 80(%rsp)\n")
           (compiler-backend-string-contains? asm "    movq %r8, 72(%rsp)\n")
           (compiler-backend-string-contains? asm "    movq %r9, 64(%rsp)\n")
-          (compiler-backend-string-contains? asm "    movq 48(%rbp), %r8\n"))
+          (compiler-backend-string-contains? asm "    movq 144(%rsp), %r8\n"))
         (compiler-backend-string-contains? asm "    movq %r10, 32(%rsp)\n")
         (not
           (compiler-backend-string-contains? asm "    movq %r11, 32(%rsp)\n"))
@@ -8493,9 +8574,10 @@
           [ok : bool
             (and
               (not (string.eq body ""))
-              (not (compiler-backend-string-contains? asm ".seh_pushreg %r12"))
-              (not (compiler-backend-string-contains? asm ".seh_pushreg %rsi"))
-              (not (compiler-backend-string-contains? asm ".seh_pushreg %rdi")))]
+              (compiler-backend-string-contains? body ".seh_stackalloc ")
+              (compiler-backend-string-contains? body ".seh_endprologue\n")
+              (not (compiler-backend-string-contains? body ".seh_setframe"))
+              (not (compiler-backend-string-contains? body "movq %rsp, %rbp")))]
           (begin
             (compiler-backend-set-scalar-registers! false)
             (compiler-backend-set-current-fn-linux!)
@@ -18830,18 +18912,16 @@
     [(ResultCompilerBackend.Ok asm)
       (and
         (backend-and8
-          ;; Win64 keeps %rbp for the prologue/SEH frame, but the M-G3
-          ;; stage-1 rsp-rebase makes local frame slots rsp-relative (negative
-          ;; -N(%rbp) -> M(%rsp)); the positive incoming stack-arg offset
-          ;; 48(%rbp) stays on %rbp (caller memory, still valid).
+          ;; Win64 FPO rebases local slots and the positive incoming fifth
+          ;; argument against the constant post-prologue %rsp.
           (compiler-backend-string-contains? asm "    movsd %xmm0, 72(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd %xmm1, 64(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd %xmm2, 56(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd %xmm3, 48(%rsp)\n")
-          (compiler-backend-string-contains? asm "    subq $112, %rsp\n")
+          (compiler-backend-string-contains? asm "    subq $120, %rsp\n")
           (compiler-backend-string-contains? asm "    movq 64(%rsp), %r10\n")
           (compiler-backend-string-contains? asm "    movq %r10, 32(%rsp)\n")
-          (compiler-backend-string-contains? asm "    movsd 48(%rbp), %xmm2\n"))
+          (compiler-backend-string-contains? asm "    movsd 128(%rsp), %xmm2\n"))
         (or
           (compiler-backend-string-contains? asm "    call _tl_f")
           (compiler-backend-string-contains? asm "    call _tl_sum5")
@@ -19049,9 +19129,9 @@
         (compiler-backend-string-contains? asm "    call _tl_add8\n")
         (compiler-backend-string-contains? asm "    movq %r10, 32(%rsp)\n")
         (compiler-backend-string-contains? asm "    movq %r10, 56(%rsp)\n")
-        (compiler-backend-string-contains? asm "    movq 48(%rbp), %r8\n")
+        (compiler-backend-string-contains? asm "    movq 128(%rsp), %r8\n")
         (not
-          (compiler-backend-string-contains? asm "    movq 48(%rbp), %rax\n")))]
+          (compiler-backend-string-contains? asm "    movq 128(%rsp), %rax\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-i64-type-list8) : AstTypeList
@@ -19378,8 +19458,8 @@
 (define (compiler-backend-direct-tail-call-stack-slot
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
-    ;; Win64 keeps %rbp, so the outgoing tail stack-arg store stays 72(%rbp).
-    "    movq %r10, 72(%rbp)\n"
+    ;; Win64 FPO rebases the outgoing tail stack-arg store.
+    "    movq %r10, 200(%rsp)\n"
     ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
     "    movq %r10, 104(%rsp)\n"))
 
@@ -19423,8 +19503,8 @@
 (define (compiler-backend-direct-tail-call-mixed-slot
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
-    ;; Win64 keeps %rbp, so the outgoing tail stack-arg store stays 136(%rbp).
-    "    movq %r10, 136(%rbp)\n"
+    ;; Win64 FPO rebases the outgoing mixed tail stack-arg store.
+    "    movq %r10, 392(%rsp)\n"
     ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
     "    movq %r10, 168(%rsp)\n"))
 
@@ -24469,6 +24549,7 @@
         (compiler-backend-callee-save-pop-epilogue-ok?)
         (compiler-backend-callee-save-push-prologue-rebase-ok?)
         (compiler-backend-win64-callee-save-homes-ok?)
+        (compiler-backend-win64-fpo-seh-prologue-ok?)
         (compiler-backend-win64-xmm-callee-save-homes-ok?))
       (compiler-backend-peephole-ok?)
       (and

@@ -98,6 +98,7 @@ gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdli
 const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 rbp_base_deref|tests/integration/rbp_base_deref.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 rbp_sixth_csr|tests/integration/rbp_sixth_csr.tl|42|-|-|stdlib/io.tl
+win64_rbp_eighth_csr|tests/integration/win64_rbp_eighth_csr.tl|42|-|-|stdlib/io.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
 arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl

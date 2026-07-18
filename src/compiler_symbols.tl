@@ -1679,22 +1679,14 @@
       [with-target : sym_i64_env.SymI64Env
         (sym_i64_env.sym-i64-bind-id modules target-module target-module)]
       [target-name : String (intern-str target-module)]
-      [with-source : sym_i64_env.SymI64Env
-        (match (intern-lookup target-name)
-          [(InternLookupFound source-id)
-            (compiler-symbols-module-owner-map-add
-              with-target
-              source-id
-              target-module)]
-          [(InternLookupMissing) with-target])]
       [with-generated : sym_i64_env.SymI64Env
         (match (intern-generated-canonical-lookup target-name)
           [(InternLookupFound generated-id)
             (compiler-symbols-module-owner-map-add
-              with-source
+              with-target
               generated-id
               target-module)]
-          [(InternLookupMissing) with-source])]
+          [(InternLookupMissing) with-target])]
       with-generated)))
 
 (define (compiler-symbols-dotted-suffix-owner-module-id

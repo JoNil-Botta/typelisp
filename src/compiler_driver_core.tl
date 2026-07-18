@@ -2488,6 +2488,12 @@
           (compiler-driver-state-install-lower-arenas! state)
           (compiler-driver-state-install-pools! state)
           (let
+            [_capture-source-names : unit
+              (compiler-driver-state-capture-active-interns! state)]
+            [source-names : ci.InternSourceNameSessionHandle
+              (ci.intern-source-name-session-handle
+                (ci.intern-source-name-session-from-state
+                  (compiler-driver-state-owned-interns state)))]
             [defer-source-destroy? : bool
               (and
                 release-source-pools?
@@ -2524,7 +2530,7 @@
                     0))
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
-              (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+              (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names
                 input-path
                 (ast-program decls)
                 (ast-decl-path-list-with-modules paths modules)
@@ -2534,7 +2540,8 @@
                   "typecheck-prefix-lower"
                   stdlib-roots
                   cfgs)
-                pools)]
+                pools
+                source-names)]
             [dest-committed? : bool
               (compiler-lower-checked-dest-pools-committed?)]
             [frontend-released? : bool
@@ -2672,6 +2679,12 @@
           (compiler-driver-state-install-lower-arenas! state)
           (compiler-driver-state-install-pools! state)
           (let
+            [_capture-source-names : unit
+              (compiler-driver-state-capture-active-interns! state)]
+            [source-names : ci.InternSourceNameSessionHandle
+              (ci.intern-source-name-session-handle
+                (ci.intern-source-name-session-from-state
+                  (compiler-driver-state-owned-interns state)))]
             [release-source-pools? : bool
               (compiler-driver-state-can-release-checked-lower-source-pools?
                 state)]
@@ -2707,7 +2720,7 @@
                   0)
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
-              (lower-compiler-program-with-decl-paths-mode-cache-and-pools
+              (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names
                 input-path
                 (ast-program decls)
                 (ast-decl-path-list-with-modules paths modules)
@@ -2717,7 +2730,8 @@
                   "typecheck-prefix-lower"
                   stdlib-roots
                   cfgs)
-                pools)]
+                pools
+                source-names)]
             [dest-committed? : bool
               (compiler-lower-checked-dest-pools-committed?)]
             [result-pools : AstNodePoolContext

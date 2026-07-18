@@ -1345,7 +1345,7 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext
+                    (tc-context-new
                       program
                       symbols
                       registries
@@ -1409,7 +1409,7 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext
+                    (tc-context-new
                       program
                       symbols
                       registries
@@ -1504,7 +1504,7 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext
+                    (tc-context-new
                       program
                       symbols
                       registries
@@ -1532,7 +1532,7 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext
+                    (tc-context-new
                       program
                       symbols
                       registries
@@ -1600,7 +1600,7 @@
             [(ResultCompilerRegistries.Ok registries)
               (let
                 [ctx : TcContext
-                  (TcContext
+                  (tc-context-new
                     program
                     symbols
                     registries
@@ -1632,7 +1632,7 @@
             [(ResultCompilerRegistries.Ok registries)
               (let
                 [ctx : TcContext
-                  (TcContext
+                  (tc-context-new
                     program
                     symbols
                     registries
@@ -1706,7 +1706,7 @@
             [(ResultCompilerRegistries.Ok registries)
               (let
                 [ctx : TcContext
-                  (TcContext
+                  (tc-context-new
                     program
                     symbols
                     registries

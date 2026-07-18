@@ -517,12 +517,25 @@
 ;; This is a read-only lookup at the language API boundary, not interning or an
 ;; internal generated-ID recovery path. Names absent from the parsed source keep
 ;; their generated identity.
-(define (ctfe-string-syntax-name-id [text : String] [string-id : i64]) : i64
-  (if (ci.intern-generated-id-active? string-id)
-    (match (ci.intern-lookup text)
-      [(ci.InternLookupFound source-id) source-id]
-      [(ci.InternLookupMissing) string-id])
-    string-id))
+(define (ctfe-string-syntax-name-id
+  [source-names : ci.InternSourceNameSessionHandle]
+  [text : String]
+  [string-id : i64]) : i64
+  (let
+    [session : ci.InternSourceNameSession
+      (ci.intern-source-name-session-handle-session source-names)]
+    (match (ci.intern-source-name-session-resolve
+      session
+      (ci.intern-source-name-session-identity session string-id)
+      text)
+      [(ci.InternSourceNameResolution.ParsedIdentity source-id) source-id]
+      [(ci.InternSourceNameResolution.GeneratedIdentity generated-id lookup)
+        (match lookup
+          [(ci.InternLookupFound source-id) source-id]
+          [(ci.InternLookupMissing) generated-id])]
+      [(ci.InternSourceNameResolution.WrongOwner) string-id]
+      [(ci.InternSourceNameResolution.StaleGeneration) string-id]
+      [(ci.InternSourceNameResolution.InvalidIdentity) string-id])))
 
 (define (ctfe-value-name-id [value : CompilerCtfeValue]) : i64
   (match value
@@ -681,7 +694,8 @@
     AstNodePoolContext
     CtfeMaybeSyntaxPools
     CtfeLayoutInfoList
-    CtfeReflectInfoList)
+    CtfeReflectInfoList
+    ci.InternSourceNameSessionHandle)
   (Cons i64 CompilerCtfeValue AstType CtfeMaybeSyntaxPools (Box CtfeEnv))
   (LocalCons
     i64
@@ -690,12 +704,20 @@
     CtfeMaybeSyntaxPools
     (Box CtfeEnv)))
 
-(define (ctfe-env-empty-with-pools [pools : AstNodePoolContext]) : CtfeEnv
+(define (ctfe-env-empty-with-pools-and-source-names
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
   (CtfeEnv.Nil
     pools
     (CtfeMaybeSyntaxPools.None)
     (ctfe-layout-info-list-empty)
-    (ctfe-reflect-info-list-empty)))
+    (ctfe-reflect-info-list-empty)
+    source-names))
+
+(define (ctfe-env-empty-with-pools [pools : AstNodePoolContext]) : CtfeEnv
+  (ctfe-env-empty-with-pools-and-source-names
+    pools
+    (ci.intern-source-name-session-capture-active-handle)))
 
 (define (ctfe-env-empty) : CtfeEnv
   (ctfe-env-empty-with-pools (ast-node-pool-context-capture-active)))
@@ -707,7 +729,8 @@
     pools
     (CtfeMaybeSyntaxPools.None)
     layouts
-    (ctfe-reflect-info-list-empty)))
+    (ctfe-reflect-info-list-empty)
+    (ci.intern-source-name-session-capture-active-handle)))
 
 (define (ctfe-env-with-layouts [layouts : CtfeLayoutInfoList]) : CtfeEnv
   (ctfe-env-with-layouts-and-pools
@@ -721,18 +744,35 @@
     pools
     (CtfeMaybeSyntaxPools.None)
     (ctfe-layout-info-list-empty)
-    reflections))
+    reflections
+    (ci.intern-source-name-session-capture-active-handle)))
 
 (define (ctfe-env-with-reflections [reflections : CtfeReflectInfoList]) : CtfeEnv
   (ctfe-env-with-reflections-and-pools
     reflections
     (ast-node-pool-context-capture-active)))
 
+(define (ctfe-env-with-metadata-and-pools-and-source-names
+  [layouts : CtfeLayoutInfoList]
+  [reflections : CtfeReflectInfoList]
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : CtfeEnv
+  (CtfeEnv.Nil
+    pools
+    (CtfeMaybeSyntaxPools.None)
+    layouts
+    reflections
+    source-names))
+
 (define (ctfe-env-with-metadata-and-pools
   [layouts : CtfeLayoutInfoList]
   [reflections : CtfeReflectInfoList]
   [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnv.Nil pools (CtfeMaybeSyntaxPools.None) layouts reflections))
+  (ctfe-env-with-metadata-and-pools-and-source-names
+    layouts
+    reflections
+    pools
+    (ci.intern-source-name-session-capture-active-handle)))
 
 (define (ctfe-env-extend-id
   [env : CtfeEnv]
@@ -932,21 +972,27 @@
 
 (define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
   (match env
-    [(CtfeEnv.Nil _ _ layouts _) layouts]
+    [(CtfeEnv.Nil _ _ layouts _ _) layouts]
     [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-layouts (box-get rest))]
     [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
 
 (define (ctfe-env-reflections [env : CtfeEnv]) : CtfeReflectInfoList
   (match env
-    [(CtfeEnv.Nil _ _ _ reflections) reflections]
+    [(CtfeEnv.Nil _ _ _ reflections _) reflections]
     [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-reflections (box-get rest))]
     [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
 
 (define (ctfe-env-pools [env : CtfeEnv]) : AstNodePoolContext
   (match env
-    [(CtfeEnv.Nil pools _ _ _) pools]
+    [(CtfeEnv.Nil pools _ _ _ _) pools]
     [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-pools (box-get rest))]
     [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-pools (box-get rest))]))
+
+(define (ctfe-env-source-names [env : CtfeEnv]) : ci.InternSourceNameSessionHandle
+  (match env
+    [(CtfeEnv.Nil _ _ _ _ source-names) source-names]
+    [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-source-names (box-get rest))]
+    [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-source-names (box-get rest))]))
 
 ;; A transformer reads its definition body from `ctfe-env-pools`, but syntax
 ;; selected from a variadic caller argument may belong to a newer pool. Carry
@@ -954,7 +1000,7 @@
 ;; children always share ownership without rescanning lexical locals.
 (define (ctfe-env-syntax-pools [env : CtfeEnv]) : CtfeMaybeSyntaxPools
   (match env
-    [(CtfeEnv.Nil _ syntax-pools _ _) syntax-pools]
+    [(CtfeEnv.Nil _ syntax-pools _ _ _) syntax-pools]
     [(CtfeEnv.Cons _ _ _ syntax-pools _) syntax-pools]
     [(CtfeEnv.LocalCons _ _ _ syntax-pools _) syntax-pools]))
 
@@ -982,8 +1028,8 @@
 
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : AstNodePoolContext]) : CtfeEnv
   (match env
-    [(CtfeEnv.Nil _ syntax-pools layouts reflections)
-      (CtfeEnv.Nil pools syntax-pools layouts reflections)]
+    [(CtfeEnv.Nil _ syntax-pools layouts reflections source-names)
+      (CtfeEnv.Nil pools syntax-pools layouts reflections source-names)]
     [(CtfeEnv.Cons key value ty syntax-pools rest)
       (CtfeEnv.Cons
         key
@@ -1021,7 +1067,7 @@
 
 (define (ctfe-env-lookup-id [env : CtfeEnv] [name-id : i64]) : CtfeMaybeValue
   (match env
-    [(CtfeEnv.Nil _ _ _ _) (CtfeMaybeValue.None)]
+    [(CtfeEnv.Nil _ _ _ _ _) (CtfeMaybeValue.None)]
     [(CtfeEnv.Cons key value _ _ rest)
       (if (= key name-id)
         (CtfeMaybeValue.Some value)
@@ -1033,7 +1079,7 @@
 
 (define (ctfe-env-lookup-type-id [env : CtfeEnv] [name-id : i64]) : AstMaybeType
   (match env
-    [(CtfeEnv.Nil _ _ _ _) (AstMaybeType.No)]
+    [(CtfeEnv.Nil _ _ _ _ _) (AstMaybeType.No)]
     [(CtfeEnv.Cons key _ ty _ rest)
       (if (= key name-id)
         (AstMaybeType.Some ty)
@@ -1050,7 +1096,7 @@
   [name-id : i64]
   [value : CompilerCtfeValue]) : bool
   (match env
-    [(CtfeEnv.Nil _ _ _ _) false]
+    [(CtfeEnv.Nil _ _ _ _ _) false]
     [(CtfeEnv.Cons key _ _ _ rest)
       (if (= key name-id)
         false
@@ -5141,7 +5187,11 @@
               (ResultCtfe.Ok
                 (ctfe-syntax-expr-push
                   env
-                  (AstExpr.Var (ctfe-string-syntax-name-id name string-id))
+                  (AstExpr.Var
+                    (ctfe-string-syntax-name-id
+                      (ctfe-env-source-names env)
+                      name
+                      string-id))
                   (ctfe-untyped-expr-type))
                 arg-fuel)]
             [(CompilerCtfeValue.Name _ name-id)
@@ -5286,7 +5336,10 @@
                           (ast-expr-struct-get-id-with-pools
                             (ctfe-env-pools env)
                             target-node
-                            (ctfe-string-syntax-name-id field field-id))
+                            (ctfe-string-syntax-name-id
+                              (ctfe-env-source-names env)
+                              field
+                              field-id))
                           (ctfe-untyped-expr-type))
                         field-fuel)]
                     [(CompilerCtfeValue.Name _ field-id)
@@ -5393,7 +5446,10 @@
                                   (ast-expr-struct-set-id-with-pools
                                     (ctfe-env-pools env)
                                     target-node
-                                    (ctfe-string-syntax-name-id field field-id)
+                                    (ctfe-string-syntax-name-id
+                                      (ctfe-env-source-names env)
+                                      field
+                                      field-id)
                                     value-node)
                                   (AstType.Unit))
                                 value-fuel)]
@@ -6594,7 +6650,11 @@
         [(ResultCtfeStringArg.Ok name name-id next-fuel)
           (ResultCtfe.Ok
             (CompilerCtfeValue.Pattern
-              (ctfe-pat-binding-id (ctfe-string-syntax-name-id name name-id)))
+              (ctfe-pat-binding-id
+                (ctfe-string-syntax-name-id
+                  (ctfe-env-source-names env)
+                  name
+                  name-id)))
             next-fuel)]
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err
@@ -6619,7 +6679,10 @@
                   (ResultCtfe.Ok
                     (CompilerCtfeValue.Pattern
                       (ctfe-pat-variant-id
-                        (ctfe-string-syntax-name-id name name-id)
+                        (ctfe-string-syntax-name-id
+                          (ctfe-env-source-names env)
+                          name
+                          name-id)
                         payloads))
                     payloads-fuel)]
                 [_
@@ -6689,7 +6752,10 @@
           expr
           "pattern-list-cons expects exactly two args")))))
 
-(define (ctfe-pattern-list-bindings-build [prefix : String] [count : i64]) : AstPatternList
+(define (ctfe-pattern-list-bindings-build
+  [env : CtfeEnv]
+  [prefix : String]
+  [count : i64]) : AstPatternList
   (let
     [patterns : AstPatternList (ast-pattern-list-with-capacity count)]
     [index : i64 0]
@@ -6701,7 +6767,11 @@
             (let
               [name : String (string.append prefix (string.int->string index))]
               [name-id : i64 (ctfe-materialize-generated-name-id name)]
-              (ctfe-pat-binding-id (ctfe-string-syntax-name-id name name-id))))
+              (ctfe-pat-binding-id
+                (ctfe-string-syntax-name-id
+                  (ctfe-env-source-names env)
+                  name
+                  name-id))))
           (set! index (+ index 1))))
       patterns)))
 
@@ -6747,7 +6817,7 @@
                   [else
                     (ResultCtfe.Ok
                       (CompilerCtfeValue.PatternList
-                        (ctfe-pattern-list-bindings-build prefix count))
+                        (ctfe-pattern-list-bindings-build env prefix count))
                       (- count-fuel count))]))]
             [(result_ctfe_i64_arg.Err diag) (ResultCtfe.Err diag)])]
         [(ResultCtfeStringArg.Err diag) (ResultCtfe.Err diag)]))
@@ -13931,10 +14001,15 @@
     [x-id : i64 (ctfe-materialize-generated-name-id "x")]
     [point-id : i64 (ctfe-materialize-generated-name-id "point")]
     [helper-id : i64 (ctfe-materialize-generated-name-id "counter.push-ref")]
-    [x-syntax-id : i64 (ctfe-string-syntax-name-id "x" x-id)]
-    [point-syntax-id : i64 (ctfe-string-syntax-name-id "point" point-id)]
+    [x-syntax-id : i64
+      (ctfe-string-syntax-name-id (ctfe-env-source-names env) "x" x-id)]
+    [point-syntax-id : i64
+      (ctfe-string-syntax-name-id (ctfe-env-source-names env) "point" point-id)]
     [helper-syntax-id : i64
-      (ctfe-string-syntax-name-id "counter.push-ref" helper-id)]
+      (ctfe-string-syntax-name-id
+        (ctfe-env-source-names env)
+        "counter.push-ref"
+        helper-id)]
     [true-lit : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true)))]
     [false-lit : i64

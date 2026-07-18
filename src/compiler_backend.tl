@@ -39040,25 +39040,63 @@
               [else compiler-backend-control-mnemonic-none]))]
         [else compiler-backend-control-mnemonic-none]))))
 
-;; Index of the first "(%rbp" occurrence in [start,end), or -1.
-(define (compiler-backend-rsp-rebase-find-rbp
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : i64
-  (let
-    [i : i64 start]
-    [found : i64 -1]
-    (begin
-      (while (and (< found 0) (<= (+ i 5) end))
-        (if (and
-          (= (compiler-backend-peephole-byte-at data i) 40)
-          (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
-          (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
-          (= (compiler-backend-peephole-byte-at data (+ i 3)) 98)
-          (= (compiler-backend-peephole-byte-at data (+ i 4)) 112))
-          (set! found i)
-          (set! i (+ i 1))))
-      found)))
+;; Index of the first "(%rbp" occurrence in [start,end), or -1. The memchr
+;; variant jumps between '(' bytes instead of stepping every byte; both
+;; variants return the same index.
+(cfg
+  feature-tl-memchr
+  (define (compiler-backend-rsp-rebase-find-rbp
+    [data : (Ptr u8)]
+    [start : i64]
+    [end : i64]) : i64
+    (let
+      [i : i64 start]
+      [found : i64 -1]
+      [done : bool false]
+      (begin
+        (while (and (not done) (<= (+ i 5) end))
+          (let
+            [offset : i64
+              (unsafe
+                (compiler-backend-runtime-index-of-byte
+                  (ptr-offset data i)
+                  (- (- end 4) i)
+                  (cast 40 : u8)))]
+            (if (< offset 0)
+              (set! done true)
+              (let
+                [pos : i64 (+ i offset)]
+                (if (and
+                  (= (compiler-backend-peephole-byte-at data (+ pos 1)) 37)
+                  (= (compiler-backend-peephole-byte-at data (+ pos 2)) 114)
+                  (= (compiler-backend-peephole-byte-at data (+ pos 3)) 98)
+                  (= (compiler-backend-peephole-byte-at data (+ pos 4)) 112))
+                  (begin
+                    (set! found pos)
+                    (set! done true))
+                  (set! i (+ pos 1)))))))
+        found))))
+
+(cfg
+  (not feature-tl-memchr)
+  (define (compiler-backend-rsp-rebase-find-rbp
+    [data : (Ptr u8)]
+    [start : i64]
+    [end : i64]) : i64
+    (let
+      [i : i64 start]
+      [found : i64 -1]
+      (begin
+        (while (and (< found 0) (<= (+ i 5) end))
+          (if (and
+            (= (compiler-backend-peephole-byte-at data i) 40)
+            (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
+            (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
+            (= (compiler-backend-peephole-byte-at data (+ i 3)) 98)
+            (= (compiler-backend-peephole-byte-at data (+ i 4)) 112))
+            (set! found i)
+            (set! i (+ i 1))))
+        found))))
 
 ;; Start index of the signed decimal immediately preceding `pos`, or -1 when
 ;; there is none (a bare/indexed form the audit must reject).

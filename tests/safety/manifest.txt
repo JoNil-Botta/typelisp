@@ -88,8 +88,8 @@ queue_bang_rvalue_reject|check-fail|tests/safety/queue_bang_rvalue_reject.tl|-|b
 set_bang_rvalue_reject|check-fail|tests/safety/set_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
-auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|typecheck: constructor lifetime mismatch
-auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: argument type mismatch
+auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& same str), found (& right str)
+auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
 auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move_before_last_use_reject.tl|-|cannot move borrowed place `text`
 two_phase_mutable_call_second_mut_reject|check-fail|tests/safety/two_phase_mutable_call_second_mut_reject.tl|-|cannot mutably borrow borrowed place `items`
@@ -158,7 +158,7 @@ in_arena_raw_i64_reject|check-fail|tests/safety/in_arena_raw_i64_reject.tl|-|in-
 in_arena_ordinary_assignment_reject|check-fail|tests/safety/in_arena_ordinary_assignment_reject.tl|-|cannot store region-tagged value into assignment
 in_arena_ordinary_return_reject|check-fail|tests/safety/in_arena_ordinary_return_reject.tl|-|reference value would escape lexical scope
 in_arena_ordinary_lambda_capture_reject|check-fail|tests/safety/in_arena_ordinary_lambda_capture_reject.tl|-|lambda cannot capture region-tagged value
-arena_mark_handle_mismatch_reject|check-fail|tests/safety/arena_mark_handle_mismatch_reject.tl|-|typecheck: argument type mismatch
+arena_mark_handle_mismatch_reject|check-fail|tests/safety/arena_mark_handle_mismatch_reject.tl|-|typecheck: call `arena.rewind` argument 1 type mismatch: expected stdlib.arena/ArenaMark, found stdlib.arena/Arena
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
 spmd_reduce_f32_min_reject|check-fail|tests/safety/spmd_reduce_f32_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
@@ -192,10 +192,10 @@ spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_r
 spmd_public_mask_type_reject|check-fail|tests/safety/spmd_public_mask_type_reject.tl|-|public SPMD mask source types are deferred
 spmd_varying_type_reject|check-fail|tests/safety/spmd_varying_type_reject.tl|-|public SPMD varying source types are deferred
 spmd_varying_call_reject|check-fail|tests/safety/spmd_varying_call_reject.tl|-|foreach calls with varying arguments are not supported
-spmd_atomic_order_arg_reject|check-fail|tests/safety/spmd_atomic_order_arg_reject.tl|-|call arity mismatch
+spmd_atomic_order_arg_reject|check-fail|tests/safety/spmd_atomic_order_arg_reject.tl|-|typecheck: call arity mismatch: atomic.atomic-i64-add! expected 3 arguments, got 4 arguments
 spmd_atomic_reduce_call_reject|check-fail|tests/safety/spmd_atomic_reduce_call_reject.tl|-|function calls are not allowed inside a spmd-reduce value expression
 spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
-spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: argument type mismatch
+spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: call `atomic.atomic-i64-add!` argument 1 type mismatch: expected (Array i64), found (Array u64)
 spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|return inside foreach is not supported
 spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try inside foreach is not supported
 spmd_foreach_break_reject|check-fail|tests/safety/spmd_foreach_break_reject.tl|-|break inside foreach is not supported
@@ -242,7 +242,7 @@ serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_miss
 serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|-|typecheck: return type mismatch
 module_catalog_invalid_unused_helper_reject|check-fail|tests/safety/module_catalog_invalid_unused_helper_reject.tl|-|typecheck: return type mismatch
 serialize_unsupported_tuple_root_reject|check-fail|tests/safety/serialize_unsupported_tuple_root_reject.tl|-|serialize: unsupported root type
-import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|tests/safety/import_arg_mismatch_lib.tl:5:14: typecheck: argument type mismatch
+import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|tests/safety/import_arg_mismatch_lib.tl:5:14: typecheck: call `takes-i64` argument 1 (parameter `x`) type mismatch: expected i64, found bool
 sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
 sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope
 sync_mutex_guard_capture_reject|check-fail|tests/safety/sync_mutex_guard_capture_reject.tl|-|lambda cannot capture cleanup-required resource; resource value would escape

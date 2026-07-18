@@ -755,6 +755,30 @@
 (define compiler-backend-fuse-free-counts : (Array i64)
   (array.make-array i64 0))
 
+;; Stable state shared by one block's instruction-emission family. Keep
+;; per-call control state (`fallthrough`, remaining instructions, RAX mode,
+;; and the output buffer) explicit: those values change as fusion consumes the
+;; stream. This context is the family-sized handoff that can become a field of
+;; the per-job backend state tracked by #4963.
+(defstruct CompilerBackendEmissionContext
+  (target CompilerBackendTarget)
+  (function String)
+  (source-function i64)
+  (blocks CompilerIrBlockList)
+  (current-label String)
+  (assignments CompilerRegAssignmentList)
+  (vars i64)
+  (types CompilerRegVarTypeList)
+  (global-types CompilerBackendGlobalTypeList)
+  (ret-ty AstType)
+  (plan CompilerBackendRuntimePlan)
+  (functions CompilerIrFunctionList)
+  (externs CompilerIrExternList)
+  (program-index CompilerBackendProgramIndex)
+  (spans CompilerSourceSpans)
+  (func-diag CompilerDiagnostic)
+  (use-counts (Array i64)))
+
 (defenum CompilerBackendEmitInstrsMode
   (Normal)
   (Rax i64 AstType)
@@ -30664,36 +30688,21 @@
               (CompilerBackendSwitchValidation.Err message)]))])))
 
 (define (compiler-backend-emit-instr
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
-  [instr : CompilerIrInstr]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  [instr : CompilerIrInstr]) : ResultCompilerBackend
   (let
     [instr-diag : CompilerDiagnostic
       (compiler-backend-instr-diagnostic
-        spans
-        source-function
+        ctx.spans
+        ctx.source-function
         instr
-        func-diag
+        ctx.func-diag
         "")]
     [_scratch-plan : CompilerRegScratchPlan
       (cfg
         scratch-vreg
-        (compiler-backend-runtime-plan-scratch plan)
+        (compiler-backend-runtime-plan-scratch ctx.plan)
         compiler-backend-empty-scratch-plan)]
     [planned-scratch0 : String
       (cfg
@@ -30740,12 +30749,12 @@
     (match instr
       [(CompilerIrInstr.Mov dst src ty)
         (match (compiler-backend-emit-mov
-          assignments
+          ctx.assignments
           dst
           src
           ty
-          program-index
-          vars
+          ctx.program-index
+          ctx.vars
           planned-scratch0)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -30757,7 +30766,7 @@
       [(CompilerIrInstr.Alloc _ _) (ResultCompilerBackend.Ok "")]
       [(CompilerIrInstr.AddrOf dst src)
         (match (compiler-backend-emit-addr-of
-          assignments
+          ctx.assignments
           dst
           src
           planned-scratch0)
@@ -30770,7 +30779,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Gep dst base offset elem-ty)
         (match (compiler-backend-emit-gep
-          assignments
+          ctx.assignments
           dst
           base
           offset
@@ -30787,7 +30796,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Load dst src ty)
         (match (compiler-backend-emit-load-instr
-          assignments
+          ctx.assignments
           dst
           src
           ty
@@ -30802,11 +30811,11 @@
                   instr-diag)))])]
       [(CompilerIrInstr.StorePtr dst src ty)
         (match (compiler-backend-emit-store-ptr
-          assignments
+          ctx.assignments
           dst
           src
           ty
-          program-index
+          ctx.program-index
           planned-scratch0
           planned-scratch1)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
@@ -30818,7 +30827,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.CopyBytes dst src size)
         (match (compiler-backend-emit-copy-bytes
-          assignments
+          ctx.assignments
           dst
           src
           size
@@ -30839,18 +30848,18 @@
                   instr-diag)))])]
       [(CompilerIrInstr.BoundsCheck index length ok-label)
         (match (compiler-backend-emit-bounds-check
-          target
-          function
-          assignments
+          ctx.target
+          ctx.function
+          ctx.assignments
           planned-scratch0
           planned-scratch1
           index
           length
           ok-label
-          plan
-          functions
-          externs
-          program-index)
+          ctx.plan
+          ctx.functions
+          ctx.externs
+          ctx.program-index)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -30860,14 +30869,14 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Cast dst src from-ty to-ty)
         (match (compiler-backend-emit-cast
-          function
-          current-label
-          assignments
+          ctx.function
+          ctx.current-label
+          ctx.assignments
           dst
           src
           from-ty
           to-ty
-          program-index
+          ctx.program-index
           planned-scratch0
           planned-scratch1
           planned-scratch2)
@@ -30880,12 +30889,12 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
         (match (compiler-backend-emit-bitcast
-          assignments
+          ctx.assignments
           dst
           src
           from-ty
           to-ty
-          program-index
+          ctx.program-index
           planned-scratch0
           planned-scratch1)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
@@ -30897,9 +30906,9 @@
                   instr-diag)))])]
       [(CompilerIrInstr.BinOp dst op lhs rhs ty)
         (match (compiler-backend-emit-binop-with-plan
-          types
-          global-types
-          assignments
+          ctx.types
+          ctx.global-types
+          ctx.assignments
           dst
           op
           lhs
@@ -30919,7 +30928,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.UnOp dst op src ty)
         (match (compiler-backend-emit-unop-with-plan
-          assignments
+          ctx.assignments
           dst
           op
           src
@@ -30934,16 +30943,16 @@
                   instr-diag)))])]
       [(CompilerIrInstr.LaneId dst lanes elem-ty)
         (compiler-backend-emit-vector-lane-id
-          function
-          current-label
-          assignments
+          ctx.function
+          ctx.current-label
+          ctx.assignments
           dst
           lanes
           elem-ty
           instr-diag)]
       [(CompilerIrInstr.Splat dst value lanes elem-ty)
         (compiler-backend-emit-vector-splat
-          assignments
+          ctx.assignments
           dst
           value
           lanes
@@ -30961,7 +30970,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-binop
-              assignments
+              ctx.assignments
               dst
               op
               lhs
@@ -30971,7 +30980,7 @@
               instr-diag)])]
       [(CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
         (compiler-backend-emit-vector-reduce
-          assignments
+          ctx.assignments
           dst
           op
           src
@@ -30990,7 +30999,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-compare
-              assignments
+              ctx.assignments
               dst
               op
               lhs
@@ -31000,7 +31009,7 @@
               instr-diag)])]
       [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
         (compiler-backend-emit-mask-binop
-          assignments
+          ctx.assignments
           dst
           op
           lhs
@@ -31008,10 +31017,15 @@
           lanes
           instr-diag)]
       [(CompilerIrInstr.MaskNot dst src lanes)
-        (compiler-backend-emit-mask-not assignments dst src lanes instr-diag)]
+        (compiler-backend-emit-mask-not
+          ctx.assignments
+          dst
+          src
+          lanes
+          instr-diag)]
       [(CompilerIrInstr.MaskReduce dst op src lanes)
         (compiler-backend-emit-mask-reduce
-          assignments
+          ctx.assignments
           dst
           op
           src
@@ -31027,7 +31041,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-select
-              assignments
+              ctx.assignments
               dst
               mask
               on-true
@@ -31037,7 +31051,7 @@
               instr-diag)])]
       [(CompilerIrInstr.VectorLoad dst base index lanes elem-ty)
         (compiler-backend-emit-vector-load
-          assignments
+          ctx.assignments
           dst
           base
           index
@@ -31053,7 +31067,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-vector-store
-              assignments
+              ctx.assignments
               base
               index
               value
@@ -31070,9 +31084,9 @@
               lanes
               elem-ty)
             (compiler-backend-emit-predicated-store
-              function
-              current-label
-              assignments
+              ctx.function
+              ctx.current-label
+              ctx.assignments
               base
               index
               value
@@ -31090,9 +31104,9 @@
               lanes
               elem-ty)
             (compiler-backend-emit-predicated-load
-              function
-              current-label
-              assignments
+              ctx.function
+              ctx.current-label
+              ctx.assignments
               dst
               base
               index
@@ -31111,7 +31125,7 @@
               lanes
               elem-ty)
             (compiler-backend-emit-gather-load
-              assignments
+              ctx.assignments
               dst
               base
               index-base
@@ -31122,9 +31136,9 @@
               instr-diag)])]
       [(CompilerIrInstr.TailMask dst index len lanes)
         (compiler-backend-emit-tail-mask
-          function
-          current-label
-          assignments
+          ctx.function
+          ctx.current-label
+          ctx.assignments
           dst
           index
           len
@@ -31132,34 +31146,34 @@
           instr-diag)]
       [(CompilerIrInstr.EntryArgc dst)
         (compiler-backend-emit-entry-load
-          assignments
+          ctx.assignments
           dst
           ".L_tl_argc"
           (AstType.I64))]
       [(CompilerIrInstr.EntryArgv dst)
         (compiler-backend-emit-entry-load
-          assignments
+          ctx.assignments
           dst
           ".L_tl_argv"
           (ast-ty-ptr (ast-ty-ptr (AstType.U8))))]
       [(CompilerIrInstr.EntryEnvp dst)
         (compiler-backend-emit-entry-load
-          assignments
+          ctx.assignments
           dst
           ".L_tl_envp"
           (ast-ty-ptr (ast-ty-ptr (AstType.U8))))]
       [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
         (compiler-backend-emit-cpuid
-          assignments
+          ctx.assignments
           dst
           leaf
           subleaf
           reg-index
           planned-scratch0)]
       [(CompilerIrInstr.Xgetbv dst index)
-        (compiler-backend-emit-xgetbv assignments dst index)]
+        (compiler-backend-emit-xgetbv ctx.assignments dst index)]
       [(CompilerIrInstr.Syscall dst args)
-        (compiler-backend-emit-syscall target assignments dst args)]
+        (compiler-backend-emit-syscall ctx.target ctx.assignments dst args)]
       [(CompilerIrInstr.SpmdCall payload-box)
         (match (box-get payload-box)
           [(CompilerIrInstrSpmdCallPayload.Payload
@@ -31170,68 +31184,68 @@
               args
               result)
             (compiler-backend-emit-spmd-call
-              target
+              ctx.target
               name
               backend
               lanes
               active-mask
               args
               result
-              assignments
-              plan
-              program-index
-              vars
+              ctx.assignments
+              ctx.plan
+              ctx.program-index
+              ctx.vars
               instr-diag)])]
       [(CompilerIrInstr.Call dst name args ty)
         (compiler-backend-emit-direct-call-with-arg-assignments
-          target
-          function
-          current-label
+          ctx.target
+          ctx.function
+          ctx.current-label
           dst
           name
           args
           ty
-          assignments
-          assignments
+          ctx.assignments
+          ctx.assignments
           planned-scratch0
-          types
-          global-types
-          plan
-          externs
-          program-index
-          vars
+          ctx.types
+          ctx.global-types
+          ctx.plan
+          ctx.externs
+          ctx.program-index
+          ctx.vars
           instr-diag)]
       [(CompilerIrInstr.CallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
-          target
+          ctx.target
           dst
           func
           args
           ty
-          assignments
+          ctx.assignments
           planned-scratch0
           planned-scratch1
-          types
-          functions
-          externs
-          program-index
-          vars
+          ctx.types
+          ctx.functions
+          ctx.externs
+          ctx.program-index
+          ctx.vars
           instr-diag)]
       [(CompilerIrInstr.CallIndirectC dst func args ty)
         (compiler-backend-emit-indirect-c-call
-          target
+          ctx.target
           dst
           func
           args
           ty
-          assignments
+          ctx.assignments
           planned-scratch0
           planned-scratch1
-          types
-          functions
-          externs
-          program-index
-          vars
+          ctx.types
+          ctx.functions
+          ctx.externs
+          ctx.program-index
+          ctx.vars
           instr-diag)]
       [(CompilerIrInstr.CallCAbiStoreResult payload-box)
         (match (box-get payload-box)
@@ -31241,20 +31255,20 @@
               args
               slots)
             (compiler-backend-emit-c-abi-store-result-call
-              target
+              ctx.target
               base
               name
               args
               slots
-              assignments
+              ctx.assignments
               planned-scratch0
               planned-scratch1
-              types
-              global-types
-              plan
-              externs
-              program-index
-              vars
+              ctx.types
+              ctx.global-types
+              ctx.plan
+              ctx.externs
+              ctx.program-index
+              ctx.vars
               instr-diag)])]
       [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
         (match (box-get payload-box)
@@ -31264,37 +31278,37 @@
               args
               slots)
             (compiler-backend-emit-indirect-c-abi-store-result-call
-              target
+              ctx.target
               base
               func
               args
               slots
-              assignments
+              ctx.assignments
               planned-scratch0
               planned-scratch1
-              types
-              functions
-              externs
-              program-index
-              vars
+              ctx.types
+              ctx.functions
+              ctx.externs
+              ctx.program-index
+              ctx.vars
               instr-diag)])]
       [(CompilerIrInstr.TailCall name args ty)
         (match (compiler-backend-emit-tail-call
-          target
-          source-function
-          blocks
+          ctx.target
+          ctx.source-function
+          ctx.blocks
           name
           args
           ty
-          assignments
+          ctx.assignments
           planned-scratch0
-          types
-          global-types
-          vars
-          plan
-          functions
-          externs
-          program-index
+          ctx.types
+          ctx.global-types
+          ctx.vars
+          ctx.plan
+          ctx.functions
+          ctx.externs
+          ctx.program-index
           instr-diag)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -31307,14 +31321,14 @@
         (let
           [addr : String
             (str_cat.str-cat (compiler-backend-user-symbol-id name) "(%rip)" "")]
-          (if (compiler-backend-group-type? program-index ty)
+          (if (compiler-backend-group-type? ctx.program-index ty)
             ;; Storing a register-group into a global writes both words
             ;; inline (word0 at sym, word1 at sym+8).
             (let
               [reg0 : String
-                (compiler-backend-group-return-reg program-index ty 0)]
+                (compiler-backend-group-return-reg ctx.program-index ty 0)]
               [reg1 : String
-                (compiler-backend-group-return-reg program-index ty 1)]
+                (compiler-backend-group-return-reg ctx.program-index ty 1)]
               [sym0 : String
                 (str_cat.str-cat
                   (compiler-backend-user-symbol-id name)
@@ -31326,13 +31340,13 @@
                   "+8(%rip)"
                   "")]
               (match (compiler-backend-emit-group-load
-                assignments
+                ctx.assignments
                 value
                 reg0
                 reg1
-                vars
+                ctx.vars
                 ty
-                program-index)
+                ctx.program-index)
                 [(ResultCompilerBackend.Ok load)
                   (ResultCompilerBackend.Ok
                     (string.append
@@ -31341,11 +31355,17 @@
                         (compiler-backend-emit-group-word-move
                           reg0
                           sym0
-                          (compiler-backend-group-word-sse? program-index ty 0))
+                          (compiler-backend-group-word-sse?
+                            ctx.program-index
+                            ty
+                            0))
                         (compiler-backend-emit-group-word-move
                           reg1
                           sym1
-                          (compiler-backend-group-word-sse? program-index ty 1)))))]
+                          (compiler-backend-group-word-sse?
+                            ctx.program-index
+                            ty
+                            1)))))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err
                     (box
@@ -31355,11 +31375,11 @@
             (let
               [no-exclude : (Array String) (array.make-array String 0)]
               (match (compiler-backend-emit-store-value-to-address
-                assignments
+                ctx.assignments
                 value
                 ty
                 addr
-                program-index
+                ctx.program-index
                 no-exclude
                 0
                 planned-scratch0)
@@ -31373,23 +31393,23 @@
                         instr-diag)))]))))]
       [(CompilerIrInstr.Jump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
-          source-function
-          blocks
+          ctx.source-function
+          ctx.blocks
           target
-          current-label
-          assignments
-          vars
-          ret-ty
-          program-index)
+          ctx.current-label
+          ctx.assignments
+          ctx.vars
+          ctx.ret-ty
+          ctx.program-index)
           [(ResultCompilerBackend.Ok direct-return)
             (if (string.eq direct-return "")
               (match (compiler-backend-emit-phi-edge-copies
-                assignments
-                blocks
+                ctx.assignments
+                ctx.blocks
                 target
-                current-label
-                program-index
-                vars
+                ctx.current-label
+                ctx.program-index
+                ctx.vars
                 planned-scratch0
                 planned-scratch1)
                 [(ResultCompilerBackend.Ok copies)
@@ -31402,7 +31422,7 @@
                         ""
                         (str_cat.str-cat
                           "    jmp "
-                          (compiler-backend-asm-label function target)
+                          (compiler-backend-asm-label ctx.function target)
                           "\n"
                           ""))))]
                 [(ResultCompilerBackend.Err message)
@@ -31420,16 +31440,16 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Branch cond true-label false-label)
         (match (compiler-backend-emit-branch-with-phi-copies-with-plan
-          assignments
-          function
-          blocks
-          current-label
+          ctx.assignments
+          ctx.function
+          ctx.blocks
+          ctx.current-label
           cond
           true-label
           false-label
           fallthrough
-          program-index
-          vars
+          ctx.program-index
+          ctx.vars
           planned-scratch0
           planned-scratch1
           planned-scratch2)
@@ -31442,13 +31462,13 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Return value)
         (match (compiler-backend-emit-return
-          source-function
-          blocks
+          ctx.source-function
+          ctx.blocks
           value
-          assignments
-          vars
-          ret-ty
-          program-index)
+          ctx.assignments
+          ctx.vars
+          ctx.ret-ty
+          ctx.program-index)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -31459,41 +31479,41 @@
       [(CompilerIrInstr.Phi _ _ _) (ResultCompilerBackend.Ok "")]
       [(CompilerIrInstr.Pack dst words ty)
         (compiler-backend-emit-pack
-          assignments
+          ctx.assignments
           dst
           words
           ty
-          vars
-          program-index
+          ctx.vars
+          ctx.program-index
           planned-scratch0
           planned-scratch1
           instr-diag)]
       [(CompilerIrInstr.Word dst src index ty)
         (compiler-backend-emit-word
-          assignments
+          ctx.assignments
           dst
           src
           index
           ty
-          vars
+          ctx.vars
           planned-scratch0
           instr-diag)]
       [(CompilerIrInstr.TailCallIndirect func args ty)
         (match (compiler-backend-emit-tail-indirect-call
-          target
-          source-function
-          blocks
+          ctx.target
+          ctx.source-function
+          ctx.blocks
           func
           args
           ty
-          assignments
+          ctx.assignments
           planned-scratch0
           planned-scratch1
-          types
-          vars
-          functions
-          externs
-          program-index
+          ctx.types
+          ctx.vars
+          ctx.functions
+          ctx.externs
+          ctx.program-index
           instr-diag)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
@@ -31504,18 +31524,18 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Switch index base cases default-label)
         (match (compiler-backend-emit-switch
-          function
-          current-label
+          ctx.function
+          ctx.current-label
           index
           base
           cases
           default-label
-          assignments
+          ctx.assignments
           planned-scratch0
           planned-scratch1
-          blocks
-          program-index
-          vars)
+          ctx.blocks
+          ctx.program-index
+          ctx.vars)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -32186,31 +32206,16 @@
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-instr-with-call-rax
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
-  [assignments : CompilerRegAssignmentList]
   [rax-var : i64]
-  [rax-ty : AstType]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  [rax-ty : AstType]) : ResultCompilerBackend
   (let
     [arg-assignments : CompilerRegAssignmentList
       (compiler-backend-rax-call-arg-assignments
-        assignments
-        program-index
+        ctx.assignments
+        ctx.program-index
         rax-var
         rax-ty)]
     ;; Mirror of the guard inside compiler-backend-rax-call-arg-assignments:
@@ -32220,15 +32225,15 @@
     [rax-forward-pending : i64
       (if (and
         (>= rax-var 0)
-        (compiler-backend-rax-call-arg-eligible? program-index rax-ty))
+        (compiler-backend-rax-call-arg-eligible? ctx.program-index rax-ty))
         rax-var
         -1)]
     [instr-diag : CompilerDiagnostic
       (compiler-backend-instr-diagnostic
-        spans
-        source-function
+        ctx.spans
+        ctx.source-function
         instr
-        func-diag
+        ctx.func-diag
         "")]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
@@ -32248,47 +32253,29 @@
                   compiler-backend-rax-forward-pending-var
                   rax-forward-pending)
                 (compiler-backend-emit-direct-call-with-arg-assignments
-                  target
-                  function
-                  current-label
+                  ctx.target
+                  ctx.function
+                  ctx.current-label
                   dst
                   name
                   args
                   ty
-                  assignments
+                  ctx.assignments
                   arg-assignments
                   (compiler-backend-scratch-plan-register-here
-                    (compiler-backend-runtime-plan-scratch plan)
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
                     0)
-                  types
-                  global-types
-                  plan
-                  externs
-                  program-index
-                  vars
+                  ctx.types
+                  ctx.global-types
+                  ctx.plan
+                  ctx.externs
+                  ctx.program-index
+                  ctx.vars
                   instr-diag))]
             (begin
               (set! compiler-backend-rax-forward-pending-var -1)
               rax-forward-result))
-          (compiler-backend-emit-instr
-            target
-            function
-            source-function
-            blocks
-            current-label
-            fallthrough
-            instr
-            assignments
-            vars
-            types
-            global-types
-            ret-ty
-            plan
-            functions
-            externs
-            program-index
-            spans
-            func-diag))]
+          (compiler-backend-emit-instr ctx fallthrough instr))]
       [(CompilerIrInstr.CallIndirect dst func args ty)
         (if (compiler-backend-call-leading-arg-uses-var? args rax-var)
           (let
@@ -32298,67 +32285,30 @@
                   compiler-backend-rax-forward-pending-var
                   rax-forward-pending)
                 (compiler-backend-emit-indirect-call-with-arg-assignments
-                  target
+                  ctx.target
                   dst
                   func
                   args
                   ty
-                  assignments
+                  ctx.assignments
                   arg-assignments
                   (compiler-backend-scratch-plan-register-here
-                    (compiler-backend-runtime-plan-scratch plan)
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
                     0)
                   (compiler-backend-scratch-plan-register-here
-                    (compiler-backend-runtime-plan-scratch plan)
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
                     1)
-                  types
-                  functions
-                  externs
-                  program-index
-                  vars
+                  ctx.types
+                  ctx.functions
+                  ctx.externs
+                  ctx.program-index
+                  ctx.vars
                   instr-diag))]
             (begin
               (set! compiler-backend-rax-forward-pending-var -1)
               rax-forward-result))
-          (compiler-backend-emit-instr
-            target
-            function
-            source-function
-            blocks
-            current-label
-            fallthrough
-            instr
-            assignments
-            vars
-            types
-            global-types
-            ret-ty
-            plan
-            functions
-            externs
-            program-index
-            spans
-            func-diag))]
-      [_
-        (compiler-backend-emit-instr
-          target
-          function
-          source-function
-          blocks
-          current-label
-          fallthrough
-          instr
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag)])))
+          (compiler-backend-emit-instr ctx fallthrough instr))]
+      [_ (compiler-backend-emit-instr ctx fallthrough instr)])))
 
 (define (compiler-backend-call-rax-forwardable-instr?
   [instr : CompilerIrInstr]
@@ -32375,239 +32325,75 @@
       [_ false])))
 
 (define (compiler-backend-emit-instrs-after-emitted
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
   [rest : CompilerIrInstrList]
   [head : String]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (let
     [next-buf : TextBuf (compiler-backend-emergency-append buf head)]
     (match instr
       [(CompilerIrInstr.Call dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
-          target
-          function
-          source-function
-          blocks
-          current-label
+          ctx
           fallthrough
           dst
           ty
           rest
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag
-          use-counts
           next-buf)]
       [(CompilerIrInstr.CallIndirect dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
-          target
-          function
-          source-function
-          blocks
-          current-label
+          ctx
           fallthrough
           dst
           ty
           rest
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag
-          use-counts
           next-buf)]
       [(CompilerIrInstr.CallIndirectC dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
-          target
-          function
-          source-function
-          blocks
-          current-label
+          ctx
           fallthrough
           dst
           ty
           rest
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag
-          use-counts
           next-buf)]
-      [_
-        (compiler-backend-emit-instrs
-          target
-          function
-          source-function
-          blocks
-          current-label
-          fallthrough
-          rest
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag
-          use-counts
-          next-buf)])))
+      [_ (compiler-backend-emit-instrs ctx fallthrough rest next-buf)])))
 
 (define (compiler-backend-emit-instrs-normal
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instr : CompilerIrInstr]
   [rest : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-instr
-    target
-    function
-    source-function
-    blocks
-    current-label
+    ctx
     (match rest
       [(CompilerIrInstrList.Nil) fallthrough]
       [_ (CompilerBackendMaybeLabel.No)])
-    instr
-    assignments
-    vars
-    types
-    global-types
-    ret-ty
-    plan
-    functions
-    externs
-    program-index
-    spans
-    func-diag)
+    instr)
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs-after-emitted
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         instr
         rest
         head
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         buf)]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-fused-result-rest
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [result : ResultCompilerBackend]
   [rest : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match result
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         rest
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         (text_buf.append buf (compiler-backend-emergency-wrap head)))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
@@ -32659,78 +32445,30 @@
     [(CompilerIrInstrList.Nil) false]))
 
 (define (compiler-backend-emit-instrs-materialize-rax
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
   [instrs : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (compiler-backend-emit-instrs
-    target
-    function
-    source-function
-    blocks
-    current-label
+    ctx
     fallthrough
     instrs
-    assignments
-    vars
-    types
-    global-types
-    ret-ty
-    plan
-    functions
-    externs
-    program-index
-    spans
-    func-diag
-    use-counts
     (text_buf.append
       buf
       (compiler-backend-emit-store-typed-var-with-plan
-        assignments
+        ctx.assignments
         rax-var
         "%rax"
         rax-ty))))
 
 (define (compiler-backend-emit-instrs-with-rax-step
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
   [instrs : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match instrs
     [(CompilerIrInstrList.Nil)
@@ -32739,7 +32477,7 @@
           (text_buf.append
             buf
             (compiler-backend-emit-store-typed-var-with-plan
-              assignments
+              ctx.assignments
               rax-var
               "%rax"
               rax-ty))))]
@@ -32747,18 +32485,18 @@
       (match instr
         [(CompilerIrInstr.BinOp dst op lhs rhs ty)
           (if (compiler-backend-rax-forwardable-consumer?
-            types
-            global-types
-            assignments
+            ctx.types
+            ctx.global-types
+            ctx.assignments
             rax-var
             instr)
             (let
               [keep-live : bool
-                (compiler-backend-var-single-use? use-counts dst)]
+                (compiler-backend-var-single-use? ctx.use-counts dst)]
               (match (compiler-backend-emit-binop-with-rax-value
-                types
-                global-types
-                assignments
+                ctx.types
+                ctx.global-types
+                ctx.assignments
                 rax-var
                 dst
                 op
@@ -32767,175 +32505,79 @@
                 ty
                 (not keep-live)
                 (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch plan)
+                  (compiler-backend-runtime-plan-scratch ctx.plan)
                   0
                   0)
                 (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch plan)
+                  (compiler-backend-runtime-plan-scratch ctx.plan)
                   0
                   1)
                 (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch plan)
+                  (compiler-backend-runtime-plan-scratch ctx.plan)
                   0
                   2)
                 (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch plan)
+                  (compiler-backend-runtime-plan-scratch ctx.plan)
                   0
                   3)
                 (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch plan)
+                  (compiler-backend-runtime-plan-scratch ctx.plan)
                   0
                   4))
                 [(ResultCompilerBackend.Ok head)
                   (if keep-live
                     (compiler-backend-emit-instrs-with-rax
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       dst
                       ty
                       (box-get rest)
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       (text_buf.append
                         buf
                         (compiler-backend-emergency-wrap head)))
                     (compiler-backend-emit-instrs
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       (box-get rest)
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       (text_buf.append
                         buf
                         (compiler-backend-emergency-wrap head))))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))
             (compiler-backend-emit-instrs-materialize-rax
-              target
-              function
-              source-function
-              blocks
-              current-label
+              ctx
               fallthrough
               rax-var
               rax-ty
               instrs
-              assignments
-              vars
-              types
-              global-types
-              ret-ty
-              plan
-              functions
-              externs
-              program-index
-              spans
-              func-diag
-              use-counts
               buf))]
         [(CompilerIrInstr.Mov dst src ty)
           (if (compiler-backend-branch-uses-var? src rax-var)
-            (if (compiler-backend-var-single-use? use-counts dst)
+            (if (compiler-backend-var-single-use? ctx.use-counts dst)
               (compiler-backend-emit-instrs-with-rax
-                target
-                function
-                source-function
-                blocks
-                current-label
+                ctx
                 fallthrough
                 dst
                 ty
                 (box-get rest)
-                assignments
-                vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts
                 buf)
               (compiler-backend-emit-instrs
-                target
-                function
-                source-function
-                blocks
-                current-label
+                ctx
                 fallthrough
                 (box-get rest)
-                assignments
-                vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts
                 (text_buf.append
                   buf
                   (compiler-backend-emit-store-typed-var-with-plan
-                    assignments
+                    ctx.assignments
                     dst
                     "%rax"
                     ty))))
             (compiler-backend-emit-instrs-materialize-rax
-              target
-              function
-              source-function
-              blocks
-              current-label
+              ctx
               fallthrough
               rax-var
               rax-ty
               instrs
-              assignments
-              vars
-              types
-              global-types
-              ret-ty
-              plan
-              functions
-              externs
-              program-index
-              spans
-              func-diag
-              use-counts
               buf))]
         [(CompilerIrInstr.Return maybe)
           (match maybe
@@ -32950,190 +32592,71 @@
                     (text_buf.append
                       buf
                       (compiler-backend-return-tail
-                        source-function
-                        assignments
-                        vars
-                        blocks))))
+                        ctx.source-function
+                        ctx.assignments
+                        ctx.vars
+                        ctx.blocks))))
                 (compiler-backend-emit-instrs-materialize-rax
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
+                  ctx
                   fallthrough
                   rax-var
                   rax-ty
                   instrs
-                  assignments
-                  vars
-                  types
-                  global-types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  func-diag
-                  use-counts
                   buf))]
             [(CompilerIrMaybeValue.No)
               (compiler-backend-emit-instrs-materialize-rax
-                target
-                function
-                source-function
-                blocks
-                current-label
+                ctx
                 fallthrough
                 rax-var
                 rax-ty
                 instrs
-                assignments
-                vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts
                 buf)])]
         [_
           (compiler-backend-emit-instrs-materialize-rax
-            target
-            function
-            source-function
-            blocks
-            current-label
+            ctx
             fallthrough
             rax-var
             rax-ty
             instrs
-            assignments
-            vars
-            types
-            global-types
-            ret-ty
-            plan
-            functions
-            externs
-            program-index
-            spans
-            func-diag
-            use-counts
             buf)])]))
 
 (define (compiler-backend-emit-instrs-with-call-rax-step
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
   [instrs : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match instrs
     [(CompilerIrInstrList.Nil) (ResultCompilerBackend.Ok (text_buf.render buf))]
     [(CompilerIrInstrList.Cons instr rest)
       (if (compiler-backend-call-rax-forwardable-instr?
         instr
-        program-index
+        ctx.program-index
         rax-var
         rax-ty)
         (match (compiler-backend-emit-instr-with-call-rax
-          target
-          function
-          source-function
-          blocks
-          current-label
+          ctx
           (match (box-get rest)
             [(CompilerIrInstrList.Nil) fallthrough]
             [_ (CompilerBackendMaybeLabel.No)])
           instr
-          assignments
           rax-var
-          rax-ty
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag)
+          rax-ty)
           [(ResultCompilerBackend.Ok head)
             (compiler-backend-emit-instrs-after-emitted
-              target
-              function
-              source-function
-              blocks
-              current-label
+              ctx
               fallthrough
               instr
               (box-get rest)
               head
-              assignments
-              vars
-              types
-              global-types
-              ret-ty
-              plan
-              functions
-              externs
-              program-index
-              spans
-              func-diag
-              use-counts
               buf)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])
-        (compiler-backend-emit-instrs
-          target
-          function
-          source-function
-          blocks
-          current-label
-          fallthrough
-          instrs
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag
-          use-counts
-          buf))]))
+        (compiler-backend-emit-instrs ctx fallthrough instrs buf))]))
 
 (define (compiler-backend-emit-fused-compare-branch-rest
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [dst : i64]
   [op : CompilerIrBinOp]
@@ -33143,70 +32666,42 @@
   [true-label : String]
   [false-label : String]
   [rest : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-compare-branch-with-phi-copies-with-plan
-    assignments
-    function
-    blocks
-    current-label
+    ctx.assignments
+    ctx.function
+    ctx.blocks
+    ctx.current-label
     op
     lhs
     rhs
-    (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)
+    (compiler-backend-binop-operand-ty ctx.types ctx.global-types op lhs rhs ty)
     true-label
     false-label
     (compiler-backend-fused-compare-fallthrough rest fallthrough)
-    program-index
-    vars
+    ctx.program-index
+    ctx.vars
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       0
       0)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       0
       1)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       1
       1)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       1
       2))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         rest
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         (text_buf.append buf (compiler-backend-emergency-wrap head)))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
@@ -33214,18 +32709,14 @@
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
-              spans
-              source-function
+              ctx.spans
+              ctx.source-function
               (CompilerIrInstr.BinOp dst op lhs rhs ty)
-              func-diag
+              ctx.func-diag
               ""))))]))
 
 (define (compiler-backend-emit-fused-load-compare-branch-rest
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [load-dst : i64]
   [ptr : CompilerIrValue]
@@ -33237,24 +32728,12 @@
   [true-label : String]
   [false-label : String]
   [rest : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-compare-branch-with-phi-copies-with-plan
-    assignments
-    function
-    blocks
-    current-label
+    ctx.assignments
+    ctx.function
+    ctx.blocks
+    ctx.current-label
     ptr
     op
     rhs
@@ -33262,45 +32741,29 @@
     true-label
     false-label
     (compiler-backend-fused-compare-fallthrough rest fallthrough)
-    program-index
-    vars
+    ctx.program-index
+    ctx.vars
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       1
       0)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       1
       1)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       2
       1)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       2
       2))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         rest
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         (text_buf.append buf (compiler-backend-emergency-wrap head)))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
@@ -33308,18 +32771,14 @@
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
-              spans
-              source-function
+              ctx.spans
+              ctx.source-function
               (CompilerIrInstr.Load load-dst ptr load-ty)
-              func-diag
+              ctx.func-diag
               ""))))]))
 
 (define (compiler-backend-emit-fused-not-branch-rest
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [dst : i64]
   [src : CompilerIrValue]
@@ -33327,66 +32786,38 @@
   [true-label : String]
   [false-label : String]
   [rest : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   ;; `not src` branches to its false successor when src is true. Emit the
   ;; source branch directly with reversed successors, including the matching
   ;; phi-edge copies, instead of materializing the inverted boolean.
   (match (compiler-backend-emit-branch-with-phi-copies-with-plan
-    assignments
-    function
-    blocks
-    current-label
+    ctx.assignments
+    ctx.function
+    ctx.blocks
+    ctx.current-label
     src
     false-label
     true-label
     (compiler-backend-fused-compare-fallthrough rest fallthrough)
-    program-index
-    vars
+    ctx.program-index
+    ctx.vars
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       1
       0)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       1
       1)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       1
       2))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         rest
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         (text_buf.append buf (compiler-backend-emergency-wrap head)))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
@@ -33394,18 +32825,14 @@
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
-              spans
-              source-function
+              ctx.spans
+              ctx.source-function
               (CompilerIrInstr.UnOp dst (CompilerIrUnOp.Not) src ty)
-              func-diag
+              ctx.func-diag
               ""))))]))
 
 (define (compiler-backend-emit-fused-gep-load-compare-branch-rest
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [gep-dst : i64]
   ;; GAP9: the fused compare consumes this gep's ordinal at the dispatch
@@ -33423,24 +32850,12 @@
   [true-label : String]
   [false-label : String]
   [rest : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-gep-load-compare-branch-with-phi-copies-with-plan
-    assignments
-    function
-    blocks
-    current-label
+    ctx.assignments
+    ctx.function
+    ctx.blocks
+    ctx.current-label
     base
     offset
     elem-ty
@@ -33450,45 +32865,29 @@
     true-label
     false-label
     (compiler-backend-fused-compare-fallthrough rest fallthrough)
-    program-index
-    vars
+    ctx.program-index
+    ctx.vars
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       2
       0)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       2
       1)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       3
       1)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       3
       2))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         rest
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         (text_buf.append buf (compiler-backend-emergency-wrap head)))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
@@ -33496,10 +32895,10 @@
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
-              spans
-              source-function
+              ctx.spans
+              ctx.source-function
               (CompilerIrInstr.Gep gep-dst base offset elem-ty)
-              func-diag
+              ctx.func-diag
               ""))))]))
 
 ;; GAP8: fold a single-use fused-load result straight into the consuming ALU
@@ -33750,11 +33149,7 @@
               (ResultCompilerBackend.Err message)]))])))
 
 (define (compiler-backend-emit-fused-gep-load-rest
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [_gep-dst : i64]
   [gep-fold-disp : i64]
@@ -33764,26 +33159,14 @@
   [load-dst : i64]
   [load-ty : AstType]
   [rest : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   ;; GAP8 ALU fold first: the probe is side-effect-free, so a rejection costs
   ;; nothing and falls through to the existing single/pair load fusion.
   (match (compiler-backend-gep-load-alu-probe
-    assignments
-    types
-    global-types
-    use-counts
+    ctx.assignments
+    ctx.types
+    ctx.global-types
+    ctx.use-counts
     base
     offset
     load-dst
@@ -33791,14 +33174,10 @@
     rest)
     [(CompilerBackendGepLoadAluFold.Some mnem alu-dst x after-binop)
       (compiler-backend-emit-fused-result-rest
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         (compiler-backend-emit-gep-load-alu
-          assignments
+          ctx.assignments
           mnem
           alu-dst
           x
@@ -33807,26 +33186,10 @@
           elem-ty
           gep-fold-disp)
         (box-get after-binop)
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         buf)]
     [(CompilerBackendGepLoadAluFold.No)
       (compiler-backend-emit-fused-gep-load-plain-rest
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         _gep-dst
         gep-fold-disp
@@ -33836,26 +33199,10 @@
         load-dst
         load-ty
         rest
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         buf)]))
 
 (define (compiler-backend-emit-fused-gep-load-plain-rest
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [_gep-dst : i64]
   [gep-fold-disp : i64]
@@ -33865,18 +33212,6 @@
   [load-dst : i64]
   [load-ty : AstType]
   [rest : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   ;; M-D emergency-leak fix: the single gep+load emission is inlined at each
   ;; fallthrough site instead of being computed SPECULATIVELY up front.
@@ -33894,7 +33229,7 @@
           (match maybe-gep
             [(CompilerIrInstr.Gep gep-dst2 base2 offset2 elem-ty2)
               (if (and
-                (compiler-backend-var-single-use? use-counts gep-dst2)
+                (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
                 (opt-value-eq base2 base))
                 (match (compiler-backend-value-as-i64 offset2)
                   [(option_i64.Some _)
@@ -33908,20 +33243,16 @@
                                 (and
                                   (compiler-backend-load-compare-type? load-ty2)
                                   (compiler-backend-var-single-use?
-                                    use-counts
+                                    ctx.use-counts
                                     load-dst2)
                                   (compiler-backend-rest-starts-load-compare-branch?
                                     (box-get after-load2)
                                     load-dst2
-                                    types
-                                    global-types
-                                    use-counts))))
+                                    ctx.types
+                                    ctx.global-types
+                                    ctx.use-counts))))
                               (compiler-backend-emit-fused-result-rest
-                                target
-                                function
-                                source-function
-                                blocks
-                                current-label
+                                ctx
                                 fallthrough
                                 (let
                                   ;; GAP9: the pair consumes a SECOND gep;
@@ -33932,7 +33263,7 @@
                                       offset2
                                       elem-ty2)]
                                   (compiler-backend-emit-load-from-gep-pair-planned
-                                    assignments
+                                    ctx.assignments
                                     base
                                     offset
                                     elem-ty
@@ -33944,57 +33275,41 @@
                                     load-ty2
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       0
                                       0)
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       0
                                       1)
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       1
                                       1)
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       2
                                       0)
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       2
                                       1)
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       3
                                       1)))
                                 (box-get after-load2)
-                                assignments
-                                vars
-                                types
-                                global-types
-                                ret-ty
-                                plan
-                                functions
-                                externs
-                                program-index
-                                spans
-                                func-diag
-                                use-counts
                                 buf)
                               (compiler-backend-emit-fused-result-rest
-                                target
-                                function
-                                source-function
-                                blocks
-                                current-label
+                                ctx
                                 fallthrough
                                 (compiler-backend-emit-load-from-gep
-                                  assignments
+                                  ctx.assignments
                                   load-dst
                                   base
                                   offset
@@ -34003,41 +33318,28 @@
                                   ""
                                   gep-fold-disp
                                   (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch plan)
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
                                     0
                                     0)
                                   (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch plan)
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
                                     0
                                     1)
                                   (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch plan)
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
                                     1
                                     1))
                                 rest
-                                assignments
-                                vars
-                                types
-                                global-types
-                                ret-ty
-                                plan
-                                functions
-                                externs
-                                program-index
-                                spans
-                                func-diag
-                                use-counts
                                 buf))]
                           [_
                             (compiler-backend-emit-fused-result-rest
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               (compiler-backend-emit-load-from-gep
-                                assignments
+                                ctx.assignments
                                 load-dst
                                 base
                                 offset
@@ -34046,41 +33348,28 @@
                                 ""
                                 gep-fold-disp
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   0
                                   0)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   0
                                   1)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   1
                                   1))
                               rest
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf)])]
                       [_
                         (compiler-backend-emit-fused-result-rest
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
+                          ctx
                           fallthrough
                           (compiler-backend-emit-load-from-gep
-                            assignments
+                            ctx.assignments
                             load-dst
                             base
                             offset
@@ -34089,41 +33378,25 @@
                             ""
                             gep-fold-disp
                             (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch plan)
+                              (compiler-backend-runtime-plan-scratch ctx.plan)
                               0
                               0)
                             (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch plan)
+                              (compiler-backend-runtime-plan-scratch ctx.plan)
                               0
                               1)
                             (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch plan)
+                              (compiler-backend-runtime-plan-scratch ctx.plan)
                               1
                               1))
                           rest
-                          assignments
-                          vars
-                          types
-                          global-types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          program-index
-                          spans
-                          func-diag
-                          use-counts
                           buf)])]
                   [(option_i64.None)
                     (compiler-backend-emit-fused-result-rest
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       (compiler-backend-emit-load-from-gep
-                        assignments
+                        ctx.assignments
                         load-dst
                         base
                         offset
@@ -34132,40 +33405,24 @@
                         ""
                         gep-fold-disp
                         (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch plan)
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
                           0
                           0)
                         (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch plan)
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
                           0
                           1)
                         (compiler-backend-scratch-plan-register-ahead
-                          (compiler-backend-runtime-plan-scratch plan)
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
                           1
                           1))
                       rest
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       buf)])
                 (compiler-backend-emit-fused-result-rest
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
+                  ctx
                   fallthrough
                   (compiler-backend-emit-load-from-gep
-                    assignments
+                    ctx.assignments
                     load-dst
                     base
                     offset
@@ -34174,41 +33431,25 @@
                     ""
                     gep-fold-disp
                     (compiler-backend-scratch-plan-register-ahead
-                      (compiler-backend-runtime-plan-scratch plan)
+                      (compiler-backend-runtime-plan-scratch ctx.plan)
                       0
                       0)
                     (compiler-backend-scratch-plan-register-ahead
-                      (compiler-backend-runtime-plan-scratch plan)
+                      (compiler-backend-runtime-plan-scratch ctx.plan)
                       0
                       1)
                     (compiler-backend-scratch-plan-register-ahead
-                      (compiler-backend-runtime-plan-scratch plan)
+                      (compiler-backend-runtime-plan-scratch ctx.plan)
                       1
                       1))
                   rest
-                  assignments
-                  vars
-                  types
-                  global-types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  func-diag
-                  use-counts
                   buf))]
             [_
               (compiler-backend-emit-fused-result-rest
-                target
-                function
-                source-function
-                blocks
-                current-label
+                ctx
                 fallthrough
                 (compiler-backend-emit-load-from-gep
-                  assignments
+                  ctx.assignments
                   load-dst
                   base
                   offset
@@ -34217,41 +33458,25 @@
                   ""
                   gep-fold-disp
                   (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch plan)
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
                     0
                     0)
                   (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch plan)
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
                     0
                     1)
                   (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch plan)
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
                     1
                     1))
                 rest
-                assignments
-                vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts
                 buf)])]
         [_
           (compiler-backend-emit-fused-result-rest
-            target
-            function
-            source-function
-            blocks
-            current-label
+            ctx
             fallthrough
             (compiler-backend-emit-load-from-gep
-              assignments
+              ctx.assignments
               load-dst
               base
               offset
@@ -34260,41 +33485,25 @@
               ""
               gep-fold-disp
               (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch plan)
+                (compiler-backend-runtime-plan-scratch ctx.plan)
                 0
                 0)
               (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch plan)
+                (compiler-backend-runtime-plan-scratch ctx.plan)
                 0
                 1)
               (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch plan)
+                (compiler-backend-runtime-plan-scratch ctx.plan)
                 1
                 1))
             rest
-            assignments
-            vars
-            types
-            global-types
-            ret-ty
-            plan
-            functions
-            externs
-            program-index
-            spans
-            func-diag
-            use-counts
             buf)])]
     [(option_i64.None)
       (compiler-backend-emit-fused-result-rest
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         (compiler-backend-emit-load-from-gep
-          assignments
+          ctx.assignments
           load-dst
           base
           offset
@@ -34303,38 +33512,22 @@
           ""
           gep-fold-disp
           (compiler-backend-scratch-plan-register-ahead
-            (compiler-backend-runtime-plan-scratch plan)
+            (compiler-backend-runtime-plan-scratch ctx.plan)
             0
             0)
           (compiler-backend-scratch-plan-register-ahead
-            (compiler-backend-runtime-plan-scratch plan)
+            (compiler-backend-runtime-plan-scratch ctx.plan)
             0
             1)
           (compiler-backend-scratch-plan-register-ahead
-            (compiler-backend-runtime-plan-scratch plan)
+            (compiler-backend-runtime-plan-scratch ctx.plan)
             1
             1))
         rest
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         buf)]))
 
 (define (compiler-backend-emit-fused-gep-store-rest
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [gep-dst : i64]
   [gep-fold-disp : i64]
@@ -34344,61 +33537,33 @@
   [value : CompilerIrValue]
   [store-ty : AstType]
   [rest : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-to-gep
-    assignments
+    ctx.assignments
     base
     offset
     elem-ty
     value
     store-ty
-    program-index
+    ctx.program-index
     gep-fold-disp
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       0
       0)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       0
       1)
     (compiler-backend-scratch-plan-register-ahead
-      (compiler-backend-runtime-plan-scratch plan)
+      (compiler-backend-runtime-plan-scratch ctx.plan)
       1
       1))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
-        target
-        function
-        source-function
-        blocks
-        current-label
+        ctx
         fallthrough
         rest
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         (text_buf.append buf (compiler-backend-emergency-wrap head)))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
@@ -34406,124 +33571,76 @@
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
-              spans
-              source-function
+              ctx.spans
+              ctx.source-function
               (CompilerIrInstr.Gep gep-dst base offset elem-ty)
-              func-diag
+              ctx.func-diag
               ""))))]))
 
 (define (compiler-backend-emit-fused-mov-trivial-phi-return-rest
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [dst : i64]
   [src : CompilerIrValue]
   [ty : AstType]
   [target-label : String]
   [after-jump : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match (compiler-backend-emit-mov-trivial-phi-return-edge
-    source-function
-    blocks
+    ctx.source-function
+    ctx.blocks
     target-label
-    current-label
-    assignments
-    vars
-    ret-ty
+    ctx.current-label
+    ctx.assignments
+    ctx.vars
+    ctx.ret-ty
     dst
     src
-    program-index)
+    ctx.program-index)
     [(ResultCompilerBackend.Ok direct-return)
       (if (string.eq direct-return "")
-        (if (compiler-backend-var-single-use? use-counts dst)
+        (if (compiler-backend-var-single-use? ctx.use-counts dst)
           (match (compiler-backend-emit-mov-phi-copy-edge
-            assignments
-            blocks
+            ctx.assignments
+            ctx.blocks
             target-label
-            current-label
+            ctx.current-label
             dst
             src
-            program-index
-            vars
+            ctx.program-index
+            ctx.vars
             (compiler-backend-scratch-plan-register-ahead
-              (compiler-backend-runtime-plan-scratch plan)
+              (compiler-backend-runtime-plan-scratch ctx.plan)
               1
               0)
             (compiler-backend-scratch-plan-register-ahead
-              (compiler-backend-runtime-plan-scratch plan)
+              (compiler-backend-runtime-plan-scratch ctx.plan)
               1
               1))
             [(ResultCompilerBackend.Ok fused-copies)
               (if (string.eq fused-copies "")
                 (compiler-backend-emit-instrs-normal
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
+                  ctx
                   fallthrough
                   (CompilerIrInstr.Mov dst src ty)
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Jump target-label)
                     after-jump)
-                  assignments
-                  vars
-                  types
-                  global-types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  func-diag
-                  use-counts
                   buf)
                 (match (compiler-backend-emit-trivial-phi-return-edge
-                  source-function
-                  blocks
+                  ctx.source-function
+                  ctx.blocks
                   target-label
-                  current-label
-                  assignments
-                  vars
-                  ret-ty
-                  program-index)
+                  ctx.current-label
+                  ctx.assignments
+                  ctx.vars
+                  ctx.ret-ty
+                  ctx.program-index)
                   [(ResultCompilerBackend.Ok plain-direct-return)
                     (compiler-backend-emit-instrs
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       after-jump
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       (text_buf.append
                         buf
                         (if (string.eq plain-direct-return "")
@@ -34534,7 +33651,7 @@
                               fallthrough)
                               ""
                               (compiler-backend-jump-label
-                                function
+                                ctx.function
                                 target-label)))
                           plain-direct-return)))]
                   [(ResultCompilerBackend.Err message)
@@ -34543,10 +33660,10 @@
                         (compiler-backend-apply-instr-diagnostic
                           (box-get message)
                           (compiler-backend-instr-diagnostic
-                            spans
-                            source-function
+                            ctx.spans
+                            ctx.source-function
                             (CompilerIrInstr.Mov dst src ty)
-                            func-diag
+                            ctx.func-diag
                             ""))))]))]
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err
@@ -34554,55 +33671,23 @@
                   (compiler-backend-apply-instr-diagnostic
                     (box-get message)
                     (compiler-backend-instr-diagnostic
-                      spans
-                      source-function
+                      ctx.spans
+                      ctx.source-function
                       (CompilerIrInstr.Mov dst src ty)
-                      func-diag
+                      ctx.func-diag
                       ""))))])
           (compiler-backend-emit-instrs-normal
-            target
-            function
-            source-function
-            blocks
-            current-label
+            ctx
             fallthrough
             (CompilerIrInstr.Mov dst src ty)
             (compiler-ir-instr-cons
               (CompilerIrInstr.Jump target-label)
               after-jump)
-            assignments
-            vars
-            types
-            global-types
-            ret-ty
-            plan
-            functions
-            externs
-            program-index
-            spans
-            func-diag
-            use-counts
             buf))
         (compiler-backend-emit-instrs
-          target
-          function
-          source-function
-          blocks
-          current-label
+          ctx
           fallthrough
           after-jump
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag
-          use-counts
           (compiler-backend-emergency-append buf direct-return)))]
     [(ResultCompilerBackend.Err message)
       (ResultCompilerBackend.Err
@@ -34610,10 +33695,10 @@
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
-              spans
-              source-function
+              ctx.spans
+              ctx.source-function
               (CompilerIrInstr.Mov dst src ty)
-              func-diag
+              ctx.func-diag
               ""))))]))
 
 (define (compiler-backend-emit-call-return
@@ -35484,25 +34569,9 @@
               instr-diag)))])))
 
 (define (compiler-backend-emit-instrs-step
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instrs : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match instrs
     [(CompilerIrInstrList.Nil) (ResultCompilerBackend.Ok (text_buf.render buf))]
@@ -35521,15 +34590,17 @@
                             (compiler-backend-divmod-op? op)
                             (compiler-backend-branch-uses-var? cast-src dst)
                             (compiler-backend-branch-uses-var? rhs cast-dst)
-                            (compiler-backend-var-single-use? use-counts dst)
                             (compiler-backend-var-single-use?
-                              use-counts
+                              ctx.use-counts
+                              dst)
+                            (compiler-backend-var-single-use?
+                              ctx.use-counts
                               cast-dst)
                             (compiler-backend-divmod-safe-literal? src bin-ty))
                             (match (compiler-backend-emit-binop
-                              types
-                              global-types
-                              assignments
+                              ctx.types
+                              ctx.global-types
+                              ctx.assignments
                               bin-dst
                               op
                               lhs
@@ -35537,118 +34608,56 @@
                               bin-ty)
                               [(ResultCompilerBackend.Ok binop-asm)
                                 (compiler-backend-emit-instrs
-                                  target
-                                  function
-                                  source-function
-                                  blocks
-                                  current-label
+                                  ctx
                                   fallthrough
                                   (box-get after-binop)
-                                  assignments
-                                  vars
-                                  types
-                                  global-types
-                                  ret-ty
-                                  plan
-                                  functions
-                                  externs
-                                  program-index
-                                  spans
-                                  func-diag
-                                  use-counts
                                   (compiler-backend-emergency-append
                                     buf
                                     binop-asm))]
                               [(ResultCompilerBackend.Err message)
                                 (ResultCompilerBackend.Err message)])
                             (compiler-backend-emit-instrs-normal
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               instr
                               (box-get rest)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf))]
                         [_
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf)])]
                     [_
                       (compiler-backend-emit-instrs-normal
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
+                        ctx
                         fallthrough
                         instr
                         (box-get rest)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
                         buf)])]
                 [(CompilerIrInstr.BinOp bin-dst op lhs rhs bin-ty)
                   (if (and
                     (compiler-backend-divmod-op? op)
                     (compiler-backend-branch-uses-var? rhs dst)
                     (compiler-backend-divmod-safe-literal? src bin-ty))
-                    (match (if (compiler-backend-var-single-use? use-counts dst)
+                    (match (if (compiler-backend-var-single-use?
+                      ctx.use-counts
+                      dst)
                       (ResultCompilerBackend.Ok "")
                       (compiler-backend-emit-mov
-                        assignments
+                        ctx.assignments
                         dst
                         src
                         ty
-                        program-index
-                        vars
+                        ctx.program-index
+                        ctx.vars
                         ""))
                       [(ResultCompilerBackend.Ok prefix)
                         (match (compiler-backend-emit-binop
-                          types
-                          global-types
-                          assignments
+                          ctx.types
+                          ctx.global-types
+                          ctx.assignments
                           bin-dst
                           op
                           lhs
@@ -35656,25 +34665,9 @@
                           bin-ty)
                           [(ResultCompilerBackend.Ok binop-asm)
                             (compiler-backend-emit-instrs
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               (box-get after-jump)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               (compiler-backend-emergency-append
                                 buf
                                 (string.append prefix binop-asm)))]
@@ -35683,52 +34676,20 @@
                       [(ResultCompilerBackend.Err message)
                         (ResultCompilerBackend.Err message)])
                     (compiler-backend-emit-instrs-normal
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       instr
                       (box-get rest)
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       buf))]
                 [(CompilerIrInstr.Jump target-label)
                   (compiler-backend-emit-fused-mov-trivial-phi-return-rest
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
+                    ctx
                     fallthrough
                     dst
                     src
                     ty
                     target-label
                     (box-get after-jump)
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
                     buf)]
                 [(CompilerIrInstr.Return maybe)
                   (match (box-get after-jump)
@@ -35737,13 +34698,13 @@
                         [(CompilerIrMaybeValue.Some value)
                           (if (compiler-backend-branch-uses-var? value dst)
                             (match (compiler-backend-emit-return
-                              source-function
-                              blocks
+                              ctx.source-function
+                              ctx.blocks
                               (CompilerIrMaybeValue.Some src)
-                              assignments
-                              vars
-                              ret-ty
-                              program-index)
+                              ctx.assignments
+                              ctx.vars
+                              ctx.ret-ty
+                              ctx.program-index)
                               [(ResultCompilerBackend.Ok asm)
                                 (ResultCompilerBackend.Ok
                                   (compiler-backend-emergency-render-append
@@ -35755,124 +34716,44 @@
                                     (compiler-backend-apply-instr-diagnostic
                                       (box-get message)
                                       (compiler-backend-instr-diagnostic
-                                        spans
-                                        source-function
+                                        ctx.spans
+                                        ctx.source-function
                                         instr
-                                        func-diag
+                                        ctx.func-diag
                                         ""))))])
                             (compiler-backend-emit-instrs-normal
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               instr
                               (box-get rest)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf))]
                         [(CompilerIrMaybeValue.No)
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf)])]
                     [_
                       (compiler-backend-emit-instrs-normal
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
+                        ctx
                         fallthrough
                         instr
                         (box-get rest)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
                         buf)])]
                 [_
                   (compiler-backend-emit-instrs-normal
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
+                    ctx
                     fallthrough
                     instr
                     (box-get rest)
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
                     buf)])]
             [_
               (compiler-backend-emit-instrs-normal
-                target
-                function
-                source-function
-                blocks
-                current-label
+                ctx
                 fallthrough
                 instr
                 (box-get rest)
-                assignments
-                vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts
                 buf)])]
         [(CompilerIrInstr.Call dst name args ty)
           (match (box-get rest)
@@ -35885,145 +34766,66 @@
                         [(CompilerIrMaybeValue.Some value)
                           (if (and
                             (compiler-backend-branch-uses-var? value dst)
-                            (opt-type-eq ty ret-ty))
+                            (opt-type-eq ty ctx.ret-ty))
                             (compiler-backend-emit-terminator-into
                               (compiler-backend-emit-call-return
-                                target
-                                source-function
-                                blocks
+                                ctx.target
+                                ctx.source-function
+                                ctx.blocks
                                 name
                                 args
-                                assignments
+                                ctx.assignments
                                 (compiler-backend-scratch-plan-register-here
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   0)
-                                types
-                                global-types
-                                vars
-                                plan
-                                functions
-                                externs
-                                program-index
+                                ctx.types
+                                ctx.global-types
+                                ctx.vars
+                                ctx.plan
+                                ctx.functions
+                                ctx.externs
+                                ctx.program-index
                                 (compiler-backend-instr-diagnostic
-                                  spans
-                                  source-function
+                                  ctx.spans
+                                  ctx.source-function
                                   instr
-                                  func-diag
+                                  ctx.func-diag
                                   ""))
                               buf)
                             (compiler-backend-emit-instrs-normal
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               instr
                               (box-get rest)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf))]
                         [(CompilerIrMaybeValue.No)
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf)])]
                     [_
                       (compiler-backend-emit-instrs-normal
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
+                        ctx
                         fallthrough
                         instr
                         (box-get rest)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
                         buf)])]
                 [_
                   (compiler-backend-emit-instrs-normal
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
+                    ctx
                     fallthrough
                     instr
                     (box-get rest)
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
                     buf)])]
             [_
               (compiler-backend-emit-instrs-normal
-                target
-                function
-                source-function
-                blocks
-                current-label
+                ctx
                 fallthrough
                 instr
                 (box-get rest)
-                assignments
-                vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts
                 buf)])]
         [(CompilerIrInstr.StorePtr ptr value0 ty0)
           (match (box-get rest)
@@ -36032,7 +34834,7 @@
                 [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
                   (if (and
                     (opt-value-eq base ptr)
-                    (compiler-backend-var-single-use? use-counts gep-dst))
+                    (compiler-backend-var-single-use? ctx.use-counts gep-dst))
                     (match (compiler-backend-value-as-i64 offset)
                       [(option_i64.Some n)
                         (let
@@ -36049,233 +34851,89 @@
                                       dst
                                       gep-dst)
                                       (compiler-backend-emit-fused-result-rest
-                                        target
-                                        function
-                                        source-function
-                                        blocks
-                                        current-label
+                                        ctx
                                         fallthrough
                                         (compiler-backend-emit-store-ptr-pair
-                                          assignments
+                                          ctx.assignments
                                           ptr
                                           value0
                                           ty0
                                           disp
                                           value1
                                           ty1
-                                          program-index
+                                          ctx.program-index
                                           (compiler-backend-scratch-plan-register-ahead
                                             (compiler-backend-runtime-plan-scratch
-                                              plan)
+                                              ctx.plan)
                                             1
                                             0)
                                           (compiler-backend-scratch-plan-register-ahead
                                             (compiler-backend-runtime-plan-scratch
-                                              plan)
+                                              ctx.plan)
                                             0
                                             1)
                                           (compiler-backend-scratch-plan-register-ahead
                                             (compiler-backend-runtime-plan-scratch
-                                              plan)
+                                              ctx.plan)
                                             2
                                             1))
                                         (box-get after-store)
-                                        assignments
-                                        vars
-                                        types
-                                        global-types
-                                        ret-ty
-                                        plan
-                                        functions
-                                        externs
-                                        program-index
-                                        spans
-                                        func-diag
-                                        use-counts
                                         buf)
                                       (compiler-backend-emit-instrs-normal
-                                        target
-                                        function
-                                        source-function
-                                        blocks
-                                        current-label
+                                        ctx
                                         fallthrough
                                         instr
                                         (box-get rest)
-                                        assignments
-                                        vars
-                                        types
-                                        global-types
-                                        ret-ty
-                                        plan
-                                        functions
-                                        externs
-                                        program-index
-                                        spans
-                                        func-diag
-                                        use-counts
                                         buf))]
                                   [_
                                     (compiler-backend-emit-instrs-normal
-                                      target
-                                      function
-                                      source-function
-                                      blocks
-                                      current-label
+                                      ctx
                                       fallthrough
                                       instr
                                       (box-get rest)
-                                      assignments
-                                      vars
-                                      types
-                                      global-types
-                                      ret-ty
-                                      plan
-                                      functions
-                                      externs
-                                      program-index
-                                      spans
-                                      func-diag
-                                      use-counts
                                       buf)])]
                               [_
                                 (compiler-backend-emit-instrs-normal
-                                  target
-                                  function
-                                  source-function
-                                  blocks
-                                  current-label
+                                  ctx
                                   fallthrough
                                   instr
                                   (box-get rest)
-                                  assignments
-                                  vars
-                                  types
-                                  global-types
-                                  ret-ty
-                                  plan
-                                  functions
-                                  externs
-                                  program-index
-                                  spans
-                                  func-diag
-                                  use-counts
                                   buf)])
                             (compiler-backend-emit-instrs-normal
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               instr
                               (box-get rest)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf)))]
                       [(option_i64.None)
                         (compiler-backend-emit-instrs-normal
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
+                          ctx
                           fallthrough
                           instr
                           (box-get rest)
-                          assignments
-                          vars
-                          types
-                          global-types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          program-index
-                          spans
-                          func-diag
-                          use-counts
                           buf)])
                     (compiler-backend-emit-instrs-normal
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       instr
                       (box-get rest)
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       buf))]
                 [_
                   (compiler-backend-emit-instrs-normal
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
+                    ctx
                     fallthrough
                     instr
                     (box-get rest)
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
                     buf)])]
             [_
               (compiler-backend-emit-instrs-normal
-                target
-                function
-                source-function
-                blocks
-                current-label
+                ctx
                 fallthrough
                 instr
                 (box-get rest)
-                assignments
-                vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts
                 buf)])]
         [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
-          (if (compiler-backend-var-single-use? use-counts gep-dst)
+          (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
             (match (compiler-backend-value-as-i64 offset)
               [(option_i64.Some n)
                 (match (box-get rest)
@@ -36286,7 +34944,7 @@
                           (if (and
                             (compiler-backend-load-compare-type? load-ty)
                             (compiler-backend-var-single-use?
-                              use-counts
+                              ctx.use-counts
                               load-dst))
                             (match (box-get after-load)
                               [(CompilerIrInstrList.Cons maybe-cmp after-cmp)
@@ -36303,12 +34961,12 @@
                                         lhs
                                         load-dst)
                                       (compiler-backend-var-single-use?
-                                        use-counts
+                                        ctx.use-counts
                                         cmp-dst)
                                       (not
                                         (compiler-backend-binop-f64?
-                                          types
-                                          global-types
+                                          ctx.types
+                                          ctx.global-types
                                           lhs
                                           rhs
                                           cmp-ty)))
@@ -36325,11 +34983,7 @@
                                                 cond
                                                 cmp-dst)
                                                 (compiler-backend-emit-fused-gep-load-compare-branch-rest
-                                                  target
-                                                  function
-                                                  source-function
-                                                  blocks
-                                                  current-label
+                                                  ctx
                                                   fallthrough
                                                   gep-dst
                                                   (compiler-backend-gep-fold-next!
@@ -36347,25 +35001,9 @@
                                                   true-label
                                                   false-label
                                                   (box-get after-branch)
-                                                  assignments
-                                                  vars
-                                                  types
-                                                  global-types
-                                                  ret-ty
-                                                  plan
-                                                  functions
-                                                  externs
-                                                  program-index
-                                                  spans
-                                                  func-diag
-                                                  use-counts
                                                   buf)
                                                 (compiler-backend-emit-fused-gep-load-rest
-                                                  target
-                                                  function
-                                                  source-function
-                                                  blocks
-                                                  current-label
+                                                  ctx
                                                   fallthrough
                                                   gep-dst
                                                   (compiler-backend-gep-fold-next!
@@ -36377,26 +35015,10 @@
                                                   load-dst
                                                   load-ty
                                                   (box-get after-load)
-                                                  assignments
-                                                  vars
-                                                  types
-                                                  global-types
-                                                  ret-ty
-                                                  plan
-                                                  functions
-                                                  externs
-                                                  program-index
-                                                  spans
-                                                  func-diag
-                                                  use-counts
                                                   buf))]
                                             [_
                                               (compiler-backend-emit-fused-gep-load-rest
-                                                target
-                                                function
-                                                source-function
-                                                blocks
-                                                current-label
+                                                ctx
                                                 fallthrough
                                                 gep-dst
                                                 (compiler-backend-gep-fold-next!
@@ -36408,26 +35030,10 @@
                                                 load-dst
                                                 load-ty
                                                 (box-get after-load)
-                                                assignments
-                                                vars
-                                                types
-                                                global-types
-                                                ret-ty
-                                                plan
-                                                functions
-                                                externs
-                                                program-index
-                                                spans
-                                                func-diag
-                                                use-counts
                                                 buf)])]
                                         [_
                                           (compiler-backend-emit-fused-gep-load-rest
-                                            target
-                                            function
-                                            source-function
-                                            blocks
-                                            current-label
+                                            ctx
                                             fallthrough
                                             gep-dst
                                             (compiler-backend-gep-fold-next!
@@ -36439,25 +35045,9 @@
                                             load-dst
                                             load-ty
                                             (box-get after-load)
-                                            assignments
-                                            vars
-                                            types
-                                            global-types
-                                            ret-ty
-                                            plan
-                                            functions
-                                            externs
-                                            program-index
-                                            spans
-                                            func-diag
-                                            use-counts
                                             buf)])
                                       (compiler-backend-emit-fused-gep-load-rest
-                                        target
-                                        function
-                                        source-function
-                                        blocks
-                                        current-label
+                                        ctx
                                         fallthrough
                                         gep-dst
                                         (compiler-backend-gep-fold-next!
@@ -36469,26 +35059,10 @@
                                         load-dst
                                         load-ty
                                         (box-get after-load)
-                                        assignments
-                                        vars
-                                        types
-                                        global-types
-                                        ret-ty
-                                        plan
-                                        functions
-                                        externs
-                                        program-index
-                                        spans
-                                        func-diag
-                                        use-counts
                                         buf))]
                                   [_
                                     (compiler-backend-emit-fused-gep-load-rest
-                                      target
-                                      function
-                                      source-function
-                                      blocks
-                                      current-label
+                                      ctx
                                       fallthrough
                                       gep-dst
                                       (compiler-backend-gep-fold-next!
@@ -36500,26 +35074,10 @@
                                       load-dst
                                       load-ty
                                       (box-get after-load)
-                                      assignments
-                                      vars
-                                      types
-                                      global-types
-                                      ret-ty
-                                      plan
-                                      functions
-                                      externs
-                                      program-index
-                                      spans
-                                      func-diag
-                                      use-counts
                                       buf)])]
                               [_
                                 (compiler-backend-emit-fused-gep-load-rest
-                                  target
-                                  function
-                                  source-function
-                                  blocks
-                                  current-label
+                                  ctx
                                   fallthrough
                                   gep-dst
                                   (compiler-backend-gep-fold-next!
@@ -36531,25 +35089,9 @@
                                   load-dst
                                   load-ty
                                   (box-get after-load)
-                                  assignments
-                                  vars
-                                  types
-                                  global-types
-                                  ret-ty
-                                  plan
-                                  functions
-                                  externs
-                                  program-index
-                                  spans
-                                  func-diag
-                                  use-counts
                                   buf)])
                             (compiler-backend-emit-fused-gep-load-rest
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               gep-dst
                               (compiler-backend-gep-fold-next! offset elem-ty)
@@ -36559,49 +35101,17 @@
                               load-dst
                               load-ty
                               (box-get after-load)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf))
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf))]
                       [(CompilerIrInstr.StorePtr dst value store-ty)
                         (if (compiler-backend-branch-uses-var? dst gep-dst)
                           (compiler-backend-emit-fused-gep-store-rest
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             gep-dst
                             (compiler-backend-gep-fold-next! offset elem-ty)
@@ -36611,40 +35121,12 @@
                             value
                             store-ty
                             (box-get after-load)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf)
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf))]
                       [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
                         (if (and
@@ -36654,21 +35136,17 @@
                           (let
                             [protect-n : i64
                               (compiler-backend-copy-run-protect-count
-                                assignments
+                                ctx.assignments
                                 (box-get after-load))]
                             [protect : (Array String)
                               (compiler-backend-copy-run-protect-exclude
-                                assignments
+                                ctx.assignments
                                 (box-get after-load))]
                             (compiler-backend-emit-fused-result-rest
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               (compiler-backend-emit-copy-bytes-from-gep-avoid
-                                assignments
+                                ctx.assignments
                                 base
                                 offset
                                 elem-ty
@@ -36678,110 +35156,55 @@
                                 protect-n
                                 (compiler-backend-gep-fold-next! offset elem-ty)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   0
                                   0)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   0
                                   1)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   1
                                   1)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   1
                                   (if (>= copy-size 16)
                                     3
                                     2))
                                 (if (>= copy-size 16)
                                   (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch plan)
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
                                     1
                                     2)
                                   ""))
                               (box-get after-load)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf))
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf))]
                       [_
                         (compiler-backend-emit-instrs-normal
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
+                          ctx
                           fallthrough
                           instr
                           (box-get rest)
-                          assignments
-                          vars
-                          types
-                          global-types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          program-index
-                          spans
-                          func-diag
-                          use-counts
                           buf)])]
                   [_
                     (compiler-backend-emit-instrs-normal
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       instr
                       (box-get rest)
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       buf)])]
               [(option_i64.None)
                 (match (box-get rest)
@@ -36789,51 +35212,37 @@
                     (match next
                       [(CompilerIrInstr.Gep _ load-base load-offset _)
                         (compiler-backend-emit-fused-result-rest
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
+                          ctx
                           fallthrough
                           (compiler-backend-emit-gep-staged-avoid
-                            assignments
+                            ctx.assignments
                             gep-dst
                             base
                             offset
                             elem-ty
                             (compiler-backend-gep-fold-next! offset elem-ty)
                             (compiler-backend-value-scalar-register
-                              assignments
+                              ctx.assignments
                               load-base)
                             (compiler-backend-value-scalar-register
-                              assignments
+                              ctx.assignments
                               load-offset)
                             (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch plan)
+                              (compiler-backend-runtime-plan-scratch ctx.plan)
                               0
                               0)
                             (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch plan)
+                              (compiler-backend-runtime-plan-scratch ctx.plan)
                               0
                               1))
                           (box-get rest)
-                          assignments
-                          vars
-                          types
-                          global-types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          program-index
-                          spans
-                          func-diag
-                          use-counts
                           buf)]
                       [(CompilerIrInstr.Mov ptr-var src _)
                         (if (and
                           (compiler-backend-branch-uses-var? src gep-dst)
-                          (compiler-backend-var-single-use? use-counts ptr-var))
+                          (compiler-backend-var-single-use?
+                            ctx.use-counts
+                            ptr-var))
                           (match (box-get after-gep)
                             [(CompilerIrInstrList.Cons maybe-store after-store)
                               (match maybe-store
@@ -36842,11 +35251,7 @@
                                     dst
                                     ptr-var)
                                     (compiler-backend-emit-fused-gep-store-rest
-                                      target
-                                      function
-                                      source-function
-                                      blocks
-                                      current-label
+                                      ctx
                                       fallthrough
                                       gep-dst
                                       (compiler-backend-gep-fold-next!
@@ -36858,117 +35263,37 @@
                                       value
                                       store-ty
                                       (box-get after-store)
-                                      assignments
-                                      vars
-                                      types
-                                      global-types
-                                      ret-ty
-                                      plan
-                                      functions
-                                      externs
-                                      program-index
-                                      spans
-                                      func-diag
-                                      use-counts
                                       buf)
                                     (compiler-backend-emit-instrs-normal
-                                      target
-                                      function
-                                      source-function
-                                      blocks
-                                      current-label
+                                      ctx
                                       fallthrough
                                       instr
                                       (box-get rest)
-                                      assignments
-                                      vars
-                                      types
-                                      global-types
-                                      ret-ty
-                                      plan
-                                      functions
-                                      externs
-                                      program-index
-                                      spans
-                                      func-diag
-                                      use-counts
                                       buf))]
                                 [_
                                   (compiler-backend-emit-instrs-normal
-                                    target
-                                    function
-                                    source-function
-                                    blocks
-                                    current-label
+                                    ctx
                                     fallthrough
                                     instr
                                     (box-get rest)
-                                    assignments
-                                    vars
-                                    types
-                                    global-types
-                                    ret-ty
-                                    plan
-                                    functions
-                                    externs
-                                    program-index
-                                    spans
-                                    func-diag
-                                    use-counts
                                     buf)])]
                             [_
                               (compiler-backend-emit-instrs-normal
-                                target
-                                function
-                                source-function
-                                blocks
-                                current-label
+                                ctx
                                 fallthrough
                                 instr
                                 (box-get rest)
-                                assignments
-                                vars
-                                types
-                                global-types
-                                ret-ty
-                                plan
-                                functions
-                                externs
-                                program-index
-                                spans
-                                func-diag
-                                use-counts
                                 buf)])
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf))]
                       [(CompilerIrInstr.Load load-dst src load-ty)
                         (if (compiler-backend-branch-uses-var? src gep-dst)
                           (compiler-backend-emit-fused-gep-load-rest
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             gep-dst
                             (compiler-backend-gep-fold-next! offset elem-ty)
@@ -36978,49 +35303,17 @@
                             load-dst
                             load-ty
                             (box-get after-gep)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf)
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf))]
                       [(CompilerIrInstr.StorePtr dst value store-ty)
                         (if (compiler-backend-branch-uses-var? dst gep-dst)
                           (compiler-backend-emit-fused-gep-store-rest
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             gep-dst
                             (compiler-backend-gep-fold-next! offset elem-ty)
@@ -37030,61 +35323,29 @@
                             value
                             store-ty
                             (box-get after-gep)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf)
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf))]
                       [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
                         (if (compiler-backend-branch-uses-var? copy-dst gep-dst)
                           (let
                             [protect-n : i64
                               (compiler-backend-copy-run-protect-count
-                                assignments
+                                ctx.assignments
                                 (box-get after-gep))]
                             [protect : (Array String)
                               (compiler-backend-copy-run-protect-exclude
-                                assignments
+                                ctx.assignments
                                 (box-get after-gep))]
                             (compiler-backend-emit-fused-result-rest
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               (compiler-backend-emit-copy-bytes-from-gep-avoid
-                                assignments
+                                ctx.assignments
                                 base
                                 offset
                                 elem-ty
@@ -37094,190 +35355,103 @@
                                 protect-n
                                 (compiler-backend-gep-fold-next! offset elem-ty)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   0
                                   0)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   0
                                   1)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   1
                                   1)
                                 (compiler-backend-scratch-plan-register-ahead
-                                  (compiler-backend-runtime-plan-scratch plan)
+                                  (compiler-backend-runtime-plan-scratch
+                                    ctx.plan)
                                   1
                                   (if (>= copy-size 16)
                                     3
                                     2))
                                 (if (>= copy-size 16)
                                   (compiler-backend-scratch-plan-register-ahead
-                                    (compiler-backend-runtime-plan-scratch plan)
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
                                     1
                                     2)
                                   ""))
                               (box-get after-gep)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf))
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf))]
                       [_
                         (compiler-backend-emit-instrs-normal
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
+                          ctx
                           fallthrough
                           instr
                           (box-get rest)
-                          assignments
-                          vars
-                          types
-                          global-types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          program-index
-                          spans
-                          func-diag
-                          use-counts
                           buf)])]
                   [_
                     (compiler-backend-emit-instrs-normal
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       instr
                       (box-get rest)
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       buf)])])
             (compiler-backend-emit-instrs-normal
-              target
-              function
-              source-function
-              blocks
-              current-label
+              ctx
               fallthrough
               instr
               (box-get rest)
-              assignments
-              vars
-              types
-              global-types
-              ret-ty
-              plan
-              functions
-              externs
-              program-index
-              spans
-              func-diag
-              use-counts
               buf))]
         [(CompilerIrInstr.CopyBytes dst src size)
           (let
             [protect-n : i64
               (compiler-backend-copy-run-protect-count
-                assignments
+                ctx.assignments
                 (box-get rest))]
             [protect : (Array String)
               (compiler-backend-copy-run-protect-exclude
-                assignments
+                ctx.assignments
                 (box-get rest))]
             (compiler-backend-emit-fused-result-rest
-              target
-              function
-              source-function
-              blocks
-              current-label
+              ctx
               fallthrough
               (compiler-backend-emit-copy-bytes-avoid
-                assignments
+                ctx.assignments
                 dst
                 src
                 size
                 protect
                 protect-n
                 (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch plan)
+                  (compiler-backend-runtime-plan-scratch ctx.plan)
                   0
                   0)
                 (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch plan)
+                  (compiler-backend-runtime-plan-scratch ctx.plan)
                   0
                   1)
                 (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch plan)
+                  (compiler-backend-runtime-plan-scratch ctx.plan)
                   0
                   (if (>= size 16)
                     3
                     2))
                 (if (>= size 16)
                   (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch plan)
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
                     0
                     2)
                   ""))
               (box-get rest)
-              assignments
-              vars
-              types
-              global-types
-              ret-ty
-              plan
-              functions
-              externs
-              program-index
-              spans
-              func-diag
-              use-counts
               buf))]
         [(CompilerIrInstr.VectorLoad load-dst base index lanes elem-ty)
           (match (box-get rest)
@@ -37293,7 +35467,7 @@
                         bin-lanes
                         bin-elem-ty)
                       (if (compiler-backend-vector-load-binop-foldable?
-                        use-counts
+                        ctx.use-counts
                         load-dst
                         lanes
                         elem-ty
@@ -37309,14 +35483,10 @@
                           rhs)
                           [(CompilerBackendVectorMemFold.Some reg-value)
                             (compiler-backend-emit-fused-result-rest
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               (compiler-backend-emit-vector-binop-memory-source
-                                assignments
+                                ctx.assignments
                                 bin-dst
                                 op
                                 reg-value
@@ -37325,200 +35495,92 @@
                                 bin-lanes
                                 bin-elem-ty
                                 (compiler-backend-instr-diagnostic
-                                  spans
-                                  source-function
+                                  ctx.spans
+                                  ctx.source-function
                                   next
-                                  func-diag
+                                  ctx.func-diag
                                   ""))
                               (box-get after-binop)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf)]
                           [(CompilerBackendVectorMemFold.No)
                             (compiler-backend-emit-instrs-normal
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               instr
                               (box-get rest)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf)])
                         (compiler-backend-emit-instrs-normal
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
+                          ctx
                           fallthrough
                           instr
                           (box-get rest)
-                          assignments
-                          vars
-                          types
-                          global-types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          program-index
-                          spans
-                          func-diag
-                          use-counts
                           buf))])]
                 [_
                   (compiler-backend-emit-instrs-normal
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
+                    ctx
                     fallthrough
                     instr
                     (box-get rest)
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
                     buf)])]
             [_
               (compiler-backend-emit-instrs-normal
-                target
-                function
-                source-function
-                blocks
-                current-label
+                ctx
                 fallthrough
                 instr
                 (box-get rest)
-                assignments
-                vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts
                 buf)])]
         [(CompilerIrInstr.Load load-dst ptr load-ty)
           (if (and
             (compiler-backend-load-compare-type? load-ty)
-            (compiler-backend-var-single-use? use-counts load-dst))
+            (compiler-backend-var-single-use? ctx.use-counts load-dst))
             (match (box-get rest)
               [(CompilerIrInstrList.Cons next after-cmp)
                 (match next
                   [(CompilerIrInstr.Load second-dst second-src second-ty)
                     (if (compiler-backend-branch-uses-var? second-src load-dst)
                       (compiler-backend-emit-fused-result-rest
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
+                        ctx
                         fallthrough
                         (compiler-backend-emit-load-load
-                          assignments
+                          ctx.assignments
                           load-dst
                           ptr
                           load-ty
                           second-dst
                           second-ty
                           (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch plan)
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
                             0
                             0)
                           (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch plan)
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
                             0
                             1)
                           (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch plan)
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
                             1
                             0)
                           (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch plan)
+                            (compiler-backend-runtime-plan-scratch ctx.plan)
                             1
                             1))
                         (box-get after-cmp)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
                         buf)
                       (compiler-backend-emit-instrs-normal
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
+                        ctx
                         fallthrough
                         instr
                         (box-get rest)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
                         buf))]
                   [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
                     (if (and
                       (compiler-backend-compare-op? op)
                       (compiler-backend-branch-uses-var? lhs load-dst)
-                      (compiler-backend-var-single-use? use-counts cmp-dst)
+                      (compiler-backend-var-single-use? ctx.use-counts cmp-dst)
                       (not
                         (compiler-backend-binop-f64?
-                          types
-                          global-types
+                          ctx.types
+                          ctx.global-types
                           lhs
                           rhs
                           cmp-ty)))
@@ -37533,11 +35595,7 @@
                                 cond
                                 cmp-dst)
                                 (compiler-backend-emit-fused-load-compare-branch-rest
-                                  target
-                                  function
-                                  source-function
-                                  blocks
-                                  current-label
+                                  ctx
                                   fallthrough
                                   load-dst
                                   ptr
@@ -37549,198 +35607,74 @@
                                   true-label
                                   false-label
                                   (box-get after-branch)
-                                  assignments
-                                  vars
-                                  types
-                                  global-types
-                                  ret-ty
-                                  plan
-                                  functions
-                                  externs
-                                  program-index
-                                  spans
-                                  func-diag
-                                  use-counts
                                   buf)
                                 (compiler-backend-emit-instrs-normal
-                                  target
-                                  function
-                                  source-function
-                                  blocks
-                                  current-label
+                                  ctx
                                   fallthrough
                                   instr
                                   (box-get rest)
-                                  assignments
-                                  vars
-                                  types
-                                  global-types
-                                  ret-ty
-                                  plan
-                                  functions
-                                  externs
-                                  program-index
-                                  spans
-                                  func-diag
-                                  use-counts
                                   buf))]
                             [_
                               (compiler-backend-emit-instrs-normal
-                                target
-                                function
-                                source-function
-                                blocks
-                                current-label
+                                ctx
                                 fallthrough
                                 instr
                                 (box-get rest)
-                                assignments
-                                vars
-                                types
-                                global-types
-                                ret-ty
-                                plan
-                                functions
-                                externs
-                                program-index
-                                spans
-                                func-diag
-                                use-counts
                                 buf)])]
                         [_
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf)])
                       (compiler-backend-emit-instrs-normal
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
+                        ctx
                         fallthrough
                         instr
                         (box-get rest)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
                         buf))]
                   [_
                     (compiler-backend-emit-instrs-normal
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       instr
                       (box-get rest)
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       buf)])]
               [_
                 (compiler-backend-emit-instrs-normal
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
+                  ctx
                   fallthrough
                   instr
                   (box-get rest)
-                  assignments
-                  vars
-                  types
-                  global-types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  func-diag
-                  use-counts
                   buf)])
             (compiler-backend-emit-instrs-normal
-              target
-              function
-              source-function
-              blocks
-              current-label
+              ctx
               fallthrough
               instr
               (box-get rest)
-              assignments
-              vars
-              types
-              global-types
-              ret-ty
-              plan
-              functions
-              externs
-              program-index
-              spans
-              func-diag
-              use-counts
               buf))]
         [(CompilerIrInstr.BinOp dst op lhs rhs ty)
           (if (and
-            (compiler-backend-var-single-use? use-counts dst)
+            (compiler-backend-var-single-use? ctx.use-counts dst)
             (compiler-backend-rax-forwardable-binop?
-              types
-              global-types
-              assignments
+              ctx.types
+              ctx.global-types
+              ctx.assignments
               op
               lhs
               rhs
               ty)
             (compiler-backend-rest-starts-rax-forwardable-consumer?
-              types
-              global-types
-              assignments
+              ctx.types
+              ctx.global-types
+              ctx.assignments
               dst
               (box-get rest)))
             (match (compiler-backend-emit-binop-to-rax
-              types
-              global-types
-              assignments
+              ctx.types
+              ctx.global-types
+              ctx.assignments
               dst
               op
               lhs
@@ -37748,57 +35682,47 @@
               ty
               false
               (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch plan)
+                (compiler-backend-runtime-plan-scratch ctx.plan)
                 0
                 0)
               (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch plan)
+                (compiler-backend-runtime-plan-scratch ctx.plan)
                 0
                 1)
               (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch plan)
+                (compiler-backend-runtime-plan-scratch ctx.plan)
                 0
                 2)
               (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch plan)
+                (compiler-backend-runtime-plan-scratch ctx.plan)
                 0
                 3)
               (compiler-backend-scratch-plan-register-ahead
-                (compiler-backend-runtime-plan-scratch plan)
+                (compiler-backend-runtime-plan-scratch ctx.plan)
                 0
                 4))
               [(ResultCompilerBackend.Ok head)
                 (compiler-backend-emit-instrs-with-rax
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
+                  ctx
                   fallthrough
                   dst
                   ty
                   (box-get rest)
-                  assignments
-                  vars
-                  types
-                  global-types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  func-diag
-                  use-counts
                   (text_buf.append buf (compiler-backend-emergency-wrap head)))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)])
             (if (and
               (compiler-backend-compare-op? op)
               (or
-                (compiler-backend-var-single-use? use-counts dst)
+                (compiler-backend-var-single-use? ctx.use-counts dst)
                 (compiler-backend-var-fuse-safe? dst))
-              (not (compiler-backend-binop-f64? types global-types lhs rhs ty)))
+              (not
+                (compiler-backend-binop-f64?
+                  ctx.types
+                  ctx.global-types
+                  lhs
+                  rhs
+                  ty)))
               (match (box-get rest)
                 [(CompilerIrInstrList.Cons next after-branch)
                   (match next
@@ -37810,118 +35734,66 @@
                               (if (compiler-backend-branch-uses-var? value dst)
                                 (compiler-backend-emit-terminator-into
                                   (compiler-backend-emit-binop-return-with-plan
-                                    source-function
-                                    blocks
-                                    types
-                                    global-types
-                                    assignments
-                                    vars
+                                    ctx.source-function
+                                    ctx.blocks
+                                    ctx.types
+                                    ctx.global-types
+                                    ctx.assignments
+                                    ctx.vars
                                     op
                                     lhs
                                     rhs
                                     ty
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       0
                                       0)
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       0
                                       1)
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       0
                                       2)
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       0
                                       3)
                                     (compiler-backend-scratch-plan-register-ahead
                                       (compiler-backend-runtime-plan-scratch
-                                        plan)
+                                        ctx.plan)
                                       0
                                       4))
                                   buf)
                                 (compiler-backend-emit-instrs-normal
-                                  target
-                                  function
-                                  source-function
-                                  blocks
-                                  current-label
+                                  ctx
                                   fallthrough
                                   instr
                                   (box-get rest)
-                                  assignments
-                                  vars
-                                  types
-                                  global-types
-                                  ret-ty
-                                  plan
-                                  functions
-                                  externs
-                                  program-index
-                                  spans
-                                  func-diag
-                                  use-counts
                                   buf))]
                             [(CompilerIrMaybeValue.No)
                               (compiler-backend-emit-instrs-normal
-                                target
-                                function
-                                source-function
-                                blocks
-                                current-label
+                                ctx
                                 fallthrough
                                 instr
                                 (box-get rest)
-                                assignments
-                                vars
-                                types
-                                global-types
-                                ret-ty
-                                plan
-                                functions
-                                externs
-                                program-index
-                                spans
-                                func-diag
-                                use-counts
                                 buf)])]
                         [_
                           (compiler-backend-emit-instrs-normal
-                            target
-                            function
-                            source-function
-                            blocks
-                            current-label
+                            ctx
                             fallthrough
                             instr
                             (box-get rest)
-                            assignments
-                            vars
-                            types
-                            global-types
-                            ret-ty
-                            plan
-                            functions
-                            externs
-                            program-index
-                            spans
-                            func-diag
-                            use-counts
                             buf)])]
                     [(CompilerIrInstr.Branch cond true-label false-label)
                       (if (compiler-backend-branch-uses-var? cond dst)
                         (compiler-backend-emit-fused-compare-branch-rest
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
+                          ctx
                           fallthrough
                           dst
                           op
@@ -37931,40 +35803,12 @@
                           true-label
                           false-label
                           (box-get after-branch)
-                          assignments
-                          vars
-                          types
-                          global-types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          program-index
-                          spans
-                          func-diag
-                          use-counts
                           buf)
                         (compiler-backend-emit-instrs-normal
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
+                          ctx
                           fallthrough
                           instr
                           (box-get rest)
-                          assignments
-                          vars
-                          types
-                          global-types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          program-index
-                          spans
-                          func-diag
-                          use-counts
                           buf))]
                     [(CompilerIrInstr.UnOp
                         not-dst
@@ -37976,8 +35820,10 @@
                       ;; flags live, omit both boolean materializations, and
                       ;; branch to the opposite labels directly.
                       (if (and
-                        (compiler-backend-var-single-use? use-counts dst)
-                        (compiler-backend-var-single-use? use-counts not-dst)
+                        (compiler-backend-var-single-use? ctx.use-counts dst)
+                        (compiler-backend-var-single-use?
+                          ctx.use-counts
+                          not-dst)
                         (compiler-backend-branch-uses-var? not-src dst))
                         (match (box-get after-branch)
                           [(CompilerIrInstrList.Cons branch after-not-branch)
@@ -37990,11 +35836,7 @@
                                   cond
                                   not-dst)
                                   (compiler-backend-emit-fused-compare-branch-rest
-                                    target
-                                    function
-                                    source-function
-                                    blocks
-                                    current-label
+                                    ctx
                                     fallthrough
                                     dst
                                     op
@@ -38004,180 +35846,56 @@
                                     false-label
                                     true-label
                                     (box-get after-not-branch)
-                                    assignments
-                                    vars
-                                    types
-                                    global-types
-                                    ret-ty
-                                    plan
-                                    functions
-                                    externs
-                                    program-index
-                                    spans
-                                    func-diag
-                                    use-counts
                                     buf)
                                   (compiler-backend-emit-instrs-normal
-                                    target
-                                    function
-                                    source-function
-                                    blocks
-                                    current-label
+                                    ctx
                                     fallthrough
                                     instr
                                     (box-get rest)
-                                    assignments
-                                    vars
-                                    types
-                                    global-types
-                                    ret-ty
-                                    plan
-                                    functions
-                                    externs
-                                    program-index
-                                    spans
-                                    func-diag
-                                    use-counts
                                     buf))]
                               [_
                                 (compiler-backend-emit-instrs-normal
-                                  target
-                                  function
-                                  source-function
-                                  blocks
-                                  current-label
+                                  ctx
                                   fallthrough
                                   instr
                                   (box-get rest)
-                                  assignments
-                                  vars
-                                  types
-                                  global-types
-                                  ret-ty
-                                  plan
-                                  functions
-                                  externs
-                                  program-index
-                                  spans
-                                  func-diag
-                                  use-counts
                                   buf)])]
                           [_
                             (compiler-backend-emit-instrs-normal
-                              target
-                              function
-                              source-function
-                              blocks
-                              current-label
+                              ctx
                               fallthrough
                               instr
                               (box-get rest)
-                              assignments
-                              vars
-                              types
-                              global-types
-                              ret-ty
-                              plan
-                              functions
-                              externs
-                              program-index
-                              spans
-                              func-diag
-                              use-counts
                               buf)])
                         (compiler-backend-emit-instrs-normal
-                          target
-                          function
-                          source-function
-                          blocks
-                          current-label
+                          ctx
                           fallthrough
                           instr
                           (box-get rest)
-                          assignments
-                          vars
-                          types
-                          global-types
-                          ret-ty
-                          plan
-                          functions
-                          externs
-                          program-index
-                          spans
-                          func-diag
-                          use-counts
                           buf))]
                     [_
                       (compiler-backend-emit-instrs-normal
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
+                        ctx
                         fallthrough
                         instr
                         (box-get rest)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
                         buf)])]
                 [_
                   (compiler-backend-emit-instrs-normal
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
+                    ctx
                     fallthrough
                     instr
                     (box-get rest)
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
                     buf)])
               (compiler-backend-emit-instrs-normal
-                target
-                function
-                source-function
-                blocks
-                current-label
+                ctx
                 fallthrough
                 instr
                 (box-get rest)
-                assignments
-                vars
-                types
-                global-types
-                ret-ty
-                plan
-                functions
-                externs
-                program-index
-                spans
-                func-diag
-                use-counts
                 buf)))]
         [(CompilerIrInstr.UnOp dst (CompilerIrUnOp.Not) src (AstType.Bool))
           (if (or
-            (compiler-backend-var-single-use? use-counts dst)
+            (compiler-backend-var-single-use? ctx.use-counts dst)
             (compiler-backend-var-fuse-safe? dst))
             (match (box-get rest)
               [(CompilerIrInstrList.Cons branch after-branch)
@@ -38185,11 +35903,7 @@
                   [(CompilerIrInstr.Branch cond true-label false-label)
                     (if (compiler-backend-branch-uses-var? cond dst)
                       (compiler-backend-emit-fused-not-branch-rest
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
+                        ctx
                         fallthrough
                         dst
                         src
@@ -38197,131 +35911,39 @@
                         true-label
                         false-label
                         (box-get after-branch)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
                         buf)
                       (compiler-backend-emit-instrs-normal
-                        target
-                        function
-                        source-function
-                        blocks
-                        current-label
+                        ctx
                         fallthrough
                         instr
                         (box-get rest)
-                        assignments
-                        vars
-                        types
-                        global-types
-                        ret-ty
-                        plan
-                        functions
-                        externs
-                        program-index
-                        spans
-                        func-diag
-                        use-counts
                         buf))]
                   [_
                     (compiler-backend-emit-instrs-normal
-                      target
-                      function
-                      source-function
-                      blocks
-                      current-label
+                      ctx
                       fallthrough
                       instr
                       (box-get rest)
-                      assignments
-                      vars
-                      types
-                      global-types
-                      ret-ty
-                      plan
-                      functions
-                      externs
-                      program-index
-                      spans
-                      func-diag
-                      use-counts
                       buf)])]
               [_
                 (compiler-backend-emit-instrs-normal
-                  target
-                  function
-                  source-function
-                  blocks
-                  current-label
+                  ctx
                   fallthrough
                   instr
                   (box-get rest)
-                  assignments
-                  vars
-                  types
-                  global-types
-                  ret-ty
-                  plan
-                  functions
-                  externs
-                  program-index
-                  spans
-                  func-diag
-                  use-counts
                   buf)])
             (compiler-backend-emit-instrs-normal
-              target
-              function
-              source-function
-              blocks
-              current-label
+              ctx
               fallthrough
               instr
               (box-get rest)
-              assignments
-              vars
-              types
-              global-types
-              ret-ty
-              plan
-              functions
-              externs
-              program-index
-              spans
-              func-diag
-              use-counts
               buf))]
         [_
           (compiler-backend-emit-instrs-normal
-            target
-            function
-            source-function
-            blocks
-            current-label
+            ctx
             fallthrough
             instr
             (box-get rest)
-            assignments
-            vars
-            types
-            global-types
-            ret-ty
-            plan
-            functions
-            externs
-            program-index
-            spans
-            func-diag
-            use-counts
             buf)])]))
 
 ;; Drift-proof per-instruction position for the scavenge coordinate. `post-base`
@@ -38342,26 +35964,10 @@
   0)
 
 (define (compiler-backend-emit-instrs-loop
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [mode : CompilerBackendEmitInstrsMode]
   [instrs : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (let
     [current-mode : CompilerBackendEmitInstrsMode mode]
@@ -38394,7 +36000,7 @@
                       compiler-backend-scavenge-ctx-ends
                       compiler-backend-scavenge-ctx-assignment-index
                       compiler-backend-scavenge-ctx-vars
-                      function
+                      ctx.function
                       (*
                         2
                         (-
@@ -38408,73 +36014,25 @@
               (match current-mode
                 [(CompilerBackendEmitInstrsMode.Normal)
                   (compiler-backend-emit-instrs-step
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
+                    ctx
                     fallthrough
                     current-instrs
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
                     current-buf)]
                 [(CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
                   (compiler-backend-emit-instrs-with-rax-step
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
+                    ctx
                     fallthrough
                     rax-var
                     rax-ty
                     current-instrs
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
                     current-buf)]
                 [(CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
                   (compiler-backend-emit-instrs-with-call-rax-step
-                    target
-                    function
-                    source-function
-                    blocks
-                    current-label
+                    ctx
                     fallthrough
                     rax-var
                     rax-ty
                     current-instrs
-                    assignments
-                    vars
-                    types
-                    global-types
-                    ret-ty
-                    plan
-                    functions
-                    externs
-                    program-index
-                    spans
-                    func-diag
-                    use-counts
                     current-buf)]))]
           (match step-result
             [(ResultCompilerBackend.Ok asm)
@@ -38497,25 +36055,9 @@
         (ResultCompilerBackend.Err diag-out)))))
 
 (define (compiler-backend-emit-instrs
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [instrs : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (if compiler-backend-emit-instrs-loop-active
     (compiler-backend-emit-instrs-set-continue!
@@ -38523,50 +36065,18 @@
       instrs
       buf)
     (compiler-backend-emit-instrs-loop
-      target
-      function
-      source-function
-      blocks
-      current-label
+      ctx
       fallthrough
       (CompilerBackendEmitInstrsMode.Normal)
       instrs
-      assignments
-      vars
-      types
-      global-types
-      ret-ty
-      plan
-      functions
-      externs
-      program-index
-      spans
-      func-diag
-      use-counts
       buf)))
 
 (define (compiler-backend-emit-instrs-with-call-rax
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
   [instrs : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (if compiler-backend-emit-instrs-loop-active
     (compiler-backend-emit-instrs-set-continue!
@@ -38574,50 +36084,18 @@
       instrs
       buf)
     (compiler-backend-emit-instrs-loop
-      target
-      function
-      source-function
-      blocks
-      current-label
+      ctx
       fallthrough
       (CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
       instrs
-      assignments
-      vars
-      types
-      global-types
-      ret-ty
-      plan
-      functions
-      externs
-      program-index
-      spans
-      func-diag
-      use-counts
       buf)))
 
 (define (compiler-backend-emit-instrs-with-rax
-  [target : CompilerBackendTarget]
-  [function : String]
-  [source-function : i64]
-  [blocks : CompilerIrBlockList]
-  [current-label : String]
+  [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
   [rax-var : i64]
   [rax-ty : AstType]
   [instrs : CompilerIrInstrList]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [types : CompilerRegVarTypeList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [ret-ty : AstType]
-  [plan : CompilerBackendRuntimePlan]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [func-diag : CompilerDiagnostic]
-  [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (if compiler-backend-emit-instrs-loop-active
     (compiler-backend-emit-instrs-set-continue!
@@ -38625,26 +36103,10 @@
       instrs
       buf)
     (compiler-backend-emit-instrs-loop
-      target
-      function
-      source-function
-      blocks
-      current-label
+      ctx
       fallthrough
       (CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
       instrs
-      assignments
-      vars
-      types
-      global-types
-      ret-ty
-      plan
-      functions
-      externs
-      program-index
-      spans
-      func-diag
-      use-counts
       buf)))
 
 (define (compiler-backend-emit-block
@@ -38669,25 +36131,26 @@
   (match block
     [(CompilerIrBlock.Block label instrs)
       (match (compiler-backend-emit-instrs
-        target
-        function
-        source-function
-        blocks
-        label
+        (CompilerBackendEmissionContext
+          target
+          function
+          source-function
+          blocks
+          label
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag
+          use-counts)
         fallthrough
         (compiler-ir-instr-seq-to-list instrs)
-        assignments
-        vars
-        types
-        global-types
-        ret-ty
-        plan
-        functions
-        externs
-        program-index
-        spans
-        func-diag
-        use-counts
         (text_buf.empty))
         [(ResultCompilerBackend.Ok body)
           (ResultCompilerBackend.Ok

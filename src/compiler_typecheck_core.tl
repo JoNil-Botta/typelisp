@@ -26474,8 +26474,8 @@
 ;; Runtime `array-length` remains dynamic-array-only. Macro helper environments
 ;; bind `array-length` for Expr operands so CTFE can validate fixed-array type
 ;; reflection.
-;; `length` is an array-length alias. String/bytes length is a stdlib
-;; wrapper over the private `__tl_string_length` intrinsic.
+;; Core `length` accepts arrays and string/bytes handles. The stdlib
+;; `string-length` wrapper uses the private `__tl_string_length` intrinsic.
 (define (tc-array-length-call
   [ctx : TcContext]
   [env : TcTypeEnv]

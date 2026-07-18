@@ -3116,6 +3116,14 @@
       compiler-builtin-id-array-length
       compiler-builtin-id-private-array-length)))
 
+(define (compiler-builtin-lower-string-length-load-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-length
+      compiler-builtin-id-tl-private-string-length)))
+
 (define (compiler-builtin-lower-cpuid-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)

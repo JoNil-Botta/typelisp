@@ -733,10 +733,6 @@
   (Ok)
   (Err String))
 
-(defenum ResultAstGeneratedDeclMeta
-  (Ok AstGeneratedDeclMeta)
-  (Err String))
-
 (defenum ResultAstDecl
   (Ok AstDecl)
   (Err String))
@@ -1197,7 +1193,7 @@
     [_ (ResultCompilerCfg.Err "parse: malformed cfg predicate")]))
 
 (define (compiler-parse-abstraction-policy-message) : String
-  "parse: TypeLisp does not support source-level generics or traits; use comptime-decl and comptime-generated concrete declarations instead")
+  "parse: TypeLisp does not support source-level generics or traits; use defmacro to generate concrete declarations instead")
 
 (define (compiler-parse-generic-type-policy-message [name : String]) : String
   (cond
@@ -1218,7 +1214,7 @@
         "parse: unknown type constructor "
         (string.append
           name
-          "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead"))]))
+          "; TypeLisp has no source-level generic type constructors; use defmacro to generate concrete declarations instead"))]))
 
 (define (compiler-parse-policy-form? [name : String]) : bool
   (cond
@@ -1739,12 +1735,6 @@
 
 (define (compiler-parse-tag-decl-import) : i64
   404)
-
-(define (compiler-parse-tag-decl-comptime-decl) : i64
-  405)
-
-(define (compiler-parse-tag-decl-comptime-decls) : i64
-  412)
 
 (define (compiler-parse-tag-decl-module) : i64
   406)
@@ -2635,19 +2625,9 @@
         e4
         "import"
         (compiler-parse-tag-decl-import))]
-    [e6 : sym_i64_env.SymI64Env
-      (compiler-parse-dispatch-bind
-        e5
-        "comptime-decl"
-        (compiler-parse-tag-decl-comptime-decl))]
-    [e7 : sym_i64_env.SymI64Env
-      (compiler-parse-dispatch-bind
-        e6
-        "comptime-decls"
-        (compiler-parse-tag-decl-comptime-decls))]
     [e8 : sym_i64_env.SymI64Env
       (compiler-parse-dispatch-bind
-        e7
+        e5
         "module"
         (compiler-parse-tag-decl-module))]
     [e9 : sym_i64_env.SymI64Env
@@ -7476,11 +7456,6 @@
       (parse-ast-ptr-null dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null-check))
       (parse-ast-ptr-null-check dispatch pools rest)]
-    [(= tag (compiler-parse-tag-decl-comptime-decl))
-      (ResultAstExpr.Err
-        "parse: comptime-decl is only valid as a top-level declaration")]
-    [(= tag (compiler-parse-tag-decl-comptime-decls))
-      (ResultAstExpr.Err (parse-ast-comptime-decls-removed-message))]
     [else (parse-ast-call dispatch pools head rest)]))
 
 (define (parse-ast-list-expr
@@ -7490,9 +7465,10 @@
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match head
     [(reader.SpannedSexpr.Sym op _)
-      (if (= op (cbi.compiler-builtin-ctfe-ref 213))
-        (parse-ast-internal-binary-data pools rest)
-        (if (compiler-parse-name-eq? op "init")
+      (cond
+        [(= op (cbi.compiler-builtin-ctfe-ref 213))
+          (parse-ast-internal-binary-data pools rest)]
+        [(compiler-parse-name-eq? op "init")
           (match rest
             [(reader.SpannedSexpr.Cons first _ _)
               (if (sexpr-colon?
@@ -7500,7 +7476,8 @@
                 (parse-ast-init dispatch pools rest)
                 (parse-ast-call dispatch pools head rest))]
             [(reader.SpannedSexpr.Nil _) (parse-ast-init dispatch pools rest)]
-            [_ (parse-ast-call dispatch pools head rest)])
+            [_ (parse-ast-call dispatch pools head rest)])]
+        [else
           (let
             [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
             (cond
@@ -7536,7 +7513,10 @@
                 (parse-ast-borrow dispatch pools false rest)]
               [(= tag (compiler-parse-tag-ty-mut-ref))
                 (parse-ast-borrow dispatch pools true rest)]
-              [else (parse-ast-list-expr-tag dispatch pools tag head rest)]))))]
+              [else
+                (if (parse-ast-removed-declaration-name? op)
+                  (ResultAstExpr.Err (parse-ast-removed-declaration-message))
+                  (parse-ast-list-expr-tag dispatch pools tag head rest))]))])]
     [_ (parse-ast-call dispatch pools head rest)]))
 
 (define (parse-ast-expr-with-pools
@@ -9765,141 +9745,31 @@
         [_ (ResultAstDecl.Err "parse: malformed test")])]
     [_ (ResultAstDecl.Err "parse: malformed test")]))
 
-(define (parse-ast-comptime-decl-payload-message) : String
-  "parse: comptime-decl accepts only defstruct, defenum, or define")
+(define (parse-ast-removed-declaration-message) : String
+  "parse: comptime-decl and comptime-decls are removed; use defmacro with Module or Decls return type instead")
 
-(define (parse-ast-comptime-decls-removed-message) : String
-  "parse: comptime-decls is removed; use a declaration-emitting macro instead")
-
-(define (parse-ast-generated-decl-meta
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [meta : reader.SpannedSexpr]) : ResultAstGeneratedDeclMeta
-  (match meta
-    [(reader.SpannedSexpr.Cons head-node meta-rest _)
-      (match (reader.sp-node-get head-node)
-        [(reader.SpannedSexpr.Sym head _)
-          (if (compiler-parse-name-eq? head ":generated")
-            (match (reader.sp-node-get meta-rest)
-              [(reader.SpannedSexpr.Cons generator-node item-tail _)
-                (match (reader.sp-node-get generator-node)
-                  [(reader.SpannedSexpr.Sym generator-name _)
-                    (match (reader.sp-node-get item-tail)
-                      [(reader.SpannedSexpr.Cons item-node arg-key-forms _)
-                        (match (reader.sp-node-get item-node)
-                          [(reader.SpannedSexpr.Sym item-name _)
-                            (match (parse-ast-expr-list
-                              dispatch
-                              pools
-                              (reader.sp-node-get arg-key-forms))
-                              [(ResultAstExprList.Ok arg-keys)
-                                (ResultAstGeneratedDeclMeta.Ok
-                                  (AstGeneratedDeclMeta.Some
-                                    (compiler-parse-name-text generator-name)
-                                    (compiler-parse-name-text item-name)
-                                    arg-keys
-                                    ""))]
-                              [(ResultAstExprList.Err message)
-                                (ResultAstGeneratedDeclMeta.Err message)])]
-                          [_
-                            (ResultAstGeneratedDeclMeta.Err
-                              "parse: :generated metadata expects generator name, item name, and argument key expressions")])]
-                      [_
-                        (ResultAstGeneratedDeclMeta.Err
-                          "parse: :generated metadata expects generator name, item name, and argument key expressions")])]
-                  [_
-                    (ResultAstGeneratedDeclMeta.Err
-                      "parse: :generated metadata expects generator name, item name, and argument key expressions")])]
-              [_
-                (ResultAstGeneratedDeclMeta.Err
-                  "parse: :generated metadata expects generator name, item name, and argument key expressions")])
-            (ResultAstGeneratedDeclMeta.Err
-              "parse: comptime-decl metadata must be :generated"))]
-        [_
-          (ResultAstGeneratedDeclMeta.Err
-            "parse: comptime-decl metadata must be :generated")])]
-    [_
-      (ResultAstGeneratedDeclMeta.Err
-        "parse: comptime-decl metadata must be :generated")]))
-
-(define (parse-ast-comptime-decl-payload
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [template : reader.SpannedSexpr]) : ResultAstDecl
-  (match template
-    [(reader.SpannedSexpr.Cons head-node template-rest _)
-      (match (reader.sp-node-get head-node)
-        [(reader.SpannedSexpr.Sym head _)
-          (let
-            [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
-            (cond
-              [(= tag (compiler-parse-tag-decl-define))
-                (parse-ast-define
-                  dispatch
-                  pools
-                  (reader.sp-node-get template-rest))]
-              [(= tag (compiler-parse-tag-decl-defenum))
-                (parse-ast-defenum
-                  dispatch
-                  pools
-                  (reader.sp-node-get template-rest))]
-              [(= tag (compiler-parse-tag-decl-defstruct))
-                (parse-ast-defstruct
-                  dispatch
-                  pools
-                  (reader.sp-node-get template-rest))]
-              [else
-                (ResultAstDecl.Err (parse-ast-comptime-decl-payload-message))]))]
-        [_ (ResultAstDecl.Err (parse-ast-comptime-decl-payload-message))])]
-    [_ (ResultAstDecl.Err (parse-ast-comptime-decl-payload-message))]))
-
-(define (parse-ast-comptime-decl-with-meta
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [meta : AstGeneratedDeclMeta]
-  [template : reader.SpannedSexpr]) : ResultAstDecl
-  (match (parse-ast-comptime-decl-payload dispatch pools template)
-    [(ResultAstDecl.Ok decl)
-      (ResultAstDecl.Ok (ast-decl-comptime-decl-with-meta meta decl))]
-    [(ResultAstDecl.Err message) (ResultAstDecl.Err message)]))
-
-(define (parse-ast-comptime-decl
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match rest
-    [(reader.SpannedSexpr.Cons first tail _)
-      (match (reader.sp-node-get tail)
-        [(reader.SpannedSexpr.Nil _)
-          (parse-ast-comptime-decl-with-meta
-            dispatch
-            pools
-            AstGeneratedDeclMeta.No
-            (reader.sp-node-get first))]
-        [(reader.SpannedSexpr.Cons template end _)
-          (match (reader.sp-node-get end)
-            [(reader.SpannedSexpr.Nil _)
-              (match (parse-ast-generated-decl-meta
-                dispatch
-                pools
-                (reader.sp-node-get first))
-                [(ResultAstGeneratedDeclMeta.Ok parsed-meta)
-                  (parse-ast-comptime-decl-with-meta
-                    dispatch
-                    pools
-                    parsed-meta
-                    (reader.sp-node-get template))]
-                [(ResultAstGeneratedDeclMeta.Err message)
-                  (ResultAstDecl.Err message)])]
-            [_
-              (ResultAstDecl.Err
-                "parse: comptime-decl expects one template or generated metadata plus one template")])]
-        [_
-          (ResultAstDecl.Err
-            "parse: comptime-decl expects one template or generated metadata plus one template")])]
-    [_
-      (ResultAstDecl.Err
-        "parse: comptime-decl expects one template or generated metadata plus one template")]))
+(define (parse-ast-removed-declaration-name? [name : i64]) : bool
+  (let
+    [text : String (compiler-parse-name-text name)]
+    [n : i64 (string.string-length text)]
+    (and
+      (or (= n 13) (= n 14))
+      (= (string.string-ref text 0) 'c')
+      (= (string.string-ref text 1) 'o')
+      (= (string.string-ref text 2) 'm')
+      (= (string.string-ref text 3) 'p')
+      (= (string.string-ref text 4) 't')
+      (= (string.string-ref text 5) 'i')
+      (= (string.string-ref text 6) 'm')
+      (= (string.string-ref text 7) 'e')
+      (= (string.string-ref text 8) '-')
+      (= (string.string-ref text 9) 'd')
+      (= (string.string-ref text 10) 'e')
+      (= (string.string-ref text 11) 'c')
+      (= (string.string-ref text 12) 'l')
+      (if (= n 14)
+        (= (string.string-ref text 13) 's')
+        true))))
 
 (define (parse-ast-unsafe-decl
   [dispatch : sym_i64_env.SymI64Env]
@@ -9997,14 +9867,8 @@
                     (parse-ast-include-bin (reader.sp-node-get rest))]
                   [(= tag (compiler-parse-tag-decl-module))
                     (parse-ast-module dispatch pools (reader.sp-node-get rest))]
-                  [(= tag (compiler-parse-tag-decl-comptime-decl))
-                    (parse-ast-comptime-decl
-                      dispatch
-                      pools
-                      (reader.sp-node-get rest))]
-                  [(= tag (compiler-parse-tag-decl-comptime-decls))
-                    (ResultAstDecl.Err
-                      (parse-ast-comptime-decls-removed-message))]
+                  [(parse-ast-removed-declaration-name? head)
+                    (ResultAstDecl.Err (parse-ast-removed-declaration-message))]
                   [(= tag (compiler-parse-tag-expr-unsafe))
                     (parse-ast-unsafe-decl
                       dispatch
@@ -10063,15 +9927,9 @@
                   [_
                     (ResultAstMaybeDecl.Err
                       "parse: cfg declaration expects predicate and declaration")])
-                (if (=
-                  (compiler-parse-dispatch-tag dispatch head)
-                  (compiler-parse-tag-decl-comptime-decls))
-                  (ResultAstMaybeDecl.Err
-                    (parse-ast-comptime-decls-removed-message))
-                  (match (parse-ast-decl dispatch pools s)
-                    [(ResultAstDecl.Ok decl) (ResultAstMaybeDecl.SomeDecl decl)]
-                    [(ResultAstDecl.Err message)
-                      (ResultAstMaybeDecl.Err message)])))]
+                (match (parse-ast-decl dispatch pools s)
+                  [(ResultAstDecl.Ok decl) (ResultAstMaybeDecl.SomeDecl decl)]
+                  [(ResultAstDecl.Err message) (ResultAstMaybeDecl.Err message)]))]
             [_
               (match (parse-ast-decl dispatch pools s)
                 [(ResultAstDecl.Ok decl) (ResultAstMaybeDecl.SomeDecl decl)]
@@ -10288,19 +10146,6 @@
                       (compiler-parse-decl-origin-syntax-span
                         dispatch
                         (reader.sp-node-get inner))]
-                    [_ fallback])]
-                [(= tag (compiler-parse-tag-decl-comptime-decl))
-                  (match (reader.sp-node-get rest)
-                    [(reader.SpannedSexpr.Cons first tail _)
-                      (match (reader.sp-node-get tail)
-                        [(reader.SpannedSexpr.Cons template _ _)
-                          (compiler-parse-decl-origin-syntax-span
-                            dispatch
-                            (reader.sp-node-get template))]
-                        [_
-                          (compiler-parse-decl-origin-syntax-span
-                            dispatch
-                            (reader.sp-node-get first))])]
                     [_ fallback])]
                 [else fallback]))]
           [_ fallback])]
@@ -12276,125 +12121,6 @@
       3
       false)))
 
-(define (compiler-parse-comptime-decl-source) : String
-  "(comptime-decl (defstruct Point (x i64) (y i64)))
-(comptime-decl (defenum Maybe (None) (Some i64)))
-(comptime-decl (:generated sample-family Box_String \"String\")
-  (define box-size : i64 8))
-(comptime-decl (:generated function-family make-box-string \"String\")
-  (define (make-box [x : i64]) : i64 x))")
-
-(define (compiler-parse-no-generated-meta-ok? [meta : AstGeneratedDeclMeta]) : bool
-  (match meta
-    [(AstGeneratedDeclMeta.No) true]
-    [_ false]))
-
-(define (compiler-parse-generated-meta-ok?
-  [meta : AstGeneratedDeclMeta]
-  [want-generator : String]
-  [want-item : String]
-  [want-arg-count : i64]) : bool
-  (match meta
-    [(AstGeneratedDeclMeta.Some generator-name item-name arg-keys _)
-      (and
-        (string.eq generator-name want-generator)
-        (string.eq item-name want-item)
-        (= (compiler-parse-expr-list-count arg-keys) want-arg-count))]
-    [_ false]))
-
-(define (compiler-parse-comptime-defstruct-ok? [decl : AstDecl]) : bool
-  (and
-    (ast-decl-comptime-only? decl)
-    (compiler-parse-no-generated-meta-ok? (ast-decl-generated-meta decl))
-    (match decl
-      [(AstDecl.DefStruct decl-meta name _ _ fields)
-        (and
-          (= name (reader.read-stable-symbol-id "Point"))
-          (= (compiler-parse-field-count fields) 2))]
-      [_ false])))
-
-(define (compiler-parse-comptime-defenum-ok? [decl : AstDecl]) : bool
-  (and
-    (ast-decl-comptime-only? decl)
-    (compiler-parse-no-generated-meta-ok? (ast-decl-generated-meta decl))
-    (match decl
-      [(AstDecl.DefEnum decl-meta name _ _)
-        (= name (reader.read-stable-symbol-id "Maybe"))]
-      [_ false])))
-
-(define (compiler-parse-comptime-define-value-ok? [decl : AstDecl]) : bool
-  (and
-    (ast-decl-comptime-only? decl)
-    (compiler-parse-generated-meta-ok?
-      (ast-decl-generated-meta decl)
-      "sample-family"
-      "Box_String"
-      1)
-    (match decl
-      [(AstDecl.Def decl-meta name _ value-box)
-        (let
-          [value : AstExpr (ast-node-get value-box)]
-          (and
-            (= name (reader.read-stable-symbol-id "box-size"))
-            (match (ast-expr-unspan value)
-              [(AstExpr.Literal (AstLiteral.Int actual _)) (= actual 8)]
-              [_ false])))]
-      [_ false])))
-
-(define (compiler-parse-comptime-define-fn-ok? [decl : AstDecl]) : bool
-  (and
-    (ast-decl-comptime-only? decl)
-    (compiler-parse-generated-meta-ok?
-      (ast-decl-generated-meta decl)
-      "function-family"
-      "make-box-string"
-      1)
-    (match decl
-      [(AstDecl.DefFn decl-meta name _ (AstType.I64) _ _)
-        (= name (reader.read-stable-symbol-id "make-box"))]
-      [_ false])))
-
-(define (compiler-parse-comptime-decl-ok?) : bool
-  (match (parse-ast-source (compiler-parse-comptime-decl-source))
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons first rest1-box)
-            (let
-              [rest1 : AstDeclList rest1-box]
-              (match (ast-decl-list-step rest1)
-                [(AstDeclListStep.Cons second rest2-box)
-                  (let
-                    [rest2 : AstDeclList rest2-box]
-                    (match (ast-decl-list-step rest2)
-                      [(AstDeclListStep.Cons third rest3-box)
-                        (let
-                          [rest3 : AstDeclList rest3-box]
-                          (match (ast-decl-list-step rest3)
-                            [(AstDeclListStep.Cons fourth rest4-box)
-                              (let
-                                [rest4 : AstDeclList rest4-box]
-                                (match (ast-decl-list-step rest4)
-                                  [(AstDeclListStep.Nil)
-                                    (and
-                                      (= (ast-decl-list-count decls) 4)
-                                      (= (ast-decl-list-tag-sum decls) 12)
-                                      (compiler-parse-comptime-defstruct-ok?
-                                        first)
-                                      (compiler-parse-comptime-defenum-ok?
-                                        second)
-                                      (compiler-parse-comptime-define-value-ok?
-                                        third)
-                                      (compiler-parse-comptime-define-fn-ok?
-                                        fourth))]
-                                  [_ false]))]
-                            [_ false]))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
 (define (compiler-parse-unsafe-decl-source) : String
   "(unsafe (define (danger [x : i64]) : i64 x))
 (unsafe (extern (raw-call [arg0 : i64]) : i64))")
@@ -12587,45 +12313,8 @@
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
 
-(define (compiler-parse-comptime-struct-cleanup-source) : String
-  "(comptime-decl
-  (defstruct Resource
-    (:cleanup close-resource)
-    (fd i64 (:cleanup close-fd))))")
-
-(define (compiler-parse-comptime-struct-cleanup-ok?) : bool
-  (match (parse-ast-source (compiler-parse-comptime-struct-cleanup-source))
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons template rest)
-            (let
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (and
-                    (ast-decl-comptime-only? template)
-                    (match template
-                      [(AstDecl.DefStruct decl-meta _ repr cleanup fields)
-                        (and
-                          (match repr
-                            [(AstStructRepr.Default) true]
-                            [_ false])
-                          (ast-struct-cleanup? cleanup)
-                          (=
-                            (compiler-parse-field-cleanup-list-score fields)
-                            10))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
 (define (compiler-parse-cleanup-metadata-ok?) : bool
-  (and
-    (compiler-parse-struct-cleanup-ok?)
-    (compiler-parse-enum-cleanup-ok?)
-    (compiler-parse-comptime-struct-cleanup-ok?)))
+  (and (compiler-parse-struct-cleanup-ok?) (compiler-parse-enum-cleanup-ok?)))
 
 (define (compiler-parse-repr-c-source) : String
   "(defstruct Stat
@@ -12650,32 +12339,6 @@
                     (= name (reader.read-stable-symbol-id "Stat"))
                     (ast-struct-repr-c? repr)
                     (= (compiler-parse-field-count fields) 2))]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-comptime-repr-c-source) : String
-  "(comptime-decl (defstruct Stat (:repr c) (size i64)))")
-
-(define (compiler-parse-comptime-repr-c-ok?) : bool
-  (match (parse-ast-source (compiler-parse-comptime-repr-c-source))
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons template rest)
-            (let
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (and
-                    (ast-decl-comptime-only? template)
-                    (match template
-                      [(AstDecl.DefStruct decl-meta _ repr _ fields)
-                        (and
-                          (ast-struct-repr-c? repr)
-                          (= (compiler-parse-field-count fields) 1))]
-                      [_ false]))]
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
@@ -12707,60 +12370,6 @@
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-comptime-decl-bad-payload-source) : String
-  "(comptime-decl (extern (x) : i64))")
-
-(define (compiler-parse-comptime-decl-expression-source) : String
-  "(define (main) : i64 (comptime-decl (defstruct Point (x i64))))")
-
-(define (compiler-parse-comptime-decl-extra-source) : String
-  "(comptime-decl
-  (:generated sample-family Box_String)
-  (defstruct Point (x i64))
-  (defenum Maybe (None)))")
-
-(define (compiler-parse-comptime-decl-bad-metadata-source) : String
-  "(comptime-decl (:bad sample-family Box_String) (defstruct Point (x i64)))")
-
-(define (compiler-parse-comptime-decl-malformed-metadata-source) : String
-  "(comptime-decl (:generated sample-family) (defstruct Point (x i64)))")
-
-(define (compiler-parse-comptime-decls-expression-source) : String
-  "(define (main) : i64
-  (comptime-decls (:generated bundle-family \"v1\") (defstruct Point (x i64))))")
-
-(define (compiler-parse-comptime-decls-empty-source) : String
-  "(comptime-decls (:generated bundle-family \"v1\"))")
-
-(define (compiler-parse-comptime-decls-bad-metadata-source) : String
-  "(comptime-decls (:bad bundle-family \"v1\") (defstruct Point (x i64)))")
-
-(define (compiler-parse-comptime-decls-malformed-metadata-source) : String
-  "(comptime-decls (:generated) (defstruct Point (x i64)))")
-
-(define (compiler-parse-comptime-decls-bad-payload-source) : String
-  "(comptime-decls (:generated bundle-family \"v1\") (extern (x) : i64))")
-
-(define (compiler-parse-comptime-decl-invalid-payload-ok? [src : String]) : bool
-  (compiler-parse-error-ok? src (parse-ast-comptime-decl-payload-message)))
-
-(define (compiler-parse-comptime-decl-invalid-payloads-ok?) : bool
-  (and
-    (compiler-parse-comptime-decl-invalid-payload-ok?
-      (compiler-parse-comptime-decl-bad-payload-source))
-    (compiler-parse-comptime-decl-invalid-payload-ok?
-      "(comptime-decl (defmacro (m [x : bool]) : bool x))")
-    (compiler-parse-comptime-decl-invalid-payload-ok?
-      "(comptime-decl (module nested))")
-    (compiler-parse-comptime-decl-invalid-payload-ok?
-      "(comptime-decl (import \"x.tl\"))")
-    (compiler-parse-comptime-decl-invalid-payload-ok?
-      "(comptime-decl (cfg feature (define x : i64 1)))")
-    (compiler-parse-comptime-decl-invalid-payload-ok?
-      "(comptime-decl (test t 1))")
-    (compiler-parse-comptime-decl-invalid-payload-ok?
-      "(comptime-decl (comptime-decl (defstruct X (x i64))))")))
 
 (define (compiler-parse-malformed-module-source) : String
   "(module)")
@@ -12842,40 +12451,6 @@
     (compiler-parse-error-ok?
       "(defenum Bad (A i64 (:cleanup close)))"
       "parse: enum payload cleanup metadata requires enum :cleanup metadata")))
-
-(define (compiler-parse-comptime-decl-error-tests-ok?) : bool
-  (and
-    (compiler-parse-comptime-decl-invalid-payloads-ok?)
-    (compiler-parse-error-ok?
-      (compiler-parse-comptime-decl-expression-source)
-      "parse: comptime-decl is only valid as a top-level declaration")
-    (compiler-parse-error-ok?
-      (compiler-parse-comptime-decl-extra-source)
-      "parse: comptime-decl expects one template or generated metadata plus one template")
-    (compiler-parse-error-ok?
-      (compiler-parse-comptime-decl-bad-metadata-source)
-      "parse: comptime-decl metadata must be :generated")
-    (compiler-parse-error-ok?
-      (compiler-parse-comptime-decl-malformed-metadata-source)
-      "parse: :generated metadata expects generator name, item name, and argument key expressions")))
-
-(define (compiler-parse-comptime-decls-error-tests-ok?) : bool
-  (and
-    (compiler-parse-error-ok?
-      (compiler-parse-comptime-decls-expression-source)
-      (parse-ast-comptime-decls-removed-message))
-    (compiler-parse-error-ok?
-      (compiler-parse-comptime-decls-empty-source)
-      (parse-ast-comptime-decls-removed-message))
-    (compiler-parse-error-ok?
-      (compiler-parse-comptime-decls-bad-metadata-source)
-      (parse-ast-comptime-decls-removed-message))
-    (compiler-parse-error-ok?
-      (compiler-parse-comptime-decls-malformed-metadata-source)
-      (parse-ast-comptime-decls-removed-message))
-    (compiler-parse-error-ok?
-      (compiler-parse-comptime-decls-bad-payload-source)
-      (parse-ast-comptime-decls-removed-message))))
 
 (define (compiler-parse-unsafe-decl-error-tests-ok?) : bool
   (and
@@ -13131,8 +12706,6 @@
     [(not (compiler-parse-diagnostic-code-ok?)) false]
     [(not (compiler-parse-nested-diagnostic-spans-ok?)) false]
     [(not (compiler-parse-special-form-error-tests-ok?)) false]
-    [(not (compiler-parse-comptime-decl-error-tests-ok?)) false]
-    [(not (compiler-parse-comptime-decls-error-tests-ok?)) false]
     [(not (compiler-parse-unsafe-decl-error-tests-ok?)) false]
     [(not (compiler-parse-repr-c-error-tests-ok?)) false]
     [(not (compiler-parse-cleanup-error-tests-ok?)) false]
@@ -13445,7 +13018,7 @@
       (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
       (compiler-parse-error-ok?
         "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
-        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead")
+        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use defmacro to generate concrete declarations instead")
       (compiler-parse-ok-with-cfg?
         "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
         private-cfg)
@@ -14153,7 +13726,6 @@
     (compiler-parse-dispatch-state-interleaving-ok?)
     (compiler-parse-diagnostic-invocations-interleaving-ok?)
     (compiler-parse-type-literal-state-interleaving-ok?)
-    (compiler-parse-comptime-decl-ok?)
     (compiler-parse-unsafe-decl-ok?)
     (compiler-parse-module-decl-ok?)
     (compiler-parse-import-metadata-ok?)
@@ -14389,7 +13961,6 @@
         (compiler-parse-float-literal-ok?)
         (compiler-parse-region-ok?)
         (compiler-parse-arena-ok?)
-        (compiler-parse-comptime-decl-ok?)
         (compiler-parse-unsafe-decl-ok?)
         (compiler-parse-module-decl-ok?)
         (compiler-parse-module-body-ok?)

@@ -388,35 +388,6 @@
           (set! keep false)))
       i)))
 
-(define (doc-generated-metadata-form? [src : String] [idx : i64] [n : i64]) : bool
-  (if (if (< idx n)
-    (= (string.string-ref src idx) '(')
-    false)
-    (let
-      [first : i64 (doc-decl-next-token src (+ idx 1) n)]
-      (if (if (< first n)
-        (= (string.string-ref src first) ':')
-        false)
-        (let
-          [name-idx : i64 (doc-decl-next-token src (+ first 1) n)]
-          (and
-            (doc-decl-symbol-start? src name-idx n)
-            (string.eq
-              (string.substring
-                src
-                name-idx
-                (- (doc-decl-symbol-end src name-idx n) name-idx))
-              "generated")))
-        (and
-          (doc-decl-symbol-start? src first n)
-          (string.eq
-            (string.substring
-              src
-              first
-              (- (doc-decl-symbol-end src first n) first))
-            ":generated"))))
-    false))
-
 (define (doc-info-after-name [kind : DocItemKind] [src : String] [idx : i64]) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
@@ -485,21 +456,9 @@
                 (doc-info-after-name (DocItemKind.DefStruct) src after-head)]
               [(string.eq head "defmacro")
                 (doc-info-after-defmacro src after-head)]
-              [(string.eq head "comptime-decl")
-                (doc-info-after-comptime-decl src after-head)]
               [else (DocMaybeDeclInfo.No)]))
           (DocMaybeDeclInfo.No)))
       (DocMaybeDeclInfo.No))))
-
-(define (doc-info-after-comptime-decl [src : String] [idx : i64]) : DocMaybeDeclInfo
-  (let
-    [n : i64 (string.string-length src)]
-    [first : i64 (doc-decl-next-token src idx n)]
-    [payload : i64
-      (if (doc-generated-metadata-form? src first n)
-        (doc-decl-next-token src (doc-scan-form-end src first n) n)
-        first)]
-    (doc-decl-info-at-list src payload)))
 
 (define (doc-decl-info [signature : String]) : DocMaybeDeclInfo
   (let
@@ -628,16 +587,14 @@
 ;: legacy item
 (define legacy : i64 1)")
 
-(define (doc-extract-generated-smoke-source) : String
-  ";: generated box doc
-(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String
-    (value String)))
+(define (doc-extract-declaration-smoke-source) : String
+  ";: box doc
+(defstruct Box_String
+  (value String))
 
-;: generated helper doc
-(comptime-decl (:generated sample-family box-string-value \"String\")
-  (define (box-string-value [value : Box_String]) : String
-    (struct-get value value)))")
+;: helper doc
+(define (box-string-value [value : Box_String]) : String
+  (struct-get value value))")
 
 (define (doc-item-ok?
   [item : DocItem]
@@ -703,8 +660,8 @@
       "macro doc"
       "(defmacro (guard")))
 
-(define (doc-extract-generated-smoke-ok?) : bool
-  (match (doc-extract-source (doc-extract-generated-smoke-source))
+(define (doc-extract-declaration-smoke-ok?) : bool
+  (match (doc-extract-source (doc-extract-declaration-smoke-source))
     [(DocExtraction.Extraction _ items)
       (and
         (= (doc-item-list-count items) 2)
@@ -712,14 +669,14 @@
           (doc-item-list-ref items 0)
           5
           "Box_String"
-          "generated box doc"
-          "(:generated sample-family Box_String")
+          "box doc"
+          "(defstruct Box_String")
         (doc-item-ok?
           (doc-item-list-ref items 1)
           2
           "box-string-value"
-          "generated helper doc"
-          "(:generated sample-family box-string-value"))]))
+          "helper doc"
+          "(define (box-string-value"))]))
 
 (define (doc-extract-smoke) : i64
   (match (doc-extract-source (doc-extract-smoke-source))
@@ -737,8 +694,8 @@
           (doc-extract-smoke-items-ok? items)
           (return (io.panic "doc-extract: item doc smoke mismatch")))
         (unless
-          (doc-extract-generated-smoke-ok?)
-          (return (io.panic "doc-extract: generated item mismatch")))
+          (doc-extract-declaration-smoke-ok?)
+          (return (io.panic "doc-extract: declaration item mismatch")))
         (match (doc-extract-source (doc-extract-legacy-smoke-source))
           [(DocExtraction.Extraction legacy-module legacy-items)
             (begin

@@ -436,6 +436,14 @@ if [ "$HOST_OS" = linux ]; then
     fi
     run_with_compiler "$STAGE2_BIN" "Linux instruction-count baseline" \
         env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" scripts/check-instruction-counts.sh
+    run_with_compiler "$STAGE2_BIN" "Linux heavy instruction-count baseline" \
+        env TYPELISP_IR_CHECK_COMPILER="$STAGE2_BIN" \
+        scripts/check-instruction-counts.sh \
+        --baseline perf/insn-exec-heavy-baseline.tsv \
+        --benchmarks spmd_map,spmd_mask,spmd_zip,spmd_short_tail,string_scan \
+        --benchmarks-only \
+        --runs 1 \
+        --output target/instruction-count-heavy
     run_with_compiler "$STAGE2_BIN" "stage2 native link generated programs" scripts/verify-native-link-linux.sh
 else
     run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh

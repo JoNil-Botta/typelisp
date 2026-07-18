@@ -12486,8 +12486,14 @@
 
 (define (opt-global-value-number-function-with-context
   [context : OptCfgContext]
+  [verified? : bool]
   [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-verify-function-with-context func context)
+  ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+  ;; The opt2 pipeline threads the loop-cluster verification through
+  ;; `verified?`: every cluster pass post-verifies its own rewrite (falling
+  ;; back to its verified input on rejection), so a verified cluster input
+  ;; reaches this pass still verified and the entry verify is skipped.
+  (match (opt-verify-gate verified? func context)
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -12504,6 +12510,7 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (opt-global-value-number-function-with-context
         (opt-cfg-context-build blocks)
+        false
         func)]))
 
 (define (opt-cfg-foldable-branch-instr? [instr : CompilerIrInstr]) : bool
@@ -30444,6 +30451,10 @@
                       ;; consistent with the promoted blocks. It reuses the
                       ;; context unroll handed back: unroll's output
                       ;; blocks are global_gvn's input blocks unchanged.
+                      ;; Its entry verify rides the loop-cluster verification:
+                      ;; every pass in between post-verifies its own rewrite
+                      ;; (falling back to its verified input), so a verified
+                      ;; cluster input arrives here still verified.
                       [_t-global : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [global : CompilerIrFunction
                         (compiler-opt-debug-observe-function
@@ -30451,6 +30462,7 @@
                           (if run-heavy?
                             (opt-global-value-number-function-with-context
                               unroll-context
+                              loop-cluster-verified?
                               (CompilerIrFunction.Function
                                 name
                                 params

@@ -1197,9 +1197,16 @@ Constraint processing has two distinct times:
 The normal post-expansion typecheck remains mandatory. Kind constraints move
 unsupported top-level shapes to the operand site; they do not by themselves
 prove a generated body correct for all nested concrete types. They are also
-the initial fact vocabulary available to a later abstract macro-body checker:
-inside a branch justified by `[T : type (:kind struct)]`, that checker may
-permit struct reflection on `T`, but it must not infer unrelated capabilities.
+the fact vocabulary used by the definition-time abstract macro-body checker.
+For each constrained `type` operand, the checker validates executable
+reflection uses once over the declared kind set. A `type-kind` equality branch
+refines that set for its then/else bodies, and direct `let` aliases preserve
+the operand's facts; shape-specific reflection is accepted only when every
+remaining kind supports it. The checker does not infer unrelated capabilities.
+Concrete transformer CTFE and the normal post-expansion typecheck remain the
+safeguards for fixed-array lengths, reflection indexes, nested-type
+properties, cleanup ownership, and final substitutions. Unconstrained `type`
+operands retain the existing concrete-only behavior.
 
 A failed satisfaction diagnostic must point at the concrete type operand and
 name the canonical macro, parameter, rendered concrete type, and allowed kind

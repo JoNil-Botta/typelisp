@@ -7146,6 +7146,44 @@
   `(define (generated-length) : i64 ,(expr-int (array-length T))))
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-macro-abstract-alias-reject-source) : String
+  "(defmacro (emit-alias-bad [T : type (:kind struct enum)]) : Decls
+  (let
+    [U T]
+    `(define (generated-alias-bad) : i64
+      ,(expr-int (struct-field-count U)))))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-macro-abstract-alias-chain-reject-source) : String
+  "(defmacro (emit-alias-chain-bad [T : type (:kind struct enum)]) : Decls
+  (let
+    [U T]
+    [V U]
+    `(define (generated-alias-chain-bad) : i64
+      ,(expr-int (struct-field-count V)))))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-macro-abstract-alias-shadow-source) : String
+  "(defmacro (emit-alias-shadow
+  [T : type (:kind struct enum)]
+  [V : type (:kind struct)]) : Decls
+  (let
+    [U T]
+    (let
+      [U V]
+      `(define (generated-alias-shadow) : i64
+        ,(expr-int (struct-field-count U))))))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-macro-abstract-callee-shadow-source) : String
+  "(defmacro (emit-shadowed [T : type (:kind struct enum)]) : Decls
+  (let
+    [struct-field-count : (-> Expr i64)
+      (lambda ([ignored : Expr]) : i64 0)]
+    `(define (generated-shadowed) : i64
+      ,(expr-int (struct-field-count T)))))
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-module-macro-type-kind-constraint-source) : String
   "(defstruct Point (x i64))
 (defmacro (record-leaf [T : type (:kind struct enum)]) : Module
@@ -7220,6 +7258,16 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-abstract-shape-reject-source)
       "typecheck: macro emit-array-length constrained type operand T cannot use array-length; requires fixed array shape")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-abstract-callee-shadow-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-abstract-alias-reject-source)
+      "typecheck: macro emit-alias-bad constrained type operand T cannot use struct-field-count; requires struct")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-abstract-alias-chain-reject-source)
+      "typecheck: macro emit-alias-chain-bad constrained type operand T cannot use struct-field-count; requires struct")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-abstract-alias-shadow-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-module-macro-type-kind-constraint-source))
     (compiler-typecheck-error-ok?

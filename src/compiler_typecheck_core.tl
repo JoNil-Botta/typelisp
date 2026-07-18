@@ -41457,7 +41457,11 @@
             (tc-comptime-purity-let-bindings-mode-at
               ctx
               env
-              (tc-comptime-purity-template-bound template? bound name)
+              (tc-macro-abstract-binding-bound
+                bound
+                name
+                (ast-node-get init-box)
+                template?)
               chain
               seen
               template?
@@ -42517,10 +42521,12 @@
     (set! tc-macro-abstract-param-name (struct-get state param-name))
     (set! tc-macro-abstract-kind-mask (struct-get state kind-mask))))
 
-(define (tc-macro-abstract-call-id [func : AstExpr]) : i64
+(define (tc-macro-abstract-call-id [func : AstExpr] [bound : TcStringList]) : i64
   (let
     [raw-id : i64 (tc-expr-var-name-id func)]
-    (if (< raw-id 0)
+    (if (or
+      (< raw-id 0)
+      (tc-string-list-contains bound (tc-hygiene-name-text-id raw-id)))
       -1
       (ctfe-comptime-helper-call-name-id
         (macro-hygiene-global-source-name-id-or raw-id raw-id)))))
@@ -42528,15 +42534,57 @@
 (define (tc-macro-abstract-arg [args : (& args AstExprList)] [index : i64]) : AstExpr
   (ast-node-get (ast-expr-list-get args index 0)))
 
+(define (tc-macro-abstract-alias-marker [name : String]) : String
+  (str_cat.str-cat " abstract type alias " name))
+
+(define (tc-macro-abstract-bound-alias-at?
+  [items : TcStringList]
+  [name : String]
+  [marker : String]) : bool
+  (match items
+    [(TcStringList.Nil) false]
+    [(TcStringList.Cons item rest)
+      (cond
+        [(string.eq item marker) true]
+        [(string.eq item name) false]
+        [else (tc-macro-abstract-bound-alias-at? (box-get rest) name marker)])]))
+
+(define (tc-macro-abstract-bound-alias? [bound : TcStringList] [name : String]) : bool
+  (tc-macro-abstract-bound-alias-at?
+    bound
+    name
+    (tc-macro-abstract-alias-marker name)))
+
 (define (tc-macro-abstract-param-var? [expr : AstExpr] [bound : TcStringList]) : bool
   (match (ast-expr-unspan expr)
     [(AstExpr.Var name-id)
       (let
         [name : String (tc-hygiene-name-text-id name-id)]
-        (and
-          (string.eq name tc-macro-abstract-param-name)
-          (not (tc-string-list-contains bound name))))]
+        (or
+          (and
+            (string.eq name tc-macro-abstract-param-name)
+            (not (tc-string-list-contains bound name)))
+          (tc-macro-abstract-bound-alias? bound name)))]
     [_ false]))
+
+(define (tc-macro-abstract-binding-bound
+  [bound : TcStringList]
+  [name-id : i64]
+  [init : AstExpr]
+  [template? : bool]) : TcStringList
+  (let
+    [next-bound : TcStringList
+      (if (and tc-macro-abstract-active (not template?))
+        (TcStringList.Cons (tc-env-key-name-text name-id) (box bound))
+        (tc-comptime-purity-template-bound template? bound name-id))]
+    (if (and
+      tc-macro-abstract-active
+      (not template?)
+      (tc-macro-abstract-param-var? init bound))
+      (TcStringList.Cons
+        (tc-macro-abstract-alias-marker (tc-env-key-name-text name-id))
+        (box next-bound))
+      next-bound)))
 
 (define (tc-macro-abstract-kind-bit [kind : String]) : i64
   (cond
@@ -42675,7 +42723,7 @@
   (if (or (not tc-macro-abstract-active) template? (= (struct-get args len) 0))
     ResultTcUnit.Ok
     (let
-      [call-id : i64 (tc-macro-abstract-call-id func)]
+      [call-id : i64 (tc-macro-abstract-call-id func bound)]
       (if (and
         (or
           (ctfe-builtin-reflection-id? call-id)
@@ -42715,7 +42763,7 @@
     [(AstExpr.Call func args)
       (and
         (=
-          (tc-macro-abstract-call-id (ast-node-get func))
+          (tc-macro-abstract-call-id (ast-node-get func) bound)
           (cbi.compiler-builtin-ctfe-ref 71))
         (= (struct-get args len) 1)
         (tc-macro-abstract-param-var? (tc-macro-abstract-arg (& args) 0) bound))]

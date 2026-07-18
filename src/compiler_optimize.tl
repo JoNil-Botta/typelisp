@@ -37271,6 +37271,641 @@
             (set! slot (+ slot 1)))))
       slots)))
 
+;; ---- opt1 tiny-leaf inlining -----------------------------------------------
+;; The cheap level inlines only call-free single-block accessor callees whose
+;; body holds at most opt-inline-tiny-leaf-max-body instructions before the
+;; return. Call-free admission makes SCC ordering, census, and devirt
+;; unnecessary: an admitted body contains no call sites, so it can never
+;; change during the pass (one program walk in any order is confluent) and a
+;; self-recursive callee can never be admitted. Splices reuse the level-2
+;; single-block expansion, add no blocks, and keep SSA form, so no
+;; reconstruction runs. Functions without an admitted call site are probed
+;; read-only and returned untouched.
+(define (opt-inline-tiny-leaf-max-body) : i64
+  8)
+
+(define (opt-inline-tiny-leaf-seq-call-free-from?
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]) : bool
+  (if (>= pos count)
+    true
+    (match (compiler-ir-instr-seq-ref instrs pos)
+      [(CompilerIrInstr.Call _ _ _ _) false]
+      [(CompilerIrInstr.CallIndirect _ _ _ _) false]
+      [(CompilerIrInstr.CallIndirectC _ _ _ _) false]
+      [_ (opt-inline-tiny-leaf-seq-call-free-from? instrs (+ pos 1) count)])))
+
+(define (opt-inline-tiny-leaf-blocks-call-free?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Cons block _)
+      (match block
+        [(CompilerIrBlock.Block _ seq)
+          (opt-inline-tiny-leaf-seq-call-free-from?
+            seq
+            0
+            (compiler-ir-instr-seq-count seq))])]
+    [(CompilerIrBlockList.Array seq)
+      (if (= (compiler-ir-block-seq-count seq) 1)
+        (match (compiler-ir-block-seq-ref seq 0)
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-inline-tiny-leaf-seq-call-free-from?
+              instrs
+              0
+              (compiler-ir-instr-seq-count instrs))])
+        false)]
+    [_ false]))
+
+(define (opt-inline-tiny-leaf-callee-ok? [callee : CompilerIrFunction]) : bool
+  (match callee
+    [(CompilerIrFunction.Function _ cparams _ cvars cblocks)
+      (let
+        [np : i64 (opt-inline-param-count cparams)]
+        (and
+          (opt-inline-params-sequential? cparams 0)
+          (>= cvars np)
+          (opt-inline-single-block-ok? cblocks np)
+          (<=
+            (opt-inline-single-block-cost-instrs cblocks)
+            (opt-inline-tiny-leaf-max-body))
+          (opt-inline-tiny-leaf-blocks-call-free? cblocks)))]))
+
+(define (opt-inline-tiny-leaf-admitted-flags
+  [index : OptFunctionIndex]) : (Array bool)
+  (let
+    [count : i64 (opt-function-index-count index)]
+    [values : (Array CompilerIrFunction) (struct-get index values)]
+    [flags : (Array bool) (make-array bool (if (> count 0) count 1))]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set!
+            flags
+            i
+            (opt-inline-tiny-leaf-callee-ok? (array-ref values i)))
+          (set! i (+ i 1))))
+      flags)))
+
+(define (opt-inline-tiny-leaf-lookup
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [cname : i64]) : OptMaybeFunction
+  (match (opt-function-index-slot index cname)
+    [(option_i64.Some slot)
+      (if (array-ref flags slot)
+        (OptMaybeFunction.Some (array-ref (struct-get index values) slot))
+        (OptMaybeFunction.No))]
+    [(option_i64.None) (OptMaybeFunction.No)]))
+
+(define (opt-inline-tiny-leaf-site?
+  [instr : CompilerIrInstr]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]) : bool
+  (match instr
+    [(CompilerIrInstr.Call _ cname cargs _)
+      (match (opt-inline-tiny-leaf-lookup index flags cname)
+        [(OptMaybeFunction.Some callee)
+          (match callee
+            [(CompilerIrFunction.Function _ cparams _ _ _)
+              (opt-inline-arity-ok? cargs (opt-inline-param-count cparams))])]
+        [(OptMaybeFunction.No) false])]
+    [_ false]))
+
+(define (opt-inline-tiny-leaf-seq-has-site-from?
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]) : bool
+  (if (>= pos count)
+    false
+    (if (opt-inline-tiny-leaf-site?
+      (compiler-ir-instr-seq-ref instrs pos)
+      index
+      flags)
+      true
+      (opt-inline-tiny-leaf-seq-has-site-from?
+        instrs
+        (+ pos 1)
+        count
+        index
+        flags))))
+
+(define (opt-inline-tiny-leaf-seq-has-site?
+  [instrs : CompilerIrInstrSeq]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]) : bool
+  (opt-inline-tiny-leaf-seq-has-site-from?
+    instrs
+    0
+    (compiler-ir-instr-seq-count instrs)
+    index
+    flags))
+
+(define (opt-inline-tiny-leaf-block-has-site?
+  [block : CompilerIrBlock]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ seq)
+      (opt-inline-tiny-leaf-seq-has-site? seq index flags)]))
+
+(define (opt-inline-tiny-leaf-blocks-have-site?
+  [blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-inline-tiny-leaf-block-has-site? block index flags)
+        true
+        (opt-inline-tiny-leaf-blocks-have-site? (box-get rest) index flags))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-inline-tiny-leaf-block-seq-has-site? seq 0 index flags)]))
+
+(define (opt-inline-tiny-leaf-block-seq-has-site?
+  [blocks : CompilerIrBlockSeq]
+  [pos : i64]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]) : bool
+  (if (>= pos (compiler-ir-block-seq-count blocks))
+    false
+    (if (opt-inline-tiny-leaf-block-has-site?
+      (compiler-ir-block-seq-ref blocks pos)
+      index
+      flags)
+      true
+      (opt-inline-tiny-leaf-block-seq-has-site? blocks (+ pos 1) index flags))))
+
+(define (opt-inline-tiny-leaf-try
+  [instr : CompilerIrInstr]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [func-name : i64]
+  [block-label : String]
+  [site-pos : i64]
+  [vars : i64]) : OptInlineState
+  (match instr
+    [(CompilerIrInstr.Call dst cname cargs cret)
+      (match (opt-inline-tiny-leaf-lookup index flags cname)
+        [(OptMaybeFunction.Some callee)
+          (match callee
+            [(CompilerIrFunction.Function callee-name cparams _ cvars cblocks)
+              (let
+                [np : i64 (opt-inline-param-count cparams)]
+                (if (opt-inline-arity-ok? cargs np)
+                  (begin
+                    (set!
+                      opt-inline-caller-site-count
+                      (+ opt-inline-caller-site-count 1))
+                    (OptInlineState.State
+                      (opt-inline-expand-instrs
+                        (opt-inline-single-block-instrs cblocks)
+                        dst
+                        cret
+                        cargs
+                        np
+                        vars
+                        (opt-inline-site-prefix
+                          func-name
+                          block-label
+                          site-pos
+                          callee-name))
+                      (+ vars (opt-inline-frame-growth cvars np))
+                      0))
+                  (OptInlineState.State
+                    (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)
+                    vars
+                    0)))])]
+        [(OptMaybeFunction.No)
+          (OptInlineState.State
+            (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)
+            vars
+            0)])]
+    [_
+      (OptInlineState.State
+        (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)
+        vars
+        0)]))
+
+(define (opt-inline-tiny-leaf-walk-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [end : i64]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [func-name : i64]
+  [block-label : String]
+  [site-pos : i64]
+  [vars : i64]) : OptInlineState
+  (if (>= pos end)
+    (OptInlineState.State CompilerIrInstrList.Nil vars 0)
+    (match (opt-inline-tiny-leaf-try
+      (compiler-ir-instr-seq-ref instrs pos)
+      index
+      flags
+      func-name
+      block-label
+      site-pos
+      vars)
+      [(OptInlineState.State expanded vars2 _)
+        (match (opt-inline-tiny-leaf-walk-seq-from
+          instrs
+          (+ pos 1)
+          end
+          index
+          flags
+          func-name
+          block-label
+          (+ site-pos 1)
+          vars2)
+          [(OptInlineState.State rest-list vars3 _)
+            (OptInlineState.State
+              (opt-inline-append expanded rest-list)
+              vars3
+              0)])])))
+
+(define (opt-inline-tiny-leaf-rewrite-block
+  [block : CompilerIrBlock]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [func-name : i64]
+  [vars : i64]) : OptInlineBlocks
+  (match block
+    [(CompilerIrBlock.Block label seq)
+      (if (not (opt-inline-tiny-leaf-seq-has-site? seq index flags))
+        (OptInlineBlocks.Blocks
+          (compiler-ir-block-cons block CompilerIrBlockList.Nil)
+          vars
+          0)
+        (match (opt-inline-tiny-leaf-walk-seq-from
+          seq
+          0
+          (compiler-ir-instr-seq-count seq)
+          index
+          flags
+          func-name
+          label
+          0
+          vars)
+          [(OptInlineState.State new-instrs vars2 _)
+            (OptInlineBlocks.Blocks
+              (compiler-ir-block-cons
+                (compiler-ir-block label new-instrs)
+                CompilerIrBlockList.Nil)
+              vars2
+              0)]))]))
+
+(define (opt-inline-tiny-leaf-blocks
+  [blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [func-name : i64]
+  [vars : i64]) : OptInlineBlocks
+  (match blocks
+    [(CompilerIrBlockList.Nil)
+      (OptInlineBlocks.Blocks CompilerIrBlockList.Nil vars 0)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match (opt-inline-tiny-leaf-rewrite-block
+        block
+        index
+        flags
+        func-name
+        vars)
+        [(OptInlineBlocks.Blocks rewritten vars2 _)
+          (match (opt-inline-tiny-leaf-blocks
+            (box-get rest)
+            index
+            flags
+            func-name
+            vars2)
+            [(OptInlineBlocks.Blocks rest-blocks vars3 _)
+              (OptInlineBlocks.Blocks
+                (opt-inline-block-append rewritten rest-blocks)
+                vars3
+                0)])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-inline-tiny-leaf-blocks
+        (compiler-ir-block-seq-to-list seq)
+        index
+        flags
+        func-name
+        vars)]))
+
+(define (opt-inline-tiny-leaf-function
+  [func : CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function name params ret vars blocks)
+      (if (not (opt-inline-tiny-leaf-blocks-have-site? blocks index flags))
+        func
+        (begin
+          (set! opt-inline-caller-site-count 0)
+          (match (opt-inline-tiny-leaf-blocks blocks index flags name vars)
+            [(OptInlineBlocks.Blocks new-blocks new-vars _)
+              (if (= opt-inline-caller-site-count 0)
+                func
+                (opt-inline-repair-or-keep
+                  func
+                  (CompilerIrFunction.Function
+                    name
+                    params
+                    ret
+                    new-vars
+                    new-blocks)
+                  false))])))]))
+
+(define (opt-inline-tiny-leaf-program-functions
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (let
+    [index : OptFunctionIndex (opt-function-index-build functions)]
+    [flags : (Array bool) (opt-inline-tiny-leaf-admitted-flags index)]
+    [values : (Array CompilerIrFunction) (struct-get index values)]
+    [count : i64 (opt-function-index-count index)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set!
+            values
+            i
+            (opt-inline-tiny-leaf-function (array-ref values i) index flags))
+          (set! i (+ i 1))))
+      (opt-function-index-to-list index))))
+
+(define (opt-inline-tiny-leaf-try-with-spans
+  [instr : CompilerIrInstr]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [func-name : i64]
+  [block-label : String]
+  [site-pos : i64]
+  [vars : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanState
+  (match instr
+    [(CompilerIrInstr.Call dst cname cargs cret)
+      (match (opt-inline-tiny-leaf-lookup index flags cname)
+        [(OptMaybeFunction.Some callee)
+          (match callee
+            [(CompilerIrFunction.Function callee-name cparams _ cvars cblocks)
+              (let
+                [np : i64 (opt-inline-param-count cparams)]
+                (if (opt-inline-arity-ok? cargs np)
+                  (begin
+                    (set!
+                      opt-inline-caller-site-count
+                      (+ opt-inline-caller-site-count 1))
+                    (match (opt-inline-expand-instrs-with-spans
+                      (opt-inline-single-block-instrs cblocks)
+                      dst
+                      cret
+                      cargs
+                      np
+                      vars
+                      (opt-inline-site-prefix
+                        func-name
+                        block-label
+                        site-pos
+                        callee-name)
+                      source-spans
+                      out-spans
+                      (compiler-ir-symbol-text func-name)
+                      instr
+                      (compiler-ir-symbol-text cname))
+                      [(OptInlineSpanState.State expanded _ _ next-spans)
+                        (OptInlineSpanState.State
+                          expanded
+                          (+ vars (opt-inline-frame-growth cvars np))
+                          0
+                          next-spans)]))
+                  (OptInlineSpanState.State
+                    (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)
+                    vars
+                    0
+                    out-spans)))])]
+        [(OptMaybeFunction.No)
+          (OptInlineSpanState.State
+            (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)
+            vars
+            0
+            out-spans)])]
+    [_
+      (OptInlineSpanState.State
+        (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)
+        vars
+        0
+        out-spans)]))
+
+(define (opt-inline-tiny-leaf-walk-seq-with-spans-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [end : i64]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [func-name : i64]
+  [block-label : String]
+  [site-pos : i64]
+  [vars : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanState
+  (if (>= pos end)
+    (OptInlineSpanState.State CompilerIrInstrList.Nil vars 0 out-spans)
+    (match (opt-inline-tiny-leaf-try-with-spans
+      (compiler-ir-instr-seq-ref instrs pos)
+      index
+      flags
+      func-name
+      block-label
+      site-pos
+      vars
+      source-spans
+      out-spans)
+      [(OptInlineSpanState.State expanded vars2 _ spans2)
+        (match (opt-inline-tiny-leaf-walk-seq-with-spans-from
+          instrs
+          (+ pos 1)
+          end
+          index
+          flags
+          func-name
+          block-label
+          (+ site-pos 1)
+          vars2
+          source-spans
+          spans2)
+          [(OptInlineSpanState.State rest-list vars3 _ spans3)
+            (OptInlineSpanState.State
+              (opt-inline-append expanded rest-list)
+              vars3
+              0
+              spans3)])])))
+
+(define (opt-inline-tiny-leaf-rewrite-block-with-spans
+  [block : CompilerIrBlock]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [func-name : i64]
+  [vars : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanBlocks
+  (match block
+    [(CompilerIrBlock.Block label seq)
+      (if (not (opt-inline-tiny-leaf-seq-has-site? seq index flags))
+        (OptInlineSpanBlocks.Blocks
+          (compiler-ir-block-cons block CompilerIrBlockList.Nil)
+          vars
+          0
+          out-spans)
+        (match (opt-inline-tiny-leaf-walk-seq-with-spans-from
+          seq
+          0
+          (compiler-ir-instr-seq-count seq)
+          index
+          flags
+          func-name
+          label
+          0
+          vars
+          source-spans
+          out-spans)
+          [(OptInlineSpanState.State new-instrs vars2 _ spans2)
+            (OptInlineSpanBlocks.Blocks
+              (compiler-ir-block-cons
+                (compiler-ir-block label new-instrs)
+                CompilerIrBlockList.Nil)
+              vars2
+              0
+              spans2)]))]))
+
+(define (opt-inline-tiny-leaf-blocks-with-spans
+  [blocks : CompilerIrBlockList]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [func-name : i64]
+  [vars : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanBlocks
+  (match blocks
+    [(CompilerIrBlockList.Nil)
+      (OptInlineSpanBlocks.Blocks CompilerIrBlockList.Nil vars 0 out-spans)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match (opt-inline-tiny-leaf-rewrite-block-with-spans
+        block
+        index
+        flags
+        func-name
+        vars
+        source-spans
+        out-spans)
+        [(OptInlineSpanBlocks.Blocks rewritten vars2 _ spans2)
+          (match (opt-inline-tiny-leaf-blocks-with-spans
+            (box-get rest)
+            index
+            flags
+            func-name
+            vars2
+            source-spans
+            spans2)
+            [(OptInlineSpanBlocks.Blocks rest-blocks vars3 _ spans3)
+              (OptInlineSpanBlocks.Blocks
+                (opt-inline-block-append rewritten rest-blocks)
+                vars3
+                0
+                spans3)])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-inline-tiny-leaf-blocks-with-spans
+        (compiler-ir-block-seq-to-list seq)
+        index
+        flags
+        func-name
+        vars
+        source-spans
+        out-spans)]))
+
+(define (opt-inline-tiny-leaf-function-with-spans
+  [func : CompilerIrFunction]
+  [index : OptFunctionIndex]
+  [flags : (Array bool)]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]) : OptInlineSpanProgram
+  (match func
+    [(CompilerIrFunction.Function name params ret vars blocks)
+      (if (not (opt-inline-tiny-leaf-blocks-have-site? blocks index flags))
+        (OptInlineSpanProgram.Program
+          (compiler-ir-function-cons func CompilerIrFunctionList.Nil)
+          out-spans)
+        (begin
+          (set! opt-inline-caller-site-count 0)
+          (match (opt-inline-tiny-leaf-blocks-with-spans
+            blocks
+            index
+            flags
+            name
+            vars
+            source-spans
+            out-spans)
+            [(OptInlineSpanBlocks.Blocks new-blocks new-vars _ next-spans)
+              (if (= opt-inline-caller-site-count 0)
+                (OptInlineSpanProgram.Program
+                  (compiler-ir-function-cons func CompilerIrFunctionList.Nil)
+                  out-spans)
+                (if (opt-inline-structure-ok-reclaiming? new-blocks)
+                  (OptInlineSpanProgram.Program
+                    (compiler-ir-function-cons
+                      (CompilerIrFunction.Function
+                        name
+                        params
+                        ret
+                        new-vars
+                        new-blocks)
+                      CompilerIrFunctionList.Nil)
+                    next-spans)
+                  (OptInlineSpanProgram.Program
+                    (compiler-ir-function-cons func CompilerIrFunctionList.Nil)
+                    out-spans)))])))]))
+
+(define (opt-inline-tiny-leaf-program-functions-with-spans
+  [functions : CompilerIrFunctionList]
+  [spans : CompilerSourceSpans]) : OptInlineSpanProgram
+  (let
+    [index : OptFunctionIndex (opt-function-index-build functions)]
+    [flags : (Array bool) (opt-inline-tiny-leaf-admitted-flags index)]
+    [values : (Array CompilerIrFunction) (struct-get index values)]
+    [count : i64 (opt-function-index-count index)]
+    [i : i64 0]
+    [current-spans : CompilerSourceSpans spans]
+    (begin
+      (while (< i count)
+        (begin
+          (match (opt-inline-tiny-leaf-function-with-spans
+            (array-ref values i)
+            index
+            flags
+            current-spans
+            current-spans)
+            [(OptInlineSpanProgram.Program one next-spans)
+              (begin
+                (match one
+                  [(CompilerIrFunctionList.Cons head _)
+                    (array-set! values i head)]
+                  [(CompilerIrFunctionList.Nil) unit]
+                  [(CompilerIrFunctionList.Array seq)
+                    (if (> (compiler-ir-function-seq-count seq) 0)
+                      (array-set!
+                        values
+                        i
+                        (compiler-ir-function-seq-ref seq 0))
+                      unit)])
+                (set! current-spans next-spans))])
+          (set! i (+ i 1))))
+      (OptInlineSpanProgram.Program
+        (opt-function-index-to-list index)
+        current-spans))))
+
 (define (opt-inline-process-scc-order!
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
@@ -37340,13 +37975,16 @@
           (set! index-pos (+ index-pos 1))))
       current-spans)))
 
-;; Inline small single-block leaf callees across the whole program. Only at opt
-;; level 2 (the register-allocated quality build).
+;; Inline small single-block leaf callees across the whole program. Level 2
+;; (the register-allocated quality build) runs the full census/SCC pipeline;
+;; level 1 runs only the call-free tiny-leaf pass above.
 (define (opt-inline-program-functions
   [functions : CompilerIrFunctionList]
   [level : i64]) : CompilerIrFunctionList
   (if (< level 2)
-    functions
+    (if (= level 1)
+      (opt-inline-tiny-leaf-program-functions functions)
+      functions)
     (let
       [devirt : CompilerIrFunctionList
         (opt-devirt-known-function-list functions)]
@@ -37374,7 +38012,9 @@
   [level : i64]
   [spans : CompilerSourceSpans]) : OptInlineSpanProgram
   (if (< level 2)
-    (OptInlineSpanProgram.Program functions spans)
+    (if (= level 1)
+      (opt-inline-tiny-leaf-program-functions-with-spans functions spans)
+      (OptInlineSpanProgram.Program functions spans))
     (let
       [devirt : CompilerIrFunctionList
         (opt-devirt-known-function-list functions)]
@@ -39301,7 +39941,8 @@
       (if (= level 0)
         program
         ;; Levels 1 (cheap) and 2 (quality) both prune unreachable functions;
-        ;; inlining self-gates to level 2 inside opt-inline-program-functions.
+        ;; opt-inline-program-functions runs the full inliner at level 2 and
+        ;; the call-free tiny-leaf pass at level 1.
         (begin
           (cfg compile-profile (compiler-opt-profile-start))
           (let

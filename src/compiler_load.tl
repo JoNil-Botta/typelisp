@@ -3207,7 +3207,7 @@
       (let
         [rest : AstDeclList rest]
         (match decl
-          [(AstDecl.Extern _ _ metadata _)
+          [(AstDecl.Extern decl-meta _ _ metadata _)
             (if (string.eq (ast-extern-metadata-symbol (box-get metadata)) want)
               true
               (compiler-load-decl-list-has-extern-symbol? rest want))]
@@ -3306,6 +3306,7 @@
           [(AstDecl.Module name)
             (compiler-load-duplicate-dotted-import-alias-loop rest name seen)]
           [(AstDecl.Import
+              decl-meta
               (AstImportSpec.Spec
                 (AstImportKind.Module)
                 _
@@ -5849,6 +5850,7 @@
         (box-get body)
         module-id)]
     [(AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
       (compiler-load-lazy-module-macro-qualified-by?
         (ast-node-get call-expr)
@@ -5885,7 +5887,7 @@
         summary
         locals)]))
 
-(define (compiler-load-session-state-lazy-decl-demand
+(define (compiler-load-session-state-lazy-decl-demand-inner
   [state : CompilerLoadSessionState]
   [decl : AstDecl]
   [alias : i64]
@@ -5900,7 +5902,7 @@
         alias
         summary
         locals)]
-    [(AstDecl.Def _ maybe-ty body)
+    [(AstDecl.Def decl-meta _ maybe-ty body)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-maybe-type-demand
           state
@@ -5914,7 +5916,7 @@
           alias
           summary
           locals))]
-    [(AstDecl.DefFn _ params ret body _)
+    [(AstDecl.DefFn decl-meta _ params ret body _)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-param-list-demand
           state
@@ -5938,7 +5940,7 @@
               state
               params
               locals))))]
-    [(AstDecl.DefMacro _ params ret body)
+    [(AstDecl.DefMacro decl-meta _ params ret body)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-lazy-alias-demand-merge
@@ -5965,7 +5967,7 @@
                 params
                 locals))))
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.Extern _ _ _ ty)
+    [(AstDecl.Extern decl-meta _ _ _ ty)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-type-demand
@@ -5975,7 +5977,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.DefEnum _ _ variants)
+    [(AstDecl.DefEnum decl-meta _ _ variants)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-variant-list-demand
@@ -5985,7 +5987,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.DefEnumLifetimes _ _ _ variants)
+    [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-variant-list-demand
@@ -5995,7 +5997,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.DefStruct _ _ _ fields)
+    [(AstDecl.DefStruct decl-meta _ _ _ fields)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-field-list-demand
@@ -6005,7 +6007,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.DefStructLifetimes _ _ _ _ fields)
+    [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ fields)
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-field-list-demand
@@ -6016,6 +6018,7 @@
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
       (compiler-load-session-state-lazy-module-macro-demand
         state
@@ -6024,9 +6027,10 @@
         summary
         locals)]
     [(AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec (AstImportKind.MacroDecls _ _) _ _ _ _))
       (compiler-load-lazy-alias-demand-unknown)]
-    [(AstDecl.Import _) (compiler-load-lazy-alias-demand-none)]
+    [(AstDecl.Import decl-meta _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.Test _ body _)
       (compiler-load-session-state-lazy-expr-demand
         state
@@ -6035,36 +6039,50 @@
         summary
         locals)]
     [(AstDecl.Unsafe inner)
-      (compiler-load-session-state-lazy-decl-demand
+      ;; ast-decl-comptime-only? and ast-decl-generated-meta recurse through
+      ;; Unsafe, so the outer dispatcher has already accounted for metadata.
+      (compiler-load-session-state-lazy-decl-demand-inner
         state
         (box-get inner)
         alias
         summary
         locals)]
-    [(AstDecl.ComptimeDecl meta inner)
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
-        (compiler-load-lazy-alias-demand-merge
-          (compiler-load-session-state-lazy-generated-meta-demand
-            state
-            meta
-            alias
-            summary
-            locals)
-          (compiler-load-session-state-lazy-decl-demand
-            state
-            (box-get inner)
-            alias
-            summary
-            locals))
-        (compiler-load-lazy-alias-demand-unknown))]
-    [(AstDecl.DefDispatch _ _) (compiler-load-lazy-alias-demand-none)]
+    [(AstDecl.DefDispatch decl-meta _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStrComptime _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStrLzss _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
     ;; A future declaration shape might hide references. Keep it conservative.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
+
+(define (compiler-load-session-state-lazy-decl-demand
+  [state : CompilerLoadSessionState]
+  [decl : AstDecl]
+  [alias : i64]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (if (ast-decl-comptime-only? decl)
+    (if (compiler-load-session-state-lazy-qualified-observer-exhaustive? state)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-session-state-lazy-generated-meta-demand
+          state
+          (ast-decl-generated-meta decl)
+          alias
+          summary
+          locals)
+        (compiler-load-session-state-lazy-decl-demand-inner
+          state
+          decl
+          alias
+          summary
+          locals))
+      (compiler-load-lazy-alias-demand-unknown))
+    (compiler-load-session-state-lazy-decl-demand-inner
+      state
+      decl
+      alias
+      summary
+      locals)))
 
 (define (compiler-load-session-state-lazy-decl-list-demand
   [state : CompilerLoadSessionState]
@@ -6530,7 +6548,7 @@
     (or (struct-get build has-generated-decls) has-generated)
     (or (struct-get build has-decl-emitting-macro) decl-emitting)))
 
-(define (compiler-load-surface-build-decl
+(define (compiler-load-surface-build-decl-inner
   [source-path : String]
   [module-id : i64]
   [decl : AstDecl]
@@ -6539,6 +6557,7 @@
   [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
   (match decl
     [(AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec kind import-path module-name alias span))
       (compiler-load-surface-build-add-import
         build
@@ -6551,7 +6570,7 @@
           (compiler-load-surface-import-default-alias kind import-path)
           (box-get span))
         (compiler-load-surface-import-decl-emitting? kind))]
-    [(AstDecl.Def name maybe-ty _)
+    [(AstDecl.Def decl-meta name maybe-ty _)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -6569,7 +6588,7 @@
         false
         generated
         false)]
-    [(AstDecl.DefFn name params ret _ metadata)
+    [(AstDecl.DefFn decl-meta name params ret _ metadata)
       (let
         [has-export : bool
           (compiler-load-surface-fn-export? (ast-fn-metadata-export metadata))]
@@ -6590,7 +6609,7 @@
           has-export
           generated
           false))]
-    [(AstDecl.Extern name kind meta ty)
+    [(AstDecl.Extern decl-meta name kind meta ty)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -6608,7 +6627,7 @@
         false
         generated
         false)]
-    [(AstDecl.DefStruct name repr cleanup fields)
+    [(AstDecl.DefStruct decl-meta name repr cleanup fields)
       (let
         [has-cleanup : bool
           (or
@@ -6635,7 +6654,7 @@
           false
           generated
           false))]
-    [(AstDecl.DefStructLifetimes name lifetimes repr cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta name lifetimes repr cleanup fields)
       (let
         [has-cleanup : bool
           (or
@@ -6658,7 +6677,7 @@
           false
           generated
           false))]
-    [(AstDecl.DefEnum name cleanup variants)
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
       (let
         [has-cleanup : bool
           (or
@@ -6684,7 +6703,7 @@
           false
           generated
           false))]
-    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (let
         [has-cleanup : bool
           (or
@@ -6707,7 +6726,7 @@
           false
           generated
           false))]
-    [(AstDecl.DefMacro name params ret body-box)
+    [(AstDecl.DefMacro decl-meta name params ret body-box)
       (let
         [result-kind : CompilerLoadSurfaceMacroResultKind
           (compiler-load-surface-macro-result-kind ret)]
@@ -6730,7 +6749,7 @@
           false
           generated
           decl-emitting))]
-    [(AstDecl.DefDispatch name variants)
+    [(AstDecl.DefDispatch decl-meta name variants)
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -6846,14 +6865,6 @@
         generated
         true
         build)]
-    [(AstDecl.ComptimeDecl meta inner-box)
-      (compiler-load-surface-build-decl
-        source-path
-        module-id
-        (box-get inner-box)
-        (or generated (compiler-load-surface-generated-meta? meta))
-        was-unsafe
-        build)]
     [(AstDecl.ModuleBody nested-module body-box)
       (compiler-load-surface-build-decls-into
         source-path
@@ -6861,6 +6872,23 @@
         (box-get body-box)
         build)]
     [(AstDecl.Module _) build]))
+
+(define (compiler-load-surface-build-decl
+  [source-path : String]
+  [module-id : i64]
+  [decl : AstDecl]
+  [generated : bool]
+  [was-unsafe : bool]
+  [build : CompilerLoadSurfaceBuild]) : CompilerLoadSurfaceBuild
+  (compiler-load-surface-build-decl-inner
+    source-path
+    module-id
+    decl
+    (or
+      generated
+      (compiler-load-surface-generated-meta? (ast-decl-generated-meta decl)))
+    was-unsafe
+    build))
 
 (define (compiler-load-surface-build-decls-into
   [source-path : String]
@@ -6980,6 +7008,7 @@
     [(AstMaybeImportAlias.Some _)
       (compiler-load-decl-list-prepend
         (AstDecl.Import
+          ast-decl-meta-runtime
           (AstImportSpec.Spec
             kind
             import-path
@@ -7173,6 +7202,7 @@
                   [(ResultCompilerLoadWithPaths.Err diag)
                     (ResultCompilerLoadWithPaths.Err diag)])))]
           [(AstDecl.Import
+              decl-meta
               (AstImportSpec.Spec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
@@ -9396,6 +9426,7 @@
     [logical : String
       (compiler-load-package-decl-logical-name "" logical-path module name-str)]
     (AstDecl.Extern
+      ast-decl-meta-runtime
       name
       (AstExternKind.Function)
       (box
@@ -9415,18 +9446,20 @@
   [module : String]
   [decl : AstDecl]) : CompilerLoadMaybeDecl
   (match decl
-    [(AstDecl.DefFn name params ret _ _)
+    [(AstDecl.DefFn decl-meta name params ret _ _)
       (CompilerLoadSomeDecl
-        (compiler-load-package-def-fn-extern
-          package-owner
-          package-root
-          stdlib-roots
-          decl-path
-          module
-          name
-          params
-          ret))]
-    [(AstDecl.DefStruct _ _ _ _) (CompilerLoadSomeDecl decl)]
+        (ast-decl-with-meta
+          decl-meta
+          (compiler-load-package-def-fn-extern
+            package-owner
+            package-root
+            stdlib-roots
+            decl-path
+            module
+            name
+            params
+            ret)))]
+    [(AstDecl.DefStruct decl-meta _ _ _ _) (CompilerLoadSomeDecl decl)]
     [(AstDecl.Module _) (CompilerLoadSomeDecl decl)]
     [(AstDecl.Unsafe inner-box)
       (let
@@ -9440,20 +9473,6 @@
           inner)
           [(CompilerLoadSomeDecl transformed)
             (CompilerLoadSomeDecl (ast-decl-unsafe transformed))]
-          [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
-    [(AstDecl.ComptimeDecl meta template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (match (compiler-load-package-transform-decl
-          package-owner
-          package-root
-          stdlib-roots
-          decl-path
-          module
-          template)
-          [(CompilerLoadSomeDecl transformed)
-            (CompilerLoadSomeDecl
-              (ast-decl-comptime-decl-with-meta meta transformed))]
           [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
     [_ (CompilerLoadNoDecl)]))
 
@@ -9478,7 +9497,7 @@
   [decl-path : String]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (compiler-load-package-entry-main?
         entry-path
         decl-path
@@ -9843,6 +9862,7 @@
         [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Import
+              decl-meta
               (AstImportSpec.Spec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-package-decls-with-module-and-roots
@@ -10736,7 +10756,11 @@
   [want : String]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons
-        (AstDecl.Def got (AstMaybeType.Some (AstType.String)) value-box)
+        (AstDecl.Def
+          ast-decl-meta-runtime
+          got
+          (AstMaybeType.Some (AstType.String))
+          value-box)
         _)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -10754,7 +10778,12 @@
   [want : String]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons
-        (AstDecl.DefMacro got params (AstType.String) body-box)
+        (AstDecl.DefMacro
+          ast-decl-meta-runtime
+          got
+          params
+          (AstType.String)
+          body-box)
         _)
       (match (ast-node-get body-box)
         [(AstExpr.Call callee-box args)
@@ -10780,6 +10809,7 @@
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons
         (AstDecl.Def
+          _
           got
           (AstMaybeType.Some (AstType.DynArray elem-id))
           value-box)
@@ -10811,6 +10841,7 @@
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons
         (AstDecl.Def
+          _
           got
           (AstMaybeType.Some (AstType.DynArray elem-id))
           value-box)
@@ -10853,6 +10884,7 @@
         [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Import
+              decl-meta
               (AstImportSpec.Spec
                 _
                 _
@@ -10879,7 +10911,9 @@
       (let
         [rest1 : AstDeclList rest1]
         (match (ast-decl-list-step rest1)
-          [(AstDeclListStep.Cons (AstDecl.Def imported-name _ _) rest2)
+          [(AstDeclListStep.Cons
+              (AstDecl.Def decl-meta imported-name _ _)
+              rest2)
             (let
               [rest2 : AstDeclList rest2]
               (match (ast-decl-list-step rest2)
@@ -10889,6 +10923,7 @@
                     (match (ast-decl-list-step rest3)
                       [(AstDeclListStep.Cons
                           (AstDecl.Import
+                            ast-decl-meta-runtime
                             (AstImportSpec.Spec
                               _
                               _
@@ -10900,7 +10935,13 @@
                           [rest4 : AstDeclList rest4]
                           (match (ast-decl-list-step rest4)
                             [(AstDeclListStep.Cons
-                                (AstDecl.DefFn main-name _ _ _ _)
+                                (AstDecl.DefFn
+                                  ast-decl-meta-runtime
+                                  main-name
+                                  _
+                                  _
+                                  _
+                                  _)
                                 done-box)
                               (let
                                 [done : AstDeclList done-box]
@@ -11349,7 +11390,9 @@
           (let
             [rest1 : AstDeclList rest1]
             (match (ast-decl-list-step rest1)
-              [(AstDeclListStep.Cons (AstDecl.Def value-name _ _) rest2)
+              [(AstDeclListStep.Cons
+                  (AstDecl.Def decl-meta value-name _ _)
+                  rest2)
                 (let
                   [rest2 : AstDeclList rest2]
                   (match (ast-decl-list-step rest2)
@@ -11360,7 +11403,7 @@
                         [rest3 : AstDeclList rest3]
                         (match (ast-decl-list-step rest3)
                           [(AstDeclListStep.Cons
-                              (AstDecl.Def root-name _ _)
+                              (AstDecl.Def ast-decl-meta-runtime root-name _ _)
                               done-box)
                             (let
                               [done : AstDeclList done-box]
@@ -12215,23 +12258,18 @@
       "main"
       decl)
       [(CompilerLoadSomeDecl transformed)
-        (match transformed
-          [(AstDecl.ComptimeDecl found-meta template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
+        (and
+          (match (ast-decl-generated-meta transformed)
+            [(AstGeneratedDeclMeta.Some generator item arg-keys _)
               (and
-                (match found-meta
-                  [(AstGeneratedDeclMeta.Some generator item arg-keys _)
-                    (and
-                      (string.eq generator "gen")
-                      (string.eq item "generated-fn")
-                      (= (ast-expr-list-len (& arg-keys)) 0))]
-                  [_ false])
-                (match template
-                  [(AstDecl.Extern name _ _ _)
-                    (string.eq (intern-str name) "generated-fn")]
-                  [_ false])))]
-          [_ false])]
+                (string.eq generator "gen")
+                (string.eq item "generated-fn")
+                (= (ast-expr-list-len (& arg-keys)) 0))]
+            [_ false])
+          (match transformed
+            [(AstDecl.Extern decl-meta name _ _ _)
+              (string.eq (intern-str name) "generated-fn")]
+            [_ false]))]
       [(CompilerLoadNoDecl) false])))
 
 ;; Diamond import dedup: entry imports A and B, both of which
@@ -14704,7 +14742,7 @@
         (ast-param-list-new)
         (AstType.I64))]
     (match decl
-      [(AstDecl.Extern _ _ metadata _)
+      [(AstDecl.Extern decl-meta _ _ metadata _)
         (string.eq
           (ast-extern-metadata-symbol (box-get metadata))
           "_tl_dep_src_lib_helper")]

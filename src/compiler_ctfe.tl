@@ -1459,13 +1459,13 @@
   [module-id : i64]
   [template : AstDecl]) : CtfeReflectInfoList
   (match template
-    [(AstDecl.DefStruct name _ cleanup fields)
+    [(AstDecl.DefStruct decl-meta name _ cleanup fields)
       (ctfe-reflections-add-struct infos module module-id name cleanup fields)]
-    [(AstDecl.DefStructLifetimes name _ _ cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
       (ctfe-reflections-add-struct infos module module-id name cleanup fields)]
-    [(AstDecl.DefEnum name cleanup variants)
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
       (ctfe-reflections-add-enum infos module module-id name cleanup variants)]
-    [(AstDecl.DefEnumLifetimes name _ cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
       (ctfe-reflections-add-enum infos module module-id name cleanup variants)]
     [_ infos]))
 
@@ -1485,18 +1485,17 @@
         (begin
           (if (match (ast-decl-list-ref-borrowed (& decls) index)
             [(AstDecl.Module _) true]
-            [(AstDecl.DefStruct _ _ _ _) true]
-            [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
-            [(AstDecl.DefEnum _ _ _) true]
-            [(AstDecl.DefEnumLifetimes _ _ _ _) true]
-            [(AstDecl.ComptimeDecl _ _) true]
+            [(AstDecl.DefStruct decl-meta _ _ _ _) true]
+            [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _) true]
+            [(AstDecl.DefEnum decl-meta _ _ _) true]
+            [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _) true]
             [_ false])
             (match (ast-decl-list-ref decls index)
               [(AstDecl.Module next-module)
                 (begin
                   (set! current-module (intern-str next-module))
                   (set! current-module-id next-module))]
-              [(AstDecl.DefStruct name _ cleanup fields)
+              [(AstDecl.DefStruct decl-meta name _ cleanup fields)
                 (set!
                   current-infos
                   (ctfe-reflections-add-struct
@@ -1506,7 +1505,7 @@
                     name
                     cleanup
                     fields))]
-              [(AstDecl.DefStructLifetimes name _ _ cleanup fields)
+              [(AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
                 (set!
                   current-infos
                   (ctfe-reflections-add-struct
@@ -1516,7 +1515,7 @@
                     name
                     cleanup
                     fields))]
-              [(AstDecl.DefEnum name cleanup variants)
+              [(AstDecl.DefEnum decl-meta name cleanup variants)
                 (set!
                   current-infos
                   (ctfe-reflections-add-enum
@@ -1526,7 +1525,7 @@
                     name
                     cleanup
                     variants))]
-              [(AstDecl.DefEnumLifetimes name _ cleanup variants)
+              [(AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
                 (set!
                   current-infos
                   (ctfe-reflections-add-enum
@@ -1536,14 +1535,6 @@
                     name
                     cleanup
                     variants))]
-              [(AstDecl.ComptimeDecl _ template-box)
-                (set!
-                  current-infos
-                  (ctfe-reflections-add-template
-                    current-infos
-                    current-module
-                    current-module-id
-                    (box-get template-box)))]
               [_ unit])
             unit)
           (set! index (+ index 1))))
@@ -1558,25 +1549,13 @@
       (while (< index count)
         (begin
           (match (ast-decl-list-ref-borrowed (& decls) index)
-            [(AstDecl.DefStruct _ _ _ _) (set! capacity (+ capacity 2))]
-            [(AstDecl.DefStructLifetimes _ _ _ _ _)
+            [(AstDecl.DefStruct decl-meta _ _ _ _)
               (set! capacity (+ capacity 2))]
-            [(AstDecl.DefEnum _ _ _) (set! capacity (+ capacity 2))]
-            [(AstDecl.DefEnumLifetimes _ _ _ _) (set! capacity (+ capacity 2))]
-            [(AstDecl.ComptimeDecl _ _)
-              ;; Borrow the common declaration cases. Copy only the uncommon
-              ;; boxed template whose payload must be dereferenced.
-              (match (ast-decl-list-ref decls index)
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (match (box-get template-box)
-                    [(AstDecl.DefStruct _ _ _ _) (set! capacity (+ capacity 2))]
-                    [(AstDecl.DefStructLifetimes _ _ _ _ _)
-                      (set! capacity (+ capacity 2))]
-                    [(AstDecl.DefEnum _ _ _) (set! capacity (+ capacity 2))]
-                    [(AstDecl.DefEnumLifetimes _ _ _ _)
-                      (set! capacity (+ capacity 2))]
-                    [_ unit])]
-                [_ unit])]
+            [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _)
+              (set! capacity (+ capacity 2))]
+            [(AstDecl.DefEnum decl-meta _ _ _) (set! capacity (+ capacity 2))]
+            [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _)
+              (set! capacity (+ capacity 2))]
             [_ unit])
           (set! index (+ index 1))))
       capacity)))
@@ -13341,6 +13320,7 @@
       (box
         (ast-decl-cons-boxed
           (AstDecl.DefStruct
+            ast-decl-meta-runtime
             cbi.compiler-builtin-id-fix-Record
             (AstStructRepr.Default)
             (AstStructCleanup.No)
@@ -13348,6 +13328,7 @@
           (box
             (ast-decl-cons-boxed
               (AstDecl.DefEnum
+                ast-decl-meta-runtime
                 cbi.compiler-builtin-id-fix-Status
                 (AstEnumCleanup.No)
                 variants)

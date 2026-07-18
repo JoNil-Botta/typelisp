@@ -1864,196 +1864,204 @@
   [source : String]
   [decl : AstDecl]
   [visible-root : bool]
-  [allow-report : bool]) : SelfhostLintDeadScan
-  (match decl
-    [(AstDecl.ModuleBody name body-box)
-      (selfhost-lint-dead-scan-decls
-        scan
-        path
-        (intern-str name)
-        source
-        visible-root
-        allow-report
-        (box-get body-box))]
-    [(AstDecl.Module _) scan]
-    [(AstDecl.Def name maybe-ty body)
-      (let
-        [text : String (intern-str name)]
-        [refs : lint_svec.Vec
-          (selfhost-lint-dead-expr-refs
-            (ast-node-get body)
-            (selfhost-lint-dead-maybe-type-refs maybe-ty (lint_svec.new)))]
-        [span : AstSourceSpan
-          (selfhost-lint-dead-decl-span
+  [requested-report : bool]) : SelfhostLintDeadScan
+  (let
+    [allow-report : bool
+      (and requested-report (not (ast-decl-comptime-only? decl)))]
+    [result : SelfhostLintDeadScan
+      (match decl
+        [(AstDecl.ModuleBody name body-box)
+          (selfhost-lint-dead-scan-decls
+            scan
+            path
+            (intern-str name)
             source
-            text
-            (selfhost-lint-dead-expr-span body))]
-        (selfhost-lint-dead-add-visible-node
-          scan
-          path
-          module
-          source
-          text
-          span
-          refs
-          visible-root
-          allow-report))]
-    [(AstDecl.DefFn name params ret body _)
-      (let
-        [text : String (intern-str name)]
-        [refs : lint_svec.Vec
-          (selfhost-lint-dead-expr-refs
-            (ast-node-get body)
+            visible-root
+            allow-report
+            (box-get body-box))]
+        [(AstDecl.Module _) scan]
+        [(AstDecl.Def decl-meta name maybe-ty body)
+          (let
+            [text : String (intern-str name)]
+            [refs : lint_svec.Vec
+              (selfhost-lint-dead-expr-refs
+                (ast-node-get body)
+                (selfhost-lint-dead-maybe-type-refs maybe-ty (lint_svec.new)))]
+            [span : AstSourceSpan
+              (selfhost-lint-dead-decl-span
+                source
+                text
+                (selfhost-lint-dead-expr-span body))]
+            (selfhost-lint-dead-add-visible-node
+              scan
+              path
+              module
+              source
+              text
+              span
+              refs
+              visible-root
+              allow-report))]
+        [(AstDecl.DefFn decl-meta name params ret body _)
+          (let
+            [text : String (intern-str name)]
+            [refs : lint_svec.Vec
+              (selfhost-lint-dead-expr-refs
+                (ast-node-get body)
+                (selfhost-lint-dead-type-refs
+                  ret
+                  (selfhost-lint-dead-param-list-refs params (lint_svec.new))))]
+            [span : AstSourceSpan
+              (selfhost-lint-dead-decl-span
+                source
+                text
+                (selfhost-lint-dead-expr-span body))]
+            (selfhost-lint-dead-add-visible-node
+              scan
+              path
+              module
+              source
+              text
+              span
+              refs
+              visible-root
+              allow-report))]
+        [(AstDecl.DefMacro decl-meta name params ret body)
+          (selfhost-lint-dead-add-visible-node
+            scan
+            path
+            module
+            source
+            (intern-str name)
+            (selfhost-lint-dead-expr-span body)
+            (selfhost-lint-dead-expr-refs
+              (ast-node-get body)
+              (selfhost-lint-dead-type-refs
+                ret
+                (selfhost-lint-dead-macro-param-list-refs
+                  params
+                  (lint_svec.new))))
+            visible-root
+            allow-report)]
+        [(AstDecl.Extern decl-meta name _ meta ty)
+          (selfhost-lint-dead-add-visible-node
+            scan
+            path
+            module
+            source
+            (intern-str name)
+            (lint-no-span)
             (selfhost-lint-dead-type-refs
-              ret
-              (selfhost-lint-dead-param-list-refs params (lint_svec.new))))]
-        [span : AstSourceSpan
-          (selfhost-lint-dead-decl-span
+              ty
+              (selfhost-lint-dead-extern-metadata-refs
+                (box-get meta)
+                (lint_svec.new)))
+            visible-root
+            allow-report)]
+        [(AstDecl.DefEnum decl-meta name cleanup variants)
+          (selfhost-lint-dead-add-visible-node
+            scan
+            path
+            module
             source
-            text
-            (selfhost-lint-dead-expr-span body))]
-        (selfhost-lint-dead-add-visible-node
-          scan
-          path
-          module
-          source
-          text
-          span
-          refs
-          visible-root
-          allow-report))]
-    [(AstDecl.DefMacro name params ret body)
-      (selfhost-lint-dead-add-visible-node
-        scan
-        path
-        module
-        source
-        (intern-str name)
-        (selfhost-lint-dead-expr-span body)
-        (selfhost-lint-dead-expr-refs
-          (ast-node-get body)
-          (selfhost-lint-dead-type-refs
-            ret
-            (selfhost-lint-dead-macro-param-list-refs params (lint_svec.new))))
-        visible-root
-        allow-report)]
-    [(AstDecl.Extern name _ meta ty)
-      (selfhost-lint-dead-add-visible-node
-        scan
-        path
-        module
-        source
-        (intern-str name)
-        (lint-no-span)
-        (selfhost-lint-dead-type-refs
-          ty
-          (selfhost-lint-dead-extern-metadata-refs
-            (box-get meta)
-            (lint_svec.new)))
-        visible-root
-        allow-report)]
-    [(AstDecl.DefEnum name cleanup variants)
-      (selfhost-lint-dead-add-visible-node
-        scan
-        path
-        module
-        source
-        (intern-str name)
-        (lint-no-span)
-        (selfhost-lint-dead-variant-def-list-refs
-          variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (lint_svec.new)))
-        visible-root
-        allow-report)]
-    [(AstDecl.DefEnumLifetimes name _ cleanup variants)
-      (selfhost-lint-dead-add-visible-node
-        scan
-        path
-        module
-        source
-        (intern-str name)
-        (lint-no-span)
-        (selfhost-lint-dead-variant-def-list-refs
-          variants
-          (selfhost-lint-dead-enum-cleanup-refs cleanup (lint_svec.new)))
-        visible-root
-        allow-report)]
-    [(AstDecl.DefStruct name _ cleanup fields)
-      (selfhost-lint-dead-add-visible-node
-        scan
-        path
-        module
-        source
-        (intern-str name)
-        (lint-no-span)
-        (selfhost-lint-dead-field-def-list-refs
-          fields
-          (selfhost-lint-dead-struct-cleanup-refs cleanup (lint_svec.new)))
-        visible-root
-        allow-report)]
-    [(AstDecl.DefStructLifetimes name _ _ cleanup fields)
-      (selfhost-lint-dead-add-visible-node
-        scan
-        path
-        module
-        source
-        (intern-str name)
-        (lint-no-span)
-        (selfhost-lint-dead-field-def-list-refs
-          fields
-          (selfhost-lint-dead-struct-cleanup-refs cleanup (lint_svec.new)))
-        visible-root
-        allow-report)]
-    [(AstDecl.Import
-        (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
-      (selfhost-lint-dead-refs-to-roots
-        scan
-        (selfhost-lint-dead-expr-refs (ast-node-get call-expr) (lint_svec.new)))]
-    [(AstDecl.Import
-        (AstImportSpec.Spec (AstImportKind.MacroDecls call-expr _) _ _ _ _))
-      (selfhost-lint-dead-refs-to-roots
-        scan
-        (selfhost-lint-dead-expr-refs (ast-node-get call-expr) (lint_svec.new)))]
-    [(AstDecl.Import _) scan]
-    [(AstDecl.IncludeStr _ _) scan]
-    [(AstDecl.IncludeStrComptime _ _) scan]
-    [(AstDecl.IncludeStrLzss _ _) scan]
-    [(AstDecl.IncludeBin _ _) scan]
-    [(AstDecl.DefDispatch name variants)
-      (selfhost-lint-dead-add-visible-node
-        scan
-        path
-        module
-        source
-        (intern-str name)
-        (lint-no-span)
-        (selfhost-lint-dead-dispatch-variant-list-refs variants (lint_svec.new))
-        visible-root
-        allow-report)]
-    [(AstDecl.Test _ body _)
-      (selfhost-lint-dead-refs-to-roots
-        scan
-        (selfhost-lint-dead-expr-refs (ast-node-get body) (lint_svec.new)))]
-    [(AstDecl.Unsafe inner)
-      (selfhost-lint-dead-scan-decl
-        scan
-        path
-        module
-        source
-        (box-get inner)
-        visible-root
-        allow-report)]
-    [(AstDecl.ComptimeDecl meta inner)
-      (selfhost-lint-dead-refs-to-roots
-        (selfhost-lint-dead-scan-decl
-          scan
-          path
-          module
-          source
-          (box-get inner)
-          visible-root
-          false)
-        (selfhost-lint-dead-generated-meta-refs meta (lint_svec.new)))]))
+            (intern-str name)
+            (lint-no-span)
+            (selfhost-lint-dead-variant-def-list-refs
+              variants
+              (selfhost-lint-dead-enum-cleanup-refs cleanup (lint_svec.new)))
+            visible-root
+            allow-report)]
+        [(AstDecl.DefEnumLifetimes decl-meta name _ cleanup variants)
+          (selfhost-lint-dead-add-visible-node
+            scan
+            path
+            module
+            source
+            (intern-str name)
+            (lint-no-span)
+            (selfhost-lint-dead-variant-def-list-refs
+              variants
+              (selfhost-lint-dead-enum-cleanup-refs cleanup (lint_svec.new)))
+            visible-root
+            allow-report)]
+        [(AstDecl.DefStruct decl-meta name _ cleanup fields)
+          (selfhost-lint-dead-add-visible-node
+            scan
+            path
+            module
+            source
+            (intern-str name)
+            (lint-no-span)
+            (selfhost-lint-dead-field-def-list-refs
+              fields
+              (selfhost-lint-dead-struct-cleanup-refs cleanup (lint_svec.new)))
+            visible-root
+            allow-report)]
+        [(AstDecl.DefStructLifetimes decl-meta name _ _ cleanup fields)
+          (selfhost-lint-dead-add-visible-node
+            scan
+            path
+            module
+            source
+            (intern-str name)
+            (lint-no-span)
+            (selfhost-lint-dead-field-def-list-refs
+              fields
+              (selfhost-lint-dead-struct-cleanup-refs cleanup (lint_svec.new)))
+            visible-root
+            allow-report)]
+        [(AstDecl.Import
+            decl-meta
+            (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
+          (selfhost-lint-dead-refs-to-roots
+            scan
+            (selfhost-lint-dead-expr-refs
+              (ast-node-get call-expr)
+              (lint_svec.new)))]
+        [(AstDecl.Import
+            decl-meta
+            (AstImportSpec.Spec (AstImportKind.MacroDecls call-expr _) _ _ _ _))
+          (selfhost-lint-dead-refs-to-roots
+            scan
+            (selfhost-lint-dead-expr-refs
+              (ast-node-get call-expr)
+              (lint_svec.new)))]
+        [(AstDecl.Import decl-meta _) scan]
+        [(AstDecl.IncludeStr _ _) scan]
+        [(AstDecl.IncludeStrComptime _ _) scan]
+        [(AstDecl.IncludeStrLzss _ _) scan]
+        [(AstDecl.IncludeBin _ _) scan]
+        [(AstDecl.DefDispatch decl-meta name variants)
+          (selfhost-lint-dead-add-visible-node
+            scan
+            path
+            module
+            source
+            (intern-str name)
+            (lint-no-span)
+            (selfhost-lint-dead-dispatch-variant-list-refs
+              variants
+              (lint_svec.new))
+            visible-root
+            allow-report)]
+        [(AstDecl.Test _ body _)
+          (selfhost-lint-dead-refs-to-roots
+            scan
+            (selfhost-lint-dead-expr-refs (ast-node-get body) (lint_svec.new)))]
+        [(AstDecl.Unsafe inner)
+          (selfhost-lint-dead-scan-decl
+            scan
+            path
+            module
+            source
+            (box-get inner)
+            visible-root
+            allow-report)])]
+    (selfhost-lint-dead-refs-to-roots
+      result
+      (selfhost-lint-dead-generated-meta-refs
+        (ast-decl-generated-meta decl)
+        (lint_svec.new)))))
 
 (define (selfhost-lint-dead-scan-decls
   [scan : SelfhostLintDeadScan]
@@ -2716,6 +2724,7 @@
     [(AstDeclListStep.Cons decl rest)
       (match decl
         [(AstDecl.Import
+            decl-meta
             (AstImportSpec.Spec kind import-path expected-module alias _))
           (if (compiler-load-macro-import-kind? kind)
             (selfhost-lint-package-dead-import-paths-from-decls

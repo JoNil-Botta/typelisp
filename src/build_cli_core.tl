@@ -3366,7 +3366,7 @@
   [mode : CompilerBackendMode]
   [collector : BuildPackageTlciCallableCollector]) : BuildPackageTlciCallableCollector
   (match decl
-    [(AstDecl.DefFn name params ret _ metadata)
+    [(AstDecl.DefFn decl-meta name params ret _ metadata)
       (if (= (string.string-length owned-path) 0)
         collector
         (match (ast-fn-metadata-spmd-callable metadata)
@@ -3391,14 +3391,6 @@
                   (struct-get collector items))
                 (struct-get collector error)))]))]
     [(AstDecl.Unsafe inner-box)
-      (build-package-tlci-collect-decl-callable
-        (box-get inner-box)
-        owned-path
-        module
-        package-name
-        mode
-        collector)]
-    [(AstDecl.ComptimeDecl _ inner-box)
       (build-package-tlci-collect-decl-callable
         (box-get inner-box)
         owned-path
@@ -3431,7 +3423,7 @@
   [owned-sources : build_string_i64_map.Map]
   [out : (&mut out cli_svec.Vec)]) : unit
   (match decl
-    [(AstDecl.DefMacro name _ _ _)
+    [(AstDecl.DefMacro decl-meta name _ _ _)
       (if (= (string.string-length owned-path) 0)
         unit
         (build-package-tlci-push-macro-name!
@@ -3442,14 +3434,6 @@
               module)
             (intern-str name))))]
     [(AstDecl.Unsafe inner-box)
-      (build-package-tlci-collect-decl-macro!
-        (box-get inner-box)
-        owned-path
-        module
-        package-name
-        owned-sources
-        out)]
-    [(AstDecl.ComptimeDecl _ inner-box)
       (build-package-tlci-collect-decl-macro!
         (box-get inner-box)
         owned-path

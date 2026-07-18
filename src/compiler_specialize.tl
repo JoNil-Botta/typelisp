@@ -240,13 +240,14 @@
 
 (define (spec-decl-maybe-span [decl : AstDecl]) : SpecMaybeSourceSpan
   (match decl
-    [(AstDecl.Def _ _ body) (spec-expr-maybe-span (ast-node-get body))]
-    [(AstDecl.DefFn _ _ _ body _) (spec-expr-maybe-span (ast-node-get body))]
-    [(AstDecl.DefMacro _ _ _ body) (spec-expr-maybe-span (ast-node-get body))]
+    [(AstDecl.Def decl-meta _ _ body)
+      (spec-expr-maybe-span (ast-node-get body))]
+    [(AstDecl.DefFn decl-meta _ _ _ body _)
+      (spec-expr-maybe-span (ast-node-get body))]
+    [(AstDecl.DefMacro decl-meta _ _ _ body)
+      (spec-expr-maybe-span (ast-node-get body))]
     [(AstDecl.Test _ _ span) (SpecMaybeSourceSpan.Some span)]
     [(AstDecl.Unsafe inner-box) (spec-decl-maybe-span (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (spec-decl-maybe-span (box-get template-box))]
     [_ (SpecMaybeSourceSpan.None)]))
 
 (define (spec-generated-origin-diagnostic
@@ -504,7 +505,7 @@
               (match decl
                 [(AstDecl.Unsafe inner-box)
                   (match (box-get inner-box)
-                    [(AstDecl.DefFn name params ret body-box _)
+                    [(AstDecl.DefFn decl-meta name params ret body-box _)
                       (if (spec-param-list-has-comptime? params)
                         (set!
                           reversed
@@ -517,7 +518,7 @@
                             reversed))
                         unit)]
                     [_ unit])]
-                [(AstDecl.DefFn name params ret body-box _)
+                [(AstDecl.DefFn decl-meta name params ret body-box _)
                   (if (spec-param-list-has-comptime? params)
                     (set!
                       reversed
@@ -909,18 +910,17 @@
 
 (define (gen-decl-visible-name-id [decl : AstDecl]) : SpecMaybeId
   (match decl
-    [(AstDecl.Def name _ _) (SpecMaybeId.Some name)]
-    [(AstDecl.DefFn name _ _ _ _) (SpecMaybeId.Some name)]
-    [(AstDecl.Extern name _ _ _) (SpecMaybeId.Some name)]
-    [(AstDecl.DefDispatch name _) (SpecMaybeId.Some name)]
-    [(AstDecl.DefEnum name _ _) (SpecMaybeId.Some name)]
-    [(AstDecl.DefEnumLifetimes name _ _ _) (SpecMaybeId.Some name)]
-    [(AstDecl.DefStruct name _ _ _) (SpecMaybeId.Some name)]
-    [(AstDecl.DefStructLifetimes name _ _ _ _) (SpecMaybeId.Some name)]
-    [(AstDecl.DefMacro name _ _ _) (SpecMaybeId.Some name)]
+    [(AstDecl.Def decl-meta name _ _) (SpecMaybeId.Some name)]
+    [(AstDecl.DefFn decl-meta name _ _ _ _) (SpecMaybeId.Some name)]
+    [(AstDecl.Extern decl-meta name _ _ _) (SpecMaybeId.Some name)]
+    [(AstDecl.DefDispatch decl-meta name _) (SpecMaybeId.Some name)]
+    [(AstDecl.DefEnum decl-meta name _ _) (SpecMaybeId.Some name)]
+    [(AstDecl.DefEnumLifetimes decl-meta name _ _ _) (SpecMaybeId.Some name)]
+    [(AstDecl.DefStruct decl-meta name _ _ _) (SpecMaybeId.Some name)]
+    [(AstDecl.DefStructLifetimes decl-meta name _ _ _ _)
+      (SpecMaybeId.Some name)]
+    [(AstDecl.DefMacro decl-meta name _ _ _) (SpecMaybeId.Some name)]
     [(AstDecl.Unsafe inner-box) (gen-decl-visible-name-id (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ inner-box)
-      (gen-decl-visible-name-id (box-get inner-box))]
     [_ (SpecMaybeId.None)]))
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
@@ -1333,11 +1333,11 @@
 
 (define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
   (match a
-    [(AstDecl.Def a-name a-ty a-value-box)
+    [(AstDecl.Def decl-meta a-name a-ty a-value-box)
       (let
         [a-value : AstExpr (ast-node-get a-value-box)]
         (match b
-          [(AstDecl.Def b-name b-ty b-value-box)
+          [(AstDecl.Def decl-meta b-name b-ty b-value-box)
             (let
               [b-value : AstExpr (ast-node-get b-value-box)]
               (and
@@ -1345,11 +1345,11 @@
                 (gen-maybe-type-eq? a-ty b-ty)
                 (gen-expr-eq? a-value b-value)))]
           [_ false]))]
-    [(AstDecl.DefFn a-name a-params a-ret a-body-box a-metadata)
+    [(AstDecl.DefFn decl-meta a-name a-params a-ret a-body-box a-metadata)
       (let
         [a-body : AstExpr (ast-node-get a-body-box)]
         (match b
-          [(AstDecl.DefFn b-name b-params b-ret b-body-box b-metadata)
+          [(AstDecl.DefFn decl-meta b-name b-params b-ret b-body-box b-metadata)
             (let
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
@@ -1359,35 +1359,52 @@
                 (gen-expr-eq? a-body b-body)
                 (gen-fn-metadata-eq? a-metadata b-metadata)))]
           [_ false]))]
-    [(AstDecl.DefEnum a-name a-cleanup a-variants)
+    [(AstDecl.DefEnum decl-meta a-name a-cleanup a-variants)
       (match b
-        [(AstDecl.DefEnum b-name b-cleanup b-variants)
+        [(AstDecl.DefEnum decl-meta b-name b-cleanup b-variants)
           (and
             (= a-name b-name)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
-    [(AstDecl.DefEnumLifetimes a-name a-lifetimes a-cleanup a-variants)
+    [(AstDecl.DefEnumLifetimes
+        decl-meta
+        a-name
+        a-lifetimes
+        a-cleanup
+        a-variants)
       (match b
-        [(AstDecl.DefEnumLifetimes b-name b-lifetimes b-cleanup b-variants)
+        [(AstDecl.DefEnumLifetimes
+            decl-meta
+            b-name
+            b-lifetimes
+            b-cleanup
+            b-variants)
           (and
             (= a-name b-name)
             (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
-    [(AstDecl.DefStruct a-name a-repr a-cleanup a-fields)
+    [(AstDecl.DefStruct decl-meta a-name a-repr a-cleanup a-fields)
       (match b
-        [(AstDecl.DefStruct b-name b-repr b-cleanup b-fields)
+        [(AstDecl.DefStruct decl-meta b-name b-repr b-cleanup b-fields)
           (and
             (= a-name b-name)
             (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq? a-fields b-fields))]
         [_ false])]
-    [(AstDecl.DefStructLifetimes a-name a-lifetimes a-repr a-cleanup a-fields)
+    [(AstDecl.DefStructLifetimes
+        decl-meta
+        a-name
+        a-lifetimes
+        a-repr
+        a-cleanup
+        a-fields)
       (match b
         [(AstDecl.DefStructLifetimes
+            _
             b-name
             b-lifetimes
             b-repr
@@ -1400,11 +1417,11 @@
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq? a-fields b-fields))]
         [_ false])]
-    [(AstDecl.DefMacro a-name a-params a-ret a-body-box)
+    [(AstDecl.DefMacro decl-meta a-name a-params a-ret a-body-box)
       (let
         [a-body : AstExpr (ast-node-get a-body-box)]
         (match b
-          [(AstDecl.DefMacro b-name b-params b-ret b-body-box)
+          [(AstDecl.DefMacro decl-meta b-name b-params b-ret b-body-box)
             (let
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
@@ -1413,9 +1430,9 @@
                 (ctfe-type-eq a-ret b-ret)
                 (gen-expr-eq? a-body b-body)))]
           [_ false]))]
-    [(AstDecl.Import a-spec)
+    [(AstDecl.Import decl-meta a-spec)
       (match b
-        [(AstDecl.Import b-spec) (gen-import-spec-eq? a-spec b-spec)]
+        [(AstDecl.Import decl-meta b-spec) (gen-import-spec-eq? a-spec b-spec)]
         [_ false])]
     [(AstDecl.IncludeStr a-name a-path)
       (match b
@@ -1457,13 +1474,6 @@
             (= a-name b-name)
             (gen-decl-list-eq? (box-get a-body-box) (box-get b-body-box)))]
         [_ false])]
-    [(AstDecl.ComptimeDecl _ a-inner-box)
-      (let
-        [a-inner : AstDecl (box-get a-inner-box)]
-        (match b
-          [(AstDecl.ComptimeDecl _ b-inner-box)
-            (gen-decl-eq? a-inner (box-get b-inner-box))]
-          [_ (gen-decl-eq? a-inner b)]))]
     [(AstDecl.Unsafe a-inner-box)
       (let
         [a-inner : AstDecl (box-get a-inner-box)]
@@ -1683,6 +1693,9 @@
     (ResultGenKey.Ok meta-key (ctfe-fuel-limit))
     (gen-key-exprs args env (ctfe-fuel-limit))))
 
+(define (gen-decl-runtime-template [decl : AstDecl]) : AstDecl
+  (ast-decl-with-meta ast-decl-meta-runtime decl))
+
 (define (gen-rewrite-decl
   [decl : AstDecl]
   [module-id : i64]
@@ -1691,58 +1704,55 @@
   (match decl
     [(AstDecl.Module name)
       (ResultGenDecl.Ok (gen-single-decl-list decl) registry name)]
-    [(AstDecl.ComptimeDecl meta template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (match meta
-          [(AstGeneratedDeclMeta.No)
-            (ResultGenDecl.Ok (gen-single-decl-list decl) registry module-id)]
-          [(AstGeneratedDeclMeta.Some generator item args meta-key)
-            (if (not (gen-metadata-key-normalizable? meta-key))
-              (ResultGenDecl.Ok (gen-single-decl-list decl) registry module-id)
-              (match (gen-decl-visible-name-id template)
-                [(SpecMaybeId.None)
+    [_
+      (match (ast-decl-generated-meta decl)
+        [(AstGeneratedDeclMeta.No)
+          (ResultGenDecl.Ok (gen-single-decl-list decl) registry module-id)]
+        [(AstGeneratedDeclMeta.Some generator item args meta-key)
+          (if (not (gen-metadata-key-normalizable? meta-key))
+            (ResultGenDecl.Ok (gen-single-decl-list decl) registry module-id)
+            (match (gen-decl-visible-name-id (gen-decl-runtime-template decl))
+              [(SpecMaybeId.None)
+                (ResultGenDecl.Err
+                  (box
+                    (spec-generated-context-diagnostic
+                      (spec-generated-origin-diagnostic
+                        (gen-decl-runtime-template decl)
+                        args
+                        "generated-decl: generated payload must declare a visible item")
+                      generator
+                      item
+                      meta-key)))]
+              [(SpecMaybeId.Some actual-id)
+                (if (not (string.eq item (intern-str actual-id)))
                   (ResultGenDecl.Err
                     (box
-                      (spec-generated-context-diagnostic
-                        (spec-generated-origin-diagnostic
-                          template
-                          args
-                          "generated-decl: generated payload must declare a visible item")
+                      (gen-item-mismatch-diag
+                        (gen-decl-runtime-template decl)
+                        args
                         generator
                         item
-                        meta-key)))]
-                [(SpecMaybeId.Some actual-id)
-                  (if (not (string.eq item (intern-str actual-id)))
-                    (ResultGenDecl.Err
-                      (box
-                        (gen-item-mismatch-diag
-                          template
-                          args
-                          generator
-                          item
-                          (intern-str actual-id)
-                          meta-key)))
-                    (match (gen-metadata-arg-key meta-key args env)
-                      [(ResultGenKey.Ok arg-key _)
-                        (gen-register-generated-decl
-                          template
-                          module-id
-                          actual-id
-                          generator
-                          item
-                          args
-                          arg-key
-                          registry)]
-                      [(ResultGenKey.Err diag)
-                        (ResultGenDecl.Err
-                          (box
-                            (spec-generated-context-diagnostic
-                              (box-get diag)
-                              generator
-                              item
-                              meta-key)))]))]))]))]
-    [_ (ResultGenDecl.Ok (gen-single-decl-list decl) registry module-id)]))
+                        (intern-str actual-id)
+                        meta-key)))
+                  (match (gen-metadata-arg-key meta-key args env)
+                    [(ResultGenKey.Ok arg-key _)
+                      (gen-register-generated-decl
+                        (gen-decl-runtime-template decl)
+                        module-id
+                        actual-id
+                        generator
+                        item
+                        args
+                        arg-key
+                        registry)]
+                    [(ResultGenKey.Err diag)
+                      (ResultGenDecl.Err
+                        (box
+                          (spec-generated-context-diagnostic
+                            (box-get diag)
+                            generator
+                            item
+                            meta-key)))]))]))])]))
 
 (define (gen-rewrite-decls
   [decls : AstDeclList]
@@ -2032,15 +2042,9 @@
       result)))
 
 (define (gen-decl-needs-normalize? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDecl.Unsafe inner-box) (gen-decl-needs-normalize? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl meta template-box)
-      (match meta
-        [(AstGeneratedDeclMeta.Some _ _ _ key)
-          (gen-metadata-key-normalizable? key)]
-        [(AstGeneratedDeclMeta.No)
-          (gen-decl-needs-normalize? (box-get template-box))])]
-    [_ false]))
+  (match (ast-decl-generated-meta decl)
+    [(AstGeneratedDeclMeta.Some _ _ _ key) (gen-metadata-key-normalizable? key)]
+    [(AstGeneratedDeclMeta.No) false]))
 
 (define (gen-decls-needed? [decls : AstDeclList]) : bool
   (let
@@ -5564,7 +5568,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDecl
   (match decl
-    [(AstDecl.Def name ty value-box)
+    [(AstDecl.Def decl-meta name ty value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr value templates state)
@@ -5573,7 +5577,7 @@
               (SpecMaybeDecl.Some (ast-decl-def-id name ty rewritten))
               state2)]
           [(ResultSpecExpr.Err diag) (ResultSpecDecl.Err diag)]))]
-    [(AstDecl.DefFn name params ret body-box metadata)
+    [(AstDecl.DefFn decl-meta name params ret body-box metadata)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (if (spec-param-list-has-comptime? params)
@@ -5606,7 +5610,7 @@
               [(SpecMaybeDecl.None)
                 (ResultSpecDecl.Ok SpecMaybeDecl.None state2)])]
           [(ResultSpecDecl.Err diag) (ResultSpecDecl.Err diag)]))]
-    [(AstDecl.DefMacro name params ret body-box)
+    [(AstDecl.DefMacro decl-meta name params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match (spec-rewrite-expr body templates state)
@@ -5910,38 +5914,11 @@
     [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Unsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDecl.DefFn fn-name _ _ _ _)
-                  (if (string.eq (intern-str fn-name) name)
-                    true
-                    (compiler-specialize-decl-list-defines? rest name))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (let
-                    [template : AstDecl (box-get template-box)]
-                    (match template
-                      [(AstDecl.DefFn fn-name _ _ _ _)
-                        (if (string.eq (intern-str fn-name) name)
-                          true
-                          (compiler-specialize-decl-list-defines? rest name))]
-                      [_ (compiler-specialize-decl-list-defines? rest name)]))]
-                [_ (compiler-specialize-decl-list-defines? rest name)]))]
-          [(AstDecl.DefFn fn-name _ _ _ _)
+        (match (ast-decl-unwrapped decl)
+          [(AstDecl.DefFn decl-meta fn-name _ _ _ _)
             (if (string.eq (intern-str fn-name) name)
               true
               (compiler-specialize-decl-list-defines? rest name))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefFn fn-name _ _ _ _)
-                  (if (string.eq (intern-str fn-name) name)
-                    true
-                    (compiler-specialize-decl-list-defines? rest name))]
-                [_ (compiler-specialize-decl-list-defines? rest name)]))]
           [_ (compiler-specialize-decl-list-defines? rest name)]))]))
 
 (define (compiler-specialize-type-param-source) : String
@@ -6107,40 +6084,11 @@
     [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Unsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDecl.DefFn fn-name _ _ _ _)
-                  (if (string.eq (intern-str fn-name) name)
-                    (+ 1 (compiler-specialize-decl-list-count-defs rest name))
-                    (compiler-specialize-decl-list-count-defs rest name))]
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (let
-                    [template : AstDecl (box-get template-box)]
-                    (match template
-                      [(AstDecl.DefFn fn-name _ _ _ _)
-                        (if (string.eq (intern-str fn-name) name)
-                          (+
-                            1
-                            (compiler-specialize-decl-list-count-defs rest name))
-                          (compiler-specialize-decl-list-count-defs rest name))]
-                      [_ (compiler-specialize-decl-list-count-defs rest name)]))]
-                [_ (compiler-specialize-decl-list-count-defs rest name)]))]
-          [(AstDecl.DefFn fn-name _ _ _ _)
+        (match (ast-decl-unwrapped decl)
+          [(AstDecl.DefFn decl-meta fn-name _ _ _ _)
             (if (string.eq (intern-str fn-name) name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
-          [(AstDecl.ComptimeDecl _ inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
-                [(AstDecl.DefFn fn-name _ _ _ _)
-                  (if (string.eq (intern-str fn-name) name)
-                    (+ 1 (compiler-specialize-decl-list-count-defs rest name))
-                    (compiler-specialize-decl-list-count-defs rest name))]
-                [_ (compiler-specialize-decl-list-count-defs rest name)]))]
           [_ (compiler-specialize-decl-list-count-defs rest name)]))]))
 
 (define (compiler-specialize-decl-list-count-visible
@@ -6648,23 +6596,20 @@
             [(AstProgram.Program decls-box)
               (match (ast-decl-list-step (box-get decls-box))
                 [(AstDeclListStep.Cons decl _)
-                  (match decl
-                    [(AstDecl.ComptimeDecl meta template-box)
-                      (and
-                        (match meta
-                          [(AstGeneratedDeclMeta.Some generator item _ key)
-                            (and
-                              (string.eq generator "sample-family")
-                              (string.eq item "Box_String")
-                              (string.eq
-                                key
-                                (compiler-generated-decl-expected-string-key)))]
-                          [(AstGeneratedDeclMeta.No) false])
-                        (match (box-get template-box)
-                          [(AstDecl.DefStruct name _ _ _)
-                            (string.eq (intern-str name) "Box_String")]
-                          [_ false]))]
-                    [_ false])]
+                  (and
+                    (match (ast-decl-generated-meta decl)
+                      [(AstGeneratedDeclMeta.Some generator item _ key)
+                        (and
+                          (string.eq generator "sample-family")
+                          (string.eq item "Box_String")
+                          (string.eq
+                            key
+                            (compiler-generated-decl-expected-string-key)))]
+                      [(AstGeneratedDeclMeta.No) false])
+                    (match decl
+                      [(AstDecl.DefStruct decl-meta name _ _ _)
+                        (string.eq (intern-str name) "Box_String")]
+                      [_ false]))]
                 [(AstDeclListStep.Nil) false])])]
         [(ResultSpecProgram.Err _) false])]
     [(ResultAstProgram.Err _) false]))

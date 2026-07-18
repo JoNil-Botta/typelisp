@@ -608,9 +608,9 @@
 
 (define (tltest-main-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Def name _ _) (= name (tltest-main-id))]
-    [(AstDecl.DefFn name _ _ _ _) (= name (tltest-main-id))]
-    [(AstDecl.DefMacro _ _ _ _) false]
+    [(AstDecl.Def decl-meta name _ _) (= name (tltest-main-id))]
+    [(AstDecl.DefFn decl-meta name _ _ _ _) (= name (tltest-main-id))]
+    [(AstDecl.DefMacro decl-meta _ _ _ _) false]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -701,7 +701,7 @@
                         (&mut runtime-paths-out)
                         decl-path
                         decl-owner-id))]
-                  [(AstDecl.Import _)
+                  [(AstDecl.Import decl-meta _)
                     (begin
                       (ast-decl-list-push (&mut runtime-decls-out) decl)
                       (ast-decl-path-list-push-with-owner-id
@@ -1180,15 +1180,9 @@
           (compiler-symbol-name-id-key leaf-id))))))
 
 (define (tltest-generated-comptime-decl? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDecl.ComptimeDecl meta inner-box)
-      (match meta
-        [(AstGeneratedDeclMeta.Some _ _ _ _) true]
-        [(AstGeneratedDeclMeta.No)
-          (tltest-generated-comptime-decl? (box-get inner-box))])]
-    [(AstDecl.Unsafe inner-box)
-      (tltest-generated-comptime-decl? (box-get inner-box))]
-    [_ false]))
+  (match (ast-decl-generated-meta decl)
+    [(AstGeneratedDeclMeta.Some _ _ _ _) true]
+    [(AstGeneratedDeclMeta.No) false]))
 
 (define (tltest-reach-mark-string-snapshot-runtime
   [names : tltest_name_map.Map]) : tltest_name_map.Map
@@ -1697,15 +1691,11 @@
   [decl : AstDecl]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match decl
-    [(AstDecl.DefFn name _ _ _ _)
+    [(AstDecl.DefFn decl-meta name _ _ _ _)
       (if (tltest-runtime-string-helper-impl-name-id? name)
         (tltest-reach-mark-name-id names name)
         names)]
     [(AstDecl.Unsafe inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (tltest-reach-mark-runtime-helper-root inner names))]
-    [(AstDecl.ComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-runtime-helper-root inner names))]
@@ -1815,13 +1805,13 @@
 
 (define (tltest-reach-mark-decl [decl : AstDecl] [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match decl
-    [(AstDecl.Def name _ expr-box)
+    [(AstDecl.Def decl-meta name _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (if (tltest-reachable-name-marked? names name)
           (tltest-reach-mark-expr expr names)
           names))]
-    [(AstDecl.DefFn name _ _ body-box metadata)
+    [(AstDecl.DefFn decl-meta name _ _ body-box metadata)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match (ast-fn-metadata-export metadata)
@@ -1831,7 +1821,7 @@
             (if (tltest-reachable-name-marked? names name)
               (tltest-reach-mark-expr body names)
               names)]))]
-    [(AstDecl.DefMacro _ _ _ body-box)
+    [(AstDecl.DefMacro decl-meta _ _ _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (tltest-reach-mark-expr body names))]
@@ -1839,23 +1829,19 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reach-mark-decl inner names))]
-    [(AstDecl.ComptimeDecl _ inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (tltest-reach-mark-decl inner names))]
-    [(AstDecl.DefStruct _ _ cleanup fields)
+    [(AstDecl.DefStruct decl-meta _ _ cleanup fields)
       (tltest-reach-mark-field-cleanups
         fields
         (tltest-reach-mark-struct-cleanup cleanup names))]
-    [(AstDecl.DefStructLifetimes _ _ _ cleanup fields)
+    [(AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup fields)
       (tltest-reach-mark-field-cleanups
         fields
         (tltest-reach-mark-struct-cleanup cleanup names))]
-    [(AstDecl.DefEnum _ cleanup variants)
+    [(AstDecl.DefEnum decl-meta _ cleanup variants)
       (tltest-reach-mark-variant-cleanups
         variants
         (tltest-reach-mark-enum-cleanup cleanup names))]
-    [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
+    [(AstDecl.DefEnumLifetimes decl-meta _ _ cleanup variants)
       (tltest-reach-mark-variant-cleanups
         variants
         (tltest-reach-mark-enum-cleanup cleanup names))]
@@ -1918,20 +1904,18 @@
   [decl : AstDecl]
   [names : tltest_name_map.Map]) : bool
   (match decl
-    [(AstDecl.Def name _ _) (tltest-reachable-name-marked? names name)]
-    [(AstDecl.DefFn name _ _ _ metadata)
+    [(AstDecl.Def decl-meta name _ _)
+      (tltest-reachable-name-marked? names name)]
+    [(AstDecl.DefFn decl-meta name _ _ _ metadata)
       (let
         [marked : bool (tltest-reachable-name-marked? names name)]
         (match (ast-fn-metadata-export metadata)
           [(AstFnExport.Export _) true]
           [(AstFnExport.No) marked]))]
-    [(AstDecl.Extern name _ _ _) (tltest-reachable-name-marked? names name)]
-    [(AstDecl.DefMacro _ _ _ _) true]
+    [(AstDecl.Extern decl-meta name _ _ _)
+      (tltest-reachable-name-marked? names name)]
+    [(AstDecl.DefMacro decl-meta _ _ _ _) true]
     [(AstDecl.Unsafe inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (tltest-reachable-runtime-decl? inner names))]
-    [(AstDecl.ComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-reachable-runtime-decl? inner names))]
@@ -2296,15 +2280,11 @@
 
 (define (tltest-decl-name [decl : AstDecl]) : String
   (match decl
-    [(AstDecl.Def name _ _) (intern-str name)]
-    [(AstDecl.DefFn name _ _ _ _) (intern-str name)]
-    [(AstDecl.DefMacro name _ _ _) (intern-str name)]
-    [(AstDecl.Extern name _ _ _) (intern-str name)]
+    [(AstDecl.Def decl-meta name _ _) (intern-str name)]
+    [(AstDecl.DefFn decl-meta name _ _ _ _) (intern-str name)]
+    [(AstDecl.DefMacro decl-meta name _ _ _) (intern-str name)]
+    [(AstDecl.Extern decl-meta name _ _ _) (intern-str name)]
     [(AstDecl.Unsafe inner-box)
-      (let
-        [inner : AstDecl (box-get inner-box)]
-        (tltest-decl-name inner))]
-    [(AstDecl.ComptimeDecl _ inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tltest-decl-name inner))]
@@ -2347,6 +2327,7 @@
         (ast-node-push (AstExpr.Literal (AstLiteral.Bool true))))]
     [source-import : AstDecl
       (AstDecl.Import
+        ast-decl-meta-runtime
         (AstImportSpec.Spec
           (AstImportKind.Module)
           dep-path
@@ -2711,6 +2692,7 @@
 (define (tltest-import-alias-preserved? [decl : AstDecl]) : bool
   (match decl
     [(AstDecl.Import
+        decl-meta
         (AstImportSpec.Spec
           _
           _
@@ -2729,6 +2711,7 @@
     [test-id : i64 (ci.intern-generated-name "uses-qualified-macro-alias")]
     [import-decl : AstDecl
       (AstDecl.Import
+        ast-decl-meta-runtime
         (AstImportSpec.Spec
           (AstImportKind.Path)
           "stdlib/core_macros.tl"

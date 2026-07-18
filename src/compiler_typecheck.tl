@@ -1346,19 +1346,19 @@
                 (ast-decl-list-get (& decls) index (ast-decl-fallback))]
               (begin
                 (match decl
-                  [(AstDecl.DefStruct candidate _ _ _)
+                  [(AstDecl.DefStruct decl-meta candidate _ _ _)
                     (if (string.eq (tc-env-key-name-text candidate) name)
                       (set! name-id candidate)
                       unit)]
-                  [(AstDecl.DefStructLifetimes candidate _ _ _ _)
+                  [(AstDecl.DefStructLifetimes decl-meta candidate _ _ _ _)
                     (if (string.eq (tc-env-key-name-text candidate) name)
                       (set! name-id candidate)
                       unit)]
-                  [(AstDecl.DefEnum candidate _ _)
+                  [(AstDecl.DefEnum decl-meta candidate _ _)
                     (if (string.eq (tc-env-key-name-text candidate) name)
                       (set! name-id candidate)
                       unit)]
-                  [(AstDecl.DefEnumLifetimes candidate _ _ _)
+                  [(AstDecl.DefEnumLifetimes decl-meta candidate _ _ _)
                     (if (string.eq (tc-env-key-name-text candidate) name)
                       (set! name-id candidate)
                       unit)]
@@ -10082,12 +10082,17 @@
             [decls : AstDeclList (box-get decls-box)]
             [decl : AstDecl (ast-decl-list-get (& decls) 0 (ast-decl-fallback))]
             (match decl
-              [(AstDecl.DefStruct name _ cleanup fields)
+              [(AstDecl.DefStruct decl-meta name _ cleanup fields)
                 (begin
                   (array-set!
                     (struct-get decls slots)
                     (struct-get decls offset)
-                    (AstDecl.DefStruct name (AstStructRepr.C) cleanup fields))
+                    (AstDecl.DefStruct
+                      ast-decl-meta-runtime
+                      name
+                      (AstStructRepr.C)
+                      cleanup
+                      fields))
                   (match (typecheck-compiler-program program)
                     [(ResultCompilerTypecheck.Err diag)
                       (let

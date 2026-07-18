@@ -1,1 +1,2 @@
-(define loaded-answer : i64 42)
+(define loaded-answer : i64
+  42)

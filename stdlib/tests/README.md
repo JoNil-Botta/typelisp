@@ -123,10 +123,11 @@ Inline stdlib coverage:
   end-to-end parse/stringify behavior for invalid input, escapes, nesting,
   arrays, objects, duplicate-key lookup, and number forms.
 - `env_api.tl` owns standalone tests for missing, empty, and present environment
-  variables, host-separator PATH splitting/joining, vector-backed PATH
-  split/list/join helpers, and explicit Windows `;` path-list behavior. The
-  inline-test verifier sets the `TYPELISP_STDLIB_TEST_*` environment variables
-  used by this coverage.
+  variables; process-local set/replace/empty/unset round trips and invalid-name
+  rejection; host-separator PATH splitting/joining; vector-backed PATH
+  split/list/join helpers; and explicit Windows `;` path-list behavior. The
+  inline-test verifier sets the read-only `TYPELISP_STDLIB_TEST_*` fixtures used
+  by this coverage.
 - `random.tl` owns inline tests for deterministic seed normalization and
   MINSTD sequences, bounded draws, invalid bounds, list/array/vector
   weighted-index edge cases, zero-weight skipping, storage parity, stable picks

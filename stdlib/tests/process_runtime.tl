@@ -116,6 +116,20 @@
     "TYPELISP_STDLIB_TEST_VALUE"
     "process-override"))
 
+;: Read the process environment without a command-local override.
+(define (process-runtime-inherited-mutation-command) : process.ProcessCommand
+  (if (string.eq (env.path-list-separator) ";")
+    (process.command
+      "C:\\Windows\\System32\\cmd.exe"
+      (process.args-cons
+        "/C"
+        (process.args-cons
+          "echo %TYPELISP_PROCESS_RUNTIME_MUTATED%"
+          (process.args-empty))))
+    (process.command
+      "/usr/bin/printenv"
+      (process.args-single "TYPELISP_PROCESS_RUNTIME_MUTATED"))))
+
 (define (process-runtime-env-vec-command) : process.ProcessCommand
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
@@ -246,6 +260,18 @@
 (define (main) : i64
   (if (string.eq (env.path-list-separator) ";")
     (begin
+      (test.assert-true
+        (env.set! "TYPELISP_PROCESS_RUNTIME_MUTATED" "inherited-mutation")
+        "windows process inherited env set")
+      (assert-process-ok
+        (process.output (process-runtime-inherited-mutation-command))
+        0
+        "inherited-mutation\r\n"
+        ""
+        "windows process inherits env mutation")
+      (test.assert-true
+        (env.unset! "TYPELISP_PROCESS_RUNTIME_MUTATED")
+        "windows process inherited env unset")
       (assert-process-ok
         (process.output (process-runtime-windows-command))
         7
@@ -281,6 +307,18 @@
         "process: async child handles are not supported by this runtime")
       42)
     (begin
+      (test.assert-true
+        (env.set! "TYPELISP_PROCESS_RUNTIME_MUTATED" "inherited-mutation")
+        "linux process inherited env set")
+      (assert-process-ok
+        (process.output (process-runtime-inherited-mutation-command))
+        0
+        "inherited-mutation\n"
+        ""
+        "linux process inherits env mutation")
+      (test.assert-true
+        (env.unset! "TYPELISP_PROCESS_RUNTIME_MUTATED")
+        "linux process inherited env unset")
       (assert-process-ok
         (process.output (process-runtime-simple-command))
         0

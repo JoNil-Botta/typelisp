@@ -58157,13 +58157,76 @@
             empty-state
             (+ slot 1)))))))
 
+;; Cheap at-least-two-loads pre-scan for the cross-block load GVN
+;; (allocation-free, exits at the second load). The pass can only rewrite a
+;; Load whose address matches an earlier dominating load --
+;; opt-load-cse-dispatch returns every non-Load instruction unchanged and all
+;; load-table value entries originate from loads -- so with fewer than two
+;; Load instructions in the function no lookup can ever hit, the materialized
+;; output equals the input, and the whole-function empty state plus the three
+;; per-block arrays are wasted work.
+(define (opt-load-gvn-instr-load? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Load _ _ _) true]
+    [_ false]))
+
+(define (opt-load-gvn-instr-seq-loads-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [seen : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    seen
+    (if (>= seen 2)
+      seen
+      (opt-load-gvn-instr-seq-loads-from
+        instrs
+        (+ index 1)
+        (if (opt-load-gvn-instr-load? (compiler-ir-instr-seq-ref instrs index))
+          (+ seen 1)
+          seen)))))
+
+(define (opt-load-gvn-block-seq-two-loads?
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [seen : i64]) : bool
+  (if (>= seen 2)
+    true
+    (if (>= index (compiler-ir-block-seq-count blocks))
+      false
+      (match (compiler-ir-block-seq-ref blocks index)
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-load-gvn-block-seq-two-loads?
+            blocks
+            (+ index 1)
+            (opt-load-gvn-instr-seq-loads-from instrs 0 seen))]))))
+
+(define (opt-load-gvn-blocks-have-two-loads?
+  [blocks : CompilerIrBlockList]
+  [seen : i64]) : bool
+  (if (>= seen 2)
+    true
+    (match blocks
+      [(CompilerIrBlockList.Nil) false]
+      [(CompilerIrBlockList.Cons block rest)
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-load-gvn-blocks-have-two-loads?
+              (box-get rest)
+              (opt-load-gvn-instr-seq-loads-from instrs 0 seen))])]
+      [(CompilerIrBlockList.Array seq)
+        (opt-load-gvn-block-seq-two-loads? seq 0 seen)])))
+
 (define (opt-load-gvn-blocks-with-context
   [context : OptCfgContext]
   [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (let
+  (if (not (opt-load-gvn-blocks-have-two-loads? blocks 0))
+    ;; Fewer than two loads: no rewrite can fire, so the pass output equals
+    ;; the input; skip the empty state and the per-block arrays.
+    blocks
+    (let
     [index : OptCfgIndex (struct-get context index)]
     [count : i64 (opt-cfg-index-block-count index)]
     [exit-states : (Array OptMaybeLoadCseState)
@@ -58191,7 +58254,7 @@
         out
         empty-state
         0)
-      (opt-gvn-materialize-blocks (struct-get context doms) out blocks))))
+      (opt-gvn-materialize-blocks (struct-get context doms) out blocks)))))
 
 ;; --- noalias fact model self-test -------------------------------------------
 (define (opt-alias-test-unique-instrs) : CompilerIrInstrList

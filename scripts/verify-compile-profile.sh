@@ -624,6 +624,9 @@ assert_profile_live_counter_eq_in \
     8 \
     "$CONCAT_STDOUT" \
     "$CONCAT_STDERR"
+assert_contains "$CONCAT_STDERR" "compile-profile|intern.render_calls|"
+assert_contains "$CONCAT_STDERR" "compile-profile-detail|intern.phase.render|"
+assert_contains "$CONCAT_STDERR" "compile-profile-detail|intern.lower_phase.render|"
 
 echo "[compile-profile] check macro detail fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \

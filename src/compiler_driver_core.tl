@@ -787,6 +787,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-driver-profile-phase-start-intern-render : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-driver-profile-phase-start-intern-lookup : i64
     0))
 (cfg
@@ -945,6 +949,9 @@
         compiler-driver-profile-phase-start-intern-generated
         (ci.intern-profile-generated-value))
       (set!
+        compiler-driver-profile-phase-start-intern-render
+        (ci.intern-profile-render-value))
+      (set!
         compiler-driver-profile-phase-start-intern-lookup
         (ci.intern-profile-lookup-value))
       (set!
@@ -963,6 +970,7 @@
       [end-intern : i64 (ci.intern-profile-intern-value)]
       [end-intern-slice : i64 (ci.intern-profile-slice-value)]
       [end-intern-generated : i64 (ci.intern-profile-generated-value)]
+      [end-intern-render : i64 (ci.intern-profile-render-value)]
       [end-intern-lookup : i64 (ci.intern-profile-lookup-value)]
       [end-intern-pool-len : i64 (ci.intern-pool-len)]
       [peak-delta : i64
@@ -1026,6 +1034,22 @@
                       (-
                         end-intern-generated
                         compiler-driver-profile-phase-start-intern-generated))
+                    "\n"))))))
+        (cfg
+          compile-profile-summary
+          unit
+          (io.print-error
+            (string.append
+              "compile-profile-detail|intern.phase.render|"
+              (string.append
+                phase
+                (string.append
+                  "|"
+                  (string.append
+                    (string.int->string
+                      (-
+                        end-intern-render
+                        compiler-driver-profile-phase-start-intern-render))
                     "\n"))))))
         (cfg
           compile-profile-summary
@@ -1132,6 +1156,9 @@
         (compiler-driver-profile-intern-line
           "generated_allocations"
           (ci.intern-profile-generated-value))
+        (compiler-driver-profile-intern-line
+          "render_calls"
+          (ci.intern-profile-render-value))
         (compiler-driver-profile-intern-line
           "lookup_calls"
           (ci.intern-profile-lookup-value))

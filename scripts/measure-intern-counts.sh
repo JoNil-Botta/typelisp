@@ -4,9 +4,10 @@
 # Builds a --cfg compile-profile compiler from the CURRENT source with a seed
 # compiler, links it, runs it compiling src/main.tl, and prints the
 # `compile-profile|intern.*` counter rows (hash_words / intern_calls /
-# slice_calls / generated_allocations / lookup_calls). These counts are deterministic for a given
-# (compiler, input), so they isolate redundant-interning changes from wall-clock
-# noise. Not a CI gate -- a local iteration metric.
+# slice_calls / generated_allocations / render_calls / lookup_calls). These
+# counts are deterministic for a given (compiler, input), so they isolate
+# redundant interning and rendering changes from wall-clock noise. Not a CI
+# gate -- a local iteration metric.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -61,10 +62,16 @@ grep '^compile-profile-detail|intern.phase' "$OUT/profile.stderr" \
             metric = "direct"
             if ($2 == "intern.phase.slice") metric = "slice"
             if ($2 == "intern.phase.generated") metric = "generated"
+            if ($2 == "intern.phase.render") metric = "render"
             if ($2 == "intern.phase.pool") metric = "pool-growth"
             if ($2 == "intern.phase.lookup") metric = "lookup"
+            if ($2 == "intern.phase.invalid_str_ids") metric = "invalid-render"
             printf "  %-14s %-12s %s\n", $3, metric, $4
         }'
+
+echo "[intern-counts] lower subphase render deltas:"
+grep '^compile-profile-detail|intern.lower_phase.render' "$OUT/profile.stderr" \
+    | awk -F'|' '{ printf "  %-22s %s\n", $3, $4 }'
 
 COMPILER_SOURCE_BYTES=$(
     find src stdlib -type f -name '*.tl' \

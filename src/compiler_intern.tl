@@ -988,8 +988,10 @@
 ;; Deterministic per (compiler, input) counters that drive the redundant-
 ;; interning elimination work: hash-words counts every string hash (the real
 ;; cost), and the entry counters attribute those hashes to intern/intern-slice/
-;; intern-lookup. `compiler_intern` is import-free, so it only exposes reset and
-;; value accessors; the driver (which owns `io`) prints them at compile end.
+;; intern-lookup. The render counter records each successful intern-str call;
+;; invalid IDs stay separate so diagnostics cannot hide semantic render work.
+;; `compiler_intern` is import-free, so it only exposes reset and value
+;; accessors; the driver (which owns `io`) prints them at compile end.
 (cfg
   compile-profile
   (define intern-profile-hash-words-count : i64
@@ -1009,6 +1011,10 @@
 (cfg
   compile-profile
   (define intern-profile-generated-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-render-count : i64
     0))
 (cfg
   compile-profile
@@ -1052,6 +1058,7 @@
       (set! intern-profile-slice-count 0)
       (set! intern-profile-lookup-count 0)
       (set! intern-profile-generated-count 0)
+      (set! intern-profile-render-count 0)
       (set! intern-profile-invalid-str-count 0)
       (set! intern-profile-invalid-str-last-id 0)
       (set! intern-profile-source-bytes-count 0)
@@ -1085,6 +1092,11 @@
   compile-profile
   (define (intern-profile-generated-value) : i64
     intern-profile-generated-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-render-value) : i64
+    intern-profile-render-count))
 
 (cfg
   compile-profile
@@ -2000,7 +2012,9 @@
           (+ intern-profile-invalid-str-count 1))
         (set! intern-profile-invalid-str-last-id id)
         "<invalid-intern-id>")
-      (array-ref intern-pool-slots id))
+      (begin
+        (set! intern-profile-render-count (+ intern-profile-render-count 1))
+        (array-ref intern-pool-slots id)))
     (array-ref intern-pool-slots id)))
 
 (define (intern-generation) : i64

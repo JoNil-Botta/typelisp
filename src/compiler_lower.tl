@@ -893,6 +893,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-lower-profile-start-intern-render : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-lower-profile-detail-start-ms : i64
     0))
 
@@ -943,6 +947,9 @@
       (set!
         compiler-lower-profile-start-intern-generated
         (ci.intern-profile-generated-value))
+      (set!
+        compiler-lower-profile-start-intern-render
+        (ci.intern-profile-render-value))
       (profile.alloc-reset-peak))))
 
 (cfg
@@ -1003,6 +1010,22 @@
                       (-
                         (ci.intern-profile-slice-value)
                         compiler-lower-profile-start-intern-slice))
+                    "\n"))))))
+        (cfg
+          compile-profile-summary
+          unit
+          (io.print-error
+            (string.append
+              "compile-profile-detail|intern.lower_phase.render|"
+              (string.append
+                phase
+                (string.append
+                  "|"
+                  (string.append
+                    (string.int->string
+                      (-
+                        (ci.intern-profile-render-value)
+                        compiler-lower-profile-start-intern-render))
                     "\n"))))))
         (cfg
           compile-profile-summary

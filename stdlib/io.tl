@@ -38,6 +38,7 @@
 (import stdlib.byte_buf_core)
 (import stdlib.comptime)
 (import stdlib.io_core)
+(import stdlib.math)
 (import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.text_buf)
@@ -1136,56 +1137,35 @@
 
 ;: Reinterpret IEEE-754 binary64 bits as f64.
 (define (float-f64-from-bits [bits : u64]) : f64
-  (let
-    [buf : (Array u64) (array.make-array u64 1)]
-    (begin
-      (array-set! buf 0 bits)
-      (unsafe
-        (ptr-read (ptr-cast (array-data buf) : (Ptr f64)))))))
+  (math.f64-from-bits bits))
 
 ;: Reinterpret an f64 as IEEE-754 binary64 bits.
 (define (float-f64-bits [value : f64]) : u64
-  (let
-    [buf : (Array f64) (array.make-array f64 1)]
-    (begin
-      (array-set! buf 0 value)
-      (unsafe
-        (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))))
+  (math.f64-to-bits value))
+
+;: Reinterpret IEEE-754 binary32 bits as f32.
+(define (float-f32-from-bits [bits : u32]) : f32
+  (math.f32-from-bits bits))
 
 ;: Reinterpret an f32 as IEEE-754 binary32 bits.
 (define (float-f32-bits [value : f32]) : u32
-  (let
-    [buf : (Array f32) (array.make-array f32 1)]
-    (begin
-      (array-set! buf 0 value)
-      (unsafe
-        (ptr-read (ptr-cast (array-data buf) : (Ptr u32)))))))
+  (math.f32-to-bits value))
 
 ;: Return true when an f64 is neither NaN nor infinity.
 (define (float-f64-finite? [value : f64]) : bool
-  (let
-    [bits : u64 (stdlib.io.float-f64-bits value)]
-    [expf : u64 (bit-and (shr bits 52) (cast 0x7ff : u64))]
-    (not (= expf (cast 0x7ff : u64)))))
+  (math.f64-finite? value))
 
 ;: Return true when an f32 is neither NaN nor infinity.
 (define (float-f32-finite? [value : f32]) : bool
-  (let
-    [bits : u32 (stdlib.io.float-f32-bits value)]
-    [expf : u32 (bit-and (shr bits 23) (cast 0xff : u32))]
-    (not (= expf (cast 0xff : u32)))))
+  (math.f32-finite? value))
 
 ;: Return true when the f64 magnitude bits are zero.
 (define (float-f64-zero-magnitude? [value : f64]) : bool
-  (=
-    (bit-and (stdlib.io.float-f64-bits value) 0x7fffffffffffffff)
-    (cast 0 : u64)))
+  (math.f64-signed-zero? value))
 
 ;: Return true when the f32 magnitude bits are zero.
 (define (float-f32-zero-magnitude? [value : f32]) : bool
-  (=
-    (bit-and (stdlib.io.float-f32-bits value) (cast 0x7fffffff : u32))
-    (cast 0 : u32)))
+  (math.f32-signed-zero? value))
 
 ;: Convert exact decimal components to an IEEE-754 binary64 value.
 (define (float-decimal-to-f64

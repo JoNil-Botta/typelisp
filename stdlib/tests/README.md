@@ -134,7 +134,11 @@ Inline stdlib coverage:
 - `math.tl` owns inline tests for the pure scalar helpers for `i64`, `f64`,
   and `f32`: negative/zero/positive absolute values, the generic float `abs`
   macro, sign predicates, min/max order, clamp low/high/inside cases, reversed
-  bounds, and explicit signed-min fallback behavior for integer abs.
+  bounds, explicit signed-min fallback behavior for integer abs, exact float
+  bit round trips (including NaN payloads and both zeros), classification,
+  copy-sign, and `scalbn` normal/subnormal/tie-to-even/overflow behavior.
+  `tests/integration/stdlib_math_ieee.tl` runs the foundation natively on both
+  Linux and Windows.
 - `hash.tl` owns inline tests for stable deterministic hashes,
   equal-values-same-hash checks, primitive key equality predicates, known
   collision behavior, hash range normalization, and string edge cases.

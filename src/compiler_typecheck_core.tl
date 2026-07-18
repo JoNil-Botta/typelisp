@@ -25950,6 +25950,10 @@
                     (not (tc-name-bound-id? env name-id)))
                   (tc-float-sqrt-call ctx env args)]
                 [(and
+                    (cbi.compiler-builtin-typecheck-float-bitcast-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-float-bitcast-call ctx env name-id args)]
+                [(and
                     (cbi.compiler-builtin-typecheck-clone-id? name-id)
                     (not (tc-name-bound-id? env name-id)))
                   (tc-clone-call ctx env args)]
@@ -26729,6 +26733,36 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)]))
     (ResultTcType.Err "typecheck: __tl_float_sqrt expects exactly one argument")))
 
+(define (tc-float-bitcast-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [args : AstExprList]) : ResultTcType
+  (if (= (struct-get (& args) len) 1)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
+      (match (tc-expr ctx env arg)
+        [(ResultTcType.Ok arg-ty)
+          (if (cbi.compiler-builtin-lower-float-to-bits-id? name-id)
+            (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
+              [(AstType.F64) (ResultTcType.Ok (AstType.U64))]
+              [(AstType.F32) (ResultTcType.Ok (AstType.U32))]
+              [_
+                (ResultTcType.Err
+                  (tc-locate-error-at-expr
+                    arg
+                    "typecheck: __tl_float_to_bits expects f64 or f32"))])
+            (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
+              [(AstType.U64) (ResultTcType.Ok (AstType.F64))]
+              [(AstType.U32) (ResultTcType.Ok (AstType.F32))]
+              [_
+                (ResultTcType.Err
+                  (tc-locate-error-at-expr
+                    arg
+                    "typecheck: __tl_float_from_bits expects u64 or u32"))]))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)]))
+    (ResultTcType.Err "typecheck: float bitcast expects exactly one argument")))
+
 (define (tc-tls-current-arena-read-call [args : AstExprList]) : ResultTcType
   (if (ast-expr-list-empty? (& args))
     (ResultTcType.Ok (AstType.I64))
@@ -26862,6 +26896,10 @@
                   (not (tc-name-bound-id? env name-id)))
                 (tc-float-sqrt-call ctx env args)]
               [(and
+                  (cbi.compiler-builtin-typecheck-float-bitcast-id? name-id)
+                  (not (tc-name-bound-id? env name-id)))
+                (tc-float-bitcast-call ctx env name-id args)]
+              [(and
                   (cbi.compiler-builtin-typecheck-clone-id? name-id)
                   (not (tc-name-bound-id? env name-id)))
                 (tc-clone-call ctx env args)]
@@ -26964,6 +27002,10 @@
                     (cbi.compiler-builtin-typecheck-float-sqrt-id? name-id)
                     (not (tc-name-bound-id? env name-id)))
                   (tc-float-sqrt-call ctx env args)]
+                [(and
+                    (cbi.compiler-builtin-typecheck-float-bitcast-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-float-bitcast-call ctx env name-id args)]
                 [(and
                     (cbi.compiler-builtin-typecheck-clone-id? name-id)
                     (not (tc-name-bound-id? env name-id)))

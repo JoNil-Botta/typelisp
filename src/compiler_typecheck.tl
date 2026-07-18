@@ -6720,6 +6720,47 @@
       "typecheck: __tl_float_sqrt expects exactly one argument")
     (compiler-typecheck-ok? (compiler-typecheck-float-sqrt-shadow-source))))
 
+(define (compiler-typecheck-float-bitcast-source) : String
+  "(define (f64-bits [value : f64]) : u64 (__tl_float_to_bits value))
+(define (f32-bits [value : f32]) : u32 (__tl_float_to_bits value))
+(define (f64-from [bits : u64]) : f64 (__tl_float_from_bits bits))
+(define (f32-from [bits : u32]) : f32 (__tl_float_from_bits bits))
+(define (main) : i64
+  (if (= (f64-bits (f64-from (cast 0x3ff0000000000000 : u64)))
+         (cast 0x3ff0000000000000 : u64))
+    (if (= (f32-bits (f32-from (cast 0x3f800000 : u32)))
+           (cast 0x3f800000 : u32))
+      0
+      1)
+    1))")
+
+(define (compiler-typecheck-float-to-bits-bad-type-source) : String
+  "(define (main) : u64 (__tl_float_to_bits (cast 4 : u64)))")
+
+(define (compiler-typecheck-float-from-bits-bad-type-source) : String
+  "(define (main) : f64 (__tl_float_from_bits 4.0))")
+
+(define (compiler-typecheck-float-bitcast-bad-arity-source) : String
+  "(define (main) : u64 (__tl_float_to_bits 4.0 9.0))")
+
+(define (compiler-typecheck-float-bitcast-shadow-source) : String
+  "(define (__tl_float_to_bits [value : i64]) : i64 value)
+(define (main) : i64 (__tl_float_to_bits 4))")
+
+(define (compiler-typecheck-float-bitcast-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? (compiler-typecheck-float-bitcast-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-float-to-bits-bad-type-source)
+      "typecheck: __tl_float_to_bits expects f64 or f32")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-float-from-bits-bad-type-source)
+      "typecheck: __tl_float_from_bits expects u64 or u32")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-float-bitcast-bad-arity-source)
+      "typecheck: float bitcast expects exactly one argument")
+    (compiler-typecheck-ok? (compiler-typecheck-float-bitcast-shadow-source))))
+
 (define (compiler-typecheck-unsafe-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-unsafe-ok-source))
@@ -8353,6 +8394,9 @@
     (if (compiler-typecheck-float-sqrt-tests-ok?)
       unit
       (io.panic "typecheck: float sqrt intrinsic tests failed"))
+    (if (compiler-typecheck-float-bitcast-tests-ok?)
+      unit
+      (io.panic "typecheck: float bitcast intrinsic tests failed"))
     (if (compiler-typecheck-arena-unsafe-tests-ok?)
       unit
       (io.panic "typecheck: arena unsafe primitive tests failed"))

@@ -16991,6 +16991,41 @@
     (compiler-backend-float-sqrt-source-target-ok?
       (CompilerBackendTarget.Windows))))
 
+(define (compiler-backend-float-bitcast-source) : String
+  "(define (f64-bits [value : f64]) : u64 (__tl_float_to_bits value))
+(define (f32-bits [value : f32]) : u32 (__tl_float_to_bits value))
+(define (f64-from [bits : u64]) : f64 (__tl_float_from_bits bits))
+(define (f32-from [bits : u32]) : f32 (__tl_float_from_bits bits))
+(define (main) : i64
+  (if (= (f64-bits (f64-from (cast 0x3ff0000000000000 : u64)))
+         (cast 0x3ff0000000000000 : u64))
+    (if (= (f32-bits (f32-from (cast 0x3f800000 : u32)))
+           (cast 0x3f800000 : u32))
+      42
+      1)
+    1))")
+
+(define (compiler-backend-float-bitcast-source-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-float-bitcast-source)
+    target)
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq ")
+        (compiler-backend-string-contains? asm "    movd ")
+        (not (compiler-backend-string-contains? asm "__tl_float_to_bits"))
+        (not (compiler-backend-string-contains? asm "__tl_float_from_bits"))
+        (not (compiler-backend-string-contains? asm "tl_alloc")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-float-bitcast-source-ok?) : bool
+  (and
+    (compiler-backend-float-bitcast-source-target-ok?
+      (CompilerBackendTarget.Linux))
+    (compiler-backend-float-bitcast-source-target-ok?
+      (CompilerBackendTarget.Windows))))
+
 (define (compiler-backend-f32-literal-binop-source) : String
   "(define (main) : i64
   (let
@@ -24583,6 +24618,7 @@
         (compiler-backend-spill-f64-neg-home-ok?)
         (compiler-backend-float-sqrt-home-ok?)
         (compiler-backend-float-sqrt-source-ok?)
+        (compiler-backend-float-bitcast-source-ok?)
         (compiler-backend-f32-literal-binop-ok?)
         (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-spill-float-arith-home-ok?)

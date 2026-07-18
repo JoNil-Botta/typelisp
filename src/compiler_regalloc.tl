@@ -18288,7 +18288,10 @@
     [vector-candidates : CompilerRegIntervalList
       (if vector-mask-empty?
         CompilerRegIntervalList.Nil
-        (compiler-reg-special-candidates intervals vector-candidate-vars blocked))]
+        (compiler-reg-special-candidates
+          intervals
+          vector-candidate-vars
+          blocked))]
     [_vector-class-reset : unit
       (compiler-reg-unassign-special-candidates!
         scalar-assignments
@@ -18299,7 +18302,9 @@
       ;; clobber rule. `%vecN` is an allocator-only class spelling; backend
       ;; save/restore sees the same physical N through the overlap helper.
       (if vector-mask-empty?
-        (CompilerRegAssignState.State CompilerRegActiveList.Nil scalar-assignments)
+        (CompilerRegAssignState.State
+          CompilerRegActiveList.Nil
+          scalar-assignments)
         (compiler-reg-greedy-state
           vector-candidates
           (compiler-reg-vector-registers-for-abi abi)
@@ -18320,9 +18325,14 @@
         [(CompilerRegAssignState.State _ assignments) assignments])]
     [mask-state : CompilerRegAssignState
       (if vector-mask-empty?
-        (CompilerRegAssignState.State CompilerRegActiveList.Nil vector-assignments)
+        (CompilerRegAssignState.State
+          CompilerRegActiveList.Nil
+          vector-assignments)
         (compiler-reg-assign-fixed-candidates
-          (compiler-reg-special-candidates intervals mask-candidate-vars blocked)
+          (compiler-reg-special-candidates
+            intervals
+            mask-candidate-vars
+            blocked)
           (compiler-reg-mask-registers)
           CompilerRegActiveList.Nil
           vector-assignments

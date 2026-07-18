@@ -21548,8 +21548,7 @@
           (if (opt-divrem-instr-seq-has-divmod? instrs 0)
             true
             (opt-divrem-blocks-have-divmod? (box-get rest)))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-divrem-block-seq-has-divmod? seq 0)]))
+    [(CompilerIrBlockList.Array seq) (opt-divrem-block-seq-has-divmod? seq 0)]))
 
 (define (opt-divrem-safety-blocks-with-context
   [context : OptCfgContext]
@@ -21560,20 +21559,20 @@
     ;; equals the input; skip the SSA facts build and the per-block copies.
     blocks
     (let
-    [index : OptCfgIndex (struct-get context index)]
-    [count : i64 (opt-cfg-index-block-count index)]
-    [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
-    [types : OptSsaVarTypes
-      (match ssa-facts
-        [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
-    [facts : (Array OptDivRemFacts) (array.make-array OptDivRemFacts count)]
-    [out : (Array OptDivRemBlockResult)
-      (array.make-array OptDivRemBlockResult count)]
-    (begin
-      (opt-divrem-facts-fill-empty! facts 0)
-      (opt-divrem-results-fill-empty! out 0)
-      (opt-divrem-process-rpo! context blocks types facts out 0)
-      (opt-divrem-materialize-blocks context out blocks)))))
+      [index : OptCfgIndex (struct-get context index)]
+      [count : i64 (opt-cfg-index-block-count index)]
+      [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
+      [types : OptSsaVarTypes
+        (match ssa-facts
+          [(OptSsaFacts.Facts _ _ fact-types) fact-types])]
+      [facts : (Array OptDivRemFacts) (array.make-array OptDivRemFacts count)]
+      [out : (Array OptDivRemBlockResult)
+        (array.make-array OptDivRemBlockResult count)]
+      (begin
+        (opt-divrem-facts-fill-empty! facts 0)
+        (opt-divrem-results-fill-empty! out 0)
+        (opt-divrem-process-rpo! context blocks types facts out 0)
+        (opt-divrem-materialize-blocks context out blocks)))))
 
 (define (opt-divrem-safety-blocks
   [params : CompilerIrParamList]
@@ -58227,34 +58226,35 @@
     ;; the input; skip the empty state and the per-block arrays.
     blocks
     (let
-    [index : OptCfgIndex (struct-get context index)]
-    [count : i64 (opt-cfg-index-block-count index)]
-    [exit-states : (Array OptMaybeLoadCseState)
-      (array.make-array OptMaybeLoadCseState count)]
-    [processed : (Array bool) (array.make-array bool count)]
-    [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
-    [empty-state : OptLoadCseState
-      (opt-load-cse-state-with-caps-and-facts
-        (opt-load-cse-table-cap-for-size
-          (compiler-ir-block-list-instruction-count blocks))
-        (opt-load-cse-kinds-cap-for-size
-          (compiler-ir-block-list-instruction-count blocks))
-        (opt-alias-seed-params params))]
-    (begin
-      (opt-load-state-array-fill-empty! exit-states count)
-      (opt-cfg-fill-bool! processed count false)
-      (opt-gvn-block-results-fill-empty! out 0)
-      (opt-load-gvn-process-rpo
-        context
-        hs
-        sources
-        blocks
-        exit-states
-        processed
-        out
-        empty-state
-        0)
-      (opt-gvn-materialize-blocks (struct-get context doms) out blocks)))))
+      [index : OptCfgIndex (struct-get context index)]
+      [count : i64 (opt-cfg-index-block-count index)]
+      [exit-states : (Array OptMaybeLoadCseState)
+        (array.make-array OptMaybeLoadCseState count)]
+      [processed : (Array bool) (array.make-array bool count)]
+      [out : (Array OptGvnBlockResult)
+        (array.make-array OptGvnBlockResult count)]
+      [empty-state : OptLoadCseState
+        (opt-load-cse-state-with-caps-and-facts
+          (opt-load-cse-table-cap-for-size
+            (compiler-ir-block-list-instruction-count blocks))
+          (opt-load-cse-kinds-cap-for-size
+            (compiler-ir-block-list-instruction-count blocks))
+          (opt-alias-seed-params params))]
+      (begin
+        (opt-load-state-array-fill-empty! exit-states count)
+        (opt-cfg-fill-bool! processed count false)
+        (opt-gvn-block-results-fill-empty! out 0)
+        (opt-load-gvn-process-rpo
+          context
+          hs
+          sources
+          blocks
+          exit-states
+          processed
+          out
+          empty-state
+          0)
+        (opt-gvn-materialize-blocks (struct-get context doms) out blocks)))))
 
 ;; --- noalias fact model self-test -------------------------------------------
 (define (opt-alias-test-unique-instrs) : CompilerIrInstrList

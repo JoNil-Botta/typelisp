@@ -51265,24 +51265,17 @@
           (ctfe-env-reflections macro-expand-ctfe-env-value)]
         [needed : i64 (ctfe-metadata-decl-capacity decls)]
         (if (and
-          (<= (+ (struct-get layouts len) needed)
+          (<=
+            (+ (struct-get layouts len) needed)
             (array.length (struct-get layouts slots)))
-          (<= (+ (struct-get reflections len) needed)
+          (<=
+            (+ (struct-get reflections len) needed)
             (array.length (struct-get reflections slots))))
           (let
             [next-layouts : CtfeLayoutInfoList
-              (tc-ctfe-layouts-from-decls
-                ctx
-                decls
-                module
-                module-id
-                layouts)]
+              (tc-ctfe-layouts-from-decls ctx decls module module-id layouts)]
             [next-reflections : CtfeReflectInfoList
-              (ctfe-reflections-from-decls
-                decls
-                module
-                module-id
-                reflections)]
+              (ctfe-reflections-from-decls decls module module-id reflections)]
             ;; The cached base env is always a bare metadata node (built by
             ;; tc-ctfe-env and only ever rebase-copied), so rebuilding it from
             ;; the extended lists drops no bindings.
@@ -52727,38 +52720,41 @@
     [prefix-count : i64 (ast-decl-list-len (& prefix-rev))]
     [middle-count : i64 (ast-decl-list-len (& middle))]
     [suffix-count : i64 (ast-decl-list-len (& suffix))]
-    (let
-      [total : i64 (+ prefix-count (+ middle-count suffix-count))]
-      [slots : (Array AstDecl)
-        (array.make-array AstDecl (if (< total 1) 1 total))]
-      [index : i64 0]
-      (begin
-        (while (< index prefix-count)
-          (begin
-            (array-set!
-              slots
-              (- (- prefix-count 1) index)
-              (ast-decl-list-ref prefix-rev index))
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index middle-count)
-          (begin
-            (array-set!
-              slots
-              (+ prefix-count index)
-              (ast-decl-list-ref middle index))
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index suffix-count)
-          (begin
-            (array-set!
-              slots
-              (+ prefix-count (+ middle-count index))
-              (ast-decl-list-ref suffix index))
-            (set! index (+ index 1))))
-        (MacroSpliceDeclView
-          (AstDeclList slots 0 total true)
-          (AstDeclList slots prefix-count (+ middle-count suffix-count) true))))))
+    [total : i64 (+ prefix-count (+ middle-count suffix-count))]
+    [slots : (Array AstDecl)
+      (array.make-array
+        AstDecl
+        (if (< total 1)
+          1
+          total))]
+    [index : i64 0]
+    (begin
+      (while (< index prefix-count)
+        (begin
+          (array-set!
+            slots
+            (- (- prefix-count 1) index)
+            (ast-decl-list-ref prefix-rev index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index middle-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count index)
+            (ast-decl-list-ref middle index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index suffix-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count (+ middle-count index))
+            (ast-decl-list-ref suffix index))
+          (set! index (+ index 1))))
+      (MacroSpliceDeclView
+        (AstDeclList slots 0 total true)
+        (AstDeclList slots prefix-count (+ middle-count suffix-count) true)))))
 
 (define (macro-splice-path-view-build
   [prefix-rev : AstDeclPathList]
@@ -52768,65 +52764,67 @@
     [prefix-count : i64 (ast-decl-path-list-len (& prefix-rev))]
     [middle-count : i64 (ast-decl-path-list-len (& middle))]
     [suffix-count : i64 (ast-decl-path-list-len (& suffix))]
-    (let
-      [total : i64 (+ prefix-count (+ middle-count suffix-count))]
-      [cap : i64 (if (< total 1) 1 total)]
-      [slots : (Array String) (array.make-array String cap)]
-      [owner-ids : (Array i64) (array.make-array i64 cap)]
-      [index : i64 0]
-      (begin
-        (while (< index prefix-count)
-          (begin
-            (array-set!
-              slots
-              (- (- prefix-count 1) index)
-              (ast-decl-path-list-get (& prefix-rev) index ""))
-            (array-set!
-              owner-ids
-              (- (- prefix-count 1) index)
-              (ast-decl-path-list-owner-id
-                (& prefix-rev)
-                index
-                cbi.compiler-builtin-id-fix-empty))
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index middle-count)
-          (begin
-            (array-set!
-              slots
-              (+ prefix-count index)
-              (ast-decl-path-list-get (& middle) index ""))
-            (array-set!
-              owner-ids
-              (+ prefix-count index)
-              (ast-decl-path-list-owner-id
-                (& middle)
-                index
-                cbi.compiler-builtin-id-fix-empty))
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index suffix-count)
-          (begin
-            (array-set!
-              slots
-              (+ prefix-count (+ middle-count index))
-              (ast-decl-path-list-get (& suffix) index ""))
-            (array-set!
-              owner-ids
-              (+ prefix-count (+ middle-count index))
-              (ast-decl-path-list-owner-id
-                (& suffix)
-                index
-                cbi.compiler-builtin-id-fix-empty))
-            (set! index (+ index 1))))
-        (MacroSplicePathView
-          (AstDeclPathList slots owner-ids 0 total true)
-          (AstDeclPathList
+    [total : i64 (+ prefix-count (+ middle-count suffix-count))]
+    [cap : i64
+      (if (< total 1)
+        1
+        total)]
+    [slots : (Array String) (array.make-array String cap)]
+    [owner-ids : (Array i64) (array.make-array i64 cap)]
+    [index : i64 0]
+    (begin
+      (while (< index prefix-count)
+        (begin
+          (array-set!
             slots
+            (- (- prefix-count 1) index)
+            (ast-decl-path-list-get (& prefix-rev) index ""))
+          (array-set!
             owner-ids
-            prefix-count
-            (+ middle-count suffix-count)
-            true))))))
+            (- (- prefix-count 1) index)
+            (ast-decl-path-list-owner-id
+              (& prefix-rev)
+              index
+              cbi.compiler-builtin-id-fix-empty))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index middle-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count index)
+            (ast-decl-path-list-get (& middle) index ""))
+          (array-set!
+            owner-ids
+            (+ prefix-count index)
+            (ast-decl-path-list-owner-id
+              (& middle)
+              index
+              cbi.compiler-builtin-id-fix-empty))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index suffix-count)
+        (begin
+          (array-set!
+            slots
+            (+ prefix-count (+ middle-count index))
+            (ast-decl-path-list-get (& suffix) index ""))
+          (array-set!
+            owner-ids
+            (+ prefix-count (+ middle-count index))
+            (ast-decl-path-list-owner-id
+              (& suffix)
+              index
+              cbi.compiler-builtin-id-fix-empty))
+          (set! index (+ index 1))))
+      (MacroSplicePathView
+        (AstDeclPathList slots owner-ids 0 total true)
+        (AstDeclPathList
+          slots
+          owner-ids
+          prefix-count
+          (+ middle-count suffix-count)
+          true)))))
 
 (define (macro-scratch-splice-decl-view-build
   [prefix-rev : AstDeclList]
@@ -67159,8 +67157,7 @@
               (struct-get signature ret)
               body-box)]
           [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
-      [_
-        (tc-check-decl-scoped ctx top-env global-env decl)])))
+      [_ (tc-check-decl-scoped ctx top-env global-env decl)])))
 
 (define (tc-check-nonfn-decl-with-global-env
   [ctx : TcContext]
@@ -67256,11 +67253,7 @@
           [(AstGeneratedDeclMeta.No)
             (match (tc-check-comptime-decl-purity ctx top-env template)
               [(ResultTcUnit.Ok)
-                (tc-check-decl-with-global-env
-                  ctx
-                  top-env
-                  global-env
-                  template)]
+                (tc-check-decl-with-global-env ctx top-env global-env template)]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]
     [(AstDecl.Unsafe inner-box)
       (let

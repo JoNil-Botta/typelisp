@@ -18606,6 +18606,22 @@
         (array-ref slots var)
         (OptSccpValue.Unknown))]))
 
+;; Whether any lattice slot still holds a Const at analysis end.
+;; opt-sccp-rewrite-value substitutes only OptSccpValue.Const hits, so when
+;; this is false the whole rewrite is the identity and the caller can skip
+;; rebuilding every block. Read once at analysis end: equivalent to tracking
+;; an any-const flag through the opt-sccp-env-set bind sites, but exact
+;; rather than conservative -- a Const later joined to Overdefined does not
+;; keep the rewrite alive.
+(define (opt-sccp-env-any-const? [env : OptSccpEnv] [index : i64]) : bool
+  (match env
+    [(OptSccpEnv.Env cap slots)
+      (if (>= index cap)
+        false
+        (match (array-ref slots index)
+          [(OptSccpValue.Const _ _) true]
+          [_ (opt-sccp-env-any-const? env (+ index 1))]))]))
+
 ;; Mutates the shared lattice array in place and returns the same env. The
 ;; environment is threaded linearly through the monotone analysis, so in-place
 ;; update is observationally identical to the old persistent cons/remove.
@@ -18992,6 +19008,38 @@
       (opt-sccp-env-from-params params (opt-sccp-env-make (+ max-var 1)))
       true)))
 
+;; Frame-sized variant: var ids are dense below the function's frame field
+;; (the lowerer's next-var counter, the same invariant regalloc relies on),
+;; so frame is an exact-or-larger upper bound for the walked max-var.
+;; opt-sccp-env-set silently drops out-of-range writes and out-of-range
+;; lookups return Unknown either way, so sizing by frame is
+;; behavior-identical to sizing by the whole-function max-var walks.
+(define (opt-sccp-initial-state-with-frame
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : OptSccpState
+  (let
+    [executable-count : i64
+      (opt-cfg-index-block-count (struct-get context index))]
+    [executable-flags : (Array bool) (array.make-array bool executable-count)]
+    [_clear-executable : unit
+      (opt-cfg-fill-bool! executable-flags executable-count false)]
+    [_entry : unit
+      (match (opt-cfg-index-id
+        (struct-get context index)
+        (struct-get context entry-label))
+        [(option_i64.Some entry-id)
+          (if (and (>= entry-id 0) (< entry-id executable-count))
+            (array-set! executable-flags entry-id true)
+            unit)]
+        [(option_i64.None) unit])]
+    (OptSccpState.State
+      (struct-get context index)
+      executable-flags
+      (opt-sccp-env-from-params params (opt-sccp-env-make frame))
+      true)))
+
 (define (opt-sccp-analyze-fixed
   [blocks : CompilerIrBlockList]
   [state : OptSccpState]
@@ -19017,6 +19065,18 @@
   (opt-sccp-analyze-fixed
     blocks
     (opt-sccp-initial-state context params blocks)
+    (+
+      (+ (compiler-ir-block-list-count blocks) 8)
+      (* 2 (compiler-ir-block-list-instruction-count blocks)))))
+
+(define (opt-sccp-analyze-with-frame
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : OptSccpState
+  (opt-sccp-analyze-fixed
+    blocks
+    (opt-sccp-initial-state-with-frame context params blocks frame)
     (+
       (+ (compiler-ir-block-list-count blocks) 8)
       (* 2 (compiler-ir-block-list-instruction-count blocks)))))
@@ -19519,7 +19579,11 @@
     [context : OptCfgContext (opt-cfg-context-build blocks)]
     (match (opt-sccp-analyze context params blocks)
       [(OptSccpState.State _ _ env _)
-        (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))])))
+        (if (opt-sccp-env-any-const? env 0)
+          (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
+          ;; No constants bound anywhere: the rewrite is the identity, so
+          ;; the simplify sees the input blocks either way.
+          (opt-cfg-simplify-blocks blocks))])))
 
 (define (opt-sccp-blocks-with-context-result
   [context : OptCfgContext]
@@ -19527,11 +19591,16 @@
   [blocks : CompilerIrBlockList]) : OptBlockCtxResult
   (match (opt-sccp-analyze context params blocks)
     [(OptSccpState.State _ _ env _)
-      (opt-cfg-simplify-blocks-with-context-result
-        (OptBlockCtxResult.Result
-          (opt-sccp-rewrite-blocks env blocks)
-          context
-          (not (opt-sccp-blocks-change-successors? env blocks))))]))
+      (if (opt-sccp-env-any-const? env 0)
+        (opt-cfg-simplify-blocks-with-context-result
+          (OptBlockCtxResult.Result
+            (opt-sccp-rewrite-blocks env blocks)
+            context
+            (not (opt-sccp-blocks-change-successors? env blocks))))
+        ;; No constants: the rewrite is the identity and no branch condition
+        ;; can have folded to a literal, so the context is valid as-is.
+        (opt-cfg-simplify-blocks-with-context-result
+          (OptBlockCtxResult.Result blocks context true)))]))
 
 ;; Pipeline entry point that skips the nested cfg-simplify: the pipeline's own
 ;; cfg pass runs immediately after sccp and canonicalizes once (literal
@@ -19547,10 +19616,14 @@
   [blocks : CompilerIrBlockList]) : OptBlockCtxResult
   (match (opt-sccp-analyze context params blocks)
     [(OptSccpState.State _ _ env _)
-      (OptBlockCtxResult.Result
-        (opt-sccp-rewrite-blocks env blocks)
-        context
-        (not (opt-sccp-blocks-change-successors? env blocks)))]))
+      (if (opt-sccp-env-any-const? env 0)
+        (OptBlockCtxResult.Result
+          (opt-sccp-rewrite-blocks env blocks)
+          context
+          (not (opt-sccp-blocks-change-successors? env blocks)))
+        ;; No constants: the rewrite is the identity and the context is
+        ;; valid as-is (no branch condition can have folded to a literal).
+        (OptBlockCtxResult.Result blocks context true))]))
 
 (defenum OptFunctionPassResult
   (Result CompilerIrFunction bool))

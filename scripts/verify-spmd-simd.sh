@@ -202,6 +202,10 @@ run_spmd_mode() {
 compile_spmd_mode() {
     _prog=$1
     _mode=$2
+    _opt_args=
+    if [ -n "${3:-}" ]; then
+        _opt_args="--opt-level $3"
+    fi
     _tag=$(printf '%s' "$_prog" | sed 's#[/.]#_#g')
     mode_out="$WORKDIR/$_tag.$_mode.compile.out"
     mode_err="$WORKDIR/$_tag.$_mode.compile.err"
@@ -210,7 +214,7 @@ compile_spmd_mode() {
     : > "$mode_err"
 
     set +e
-    "$COMPILER" compile "$_prog" --backend-mode "$_mode" -o "$_asm" \
+    "$COMPILER" compile "$_prog" --backend-mode "$_mode" $_opt_args -o "$_asm" \
         > "$mode_out" 2> "$mode_err"
     mode_code=$?
     set -e
@@ -256,6 +260,36 @@ verify_gather_reduce_opcodes() {
             echo "benchmarks/ispc/perfbench_gathers/bench.tl $_mode (missing $opcode)" >> "$FAILURES"
         fi
     done
+}
+
+verify_reduce_accumulator_shape() {
+    _mode=$1
+    compile_spmd_mode tests/integration/spmd_reduce_scalar.tl "$_mode" 2
+    _tag=tests_integration_spmd_reduce_scalar_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    _func="$WORKDIR/$_tag.$_mode.reduce-sum.s"
+    _gang="$WORKDIR/$_tag.$_mode.reduce-sum-gang.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] reduce-accumulator shape compile failed in $_mode:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/integration/spmd_reduce_scalar.tl $_mode (accumulator compile)" >> "$FAILURES"
+        return
+    fi
+    sed -n '/^_tl_spmd_reduce_scalar_reduce_sum:/,/^$/p' "$_asm" > "$_func"
+    sed -n '/spmd_reduce_avx2_body/,/spmd_reduce_tail/p' "$_func" > "$_gang"
+    _gang_adds=$(grep -c -F -- "vpaddq" "$_gang" || true)
+    if [ "$_gang_adds" != 1 ]; then
+        echo "[spmd-simd] reduce-accumulator $_mode gang has $_gang_adds vpaddq instructions; wanted 1" >&2
+        echo "tests/integration/spmd_reduce_scalar.tl $_mode (gang vpaddq count)" >> "$FAILURES"
+    fi
+    if grep -E -- 'vextract|vpsrldq' "$_gang" > /dev/null; then
+        echo "[spmd-simd] reduce-accumulator $_mode gang still performs a horizontal reduction" >&2
+        echo "tests/integration/spmd_reduce_scalar.tl $_mode (horizontal reduce in gang)" >> "$FAILURES"
+    fi
+    if ! grep -E -- 'vextract|vpsrldq' "$_func" > /dev/null; then
+        echo "[spmd-simd] reduce-accumulator $_mode function lacks the post-loop horizontal reduction" >&2
+        echo "tests/integration/spmd_reduce_scalar.tl $_mode (missing post-loop horizontal reduce)" >> "$FAILURES"
+    fi
 }
 
 verify_avx2_varying_while_shape() {
@@ -340,6 +374,7 @@ for mode in avx2 avx512; do
     # host even when that ISA is unavailable for the execution corpus below.
     verify_gather_opcodes "$mode"
     verify_gather_reduce_opcodes "$mode"
+    verify_reduce_accumulator_shape "$mode"
 done
 
 verify_avx2_varying_while_shape

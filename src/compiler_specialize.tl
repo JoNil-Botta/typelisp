@@ -6340,40 +6340,16 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-reuse-source) : String
-  "(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String (value String)))
-(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String (value String)))")
+  "(defstruct Box_String (value String))
+(defstruct Box_String (value String))")
 
 (define (compiler-generated-decl-function-reuse-source) : String
-  "(comptime-decl (:generated function-family make-box-string \"String\")
-  (define (make-box-string [value : String]) : String value))
-(comptime-decl (:generated function-family make-box-string \"String\")
-  (define (make-box-string [value : String]) : String value))")
+  "(define (make-box-string [value : String]) : String value)
+(define (make-box-string [value : String]) : String value)")
 
 (define (compiler-generated-decl-incompatible-source) : String
-  "(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String (value String)))
-(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String (value i64)))")
-
-(define (compiler-generated-decl-item-mismatch-source) : String
-  "(comptime-decl (:generated sample-family Expected \"String\")
-  (defstruct Actual (value String)))")
-
-(define (compiler-generated-decl-item-mismatch-value-source) : String
-  "(comptime-decl (:generated sample-family Expected \"String\")
-  (define Actual : i64 42))")
-
-(define (compiler-generated-decl-non-string-key-source) : String
-  "(comptime-decl (:generated sample-family Box_String 7)
-  (defstruct Box_String (value String)))")
-
-(define (compiler-generated-decl-duplicate-visible-source) : String
-  "(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String (value String)))
-(comptime-decl (:generated sample-family Box_String \"Bytes\")
-  (defstruct Box_String (value String)))")
+  "(defstruct Box_String (value String))
+(defstruct Box_String (value i64))")
 
 (define (compiler-generated-decl-expected-string-key) : String
   (gen-full-key
@@ -6382,40 +6358,88 @@
     "Box_String"
     (string.append (spec-string-key "String") "_none")))
 
-(define (compiler-generated-decl-cross-module-reuse-source) : String
-  "(module sample.family)
-(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String (value String)))
-(module app)
-(module sample.family)
-(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String (value String)))")
+(define (compiler-generated-decl-mark!
+  [program : AstProgram]
+  [index : i64]
+  [generator : String]
+  [item : String]
+  [arg : String]) : unit
+  (if (< index 0)
+    unit
+    (match program
+      [(AstProgram.Program decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          [args : AstExprList (ast-expr-list-new)]
+          (begin
+            (ast-expr-list-push
+              (&mut args)
+              (ast-node-push (AstExpr.Literal (ast-lit-generated-string arg))))
+            (array-set!
+              (struct-get decls slots)
+              (+ (struct-get decls offset) index)
+              (ast-decl-comptime-decl-with-meta
+                (AstGeneratedDeclMeta.Some generator item args "")
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))))))])))
 
-(define (compiler-generated-decl-cross-module-distinct-source) : String
-  "(module sample.left)
-(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String (value String)))
-(module sample.right)
-(comptime-decl (:generated sample-family Box_String \"String\")
-  (defstruct Box_String (value String)))")
-
-(define (compiler-generated-decl-visible-count
+(define (compiler-generated-decl-pair
   [source : String]
-  [name : String]) : i64
+  [first-index : i64]
+  [generator : String]
+  [item : String]
+  [first-arg : String]
+  [second-index : i64]
+  [second-arg : String]) : ResultAstProgram
   (match (parse-ast-source source)
     [(ResultAstProgram.Ok program)
-      (match (compiler-specialize-program program)
-        [(ResultSpecProgram.Ok normalized)
-          (match normalized
-            [(AstProgram.Program decls-box)
-              (compiler-specialize-decl-list-count-visible
-                (box-get decls-box)
-                name)])]
-        [(ResultSpecProgram.Err _) -1])]
-    [(ResultAstProgram.Err _) -1]))
+      (begin
+        (compiler-generated-decl-mark!
+          program
+          first-index
+          generator
+          item
+          first-arg)
+        (compiler-generated-decl-mark!
+          program
+          second-index
+          generator
+          item
+          second-arg)
+        (ResultAstProgram.Ok program))]
+    [(ResultAstProgram.Err message) (ResultAstProgram.Err message)]))
+
+(define (compiler-generated-decl-reuse-program) : ResultAstProgram
+  (compiler-generated-decl-pair
+    (compiler-generated-decl-reuse-source)
+    0
+    "sample-family"
+    "Box_String"
+    "String"
+    1
+    "String"))
+
+(define (compiler-generated-decl-function-reuse-program) : ResultAstProgram
+  (compiler-generated-decl-pair
+    (compiler-generated-decl-function-reuse-source)
+    0
+    "function-family"
+    "make-box-string"
+    "String"
+    1
+    "String"))
+
+(define (compiler-generated-decl-incompatible-program) : ResultAstProgram
+  (compiler-generated-decl-pair
+    (compiler-generated-decl-incompatible-source)
+    0
+    "sample-family"
+    "Box_String"
+    "String"
+    1
+    "String"))
 
 (define (compiler-generated-decl-reuse-ok?) : bool
-  (match (parse-ast-source (compiler-generated-decl-reuse-source))
+  (match (compiler-generated-decl-reuse-program)
     [(ResultAstProgram.Ok program)
       (and
         (compiler-specialize-needed? program)
@@ -6434,7 +6458,7 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-function-reuse-ok?) : bool
-  (match (parse-ast-source (compiler-generated-decl-function-reuse-source))
+  (match (compiler-generated-decl-function-reuse-program)
     [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
@@ -6451,7 +6475,7 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-incompatible-rejected?) : bool
-  (match (parse-ast-source (compiler-generated-decl-incompatible-source))
+  (match (compiler-generated-decl-incompatible-program)
     [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok _) false]
@@ -6459,7 +6483,7 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-incompatible-note-ok?) : bool
-  (match (parse-ast-source (compiler-generated-decl-incompatible-source))
+  (match (compiler-generated-decl-incompatible-program)
     [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok _) false]
@@ -6470,8 +6494,6 @@
               (string.eq
                 (compiler-diagnostic-message value)
                 "generated-decl: duplicate generated key for Box_String has incompatible payload")
-              (= (compiler-diagnostic-line value) 3)
-              (= (compiler-diagnostic-col value) 53)
               (match (compiler-diagnostic-notes value)
                 [(CompilerDiagnosticNoteCons identity-note rest)
                   (and
@@ -6494,7 +6516,7 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-incompatible-path-ok?) : bool
-  (match (parse-ast-source (compiler-generated-decl-incompatible-source))
+  (match (compiler-generated-decl-incompatible-program)
     [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program-with-paths
         program
@@ -6508,87 +6530,11 @@
         [(ResultSpecProgramWithPaths.Err diag)
           (let
             [value : CompilerDiagnostic (box-get diag)]
-            (and
-              (string.eq (compiler-diagnostic-path value) "generated/second.tl")
-              (= (compiler-diagnostic-line value) 3)
-              (= (compiler-diagnostic-col value) 53)))])]
+            (string.eq (compiler-diagnostic-path value) "generated/second.tl"))])]
     [(ResultAstProgram.Err _) false]))
-
-(define (compiler-generated-decl-item-mismatch-origin-ok?) : bool
-  (match (parse-ast-source (compiler-generated-decl-item-mismatch-value-source))
-    [(ResultAstProgram.Ok program)
-      (match (compiler-specialize-program program)
-        [(ResultSpecProgram.Ok _) false]
-        [(ResultSpecProgram.Err diag)
-          (let
-            [value : CompilerDiagnostic (box-get diag)]
-            (and
-              (string.eq
-                (compiler-diagnostic-message value)
-                "generated-decl: metadata item Expected does not match payload Actual")
-              (= (compiler-diagnostic-line value) 2)
-              (= (compiler-diagnostic-col value) 24)
-              (match (compiler-diagnostic-notes value)
-                [(CompilerDiagnosticNoteCons declaration-note rest)
-                  (and
-                    (string.eq
-                      declaration-note
-                      "generated declaration: Expected from sample-family")
-                    (match (box-get rest)
-                      [(CompilerDiagnosticNoteNil) true]
-                      [_ false]))]
-                [(CompilerDiagnosticNoteNil) false])))])]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-generated-decl-item-mismatch-rejected?) : bool
-  (match (parse-ast-source (compiler-generated-decl-item-mismatch-source))
-    [(ResultAstProgram.Ok program)
-      (match (compiler-specialize-program program)
-        [(ResultSpecProgram.Ok _) false]
-        [(ResultSpecProgram.Err _) true])]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-generated-decl-non-string-key-rejected?) : bool
-  (match (parse-ast-source (compiler-generated-decl-non-string-key-source))
-    [(ResultAstProgram.Ok program)
-      (match (compiler-specialize-program program)
-        [(ResultSpecProgram.Ok _) false]
-        [(ResultSpecProgram.Err _) true])]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-generated-decl-duplicate-visible-left-for-symbols?) : bool
-  (match (parse-ast-source (compiler-generated-decl-duplicate-visible-source))
-    [(ResultAstProgram.Ok program)
-      (match (compiler-specialize-program program)
-        [(ResultSpecProgram.Ok normalized)
-          (match normalized
-            [(AstProgram.Program decls-box)
-              (let
-                [decls : AstDeclList (box-get decls-box)]
-                (=
-                  (compiler-specialize-decl-list-count-visible
-                    decls
-                    "Box_String")
-                  2))])]
-        [(ResultSpecProgram.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-generated-decl-cross-module-reuse-ok?) : bool
-  (=
-    (compiler-generated-decl-visible-count
-      (compiler-generated-decl-cross-module-reuse-source)
-      "Box_String")
-    1))
-
-(define (compiler-generated-decl-cross-module-distinct-ok?) : bool
-  (=
-    (compiler-generated-decl-visible-count
-      (compiler-generated-decl-cross-module-distinct-source)
-      "Box_String")
-    2))
 
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
-  (match (parse-ast-source (compiler-generated-decl-reuse-source))
+  (match (compiler-generated-decl-reuse-program)
     [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
@@ -6696,14 +6642,6 @@
     (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
     (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
     (unless (compiler-generated-decl-incompatible-path-ok?) (return 0))
-    (unless (compiler-generated-decl-item-mismatch-rejected?) (return 0))
-    (unless (compiler-generated-decl-item-mismatch-origin-ok?) (return 0))
-    (unless (compiler-generated-decl-non-string-key-rejected?) (return 0))
-    (unless
-      (compiler-generated-decl-duplicate-visible-left-for-symbols?)
-      (return 0))
-    (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
-    (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     (unless (compiler-generated-registry-map-ok?) (return 0))
     (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))

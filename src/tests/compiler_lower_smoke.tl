@@ -771,7 +771,7 @@
       (compiler-lower-inline-aggregate-tests-ok?)
       (panic "lower: inline aggregate smoke mismatch"))
     (unless
-      (compiler-lower-ok? (compiler-lower-comptime-decl-source))
+      (compiler-lower-ok? (compiler-lower-generated-decl-source))
       (panic "lower: comptime decl smoke mismatch"))
     (unless
       (compiler-lower-generated-paths-preserved-ok?)

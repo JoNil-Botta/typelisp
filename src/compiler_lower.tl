@@ -56386,11 +56386,9 @@
       (compiler-lower-inline-recursive-error-source)
       "typecheck: inline aggregate layout cycle BadList -> BadList; insert (Box BadList) at the recursive edge")))
 
-(define (compiler-lower-comptime-decl-source) : String
-  "(comptime-decl (:generated point-family Point \"i64-i64\")
-  (defstruct Point (x i64) (y i64)))
-(comptime-decl (:generated shape-family Shape \"point\")
-  (defenum Shape (Nothing) (Circle i64) (Pair Point)))
+(define (compiler-lower-generated-decl-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defenum Shape (Nothing) (Circle i64) (Pair Point))
 (define (make-point [x : i64] [y : i64]) : Point
   (Point x y))
 (define (get-y [p : Point]) : i64
@@ -59218,10 +59216,8 @@
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-generated-path-source) : String
-  "(comptime-decl (:generated point-family Point \"same\")
-  (defstruct Point (x i64)))
-(comptime-decl (:generated point-family Point \"same\")
-  (defstruct Point (x i64)))
+  "(defstruct Point (x i64))
+(defstruct Point (x i64))
 (define (after [x : i64]) : i64 (+ x 1))
 (define (main) : i64 (after 41))")
 
@@ -59237,23 +59233,45 @@
 (define (compiler-lower-generated-paths-preserved-ok?) : bool
   (match (parse-ast-source (compiler-lower-generated-path-source))
     [(ResultAstProgram.Ok program)
-      (match (lower-compiler-program-with-decl-paths
-        "app.tl"
-        program
-        (compiler-lower-generated-paths))
-        [(ResultCompilerLower.Ok lowered _)
-          (match lowered
-            [(CompilerIrProgram.Program _ functions _)
-              (and
-                (lower-test-function-defined? functions "lib.tl::after")
-                (lower-test-function-defined? functions "main")
-                (=
-                  (lower-test-function-direct-call-count
-                    functions
-                    "main"
-                    "lib.tl::after")
-                  1))])]
-        [(ResultCompilerLower.Err _) false])]
+      (match program
+        [(AstProgram.Program decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            [args : AstExprList (ast-expr-list-new)]
+            (begin
+              (ast-expr-list-push
+                (&mut args)
+                (ast-node-push
+                  (AstExpr.Literal (ast-lit-generated-string "same"))))
+              (array-set!
+                (struct-get decls slots)
+                (struct-get decls offset)
+                (ast-decl-comptime-decl-with-meta
+                  (AstGeneratedDeclMeta.Some "point-family" "Point" args "")
+                  (ast-decl-list-get (& decls) 0 (ast-decl-fallback))))
+              (array-set!
+                (struct-get decls slots)
+                (+ (struct-get decls offset) 1)
+                (ast-decl-comptime-decl-with-meta
+                  (AstGeneratedDeclMeta.Some "point-family" "Point" args "")
+                  (ast-decl-list-get (& decls) 1 (ast-decl-fallback))))
+              (match (lower-compiler-program-with-decl-paths
+                "app.tl"
+                program
+                (compiler-lower-generated-paths))
+                [(ResultCompilerLower.Ok lowered _)
+                  (match lowered
+                    [(CompilerIrProgram.Program _ functions _)
+                      (and
+                        (lower-test-function-defined? functions "lib.tl::after")
+                        (lower-test-function-defined? functions "main")
+                        (=
+                          (lower-test-function-direct-call-count
+                            functions
+                            "main"
+                            "lib.tl::after")
+                          1))])]
+                [(ResultCompilerLower.Err _) false])))])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-module-symbol-source) : String

@@ -61437,7 +61437,7 @@
             [(TcMaybeNameId.No) fallback])))]
     [_ fallback]))
 
-(define (macro-rewrite-generated-import-call-id
+(define (macro-rewrite-generated-import-call-id-active
   [ctx : TcContext]
   [orig-decls : AstDeclList]
   [module : String]
@@ -61494,6 +61494,31 @@
                 env
                 call-id)]))]
       [_ call-id])))
+
+(define (macro-rewrite-generated-import-call-id
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [module-id : i64]
+  [definition-module-id : i64]
+  [env : CtfeEnv]
+  [call-id : i64]) : i64
+  (let
+    [rewritten : i64
+      (macro-rewrite-generated-import-call-id-active
+        ctx
+        orig-decls
+        module
+        module-id
+        definition-module-id
+        env
+        call-id)]
+    (begin
+      ;; The rewrite still uses legacy AST builders selected by the CTFE
+      ;; environment. Publish their grown active pool before callers place the
+      ;; returned node id into declarations read through this TcContext.
+      (tc-context-capture-active-pools! ctx)
+      rewritten)))
 
 (define (macro-rewrite-generated-import-kind
   [ctx : TcContext]

@@ -21,12 +21,12 @@ set -eu
 # TYPELISP_BIN) to measure it as-is, or set TYPELISP_IR_SELF_STAGE2=0 to measure
 # the raw seed.
 #
-# The opt-in `--c-scalar` mode (env TYPELISP_IR_MEASURE_C_SCALAR=1) additionally
+# The `--c-scalar` mode (env TYPELISP_IR_MEASURE_C_SCALAR=1) additionally
 # builds each C baseline with clang vectorization disabled
 # (-fno-vectorize -fno-slp-vectorize) and measures it as
 # `benchmark/c-scalar/<name>`, a scalar-fair comparison point alongside the
-# default auto-vectorized clang -O2 baseline. It is off by default, so the
-# check-instruction-counts.sh gate and committed baselines are unaffected.
+# auto-vectorized clang -O2 baseline. It remains opt-in for ad-hoc measurement;
+# check-instruction-counts.sh enables it for the per-PR scalar gate.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -286,6 +286,7 @@ if [ "$BUILD_STAGE2_FROM_SEED" -eq 1 ]; then
 fi
 RUNS_TSV="$WORKDIR/runs.tsv"
 SUMMARY_TSV="$WORKDIR/summary.tsv"
+RATIOS_TSV="$WORKDIR/ratios.tsv"
 printf 'kind\tname\trun\tir_count\texit_status\n' > "$RUNS_TSV"
 printf 'kind\tname\tir_count\tmin_ir\tmax_ir\truns\tstable\n' > "$SUMMARY_TSV"
 CR=$(printf '\r')
@@ -627,6 +628,114 @@ measure_benchmarks() {
     [ "$matched" -gt 0 ] || fail "no benchmark cases matched filter='$FILTER' cases='$CASES'"
 }
 
+generate_benchmark_ratios() {
+    summary=$1
+    output=$2
+    require_scalar=$3
+    awk -F '\t' -v require_scalar="$require_scalar" '
+        function problem(message) {
+            print "[ir-count] " message > "/dev/stderr"
+            failed = 1
+        }
+        NR == 1 {
+            if ($0 != "kind\tname\tir_count\tmin_ir\tmax_ir\truns\tstable") {
+                problem("invalid summary header for ratio report")
+            }
+            next
+        }
+        $1 == "benchmark/typelisp" ||
+        $1 == "benchmark/c" ||
+        $1 == "benchmark/c-scalar" {
+            implementation = $1
+            sub(/^benchmark\//, "", implementation)
+            key = implementation SUBSEP $2
+            if (seen[key]++) {
+                problem("duplicate summary row for " $1 "/" $2)
+                next
+            }
+            if ($3 !~ /^[0-9]+$/ || ($3 + 0) <= 0 || $7 != 1) {
+                problem("invalid or unstable summary row for " $1 "/" $2)
+                next
+            }
+            count[key] = $3
+            if (implementation == "typelisp") {
+                benchmark_order[++benchmark_count] = $2
+                typelisp_seen[$2] = 1
+            } else {
+                comparison_seen[$2] = 1
+            }
+        }
+        END {
+            print "benchmark", "typelisp_ir", "clang_auto_ir", \
+                "clang_scalar_ir", "typelisp_over_clang_auto_x", \
+                "typelisp_over_clang_scalar_x"
+            for (i = 1; i <= benchmark_count; i++) {
+                benchmark = benchmark_order[i]
+                tl = count["typelisp" SUBSEP benchmark]
+                auto = count["c" SUBSEP benchmark]
+                scalar = count["c-scalar" SUBSEP benchmark]
+                valid = 1
+                if (auto == "") {
+                    problem("missing auto-vectorized clang row for " benchmark)
+                    valid = 0
+                }
+                if (require_scalar == 1 && scalar == "") {
+                    problem("missing scalar-fair clang row for " benchmark)
+                    valid = 0
+                }
+                if (valid) {
+                    if (scalar == "") {
+                        print benchmark, tl, auto, "-", \
+                            sprintf("%.6f", (tl + 0.0) / auto), "-"
+                    } else {
+                        print benchmark, tl, auto, scalar, \
+                            sprintf("%.6f", (tl + 0.0) / auto), \
+                            sprintf("%.6f", (tl + 0.0) / scalar)
+                    }
+                }
+            }
+            for (benchmark in comparison_seen) {
+                if (!(benchmark in typelisp_seen)) {
+                    problem("comparison row has no TypeLisp row for " benchmark)
+                }
+            }
+            exit failed ? 1 : 0
+        }
+    ' OFS="$(printf '\t')" "$summary" > "$output"
+}
+
+run_ratio_self_test() {
+    ratio_summary="$WORKDIR/ratio-self-test-summary.tsv"
+    ratio_output="$WORKDIR/ratio-self-test.tsv"
+    ratio_missing="$WORKDIR/ratio-self-test-missing.tsv"
+    printf 'kind\tname\tir_count\tmin_ir\tmax_ir\truns\tstable\n' > "$ratio_summary"
+    printf 'benchmark/typelisp\tdemo\t100\t100\t100\t2\t1\n' >> "$ratio_summary"
+    printf 'benchmark/c\tdemo\t25\t25\t25\t2\t1\n' >> "$ratio_summary"
+    printf 'benchmark/c-scalar\tdemo\t50\t50\t50\t2\t1\n' >> "$ratio_summary"
+    printf 'self_compile\tcompile_cli_opt1\t999\t999\t999\t1\t1\n' >> "$ratio_summary"
+
+    generate_benchmark_ratios "$ratio_summary" "$ratio_output" 1 ||
+        fail "ratio self-test could not generate paired report"
+    awk -F '\t' '
+        $1 == "demo" && $2 == 100 && $3 == 25 && $4 == 50 &&
+        $5 == "4.000000" && $6 == "2.000000" { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' "$ratio_output" || fail "ratio self-test paired values"
+
+    grep -v '^benchmark/c-scalar' "$ratio_summary" > "$ratio_missing"
+    if generate_benchmark_ratios "$ratio_missing" "$ratio_output" 1 2>/dev/null; then
+        fail "ratio self-test accepted a missing scalar-fair row"
+    fi
+    generate_benchmark_ratios "$ratio_missing" "$ratio_output" 0 ||
+        fail "ratio self-test rejected optional scalar-fair row"
+    awk -F '\t' '
+        $1 == "demo" && $2 == 100 && $3 == 25 && $4 == "-" &&
+        $5 == "4.000000" && $6 == "-" { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' "$ratio_output" || fail "ratio self-test optional values"
+    echo "[ir-count] benchmark ratio self-test passed"
+}
+
 measure_self_compile() {
     asm="$WORKDIR/bin/self-compile.opt$OPT_LEVEL.s"
     measure_repeated self_compile "compile_cli_opt$OPT_LEVEL" 1 yes \
@@ -641,6 +750,7 @@ measure_self_compile() {
 
 if [ "$SELF_TEST" -eq 1 ]; then
     run_c_region_self_test
+    run_ratio_self_test
     exit 0
 fi
 
@@ -660,6 +770,8 @@ fi
 
 if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
     measure_benchmarks
+    generate_benchmark_ratios "$SUMMARY_TSV" "$RATIOS_TSV" "$C_SCALAR" ||
+        fail "could not generate benchmark ratio report"
 fi
 
 if [ "$MEASURE_SELF_COMPILE" -eq 1 ]; then
@@ -669,3 +781,7 @@ fi
 echo "[ir-count] runs: $RUNS_TSV"
 echo "[ir-count] summary: $SUMMARY_TSV"
 cat "$SUMMARY_TSV"
+if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
+    echo "[ir-count] ratios: $RATIOS_TSV"
+    cat "$RATIOS_TSV"
+fi

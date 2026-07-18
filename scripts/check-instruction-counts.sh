@@ -3,7 +3,9 @@ set -eu
 
 # check-instruction-counts.sh - Linux cachegrind instruction-count baseline gate.
 #
-# Benchmark metrics are exact. The self-compile metric carries a small
+# Benchmark metrics are exact. Each scalar TypeLisp benchmark is paired with
+# both auto-vectorized clang -O2 and scalar-fair clang -O2
+# -fno-vectorize/-fno-slp-vectorize rows. The self-compile metric carries a small
 # cross-runner tolerance because cachegrind counts differ between WSL and GitHub
 # hosted Linux runners even with fixed paths and a clean measured environment.
 
@@ -35,9 +37,10 @@ Options:
   --benchmarks-only    Measure benchmark cases only, not self_compile
   --self-compile-only  Measure and compare self_compile/compile_cli_opt1 only;
                        with --update-baseline, rewrites only that row and
-                       preserves every benchmark row (benchmark/c rows depend
-                       on the local clang; benchmark/typelisp rows are
-                       deterministic and unaffected by a self-compile ratchet)
+                       preserves every benchmark row (benchmark/c and
+                       benchmark/c-scalar rows depend on the local clang;
+                       benchmark/typelisp rows are deterministic and unaffected
+                       by a self-compile ratchet)
   --output DIR         Work directory (default: target/instruction-count-check)
   -h, --help           Show this help
 
@@ -161,6 +164,13 @@ if [ "$BENCHMARKS_ONLY" -eq 1 ] && [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
     exit 2
 fi
 
+SCALAR_FAIR=0
+case "$BASELINE" in
+    "$DEFAULT_BASELINE" | perf/insn-exec-baseline.tsv | ./perf/insn-exec-baseline.tsv)
+        SCALAR_FAIR=1
+        ;;
+esac
+
 case "$(uname -s)" in
     Linux*) ;;
     *)
@@ -257,6 +267,9 @@ if [ "$BENCHMARKS_ONLY" -eq 1 ]; then
 elif [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
     measure_args="--self-compile-only"
 fi
+if [ "$SELF_COMPILE_ONLY" -eq 0 ] && [ "$SCALAR_FAIR" -eq 1 ]; then
+    measure_args="$measure_args --c-scalar"
+fi
 env -i PATH="$PATH" HOME="${HOME:-}" LC_ALL=C \
     scripts/measure-instruction-counts.sh \
     --runs "$RUNS" \
@@ -276,8 +289,8 @@ if [ "$UPDATE_BASELINE" -eq 1 ]; then
     if [ "$SELF_COMPILE_ONLY" -eq 1 ] && [ -f "$BASELINE" ]; then
         # Rewrite only the self_compile row. benchmark/typelisp rows are
         # deterministic and out of scope for a self-compile ratchet;
-        # benchmark/c rows depend on the local clang version and must not
-        # absorb its noise.
+        # benchmark/c and benchmark/c-scalar rows depend on the local clang
+        # version and must not absorb its noise.
         awk -F '\t' '
         BEGIN { OFS = "\t" }
         NR == FNR {

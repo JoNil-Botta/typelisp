@@ -21496,11 +21496,63 @@
         out
         (compiler-ir-block-seq-to-list seq))]))
 
+;; Cheap any-Div/Mod pre-scan for the divrem-safety pass (allocation-free: no
+;; facts, no copies, returns at the first hit). The pass can only rewrite
+;; CompilerIrBinOp.Div / CompilerIrBinOp.Mod ops -- opt-divrem-rewrite-op is
+;; identity for every other op -- so a function containing neither op is
+;; returned unchanged, exactly the content the full pass materializes for it
+;; (no block rewrite can fire), without building the SSA facts, the per-block
+;; fact/result arrays, or the per-block rewrite copies.
+(define (opt-divrem-instr-has-divmod? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp _ op _ _ _)
+      (match op
+        [(CompilerIrBinOp.Div) true]
+        [(CompilerIrBinOp.Mod) true]
+        [_ false])]
+    [_ false]))
+
+(define (opt-divrem-instr-seq-has-divmod?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-divrem-instr-has-divmod? (compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-divrem-instr-seq-has-divmod? instrs (+ index 1)))))
+
+(define (opt-divrem-block-seq-has-divmod?
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    false
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (if (opt-divrem-instr-seq-has-divmod? instrs 0)
+          true
+          (opt-divrem-block-seq-has-divmod? blocks (+ index 1)))])))
+
+(define (opt-divrem-blocks-have-divmod? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-divrem-instr-seq-has-divmod? instrs 0)
+            true
+            (opt-divrem-blocks-have-divmod? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-divrem-block-seq-has-divmod? seq 0)]))
+
 (define (opt-divrem-safety-blocks-with-context
   [context : OptCfgContext]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (let
+  (if (not (opt-divrem-blocks-have-divmod? blocks))
+    ;; No Div/Mod op anywhere: every rewrite is identity, so the pass output
+    ;; equals the input; skip the SSA facts build and the per-block copies.
+    blocks
+    (let
     [index : OptCfgIndex (struct-get context index)]
     [count : i64 (opt-cfg-index-block-count index)]
     [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
@@ -21514,7 +21566,7 @@
       (opt-divrem-facts-fill-empty! facts 0)
       (opt-divrem-results-fill-empty! out 0)
       (opt-divrem-process-rpo! context blocks types facts out 0)
-      (opt-divrem-materialize-blocks context out blocks))))
+      (opt-divrem-materialize-blocks context out blocks)))))
 
 (define (opt-divrem-safety-blocks
   [params : CompilerIrParamList]

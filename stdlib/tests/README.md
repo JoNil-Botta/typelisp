@@ -136,9 +136,13 @@ Inline stdlib coverage:
   macro, sign predicates, min/max order, clamp low/high/inside cases, reversed
   bounds, explicit signed-min fallback behavior for integer abs, exact float
   bit round trips (including NaN payloads and both zeros), classification,
-  copy-sign, and `scalbn` normal/subnormal/tie-to-even/overflow behavior.
-  `tests/integration/stdlib_math_ieee.tl` runs the foundation natively on both
-  Linux and Windows.
+  copy-sign, `scalbn` normal/subnormal/tie-to-even/overflow behavior, typed and
+  generic square root, single evaluation, exact correctly-rounded f64/f32
+  vectors, subnormal boundaries, signed zero, infinities, and NaN behavior.
+  `math_sqrt_non_float_reject.tl` keeps the generic macro restricted to f64/f32.
+  `tests/integration/stdlib_math_ieee.tl` runs the foundation and square-root
+  surface natively on both Linux and Windows; the assembly-shape gate proves
+  public f64/f32 probes contain `sqrtsd`/`sqrtss` with no call.
 - `hash.tl` owns inline tests for stable deterministic hashes,
   equal-values-same-hash checks, primitive key equality predicates, known
   collision behavior, hash range normalization, and string edge cases.

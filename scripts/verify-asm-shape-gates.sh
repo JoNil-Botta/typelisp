@@ -371,6 +371,20 @@ check_gep_value_direct() {
     assert_fixed_count_eq "$_body" 'call tl_memcpy' 2 gep-value-direct
 }
 
+check_stdlib_math_sqrt() {
+    for _target in linux-x86_64 windows-x86_64; do
+        _suffix=$(printf '%s' "$_target" | tr -c 'A-Za-z0-9_' '_')
+        _asm=$(compile_gate "stdlib_math_sqrt_$_suffix" tests/integration/stdlib_math_ieee.tl "$_target")
+        _f64=$(function_body "$_asm" tl_test_math_sqrt_f64)
+        _f32=$(function_body "$_asm" tl_test_math_sqrt_f32)
+        assert_contains "$_f64" 'sqrtsd' "stdlib-math-sqrt-f64-$_target"
+        assert_contains "$_f32" 'sqrtss' "stdlib-math-sqrt-f32-$_target"
+        assert_not_matches "$_f64" '^[[:space:]]+call ' "stdlib-math-sqrt-f64-$_target"
+        assert_not_matches "$_f32" '^[[:space:]]+call ' "stdlib-math-sqrt-f32-$_target"
+        assert_not_contains "$_asm" '__tl_float_sqrt' "stdlib-math-sqrt-private-$_target"
+    done
+}
+
 check_divmagic_hoist
 check_wide_const_hoist
 check_group_pair_home
@@ -392,5 +406,6 @@ check_handle_arg_csr
 check_shift_pin
 check_param_pin_interval
 check_gep_value_direct
+check_stdlib_math_sqrt
 
 echo "Assembly shape gates passed."

@@ -39925,22 +39925,64 @@
 ;; literal whose value (20 + 22) is correct, and a later `Load` redefining a
 ;; formerly-constant var invalidates the stale fact before another arithmetic
 ;; instruction reads that var.
+(define (compiler-optimize-self-test-failure-message
+  [name : String]
+  [actual : i64]
+  [expected : i64]) : String
+  (str_cat.str-cat
+    "optimizer self-test failed: "
+    name
+    " (expected "
+    (string.int->string expected)
+    ", got "
+    (string.int->string actual)
+    ")"))
+
+(define (compiler-optimize-self-test-require-i64!
+  [name : String]
+  [actual : i64]
+  [expected : i64]) : unit
+  (unless
+    (= actual expected)
+    (io.panic
+      (compiler-optimize-self-test-failure-message name actual expected))))
+
+(define (compiler-optimize-self-test-require! [name : String] [ok : bool]) : unit
+  (unless ok (io.panic (str_cat.str-cat "optimizer self-test failed: " name))))
+
 (define (compiler-optimize-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-self-test-instrs)]
     [optimized : CompilerIrInstrList (opt-fold-instrs (OptConstEnv.Nil) instrs)]
     (begin
-      (unless (= (opt-count-arith-instrs instrs) 1) (return 1))
-      (unless (= (opt-count-arith-instrs optimized) 0) (return 2))
-      (unless (= (opt-sum-mov-i64 optimized) 84) (return 3))
+      (compiler-optimize-self-test-require-i64!
+        "constant-fold input arithmetic count"
+        (opt-count-arith-instrs instrs)
+        1)
+      (compiler-optimize-self-test-require-i64!
+        "constant-fold output arithmetic count"
+        (opt-count-arith-instrs optimized)
+        0)
+      (compiler-optimize-self-test-require-i64!
+        "constant-fold literal sum"
+        (opt-sum-mov-i64 optimized)
+        84)
       (let
         [stale-instrs : CompilerIrInstrList (opt-stale-load-test-instrs)]
         [stale-optimized : CompilerIrInstrList
           (opt-fold-instrs (OptConstEnv.Nil) stale-instrs)]
         (begin
-          (unless (= (opt-count-arith-instrs stale-optimized) 1) (return 4))
-          (unless (= (compiler-optimize-vector-mask-self-test) 42) (return 5))
-          (unless (opt-loop-bce-argc-summary-prescan-self-test?) (return 6))
+          (compiler-optimize-self-test-require-i64!
+            "stale load invalidates constant fact"
+            (opt-count-arith-instrs stale-optimized)
+            1)
+          (compiler-optimize-self-test-require-i64!
+            "vector/mask folding and copy propagation"
+            (compiler-optimize-vector-mask-self-test)
+            42)
+          (compiler-optimize-self-test-require!
+            "loop-BCE argc summary prescan"
+            (opt-loop-bce-argc-summary-prescan-self-test?))
           42)))))
 
 (define (opt-typed-fold-u64-shr-instrs) : CompilerIrInstrList

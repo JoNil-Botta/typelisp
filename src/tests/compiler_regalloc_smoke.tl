@@ -2,6 +2,7 @@
 (import "../compiler_liveness.tl")
 (import "../compiler_regalloc.tl")
 (import compiler_intern as ci)
+(import stdlib.string)
 
 (define (compiler-reg-smoke-spmd-call-function) : CompilerIrFunction
   (let
@@ -154,10 +155,17 @@
       (not (compiler-live-set-contains? groups 7)))))
 
 (define (main) : i64
-  (let
-    [base : i64 (compiler-regalloc-self-test)]
-    (begin
-      (unless (= base 42) (return 2))
-      (unless (compiler-reg-smoke-spmd-call-shape-ok?) (return 3))
-      (unless (compiler-reg-smoke-descriptor-pair-group-ok?) (return 4))
-      42)))
+  (begin
+    (compiler-regalloc-self-test-require!
+      "named failure message renderer"
+      (string.eq
+        (compiler-regalloc-self-test-failure-message "register reuse")
+        "regalloc self-test failed: register reuse"))
+    (compiler-regalloc-self-test)
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-smoke-spmd-call-shape-ok?"
+      (compiler-reg-smoke-spmd-call-shape-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-smoke-descriptor-pair-group-ok?"
+      (compiler-reg-smoke-descriptor-pair-group-ok?))
+    42))

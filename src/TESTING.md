@@ -58,7 +58,11 @@ Current examples include:
 Prefer small hand-built fixtures and deterministic structural assertions over
 large golden strings. A runnable self-test returns `42` on success. Failures
 should be specific enough to identify the broken layer; using `panic` with a
-short module-prefixed message is normal when a boolean helper fails.
+short module-prefixed message is normal when a boolean helper fails. Aggregator
+self-tests must name each failed check instead of mapping predicates or child
+self-tests to magic exit codes. A leaf self-test may temporarily retain a
+numeric status when changing it would obscure a large fixture, but its caller
+must print the leaf's name and returned/expected status before failing.
 
 ### Smoke drivers
 

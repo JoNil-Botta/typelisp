@@ -15045,6 +15045,47 @@
                             (box
                               (lower-diagnostic
                                 "lower: internal enum payload load failed")))])])]
+                [(AstPattern.Var name _)
+                  (match (if scrut-reg-group?
+                    (lower-read-register-group-payload
+                      ctx
+                      state
+                      base
+                      (AstType.Enum enum-id)
+                      offset
+                      resolved)
+                    (lower-load-inline-value-at-offset
+                      ctx
+                      state
+                      base
+                      offset
+                      resolved
+                      mode))
+                    [(LowerExpr.Expr load-state value _)
+                      (match value
+                        [(CompilerIrValue.Var field-var)
+                          (lower-bind-variant-payloads
+                            ctx
+                            load-state
+                            (sym_i64_env.sym-i64-bind-id env name field-var)
+                            (tc-bind-id type-env name resolved)
+                            base
+                            rest-patterns
+                            rest-types
+                            mode
+                            enum-id
+                            enum-name
+                            variant-name
+                            variant-name-id
+                            next-index
+                            next-cursor
+                            fail-label
+                            scrut-reg-group?)]
+                        [_
+                          (ResultLowerEnv.Err
+                            (box
+                              (lower-diagnostic
+                                "lower: internal enum payload load failed")))])])]
                 [(AstPattern.Literal lit)
                   (if (lower-literal-payload-supported? lit)
                     (match (if scrut-reg-group?
@@ -15398,6 +15439,44 @@
                   next-cursor
                   fail-label)]
               [(AstPattern.Binding name)
+                (let
+                  [ref-ty : AstType
+                    (tc-borrowed-field-ref-type borrow-lifetime resolved)]
+                  [ref-expr : LowerExpr
+                    (lower-borrowed-payload-ref-expr
+                      ctx
+                      state
+                      base
+                      offset
+                      resolved
+                      ref-ty)]
+                  (match ref-expr
+                    [(LowerExpr.Expr ref-state ref-value _)
+                      (match ref-value
+                        [(CompilerIrValue.Var field-var)
+                          (lower-bind-borrowed-variant-payloads
+                            ctx
+                            ref-state
+                            (sym_i64_env.sym-i64-bind-id env name field-var)
+                            (tc-bind-id type-env name ref-ty)
+                            borrow-lifetime
+                            base
+                            rest-patterns
+                            rest-types
+                            mode
+                            enum-id
+                            enum-name
+                            variant-name
+                            variant-name-id
+                            next-index
+                            next-cursor
+                            fail-label)]
+                        [_
+                          (ResultLowerEnv.Err
+                            (box
+                              (lower-diagnostic
+                                "lower: internal borrowed enum payload reference failed")))])]))]
+              [(AstPattern.Var name _)
                 (let
                   [ref-ty : AstType
                     (tc-borrowed-field-ref-type borrow-lifetime resolved)]

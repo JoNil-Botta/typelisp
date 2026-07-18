@@ -284,7 +284,8 @@ platform-specific code. Target OS predicates are enabled automatically:
 
 ### Expression forms
 
-`if`, `when`, `unless`, `let`, `while` (with unit `break`/`continue`),
+`if`, `when`, `unless`, `let`, scalar `for`, `while` (with unit
+`break`/`continue`),
 `begin`, `set!`, `match` (nested/recursive enum patterns, constructor-shaped
 struct patterns, `_`), `ann`, `cast`, `return`, `try`, `foreach`,
 `spmd-reduce`, `spmd-scan`; arithmetic (`+ - * / %`), comparison

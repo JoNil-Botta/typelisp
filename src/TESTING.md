@@ -707,7 +707,7 @@ Before each self-host generation after stage1, the preceding compiler builds
 the exact 42-module embedded source manifest into `stdlib.tlci`. The generated
 compiler includes those bytes, maps them with the production W^X loader, and
 the bootstrap smoke requires `typelisp inspect embedded:stdlib.tlci` to register
-all 91 current macro identities. `verify-embedded-stdlib-tlci.sh` separately
+all 92 current macro identities. `verify-embedded-stdlib-tlci.sh` separately
 checks byte determinism and proves that a source-only mutation changes the
 image. The entries remain deterministic native registration shells until the
 general macro-body lowering tracked by #2658 lands.

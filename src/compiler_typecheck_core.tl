@@ -36436,6 +36436,23 @@
   (let
     [ty : AstType (tc-resolve-type ctx field-ty)]
     (match pattern
+      [(AstPattern.Var name maybe-ty)
+        (match maybe-ty
+          [(AstMaybeType.No) (ResultTcEnv.Ok (tc-bind-id env name ty))]
+          [(AstMaybeType.Some annotation)
+            (let
+              [expected : AstType (tc-resolve-type ctx annotation)]
+              (match (tc-expect
+                ty
+                expected
+                "typecheck: pattern binding type mismatch")
+                [(ResultTcUnit.Ok)
+                  (ResultTcEnv.Ok
+                    (tc-bind-id
+                      env
+                      name
+                      (tc-contextual-result-type expected ty)))]
+                [(ResultTcUnit.Err message) (ResultTcEnv.Err message)]))])]
       [(AstPattern.Binding name) (ResultTcEnv.Ok (tc-bind-id env name ty))]
       [(AstPattern.Wildcard) (ResultTcEnv.Ok env)]
       [(AstPattern.Literal lit) (tc-bind-literal-pattern env lit ty)]
@@ -36677,6 +36694,33 @@
     [_ (ResultTcEnv.Err "typecheck: unsupported enum match pattern")]))
 
 (define (tc-bind-match-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : AstType]
+  [pattern : AstPattern]) : ResultTcEnv
+  (match pattern
+    [(AstPattern.Var name maybe-ty)
+      (let
+        [actual : AstType (tc-resolve-type ctx scrut-ty)]
+        (match maybe-ty
+          [(AstMaybeType.No) (ResultTcEnv.Ok (tc-bind-id env name actual))]
+          [(AstMaybeType.Some annotation)
+            (let
+              [expected : AstType (tc-resolve-type ctx annotation)]
+              (match (tc-expect
+                actual
+                expected
+                "typecheck: pattern binding type mismatch")
+                [(ResultTcUnit.Ok)
+                  (ResultTcEnv.Ok
+                    (tc-bind-id
+                      env
+                      name
+                      (tc-contextual-result-type expected actual)))]
+                [(ResultTcUnit.Err message) (ResultTcEnv.Err message)]))]))]
+    [_ (tc-bind-match-pattern-unannotated ctx env scrut-ty pattern)]))
+
+(define (tc-bind-match-pattern-unannotated
   [ctx : TcContext]
   [env : TcTypeEnv]
   [scrut-ty : AstType]
@@ -60983,6 +61027,669 @@
 (define (macro-core-bool-lit [value : bool]) : i64
   (ast-node-push (AstExpr.Literal (AstLiteral.Bool value))))
 
+(defstruct MacroCoreForProtocol
+  (constructor i64)
+  (next i64)
+  (cleanup i64)
+  (item-cleanup i64))
+
+(defstruct MacroCoreForPlan
+  (binding AstExprBindingClause)
+  (source i64)
+  (source-temp? bool)
+  (source-temp i64)
+  (iterator-temp i64)
+  (protocol MacroCoreForProtocol))
+
+(defenum MacroCoreForPlanList
+  (Nil)
+  (Cons MacroCoreForPlan (Box MacroCoreForPlanList)))
+
+(defenum ResultMacroCoreForProtocol
+  (Ok MacroCoreForProtocol)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum ResultMacroCoreForPlanList
+  (Ok MacroCoreForPlanList)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum ResultMacroCoreForType
+  (Ok AstType)
+  (Err (Box CompilerDiagnostic)))
+
+(define (macro-core-for-diagnostic [expr : AstExpr] [message : String]) : (Box
+    CompilerDiagnostic)
+  (box (ctfe-diagnostic-at-expr expr message)))
+
+(define (macro-core-for-var [name : i64]) : i64
+  (ast-node-push (AstExpr.Var name)))
+
+(define (macro-core-for-call1 [callee : i64] [arg : i64]) : i64
+  (ast-expr-call
+    (macro-core-for-var callee)
+    (ast-expr-cons arg (ast-expr-list-new))))
+
+(define (macro-core-for-source-name-id [name : String]) : i64
+  (match (ci.intern-lookup name)
+    [(ci.InternLookupFound source-id) source-id]
+    [(ci.InternLookupMissing) (tc-generated-name-id name)]))
+
+(define (macro-core-for-qualified-value-id [module-id : i64] [name : String]) : i64
+  (macro-hygiene-global-id module-id (macro-core-for-source-name-id name) false))
+
+(define (macro-core-for-nominal-module-id [ty : AstType]) : i64
+  (match (tc-type-strip-region ty)
+    [(AstType.Struct name) (tc-qualified-name-module-id name)]
+    [(AstType.StructArgs name _) (tc-qualified-name-module-id name)]
+    [(AstType.Enum name) (tc-qualified-name-module-id name)]
+    [(AstType.EnumArgs name _) (tc-qualified-name-module-id name)]
+    [_ -1]))
+
+(define (macro-core-for-function-return
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-expr : AstExpr]
+  [source-ty : AstType]
+  [function-id : i64]
+  [function-name : String]) : ResultMacroCoreForType
+  (match (tc-expr ctx env (AstExpr.Var function-id))
+    [(ResultTcType.Ok function-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx function-ty))
+        [(AstType.Func _ ret)
+          (ResultMacroCoreForType.Ok (tc-resolve-type ctx (ty-node-get ret)))]
+        [_
+          (ResultMacroCoreForType.Err
+            (macro-core-for-diagnostic
+              source-expr
+              (str_cat.str-cat
+                "typecheck: for protocol function "
+                function-name
+                " for source "
+                (tc-type-render source-ty)
+                " is not callable")))])]
+    [(ResultTcType.Err _)
+      (ResultMacroCoreForType.Err
+        (macro-core-for-diagnostic
+          source-expr
+          (str_cat.str-cat
+            "typecheck: for source "
+            (tc-type-render source-ty)
+            " is missing protocol function "
+            function-name)))]))
+
+(define (macro-core-for-next-result-enum-id [ty : AstType]) : i64
+  (match (tc-type-strip-region ty)
+    [(AstType.Enum name) name]
+    [(AstType.EnumArgs name _) name]
+    [_ -1]))
+
+(define (macro-core-for-cleanup-id [ctx : TcContext] [ty : AstType]) : i64
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstType.Struct name)
+      (match (tc-struct-decl-id ctx name)
+        [(ResultTcStructDecl.Ok (TcStructDecl _ cleanup _))
+          (match cleanup
+            [(AstStructCleanup.No) -1]
+            [(AstStructCleanup.Fn cleanup-name)
+              (tc-module-name-id-by-id
+                (tc-qualified-name-module-id name)
+                cleanup-name)])]
+        [(ResultTcStructDecl.Err _) -1])]
+    [(AstType.StructArgs name _)
+      (match (tc-struct-decl-id ctx name)
+        [(ResultTcStructDecl.Ok (TcStructDecl _ cleanup _))
+          (match cleanup
+            [(AstStructCleanup.No) -1]
+            [(AstStructCleanup.Fn cleanup-name)
+              (tc-module-name-id-by-id
+                (tc-qualified-name-module-id name)
+                cleanup-name)])]
+        [(ResultTcStructDecl.Err _) -1])]
+    [(AstType.Enum name)
+      (match (tc-enum-decl-id ctx name)
+        [(ResultTcEnumDecl.Ok (TcEnumDecl cleanup _))
+          (match cleanup
+            [(AstEnumCleanup.No) -1]
+            [(AstEnumCleanup.Fn cleanup-name)
+              (tc-module-name-id-by-id
+                (tc-qualified-name-module-id name)
+                cleanup-name)])]
+        [(ResultTcEnumDecl.Err _) -1])]
+    [(AstType.EnumArgs name _)
+      (match (tc-enum-decl-id ctx name)
+        [(ResultTcEnumDecl.Ok (TcEnumDecl cleanup _))
+          (match cleanup
+            [(AstEnumCleanup.No) -1]
+            [(AstEnumCleanup.Fn cleanup-name)
+              (tc-module-name-id-by-id
+                (tc-qualified-name-module-id name)
+                cleanup-name)])]
+        [(ResultTcEnumDecl.Err _) -1])]
+    [_ -1]))
+
+(define (macro-core-for-variant-present?
+  [ctx : TcContext]
+  [enum-id : i64]
+  [name : String]) : bool
+  (compiler-symbols-handle-found?
+    (tc-source-variant-handle-for-enum-id-or
+      ctx
+      enum-id
+      (macro-core-for-source-name-id name)
+      (compiler-symbols-missing-handle))))
+
+(define (macro-core-for-item-type
+  [ctx : TcContext]
+  [_env : TcTypeEnv]
+  [source-expr : AstExpr]
+  [next-ret : AstType]) : ResultMacroCoreForType
+  (let
+    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx next-ret))]
+    [enum-id : i64 (macro-core-for-next-result-enum-id resolved)]
+    [lifetimes : AstLifetimeList
+      (match resolved
+        [(AstType.EnumArgs _ args) (box-get args)]
+        [_ (ast-lifetime-list-new)])]
+    [handle : i64
+      (tc-source-variant-handle-for-enum-id-or
+        ctx
+        enum-id
+        (macro-core-for-source-name-id "Item")
+        (compiler-symbols-missing-handle))]
+    (if (not (compiler-symbols-handle-found? handle))
+      (ResultMacroCoreForType.Err
+        (macro-core-for-diagnostic
+          source-expr
+          "typecheck: for protocol result is missing Item"))
+      (match (compiler-registries-variant-fields-indexed
+        (tc-context-symbols ctx)
+        handle)
+        [(ResultAstTypeList.Ok fields)
+          (match (tc-variant-pattern-payload-types
+            ctx
+            enum-id
+            (compiler-registry-handle-owner-index handle)
+            lifetimes
+            fields)
+            [(ResultTcVariantPayloadTypes.Ok payloads)
+              (if (= (ast-type-list-len (& payloads)) 1)
+                (ResultMacroCoreForType.Ok
+                  (ty-node-get
+                    (ast-type-list-get (& payloads) 0 (ast-type-id-fallback))))
+                (ResultMacroCoreForType.Err
+                  (macro-core-for-diagnostic
+                    source-expr
+                    "typecheck: for protocol Item must carry exactly one item")))]
+            [(ResultTcVariantPayloadTypes.Err message)
+              (ResultMacroCoreForType.Err
+                (macro-core-for-diagnostic source-expr message))])]
+        [(ResultAstTypeList.Err message)
+          (ResultMacroCoreForType.Err
+            (macro-core-for-diagnostic source-expr message))]))))
+
+(define (macro-core-for-protocol-after-next
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-expr : AstExpr]
+  [source-ty : AstType]
+  [constructor-id : i64]
+  [constructor-ret : AstType]
+  [next-id : i64]
+  [next-name : String]
+  [next-ret : AstType]) : ResultMacroCoreForProtocol
+  (let
+    [enum-id : i64 (macro-core-for-next-result-enum-id next-ret)]
+    (cond
+      [(< enum-id 0)
+        (ResultMacroCoreForProtocol.Err
+          (macro-core-for-diagnostic
+            source-expr
+            (str_cat.str-cat
+              "typecheck: for protocol function "
+              next-name
+              " for source "
+              (tc-type-render source-ty)
+              " must return a Done/Item enum")))]
+      [(not (macro-core-for-variant-present? ctx enum-id "Done"))
+        (ResultMacroCoreForProtocol.Err
+          (macro-core-for-diagnostic
+            source-expr
+            (str_cat.str-cat
+              "typecheck: for protocol result "
+              (tc-type-render next-ret)
+              " is missing Done")))]
+      [(not (macro-core-for-variant-present? ctx enum-id "Item"))
+        (ResultMacroCoreForProtocol.Err
+          (macro-core-for-diagnostic
+            source-expr
+            (str_cat.str-cat
+              "typecheck: for protocol result "
+              (tc-type-render next-ret)
+              " is missing Item")))]
+      [else
+        (match (macro-core-for-item-type ctx env source-expr next-ret)
+          [(ResultMacroCoreForType.Ok item-ty)
+            (ResultMacroCoreForProtocol.Ok
+              (MacroCoreForProtocol
+                constructor-id
+                next-id
+                (macro-core-for-cleanup-id ctx constructor-ret)
+                (macro-core-for-cleanup-id ctx item-ty)))]
+          [(ResultMacroCoreForType.Err diag)
+            (ResultMacroCoreForProtocol.Err diag)])])))
+
+(define (macro-core-for-protocol
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-expr : AstExpr]
+  [source-ty : AstType]) : ResultMacroCoreForProtocol
+  (let
+    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx source-ty))]
+    [referent : AstType
+      (match resolved
+        [(AstType.Ref _ inner)
+          (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))]
+        [(AstType.MutRef _ inner)
+          (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))]
+        [_ resolved])]
+    [constructor-name : String
+      (match resolved
+        [(AstType.Ref _ _) "iterator"]
+        [(AstType.MutRef _ _) "iterator-mut"]
+        [_ "into-iterator"])]
+    [next-base : String
+      (match resolved
+        [(AstType.Ref _ _) "next"]
+        [(AstType.MutRef _ _) "next-mut"]
+        [_ "into-next"])]
+    [module-id : i64 (macro-core-for-nominal-module-id referent)]
+    (if (< module-id 0)
+      (ResultMacroCoreForProtocol.Err
+        (macro-core-for-diagnostic
+          source-expr
+          (str_cat.str-cat
+            "typecheck: for source "
+            (tc-type-render source-ty)
+            " must be a nominal iterable or reference to one")))
+      (let
+        [module-name : String (macro-decl-module-display module-id)]
+        [constructor-display : String
+          (compiler-symbol-module-key module-name constructor-name)]
+        [next-display : String
+          (compiler-symbol-module-key module-name next-base)]
+        [constructor-id : i64
+          (macro-core-for-qualified-value-id module-id constructor-name)]
+        [next-id : i64 (macro-core-for-qualified-value-id module-id next-base)]
+        (match (macro-core-for-function-return
+          ctx
+          env
+          source-expr
+          source-ty
+          constructor-id
+          constructor-display)
+          [(ResultMacroCoreForType.Ok constructor-ret)
+            (match (macro-core-for-function-return
+              ctx
+              env
+              source-expr
+              source-ty
+              next-id
+              next-display)
+              [(ResultMacroCoreForType.Ok next-ret)
+                (macro-core-for-protocol-after-next
+                  ctx
+                  env
+                  source-expr
+                  source-ty
+                  constructor-id
+                  constructor-ret
+                  next-id
+                  next-display
+                  next-ret)]
+              [(ResultMacroCoreForType.Err diag)
+                (ResultMacroCoreForProtocol.Err diag)])]
+          [(ResultMacroCoreForType.Err diag)
+            (ResultMacroCoreForProtocol.Err diag)])))))
+
+(define (macro-core-for-prefix-count
+  [args : (& args AstExprList)]
+  [index : i64]) : i64
+  (if (>= index (struct-get args len))
+    index
+    (match (ast-expr-unspan (ast-node-get (ast-expr-list-get args index 0)))
+      [(AstExpr.BracketClause _) (macro-core-for-prefix-count args (+ index 1))]
+      [_ index])))
+
+(define (macro-core-for-source-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : ResultTcType
+  (match (ast-expr-unspan expr)
+    [(AstExpr.Borrow mutable lifetime place-box)
+      (match (tc-normalize-dotted-local-field-node! env place-box)
+        [(ResultTcUnit.Ok)
+          (tc-borrow-expr-with-policy
+            ctx
+            env
+            mutable
+            lifetime
+            (ast-node-get place-box)
+            true)]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+    [_ (tc-expr ctx env expr)]))
+
+(define (macro-core-for-temp-id
+  [_hygiene : MacroHygieneContext]
+  [_depth : i64]
+  [prefix : String]
+  [index : i64]) : i64
+  (tc-generated-name-id (str_cat.str-cat prefix (string.int->string index))))
+
+(define (macro-core-for-plan-list-empty? [plans : MacroCoreForPlanList]) : bool
+  (match plans
+    [(MacroCoreForPlanList.Nil) true]
+    [_ false]))
+
+(define (macro-core-for-plan-list
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [hygiene : MacroHygieneContext]
+  [depth : i64]
+  [args : (& args AstExprList)]
+  [index : i64]
+  [count : i64]) : ResultMacroCoreForPlanList
+  (if (>= index count)
+    (ResultMacroCoreForPlanList.Ok MacroCoreForPlanList.Nil)
+    (let
+      [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (macro-expr-binding-clause-from-arg arg)
+        [(ResultMacroBindingClause.Ok binding)
+          (match binding
+            [(AstExprBindingClause _ _ _ init _)
+              (match (macro-expand-expr ctx env decls depth (ast-node-get init))
+                [(ResultMacroExpr.Ok expanded-source)
+                  (let
+                    [expanded-expr : AstExpr (ast-node-get expanded-source)]
+                    (match (macro-core-for-source-type ctx env expanded-expr)
+                      [(ResultTcType.Ok source-ty)
+                        (match (macro-core-for-protocol
+                          ctx
+                          env
+                          expanded-expr
+                          source-ty)
+                          [(ResultMacroCoreForProtocol.Ok protocol)
+                            (match (macro-core-for-plan-list
+                              ctx
+                              env
+                              decls
+                              hygiene
+                              depth
+                              args
+                              (+ index 1)
+                              count)
+                              [(ResultMacroCoreForPlanList.Ok rest)
+                                (if (and
+                                  (>= (struct-get protocol item-cleanup) 0)
+                                  (not (macro-core-for-plan-list-empty? rest)))
+                                  (ResultMacroCoreForPlanList.Err
+                                    (macro-core-for-diagnostic
+                                      expanded-expr
+                                      "typecheck: cleanup-owning for item binding must be final in a zipped loop"))
+                                  (ResultMacroCoreForPlanList.Ok
+                                    (MacroCoreForPlanList.Cons
+                                      (MacroCoreForPlan
+                                        binding
+                                        expanded-source
+                                        (match (tc-type-strip-region
+                                          (tc-resolve-type ctx source-ty))
+                                          [(AstType.MutRef _ _) false]
+                                          [_
+                                            (not
+                                              (tc-cleanup-owning-aggregate-type?
+                                                ctx
+                                                source-ty))])
+                                        (macro-core-for-temp-id
+                                          hygiene
+                                          depth
+                                          "__for_source_"
+                                          index)
+                                        (macro-core-for-temp-id
+                                          hygiene
+                                          depth
+                                          "__for_iterator_"
+                                          index)
+                                        protocol)
+                                      (box rest))))]
+                              [(ResultMacroCoreForPlanList.Err diag)
+                                (ResultMacroCoreForPlanList.Err diag)])]
+                          [(ResultMacroCoreForProtocol.Err diag)
+                            (ResultMacroCoreForPlanList.Err diag)])]
+                      [(ResultTcType.Err message)
+                        (ResultMacroCoreForPlanList.Err
+                          (macro-core-for-diagnostic expanded-expr message))]))]
+                [(ResultMacroExpr.Err diag)
+                  (ResultMacroCoreForPlanList.Err diag)])])]
+        [(ResultMacroBindingClause.Err diag)
+          (ResultMacroCoreForPlanList.Err diag)]))))
+
+(define (macro-core-for-source-bindings-into
+  [plans : MacroCoreForPlanList]
+  [out : (&mut out AstLetBindingList)]) : unit
+  (match plans
+    [(MacroCoreForPlanList.Nil) unit]
+    [(MacroCoreForPlanList.Cons plan rest)
+      (begin
+        (if (struct-get plan source-temp?)
+          (ast-let-binding-list-push
+            out
+            (ast-let-binding-id
+              (struct-get plan source-temp)
+              AstMaybeType.No
+              (struct-get plan source)))
+          unit)
+        (macro-core-for-source-bindings-into (box-get rest) out))]))
+
+(define (macro-core-for-iterator-scopes
+  [plans : MacroCoreForPlanList]
+  [inner : i64]) : i64
+  (match plans
+    [(MacroCoreForPlanList.Nil) inner]
+    [(MacroCoreForPlanList.Cons plan rest)
+      (let
+        [protocol : MacroCoreForProtocol (struct-get plan protocol)]
+        [next-scope : i64 (macro-core-for-iterator-scopes (box-get rest) inner)]
+        [init : i64
+          (macro-core-for-call1
+            (struct-get protocol constructor)
+            (if (struct-get plan source-temp?)
+              (macro-core-for-var (struct-get plan source-temp))
+              (struct-get plan source)))]
+        [cleanup : i64 (struct-get protocol cleanup)]
+        (if (>= cleanup 0)
+          (let
+            [bindings : AstResourceBindingList (ast-resource-binding-list-new)]
+            [body : AstExprList (ast-expr-list-with-capacity 1)]
+            (begin
+              (ast-resource-binding-list-push
+                (&mut bindings)
+                (ast-resource-binding-id
+                  (struct-get plan iterator-temp)
+                  init
+                  (macro-core-for-var cleanup)))
+              (ast-expr-list-push (&mut body) next-scope)
+              (ast-node-push
+                (AstExpr.WithResource
+                  (box (AstWithResource.WithResource bindings body))))))
+          (let
+            [bindings : AstLetBindingList (ast-let-binding-list-new)]
+            (begin
+              (ast-let-binding-list-push
+                (&mut bindings)
+                (ast-let-binding-id
+                  (struct-get plan iterator-temp)
+                  AstMaybeType.No
+                  init))
+              (ast-expr-let bindings next-scope)))))]))
+
+(define (macro-core-for-binding-maybe-type
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [binding : AstExprBindingClause]) : ResultMacroCoreForType
+  (match binding
+    [(AstExprBindingClause _ has-type ty _ _)
+      (if has-type
+        (macro-core-for-binding-type-arg ctx decls (ast-node-get ty))
+        (ResultMacroCoreForType.Ok (AstType.Never)))]))
+
+(define (macro-core-for-binding-type-arg
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [arg : AstExpr]) : ResultMacroCoreForType
+  (match (ast-expr-unspan arg)
+    [(AstExpr.Borrow mutable lifetime target)
+      (match (macro-core-for-binding-type-arg ctx decls (ast-node-get target))
+        [(ResultMacroCoreForType.Ok inner)
+          (let
+            [region : i64
+              (match lifetime
+                [(AstBorrowLifetime.Inferred) cbi.compiler-builtin-id-fix-empty]
+                [(AstBorrowLifetime.Named name) name])]
+            (ResultMacroCoreForType.Ok
+              (if mutable
+                (ast-ty-mut-ref region inner)
+                (ast-ty-ref region inner))))]
+        [(ResultMacroCoreForType.Err diag) (ResultMacroCoreForType.Err diag)])]
+    [_
+      (match (macro-type-arg ctx decls arg)
+        [(ResultMacroTypeArg.Ok resolved) (ResultMacroCoreForType.Ok resolved)]
+        [(ResultMacroTypeArg.Err diag) (ResultMacroCoreForType.Err diag)])]))
+
+(define (macro-core-for-item-pattern
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [binding : AstExprBindingClause]) : ResultMacroCoreForType
+  (macro-core-for-binding-maybe-type ctx decls binding))
+
+(define (macro-core-for-one-match
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [plan : MacroCoreForPlan]
+  [done-name : i64]
+  [inner : i64]) : ResultMacroExpr
+  (let
+    [binding : AstExprBindingClause (struct-get plan binding)]
+    (match (macro-core-for-item-pattern ctx decls binding)
+      [(ResultMacroCoreForType.Ok annotation)
+        (match binding
+          [(AstExprBindingClause name has-type _ _ _)
+            (let
+              [protocol : MacroCoreForProtocol (struct-get plan protocol)]
+              [item-patterns : AstPatternList
+                (ast-pattern-cons
+                  (if has-type
+                    (AstPattern.Var name (AstMaybeType.Some annotation))
+                    (AstPattern.Binding name))
+                  (ast-pattern-list-new))]
+              [done-pattern : AstPattern
+                (ast-pat-variant-id
+                  (macro-core-for-source-name-id "Done")
+                  (ast-pattern-list-new))]
+              [item-pattern : AstPattern
+                (ast-pat-variant-id
+                  (macro-core-for-source-name-id "Item")
+                  item-patterns)]
+              [arms : AstMatchArmList (ast-match-arm-list-with-capacity 2)]
+              [next-call : i64
+                (macro-core-for-call1
+                  (struct-get protocol next)
+                  (ast-expr-borrow
+                    true
+                    AstBorrowLifetime.Inferred
+                    (macro-core-for-var (struct-get plan iterator-temp))))]
+              (begin
+                (ast-match-arm-list-push
+                  (&mut arms)
+                  (ast-match-arm
+                    done-pattern
+                    (ast-expr-set-id done-name (macro-core-bool-lit true))))
+                (ast-match-arm-list-push
+                  (&mut arms)
+                  (ast-match-arm item-pattern inner))
+                (ResultMacroExpr.Ok (ast-expr-match next-call arms))))])]
+      [(ResultMacroCoreForType.Err diag) (ResultMacroExpr.Err diag)])))
+
+(define (macro-core-for-match-chain
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [plans : MacroCoreForPlanList]
+  [done-name : i64]
+  [body : i64]) : ResultMacroExpr
+  (match plans
+    [(MacroCoreForPlanList.Nil) (ResultMacroExpr.Ok body)]
+    [(MacroCoreForPlanList.Cons plan rest)
+      (match (macro-core-for-match-chain
+        ctx
+        decls
+        (box-get rest)
+        done-name
+        body)
+        [(ResultMacroExpr.Ok inner)
+          (macro-core-for-one-match ctx decls plan done-name inner)]
+        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]))
+
+(define (macro-core-for-build
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [plans : MacroCoreForPlanList]
+  [hygiene : MacroHygieneContext]
+  [depth : i64]
+  [body : AstExprList]) : ResultMacroExpr
+  (let
+    [done-name : i64 (macro-core-for-temp-id hygiene depth "__for_done_" 0)]
+    [source-bindings : AstLetBindingList (ast-let-binding-list-new)]
+    [body-expr : i64
+      (ast-node-push (AstExpr.Begin (macro-compat-append-unit body)))]
+    (begin
+      (macro-core-for-source-bindings-into plans (&mut source-bindings))
+      (let
+        [loop-bindings : AstLetBindingList (ast-let-binding-list-new)]
+        (begin
+          (ast-let-binding-list-push
+            (&mut loop-bindings)
+            (ast-let-binding-id
+              done-name
+              (AstMaybeType.Some (AstType.Bool))
+              (macro-core-bool-lit false)))
+          (match (macro-core-for-match-chain
+            ctx
+            decls
+            plans
+            done-name
+            body-expr)
+            [(ResultMacroExpr.Ok loop-body)
+              (let
+                [loop-expr : i64
+                  (ast-expr-while
+                    (ast-expr-unary AstUnOp.Not (macro-core-for-var done-name))
+                    loop-body)]
+                [result-body : AstExprList (ast-expr-list-with-capacity 2)]
+                (begin
+                  (ast-expr-list-push (&mut result-body) loop-expr)
+                  (ast-expr-list-push
+                    (&mut result-body)
+                    (macro-compat-unit-expr))
+                  (let
+                    [loop-scope : i64
+                      (ast-expr-let
+                        loop-bindings
+                        (ast-node-push (AstExpr.Begin result-body)))]
+                    (ResultMacroExpr.Ok
+                      (ast-expr-let
+                        source-bindings
+                        (macro-core-for-iterator-scopes plans loop-scope))))))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))))))
+
 (define (macro-core-and-chain [args : (& args AstExprList)] [index : i64]) : i64
   (if (>= index (struct-get args len))
     (macro-core-bool-lit true)
@@ -61042,6 +61749,13 @@
     (string.eq definition-module "stdlib.core_macros")
     (tc-name-spelling-base-eq? macro-name "cond")))
 
+(define (macro-core-for-macro?
+  [macro-name : String]
+  [definition-module : String]) : bool
+  (and
+    (string.eq definition-module "stdlib.core_macros")
+    (tc-name-spelling-base-eq? macro-name "for")))
+
 (define (macro-core-boolean-signature?
   [ctx : TcContext]
   [definition-module : String]
@@ -61059,6 +61773,25 @@
               definition-module-id
               ty)
             (AstType.Bool)))])
+    false))
+
+(define (macro-core-for-signature?
+  [ctx : TcContext]
+  [definition-module : String]
+  [definition-module-id : i64]
+  [params : AstMacroParamList]) : bool
+  (if (= (ast-macro-param-list-len (& params)) 1)
+    (match (ast-macro-param-list-get (& params) 0 (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty variadic _)
+        (and
+          variadic
+          (tc-type-eq
+            (macro-resolve-signature-type-id
+              ctx
+              definition-module
+              definition-module-id
+              ty)
+            (AstType.Expr)))])
     false))
 
 (define (macro-core-boolean-fast-expand
@@ -61151,6 +61884,73 @@
         [(ResultMacroClauseList.Err diag) (ResultMacroExpr.Err diag)])]
     [(ResultMacroEnv.Err diag) (ResultMacroExpr.Err diag)]))
 
+(define (macro-core-for-fast-expand
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [macro-name-id : i64]
+  [declaration-id : i64]
+  [_macro-name : String]
+  [definition-module-id : i64]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroExpr
+  (let
+    [args-ref : (& args AstExprList) (& args)]
+    [count : i64 (struct-get args-ref len)]
+    [binding-count : i64 (macro-core-for-prefix-count args-ref 0)]
+    (cond
+      [(= binding-count 0)
+        (ResultMacroExpr.Err
+          (macro-core-for-diagnostic
+            call-expr
+            "typecheck: for expects at least one leading binding clause [name source] or [name : Type source]"))]
+      [(>= binding-count count)
+        (ResultMacroExpr.Err
+          (macro-core-for-diagnostic
+            call-expr
+            "typecheck: for expects at least one body expression after its binding clauses"))]
+      [else
+        (let
+          [hygiene : MacroHygieneContext
+            (MacroHygieneContext
+              macro-name-id
+              definition-module-id
+              declaration-id
+              (tc-context-symbols ctx))]
+          [body : AstExprList
+            (ast-expr-list-tail-from-ref args-ref binding-count)]
+          (match (macro-core-for-plan-list
+            ctx
+            type-env
+            decls
+            hygiene
+            (+ depth 1)
+            args-ref
+            0
+            binding-count)
+            [(ResultMacroCoreForPlanList.Ok plans)
+              (match (macro-expand-exprs ctx type-env decls depth body)
+                [(ResultMacroExprList.Ok expanded-body)
+                  (begin
+                    (cfg compile-profile (compiler-tc-macro-profile-start))
+                    (match (macro-core-for-build
+                      ctx
+                      decls
+                      plans
+                      hygiene
+                      (+ depth 1)
+                      expanded-body)
+                      [(ResultMacroExpr.Ok expanded)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-tc-macro-profile-finish _macro-name args))
+                          (ResultMacroExpr.Ok expanded))]
+                      [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+                [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroCoreForPlanList.Err diag) (ResultMacroExpr.Err diag)]))])))
+
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
 (define (macro-expand-call
@@ -61228,6 +62028,24 @@
             definition-module-id
             params
             macro-name
+            args
+            depth
+            call-expr)]
+        [(and
+            (macro-core-for-macro? macro-name definition-module)
+            (macro-core-for-signature?
+              ctx
+              definition-module
+              definition-module-id
+              params))
+          (macro-core-for-fast-expand
+            ctx
+            type-env
+            decls
+            macro-name-id
+            declaration-id
+            macro-name
+            definition-module-id
             args
             depth
             call-expr)]

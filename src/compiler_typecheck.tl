@@ -7794,8 +7794,85 @@
                (or-from ,carrier ,(expr-int (+ i 1)))))]
         [_ (expr-bool false)])]
     [_ (expr-bool false)]))
+(defmacro (for [forms : Expr ...]) : unit
+  (expr-var \"unit\"))
 (module main)
 ")
+
+(define (compiler-typecheck-macro-prelude-for-source) : String
+  (string.append
+    (compiler-typecheck-macro-prelude-module-source)
+    "(module fixture.iter)
+(defstruct Bag (value i64))
+(defstruct Iter (:lifetimes source) (value (& source i64)) (done bool))
+(defenum IterNext (:lifetimes source) (Done) (Item (& source i64)))
+(defstruct IterMut (:lifetimes source) (value (&mut source i64)) (done bool))
+(defenum IterMutNext (:lifetimes source) (Done) (Item (&mut source i64)))
+(defstruct IntoIter
+  (:cleanup cleanup-into-iter)
+  (value i64)
+  (done bool))
+(defenum IntoNext (Done) (Item i64))
+(define (iterator [items : (& source Bag)]) : (Iter source)
+  (Iter (& (struct-get items value)) false))
+(define (next [state : (&mut state (Iter source))]) : (IterNext source)
+  (if (struct-get state done)
+    (IterNext.Done)
+    (begin
+      (set! (struct-get state done) true)
+      (IterNext.Item (struct-get state value)))))
+(define (iterator-mut [items : (&mut source Bag)]) : (IterMut source)
+  (IterMut (&mut (struct-get items value)) false))
+(define (next-mut [state : (&mut state (IterMut source))]) : (IterMutNext
+    source)
+  (if (struct-get state done)
+    (IterMutNext.Done)
+    (begin
+      (set! (struct-get state done) true)
+      (IterMutNext.Item (struct-get state value)))))
+(define (into-iterator [items : Bag (:consume)]) : IntoIter
+  (IntoIter (struct-get items value) false))
+(define (into-next [state : (&mut state IntoIter)]) : IntoNext
+  (if (struct-get state done)
+    (IntoNext.Done)
+    (begin
+      (set! (struct-get state done) true)
+      (IntoNext.Item (struct-get state value)))))
+(module main)
+(import fixture.iter)
+(define (main) : i64
+  (let
+    [shared : iter.Bag (iter.Bag 1)]
+    [mutable : iter.Bag (iter.Bag 2)]
+    [owned-a : iter.Bag (iter.Bag 20)]
+    [owned-b : iter.Bag (iter.Bag 22)]
+    [sum : i64 0]
+    (begin
+      (for [item : (& shared i64) (& shared)] unit)
+      (for [item : (&mut mutable i64) (&mut mutable)] unit)
+      (for
+        [left : i64 owned-a]
+        [right owned-b]
+        (set! sum (+ sum (+ left right))))
+      sum)))"))
+
+(define (compiler-typecheck-macro-prelude-for-bad-annotation-source) : String
+  (string.append
+    (compiler-typecheck-macro-prelude-for-source)
+    "
+(define (bad-for-annotation) : unit
+  (for [item : bool (iter.Bag 1)] unit))"))
+
+(define (compiler-typecheck-macro-prelude-for-no-binding-source) : String
+  (string.append
+    (compiler-typecheck-macro-prelude-module-source)
+    "(define (main) : unit (for unit))"))
+
+(define (compiler-typecheck-macro-prelude-for-no-body-source) : String
+  (string.append
+    (compiler-typecheck-macro-prelude-module-source)
+    "(defstruct NotIterable (value i64))
+(define (main) : unit (for [item (NotIterable 1)]))"))
 
 (define (compiler-typecheck-macro-prelude-and-or-source) : String
   (string.append
@@ -8035,6 +8112,16 @@
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-forward-prelude-shadow-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-prelude-and-or-source))
+    (compiler-typecheck-ok? (compiler-typecheck-macro-prelude-for-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-prelude-for-bad-annotation-source)
+      "typecheck: pattern binding type mismatch: expected bool, found i64")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-prelude-for-no-binding-source)
+      "typecheck: for expects at least one leading binding clause [name source] or [name : Type source]")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-prelude-for-no-body-source)
+      "typecheck: for expects at least one body expression after its binding clauses")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-prelude-and-bad-source)
       "typecheck: macro operand type mismatch: expected bool, got i32")

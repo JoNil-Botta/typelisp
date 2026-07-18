@@ -2,10 +2,13 @@
 ;#
 ;# The compile driver links this module into every program (alongside
 ;# stdlib/runtime.tl), so a bare `when`, `unless`, `cond`, `and`, or `or` that is
-;# not bound locally resolves to these macros without an import. Local macros
+;# not bound locally resolves to these macros without an import. `for` is the
+;# scalar iterator loop; it remains distinct from SPMD `foreach`. Local macros
 ;# and explicit imports shadow the prelude.
 ;#
 ;# ```lisp
+;# (import stdlib.iterator)
+;#
 ;# (define (main) : i64
 ;#   (let
 ;#     [value : i64 0]
@@ -14,6 +17,7 @@
 ;#       (or false true)
 ;#       (when true (set! value 21))
 ;#       (unless false (set! value (+ value 21)))
+;#       (for [item (iterator.range 0 0)] (set! value (+ value item)))
 ;#       (set! value (cond [false 0] [true value] [else value]))
 ;#       value)))
 ;# ```
@@ -113,6 +117,26 @@
     arms
     (comptime.expr-var "core-cond-missing-else")
     (comptime.expr-var "core-cond-else-must-be-final")))
+
+;: Traverse one or more scalar iterables with zip-shortest semantics.
+;:
+;: Leading operands are let-like clauses, `[name source]` or
+;: `[name : ItemType source]`, followed by one or more unit-valued body
+;: expressions. Every source is evaluated once and every iterator state is
+;: constructed once.
+;: A shared source selects `iterator` / `next`, a mutable source selects
+;: `iterator-mut` / `next-mut`, and an owned source selects
+;: `into-iterator` / `into-next` from the source type's defining module.
+;: Cleanup-owning item bindings must be final when clauses are zipped.
+;:
+;: The compiler expands this prelude macro directly, just as it does the hot
+;: `and`, `or`, and `cond` prelude macros. The wildcard signature is the
+;: bootstrap-compatible representation of its mixed binding/body operands.
+(defmacro (for [forms : Expr ...]) : unit
+  ;; Published seed compilers typecheck this declaration before the branch-built
+  ;; fast expander exists. The branch compiler always intercepts calls; `unit`
+  ;; keeps that seed bootstrap pass source-compatible.
+  (comptime.expr-var "unit"))
 
 (cfg
   test

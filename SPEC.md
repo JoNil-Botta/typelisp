@@ -670,6 +670,12 @@ body receives an `ExprClauseList`. For `ExprBindingClause ...`, every
 remaining operand must be a binding clause and the macro body receives an
 `ExprBindingClauseList`.
 
+The implicit-prelude `for` macro is the one mixed-shape core exception. Its
+bootstrap-compatible signature is `Expr ...`, while the compiler validates a
+non-empty prefix of let-like binding clauses followed by one or more ordinary
+body expressions. This exception does not make bracket clauses ordinary
+`Expr` operands for user-defined macros.
+
 Macro bodies can build expression literals with `expr-bool`, `expr-int`,
 `expr-string`, and `expr-var`. `expr-binary-data` builds an opaque `(Array u8)`
 static payload from a compile-time string, without materializing array-literal
@@ -1526,8 +1532,8 @@ are disjoint. Consequently, mutation, growth, or conflicting borrows of the
 collection are rejected while the iterator state or a yielded item is live;
 they are accepted after the last proven use. Repeated exhausted steps return a
 concrete `Done` result. `String` elements remain immutable and use `(& source
-str)` items under this convention. A future `for` macro may select the
-protocol, but it is explicit library API until its reflection support lands.
+str)` items under this convention. Scalar `for` selects this protocol for a
+mutable source.
 
 **Consuming collection iterators.** A generated collection module may expose
 `into-iterator` with a `(:consume)` collection parameter and `into-next` over
@@ -1539,8 +1545,32 @@ hidden copy. For cleanup-owning element types, backing storage contains only
 constructed elements: capacity never creates spare owners. `IntoNext` is itself
 cleanup-owning, so an abandoned `Item` cleans its payload, while abandoning the
 `IntoIter` drains exactly the still-live, unvisited slots and `Done` is a no-op.
-A future `for` macro may select this protocol for a bare owned source; protocol
-discovery remains explicit library API until that macro lands.
+
+**Scalar `for`.** The implicit-prelude macro has the let-like form
+`(for [item source] body...)`; an optional item annotation is written
+`[item : ItemType source]`. One or more leading clauses are accepted. Every
+source expression is evaluated once, in source order, as its iterator state is
+constructed once before stepping begins. Source ownership selects the defining
+module's protocol names:
+
+- `&T` uses `iterator` and `next`, yielding shared items.
+- `&mut T` uses `iterator-mut` and `next-mut`, yielding lending mutable items.
+- Owned `T` uses `into-iterator` and `into-next`, yielding owned items.
+
+Each step result is an enum with `Done` and `Item`; a missing protocol function
+or variant is a source-located typecheck diagnostic. Multiple clauses use
+zip-shortest semantics: later iterators are stepped only after every earlier
+iterator yielded `Item`, and the loop ends as soon as any iterator yields
+`Done`. Item bindings exist only in `body`, every body expression must produce
+`unit`, and the whole form produces `unit`. A type annotation is checked
+against the yielded owned/reference type and reports the expected and yielded
+types on mismatch. Cleanup-owning iterator state uses its declared resource
+cleanup scope, so early `break`, `return`, or normal exhaustion cleans
+unvisited consuming items. In a zipped loop, a cleanup-owning item binding must
+be final so a later `Done` result cannot strand an already-acquired owner; an
+earlier cleanup-owning item is rejected until cleanup-aware zip short-circuiting
+lands (#5281). This scalar construct is unrelated to SPMD `foreach` (section
+5.15).
 
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference
 lifetime from the owner:
@@ -6985,6 +7015,7 @@ expr          ::= literal
                 | "(" "ann" expr ":" type ")"
                 | "(" "cast" expr ":" type ")"
                 | "(" "match" expr match-arm+ ")"
+                | "(" "for" for-binding+ expr+ ")"
                 | "(" "foreach" foreach-clause expr ")"
                 | "(" "cfg" cfg-predicate expr [expr] ")"
                 | "(" "spmd-reduce" reduce-op foreach-clause expr expr ")"
@@ -7053,6 +7084,7 @@ addr-of-place ::= ident
 
 binding       ::= "[" ident [":" type] expr "]"
 resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn
+for-binding   ::= "[" ident [":" type] expr "]"
 foreach-clause ::= "(" "[" ident ":" type expr expr "]" ")"
 scan-clause   ::= "(" "[" ident ":" type expr expr "]"
                       "[" ident ":" type expr "]" ")"

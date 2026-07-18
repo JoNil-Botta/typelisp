@@ -18,6 +18,7 @@ borrow_reborrow_stored_reference_aggregate|tests/integration/borrow_reborrow_sto
 vector_shared_iterator|tests/integration/vector_shared_iterator.tl|42|-|-|stdlib/vector.tl
 vector_consuming_iterator|tests/integration/vector_consuming_iterator.tl|42|-|-|stdlib/vector.tl
 vector_cleanup_consuming_iterator|tests/integration/vector_cleanup_consuming_iterator.tl|42|-|-|stdlib/vector.tl stdlib/test.tl
+for_macro|tests/integration/for_macro.tl|42|-|-|stdlib/iterator.tl stdlib/vector.tl
 two_phase_mutable_call_borrow|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 core_macros_headerless_prelude_import|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-

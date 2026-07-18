@@ -41609,26 +41609,34 @@
     [(AstExpr.Unary _ inner)
       (tc-comptime-purity-node-mode ctx env bound chain seen template? inner)]
     [(AstExpr.Call func args)
-      (match (tc-comptime-purity-node-mode
-        ctx
-        env
+      (match (tc-macro-abstract-check-current-call
         bound
-        chain
-        seen
         template?
-        func)
+        expr
+        (ast-node-get func)
+        args)
         [(ResultTcUnit.Ok)
-          (tc-comptime-purity-expr-list-mode
+          (match (tc-comptime-purity-node-mode
             ctx
             env
             bound
             chain
             seen
             template?
-            args)]
+            func)
+            [(ResultTcUnit.Ok)
+              (tc-comptime-purity-expr-list-mode
+                ctx
+                env
+                bound
+                chain
+                seen
+                template?
+                args)]
+            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
     [(AstExpr.If cond then-branch else-branch)
-      (tc-comptime-purity-node3-mode
+      (tc-comptime-purity-if-mode
         ctx
         env
         bound
@@ -42471,6 +42479,437 @@
     (tc-string-list-add TcStringList.Nil (tc-env-key-name-text name))
     body))
 
+;; The ordinary comptime-purity walk already models executable macro syntax,
+;; including quote/unquote and lexical shadowing.  Reuse that walk while a
+;; small abstract-kind state is active instead of maintaining a second large
+;; recursive visitor.  Typechecking is single-threaded, and every scoped state
+;; mutation below is restored before returning.
+(defstruct TcMacroAbstractState
+  (active bool)
+  (macro-name String)
+  (param-name String)
+  (kind-mask i64))
+
+(defenum TcMacroAbstractGuard
+  (No)
+  (Kind String))
+
+(define tc-macro-abstract-active : bool
+  false)
+(define tc-macro-abstract-macro-name : String
+  "")
+(define tc-macro-abstract-param-name : String
+  "")
+(define tc-macro-abstract-kind-mask : i64
+  0)
+
+(define (tc-macro-abstract-state-save) : TcMacroAbstractState
+  (TcMacroAbstractState
+    tc-macro-abstract-active
+    tc-macro-abstract-macro-name
+    tc-macro-abstract-param-name
+    tc-macro-abstract-kind-mask))
+
+(define (tc-macro-abstract-state-restore! [state : TcMacroAbstractState]) : unit
+  (begin
+    (set! tc-macro-abstract-active (struct-get state active))
+    (set! tc-macro-abstract-macro-name (struct-get state macro-name))
+    (set! tc-macro-abstract-param-name (struct-get state param-name))
+    (set! tc-macro-abstract-kind-mask (struct-get state kind-mask))))
+
+(define (tc-macro-abstract-call-id [func : AstExpr]) : i64
+  (let
+    [raw-id : i64 (tc-expr-var-name-id func)]
+    (if (< raw-id 0)
+      -1
+      (ctfe-comptime-helper-call-name-id
+        (macro-hygiene-global-source-name-id-or raw-id raw-id)))))
+
+(define (tc-macro-abstract-arg [args : (& args AstExprList)] [index : i64]) : AstExpr
+  (ast-node-get (ast-expr-list-get args index 0)))
+
+(define (tc-macro-abstract-param-var? [expr : AstExpr] [bound : TcStringList]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExpr.Var name-id)
+      (let
+        [name : String (tc-hygiene-name-text-id name-id)]
+        (and
+          (string.eq name tc-macro-abstract-param-name)
+          (not (tc-string-list-contains bound name))))]
+    [_ false]))
+
+(define (tc-macro-abstract-kind-bit [kind : String]) : i64
+  (cond
+    [(string.eq kind "i64") (shl 1 0)]
+    [(string.eq kind "i32") (shl 1 1)]
+    [(string.eq kind "i16") (shl 1 2)]
+    [(string.eq kind "i8") (shl 1 3)]
+    [(string.eq kind "u64") (shl 1 4)]
+    [(string.eq kind "u32") (shl 1 5)]
+    [(string.eq kind "u16") (shl 1 6)]
+    [(string.eq kind "u8") (shl 1 7)]
+    [(string.eq kind "f64") (shl 1 8)]
+    [(string.eq kind "f32") (shl 1 9)]
+    [(string.eq kind "bool") (shl 1 10)]
+    [(string.eq kind "char") (shl 1 11)]
+    [(string.eq kind "string") (shl 1 12)]
+    [(string.eq kind "unit") (shl 1 13)]
+    [(string.eq kind "never") (shl 1 14)]
+    [(string.eq kind "array") (shl 1 15)]
+    [(string.eq kind "dyn-array") (shl 1 16)]
+    [(string.eq kind "function") (shl 1 17)]
+    [(string.eq kind "tuple") (shl 1 18)]
+    [(string.eq kind "struct") (shl 1 19)]
+    [(string.eq kind "enum") (shl 1 20)]
+    [(string.eq kind "str") (shl 1 21)]
+    [(string.eq kind "ptr") (shl 1 22)]
+    [(string.eq kind "mut-ptr") (shl 1 23)]
+    [(string.eq kind "ref") (shl 1 24)]
+    [(string.eq kind "mut-ref") (shl 1 25)]
+    [(string.eq kind "region") (shl 1 26)]
+    [(string.eq kind "type-var") (shl 1 27)]
+    ;; Reserved for a future parser-visible `box` kind constraint.
+    [(string.eq kind "box") (shl 1 28)]
+    [else (shl 1 29)]))
+
+(define (tc-macro-abstract-kind-list-mask [kinds : AstMacroTypeKindList]) : i64
+  (match kinds
+    [(AstMacroTypeKindList.Nil) 0]
+    [(AstMacroTypeKindList.Cons head rest)
+      (bit-or
+        (tc-macro-abstract-kind-bit (intern-str head))
+        (tc-macro-abstract-kind-list-mask (box-get rest)))]))
+
+(define (tc-macro-abstract-mask-allows? [allowed : i64]) : bool
+  (= (bit-and tc-macro-abstract-kind-mask (bit-xor allowed -1)) 0))
+
+(define (tc-macro-abstract-reflection-supported? [call-id : i64]) : bool
+  (cond
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 46))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 71))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 72))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 210)))
+      true]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 73))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 74)))
+      (tc-macro-abstract-mask-allows? (bit-or (shl 1 19) (shl 1 20)))]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 2))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 75))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 76))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 77)))
+      (tc-macro-abstract-mask-allows? (shl 1 19))]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 78))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 79))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 80))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 81)))
+      (tc-macro-abstract-mask-allows? (shl 1 20))]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 82))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 84)))
+      (tc-macro-abstract-mask-allows? (bit-or (shl 1 15) (shl 1 16)))]
+    [(= call-id (cbi.compiler-builtin-ctfe-ref 214))
+      (tc-macro-abstract-mask-allows? (shl 1 28))]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 85))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 86)))
+      (tc-macro-abstract-mask-allows? (shl 1 18))]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 87))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 88))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 89)))
+      (tc-macro-abstract-mask-allows? (shl 1 17))]
+    ;; Kind `array` does not imply a fixed length, and no kind proves cleanup
+    ;; ownership.  Those facts remain concrete-only.
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 83))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 211)))
+      false]
+    [else false]))
+
+(define (tc-macro-abstract-required [call-id : i64]) : String
+  (cond
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 73))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 74)))
+      "struct or enum"]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 2))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 75))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 76))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 77)))
+      "struct"]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 78))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 79))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 80))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 81)))
+      "enum"]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 82))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 84)))
+      "array"]
+    [(= call-id (cbi.compiler-builtin-ctfe-ref 83)) "fixed array shape"]
+    [(= call-id (cbi.compiler-builtin-ctfe-ref 214)) "box"]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 85))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 86)))
+      "tuple"]
+    [(or
+        (= call-id (cbi.compiler-builtin-ctfe-ref 87))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 88))
+        (= call-id (cbi.compiler-builtin-ctfe-ref 89)))
+      "function"]
+    [(= call-id (cbi.compiler-builtin-ctfe-ref 211)) "cleanup-owning type"]
+    [else "a stronger type-kind bound"]))
+
+(define (tc-macro-abstract-check-current-call
+  [bound : TcStringList]
+  [template? : bool]
+  [expr : AstExpr]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcUnit
+  (if (or (not tc-macro-abstract-active) template? (= (struct-get args len) 0))
+    ResultTcUnit.Ok
+    (let
+      [call-id : i64 (tc-macro-abstract-call-id func)]
+      (if (and
+        (or
+          (ctfe-builtin-reflection-id? call-id)
+          (ctfe-builtin-offset-of-id? call-id))
+        (tc-macro-abstract-param-var? (tc-macro-abstract-arg (& args) 0) bound)
+        (not (tc-macro-abstract-reflection-supported? call-id)))
+        (let
+          [name-id : i64 (tc-expr-var-name-id func)]
+          [call-name : String
+            (if (< name-id 0)
+              "reflection operation"
+              (tc-hygiene-name-text-id name-id))]
+          (ResultTcUnit.Err
+            (tc-locate-error-at-expr
+              expr
+              (str_cat.str-cat
+                "typecheck: macro "
+                (tc-name-slashes-to-dots tc-macro-abstract-macro-name)
+                " constrained type operand "
+                tc-macro-abstract-param-name
+                " cannot use "
+                call-name
+                "; requires "
+                (tc-macro-abstract-required call-id)))))
+        ResultTcUnit.Ok))))
+
+(define (tc-macro-abstract-kind-literal [expr : AstExpr]) : TcMacroAbstractGuard
+  (match (ast-expr-unspan expr)
+    [(AstExpr.Literal (AstLiteral.String string-id))
+      (TcMacroAbstractGuard.Kind (intern-str string-id))]
+    [_ TcMacroAbstractGuard.No]))
+
+(define (tc-macro-abstract-type-kind-param?
+  [expr : AstExpr]
+  [bound : TcStringList]) : bool
+  (match (ast-expr-unspan expr)
+    [(AstExpr.Call func args)
+      (and
+        (=
+          (tc-macro-abstract-call-id (ast-node-get func))
+          (cbi.compiler-builtin-ctfe-ref 71))
+        (= (struct-get args len) 1)
+        (tc-macro-abstract-param-var? (tc-macro-abstract-arg (& args) 0) bound))]
+    [_ false]))
+
+(define (tc-macro-abstract-kind-equality
+  [left : AstExpr]
+  [right : AstExpr]
+  [bound : TcStringList]) : TcMacroAbstractGuard
+  (if (tc-macro-abstract-type-kind-param? left bound)
+    (tc-macro-abstract-kind-literal right)
+    (if (tc-macro-abstract-type-kind-param? right bound)
+      (tc-macro-abstract-kind-literal left)
+      TcMacroAbstractGuard.No)))
+
+(define (tc-macro-abstract-guard [cond-expr : AstExpr] [bound : TcStringList]) : TcMacroAbstractGuard
+  (match (ast-expr-unspan cond-expr)
+    [(AstExpr.Binary (AstBinOp.Eq) left right)
+      (tc-macro-abstract-kind-equality
+        (ast-node-get left)
+        (ast-node-get right)
+        bound)]
+    [(AstExpr.Call func args)
+      (let
+        [raw-id : i64 (tc-expr-var-name-id (ast-node-get func))]
+        (if (and
+          (= (struct-get args len) 2)
+          (>= raw-id 0)
+          (ctfe-string-eq-helper-name-id?
+            (tc-hygiene-name-text-id raw-id)
+            (macro-hygiene-global-source-name-id-or raw-id raw-id)))
+          (tc-macro-abstract-kind-equality
+            (tc-macro-abstract-arg (& args) 0)
+            (tc-macro-abstract-arg (& args) 1)
+            bound)
+          TcMacroAbstractGuard.No))]
+    [_ TcMacroAbstractGuard.No]))
+
+(define (tc-macro-abstract-purity-node-with-mask
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [kind-mask : i64]
+  [expr-id : i64]) : ResultTcUnit
+  (let
+    [saved : i64 tc-macro-abstract-kind-mask]
+    (begin
+      (set! tc-macro-abstract-kind-mask kind-mask)
+      (let
+        [result : ResultTcUnit
+          (tc-comptime-purity-node-mode ctx env bound chain seen false expr-id)]
+        (begin
+          (set! tc-macro-abstract-kind-mask saved)
+          result)))))
+
+(define (tc-comptime-purity-if-mode
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [chain : TcStringList]
+  [seen : TcStringList]
+  [template? : bool]
+  [cond-id : i64]
+  [then-id : i64]
+  [else-id : i64]) : ResultTcUnit
+  (if (or (not tc-macro-abstract-active) template?)
+    (tc-comptime-purity-node3-mode
+      ctx
+      env
+      bound
+      chain
+      seen
+      template?
+      cond-id
+      then-id
+      else-id)
+    (match (tc-comptime-purity-node-mode ctx env bound chain seen false cond-id)
+      [(ResultTcUnit.Ok)
+        (match (tc-macro-abstract-guard (ast-node-get cond-id) bound)
+          [(TcMacroAbstractGuard.No)
+            (tc-comptime-purity-node2-mode
+              ctx
+              env
+              bound
+              chain
+              seen
+              false
+              then-id
+              else-id)]
+          [(TcMacroAbstractGuard.Kind kind)
+            (let
+              [kind-bit : i64 (tc-macro-abstract-kind-bit kind)]
+              (match (tc-macro-abstract-purity-node-with-mask
+                ctx
+                env
+                bound
+                chain
+                seen
+                (bit-and tc-macro-abstract-kind-mask kind-bit)
+                then-id)
+                [(ResultTcUnit.Ok)
+                  (tc-macro-abstract-purity-node-with-mask
+                    ctx
+                    env
+                    bound
+                    chain
+                    seen
+                    (bit-and tc-macro-abstract-kind-mask (bit-xor kind-bit -1))
+                    else-id)]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+
+(define (tc-check-defmacro-abstract-param
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [macro-name : String]
+  [param-name : String]
+  [kinds : AstMacroTypeKindList]
+  [body : AstExpr]) : ResultTcUnit
+  (let
+    [saved : TcMacroAbstractState (tc-macro-abstract-state-save)]
+    (begin
+      (set! tc-macro-abstract-active true)
+      (set! tc-macro-abstract-macro-name (string.copy (& macro-name)))
+      (set! tc-macro-abstract-param-name param-name)
+      (set!
+        tc-macro-abstract-kind-mask
+        (tc-macro-abstract-kind-list-mask kinds))
+      (let
+        [result : ResultTcUnit
+          (tc-comptime-purity-expr
+            ctx
+            env
+            TcStringList.Nil
+            (tc-comptime-purity-chain-push
+              TcStringList.Nil
+              (string.copy (& macro-name)))
+            (tc-string-list-add TcStringList.Nil macro-name)
+            body)]
+        (begin
+          (tc-macro-abstract-state-restore! saved)
+          result)))))
+
+(define (tc-check-defmacro-abstract-type-params-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [macro-name : String]
+  [params : (& params AstMacroParamList)]
+  [index : i64]
+  [body : AstExpr]) : ResultTcUnit
+  (if (>= index (ast-macro-param-list-len params))
+    ResultTcUnit.Ok
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param param-name ty _ type-kinds)
+        (match (if (and
+          (tc-macro-type-param-kind? ty)
+          (not
+            (match type-kinds
+              [(AstMacroTypeKindList.Nil) true]
+              [_ false])))
+          (tc-check-defmacro-abstract-param
+            ctx
+            env
+            macro-name
+            (tc-env-key-name-text param-name)
+            type-kinds
+            body)
+          ResultTcUnit.Ok)
+          [(ResultTcUnit.Ok)
+            (tc-check-defmacro-abstract-type-params-at
+              ctx
+              env
+              macro-name
+              params
+              (+ index 1)
+              body)]
+          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])))
+
+(define (tc-check-defmacro-abstract-type-params
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [params : AstMacroParamList]
+  [body : AstExpr]) : ResultTcUnit
+  (tc-check-defmacro-abstract-type-params-at
+    ctx
+    env
+    (tc-env-key-name-text name)
+    (& params)
+    0
+    body))
+
 (define (tc-macro-param-list-needs-call-context? [params : AstMacroParamList]) : bool
   (tc-macro-param-list-needs-call-context-at? (& params) 0))
 
@@ -42510,31 +42949,39 @@
       [(ResultTcType.Ok got)
         (match (tc-check-defmacro-purity ctx macro-env name params body)
           [(ResultTcUnit.Ok)
-            (match (tc-expect
-              got
-              (AstType.Expr)
-              "typecheck: macro body must return Expr")
+            (match (tc-check-defmacro-abstract-type-params
+              ctx
+              macro-env
+              name
+              params
+              body)
               [(ResultTcUnit.Ok)
-                (if (or
-                  (tc-macro-param-list-needs-call-context? params)
-                  (macro-expr-uses-expr-type? body))
-                  ResultTcUnit.Ok
-                  (begin
-                    (tc-context-capture-active-pools! ctx)
-                    (match (compiler-ctfe-eval
-                      body
-                      (tc-ctfe-env-extend-macro-params
-                        ctx
-                        (tc-ctfe-env ctx)
-                        params)
-                      (ctfe-fuel-limit))
-                      [(ResultCtfe.Ok value _)
-                        (begin
-                          (tc-context-install-pools! ctx)
-                          (tc-check-defmacro-produced-type ctx ret value))]
-                      [(ResultCtfe.Err diag)
-                        (ResultTcUnit.Err
-                          (compiler-diagnostic-message (box-get diag)))])))]
+                (match (tc-expect
+                  got
+                  (AstType.Expr)
+                  "typecheck: macro body must return Expr")
+                  [(ResultTcUnit.Ok)
+                    (if (or
+                      (tc-macro-param-list-needs-call-context? params)
+                      (macro-expr-uses-expr-type? body))
+                      ResultTcUnit.Ok
+                      (begin
+                        (tc-context-capture-active-pools! ctx)
+                        (match (compiler-ctfe-eval
+                          body
+                          (tc-ctfe-env-extend-macro-params
+                            ctx
+                            (tc-ctfe-env ctx)
+                            params)
+                          (ctfe-fuel-limit))
+                          [(ResultCtfe.Ok value _)
+                            (begin
+                              (tc-context-install-pools! ctx)
+                              (tc-check-defmacro-produced-type ctx ret value))]
+                          [(ResultCtfe.Err diag)
+                            (ResultTcUnit.Err
+                              (compiler-diagnostic-message (box-get diag)))])))]
+                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
       [(ResultTcType.Err message) (ResultTcUnit.Err message)])))

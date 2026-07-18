@@ -7104,6 +7104,48 @@
   (expr-int 0))
 (define (main) : i64 (kind-code (Array i64 4)))")
 
+(define (compiler-typecheck-macro-abstract-kind-reject-source) : String
+  "(defmacro (emit-bad [T : type (:kind struct enum)]) : Decls
+  (let
+    [count : i64 (struct-field-count T)]
+    `(define (generated-bad) : i64 ,(expr-int count))))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-macro-abstract-kind-branches-source) : String
+  "(defstruct Point (x i64) (y bool))
+(defenum Maybe (None) (Some i64))
+(defmacro (emit-kind-count [T : type (:kind struct enum)]) : Decls
+  (if (__tl_string_eq (type-kind T) \"struct\")
+    `(define (generated-struct-count) : i64
+      ,(expr-int (struct-field-count T)))
+    `(define (generated-enum-count) : i64
+      ,(expr-int (enum-variant-count T)))))
+(emit-kind-count Point)
+(emit-kind-count Maybe)
+(define (main) : i64
+  (+ (generated-struct-count) (generated-enum-count)))")
+
+(define (compiler-typecheck-macro-abstract-kind-branch-reject-source) : String
+  "(defmacro (emit-wrong-branch [T : type (:kind struct enum)]) : Decls
+  (if (__tl_string_eq (type-kind T) \"struct\")
+    `(define (generated-wrong) : i64
+      ,(expr-int (enum-variant-count T)))
+    `(define (generated-other) : i64 0)))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-macro-abstract-kind-else-reject-source) : String
+  "(defmacro (emit-wrong-else [T : type (:kind struct i64 bool)]) : Decls
+  (if (__tl_string_eq (type-kind T) \"i64\")
+    `(define (generated-scalar) : i64 0)
+    `(define (generated-not-i64) : i64
+      ,(expr-int (struct-field-count T)))))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-macro-abstract-shape-reject-source) : String
+  "(defmacro (emit-array-length [T : type (:kind array)]) : Decls
+  `(define (generated-length) : i64 ,(expr-int (array-length T))))
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-module-macro-type-kind-constraint-source) : String
   "(defstruct Point (x i64))
 (defmacro (record-leaf [T : type (:kind struct enum)]) : Module
@@ -7162,6 +7204,22 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-type-kind-constraint-reject-source)
       "typecheck: macro app.kind-code type operand T rejects (Array i64 4): expected one of :kind i64, i32, bool")
+    (compiler-typecheck-error-location-ok?
+      (compiler-typecheck-macro-abstract-kind-reject-source)
+      "typecheck: macro emit-bad constrained type operand T cannot use struct-field-count; requires struct"
+      2
+      3)
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-abstract-kind-branches-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-abstract-kind-branch-reject-source)
+      "typecheck: macro emit-wrong-branch constrained type operand T cannot use enum-variant-count; requires enum")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-abstract-kind-else-reject-source)
+      "typecheck: macro emit-wrong-else constrained type operand T cannot use struct-field-count; requires struct")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-abstract-shape-reject-source)
+      "typecheck: macro emit-array-length constrained type operand T cannot use array-length; requires fixed array shape")
     (compiler-typecheck-ok?
       (compiler-typecheck-module-macro-type-kind-constraint-source))
     (compiler-typecheck-error-ok?

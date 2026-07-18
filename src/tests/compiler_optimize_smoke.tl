@@ -1901,6 +1901,24 @@
     42
     "optimizer alias fact model"))
 
+(test
+  inline-multiblock-switch-absorbable
+  (test.assert-true
+    (compiler-optimize-inline-multiblock-switch-ok?)
+    "absorbable acyclic bounds+switch callee inlines with fresh CFG/phi labels"))
+
+(test
+  inline-multiblock-cyclic-bounds-switch-refusal
+  (test.assert-true
+    (compiler-optimize-inline-multiblock-cyclic-bounds-switch-refusal-ok?)
+    "cyclic bounds+switch callee remains behind the acyclic admission gate"))
+
+(test
+  inline-multiblock-switch-cost-refusal
+  (test.assert-true
+    (compiler-optimize-inline-multiblock-switch-cost-refusal-ok?)
+    "multi-site switch callee above the weighted cost threshold stays uninlined"))
+
 (cfg
   test
   (test

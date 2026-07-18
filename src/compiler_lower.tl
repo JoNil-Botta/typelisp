@@ -17575,33 +17575,20 @@
           [(TcTypeEnvSpineStep.Cache rest-env) (set! cur-env rest-env)]
           [(TcTypeEnvSpineStep.Bind key ty rest-env)
             (begin
-              (if (= key cleanup-marker-id)
-                (match ty
-                  [(AstType.Tuple types)
-                    (match (lower-emit-cleanup-marker-tuple
-                      ctx
-                      cur-state
-                      env
-                      (box-get types))
-                      [(ResultLowerState.Ok next-state)
-                        (set! cur-state next-state)]
-                      [(ResultLowerState.Err message)
-                        (begin
-                          (set! result (ResultLowerState.Err message))
-                          (set! done true))])]
-                  [_ unit])
-                (if (= key region-reset-marker-id)
+              ;; The hygiene global boundary closes the function-local scope:
+              ;; cleanup/region-reset markers are only ever bound above it by
+              ;; body forms (with-resource/with-arena), never in the module or
+              ;; top env below. Stop there instead of walking the whole
+              ;; program spine (~24.6k binds per return on a self-compile).
+              ;; lint-allow: nested-if-ladder
+              (if (= key (tc-hygiene-global-boundary-id))
+                (begin
+                  (set! result (ResultLowerState.Ok cur-state))
+                  (set! done true))
+                (if (= key cleanup-marker-id)
                   (match ty
-                    [(AstType.Var hidden-name)
-                      (match (lower-emit-region-reset cur-state env hidden-name)
-                        [(ResultLowerState.Ok next-state)
-                          (set! cur-state next-state)]
-                        [(ResultLowerState.Err message)
-                          (begin
-                            (set! result (ResultLowerState.Err message))
-                            (set! done true))])]
                     [(AstType.Tuple types)
-                      (match (lower-emit-arena-restore-marker-tuple
+                      (match (lower-emit-cleanup-marker-tuple
                         ctx
                         cur-state
                         env
@@ -17613,7 +17600,33 @@
                             (set! result (ResultLowerState.Err message))
                             (set! done true))])]
                     [_ unit])
-                  unit))
+                  (if (= key region-reset-marker-id)
+                    (match ty
+                      [(AstType.Var hidden-name)
+                        (match (lower-emit-region-reset
+                          cur-state
+                          env
+                          hidden-name)
+                          [(ResultLowerState.Ok next-state)
+                            (set! cur-state next-state)]
+                          [(ResultLowerState.Err message)
+                            (begin
+                              (set! result (ResultLowerState.Err message))
+                              (set! done true))])]
+                      [(AstType.Tuple types)
+                        (match (lower-emit-arena-restore-marker-tuple
+                          ctx
+                          cur-state
+                          env
+                          (box-get types))
+                          [(ResultLowerState.Ok next-state)
+                            (set! cur-state next-state)]
+                          [(ResultLowerState.Err message)
+                            (begin
+                              (set! result (ResultLowerState.Err message))
+                              (set! done true))])]
+                      [_ unit])
+                    unit)))
               (if done
                 unit
                 (set! cur-env rest-env)))]))

@@ -17575,33 +17575,20 @@
           [(TcTypeEnvSpineStep.Cache rest-env) (set! cur-env rest-env)]
           [(TcTypeEnvSpineStep.Bind key ty rest-env)
             (begin
-              (if (= key cleanup-marker-id)
-                (match ty
-                  [(AstType.Tuple types)
-                    (match (lower-emit-cleanup-marker-tuple
-                      ctx
-                      cur-state
-                      env
-                      (box-get types))
-                      [(ResultLowerState.Ok next-state)
-                        (set! cur-state next-state)]
-                      [(ResultLowerState.Err message)
-                        (begin
-                          (set! result (ResultLowerState.Err message))
-                          (set! done true))])]
-                  [_ unit])
-                (if (= key region-reset-marker-id)
+              ;; The hygiene global boundary closes the function-local scope:
+              ;; cleanup/region-reset markers are only ever bound above it by
+              ;; body forms (with-resource/with-arena), never in the module or
+              ;; top env below. Stop there instead of walking the whole
+              ;; program spine (~24.6k binds per return on a self-compile).
+              ;; lint-allow: nested-if-ladder
+              (if (= key (tc-hygiene-global-boundary-id))
+                (begin
+                  (set! result (ResultLowerState.Ok cur-state))
+                  (set! done true))
+                (if (= key cleanup-marker-id)
                   (match ty
-                    [(AstType.Var hidden-name)
-                      (match (lower-emit-region-reset cur-state env hidden-name)
-                        [(ResultLowerState.Ok next-state)
-                          (set! cur-state next-state)]
-                        [(ResultLowerState.Err message)
-                          (begin
-                            (set! result (ResultLowerState.Err message))
-                            (set! done true))])]
                     [(AstType.Tuple types)
-                      (match (lower-emit-arena-restore-marker-tuple
+                      (match (lower-emit-cleanup-marker-tuple
                         ctx
                         cur-state
                         env
@@ -17613,7 +17600,33 @@
                             (set! result (ResultLowerState.Err message))
                             (set! done true))])]
                     [_ unit])
-                  unit))
+                  (if (= key region-reset-marker-id)
+                    (match ty
+                      [(AstType.Var hidden-name)
+                        (match (lower-emit-region-reset
+                          cur-state
+                          env
+                          hidden-name)
+                          [(ResultLowerState.Ok next-state)
+                            (set! cur-state next-state)]
+                          [(ResultLowerState.Err message)
+                            (begin
+                              (set! result (ResultLowerState.Err message))
+                              (set! done true))])]
+                      [(AstType.Tuple types)
+                        (match (lower-emit-arena-restore-marker-tuple
+                          ctx
+                          cur-state
+                          env
+                          (box-get types))
+                          [(ResultLowerState.Ok next-state)
+                            (set! cur-state next-state)]
+                          [(ResultLowerState.Err message)
+                            (begin
+                              (set! result (ResultLowerState.Err message))
+                              (set! done true))])]
+                      [_ unit])
+                    unit)))
               (if done
                 unit
                 (set! cur-env rest-env)))]))
@@ -50310,6 +50323,109 @@
                 borrow-lifetime
                 scrut-reg-group?)))]))))
 
+;; Per-match variant arm resolution memo. Each arm of one match re-runs the
+;; same constructor/payload resolution chain (tc-env-key-name-text, scrutinee
+;; type resolution, lower-variant-constructor-handle-id-or,
+;; compiler-registries-variant-fields-indexed,
+;; lower-variant-payload-fields-for-handle,
+;; lower-variant-handle-name-id-or), whose inputs are constant across the
+;; arms of one match and pure (registries and ctx caches only grow during one
+;; function's lowering). Memoize the resolution per (variant-name-id,
+;; scrutinee type) for the lifetime of one function in a small direct-mapped
+;; cache in program-arena arrays allocated at module init, tagged by a
+;; generation bumped in lower-function-escaping (next to tc-rtf-next-gen!).
+;; Collisions simply evict; the result is exact either way.
+(defenum LowerVariantArmResolution
+  (Missing String)
+  (FieldsErr String)
+  (Some String AstType i64 AstTypeList i64))
+
+(define lower-variant-arm-memo-generation : i64
+  0)
+(define lower-variant-arm-memo-stamps : (Array i64)
+  (array.make-array i64 256))
+(define lower-variant-arm-memo-keys : (Array i64)
+  (array.make-array i64 256))
+(define lower-variant-arm-memo-scrut-tys : (Array AstType)
+  (array.make-array AstType 256))
+(define lower-variant-arm-memo-outcomes : (Array LowerVariantArmResolution)
+  (array.make-array LowerVariantArmResolution 256))
+
+(define (lower-variant-arm-memo-next-gen!) : unit
+  (set!
+    lower-variant-arm-memo-generation
+    (+ lower-variant-arm-memo-generation 1)))
+
+(define (lower-variant-arm-resolution-compute
+  [ctx : TcContext]
+  [symbols : CompilerSymbols]
+  [scrut-ty : AstType]
+  [variant-name-id : i64]) : LowerVariantArmResolution
+  (let
+    [variant-name : String (tc-env-key-name-text variant-name-id)]
+    [resolved-scrut-ty : AstType
+      (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
+    [handle : i64
+      (lower-variant-constructor-handle-id-or
+        ctx
+        variant-name
+        variant-name-id
+        resolved-scrut-ty
+        (compiler-symbols-missing-handle))]
+    (if (compiler-symbols-handle-found? handle)
+      (match (compiler-registries-variant-fields-indexed symbols handle)
+        [(ResultAstTypeList.Ok fields)
+          (LowerVariantArmResolution.Some
+            variant-name
+            resolved-scrut-ty
+            handle
+            (lower-variant-payload-fields-for-handle
+              ctx
+              handle
+              resolved-scrut-ty
+              fields)
+            (lower-variant-handle-name-id-or ctx handle variant-name-id))]
+        [(ResultAstTypeList.Err message)
+          (LowerVariantArmResolution.FieldsErr message)])
+      (LowerVariantArmResolution.Missing variant-name))))
+
+(define (lower-variant-arm-resolution
+  [ctx : TcContext]
+  [symbols : CompilerSymbols]
+  [scrut-ty : AstType]
+  [variant-name-id : i64]) : LowerVariantArmResolution
+  (let
+    [slot : i64 (- variant-name-id (* (/ variant-name-id 256) 256))]
+    (if (and
+      (=
+        (array-ref lower-variant-arm-memo-stamps slot)
+        lower-variant-arm-memo-generation)
+      (= (array-ref lower-variant-arm-memo-keys slot) variant-name-id)
+      (ast-type-eq? (array-ref lower-variant-arm-memo-scrut-tys slot) scrut-ty))
+      (array-ref lower-variant-arm-memo-outcomes slot)
+      (let
+        [result : LowerVariantArmResolution
+          (lower-variant-arm-resolution-compute
+            ctx
+            symbols
+            scrut-ty
+            variant-name-id)]
+        (begin
+          (match result
+            ;; Error results stay recomputed: diagnostics are cold paths and
+            ;; must not pin a stale message across scrutinee types.
+            [(LowerVariantArmResolution.FieldsErr _) unit]
+            [_
+              (begin
+                (array-set!
+                  lower-variant-arm-memo-stamps
+                  slot
+                  lower-variant-arm-memo-generation)
+                (array-set! lower-variant-arm-memo-keys slot variant-name-id)
+                (array-set! lower-variant-arm-memo-scrut-tys slot scrut-ty)
+                (array-set! lower-variant-arm-memo-outcomes slot result))])
+          result)))))
+
 (define (lower-tail-match-variant-final
   [ctx : TcContext]
   [state : LowerState]
@@ -50326,70 +50442,53 @@
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
     [(TcContext _ symbols registries _ _ _)
-      (let
-        [variant-name : String (tc-env-key-name-text variant-name-id)]
-        [resolved-scrut-ty : AstType
-          (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [handle : i64
-          (lower-variant-constructor-handle-id-or
-            ctx
-            variant-name
-            variant-name-id
-            resolved-scrut-ty
-            (compiler-symbols-missing-handle))]
-        (if (compiler-symbols-handle-found? handle)
-          (match (compiler-registries-variant-fields-indexed symbols handle)
-            [(ResultAstTypeList.Ok fields)
-              (let
-                [resolved-fields : AstTypeList
-                  (lower-variant-payload-fields-for-handle
-                    ctx
-                    handle
-                    resolved-scrut-ty
-                    fields)]
-                (if (lower-pattern-list-refutable-for-types?
-                  ctx
-                  args
-                  resolved-fields)
-                  (ResultLowerState.Err
-                    (box
-                      (lower-diagnostic
-                        "lower: refutable payload pattern in final match arm requires a trailing catch-all")))
-                  (match (lower-bind-match-variant-payloads
-                    ctx
-                    state
-                    env
-                    type-env
-                    borrow-lifetime
-                    (CompilerIrValue.Var scrut-var)
-                    args
-                    resolved-fields
-                    (lower-state-mode state)
-                    (lower-enum-type-name-id-or resolved-scrut-ty -1)
-                    (lower-enum-type-name-or-empty resolved-scrut-ty)
-                    variant-name
-                    (lower-variant-handle-name-id-or ctx handle variant-name-id)
-                    0
-                    8
-                    (lower-state-current-label state)
-                    scrut-reg-group?)
-                    [(ResultLowerEnv.Ok body-start body-env body-type-env)
-                      (lower-tail-expr
-                        ctx
-                        body-start
-                        body-env
-                        body-type-env
-                        body
-                        ret-ty
-                        sret-var)]
-                    [(ResultLowerEnv.Err message)
-                      (ResultLowerState.Err message)])))]
-            [(ResultAstTypeList.Err message)
-              (ResultLowerState.Err (box (lower-diagnostic message)))])
+      (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
+        [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err
             (box
               (lower-diagnostic
-                (string.append "lower: unknown variant " variant-name))))))]))
+                (string.append "lower: unknown variant " variant-name))))]
+        [(LowerVariantArmResolution.FieldsErr message)
+          (ResultLowerState.Err (box (lower-diagnostic message)))]
+        [(LowerVariantArmResolution.Some
+            variant-name
+            resolved-scrut-ty
+            handle
+            resolved-fields
+            handle-name-id)
+          (if (lower-pattern-list-refutable-for-types? ctx args resolved-fields)
+            (ResultLowerState.Err
+              (box
+                (lower-diagnostic
+                  "lower: refutable payload pattern in final match arm requires a trailing catch-all")))
+            (match (lower-bind-match-variant-payloads
+              ctx
+              state
+              env
+              type-env
+              borrow-lifetime
+              (CompilerIrValue.Var scrut-var)
+              args
+              resolved-fields
+              (lower-state-mode state)
+              (lower-enum-type-name-id-or resolved-scrut-ty -1)
+              (lower-enum-type-name-or-empty resolved-scrut-ty)
+              variant-name
+              handle-name-id
+              0
+              8
+              (lower-state-current-label state)
+              scrut-reg-group?)
+              [(ResultLowerEnv.Ok body-start body-env body-type-env)
+                (lower-tail-expr
+                  ctx
+                  body-start
+                  body-env
+                  body-type-env
+                  body
+                  ret-ty
+                  sret-var)]
+              [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))])]))
 
 (define (lower-tail-match-variant-body
   [ctx : TcContext]
@@ -50472,84 +50571,68 @@
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
     [(TcContext _ symbols registries _ _ _)
-      (let
-        [variant-name : String (tc-env-key-name-text variant-name-id)]
-        [resolved-scrut-ty : AstType
-          (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [handle : i64
-          (lower-variant-constructor-handle-id-or
-            ctx
-            variant-name
-            variant-name-id
-            resolved-scrut-ty
-            (compiler-symbols-missing-handle))]
-        (if (compiler-symbols-handle-found? handle)
-          (match (compiler-registries-variant-fields-indexed symbols handle)
-            [(ResultAstTypeList.Ok fields)
-              (let
-                [resolved-fields : AstTypeList
-                  (lower-variant-payload-fields-for-handle
-                    ctx
-                    handle
-                    resolved-scrut-ty
-                    fields)]
-                (match (lower-state-alloc-var state)
-                  [(LowerAlloc.Alloc eq-alloc eq-var)
-                    (let
-                      [eq-state : LowerState
-                        (lower-state-emit
-                          eq-alloc
-                          (CompilerIrInstr.BinOp
-                            eq-var
-                            CompilerIrBinOp.Eq
-                            (CompilerIrValue.Var tag-var)
-                            (CompilerIrValue.I64
-                              (compiler-registry-handle-child-index handle))
-                            (AstType.I64)))]
-                      (match (lower-state-fresh-label eq-state "match_arm")
-                        [(LowerLabel.Label body-label-state body-label)
-                          (match (lower-state-fresh-label
-                            body-label-state
-                            "match_next")
-                            [(LowerLabel.Label next-label-state next-label)
-                              (let
-                                [body-start : LowerState
-                                  (lower-state-finish-block
-                                    (lower-state-emit
-                                      next-label-state
-                                      (CompilerIrInstr.Branch
-                                        (CompilerIrValue.Var eq-var)
-                                        body-label
-                                        next-label))
-                                    body-label)]
-                                (lower-tail-match-variant-body
-                                  ctx
-                                  body-start
-                                  next-label
-                                  env
-                                  type-env
-                                  scrut-var
-                                  scrut-ty
-                                  tag-var
-                                  variant-name
-                                  (lower-variant-handle-name-id-or
-                                    ctx
-                                    handle
-                                    variant-name-id)
-                                  resolved-fields
-                                  args
-                                  body
-                                  rest
-                                  ret-ty
-                                  sret-var
-                                  borrow-lifetime
-                                  scrut-reg-group?))])]))]))]
-            [(ResultAstTypeList.Err message)
-              (ResultLowerState.Err (box (lower-diagnostic message)))])
+      (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
+        [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err
             (box
               (lower-diagnostic
-                (string.append "lower: unknown variant " variant-name))))))]))
+                (string.append "lower: unknown variant " variant-name))))]
+        [(LowerVariantArmResolution.FieldsErr message)
+          (ResultLowerState.Err (box (lower-diagnostic message)))]
+        [(LowerVariantArmResolution.Some
+            variant-name
+            resolved-scrut-ty
+            handle
+            resolved-fields
+            handle-name-id)
+          (match (lower-state-alloc-var state)
+            [(LowerAlloc.Alloc eq-alloc eq-var)
+              (let
+                [eq-state : LowerState
+                  (lower-state-emit
+                    eq-alloc
+                    (CompilerIrInstr.BinOp
+                      eq-var
+                      CompilerIrBinOp.Eq
+                      (CompilerIrValue.Var tag-var)
+                      (CompilerIrValue.I64
+                        (compiler-registry-handle-child-index handle))
+                      (AstType.I64)))]
+                (match (lower-state-fresh-label eq-state "match_arm")
+                  [(LowerLabel.Label body-label-state body-label)
+                    (match (lower-state-fresh-label
+                      body-label-state
+                      "match_next")
+                      [(LowerLabel.Label next-label-state next-label)
+                        (let
+                          [body-start : LowerState
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                next-label-state
+                                (CompilerIrInstr.Branch
+                                  (CompilerIrValue.Var eq-var)
+                                  body-label
+                                  next-label))
+                              body-label)]
+                          (lower-tail-match-variant-body
+                            ctx
+                            body-start
+                            next-label
+                            env
+                            type-env
+                            scrut-var
+                            scrut-ty
+                            tag-var
+                            variant-name
+                            handle-name-id
+                            resolved-fields
+                            args
+                            body
+                            rest
+                            ret-ty
+                            sret-var
+                            borrow-lifetime
+                            scrut-reg-group?))])]))])])]))
 
 (define (lower-borrowed-enum-match-scrutinee?
   [ctx : TcContext]
@@ -51294,6 +51377,9 @@
       ;; this function's cached node types are independent of every other
       ;; function's (and never outlive this function's scratch arena).
       (tc-rtf-next-gen!)
+      ;; Same generation discipline for the per-match variant arm
+      ;; resolution memo.
+      (lower-variant-arm-memo-next-gen!)
       ;; The scalar context and recursive-helper stack carry scratch-owned
       ;; values while lowering one function. Never let those scoped values
       ;; cross the per-function arena rewind into the next top-level function.

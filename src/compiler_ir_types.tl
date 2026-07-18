@@ -1491,7 +1491,12 @@
     (CompilerIrInstrBuilder (make-array CompilerIrInstr cap) 0)))
 
 (define (compiler-ir-instr-builder-new) : CompilerIrInstrBuilder
-  (compiler-ir-instr-builder-with-capacity 16))
+  ;; Seed for the common small block: optimizer IR blocks are short
+  ;; (entry/guard/branch fragments), so 8 covers most without a grow and
+  ;; halves the transient padding of the old 16 slot seed across the ~16k
+  ;; functions of a self-compile. Capacity is invisible to the final IR
+  ;; (the escape clone right-sizes every seq).
+  (compiler-ir-instr-builder-with-capacity 8))
 
 (define (compiler-ir-instr-builder-copy-range!
   [dst : (&mut dst (Array CompilerIrInstr))]
@@ -1545,7 +1550,11 @@
     (CompilerIrBlockBuilder (make-array CompilerIrBlock cap) 0)))
 
 (define (compiler-ir-block-builder-new) : CompilerIrBlockBuilder
-  (compiler-ir-block-builder-with-capacity 8))
+  ;; Seed for the common small function: most lowered functions have four
+  ;; or fewer blocks, so 4 covers them without a grow and halves the
+  ;; transient padding of the old 8 slot seed. Capacity is invisible to the
+  ;; final IR (the escape clone right-sizes every seq).
+  (compiler-ir-block-builder-with-capacity 4))
 
 (define (compiler-ir-block-builder-copy-range!
   [dst : (&mut dst (Array CompilerIrBlock))]

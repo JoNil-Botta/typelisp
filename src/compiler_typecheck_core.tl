@@ -61378,6 +61378,7 @@
         env))))
 
 (define (macro-rewrite-generated-import-call-with-decl
+  [ctx : TcContext]
   [func-box : i64]
   [args : AstExprList]
   [env : CtfeEnv]
@@ -61385,9 +61386,14 @@
   [maybe-decl : MacroMaybeDecl]) : i64
   (match maybe-decl
     [(MacroMaybeDecl.Some _ _ _ params _ _)
-      (ast-expr-call
-        func-box
-        (macro-generated-import-type-args params args env))]
+      (let
+        [rewritten : i64
+          (ast-expr-call
+            func-box
+            (macro-generated-import-type-args params args env))]
+        (begin
+          (tc-context-capture-active-pools! ctx)
+          rewritten))]
     [(MacroMaybeDecl.No) fallback]))
 
 (define (macro-rewrite-generated-import-direct-call
@@ -61424,20 +61430,26 @@
                   (match maybe-decl
                     [(MacroMaybeDecl.Some _ _ _ _ _ _)
                       (macro-rewrite-generated-import-call-with-decl
+                        ctx
                         func-box
                         args
                         env
                         fallback
                         maybe-decl)]
                     [(MacroMaybeDecl.No)
-                      (ast-expr-call
-                        func-box
-                        (macro-generated-type-param-expr-list env args))])]
+                      (let
+                        [rewritten : i64
+                          (ast-expr-call
+                            func-box
+                            (macro-generated-type-param-expr-list env args))]
+                        (begin
+                          (tc-context-capture-active-pools! ctx)
+                          rewritten))])]
                 [(ResultMacroCallDecl.Err _) fallback])]
             [(TcMaybeNameId.No) fallback])))]
     [_ fallback]))
 
-(define (macro-rewrite-generated-import-call-id-active
+(define (macro-rewrite-generated-import-call-id
   [ctx : TcContext]
   [orig-decls : AstDeclList]
   [module : String]
@@ -61464,6 +61476,7 @@
               (match maybe-decl
                 [(MacroMaybeDecl.Some _ _ _ _ _ _)
                   (macro-rewrite-generated-import-call-with-decl
+                    ctx
                     func-box
                     args
                     env
@@ -61494,31 +61507,6 @@
                 env
                 call-id)]))]
       [_ call-id])))
-
-(define (macro-rewrite-generated-import-call-id
-  [ctx : TcContext]
-  [orig-decls : AstDeclList]
-  [module : String]
-  [module-id : i64]
-  [definition-module-id : i64]
-  [env : CtfeEnv]
-  [call-id : i64]) : i64
-  (let
-    [rewritten : i64
-      (macro-rewrite-generated-import-call-id-active
-        ctx
-        orig-decls
-        module
-        module-id
-        definition-module-id
-        env
-        call-id)]
-    (begin
-      ;; The rewrite still uses legacy AST builders selected by the CTFE
-      ;; environment. Publish their grown active pool before callers place the
-      ;; returned node id into declarations read through this TcContext.
-      (tc-context-capture-active-pools! ctx)
-      rewritten)))
 
 (define (macro-rewrite-generated-import-kind
   [ctx : TcContext]

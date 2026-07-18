@@ -14976,12 +14976,11 @@
 
 (defstruct OptLicmStoreState
   (summary OptLicmStoreSummary)
-  ;; Preserve the pre-root-aware store classification for candidates without a
-  ;; canonical checked/fresh root. `summary` excludes proven-rooted stores so a
-  ;; distinct checked root can use the stronger disjointness proof;
-  ;; `legacy-summary` includes every store so unrooted loads retain the exact
-  ;; old LICM decision instead of becoming more conservative.
-  (legacy-summary OptLicmStoreSummary)
+  ;; `summary` excludes proven-rooted stores so a distinct checked root can use
+  ;; the stronger disjointness proof. Preserve the excluded stores separately;
+  ;; composing the two summaries once per loop retains the old LICM decision
+  ;; for unrooted loads without merging every ordinary effect twice.
+  (rooted-summary OptLicmStoreSummary)
   (ptrs OptLicmPtrEnv)
   (roots OptLicmRootEnv)
   (store-roots OptLicmStoreRootList)
@@ -15357,28 +15356,26 @@
 (define (opt-licm-root-env-update-instr!
   [env : OptLicmRootEnv]
   [instr : CompilerIrInstr]) : unit
-  (begin
-    (match (opt-instr-def-var instr)
-      [(option_i64.Some dst) (opt-licm-root-env-remove! env dst)]
-      [(option_i64.None) unit])
-    (match instr
-      [(CompilerIrInstr.Alloc dst _)
-        (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))]
-      [(CompilerIrInstr.Gep dst base _ _)
-        (opt-licm-root-env-copy! env dst base)]
-      [(CompilerIrInstr.Mov dst src _) (opt-licm-root-env-copy! env dst src)]
-      [(CompilerIrInstr.Cast dst src _ _) (opt-licm-root-env-copy! env dst src)]
-      [(CompilerIrInstr.Bitcast dst src _ _)
-        (opt-licm-root-env-copy! env dst src)]
-      [(CompilerIrInstr.Phi dst inputs _)
-        (match (opt-licm-phi-root env inputs (OptMaybeLicmRoot.No))
-          [(OptMaybeLicmRoot.No) unit]
-          [(OptMaybeLicmRoot.Some root) (opt-licm-root-env-bind! env dst root)])]
-      [(CompilerIrInstr.Call dst name _ _)
-        (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
-          (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
-          unit)]
-      [_ unit])))
+  (match instr
+    [(CompilerIrInstr.Alloc dst _)
+      (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))]
+    [(CompilerIrInstr.Gep dst base _ _) (opt-licm-root-env-copy! env dst base)]
+    [(CompilerIrInstr.Mov dst src _) (opt-licm-root-env-copy! env dst src)]
+    [(CompilerIrInstr.Cast dst src _ _) (opt-licm-root-env-copy! env dst src)]
+    [(CompilerIrInstr.Bitcast dst src _ _)
+      (opt-licm-root-env-copy! env dst src)]
+    [(CompilerIrInstr.Phi dst inputs _)
+      (match (opt-licm-phi-root env inputs (OptMaybeLicmRoot.No))
+        [(OptMaybeLicmRoot.No) (opt-licm-root-env-remove! env dst)]
+        [(OptMaybeLicmRoot.Some root) (opt-licm-root-env-bind! env dst root)])]
+    ;; A descriptor-data Load may be rebound by
+    ;; opt-licm-provenance-state-instr immediately after this update.
+    [(CompilerIrInstr.Load dst _ _) (opt-licm-root-env-remove! env dst)]
+    [(CompilerIrInstr.Call dst name _ _)
+      (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+        (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
+        unit)]
+    [_ unit]))
 
 (define (opt-licm-array-header-type? [ty : AstType]) : bool
   (match ty
@@ -15487,7 +15484,7 @@
   [summary : OptLicmStoreSummary]) : OptLicmStoreState
   (OptLicmStoreState
     (opt-licm-store-summary-merge (struct-get state summary) summary)
-    (opt-licm-store-summary-merge (struct-get state legacy-summary) summary)
+    (struct-get state rooted-summary)
     (struct-get state ptrs)
     (struct-get state roots)
     (struct-get state store-roots)
@@ -15499,7 +15496,7 @@
   [kind : OptLicmPtrKind]) : OptLicmStoreState
   (OptLicmStoreState
     (struct-get state summary)
-    (struct-get state legacy-summary)
+    (struct-get state rooted-summary)
     (opt-licm-ptr-bind (struct-get state ptrs) var kind)
     (struct-get state roots)
     (struct-get state store-roots)
@@ -15516,12 +15513,10 @@
 (define (opt-licm-store-state-add-rooted-store
   [state : OptLicmStoreState]
   [root : OptLicmRoot]
-  [legacy-summary : OptLicmStoreSummary]) : OptLicmStoreState
+  [summary : OptLicmStoreSummary]) : OptLicmStoreState
   (OptLicmStoreState
     (struct-get state summary)
-    (opt-licm-store-summary-merge
-      (struct-get state legacy-summary)
-      legacy-summary)
+    (opt-licm-store-summary-merge (struct-get state rooted-summary) summary)
     (struct-get state ptrs)
     (struct-get state roots)
     (OptLicmStoreRootList.Cons root (box (struct-get state store-roots)))
@@ -15530,30 +15525,28 @@
 (define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
   (OptLicmStoreState
     (struct-get state summary)
-    (struct-get state legacy-summary)
+    (struct-get state rooted-summary)
     (struct-get state ptrs)
     (struct-get state roots)
     (struct-get state store-roots)
     true))
 
-(define (opt-licm-store-state-invalidate-def
+(define (opt-licm-store-state-invalidate-ptr-def
   [state : OptLicmStoreState]
   [var : i64]) : OptLicmStoreState
-  (begin
-    (opt-licm-root-env-remove! (struct-get state roots) var)
-    (OptLicmStoreState
-      (struct-get state summary)
-      (struct-get state legacy-summary)
-      (opt-licm-ptr-unbind (struct-get state ptrs) var)
-      (struct-get state roots)
-      (struct-get state store-roots)
-      (struct-get state any-call?))))
+  (OptLicmStoreState
+    (struct-get state summary)
+    (struct-get state rooted-summary)
+    (opt-licm-ptr-unbind (struct-get state ptrs) var)
+    (struct-get state roots)
+    (struct-get state store-roots)
+    (struct-get state any-call?)))
 
-(define (opt-licm-store-state-invalidate-instr
+(define (opt-licm-store-state-invalidate-ptr-instr
   [state : OptLicmStoreState]
   [instr : CompilerIrInstr]) : OptLicmStoreState
   (match (opt-instr-def-var instr)
-    [(option_i64.Some var) (opt-licm-store-state-invalidate-def state var)]
+    [(option_i64.Some var) (opt-licm-store-state-invalidate-ptr-def state var)]
     [(option_i64.None) state]))
 
 (define (opt-licm-store-summary-for-storeptr
@@ -15575,7 +15568,7 @@
   [instr : CompilerIrInstr]) : OptLicmStoreState
   (let
     [invalid : OptLicmStoreState
-      (opt-licm-store-state-invalidate-instr state instr)]
+      (opt-licm-store-state-invalidate-ptr-instr state instr)]
     [_roots : unit
       (opt-licm-root-env-update-instr! (struct-get invalid roots) instr)]
     (match instr
@@ -15612,10 +15605,13 @@
   [types : OptSsaVarTypes]
   [state : OptLicmStoreState]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [track-provenance? : bool]
   [instr : CompilerIrInstr]) : OptLicmStoreState
   (let
     [provenance : OptLicmStoreState
-      (opt-licm-provenance-state-instr types state instr)]
+      (if track-provenance?
+        (opt-licm-provenance-state-instr types state instr)
+        state)]
     (match instr
       [(CompilerIrInstr.Call _ name _ _)
         (opt-licm-store-state-add-summary
@@ -15689,6 +15685,7 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [track-provenance? : bool]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (if (>= index (compiler-ir-instr-seq-count instrs))
     state
@@ -15697,23 +15694,33 @@
       instrs
       (+ index 1)
       direct-call-clean
+      track-provenance?
       (opt-licm-store-state-instr
         types
         state
         direct-call-clean
+        track-provenance?
         (compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-licm-store-state-instr-seq
   [types : OptSsaVarTypes]
   [instrs : CompilerIrInstrSeq]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [track-provenance? : bool]
   [state : OptLicmStoreState]) : OptLicmStoreState
-  (opt-licm-store-state-instr-seq-from types instrs 0 direct-call-clean state))
+  (opt-licm-store-state-instr-seq-from
+    types
+    instrs
+    0
+    direct-call-clean
+    track-provenance?
+    state))
 
 (define (opt-licm-store-state-blocks
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [direct-call-clean : opt_i64_i64_map.Map]
+  [track-provenance? : bool]
   [state : OptLicmStoreState]) : OptLicmStoreState
   (match blocks
     [(CompilerIrBlockList.Nil) state]
@@ -15724,16 +15731,19 @@
             types
             (box-get rest)
             direct-call-clean
+            track-provenance?
             (opt-licm-store-state-instr-seq
               types
               instrs
               direct-call-clean
+              track-provenance?
               state))])]
     [(CompilerIrBlockList.Array seq)
       (opt-licm-store-state-blocks
         types
         (compiler-ir-block-seq-to-list seq)
         direct-call-clean
+        track-provenance?
         state)]))
 
 (define (opt-licm-provenance-state-instr-seq-from
@@ -15795,19 +15805,23 @@
 (define (opt-licm-store-summary-blocks
   [blocks : CompilerIrBlockList]
   [summary : OptLicmStoreSummary]) : OptLicmStoreSummary
-  (struct-get
-    (opt-licm-store-state-blocks
-      (OptSsaVarTypes.Nil)
-      blocks
-      (opt_i64_i64_map.with-capacity 1)
-      (OptLicmStoreState
-        summary
-        summary
-        (OptLicmPtrEnv.Nil)
-        (opt-licm-root-env-with-capacity 17)
-        (OptLicmStoreRootList.Nil)
-        false))
-    legacy-summary))
+  (let
+    [state : OptLicmStoreState
+      (opt-licm-store-state-blocks
+        (OptSsaVarTypes.Nil)
+        blocks
+        (opt_i64_i64_map.with-capacity 1)
+        true
+        (OptLicmStoreState
+          summary
+          (opt-licm-store-summary-empty)
+          (OptLicmPtrEnv.Nil)
+          (opt-licm-root-env-with-capacity 17)
+          (OptLicmStoreRootList.Nil)
+          false))]
+    (opt-licm-store-summary-merge
+      (struct-get state summary)
+      (struct-get state rooted-summary))))
 
 (define (opt-licm-memory-safe?
   [root-summary : OptLicmStoreSummary]
@@ -16514,12 +16528,15 @@
             types
             body-blocks
             direct-call-clean
+            false
             (opt-licm-store-state-with-provenance
               (struct-get provenance ptrs)
               (struct-get provenance roots)))]
         [raw-summary : OptLicmStoreSummary (struct-get store-state summary)]
+        [raw-rooted-summary : OptLicmStoreSummary
+          (struct-get store-state rooted-summary)]
         [raw-legacy-summary : OptLicmStoreSummary
-          (struct-get store-state legacy-summary)]
+          (opt-licm-store-summary-merge raw-summary raw-rooted-summary)]
         [side-exit-kind : i64
           (opt-licm-loop-side-exit-kind
             blocks

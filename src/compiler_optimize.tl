@@ -19017,7 +19017,6 @@
 (define (opt-sccp-initial-state-with-frame
   [context : OptCfgContext]
   [params : CompilerIrParamList]
-  [blocks : CompilerIrBlockList]
   [frame : i64]) : OptSccpState
   (let
     [executable-count : i64
@@ -19076,7 +19075,7 @@
   [frame : i64]) : OptSccpState
   (opt-sccp-analyze-fixed
     blocks
-    (opt-sccp-initial-state-with-frame context params blocks frame)
+    (opt-sccp-initial-state-with-frame context params frame)
     (+
       (+ (compiler-ir-block-list-count blocks) 8)
       (* 2 (compiler-ir-block-list-instruction-count blocks)))))
@@ -19610,11 +19609,21 @@
 ;; simplify for the sccp self-test, which pins it. The context stays valid
 ;; for the rewrite output exactly when no branch condition folded to a
 ;; literal (opt-sccp-blocks-change-successors?).
+;; Pipeline entry point that skips the nested cfg-simplify: the pipeline's own
+;; cfg pass runs immediately after sccp and canonicalizes once (literal
+;; branches folded, unreachable blocks filtered, phis cleaned -- a second
+;; application is a no-op), so simplifying here duplicated that stage
+;; back-to-back. opt-sccp-blocks-with-context-result keeps the nested
+;; simplify for the sccp self-test, which pins it. The context stays valid
+;; for the rewrite output exactly when no branch condition folded to a
+;; literal (opt-sccp-blocks-change-successors?). The lattice env is sized by
+;; the function frame (dense var ids), skipping the max-var walks.
 (define (opt-sccp-blocks-with-context-result-raw
   [context : OptCfgContext]
   [params : CompilerIrParamList]
-  [blocks : CompilerIrBlockList]) : OptBlockCtxResult
-  (match (opt-sccp-analyze context params blocks)
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : OptBlockCtxResult
+  (match (opt-sccp-analyze-with-frame context params blocks frame)
     [(OptSccpState.State _ _ env _)
       (if (opt-sccp-env-any-const? env 0)
         (OptBlockCtxResult.Result
@@ -19624,6 +19633,21 @@
         ;; No constants: the rewrite is the identity and the context is
         ;; valid as-is (no branch condition can have folded to a literal).
         (OptBlockCtxResult.Result blocks context true))]))
+
+;; Non-heavy pipeline entry point: identical to opt-sccp-blocks (nested
+;; cfg-simplify included) but sizes the lattice env by the function frame
+;; instead of walking the whole function for max-var.
+(define (opt-sccp-blocks-with-frame
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : CompilerIrBlockList
+  (let
+    [context : OptCfgContext (opt-cfg-context-build blocks)]
+    (match (opt-sccp-analyze-with-frame context params blocks frame)
+      [(OptSccpState.State _ _ env _)
+        (if (opt-sccp-env-any-const? env 0)
+          (opt-cfg-simplify-blocks (opt-sccp-rewrite-blocks env blocks))
+          (opt-cfg-simplify-blocks blocks))])))
 
 (defenum OptFunctionPassResult
   (Result CompilerIrFunction bool))
@@ -31275,9 +31299,13 @@
                           (opt-sccp-blocks-with-context-result-raw
                             ssa-context
                             params
-                            bounds-dom)
+                            bounds-dom
+                            ssa-frame)
                           (OptBlockCtxResult.Result
-                            (opt-sccp-blocks params bounds-dom)
+                            (opt-sccp-blocks-with-frame
+                              params
+                              bounds-dom
+                              ssa-frame)
                             (opt-cfg-context-empty)
                             false))]
                       [sccp : CompilerIrBlockList

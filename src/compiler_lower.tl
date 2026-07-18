@@ -7990,6 +7990,10 @@
 ;; resolving dispatch logical names against `resolve-names` (the full module
 ;; env), so a module-local-only env can be built for the per-module body
 ;; name-cache overlay without changing dispatch results.
+;; Iterate only the target module's decls through the shared module-decl
+;; position index (same classification: decls before the first Module marker
+;; belong to the empty module, marker decls excluded, program order kept)
+;; instead of filtering the whole program's decl list per module.
 (define (lower-function-body-local-names-in-module-resolve
   [decls : AstDeclList]
   [base-names : LowerNameEnv]
@@ -7997,34 +8001,34 @@
   [base-cache : LowerNameCache]
   [target-module : String]
   [target-module-id : i64]
-  [module-id : i64]) : LowerNameEnv
+  [_module-id : i64]) : LowerNameEnv
   (let
     [out : LowerNameEnv base-names]
-    [cur-module-id : i64 module-id]
-    [index : i64 0]
-    [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
-    (begin
-      (while (< index count)
-        (let
-          [decl : AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
-          (begin
-            (match decl
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-              [_
-                (if (= cur-module-id target-module-id)
-                  (set!
-                    out
-                    (lower-name-env-add-local-decl-resolve
-                      out
-                      resolve-names
-                      base-cache
-                      target-module
-                      decl))
-                  unit)])
-            (set! index (+ index 1)))))
-      out)))
+    [_ensure : unit (lower-module-decl-index-ensure! decls)]
+    [slot : i64 (lower-module-decl-index-slot target-module-id)]
+    (if (< slot 0)
+      out
+      (let
+        [j : i64 (array-ref lower-module-decl-index-starts slot)]
+        [end : i64 (array-ref lower-module-decl-index-ends slot)]
+        (begin
+          (while (< j end)
+            (begin
+              (set!
+                out
+                (lower-name-env-add-local-decl-resolve
+                  out
+                  resolve-names
+                  base-cache
+                  target-module
+                  (array-ref
+                    (struct-get decls slots)
+                    (+
+                      decl-offset
+                      (array-ref lower-module-decl-index-positions j)))))
+              (set! j (+ j 1))))
+          out)))))
 
 ;; Build a small per-module overlay name cache holding only the module's
 ;; import aliases + local decl names; misses fall through to the shared global

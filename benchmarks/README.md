@@ -39,7 +39,7 @@ space-separated command-line arguments used by
 |------|----------|
 | `arith_loop` | Scalar LCG recurrence over wrapping 64-bit arithmetic. |
 | `array_sum` | `(Array i64)` fill + repeated sum, with the accumulator stored back per round to defeat loop-invariant folding (refs #1098). |
-| `borrowed_disjoint_store` | Shared checked-reference loads separated by a scalar store through a distinct mutable-reference root (refs #5201). |
+| `borrowed_disjoint_store` | Loop-invariant shared checked-reference loads separated by scalar stores through a distinct mutable-reference root (refs #5201, #5217). |
 | `string_scan` | Polynomial rolling hash (`acc = acc * 131 + byte`) over a fixed ASCII string scanned many rounds, carrying the hash across rounds (refs #1098). |
 | `hashmap_get` | Generated i64/i64 hashmap hit/miss lookups on a fixed map, focused on the read probe path (refs #2166). |
 | `hashmap_insert` | Repeatedly build and populate a fresh generated i64/i64 hashmap, focused on the insert probe path (refs #2165). |

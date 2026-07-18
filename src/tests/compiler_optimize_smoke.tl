@@ -1731,6 +1731,13 @@
       "compiler-optimize-licm-self-test"
       (compiler-optimize-licm-self-test)
       42)
+    (cfg
+      test
+      (compiler-optimize-self-test-require-i64!
+        "compiler-optimize-licm-checked-root-self-test"
+        (compiler-optimize-licm-checked-root-self-test)
+        42)
+      unit)
     (compiler-optimize-self-test-require-i64!
       "compiler-optimize-induction-self-test"
       (compiler-optimize-induction-self-test)
@@ -1889,6 +1896,15 @@
     (compiler-optimize-alias-self-test)
     42
     "optimizer alias fact model"))
+
+(cfg
+  test
+  (test
+    licm-checked-root-disjointness
+    (test.assert-i64-eq
+      (compiler-optimize-licm-checked-root-self-test)
+      42
+      "LICM checked-reference root disjointness")))
 
 (test
   dead-store-overwrite

@@ -167,6 +167,10 @@ run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh -
 # the new loader surface.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
 run_gate \
+    "CI timing budget self-tests" \
+    scripts/check-ci-timing-budgets.sh \
+    --self-test
+run_gate \
     "SPMD AVX-512 instruction harness self-tests" \
     scripts/measure-spmd-avx512-instructions.sh \
     --self-test

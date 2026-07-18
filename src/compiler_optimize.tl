@@ -60043,9 +60043,10 @@
           [(OptLoadLocElement) (OptLoadStoreElement)]
           [(OptLoadLocField base off _ header?)
             (OptLoadStoreField base off width header?)]
-          ;; A var-offset store's target cannot be classified precisely:
-          ;; clear the table (conservative, like an unknown store).
-          [(OptLoadLocScaledField _ _ _ _) (OptLoadStoreUnknown)]
+          ;; A scaled element store writes data-buffer memory (base is the
+          ;; loaded data pointer), exactly like an Element store: descriptor
+          ;; fields are provably outside it, so header-typed entries survive.
+          [(OptLoadLocScaledField _ _ _ _) (OptLoadStoreElement)]
           [(OptLoadLocUnknown) (OptLoadStoreUnknown)])]
       [_ (OptLoadStoreUnknown)])))
 

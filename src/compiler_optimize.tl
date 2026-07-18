@@ -13171,15 +13171,130 @@
         reachable
         doms)]))
 
+;; Allocation-free natural-loop scan for Array block lists: walks the block
+;; seq directly and reads each block's successor row from the context's CSR
+;; index instead of consing a seq->list copy and recomputing per-block
+;; successor sets from instructions. The CSR row holds exactly the
+;; deduplicated opt-cfg-block-successors-with-next set in reverse insertion
+;; order (opt-label-add prepends; opt-cfg-csr-fill-rows! reverses the row),
+;; so iterating blocks from last to first and each CSR row forward while
+;; front-consing emits loops in precisely the order the cons-list scan
+;; produced. Reachability and ids come from the same index the set scan
+;; consulted (the reachable set is built from this reachable array).
+(define (opt-cfg-natural-loop-edges-csr
+  [all-blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [pred-map : OptPredMap]
+  [reachable : OptLabelSet]
+  [doms : OptDomInfo]
+  [source-id : i64]
+  [source : String]
+  [edge : i64]
+  [end : i64]
+  [acc : OptNaturalLoopList]) : OptNaturalLoopList
+  (if (>= edge end)
+    acc
+    (let
+      [header-id : i64
+        (array-ref (struct-get (struct-get index succs) edges) edge)]
+      [next-acc : OptNaturalLoopList
+        (if (and
+          (>= header-id 0)
+          (< header-id (array-length (struct-get index reachable))))
+          (if (and
+            (array-ref (struct-get index reachable) header-id)
+            (opt-dom-info-dominates-id? doms header-id source-id))
+            (OptNaturalLoopList.Cons
+              (opt-natural-loop-build
+                all-blocks
+                pred-map
+                reachable
+                (array-ref (struct-get index labels) header-id)
+                source)
+              (box acc))
+            acc)
+          acc)]
+      (opt-cfg-natural-loop-edges-csr
+        all-blocks
+        index
+        pred-map
+        reachable
+        doms
+        source-id
+        source
+        (+ edge 1)
+        end
+        next-acc))))
+
+(define (opt-cfg-natural-loop-block-seq-csr
+  [all-blocks : CompilerIrBlockList]
+  [seq : CompilerIrBlockSeq]
+  [pos : i64]
+  [context : OptCfgContext]
+  [pred-map : OptPredMap]
+  [reachable : OptLabelSet]
+  [doms : OptDomInfo]
+  [acc : OptNaturalLoopList]) : OptNaturalLoopList
+  (if (< pos 0)
+    acc
+    (match (compiler-ir-block-seq-ref seq pos)
+      [(CompilerIrBlock.Block label _)
+        (let
+          [index : OptCfgIndex (struct-get context index)]
+          [next-acc : OptNaturalLoopList
+            (match (opt-cfg-index-id index label)
+              [(option_i64.Some source-id)
+                (if (and
+                  (>= source-id 0)
+                  (< source-id (array-length (struct-get index reachable))))
+                  (opt-cfg-natural-loop-edges-csr
+                    all-blocks
+                    index
+                    pred-map
+                    reachable
+                    doms
+                    source-id
+                    label
+                    (array-ref
+                      (struct-get (struct-get index succs) offsets)
+                      source-id)
+                    (array-ref
+                      (struct-get (struct-get index succs) offsets)
+                      (+ source-id 1))
+                    acc)
+                  acc)]
+              [(option_i64.None) acc])]
+          (opt-cfg-natural-loop-block-seq-csr
+            all-blocks
+            seq
+            (- pos 1)
+            context
+            pred-map
+            reachable
+            doms
+            next-acc))])))
+
 (define (opt-cfg-natural-loops-with-context
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]) : OptNaturalLoopList
-  (opt-cfg-natural-loop-blocks
-    blocks
-    blocks
-    (struct-get context pred-map)
-    (struct-get context reachable)
-    (struct-get context doms)))
+  (match blocks
+    [(CompilerIrBlockList.Array seq)
+      (opt-cfg-natural-loop-block-seq-csr
+        blocks
+        seq
+        (- (compiler-ir-block-seq-count seq) 1)
+        context
+        (struct-get context pred-map)
+        (struct-get context reachable)
+        (struct-get context doms)
+        (OptNaturalLoopList.Nil))]
+    [_
+      (opt-cfg-natural-loop-blocks
+        blocks
+        blocks
+        (struct-get context pred-map)
+        (struct-get context reachable)
+        (struct-get context doms))]))
 
 (define (opt-cfg-natural-loops [blocks : CompilerIrBlockList]) : OptNaturalLoopList
   (opt-cfg-natural-loops-with-context blocks (opt-cfg-context-build blocks)))

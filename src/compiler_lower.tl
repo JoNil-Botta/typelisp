@@ -39728,6 +39728,113 @@
           op
           (ast-node-pool-context-expr-push pools (AstExpr.Var current-name-id)))))))
 
+(define (lower-spmd-reduce-vector-accumulator? [elem-ty : AstType]) : bool
+  (match elem-ty
+    [(AstType.I32) true]
+    [(AstType.I64) true]
+    [_ false]))
+
+(define (lower-spmd-reduce-vector-accumulator-init
+  [op : AstReduceOp]
+  [acc-var : i64]) : CompilerIrValue
+  (match op
+    [(AstReduceOp.Sum) (CompilerIrValue.I64 0)]
+    ;; Min/max are idempotent, so seeding every lane from the scalar init
+    ;; preserves seeded and empty-range semantics without signed-extreme
+    ;; constants. The post-loop horizontal result already includes the seed.
+    [_ (CompilerIrValue.Var acc-var)]))
+
+(define (lower-spmd-reduce-vector-accumulate
+  [state : LowerState]
+  [vector-op : CompilerIrVectorReduceOp]
+  [vector-acc-var : i64]
+  [value : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerState
+  (match vector-op
+    [(CompilerIrVectorReduceOp.Sum)
+      (lower-state-emit
+        state
+        (ir-instr-vector-bin-op
+          vector-acc-var
+          CompilerIrBinOp.Add
+          (CompilerIrValue.Var vector-acc-var)
+          value
+          lanes
+          elem-ty))]
+    [_
+      (match (lower-state-alloc-var state)
+        [(LowerAlloc.Alloc compare-alloc mask-var)
+          (let
+            [compare-op : CompilerIrBinOp
+              (match vector-op
+                [(CompilerIrVectorReduceOp.Min) CompilerIrBinOp.Lt]
+                [_ CompilerIrBinOp.Gt])]
+            (lower-state-emit
+              (lower-state-emit
+                compare-alloc
+                (ir-instr-vector-compare
+                  mask-var
+                  compare-op
+                  value
+                  (CompilerIrValue.Var vector-acc-var)
+                  lanes
+                  elem-ty))
+              (ir-instr-select
+                vector-acc-var
+                (CompilerIrValue.Var mask-var)
+                value
+                (CompilerIrValue.Var vector-acc-var)
+                lanes
+                elem-ty)))])]))
+
+(define (lower-spmd-reduce-finish-vector-accumulator
+  [state : LowerState]
+  [op : AstReduceOp]
+  [acc-var : i64]
+  [vector-acc-var : i64]
+  [vector-op : CompilerIrVectorReduceOp]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerState
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc reduce-alloc reduced-var)
+      (let
+        [reduced-state : LowerState
+          (lower-state-emit
+            reduce-alloc
+            (CompilerIrInstr.VectorReduce
+              reduced-var
+              vector-op
+              (CompilerIrValue.Var vector-acc-var)
+              lanes
+              elem-ty))]
+        (match op
+          [(AstReduceOp.Sum)
+            (match (lower-state-alloc-var reduced-state)
+              [(LowerAlloc.Alloc update-alloc updated-var)
+                (lower-state-emit
+                  (lower-state-emit
+                    update-alloc
+                    (CompilerIrInstr.BinOp
+                      updated-var
+                      CompilerIrBinOp.Add
+                      (CompilerIrValue.Var acc-var)
+                      (CompilerIrValue.Var reduced-var)
+                      elem-ty))
+                  (CompilerIrInstr.Mov
+                    acc-var
+                    (CompilerIrValue.Var updated-var)
+                    elem-ty))])]
+          ;; Every min/max lane was initialized with acc-var, so the horizontal
+          ;; result already contains the scalar seed.
+          [_
+            (lower-state-emit
+              reduced-state
+              (CompilerIrInstr.Mov
+                acc-var
+                (CompilerIrValue.Var reduced-var)
+                elem-ty))]))]))
+
 (define (lower-avx2-reduce-vector-body
   [ctx : TcContext]
   [state : LowerState]
@@ -39737,6 +39844,7 @@
   [index-var : i64]
   [next-index : CompilerIrValue]
   [acc-var : i64]
+  [vector-acc-var : i64]
   [array-var : i64]
   [vector-op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]
@@ -39748,41 +39856,55 @@
     lanes
     elem-ty)
     [(LowerExpr.Expr load-state chunk-vec _)
-      (match (lower-emit-vector-reduce
-        load-state
-        vector-op
-        chunk-vec
-        lanes
-        elem-ty)
-        [(LowerExpr.Expr reduce-state reduced _)
-          (match reduced
-            [(CompilerIrValue.Var reduced-var)
-              (match (lower-spmd-reduce-apply-update
-                ctx
-                reduce-state
-                env
-                type-env
-                op
-                acc-var
-                elem-ty
-                reduced-var)
-                [(ResultLowerExpr.Ok update-lowered)
-                  (match update-lowered
-                    [(LowerExpr.Expr update-state _ _)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          (lower-state-emit
-                            update-state
-                            (CompilerIrInstr.Mov
-                              index-var
-                              next-index
-                              (AstType.I64)))
-                          CompilerIrValue.Unit
-                          (AstType.Unit)))])]
-                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-            [_
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic "lower: invalid vector reduce result")))])])]))
+      (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+        (ResultLowerExpr.Ok
+          (LowerExpr.Expr
+            (lower-state-emit
+              (lower-spmd-reduce-vector-accumulate
+                load-state
+                vector-op
+                vector-acc-var
+                chunk-vec
+                lanes
+                elem-ty)
+              (CompilerIrInstr.Mov index-var next-index (AstType.I64)))
+            CompilerIrValue.Unit
+            (AstType.Unit)))
+        (match (lower-emit-vector-reduce
+          load-state
+          vector-op
+          chunk-vec
+          lanes
+          elem-ty)
+          [(LowerExpr.Expr reduce-state reduced _)
+            (match reduced
+              [(CompilerIrValue.Var reduced-var)
+                (match (lower-spmd-reduce-apply-update
+                  ctx
+                  reduce-state
+                  env
+                  type-env
+                  op
+                  acc-var
+                  elem-ty
+                  reduced-var)
+                  [(ResultLowerExpr.Ok update-lowered)
+                    (match update-lowered
+                      [(LowerExpr.Expr update-state _ _)
+                        (ResultLowerExpr.Ok
+                          (LowerExpr.Expr
+                            (lower-state-emit
+                              update-state
+                              (CompilerIrInstr.Mov
+                                index-var
+                                next-index
+                                (AstType.I64)))
+                            CompilerIrValue.Unit
+                            (AstType.Unit)))])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+              [_
+                (ResultLowerExpr.Err
+                  (box (lower-diagnostic "lower: invalid vector reduce result")))])]))]))
 
 (define (lower-avx2-reduce-vector-value-body
   [ctx : TcContext]
@@ -39793,6 +39915,7 @@
   [index-var : i64]
   [next-index : CompilerIrValue]
   [acc-var : i64]
+  [vector-acc-var : i64]
   [value-plan : LowerVectorMapValue]
   [vector-op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]
@@ -39805,41 +39928,55 @@
     elem-ty
     value-plan)
     [(LowerExpr.Expr value-state chunk-vec _)
-      (match (lower-emit-vector-reduce
-        value-state
-        vector-op
-        chunk-vec
-        lanes
-        elem-ty)
-        [(LowerExpr.Expr reduce-state reduced _)
-          (match reduced
-            [(CompilerIrValue.Var reduced-var)
-              (match (lower-spmd-reduce-apply-update
-                ctx
-                reduce-state
-                env
-                type-env
-                op
-                acc-var
-                elem-ty
-                reduced-var)
-                [(ResultLowerExpr.Ok update-lowered)
-                  (match update-lowered
-                    [(LowerExpr.Expr update-state _ _)
-                      (ResultLowerExpr.Ok
-                        (LowerExpr.Expr
-                          (lower-state-emit
-                            update-state
-                            (CompilerIrInstr.Mov
-                              index-var
-                              next-index
-                              (AstType.I64)))
-                          CompilerIrValue.Unit
-                          (AstType.Unit)))])]
-                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-            [_
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic "lower: invalid vector reduce result")))])])]))
+      (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+        (ResultLowerExpr.Ok
+          (LowerExpr.Expr
+            (lower-state-emit
+              (lower-spmd-reduce-vector-accumulate
+                value-state
+                vector-op
+                vector-acc-var
+                chunk-vec
+                lanes
+                elem-ty)
+              (CompilerIrInstr.Mov index-var next-index (AstType.I64)))
+            CompilerIrValue.Unit
+            (AstType.Unit)))
+        (match (lower-emit-vector-reduce
+          value-state
+          vector-op
+          chunk-vec
+          lanes
+          elem-ty)
+          [(LowerExpr.Expr reduce-state reduced _)
+            (match reduced
+              [(CompilerIrValue.Var reduced-var)
+                (match (lower-spmd-reduce-apply-update
+                  ctx
+                  reduce-state
+                  env
+                  type-env
+                  op
+                  acc-var
+                  elem-ty
+                  reduced-var)
+                  [(ResultLowerExpr.Ok update-lowered)
+                    (match update-lowered
+                      [(LowerExpr.Expr update-state _ _)
+                        (ResultLowerExpr.Ok
+                          (LowerExpr.Expr
+                            (lower-state-emit
+                              update-state
+                              (CompilerIrInstr.Mov
+                                index-var
+                                next-index
+                                (AstType.I64)))
+                            CompilerIrValue.Unit
+                            (AstType.Unit)))])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+              [_
+                (ResultLowerExpr.Err
+                  (box (lower-diagnostic "lower: invalid vector reduce result")))])]))]))
 
 (define (lower-spmd-reduce-scalar-tail-body
   [ctx : TcContext]
@@ -40002,6 +40139,7 @@
                 (CompilerIrInstr.Mov index-var start-value index-ty))]
             [header-label : String ""]
             [body-label : String ""]
+            [tail-init-label : String ""]
             [tail-header-label : String ""]
             [tail-body-label : String ""]
             [exit-label : String ""]
@@ -40012,7 +40150,25 @@
             [next-index : CompilerIrValue CompilerIrValue.Unit]
             [vector-ok : CompilerIrValue CompilerIrValue.Unit]
             [tail-cond : CompilerIrValue CompilerIrValue.Unit]
+            [vector-acc-var : i64 0]
             (begin
+              (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                (match (lower-state-alloc-var s)
+                  [(LowerAlloc.Alloc next-s var)
+                    (begin
+                      (set! vector-acc-var var)
+                      (set!
+                        s
+                        (lower-state-emit
+                          next-s
+                          (CompilerIrInstr.Splat
+                            vector-acc-var
+                            (lower-spmd-reduce-vector-accumulator-init
+                              op
+                              acc-var)
+                            lanes
+                            elem-ty))))])
+                unit)
               (match (lower-state-fresh-label s "spmd_reduce_avx2_header")
                 [(LowerLabel.Label next-s label)
                   (begin
@@ -40028,6 +40184,13 @@
                   (begin
                     (set! s next-s)
                     (set! tail-header-label label))])
+              (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                (match (lower-state-fresh-label s "spmd_reduce_tail_init")
+                  [(LowerLabel.Label next-s label)
+                    (begin
+                      (set! s next-s)
+                      (set! tail-init-label label))])
+                unit)
               (match (lower-state-fresh-label s "spmd_reduce_tail_body")
                 [(LowerLabel.Label next-s label)
                   (begin
@@ -40048,16 +40211,27 @@
                   (begin
                     (set! s next-s)
                     (set! vector-start-ok value))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (CompilerIrInstr.Branch
-                      vector-start-ok
-                      header-label
-                      tail-header-label))
-                  header-label))
+              (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (CompilerIrInstr.Branch
+                        vector-start-ok
+                        header-label
+                        tail-init-label))
+                    header-label))
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (CompilerIrInstr.Branch
+                        vector-start-ok
+                        header-label
+                        tail-header-label))
+                    header-label)))
               (match (lower-emit-binop
                 s
                 (CompilerIrBinOp.Add)
@@ -40073,16 +40247,27 @@
                   (begin
                     (set! s next-s)
                     (set! vector-ok value))])
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    s
-                    (CompilerIrInstr.Branch
-                      vector-ok
-                      body-label
-                      tail-header-label))
-                  body-label))
+              (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (CompilerIrInstr.Branch
+                        vector-ok
+                        body-label
+                        tail-init-label))
+                    body-label))
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (CompilerIrInstr.Branch
+                        vector-ok
+                        body-label
+                        tail-header-label))
+                    body-label)))
               (match (lower-avx2-reduce-vector-body
                 ctx
                 s
@@ -40092,6 +40277,7 @@
                 index-var
                 next-index
                 acc-var
+                vector-acc-var
                 array-var
                 vector-op
                 elem-ty
@@ -40101,13 +40287,41 @@
                     [(LowerExpr.Expr body-state _ _)
                       (begin
                         (set! s body-state)
-                        (set!
-                          s
-                          (lower-state-finish-block
-                            (lower-state-emit
+                        (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                          (set!
+                            s
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                s
+                                (CompilerIrInstr.Jump header-label))
+                              tail-init-label))
+                          (set!
+                            s
+                            (lower-state-finish-block
+                              (lower-state-emit
+                                s
+                                (CompilerIrInstr.Jump header-label))
+                              tail-header-label)))
+                        (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                          (begin
+                            (set!
                               s
-                              (CompilerIrInstr.Jump header-label))
-                            tail-header-label))
+                              (lower-spmd-reduce-finish-vector-accumulator
+                                s
+                                op
+                                acc-var
+                                vector-acc-var
+                                vector-op
+                                lanes
+                                elem-ty))
+                            (set!
+                              s
+                              (lower-state-finish-block
+                                (lower-state-emit
+                                  s
+                                  (CompilerIrInstr.Jump tail-header-label))
+                                tail-header-label)))
+                          unit)
                         (match (lower-vector-loop-i64-compare
                           s
                           (CompilerIrBinOp.Lt)
@@ -40196,7 +40410,25 @@
                 [vector-ok : CompilerIrValue CompilerIrValue.Unit]
                 [active-lanes : CompilerIrValue CompilerIrValue.Unit]
                 [tail-cond : CompilerIrValue CompilerIrValue.Unit]
+                [vector-acc-var : i64 0]
                 (begin
+                  (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                    (match (lower-state-alloc-var s)
+                      [(LowerAlloc.Alloc next-s var)
+                        (begin
+                          (set! vector-acc-var var)
+                          (set!
+                            s
+                            (lower-state-emit
+                              next-s
+                              (CompilerIrInstr.Splat
+                                vector-acc-var
+                                (lower-spmd-reduce-vector-accumulator-init
+                                  op
+                                  acc-var)
+                                lanes
+                                elem-ty))))])
+                    unit)
                   (match (lower-state-fresh-label s "spmd_reduce_value_header")
                     [(LowerLabel.Label next-s label)
                       (begin
@@ -40287,6 +40519,7 @@
                     index-var
                     next-index
                     acc-var
+                    vector-acc-var
                     value-plan
                     vector-op
                     elem-ty
@@ -40303,6 +40536,18 @@
                                   s
                                   (CompilerIrInstr.Jump header-label))
                                 tail-init-label))
+                            (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                              (set!
+                                s
+                                (lower-spmd-reduce-finish-vector-accumulator
+                                  s
+                                  op
+                                  acc-var
+                                  vector-acc-var
+                                  vector-op
+                                  lanes
+                                  elem-ty))
+                              unit)
                             (set!
                               s
                               (lower-state-emit
@@ -62245,7 +62490,9 @@
 (define (compiler-lower-avx2-spmd-reduce-shape-ok?
   [src : String]
   [elem-ty : AstType]
-  [lanes : i64]) : bool
+  [lanes : i64]
+  [vector-shapes : i64]
+  [vector-binops : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx2))
     [(ResultCompilerLower.Ok program _)
       (match program
@@ -62254,12 +62501,15 @@
             (= (lower-test-function-vector-load-count functions "f") 1)
             (= (lower-test-function-vector-reduce-count functions "f") 1)
             (=
+              (lower-test-function-vector-binop-count functions "f")
+              vector-binops)
+            (=
               (lower-test-function-vector-shape-count
                 functions
                 "f"
                 lanes
                 elem-ty)
-              2)
+              vector-shapes)
             (> (lower-test-function-bounds-count functions "f") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -62274,7 +62524,9 @@
 (define (compiler-lower-avx512-spmd-reduce-shape-ok?
   [src : String]
   [elem-ty : AstType]
-  [lanes : i64]) : bool
+  [lanes : i64]
+  [vector-shapes : i64]
+  [vector-binops : i64]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx512))
     [(ResultCompilerLower.Ok program _)
       (match program
@@ -62283,12 +62535,15 @@
             (= (lower-test-function-vector-load-count functions "f") 1)
             (= (lower-test-function-vector-reduce-count functions "f") 1)
             (=
+              (lower-test-function-vector-binop-count functions "f")
+              vector-binops)
+            (=
               (lower-test-function-vector-shape-count
                 functions
                 "f"
                 lanes
                 elem-ty)
-              2)
+              vector-shapes)
             (> (lower-test-function-bounds-count functions "f") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -62308,14 +62563,14 @@
           (and
             (= (lower-test-function-vector-load-count functions "f") 0)
             (= (lower-test-function-vector-reduce-count functions "f") 1)
-            (= (lower-test-function-vector-binop-count functions "f") 1)
+            (= (lower-test-function-vector-binop-count functions "f") 2)
             (=
               (lower-test-function-vector-shape-count
                 functions
                 "f"
                 lanes
                 (AstType.I64))
-              3)
+              5)
             (= (lower-test-function-bounds-count functions "f") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -62361,23 +62616,33 @@
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
         (AstType.I64)
-        4)
+        4
+        4
+        1)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
         (AstType.I32)
-        8)
+        8
+        4
+        1)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (AstType.I32)
-        8)
+        8
+        4
+        0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (AstType.I32)
-        8)
+        8
+        4
+        0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
         (AstType.F64)
-        4)
+        4
+        2
+        0)
       (compiler-lower-avx2-spmd-reduce-stays-scalar-ok?
         "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
       (compiler-lower-spmd-reduce-lane-identity-shape-ok?
@@ -62387,7 +62652,9 @@
     (compiler-lower-avx2-spmd-reduce-shape-ok?
       "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
       (AstType.F32)
-      8)
+      8
+      2
+      0)
     (compiler-lower-spmd-reduce-gather-shape-ok? (CompilerLowerMode.Avx2) 8)))
 
 (define (compiler-lower-avx512-spmd-reduce-tests-ok?) : bool
@@ -62396,34 +62663,48 @@
       (compiler-lower-avx512-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
         (AstType.I64)
-        8)
+        8
+        4
+        1)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (AstType.I64)
-        8)
+        8
+        4
+        0)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (AstType.I64)
-        8)
+        8
+        4
+        0)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
         "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
         (AstType.F64)
-        8)
+        8
+        2
+        0)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (AstType.I32)
-        16)
+        16
+        4
+        0)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
         "(define (f [xs : (Array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (AstType.I32)
-        16)
+        16
+        4
+        0)
       (compiler-lower-spmd-reduce-lane-identity-shape-ok?
         (CompilerLowerMode.Avx512)
         8)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
         "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
         (AstType.F32)
-        16))
+        16
+        2
+        0))
     (compiler-lower-spmd-reduce-gather-shape-ok? (CompilerLowerMode.Avx512) 16)))
 
 ;; `spmd-reduce` lowering: integer, f32, and f64 sum reductions lower (to

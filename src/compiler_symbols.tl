@@ -4386,13 +4386,13 @@
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
-(define (compiler-symbols-comptime-decl-source) : String
-  "(comptime-decl (defstruct Point (x i64) (y i64)))
-(comptime-decl (defenum Maybe (None) (Some i64)))
+(define (compiler-symbols-nominal-decl-source) : String
+  "(defstruct Point (x i64) (y i64))
+(defenum Maybe (None) (Some i64))
 (define (main) : i64 0)")
 
-(define (compiler-symbols-comptime-decl-ok?) : bool
-  (match (parse-ast-source (compiler-symbols-comptime-decl-source))
+(define (compiler-symbols-nominal-decl-ok?) : bool
+  (match (parse-ast-source (compiler-symbols-nominal-decl-source))
     [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
@@ -5042,7 +5042,7 @@
                     (if (compiler-registries-incremental-splice-ok?)
                       unit
                       (set! ok false))
-                    (if (compiler-symbols-comptime-decl-ok?)
+                    (if (compiler-symbols-nominal-decl-ok?)
                       unit
                       (set! ok false))
                     (if (compiler-symbols-module-scope-ok?)

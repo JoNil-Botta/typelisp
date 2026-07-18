@@ -11202,8 +11202,7 @@
 (defmacro (expr-m [x : Expr]) : Expr x)
 (defmacro (module-m [T : type]) : Module (expr-unit))
 (defmacro (decls-m [T : type]) : Decls (expr-unit))
-(comptime-decl (:generated gen-family generated-value \"i64\")
-  (define generated-value : i64 3))
+(define generated-value : i64 3)
 (module nested.summary
   (define nested-value : i64 4))
 ("
@@ -11254,6 +11253,44 @@
       (struct-get summary has-decl-emitting-macro)
       (compiler-load-surface-summary-requires-eager? summary))))
 
+(define (compiler-load-surface-mark-generated-value! [program : AstProgram]) : bool
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (< index (ast-decl-list-len (& decls))) (not found))
+            (let
+              [decl : AstDecl
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              (match decl
+                [(AstDecl.Def _ name _ _)
+                  (if (string.eq (intern-str name) "generated-value")
+                    (let
+                      [args : AstExprList (ast-expr-list-new)]
+                      (begin
+                        (ast-expr-list-push
+                          (&mut args)
+                          (ast-node-push
+                            (AstExpr.Literal (ast-lit-generated-string "i64"))))
+                        (array-set!
+                          (struct-get decls slots)
+                          (+ (struct-get decls offset) index)
+                          (ast-decl-comptime-decl-with-meta
+                            (AstGeneratedDeclMeta.Some
+                              "gen-family"
+                              "generated-value"
+                              args
+                              "")
+                            decl))
+                        (set! found true)))
+                    unit)]
+                [_ unit])
+              (set! index (+ index 1))))
+          found))]))
+
 (define (compiler-load-surface-summary-smoke-ok?) : bool
   (let
     [cfgs : sym_i64_env.SymI64Env
@@ -11268,15 +11305,17 @@
       (compiler-load-surface-summary-smoke-source)
       cfgs)
       [(ResultAstProgramDiagnostic.Ok program)
-        (match (compiler-load-surface-summary-build
-          path
-          source-path-id
-          "src\\..\\src"
-          program
-          fallback-id)
-          [(ResultCompilerLoadSurfaceSummary.Ok summary)
-            (compiler-load-surface-summary-shape-ok? summary)]
-          [(ResultCompilerLoadSurfaceSummary.Err _) false])]
+        (if (not (compiler-load-surface-mark-generated-value! program))
+          false
+          (match (compiler-load-surface-summary-build
+            path
+            source-path-id
+            "src\\..\\src"
+            program
+            fallback-id)
+            [(ResultCompilerLoadSurfaceSummary.Ok summary)
+              (compiler-load-surface-summary-shape-ok? summary)]
+            [(ResultCompilerLoadSurfaceSummary.Err _) false]))]
       [(ResultAstProgramDiagnostic.Err _) false])))
 
 (define (compiler-load-normalize-ok?) : bool

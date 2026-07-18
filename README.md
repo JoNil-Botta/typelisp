@@ -406,11 +406,12 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   public APIs can take vector/slice views.
 - Scalar lowering supports `spmd-reduce` `sum`/`min`/`max`/`all`/`any` and
   inclusive `spmd-scan` over the SPEC-supported types.
-- Masked varying `if` (including nested masks and value-producing selects) and
-  varying `while` with loop-carried active masks run in scalar, AVX2, and
-  AVX-512 subsets. AVX2 still reports explicit diagnostics for varying `match`
-  (enum tags and lane payload bindings), early exits, and other unsupported
-  control-flow shapes instead of silently scalarizing them.
+- Masked varying `if` (including nested masks and value-producing selects),
+  varying `while` with loop-carried active masks, and varying `match`
+  (including AVX2 enum tags and scalar-lane payload bindings) run in the
+  documented scalar, AVX2, and AVX-512 subsets. Unsupported early exits and
+  other deferred control-flow shapes report explicit diagnostics instead of
+  silently scalarizing.
 - `(program-index)` and `(program-count)` are lane identity forms inside
   SPMD scopes; programs using them intentionally observe backend gang
   width.

@@ -138,12 +138,6 @@ spmd_mode_expected_compile_diagnostic() {
         tests/spmd/i8_mul_reject.tl:avx2 | tests/spmd/i8_mul_reject.tl:avx512)
             printf '%s\n' "lower: SPMD foreach SIMD lowering does not support 8-bit lane multiplication; use scalar or widen before multiplying"
             ;;
-        tests/spmd/masked_if_match_i64.tl:avx2)
-            printf '%s\n' "lower: SPMD masked if is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
-        tests/spmd/varying_match_i64.tl:avx2 | tests/spmd/varying_match_enum_payload.tl:avx2)
-            printf '%s\n' "lower: SPMD varying match is not supported in AVX2 backend mode; use scalar or avx512"
-            ;;
         tests/spmd/private_helper_i64.tl:avx2 | tests/spmd/private_helper_f64.tl:avx2 | tests/spmd/private_helper_bool.tl:avx2 | tests/spmd/private_helper_masked_load.tl:avx2 | tests/spmd/private_helper_store.tl:avx2 | tests/spmd/private_helper_effects.tl:avx2)
             printf '%s\n' "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512"
             ;;
@@ -314,6 +308,28 @@ verify_avx2_varying_while_shape() {
     fi
 }
 
+verify_avx2_varying_enum_match_shape() {
+    compile_spmd_mode tests/spmd/varying_match_enum_payload.tl avx2
+    _tag=tests_spmd_varying_match_enum_payload_tl
+    _asm="$WORKDIR/$_tag.avx2.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] varying-enum-match AVX2 shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/varying_match_enum_payload.tl avx2 (shape compile)" >> "$FAILURES"
+        return
+    fi
+    for shape in spmd_match_lane_load vpmovmskb ymm; do
+        if ! grep -F -- "$shape" "$_asm" > /dev/null; then
+            echo "[spmd-simd] varying-enum-match AVX2 assembly missing $shape" >&2
+            echo "tests/spmd/varying_match_enum_payload.tl avx2 (missing $shape)" >> "$FAILURES"
+        fi
+    done
+    if grep -E -- '%k[0-7]|%zmm[0-9]+' "$_asm" > /dev/null; then
+        echo "[spmd-simd] varying-enum-match AVX2 assembly uses AVX-512 registers" >&2
+        echo "tests/spmd/varying_match_enum_payload.tl avx2 (AVX-512 register)" >> "$FAILURES"
+    fi
+}
+
 while IFS= read -r prog; do
     [ -n "$prog" ] || continue
     if [ ! -f "$prog" ]; then
@@ -378,6 +394,7 @@ for mode in avx2 avx512; do
 done
 
 verify_avx2_varying_while_shape
+verify_avx2_varying_enum_match_shape
 
 # Gather safety is a runtime property, not a same-exit result. Exercise a full
 # gang with multiple invalid active lanes in every runnable mode. The lowering

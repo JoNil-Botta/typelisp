@@ -6373,6 +6373,8 @@ in documentation passes.
   and no destination read by a fused value; eligible vectorized
   `spmd-reduce` folds; AVX2/AVX-512 masked varying `if` subsets including
   nested branch-mask composition and value-producing selects; AVX2/AVX-512
+  scalar-lane varying `match`; AVX2 enum tag/payload varying `match` with
+  active-lane-only scalar field loads; AVX2/AVX-512
   standalone bool dynamic-array lanes, including bool copies and numeric
   comparison results stored to bool arrays; AVX2/AVX-512 varying `while` with
   loop-carried active masks and nested masked flow; runtime dispatch via
@@ -6392,7 +6394,7 @@ in documentation passes.
 | Feature | Status |
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
-| AVX2 lowering for varying `match`, and SIMD early exits | Deferred; AVX2 varying `while` is implemented, while scalar reference lowering is complete and unsupported SIMD backend modes report explicit diagnostics for the remaining forms. |
+| SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
 | Vectorized `spmd-scan`, vectorized shuffles, vectorized enum-payload gather/match | Deferred. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Frontend analysis and private scalar/AVX-512 call IR lowering are implemented; native backend emission is deferred under #3767. |

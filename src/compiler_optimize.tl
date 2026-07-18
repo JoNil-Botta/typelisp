@@ -37296,8 +37296,7 @@
       [(CompilerIrInstr.CallIndirectC _ _ _ _) false]
       [_ (opt-inline-tiny-leaf-seq-call-free-from? instrs (+ pos 1) count)])))
 
-(define (opt-inline-tiny-leaf-blocks-call-free?
-  [blocks : CompilerIrBlockList]) : bool
+(define (opt-inline-tiny-leaf-blocks-call-free? [blocks : CompilerIrBlockList]) : bool
   (match blocks
     [(CompilerIrBlockList.Cons block _)
       (match block
@@ -37331,12 +37330,17 @@
             (opt-inline-tiny-leaf-max-body))
           (opt-inline-tiny-leaf-blocks-call-free? cblocks)))]))
 
-(define (opt-inline-tiny-leaf-admitted-flags
-  [index : OptFunctionIndex]) : (Array bool)
+(define (opt-inline-tiny-leaf-admitted-flags [index : OptFunctionIndex]) : (Array
+    bool)
   (let
     [count : i64 (opt-function-index-count index)]
     [values : (Array CompilerIrFunction) (struct-get index values)]
-    [flags : (Array bool) (make-array bool (if (> count 0) count 1))]
+    [flags : (Array bool)
+      (make-array
+        bool
+        (if (> count 0)
+          count
+          1))]
     [i : i64 0]
     (begin
       (while (< i count)
@@ -37895,10 +37899,7 @@
                   [(CompilerIrFunctionList.Nil) unit]
                   [(CompilerIrFunctionList.Array seq)
                     (if (> (compiler-ir-function-seq-count seq) 0)
-                      (array-set!
-                        values
-                        i
-                        (compiler-ir-function-seq-ref seq 0))
+                      (array-set! values i (compiler-ir-function-seq-ref seq 0))
                       unit)])
                 (set! current-spans next-spans))])
           (set! i (+ i 1))))

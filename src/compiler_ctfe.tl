@@ -4998,11 +4998,7 @@
                 (ctfe-embedded-stdlib-lzss-byte data (+ index best-len)))
               (let
                 [length : i64
-                  (ctfe-embedded-stdlib-lzss-match-len
-                    data
-                    cap
-                    candidate
-                    index)]
+                  (ctfe-embedded-stdlib-lzss-match-len data cap candidate index)]
                 (when
                   (> length best-len)
                   (begin
@@ -5065,9 +5061,7 @@
                       (set! flags (bit-or flags (shl 1 bit)))
                       (byte_buf_core.byte-buf-builder-push
                         (&mut out)
-                        (cast
-                          (ctfe-embedded-stdlib-lzss-byte data index)
-                          : u8))
+                        (cast (ctfe-embedded-stdlib-lzss-byte data index) : u8))
                       (ctfe-embedded-stdlib-lzss-insert!
                         data
                         source-len

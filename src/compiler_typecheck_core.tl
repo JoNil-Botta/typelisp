@@ -2244,6 +2244,14 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-generated-module-materialized-decls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-generated-decl-checks : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-generated-module-memo-hits : i64
     0))
 (cfg
@@ -2415,6 +2423,8 @@
   (define (compiler-tc-macro-profile-reset-program-counters) : unit
     (begin
       (set! compiler-tc-macro-generated-module-materializations 0)
+      (set! compiler-tc-macro-generated-module-materialized-decls 0)
+      (set! compiler-tc-macro-generated-decl-checks 0)
       (set! compiler-tc-macro-generated-module-memo-hits 0)
       (set! compiler-tc-macro-generated-module-catalog-builds 0)
       (set! compiler-tc-macro-generated-module-catalog-hits 0)
@@ -2460,6 +2470,24 @@
     (set!
       compiler-tc-macro-generated-module-materializations
       (+ compiler-tc-macro-generated-module-materializations 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-module-materialized-decls
+    [decls : i64]) : unit
+    (set!
+      compiler-tc-macro-generated-module-materialized-decls
+      (+ compiler-tc-macro-generated-module-materialized-decls decls))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-decl-check [decl : AstDecl]) : unit
+    (match (ast-decl-generated-meta decl)
+      [(AstGeneratedDeclMeta.Some _ _ _ _)
+        (set!
+          compiler-tc-macro-generated-decl-checks
+          (+ compiler-tc-macro-generated-decl-checks 1))]
+      [(AstGeneratedDeclMeta.No) unit])))
 
 (cfg
   compile-profile
@@ -3045,6 +3073,12 @@
       (compiler-tc-macro-counter-profile-line
         "generated_module_materializations"
         compiler-tc-macro-generated-module-materializations)
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_materialized_decls"
+        compiler-tc-macro-generated-module-materialized-decls)
+      (compiler-tc-macro-counter-profile-line
+        "generated_decl_checks"
+        compiler-tc-macro-generated-decl-checks)
       (compiler-tc-macro-counter-profile-line
         "generated_module_memo_hits"
         compiler-tc-macro-generated-module-memo-hits)
@@ -64440,6 +64474,10 @@
             unit)
           (cfg
             compile-profile
+            (compiler-tc-macro-profile-note-generated-module-materialized-decls
+              (ast-decl-list-len (& catalog))))
+          (cfg
+            compile-profile
             (compiler-tc-macro-profile-note-generated-module-materialization)))]
       [(ResultMacroDeclExpansion.Err _) unit])
     result))
@@ -69511,6 +69549,10 @@
                         (cfg
                           compile-profile
                           (compiler-tc-decl-profile-start-section))
+                        (cfg
+                          compile-profile
+                          (compiler-tc-macro-profile-note-generated-decl-check
+                            decl))
                         (tc-context-capture-active-pools! decl-ctx)
                         (match (tc-check-decl-with-global-env
                           decl-ctx

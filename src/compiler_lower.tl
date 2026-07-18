@@ -53835,6 +53835,11 @@
                     (cfg
                       compile-profile
                       (compiler-lower-profile-finish "prune_apply"))
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-program-counts
+                        "reachable"
+                        pruned-program))
                     (cfg compile-profile (compiler-lower-profile-start))
                     (cfg
                       compile-profile
@@ -53937,6 +53942,11 @@
                 paths
                 entry-path
                 LowerNameEnv.Nil))])]
+      [_profile-pre-specialize : unit
+        (cfg
+          compile-profile
+          (compiler-lower-profile-program-counts "pre_specialize" program)
+          unit)]
       (match (if needs-specialization
         (compiler-specialize-program-with-paths-and-pools
           program
@@ -53947,6 +53957,11 @@
         [(ResultSpecProgramWithPaths.Ok specialized specialized-paths)
           (begin
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
+            (cfg
+              compile-profile
+              (compiler-lower-profile-program-counts
+                "post_specialize"
+                specialized))
             (cfg compile-profile (compiler-lower-profile-start))
             (let
               [prune-names : LowerNameEnv

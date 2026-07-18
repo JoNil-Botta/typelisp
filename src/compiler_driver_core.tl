@@ -112,12 +112,13 @@
 (define compiler-driver-compile-load-expr-pool-initial-capacity : i64
   3670016)
 
-;; Reachability compaction retains about 1.464M nodes for the selfhost CLI,
-;; including clone augmentation. A 1.5M initial pool leaves more than 100K
-;; slots of headroom and keeps the backing array above the allocator's 64 MiB
-;; dedicated-segment threshold; larger programs still grow the pool normally.
+;; Reachability compaction retains about 1.574M nodes for the selfhost CLI,
+;; including clone augmentation and core `for` expansion. A 25-page initial
+;; pool leaves about 64K slots of headroom and keeps the backing array above
+;; the allocator's 64 MiB dedicated-segment threshold; larger programs still
+;; grow the pool normally.
 (define compiler-driver-checked-lower-expr-pool-initial-capacity : i64
-  1572864)
+  1638400)
 
 ;; Type nodes are hash-consed. The selfhost CLI retains roughly 5K unique type
 ;; nodes even after macro expansion, so the former 262K-node reserve and its

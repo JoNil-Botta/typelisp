@@ -3965,77 +3965,82 @@
     first-tombstone
     empty-index))
 
-;: Generated concrete hashmap family helper.
-(define (hashmap-i64-i64-backing-probe-from
-  [slots : (Array HashmapI64I64BackingSlot)]
-  [capacity : i64]
-  [key : i64]
-  [hash : i64]
-  [index : i64]
-  [steps : i64]
-  [first-tombstone : i64]) : HashmapI64I64BackingProbe
-  (let
-    [cursor : i64 index]
-    [walked : i64 steps]
-    [first : i64 first-tombstone]
-    [data : (Ptr HashmapI64I64BackingSlot)
-      (unsafe
-        (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot)))]
-    (begin
-      (while (< walked capacity)
-        (match (unsafe
-          (ptr-read (ptr-offset data cursor)))
-          [(HashmapI64I64BackingEmpty)
-            (return
-              (HashmapI64I64BackingProbeAbsent
-                (hashmap-i64-i64-backing-insert-slot first cursor)))]
-          [(HashmapI64I64BackingTombstone)
-            (let
-              [next : i64 (+ cursor 1)]
-              (begin
-                (if (< first 0)
-                  (set! first cursor)
-                  unit)
-                (set!
-                  cursor
-                  (if (>= next capacity)
-                    0
-                    next))
-                (set! walked (+ walked 1))))]
-          [(HashmapI64I64BackingOccupied slot-key _ slot-hash)
-            (if (if (= slot-hash hash)
-              (= slot-key key)
-              false)
-              (return (HashmapI64I64BackingProbeFound cursor))
+;: Unsafe raw probe helper. Callers must establish that `capacity` is the
+;: actual slot-array length and that the starting probe metadata is in range.
+(unsafe
+  (define (hashmap-i64-i64-backing-probe-from
+    [slots : (Array HashmapI64I64BackingSlot)]
+    [capacity : i64]
+    [key : i64]
+    [hash : i64]
+    [index : i64]
+    [steps : i64]
+    [first-tombstone : i64]) : HashmapI64I64BackingProbe
+    (let
+      [cursor : i64 index]
+      [walked : i64 steps]
+      [first : i64 first-tombstone]
+      [data : (Ptr HashmapI64I64BackingSlot)
+        (unsafe
+          (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot)))]
+      (begin
+        (while (< walked capacity)
+          (match (unsafe
+            (ptr-read (ptr-offset data cursor)))
+            [(HashmapI64I64BackingEmpty)
+              (return
+                (HashmapI64I64BackingProbeAbsent
+                  (hashmap-i64-i64-backing-insert-slot first cursor)))]
+            [(HashmapI64I64BackingTombstone)
               (let
                 [next : i64 (+ cursor 1)]
                 (begin
+                  (if (< first 0)
+                    (set! first cursor)
+                    unit)
                   (set!
                     cursor
                     (if (>= next capacity)
                       0
                       next))
-                  (set! walked (+ walked 1)))))]))
-      (if (>= first 0)
-        (HashmapI64I64BackingProbeAbsent first)
-        (HashmapI64I64BackingProbeFull)))))
+                  (set! walked (+ walked 1))))]
+            [(HashmapI64I64BackingOccupied slot-key _ slot-hash)
+              (if (if (= slot-hash hash)
+                (= slot-key key)
+                false)
+                (return (HashmapI64I64BackingProbeFound cursor))
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1)))))]))
+        (if (>= first 0)
+          (HashmapI64I64BackingProbeAbsent first)
+          (HashmapI64I64BackingProbeFull))))))
 
-;: Generated concrete hashmap family helper.
-(define (hashmap-i64-i64-backing-probe
-  [slots : (Array HashmapI64I64BackingSlot)]
-  [capacity : i64]
-  [key : i64]
-  [hash : i64]) : HashmapI64I64BackingProbe
-  (if (<= capacity 0)
-    (HashmapI64I64BackingProbeFull)
-    (hashmap-i64-i64-backing-probe-from
-      slots
-      capacity
-      key
-      hash
-      (hashmap-i64-i64-backing-normalized-bucket-index hash capacity)
-      0
-      -1)))
+;: Unsafe raw probe entry point. Generated backing operations pass the actual
+;: slot-array length; direct callers must uphold the same invariant.
+(unsafe
+  (define (hashmap-i64-i64-backing-probe
+    [slots : (Array HashmapI64I64BackingSlot)]
+    [capacity : i64]
+    [key : i64]
+    [hash : i64]) : HashmapI64I64BackingProbe
+    (if (<= capacity 0)
+      (HashmapI64I64BackingProbeFull)
+      (unsafe
+        (hashmap-i64-i64-backing-probe-from
+          slots
+          capacity
+          key
+          hash
+          (hashmap-i64-i64-backing-normalized-bucket-index hash capacity)
+          0
+          -1)))))
 
 ;: Generated concrete hashmap family helper.
 (defstruct HashmapI64I64Backing
@@ -4132,11 +4137,12 @@
   (let
     [slots : (Array HashmapI64I64BackingSlot)
       (hashmap-i64-i64-backing-slots map)]
-    (match (hashmap-i64-i64-backing-probe
-      slots
-      (hashmap-i64-i64-backing-capacity map)
-      key
-      (hashmap-i64-i64-backing-hash-key key))
+    (match (unsafe
+      (hashmap-i64-i64-backing-probe
+        slots
+        (hashmap-i64-i64-backing-capacity map)
+        key
+        (hashmap-i64-i64-backing-hash-key key)))
       [(HashmapI64I64BackingProbeFound index)
         (match (array-ref slots index)
           [(HashmapI64I64BackingOccupied _ value _)
@@ -4224,11 +4230,12 @@
     [slots : (Array HashmapI64I64BackingSlot)
       (hashmap-i64-i64-backing-slots map)]
     [hash : i64 (hashmap-i64-i64-backing-hash-key key)]
-    (match (hashmap-i64-i64-backing-probe
-      slots
-      (hashmap-i64-i64-backing-capacity map)
-      key
-      hash)
+    (match (unsafe
+      (hashmap-i64-i64-backing-probe
+        slots
+        (hashmap-i64-i64-backing-capacity map)
+        key
+        hash))
       [(HashmapI64I64BackingProbeFound index)
         (begin
           (array-set! slots index (HashmapI64I64BackingOccupied key value hash))
@@ -4258,11 +4265,12 @@
   (let
     [slots : (Array HashmapI64I64BackingSlot)
       (hashmap-i64-i64-backing-slots map)]
-    (match (hashmap-i64-i64-backing-probe
-      slots
-      (hashmap-i64-i64-backing-capacity map)
-      key
-      (hashmap-i64-i64-backing-hash-key key))
+    (match (unsafe
+      (hashmap-i64-i64-backing-probe
+        slots
+        (hashmap-i64-i64-backing-capacity map)
+        key
+        (hashmap-i64-i64-backing-hash-key key)))
       [(HashmapI64I64BackingProbeFound index)
         (begin
           (array-set! slots index (HashmapI64I64BackingTombstone))
@@ -4284,11 +4292,12 @@
     [slots : (Array HashmapI64I64BackingSlot)
       (hashmap-i64-i64-backing-slots map)]
     [hash : i64 (hashmap-i64-i64-backing-hash-key key)]
-    (match (hashmap-i64-i64-backing-probe
-      slots
-      (hashmap-i64-i64-backing-capacity map)
-      key
-      hash)
+    (match (unsafe
+      (hashmap-i64-i64-backing-probe
+        slots
+        (hashmap-i64-i64-backing-capacity map)
+        key
+        hash))
       [(HashmapI64I64BackingProbeFound index)
         (match (array-ref slots index)
           [(HashmapI64I64BackingOccupied slot-key _ slot-hash)
@@ -4489,11 +4498,12 @@
     [slots : (Array HashmapI64I64BackingSlot)
       (hashmap-i64-i64-backing-slots map)]
     [hash : i64 (hashmap-i64-i64-backing-hash-key key)]
-    (match (hashmap-i64-i64-backing-probe
-      slots
-      (hashmap-i64-i64-backing-capacity map)
-      key
-      hash)
+    (match (unsafe
+      (hashmap-i64-i64-backing-probe
+        slots
+        (hashmap-i64-i64-backing-capacity map)
+        key
+        hash))
       [(HashmapI64I64BackingProbeFound index)
         (match (array-ref slots index)
           [(HashmapI64I64BackingOccupied _ value _)
@@ -4519,54 +4529,56 @@
             (hashmap-i64-i64-backing-put map key default-value)]
           (HashmapI64I64BackingEntryOrInsertInserted updated default-value))])))
 
-;: Generated concrete hashmap family helper.
-(define (hashmap-i64-i64-backing-mut-entry-info
-  [slots : (Array HashmapI64I64BackingSlot)]
-  [capacity : i64]
-  [key : i64]) : HashmapI64I64BackingMutEntryInfo
-  (if (<= capacity 0)
-    (HashmapI64I64BackingMutEntryInfo -1 false 0 0)
-    (let
-      [hash : i64 (hashmap-i64-i64-backing-hash-key key)]
-      [cursor : i64 (hashmap-i64-i64-backing-bucket-index hash capacity)]
-      [walked : i64 0]
-      [found : i64 -1]
-      [present : bool false]
-      [entry-key : i64 0]
-      [entry-hash : i64 0]
-      [done : bool false]
-      [data : (Ptr HashmapI64I64BackingSlot)
-        (unsafe
-          (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot)))]
-      (begin
-        (while (if (< walked capacity)
-          (not done)
-          false)
-          (match (unsafe
-            (ptr-read (ptr-offset data cursor)))
-            [(HashmapI64I64BackingOccupied slot-key _ slot-hash)
-              (if (if (= slot-hash hash)
-                (= slot-key key)
-                false)
-                (begin
-                  (set! found cursor)
-                  (set! present true)
-                  (set! entry-key slot-key)
-                  (set! entry-hash slot-hash)
-                  (set! done true))
+;: Unsafe raw mutable-entry probe. The generated macro below supplies the
+;: actual slot-array length before entering this unchecked loop.
+(unsafe
+  (define (hashmap-i64-i64-backing-mut-entry-info
+    [slots : (Array HashmapI64I64BackingSlot)]
+    [capacity : i64]
+    [key : i64]) : HashmapI64I64BackingMutEntryInfo
+    (if (<= capacity 0)
+      (HashmapI64I64BackingMutEntryInfo -1 false 0 0)
+      (let
+        [hash : i64 (hashmap-i64-i64-backing-hash-key key)]
+        [cursor : i64 (hashmap-i64-i64-backing-bucket-index hash capacity)]
+        [walked : i64 0]
+        [found : i64 -1]
+        [present : bool false]
+        [entry-key : i64 0]
+        [entry-hash : i64 0]
+        [done : bool false]
+        [data : (Ptr HashmapI64I64BackingSlot)
+          (unsafe
+            (ptr-cast (array-data slots) : (Ptr HashmapI64I64BackingSlot)))]
+        (begin
+          (while (if (< walked capacity)
+            (not done)
+            false)
+            (match (unsafe
+              (ptr-read (ptr-offset data cursor)))
+              [(HashmapI64I64BackingOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (= slot-key key)
+                  false)
+                  (begin
+                    (set! found cursor)
+                    (set! present true)
+                    (set! entry-key slot-key)
+                    (set! entry-hash slot-hash)
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (hashmap-i64-i64-backing-next-index cursor capacity))
+                    (set! walked (+ walked 1))))]
+              [(HashmapI64I64BackingEmpty) (set! done true)]
+              [(HashmapI64I64BackingTombstone)
                 (begin
                   (set!
                     cursor
                     (hashmap-i64-i64-backing-next-index cursor capacity))
-                  (set! walked (+ walked 1))))]
-            [(HashmapI64I64BackingEmpty) (set! done true)]
-            [(HashmapI64I64BackingTombstone)
-              (begin
-                (set!
-                  cursor
-                  (hashmap-i64-i64-backing-next-index cursor capacity))
-                (set! walked (+ walked 1)))]))
-        (HashmapI64I64BackingMutEntryInfo found present entry-key entry-hash)))))
+                  (set! walked (+ walked 1)))]))
+          (HashmapI64I64BackingMutEntryInfo found present entry-key entry-hash))))))
 
 ;: Generated concrete hashmap family helper.
 (define (hashmap-i64-i64-backing-mut-entry-from-info
@@ -4585,10 +4597,11 @@
 ;: Generated concrete hashmap family helper.
 (defmacro (hashmap-i64-i64-backing-get-mut-entry [map : Expr] [key : Expr]) : Expr
   `(hashmap-i64-i64-backing-mut-entry-from-info
-    (hashmap-i64-i64-backing-mut-entry-info
-      (struct-get ,map slots)
-      (array-length (struct-get ,map slots))
-      ,key)
+    (unsafe
+      (hashmap-i64-i64-backing-mut-entry-info
+        (struct-get ,map slots)
+        (array-length (struct-get ,map slots))
+        ,key))
     (struct-get ,map slots)
     (&mut (struct-get ,map slots))))
 

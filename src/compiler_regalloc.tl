@@ -552,12 +552,12 @@
           "%r15"
           (compiler-reg-string-cons "%rbx" CompilerRegStringList.Nil))))))
 
-;; M-G3 stage 2 (FPO): %rbp as the 6th callee-saved pool register. Only enabled
-;; per-function by the backend (compiler-reg-set-rbp-pool-enabled!) when the
-;; function is frame-pointer-omission eligible (Linux, scalar opt2 path): the
-;; prologue then addresses the frame purely rsp-relative, freeing %rbp to home a
-;; value exactly like r12-r15/rbx (prologue-saved to a frame slot). %rbp is added
-;; LAST so functions needing five or fewer CSRs keep their existing assignments.
+;; M-G3 stage 2 / Win64 FPO: %rbp as the last callee-saved pool register. Only
+;; enabled per-function by the backend (compiler-reg-set-rbp-pool-enabled!) when
+;; the function is frame-pointer-omission eligible: the prologue then addresses
+;; the frame purely rsp-relative, freeing %rbp to home a value like every other
+;; nonvolatile register. %rbp is added LAST in each ABI pool so lower-pressure
+;; functions keep their existing assignments.
 ;; The flag defaults to false, so every non-backend planning path (regalloc unit
 ;; tests, SIMD/AVX config, stack-only plans) sees the historical 14-register pool.
 (define compiler-reg-rbp-pool-enabled : bool
@@ -15748,42 +15748,47 @@
       ;; Win64: %rsi/%rdi are nonvolatile (callee-saved). The backend prologue/
       ;; epilogue saves them with the Win64 callee-save suffix. Keep the existing
       ;; r12-r15,rbx order first so old homes are stable until pressure reaches
-      ;; the two extra Win64 nonvolatile registers.
+      ;; the two extra Win64 nonvolatile registers. An FPO-eligible function
+      ;; appends %rbp after both, preserving every existing home.
       ;; caller-saved (volatile) first: rax,rcx,rdx,r8,r9,r10,r11 (7), then the
-      ;; backend-saved callee suffix r12-r15,rbx,rsi,rdi (7).
-      (compiler-reg-string-cons
-        "%rax"
-        (compiler-reg-string-cons
-          "%rcx"
+      ;; backend-saved callee suffix r12-r15,rbx,rsi,rdi[,rbp].
+      (let
+        [base : CompilerRegStringList
           (compiler-reg-string-cons
-            "%rdx"
+            "%rax"
             (compiler-reg-string-cons
-              "%r8"
+              "%rcx"
               (compiler-reg-string-cons
-                "%r9"
+                "%rdx"
                 (compiler-reg-string-cons
-                  "%r10"
+                  "%r8"
                   (compiler-reg-string-cons
-                    "%r11"
-                    (compiler-reg-string-list-append
-                      (compiler-reg-sysv-integer-registers)
+                    "%r9"
+                    (compiler-reg-string-cons
+                      "%r10"
                       (compiler-reg-string-cons
-                        "%rsi"
-                        (compiler-reg-string-cons
-                          "%rdi"
-                          CompilerRegStringList.Nil))))))))))]))
+                        "%r11"
+                        (compiler-reg-string-list-append
+                          (compiler-reg-sysv-integer-registers)
+                          (compiler-reg-string-cons
+                            "%rsi"
+                            (compiler-reg-string-cons
+                              "%rdi"
+                              CompilerRegStringList.Nil))))))))))]
+        (if compiler-reg-rbp-pool-enabled
+          (compiler-reg-string-list-append
+            base
+            (compiler-reg-string-cons "%rbp" CompilerRegStringList.Nil))
+          base))]))
 
 (define (compiler-reg-greedy-caller-saved-count-for-abi
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
     [(CompilerRegTargetAbi.Linux) (compiler-reg-greedy-caller-saved-count)]
     [(CompilerRegTargetAbi.Windows)
-      ;; Win64 pool = 7 caller-saved + 7 backend-saved callee regs
-      ;; (r12-r15,rbx,rsi,rdi). 14 - 7 = 7 caller-saved.
-      (-
-        (compiler-reg-string-list-count
-          (compiler-reg-greedy-integer-pool-for-abi abi))
-        (compiler-reg-callee-saved-integer-register-count-for-abi abi))]))
+      ;; The optional %rbp is appended to the nonvolatile suffix and must not
+      ;; move this boundary.
+      (compiler-abi-caller-saved-gp-register-count abi)]))
 
 ;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
 ;; (The clobber-span half of the old per-register zero-call gate, sans the
@@ -31487,6 +31492,7 @@
 
 (define (compiler-reg-target-clobbers-ok?) : bool
   (let
+    [_rbp-off : unit (compiler-reg-set-rbp-pool-enabled! false)]
     [zero-call-callers : CompilerRegStringList
       (compiler-reg-zero-call-caller-saved-integer-registers)]
     [greedy-pool : CompilerRegStringList (compiler-reg-greedy-integer-pool)]
@@ -31578,6 +31584,23 @@
       (compiler-reg-string-list-contains? win-callers "%rdx")
       (compiler-reg-string-list-contains? win-callers "%r9")
       (not (compiler-reg-string-list-contains? zero-call-callers "%rax"))
+      ;; Win64 FPO appends %rbp to the nonvolatile suffix without moving the
+      ;; seven-register volatile boundary or any existing pool member.
+      (let
+        [_rbp-on : unit (compiler-reg-set-rbp-pool-enabled! true)]
+        [fpo-pool : CompilerRegStringList
+          (compiler-reg-greedy-integer-pool-for-abi
+            CompilerRegTargetAbi.Windows)]
+        [ok : bool
+          (and
+            (= (compiler-reg-string-list-count fpo-pool) 15)
+            (compiler-reg-string-list-contains? fpo-pool "%rbp")
+            (=
+              (compiler-reg-greedy-caller-saved-count-for-abi
+                CompilerRegTargetAbi.Windows)
+              7))]
+        [_rbp-restore : unit (compiler-reg-set-rbp-pool-enabled! false)]
+        ok)
       (not (compiler-reg-string-list-contains? zero-call-callers "%r8"))
       (not (compiler-reg-string-list-contains? zero-call-callers "%r10"))
       (not (compiler-reg-string-list-contains? zero-call-callers "%r11"))

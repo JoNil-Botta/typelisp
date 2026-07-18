@@ -7198,11 +7198,22 @@
     slots
     (+ slots 1)))
 
+(define (compiler-backend-rbp-callee-save-slot-index) : i64
+  (if (compiler-backend-current-fn-win64?)
+    7
+    5))
+
+(define (compiler-backend-win64-gp-callee-save-prefix
+  [assignments : CompilerRegAssignmentList]) : i64
+  (if (compiler-backend-callee-needs-save? assignments "%rbp")
+    8
+    7))
+
 ;; Callee-saved registers are spilled to frame slots that sit just below the
 ;; var slots: r12..r15 occupy idx 0..3 (offset -(8*(vars+idx+1))(%rbp)) and %rbx
-;; occupies idx 4. Reserve the %rbx slot only when the plan actually homes a
-;; value there, so functions that use only r12-r15 keep their previous frame
-;; size (and byte-identical prologue) â€” %rbx, added last to the pool, is rare.
+;; occupies idx 4. Linux %rbp occupies idx 5. Win64 keeps its existing %rsi/%rdi
+;; slots at idx 5/6 and appends FPO-only %rbp at idx 7, so all three can be live
+;; without collisions and pre-FPO Win64 layouts stay stable.
 (define (compiler-backend-frame-slots
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : i64
@@ -7211,10 +7222,15 @@
     (if (>= highest 0)
       ;; Start after the maximum Win64 GP-save prefix so late scavenge saves
       ;; cannot move or overlap the deterministic 16-byte XMM slots.
-      (+ (compiler-backend-round-up-even-slots (+ vars 7)) (* 2 (+ highest 1)))
+      (+
+        (compiler-backend-round-up-even-slots
+          (+ vars (compiler-backend-win64-gp-callee-save-prefix assignments)))
+        (* 2 (+ highest 1)))
       (if (compiler-backend-plan-uses-callee-regs? assignments)
         (if (compiler-backend-current-fn-win64?)
           (cond
+            [(compiler-backend-callee-needs-save? assignments "%rbp")
+              (+ vars 8)]
             [(compiler-backend-callee-needs-save? assignments "%rdi")
               (+ vars 7)]
             [(compiler-backend-callee-needs-save? assignments "%rsi")
@@ -7258,7 +7274,7 @@
     [win64 : bool (compiler-backend-current-fn-win64?)]
     [base : i64
       (if win64
-        (+ (compiler-backend-round-up-even-slots (+ vars 7)) 20)
+        (+ (compiler-backend-round-up-even-slots (+ vars 8)) 20)
         (+ vars 6))]
     (if has-group-vars
       (+ base (* 2 vars))
@@ -7267,14 +7283,25 @@
 (define (compiler-backend-callee-save-slot [vars : i64] [idx : i64]) : String
   (compiler-backend-frame-offset (- 0 (* 8 (+ vars (+ idx 1))))))
 
-(define (compiler-backend-win64-xmm-callee-slot-offset [vars : i64] [idx : i64]) : i64
+(define (compiler-backend-win64-xmm-callee-slot-offset
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [idx : i64]) : i64
   (-
     0
-    (* 8 (+ (compiler-backend-round-up-even-slots (+ vars 7)) (* 2 (+ idx 1))))))
+    (*
+      8
+      (+
+        (compiler-backend-round-up-even-slots
+          (+ vars (compiler-backend-win64-gp-callee-save-prefix assignments)))
+        (* 2 (+ idx 1))))))
 
-(define (compiler-backend-win64-xmm-callee-slot [vars : i64] [idx : i64]) : String
+(define (compiler-backend-win64-xmm-callee-slot
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [idx : i64]) : String
   (compiler-backend-frame-offset
-    (compiler-backend-win64-xmm-callee-slot-offset vars idx)))
+    (compiler-backend-win64-xmm-callee-slot-offset assignments vars idx)))
 
 (define (compiler-backend-asm-label [function : String] [label : String]) : String
   (str_cat.str-cat ".L" (compiler-backend-asm-safe-symbol function) "_" label))
@@ -7351,7 +7378,10 @@
         (if saving
           (let
             [slot-offset : i64
-              (compiler-backend-win64-xmm-callee-slot-offset vars idx)]
+              (compiler-backend-win64-xmm-callee-slot-offset
+                assignments
+                vars
+                idx)]
             [unwind-offset : i64 (+ frame slot-offset)]
             [save-line : String
               (str_cat.str-cat
@@ -7370,7 +7400,7 @@
             (str_cat.str-cat save-line unwind-line tail))
           (str_cat.str-cat
             "    movdqu "
-            (compiler-backend-win64-xmm-callee-slot vars idx)
+            (compiler-backend-win64-xmm-callee-slot assignments vars idx)
             ", "
             reg
             (str_cat.str-cat "\n" tail)))
@@ -7390,6 +7420,44 @@
       1
       true)
     ""))
+
+(define (compiler-backend-emit-save-win64-xmm-callee-regs-fpo-at
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [rsp-bias : i64]
+  [idx : i64]) : String
+  (if (>=
+    idx
+    (compiler-abi-callee-saved-xmm-register-count
+      (CompilerRegTargetAbi.Windows)))
+    ""
+    (let
+      [reg : String
+        (compiler-abi-callee-saved-xmm-register
+          (CompilerRegTargetAbi.Windows)
+          idx)]
+      [tail : String
+        (compiler-backend-emit-save-win64-xmm-callee-regs-fpo-at
+          assignments
+          vars
+          rsp-bias
+          (+ idx 1))]
+      (if (compiler-backend-callee-needs-save? assignments reg)
+        (let
+          [slot-offset : i64
+            (compiler-backend-win64-xmm-callee-slot-offset assignments vars idx)]
+          [rsp-offset : i64 (+ rsp-bias slot-offset)]
+          (str_cat.str-cat
+            "    movdqu "
+            reg
+            ", "
+            (str_cat.str-cat
+              (int->string rsp-offset)
+              "(%rsp)\n    .seh_savexmm "
+              reg
+              ", ")
+            (str_cat.str-cat (int->string rsp-offset) "\n" tail)))
+        tail))))
 
 (define (compiler-backend-emit-windows-seh-prologue-tail
   [target : CompilerBackendTarget]
@@ -7480,7 +7548,7 @@
     [idx : i64 0]
     [acc : String (str_cat.str-cat symbol ":\n" "")]
     (begin
-      (while (< idx 6)
+      (while (< idx (array-length push-regs))
         (begin
           (if (string.eq (array-ref push-regs idx) "")
             unit
@@ -7501,6 +7569,59 @@
           (string.int->string sub-s)
           ", %rsp\n"
           "")))))
+
+(define (compiler-backend-emit-function-entry-fpo-windows
+  [symbol : String]
+  [frame : i64]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [push-regs : (Array String)]
+  [push-count : i64]) : String
+  (let
+    [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
+    [rsp-bias : i64
+      (if (> push-count 0)
+        sub-s
+        frame)]
+    [idx : i64 0]
+    [acc : String (str_cat.str-cat ".seh_proc " symbol "\n" symbol ":\n")]
+    (begin
+      (while (< idx (array-length push-regs))
+        (begin
+          (if (string.eq (array-ref push-regs idx) "")
+            unit
+            (set!
+              acc
+              (str_cat.str-cat
+                acc
+                "    pushq "
+                (array-ref push-regs idx)
+                (str_cat.str-cat
+                  "\n    .seh_pushreg "
+                  (array-ref push-regs idx)
+                  "\n"))))
+          (set! idx (+ idx 1))))
+      (set!
+        acc
+        (string.append
+          acc
+          (compiler-backend-emit-stack-sub
+            (CompilerBackendTarget.Windows)
+            sub-s)))
+      (set!
+        acc
+        (str_cat.str-cat
+          acc
+          (if (> sub-s 0)
+            (str_cat.str-cat "    .seh_stackalloc " (int->string sub-s) "\n" "")
+            "")
+          (compiler-backend-emit-save-win64-xmm-callee-regs-fpo-at
+            assignments
+            vars
+            rsp-bias
+            0)
+          "    .seh_endprologue\n"))
+      acc)))
 
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (str_cat.str-cat "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
@@ -8215,10 +8336,8 @@
 
 ;; Win64-only callee-save extension: on Win64 %rsi/%rdi are callee-saved (unlike
 ;; SysV, where they are caller-saved argument registers), so a function that
-;; homes a value in them must spill/reload across the call boundary. They occupy
-;; slot idx 5/6 -- idx 5 collides with %rbp's slot, but that is sound because
-;; %rbp-as-CSR only happens on the Linux FPO path and these only fire on Win64,
-;; and a function targets exactly one ABI, so the two are mutually exclusive.
+;; homes a value in them must spill/reload across the call boundary. They retain
+;; slots 5/6; Win64 FPO appends %rbp at the non-overlapping slot 7.
 (define (compiler-backend-emit-save-win64-callee-regs
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
@@ -8266,14 +8385,16 @@
           (compiler-backend-emit-save-callee-reg assignments vars "%r15" 3)
           (string.append
             (compiler-backend-emit-save-callee-reg assignments vars "%rbx" 4)
-            ;; M-G3 stage 2: %rbp saved like any other CSR (slot idx 5). The
-            ;; slot operand is a frame reference; in the (FPO-only) functions
-            ;; that home values in %rbp it is rebased to an rsp-relative form,
-            ;; so the save works without the rbp frame base.
+            ;; %rbp is saved like any other CSR (Linux slot 5, Win64 slot 7).
+            ;; FPO rebases the frame operand before replacing these moves with
+            ;; unwind-described prologue pushes.
             (string.append
-              (compiler-backend-emit-save-callee-reg assignments vars "%rbp" 5)
-              ;; Win64: %rsi/%rdi saves (no-op on Linux; the %rbp save above is a
-              ;; no-op on Win64, so save order stays r12..rbx, then rsi, rdi).
+              (compiler-backend-emit-save-callee-reg
+                assignments
+                vars
+                "%rbp"
+                (compiler-backend-rbp-callee-save-slot-index))
+              ;; Win64: %rsi/%rdi saves (no-op on Linux).
               (compiler-backend-emit-save-win64-callee-regs assignments vars))))))))
 
 (define (compiler-backend-emit-restore-callee-regs
@@ -8287,7 +8408,11 @@
           ;; Win64: %rdi/%rsi restores first (no-op on Linux), mirroring the save.
           (compiler-backend-emit-restore-win64-callee-regs assignments vars)
           (string.append
-            (compiler-backend-emit-restore-callee-reg assignments vars "%rbp" 5)
+            (compiler-backend-emit-restore-callee-reg
+              assignments
+              vars
+              "%rbp"
+              (compiler-backend-rbp-callee-save-slot-index))
             (string.append
               (compiler-backend-emit-restore-callee-reg
                 assignments
@@ -41413,7 +41538,7 @@
         v))))
 
 ;; ============================================================================
-;; GAP1: push-style CSR prologue saves (FPO functions, Linux text path).
+;; GAP1 / Win64 FPO: push-style CSR prologue saves.
 ;;
 ;; The mov-form CSR save/restore (`movq %rXX, -K(%rbp)` / `movq -K(%rbp), %rXX`
 ;; / the pop-run `leaq -K(%rbp), %rsp; popq ...`) is converted AT THE REBASE
@@ -41447,16 +41572,16 @@
 ;; emergency slots sit below frame-slots-emergency-max, so a saved-CSR-slot
 ;; offset is unambiguous. Any OTHER line shape referencing one fails the audit
 ;; (keep-rbp fallback on the ORIGINAL text stays correct: mov saves intact).
-;; Win64 keeps the rbp prologue + mov saves entirely (fpo never attempted:
-;; SEH unwind needs `.seh_setframe %rbp`); --pic/opt0/vector never plan CSRs.
-;; Saved-CSR names indexed by callee-save slot idx (0..5 = r12,r13,r14,r15,
-;; rbx,rbp); "" = not saved. All six names are 4 bytes ("%rNN").
+;; Win64 uses the same conversion, with every prologue push described by
+;; `.seh_pushreg` and no `.seh_setframe`. Saved-CSR names are indexed by
+;; ABI-specific callee-save slot: common 0..4 = r12..r15,rbx; Linux 5 = rbp;
+;; Win64 5..7 = rsi,rdi,rbp. "" = not saved.
 (define (compiler-backend-rsp-rebase-make-push-regs) : (Array String)
   (let
-    [regs : (Array String) (make-array String 6)]
+    [regs : (Array String) (make-array String 8)]
     [idx : i64 0]
     (begin
-      (while (< idx 6)
+      (while (< idx (array-length regs))
         (begin
           (array-set! regs idx "")
           (set! idx (+ idx 1))))
@@ -41474,7 +41599,7 @@
   [assignments : CompilerRegAssignmentList]
   [regs : (Array String)]) : i64
   (let
-    [names : (Array String) (make-array String 6)]
+    [names : (Array String) (make-array String 8)]
     [idx : i64 0]
     [count : i64 0]
     (begin
@@ -41483,8 +41608,16 @@
       (array-set! names 2 "%r14")
       (array-set! names 3 "%r15")
       (array-set! names 4 "%rbx")
-      (array-set! names 5 "%rbp")
-      (while (< idx 6)
+      (if (compiler-backend-current-fn-win64?)
+        (begin
+          (array-set! names 5 "%rsi")
+          (array-set! names 6 "%rdi")
+          (array-set! names 7 "%rbp"))
+        (begin
+          (array-set! names 5 "%rbp")
+          (array-set! names 6 "")
+          (array-set! names 7 "")))
+      (while (< idx (array-length names))
         (begin
           (if (compiler-backend-callee-needs-save?
             assignments
@@ -41511,7 +41644,7 @@
 ;; Lines joined by newlines with NO trailing newline (append-line adds it).
 (define (compiler-backend-rsp-rebase-pop-run [push-regs : (Array String)]) : String
   (let
-    [idx : i64 5]
+    [idx : i64 (- (array-length push-regs) 1)]
     [acc : String ""]
     (begin
       (while (>= idx 0)
@@ -41567,7 +41700,7 @@
                   0
                   (let
                     [idx : i64 (- unit-idx (+ slot-vars 1))]
-                    (if (or (< idx 0) (> idx 5))
+                    (if (or (< idx 0) (>= idx (array-length push-regs)))
                       0
                       (let
                         [reg : String (array-ref push-regs idx)]
@@ -41648,11 +41781,10 @@
 ;; (`X(%rbp)` -> `(frame+delta+X)(%rsp)`); returns the ORIGINAL text when the
 ;; rsp-constancy audit fails (the function keeps rbp addressing).
 ;;
-;; M-G3 stage 2 (`fpo` = true, Linux only): the function is emitted
-;; frame-pointer-FREE. The caller's prologue is `subq $(frame+8), %rsp` (the +8
-;; replaces the omitted `pushq %rbp`, keeping 16-alignment AND every absolute
-;; slot address identical to the rbp world, so the rebase formula and bias are
-;; UNCHANGED). Differences from the stage-1 (behavior-neutral) mode:
+;; With `fpo = true` the function is emitted frame-pointer-free. A no-CSR
+;; prologue uses `subq $(frame+8), %rsp`; a CSR plan uses push saves plus an
+;; aligned sub-allocation. Win64 describes those operations with SEH unwind
+;; codes. Differences from the stage-1 (behavior-neutral) mode:
 ;;   * POSITIVE rbp offsets (incoming stack args 16+8k(%rbp), tail-call final
 ;;     stack-arg stores) are rebased with the SAME formula -- the virtual rbp
 ;;     sits at rsp+frame post-prologue in both worlds.
@@ -41710,6 +41842,11 @@
     ;; GAP1 push mode: prologue = pushes + subq $sub-s; disp = the total
     ;; prologue rsp displacement (plays frame+8's role in the leave fold).
     [pm : bool (and fpo (> push-count 0))]
+    ;; Win64 unwind codes describe one fixed post-prologue %rsp. Unlike SysV
+    ;; FPO, a Win64 FPO body cannot contain a transient stack dip: any ordinary
+    ;; push/pop/sub/add/mov-to-rsp fails the audit. The recognized terminal
+    ;; add/pop epilogue is still legal and is synthesized by this pass.
+    [seh-fpo : bool (and fpo (compiler-backend-current-fn-win64?))]
     [sub-s : i64 (compiler-backend-rsp-rebase-push-sub frame push-count)]
     [disp : i64 (+ (* push-count 8) sub-s)]
     [bias-neg : i64
@@ -41818,6 +41955,14 @@
                     ;; rsp logic: a syscall line carries no frame ref, so the
                     ;; remaining arms are inert on it.
                     (if syscall?
+                      (set! ok false)
+                      unit)
+                    (if (and
+                      seh-fpo
+                      (or
+                        push?
+                        (and pop? (not tail))
+                        (and rsp-dst? (not (= csr-kind 2)))))
                       (set! ok false)
                       unit)
                     ;; lint-allow: nested-if-ladder
@@ -42359,7 +42504,7 @@
       disp
       em-lo
       em-hi
-      false)))
+      (compiler-backend-current-fn-win64?))))
 
 ;; Compute [lo, hi] and disp for one Win64 rbp-framed function whose negative
 ;; rbp frame refs were successfully rebased to rsp-relative text. The body sees
@@ -43862,15 +44007,16 @@
         [_ra-grp-mask : unit
           (compiler-reg-set-group-class-masks!
             (struct-get program-index group-word-class-masks))]
-        ;; M-G3 stage 2: enable %rbp as the 6th CSR for this function's plan --
-        ;; Linux scalar-opt2 text path only. The `allow-rbp` parameter is false
-        ;; only on the DEMOTION retry (the FPO audit failed on an rbp-planned
-        ;; function).
+        ;; M-G3 stage 2: enable %rbp as the final CSR for this function's plan
+        ;; on both text backends. The `allow-rbp` parameter is false only on the
+        ;; DEMOTION retry (the FPO audit failed on an rbp-planned function).
         [_rbp-pool-flag : unit
           (compiler-reg-set-rbp-pool-enabled!
             (and
               allow-rbp
-              (compiler-backend-target-linux? target)
+              (or
+                (compiler-backend-target-linux? target)
+                (compiler-backend-target-windows? target))
               (compiler-backend-mode-scalar? mode)
               compiler-backend-scalar-registers-enabled))]
         [fn-abi : CompilerRegTargetAbi (compiler-backend-regalloc-abi target)]
@@ -44447,12 +44593,14 @@
                                 slot-vars
                                 emit-blocks-list)
                               "")]
-                          ;; M-G3 stage 2: attempt frame-pointer omission on the
-                          ;; Linux text path. Win64 still keeps the rbp prologue
-                          ;; because SEH unwind metadata is not yet emitted for
-                          ;; the FPO shape. Stage-1 mode (fpo=false) elsewhere.
-                          [fpo-attempt : bool
-                            (compiler-backend-target-linux? target)]
+                          ;; M-G3 stage 2: attempt frame-pointer omission on both
+                          ;; text backends. Win64's FPO prologue emits explicit
+                          ;; push/stack/XMM SEH unwind codes and the audit rejects
+                          ;; any body whose rsp shape cannot stay unwind-stable.
+                          [fpo-target : bool
+                            (or
+                              (compiler-backend-target-linux? target)
+                              (compiler-backend-target-windows? target))]
                           ;; GAP1: push-style CSR saves ride the FPO audit --
                           ;; the plan-saved CSR set is fixed pre-body (the
                           ;; scavenger only hands out plan-saved callee regs;
@@ -44464,11 +44612,26 @@
                           [push-regs : (Array String)
                             (compiler-backend-rsp-rebase-make-push-regs)]
                           [push-count : i64
-                            (if fpo-attempt
+                            (if fpo-target
                               (compiler-backend-fill-push-csr-regs!
                                 assignments
                                 push-regs)
                               0)]
+                          ;; Win64 UWOP_SAVE_XMM128 encodes its stack offset in
+                          ;; 16-byte units. An even GP-push count leaves the
+                          ;; canonical frame slots at rsp+8 (mod 16), so retain
+                          ;; the rbp frame for that uncommon mixed shape. GP-only
+                          ;; functions and odd-push XMM functions remain FPO.
+                          [fpo-attempt : bool
+                            (and
+                              fpo-target
+                              (or
+                                (not
+                                  (and
+                                    (compiler-backend-target-windows? target)
+                                    (compiler-backend-plan-uses-win64-xmm-callee-regs?
+                                      assignments)))
+                                (= (bit-and push-count 1) 1)))]
                           [rebased : String
                             (compiler-backend-rsp-rebase-full
                               post-prologue
@@ -44480,7 +44643,6 @@
                           [rebase-ok : bool compiler-backend-rsp-rebase-last-ok]
                           [fpo-ok : bool (and fpo-attempt rebase-ok)]
                           (if (and
-                            fpo-attempt
                             (not fpo-ok)
                             (compiler-backend-plan-uses-reg? assignments "%rbp"))
                             ;; DEMOTE: the FPO audit failed but the plan homes a
@@ -44565,15 +44727,24 @@
                                   symbol
                                   "\n"
                                   (if fpo-ok
-                                    (if (> push-count 0)
-                                      (compiler-backend-emit-function-entry-fpo-push
+                                    (if (compiler-backend-target-windows?
+                                      target)
+                                      (compiler-backend-emit-function-entry-fpo-windows
                                         symbol
                                         frame
+                                        assignments
+                                        slot-vars
                                         push-regs
                                         push-count)
-                                      (compiler-backend-emit-function-entry-fpo
-                                        symbol
-                                        frame))
+                                      (if (> push-count 0)
+                                        (compiler-backend-emit-function-entry-fpo-push
+                                          symbol
+                                          frame
+                                          push-regs
+                                          push-count)
+                                        (compiler-backend-emit-function-entry-fpo
+                                          symbol
+                                          frame)))
                                     (compiler-backend-emit-function-entry
                                       target
                                       symbol

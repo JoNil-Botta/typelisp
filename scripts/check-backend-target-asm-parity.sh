@@ -124,16 +124,12 @@ normalize_asm() {
         }
         function normalize_frame_teardown(s) {
             # The function epilogue restores %rsp before `ret`. Frame-pointer
-            # omission (the Linux scalar path) tears the frame down with
-            # `addq $N, %rsp`; the keep-rbp Win64 path (retained so SEH can
-            # unwind the in-body rsp dips) uses `leave`. Both discard the local
-            # frame and are behavior-equivalent. The Linux frame constant is
-            # intentionally +8 vs the Win64 one — it replaces the omitted
-            # `pushq %rbp`, which keeps every absolute stack-slot address
-            # identical across the two targets (so the rest of each body still
-            # compares byte-for-byte). Collapse both epilogue spellings to one
-            # token so the gate accepts the deliberate FPO/keep-rbp divergence
-            # while still catching any real cross-target difference elsewhere.
+            # omission tears the frame down with `addq $N, %rsp`; an audited
+            # fallback that retains %rbp uses `leave`. Both targets now attempt
+            # FPO, but Win64 deliberately keeps %rbp for shapes its SEH audit
+            # cannot describe (including misaligned XMM-save layouts). Collapse
+            # both epilogue spellings to one token so the gate accepts that
+            # per-function fallback without hiding body differences.
             # (No corpus body emits a mid-body `addq $N,%rsp` c-abi call dip;
             # the --self-test mutation guard fails loudly if that assumption
             # ever changes and this over-collapses.)
@@ -203,6 +199,20 @@ normalize_asm() {
             gsub(/%r(di|si|cx)/, "%G", s)
             gsub(/%e(di|si|cx)/, "%Gd", s)
             return s
+        }
+        function normalize_loop_divmod_parity_stack(s, at, token, offset) {
+            if (!loop_divmod_parity_normalize_enabled() ||
+                    target != "windows-x86_64") return s
+            # Win64 reserves one additional emergency GP-save slot now that
+            # %rbp can be the eighth nonvolatile value home. This fixture fires
+            # the emergency layout, shifting every canonical body slot by
+            # exactly eight bytes without changing the dataflow being compared.
+            if (!match(s, /[0-9]+\(%rsp\)/)) return s
+            at = RSTART
+            token = substr(s, at, RLENGTH)
+            sub(/\(%rsp\)$/, "", token)
+            offset = (token + 0) - 8
+            return substr(s, 1, at - 1) offset "(%rsp)" substr(s, at + RLENGTH)
         }
         function skip_loop_divmod_parity_epilogue(s) {
             if (!loop_divmod_parity_normalize_enabled()) return 0
@@ -326,6 +336,7 @@ normalize_asm() {
             line = normalize_arg_regs(line)
             line = consume_pending_stack_arg(line)
             line = normalize_loop_divmod_parity_regs(line)
+            line = normalize_loop_divmod_parity_stack(line)
             if (skip_loop_divmod_parity_epilogue(line)) {
                 next
             }

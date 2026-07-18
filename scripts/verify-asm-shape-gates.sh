@@ -116,12 +116,13 @@ assert_regex_count_at_least() {
 compile_gate() {
     _name=$1
     _source=$2
+    _target=${3:-linux-x86_64}
     _asm="$WORKDIR/$_name.s"
     _stdout="$WORKDIR/$_name.compile.stdout"
     _stderr="$WORKDIR/$_name.compile.stderr"
     echo "[asm-shape] compile $_name" >&2
     if ! "$COMPILER" compile "$ROOT/$_source" \
-        --target linux-x86_64 \
+        --target "$_target" \
         --opt-level 2 \
         --stdlib-root "$ROOT/stdlib" \
         --stdlib-root "$ROOT/src" \
@@ -268,6 +269,22 @@ check_rbp_sixth_csr() {
     assert_not_matches "$_body" '\(%rbp\)' rbp-sixth-csr
 }
 
+check_win64_rbp_eighth_csr() {
+    _asm=$(compile_gate \
+        win64_rbp_eighth_csr \
+        tests/integration/win64_rbp_eighth_csr.tl \
+        windows-x86_64)
+    _body=$(function_body "$_asm" _tl_win64_rbp_eighth_csr_churn8)
+    assert_contains "$_body" 'pushq %rbp' win64-rbp-eighth-csr
+    assert_contains "$_body" '.seh_pushreg %rbp' win64-rbp-eighth-csr
+    assert_contains "$_body" '.seh_stackalloc ' win64-rbp-eighth-csr
+    assert_contains "$_body" '.seh_endprologue' win64-rbp-eighth-csr
+    assert_contains "$_body" 'popq %rbp' win64-rbp-eighth-csr
+    assert_not_contains "$_body" '.seh_setframe' win64-rbp-eighth-csr
+    assert_not_contains "$_body" 'movq %rsp, %rbp' win64-rbp-eighth-csr
+    assert_not_matches "$_body" '\(%rbp\)' win64-rbp-eighth-csr
+}
+
 check_licm_desc_hoist() {
     _asm=$(compile_gate licm_desc_hoist tests/integration/licm_desc_hoist.tl)
     _body=$(function_body "$_asm" _tl_licm_desc_hoist_sum_loop)
@@ -356,6 +373,7 @@ check_switch_dispatch_scavenge
 check_cmp_fold_load
 check_const_index_bounds
 check_rbp_sixth_csr
+check_win64_rbp_eighth_csr
 check_licm_desc_hoist
 check_group_copy_direct
 check_dead_result_store

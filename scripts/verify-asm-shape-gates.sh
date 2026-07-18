@@ -292,7 +292,7 @@ check_licm_desc_hoist() {
     # LICM's contract is the single hoisted descriptor load, not a particular
     # physical register choice.
     assert_regex_count_eq "$_body" '^[[:space:]]+movq 8\(%rdi\), %r[a-z0-9]+$' 1 licm-desc-hoist
-    assert_fixed_count_eq "$_body" 'movq (%rdi), %rdi' 1 licm-desc-hoist
+    assert_regex_count_eq "$_body" '^[[:space:]]+movq \(%rdi\), %r[a-z0-9]+$' 1 licm-desc-hoist
     assert_contains "$_body" 'call tl_oob_abort' licm-desc-hoist
 }
 

@@ -156,6 +156,9 @@ validate_selection() {
 
 c_flags_for_mode() {
     case "$1" in
+        # Scalar is the like-for-like codegen comparison. AVX2 deliberately
+        # leaves clang's vectorizers enabled: explicit TypeLisp SPMD is the
+        # data-parallel surface and competes with auto-vectorized C here.
         scalar) C_FLAGS="-O2 -fno-vectorize -fno-slp-vectorize" ;;
         avx2) C_FLAGS="-O2 -mavx2 -mno-avx512f" ;;
         *) fail "no clang flags for mode: $1" ;;
@@ -785,8 +788,10 @@ printf 'typelisp_flags\t--target linux-x86_64 --opt-level 2 --backend-mode <mode
 printf 'clang_version\t%s\n' "$_clang_version" >> "$METADATA_TSV"
 c_flags_for_mode scalar
 printf 'clang_scalar_flags\t%s\n' "$C_FLAGS" >> "$METADATA_TSV"
+printf 'clang_scalar_policy\tscalar-fair, vectorization disabled\n' >> "$METADATA_TSV"
 c_flags_for_mode avx2
 printf 'clang_avx2_flags\t%s\n' "$C_FLAGS" >> "$METADATA_TSV"
+printf 'clang_avx2_policy\tauto-vectorized C vs explicit TypeLisp SPMD\n' >> "$METADATA_TSV"
 printf 'valgrind_version\t%s\n' "$_valgrind_version" >> "$METADATA_TSV"
 printf 'avx512_methodology\thttps://github.com/JoNil-Botta/typelisp/issues/4933\n' >> "$METADATA_TSV"
 

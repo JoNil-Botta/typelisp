@@ -80,11 +80,24 @@ Use `scripts/benchmark-compile-cli.sh` for phase-level local investigation when
 the wall-clock gate fails. There is intentionally no retry path; the headroom,
 absolute caps, and ratio provide flake resistance without masking regressions.
 
-Comparison benchmark rows are split by implementation. TypeLisp-generated
-executables use `benchmark/typelisp/<name>` and the paired deterministic
-`clang -O2` C baseline uses `benchmark/c/<name>`. A selected benchmark case must
-contain both `bench.tl` and `baseline.c`; unpaired benchmark directories are
-skipped only when no explicit benchmark filter or case list selected them.
+TypeLisp deliberately does not auto-vectorize ordinary loops. Explicit SPMD
+(`foreach`, `spmd-reduce`, and `spmd-scan`) is the data-parallel model.
+Accordingly, the per-PR scalar gate compares every TypeLisp row with two clang
+rows:
+
+- `benchmark/c-scalar/<name>` uses
+  `clang -O2 -fno-vectorize -fno-slp-vectorize` and is the scalar-fair codegen
+  comparison.
+- `benchmark/c/<name>` keeps ordinary `clang -O2` auto-vectorization enabled,
+  making the auto-vectorizer gap visible while SPMD backends close it.
+
+TypeLisp-generated executables use `benchmark/typelisp/<name>`. The measurement
+report writes `ratios.tsv` with both
+`typelisp_over_clang_scalar_x` and `typelisp_over_clang_auto_x`; all three
+instruction-count rows are exact gate inputs in `perf/insn-exec-baseline.tsv`.
+A selected benchmark case must contain both `bench.tl` and `baseline.c`;
+unpaired benchmark directories are skipped only when no explicit benchmark
+filter or case list selected them.
 
 Benchmark binaries are built at **opt-level 2** so the TypeLisp-vs-C rows are a
 release-vs-release comparison (TypeLisp opt2 against `clang -O2`). Override with
@@ -94,10 +107,12 @@ recorded in its row name (`self_compile/compile_cli_opt1`).
 
 The checker builds a fresh full CLI stage1 and stage2 under
 `target/instruction-count-check` and measures that fixed stage2 compiler. The
-default per-PR subset is `self_compile` plus paired rows for `arith_loop`,
-`array_sum`, `borrowed_disjoint_store`, `hashmap_churn`, `hashmap_grow`,
-`hashmap_insert`, `hashmap_get`, `spmd_reduce`, `opt_quicksort`, `opt_crc32`, and
-`opt_bytecode_vm`, each with one cachegrind run.
+default per-PR subset is `self_compile` plus TypeLisp/auto-clang/scalar-clang
+rows for `arith_loop`, `array_sum`, `borrowed_disjoint_store`, `hashmap_churn`,
+`hashmap_grow`, `hashmap_insert`, `hashmap_get`, `spmd_reduce`,
+`opt_quicksort`, `opt_crc32`, and `opt_bytecode_vm`, each with one cachegrind
+run. Alternate baseline files such as the scheduled heavy corpus retain their
+own checked row policy.
 
 ## Host-keyed AVX-512 retired instructions
 
@@ -212,8 +227,12 @@ workflow; accept intentional changes by committing an explicit
 `scripts/measure-spmd-mode-instruction-counts.sh` is the opt-in deterministic
 mode comparison for the five SPMD benchmarks. It builds TypeLisp explicitly at
 `--opt-level 2 --backend-mode scalar|avx2`; scalar rows are paired with
-`clang -O2 -fno-vectorize -fno-slp-vectorize`, and AVX2 rows with
-`clang -O2 -mavx2 -mno-avx512f`. Every measured pair must return the same exit
+`clang -O2 -fno-vectorize -fno-slp-vectorize`, while AVX2 rows are paired with
+auto-vectorized `clang -O2 -mavx2 -mno-avx512f`. Thus each
+benchmark/mode/implementation row lives in the same checked
+`perf/spmd-mode-insn-baseline.tsv` table: scalar measures like-for-like codegen,
+and AVX2 measures the explicit TypeLisp SPMD backend against clang's
+auto-vectorized end-state target. Every measured pair must return the same exit
 status. The checked support contract is `perf/spmd-mode-support.tsv`; an
 unsupported TypeLisp row must fail with its exact recorded lowering diagnostic
 and is emitted as `unsupported`, never as a missing or zero count.

@@ -643,6 +643,10 @@ checking the combined session. Scalar results are printed directly; structs,
 enums, tuples, and fixed arrays use the stable fallback `<value: Type>` because
 TypeLisp does not currently provide runtime reflection for their contents.
 
+Disposable measurements and diagnostics belong under `target/exp/<name>/`;
+`typelisp clean --experiments` removes that subtree at the nearest package root
+without touching bootstrap or package build outputs.
+
 ## Status
 
 Implemented: the full pipeline (lexer, parser, type checker, IR lowering,

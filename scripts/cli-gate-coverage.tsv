@@ -1,12 +1,12 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	469
-# count	total	all	annotations	469
+# count	total	all	rows	474
+# count	total	all	annotations	474
 # count	total	all	sources	3
-# count	total	all	source-sites	343
+# count	total	all	source-sites	348
 # count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	291
-# count	gate	public-tools	source-sites	182
+# count	gate	public-tools	rows	296
+# count	gate	public-tools	source-sites	187
 # count	gate	public-tools	expanded-cases	125
 # count	gate	selfhost-cli	rows	77
 # count	gate	selfhost-cli	source-sites	76
@@ -14,15 +14,15 @@
 # count	gate	stage1-wrapper	rows	101
 # count	gate	stage1-wrapper	source-sites	85
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	348
-# count	host	linux	rows	118
+# count	host	all	rows	352
+# count	host	linux	rows	119
 # count	host	windows	rows	3
-# count	platform	linux	rows	466
-# count	platform	windows	rows	351
+# count	platform	linux	rows	471
+# count	platform	windows	rows	355
 # count	kind	delegated	rows	8
 # count	kind	direct	rows	51
-# count	kind	wrapper	rows	410
-# count	process	compiler	rows	303
+# count	kind	wrapper	rows	415
+# count	process	compiler	rows	308
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	1
@@ -187,7 +187,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	init-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp init --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	init-help	-
 1	init-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp init -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	init-short-help	-
 1	clean-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	clean-help	-
-1	clean-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	clean-short-help	-
+1	clean-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:;assert_contains stderr --experiments	none	clean-short-help	-
 1	lsp-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lsp --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	lsp-help	-
 1	lsp-short-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp lsp -h	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr Usage:;assert_contains stderr <-usage>;assert_contains stderr Summary:	none	lsp-short-help	-
 1	missing-command	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp	-	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains_any stderr Usage: usage:	none	missing-command	-
@@ -404,6 +404,11 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	package-clean-dry-run	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean --dry-run --manifest-path <pkg>/typelisp.pkg	<pkg>/typelisp.pkg	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Would remove:;assert_contains stdout public_tool_pkg.s	empty	[ -f <pkg-asm> ] || fail package clean dry-run removed assembly	package-clean-dry-run	-
 1	package-clean	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean --manifest-path <pkg>/typelisp.pkg	<pkg>/typelisp.pkg	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Removed:	empty	[ ! -d <pkg-out-dir> ] || fail package clean did not remove <pkg-out-dir>	package-clean	-
 1	package-clean-idempotent	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean --manifest-path <pkg>/typelisp.pkg	<pkg>/typelisp.pkg	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	package-clean-idempotent	-
+1	experiment-clean-invalid-manifest	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean --experiments --manifest-path <pkg>/src/main.tl	<non-manifest-source>	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr invalid package manifest	[ -f <exp-result> ] || fail experiment clean accepted a non-manifest selector	experiment-clean-invalid-manifest	-
+1	experiment-clean-dry-run	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean --experiments --dry-run --manifest-path <pkg>/typelisp.pkg	<pkg>/typelisp.pkg	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Would remove:;assert_contains stdout target/exp	empty	[ -f <exp-result> ] || fail experiment clean dry-run removed experiment output;[ -f <stage0-sentinel> ] || fail experiment clean dry-run removed stage0 sibling;[ -f <package-sentinel> ] || fail experiment clean dry-run removed package output sibling	experiment-clean-dry-run	-
+1	experiment-clean	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp clean --experiments	<pkg>/typelisp.pkg	inherited	<pkg>/src	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Removed:	empty	[ ! -e <exp-dir> ] || fail experiment clean did not remove experiment subtree;[ -f <stage0-sentinel> ] || fail experiment clean removed stage0 sibling;[ -f <package-sentinel> ] || fail experiment clean removed package output sibling	experiment-clean	-
+1	experiment-clean-idempotent	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean --experiments --manifest-path <pkg>/typelisp.pkg	<pkg>/typelisp.pkg	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	none	experiment-clean-idempotent	-
+1	experiment-clean-symlink-refusal	public-tools	scripts/verify-public-tools.sh	wrapper	linux	stage2/run_cmd	typelisp clean --experiments --manifest-path <pkg>/typelisp.pkg	<pkg>/typelisp.pkg	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr refusing symbolic link or special filesystem node	[ -f <stage0-sentinel> ] || fail experiment clean followed a symlink into stage0	experiment-clean-symlink-refusal	-
 1	package-parse-error	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp build --manifest-path <badpkg>/typelisp.pkg	<badpkg>/typelisp.pkg	inherited	repository	compiler+native-tools	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr 'unknown manifest field `deps`'	none	package-parse-error	-
 1	package-missing-alias	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp build --manifest-path <badpkg>/typelisp.pkg	<badpkg>/typelisp.pkg	inherited	repository	compiler+native-tools	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr pkg:math/src/lib.tl;assert_contains_any stderr 'alias `math`' unknown package alias 'math'	none	package-missing-alias	-
 1	package-discover-upward	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd_cwd	typelisp build	prepared-by-gate	inherited	<walk-pkg>/src/nested/deeper	compiler+native-tools	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Built	empty	[ -f <walk-asm> ] || fail package discover-upward did not write assembly;assert_contains <walk-asm> main:;assert_contains <walk-asm> inc:;assert_contains_any <walk-asm> \;assert_contains <walk-asm> _tl_walk_pkg_src_math_inc	package-discover-upward	-

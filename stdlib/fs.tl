@@ -633,6 +633,10 @@
 (define fs-windows-file-attribute-directory : i64
   16)
 
+;: Windows file attribute bit that marks a symbolic link or junction.
+(define fs-windows-file-attribute-reparse-point : i64
+  1024)
+
 ;: Byte offset of `dwFileAttributes` in `WIN32_FILE_ATTRIBUTE_DATA`.
 (define fs-windows-file-attributes-offset : i64
   0)
@@ -655,10 +659,13 @@
   (unsafe
     (ptr-read (ptr-cast (ptr-offset base offset) : (Ptr i64)))))
 
-;: Linux `newfstatat(AT_FDCWD, path, statbuf, 0)` syscall.
+;: Linux `newfstatat(AT_FDCWD, path, statbuf, flags)` syscall.
 (cfg
   (not windows)
-  (define (linux-syscall-newfstatat [path : (Ptr u8)] [statbuf : (MutPtr u8)]) : i64
+  (define (linux-syscall-newfstatat
+    [path : (Ptr u8)]
+    [statbuf : (MutPtr u8)]
+    [flags : i64]) : i64
     (io.linux-syscall-status
       (unsafe
         (syscall
@@ -668,7 +675,7 @@
           (io.linux-ptr-arg
             (unsafe
               (ptr-cast statbuf : (Ptr u8))))
-          0)))))
+          flags)))))
 
 (cfg
   (not windows)
@@ -694,6 +701,10 @@
   (not windows)
   (define fs-linux-stat-directory-mode : i64
     16384))
+(cfg
+  (not windows)
+  (define fs-linux-at-symlink-nofollow : i64
+    256))
 
 (cfg
   (not windows)
@@ -708,12 +719,18 @@
 
 (cfg
   (not windows)
-  (define (linux-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
+  (define (linux-file-metadata-probe [path : (Ptr u8)] [no-follow : bool]) : FsFileMetadataProbe
     (let
       [statbuf : (Array u8) (array.make-array u8 fs-linux-stat-buffer-size)]
       [statptr : (MutPtr u8) (io.array-ptr statbuf)]
       [status : i64
-        (status-from-result (linux-syscall-newfstatat path statptr))]
+        (status-from-result
+          (linux-syscall-newfstatat
+            path
+            statptr
+            (if no-follow
+              fs-linux-at-symlink-nofollow
+              0)))]
       (if (= status io.io-status-ok)
         (let
           [kind : i64
@@ -741,10 +758,16 @@
 
 (cfg
   windows
-  (define (fs-windows-file-kind-from-attributes [attrs : i64]) : i64
-    (if (not (= (bit-and attrs fs-windows-file-attribute-directory) 0))
-      fs-file-kind-directory-code
-      fs-file-kind-regular-code)))
+  (define (fs-windows-file-kind-from-attributes
+    [attrs : i64]
+    [no-follow : bool]) : i64
+    (if (and
+      no-follow
+      (not (= (bit-and attrs fs-windows-file-attribute-reparse-point) 0)))
+      fs-file-kind-other-code
+      (if (not (= (bit-and attrs fs-windows-file-attribute-directory) 0))
+        fs-file-kind-directory-code
+        fs-file-kind-regular-code))))
 
 (cfg
   windows
@@ -760,7 +783,7 @@
 
 (cfg
   windows
-  (define (fs-windows-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
+  (define (fs-windows-file-metadata-probe [path : (Ptr u8)] [no-follow : bool]) : FsFileMetadataProbe
     (let
       [data : (Array u8)
         (array.make-array u8 fs-windows-file-attribute-data-size)]
@@ -775,7 +798,8 @@
             (fs-windows-file-kind-from-attributes
               (cast
                 (metadata-read-u32-at dataptr fs-windows-file-attributes-offset)
-                : i64))]
+                : i64)
+              no-follow)]
           (FsFileMetadataProbe
             io.io-status-ok
             kind
@@ -784,18 +808,28 @@
               0)))))))
 
 ;: Probe path metadata and return status, kind sentinel, and regular-file size.
-(define (file-metadata-probe [path : String]) : FsFileMetadataProbe
+(define (file-metadata-probe-with-links [path : String] [no-follow : bool]) : FsFileMetadataProbe
   (let
     [path-bytes : (Array u8) (io.c-string path)]
     [path-ptr : (Ptr u8) (io.array-const-ptr path-bytes)]
     (cfg
       windows
-      (fs-windows-file-metadata-probe path-ptr)
-      (linux-file-metadata-probe path-ptr))))
+      (fs-windows-file-metadata-probe path-ptr no-follow)
+      (linux-file-metadata-probe path-ptr no-follow))))
+
+;: Probe path metadata while following symbolic links.
+(define (file-metadata-probe [path : String]) : FsFileMetadataProbe
+  (file-metadata-probe-with-links path false))
 
 ;: Return the host status code or sentinel for a filesystem node kind.
 (define (file-kind-status [path : String]) : i64
   (struct-get (file-metadata-probe path) kind))
+
+;: Return the host status code or kind without following symbolic links.
+;:
+;: Symbolic links and Windows reparse points are reported as "other".
+(define (file-kind-status-no-follow [path : String]) : i64
+  (struct-get (file-metadata-probe-with-links path true) kind))
 
 ;: Return the host status code for retrieving a regular-file size.
 (define (file-size-status [path : String]) : i64
@@ -1380,6 +1414,18 @@
       (stdlib.fs.file-kind-status-result
         path
         (stdlib.fs.file-kind-status path-text)))))
+
+;: Probe the coarse filesystem kind of `path` without following symbolic links.
+;:
+;: Symbolic links and Windows reparse points are returned as `FsFileOther`.
+(define (try-file-kind-no-follow [path : (& path str)]) : ResultFsFileKind
+  (let
+    [path-text : String (string.copy path)]
+    (if (io.empty-path? path)
+      (ErrFsFileKind (io.invalid-path-error path))
+      (stdlib.fs.file-kind-status-result
+        path
+        (stdlib.fs.file-kind-status-no-follow path-text)))))
 
 ;: Return true when `kind` is `FsFileRegular`.
 (define (file-kind-regular? [kind : FsFileKind]) : bool

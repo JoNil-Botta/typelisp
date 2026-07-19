@@ -401,6 +401,9 @@ assert_subcommand_help_pair new "typelisp new"
 assert_subcommand_help_pair init "typelisp init"
 if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
     assert_subcommand_help_pair clean "typelisp clean"
+    if [ "$EXPECT_NORMALIZED_HELP" -eq 1 ]; then
+        assert_contains "$err" "--experiments"
+    fi
 fi
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     assert_subcommand_help_pair lsp "typelisp lsp"
@@ -3001,6 +3004,55 @@ run_cmd package-clean-idempotent "$COMPILER" clean --manifest-path "$PKG/typelis
 assert_success
 assert_stdout_empty
 assert_stderr_empty
+
+EXP_DIR="$PKG/target/exp"
+EXP_RESULT="$EXP_DIR/measure-parser/result.txt"
+STAGE0_SENTINEL="$PKG/target/stage0/keep.txt"
+PACKAGE_SENTINEL="$PKG/target/release/keep.txt"
+mkdir -p "$(dirname "$EXP_RESULT")" "$(dirname "$STAGE0_SENTINEL")" "$(dirname "$PACKAGE_SENTINEL")"
+: > "$EXP_RESULT"
+: > "$STAGE0_SENTINEL"
+: > "$PACKAGE_SENTINEL"
+# cli-gate-case experiment-clean-invalid-manifest wrapper run_cmd
+run_cmd experiment-clean-invalid-manifest "$COMPILER" clean --experiments --manifest-path "$PKG/src/main.tl"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "invalid package manifest"
+[ -f "$EXP_RESULT" ] || fail "experiment clean accepted a non-manifest selector"
+# cli-gate-case experiment-clean-dry-run wrapper run_cmd
+run_cmd experiment-clean-dry-run "$COMPILER" clean --experiments --dry-run --manifest-path "$PKG/typelisp.pkg"
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Would remove:"
+assert_contains "$out" "target/exp"
+[ -f "$EXP_RESULT" ] || fail "experiment clean dry-run removed experiment output"
+[ -f "$STAGE0_SENTINEL" ] || fail "experiment clean dry-run removed stage0 sibling"
+[ -f "$PACKAGE_SENTINEL" ] || fail "experiment clean dry-run removed package output sibling"
+# cli-gate-case experiment-clean wrapper run_cmd_cwd
+run_cmd_cwd experiment-clean "$PKG/src" "$COMPILER" clean --experiments
+assert_success
+assert_stderr_empty
+assert_contains "$out" "Removed:"
+[ ! -e "$EXP_DIR" ] || fail "experiment clean did not remove $EXP_DIR"
+[ -f "$STAGE0_SENTINEL" ] || fail "experiment clean removed stage0 sibling"
+[ -f "$PACKAGE_SENTINEL" ] || fail "experiment clean removed package output sibling"
+# cli-gate-case experiment-clean-idempotent wrapper run_cmd
+run_cmd experiment-clean-idempotent "$COMPILER" clean --experiments --manifest-path "$PKG/typelisp.pkg"
+assert_success
+assert_stdout_empty
+assert_stderr_empty
+if [ "$HOST_OS" = linux ]; then
+    mkdir -p "$EXP_DIR"
+    ln -s "$PKG/target/stage0" "$EXP_DIR/stage0-link"
+    # cli-gate-case experiment-clean-symlink-refusal wrapper run_cmd
+    run_cmd experiment-clean-symlink-refusal "$COMPILER" clean --experiments --manifest-path "$PKG/typelisp.pkg"
+    assert_failure
+    assert_stdout_empty
+    assert_contains "$err" "refusing symbolic link or special filesystem node"
+    [ -f "$STAGE0_SENTINEL" ] || fail "experiment clean followed a symlink into stage0"
+    rm -f "$EXP_DIR/stage0-link"
+    rmdir "$EXP_DIR"
+fi
 fi
 
 BADPKG="$WORKDIR/badpkg"

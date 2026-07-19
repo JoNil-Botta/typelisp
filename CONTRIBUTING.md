@@ -52,6 +52,29 @@ The `scripts/check-implementation-languages.sh` CI gate honors the path
 exceptions above and **fails on any new forbidden-language file** outside them,
 enforcing the TypeLisp-only policy.
 
+## Target Directory Hygiene
+
+Keep ad-hoc measurements, compiler comparisons, generated diagnostics, and
+other disposable experiments under `target/exp/<short-name>/`. Reuse or replace
+that named directory instead of adding new top-level `target/<name>/` paths.
+Stable package outputs, bootstrap compilers, caches, and documented CI artifacts
+retain their existing paths outside `target/exp/`.
+
+Run `typelisp clean --experiments` to remove the nearest package root's complete
+`target/exp/` subtree, or add `--manifest-path <typelisp.pkg>` to select the
+package explicitly. `--dry-run` reports the selected root without deleting it.
+This mode cannot select sibling paths such as `target/stage0/`, package
+`target/release/` or `target/dev/` outputs, and dependency caches. For safety it
+also refuses symbolic links, special filesystem nodes, and nested `.git`
+metadata.
+
+New scripts should default their disposable output below
+`target/exp/<script-name>/`. A script may use another `target/` path only when
+the artifact is a stable, documented part of the build or CI workflow. The
+separate scripts inventory in
+[#5173](https://github.com/JoNil-Botta/typelisp/issues/5173) tracks which
+existing scripts are enduring gates versus archived one-off experiments.
+
 ## No Syntax Aliases Rule
 
 **When you change language syntax, do not add an alias or a second parser path

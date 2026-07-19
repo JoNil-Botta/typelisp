@@ -514,7 +514,14 @@ verify_compiler_driver_import() {
 EOF
     cat > "$_helper" <<'EOF'
 (import "shared.tl")
-(define (helper) : i64 (+ 38 shared))
+;; Self-recursive, so no inliner admits it: the gate's snippet assertions
+;; below prove the cross-file call materializes, which requires helper to
+;; stay an out-of-line function at every opt level.
+(define (helper-opaque [value : i64] [rounds : i64]) : i64
+  (if (> rounds 1)
+    (+ value (helper-opaque value (- rounds 1)))
+    value))
+(define (helper) : i64 (helper-opaque (+ 38 shared) 1))
 EOF
     cat > "$_src" <<'EOF'
 (import "helper.tl")

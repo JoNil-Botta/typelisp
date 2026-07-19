@@ -62,6 +62,12 @@ VECTOR_CORE_STDOUT="$WORKDIR/profile-vector-core.stdout"
 VECTOR_CORE_STDERR="$WORKDIR/profile-vector-core.stderr"
 VECTOR_FULL_STDOUT="$WORKDIR/profile-vector-full.stdout"
 VECTOR_FULL_STDERR="$WORKDIR/profile-vector-full.stderr"
+VECTOR_ONE_ASM="$WORKDIR/profile-vector-one.s"
+VECTOR_ONE_STDOUT="$WORKDIR/profile-vector-one.stdout"
+VECTOR_ONE_STDERR="$WORKDIR/profile-vector-one.stderr"
+VECTOR_FIVE_ASM="$WORKDIR/profile-vector-five.s"
+VECTOR_FIVE_STDOUT="$WORKDIR/profile-vector-five.stdout"
+VECTOR_FIVE_STDERR="$WORKDIR/profile-vector-five.stderr"
 GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
 GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
 RESULT_IMPORT_STDOUT="$WORKDIR/profile-result-import.stdout"
@@ -210,6 +216,32 @@ assert_profile_counter_eq_in() {
         show_failure_logs "$_stdout" "$_stderr"
         fail "expected profile counter $_phase to equal $_want"
     fi
+}
+
+profile_counter_value_in() {
+    _file=$1
+    _phase=$2
+    awk -F'|' -v phase="$_phase" '
+        $1 == "compile-profile" && $2 == phase {
+            print $3 + 0
+            found = 1
+            exit
+        }
+        END { if (!found) exit 1 }
+    ' "$_file"
+}
+
+profile_live_counter_value_in() {
+    _file=$1
+    _phase=$2
+    awk -F'|' -v phase="$_phase" '
+        $1 == "compile-profile" && $2 == phase {
+            print $5 + 0
+            found = 1
+            exit
+        }
+        END { if (!found) exit 1 }
+    ' "$_file"
 }
 
 # Lowerer counters use the same six-field phase schema, with their value in
@@ -662,6 +694,7 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_tail_fallb
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_materializations|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_materialized_slots|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materializations|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_decl_checks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_memo_hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_catalog_builds|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_catalog_hits|"
@@ -810,6 +843,90 @@ if [ "$VECTOR_MACRO_ALLOC_SAVINGS" -lt 250000 ]; then
 fi
 echo "[compile-profile] vector macro-walk allocation core=$VECTOR_CORE_MACRO_ALLOC full=$VECTOR_FULL_MACRO_ALLOC savings=$VECTOR_MACRO_ALLOC_SAVINGS"
 
+echo "[compile-profile] compare one and five compact vector identities"
+if ! "$PROFILE_BIN" compile tests/integration/compile_profile_vector_one_core.tl \
+    -o "$VECTOR_ONE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    --opt-level 1 \
+    > "$VECTOR_ONE_STDOUT" 2> "$VECTOR_ONE_STDERR"; then
+    show_failure_logs "$VECTOR_ONE_STDOUT" "$VECTOR_ONE_STDERR"
+    fail "profiled one-vector fixture compile failed"
+fi
+if ! "$PROFILE_BIN" compile tests/integration/compile_profile_vector_five_core.tl \
+    -o "$VECTOR_FIVE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    --opt-level 1 \
+    > "$VECTOR_FIVE_STDOUT" 2> "$VECTOR_FIVE_STDERR"; then
+    show_failure_logs "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR"
+    fail "profiled five-vector fixture compile failed"
+fi
+
+assert_profile_counter_eq_in \
+    "$VECTOR_ONE_STDERR" \
+    "typecheck.macro.generated_module_materializations" \
+    1 \
+    "$VECTOR_ONE_STDOUT" \
+    "$VECTOR_ONE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.generated_module_materializations" \
+    5 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_ONE_STDERR" \
+    "typecheck.macro.generated_module_memo_hits" \
+    0 \
+    "$VECTOR_ONE_STDOUT" \
+    "$VECTOR_ONE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.generated_module_memo_hits" \
+    0 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+
+VECTOR_ONE_DECL_CHECKS=$(profile_counter_value_in \
+    "$VECTOR_ONE_STDERR" \
+    "typecheck.macro.generated_decl_checks")
+VECTOR_FIVE_DECL_CHECKS=$(profile_counter_value_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.generated_decl_checks")
+if [ "$VECTOR_ONE_DECL_CHECKS" -le 0 ] ||
+    [ "$VECTOR_FIVE_DECL_CHECKS" -ne $((VECTOR_ONE_DECL_CHECKS * 5)) ]; then
+    show_failure_logs "$VECTOR_ONE_STDOUT" "$VECTOR_ONE_STDERR"
+    show_failure_logs "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR"
+    fail "generated declaration checks did not grow from one to five identities: one=$VECTOR_ONE_DECL_CHECKS five=$VECTOR_FIVE_DECL_CHECKS"
+fi
+
+for counter in \
+    checked_program.pre_decls.functions \
+    checked_program.reachable.decls \
+    checked_program.reachable.functions \
+    ir.after_decls.functions \
+    ir.after_decls.blocks \
+    ir.after_decls.instructions; do
+    one_value=$(profile_live_counter_value_in \
+        "$VECTOR_ONE_STDERR" \
+        "lower.$counter")
+    five_value=$(profile_live_counter_value_in \
+        "$VECTOR_FIVE_STDERR" \
+        "lower.$counter")
+    if [ "$one_value" -le 0 ] || [ "$five_value" -le "$one_value" ]; then
+        show_failure_logs "$VECTOR_ONE_STDOUT" "$VECTOR_ONE_STDERR"
+        show_failure_logs "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR"
+        fail "profile counter lower.$counter did not grow from one to five identities: one=$one_value five=$five_value"
+    fi
+done
+
+echo "[compile-profile] compact vector identity counters generated_decl_checks=$VECTOR_ONE_DECL_CHECKS/$VECTOR_FIVE_DECL_CHECKS"
+
 echo "[compile-profile] check generated import fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import.tl \
     --stdlib-root . \
@@ -868,8 +985,8 @@ fi
 # contains uses the shared generated equality module, so the compilation
 # materializes exactly two identities: `(vector i64)` and `(eq.eq i64)`. The
 # vector catalog currently exceeds the large-catalog cutoff and is materialized
-# in full, so ordinary typechecking validates all of it and the separate
-# partial-catalog shadow-validation counter remains zero.
+# in full, so ordinary typechecking validates generated declarations while the
+# separate partial-catalog shadow-validation counter remains zero.
 assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_memo_hits" \
@@ -882,6 +999,13 @@ assert_profile_counter_eq_in \
     2 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"
+CROSS_SINGLE_DECL_CHECKS=$(profile_counter_value_in \
+    "$CROSS_SINGLE_STDERR" \
+    "typecheck.macro.generated_decl_checks")
+if [ "$CROSS_SINGLE_DECL_CHECKS" -le 0 ]; then
+    show_failure_logs "$CROSS_SINGLE_STDOUT" "$CROSS_SINGLE_STDERR"
+    fail "repeated generated identity emitted no generated declaration checks"
+fi
 assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_catalog_builds" \
@@ -1074,6 +1198,8 @@ assert_lower_row "ast_type_pool.pre_decls.len"
 assert_lower_row "ast_type_pool.pre_decls.capacity"
 assert_lower_row "checked_program.pre_decls.decls"
 assert_lower_row "checked_program.pre_decls.functions"
+assert_lower_row "checked_program.reachable.decls"
+assert_lower_row "checked_program.reachable.functions"
 assert_lower_row "ir.after_decls.functions"
 assert_lower_row "ir.after_decls.blocks"
 assert_lower_row "ir.after_decls.instructions"

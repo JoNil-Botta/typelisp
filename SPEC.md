@@ -5327,8 +5327,17 @@ the instruction's IEEE-754 special-value behavior. The private polymorphic
 `__tl_float_to_bits` and `__tl_float_from_bits` intrinsics reinterpret
 `f64`/`u64` or `f32`/`u32` values without conversion. They lower to the
 existing register bitcast operation and never allocate or call a runtime
-symbol. Public typed wrappers, classification/sign helpers, exact special
-values, and `scalbn`-style power-of-two scaling live in `stdlib.math`.
+symbol. Public `stdlib.math.f64-sqrt` and `stdlib.math.f32-sqrt` wrappers expose
+typed square root, and `stdlib.math.sqrt` evaluates one `f64` or `f32`
+expression once while preserving its type. They emit the matching scalar SSE2
+instruction without allocation, runtime calls, libm, or CRT dependencies.
+Under the default MXCSR round-to-nearest, ties-to-even mode, positive finite
+normal and subnormal inputs are correctly rounded, signed zeros retain their
+sign, positive infinity is unchanged, and negative inputs produce NaN. NaN
+results follow the hardware contract; signaling-NaN payload, quieting, and
+exception details are not promised. Other public typed wrappers,
+classification/sign helpers, exact special values, and `scalbn`-style
+power-of-two scaling live in `stdlib.math`.
 Float bit reinterpretation preserves every bit, including signed zero and NaN
 payloads. The scaling helpers follow IEEE-754 arithmetic under the active
 rounding environment; the default environment is round-to-nearest, ties to

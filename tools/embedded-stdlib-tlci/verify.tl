@@ -14,11 +14,11 @@
           (str_cat.str-cat "embedded stdlib tlci validation failed: " message))
         1)]
     [(CompilerEmbeddedStdlibTlciValidation.Ok count)
-      (if (= count 92)
+      (if (= count 93)
         42
         (begin
           (io.print-error
             (str_cat.str-cat
-              "embedded stdlib tlci macro count mismatch: expected 92, got "
+              "embedded stdlib tlci macro count mismatch: expected 93, got "
               (string.int->string count)))
           2))]))

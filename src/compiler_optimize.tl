@@ -32435,6 +32435,699 @@
         true
         (opt-bce-mb-keep-contains? (box-get rest) label index))]))
 
+;; An index expression represented as either a literal or `base + offset`.
+;; Opaque SSA definitions are valid bases: this recognizes both an explicit
+;; `second = first - 1` chain and two expressions such as `sp - 1` / `sp - 2`
+;; derived independently from the same base.
+(defenum OptBceMbAffine
+  (No)
+  (Const i64)
+  (Base i64 i64))
+
+(define (opt-bce-mb-affine-add [value : OptBceMbAffine] [offset : i64]) : OptBceMbAffine
+  (match value
+    [(OptBceMbAffine.No) (OptBceMbAffine.No)]
+    [(OptBceMbAffine.Const k) (OptBceMbAffine.Const (+ k offset))]
+    [(OptBceMbAffine.Base base k) (OptBceMbAffine.Base base (+ k offset))]))
+
+(define (opt-bce-mb-affine-value
+  [body-blocks : CompilerIrBlockList]
+  [value : CompilerIrValue]
+  [fuel : i64]) : OptBceMbAffine
+  (match value
+    [(CompilerIrValue.I64 k) (OptBceMbAffine.Const k)]
+    [(CompilerIrValue.Var raw)
+      (let
+        [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+        (if (<= fuel 0)
+          (OptBceMbAffine.Base id 0)
+          (match (opt-bce-mb-find-def body-blocks id)
+            [(OptBceMbMaybeInstr.No) (OptBceMbAffine.Base id 0)]
+            [(OptBceMbMaybeInstr.Some instr)
+              (match instr
+                [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+                  (if (opt-affine-64bit-type? ty)
+                    (match op
+                      [(CompilerIrBinOp.Add)
+                        (match (opt-affine-var-const lhs rhs)
+                          [(OptAffineOperands.Some src k)
+                            (opt-bce-mb-affine-add
+                              (opt-bce-mb-affine-value
+                                body-blocks
+                                (CompilerIrValue.Var src)
+                                (- fuel 1))
+                              k)]
+                          [(OptAffineOperands.No) (OptBceMbAffine.Base id 0)])]
+                      [(CompilerIrBinOp.Sub)
+                        (match lhs
+                          [(CompilerIrValue.Var src)
+                            (match rhs
+                              [(CompilerIrValue.I64 k)
+                                (opt-bce-mb-affine-add
+                                  (opt-bce-mb-affine-value
+                                    body-blocks
+                                    (CompilerIrValue.Var src)
+                                    (- fuel 1))
+                                  (- 0 k))]
+                              [_ (OptBceMbAffine.Base id 0)])]
+                          [_ (OptBceMbAffine.Base id 0)])]
+                      [_ (OptBceMbAffine.Base id 0)])
+                    (OptBceMbAffine.Base id 0))]
+                [_ (OptBceMbAffine.Base id 0)])])))]
+    [_ (OptBceMbAffine.No)]))
+
+(defenum OptBceMbAffinePair
+  (No)
+  (Some bool))
+
+(define (opt-bce-mb-affine-pair
+  [body-blocks : CompilerIrBlockList]
+  [first : CompilerIrValue]
+  [second : CompilerIrValue]) : OptBceMbAffinePair
+  (match (opt-bce-mb-affine-value body-blocks first 16)
+    [(OptBceMbAffine.No) (OptBceMbAffinePair.No)]
+    [(OptBceMbAffine.Const first-k)
+      (match (opt-bce-mb-affine-value body-blocks second 16)
+        [(OptBceMbAffine.Const second-k)
+          (if (= (- second-k first-k) 1)
+            (OptBceMbAffinePair.Some true)
+            (if (= (- first-k second-k) 1)
+              (OptBceMbAffinePair.Some false)
+              (OptBceMbAffinePair.No)))]
+        [_ (OptBceMbAffinePair.No)])]
+    [(OptBceMbAffine.Base first-base first-k)
+      (match (opt-bce-mb-affine-value body-blocks second 16)
+        [(OptBceMbAffine.Base second-base second-k)
+          (if (= first-base second-base)
+            (if (= (- second-k first-k) 1)
+              (OptBceMbAffinePair.Some true)
+              (if (= (- first-k second-k) 1)
+                (OptBceMbAffinePair.Some false)
+                (OptBceMbAffinePair.No)))
+            (OptBceMbAffinePair.No))]
+        [_ (OptBceMbAffinePair.No)])]))
+
+(defenum OptBceMbPairCandidate
+  (No)
+  (Some i64 bool CompilerIrValue))
+
+(define (opt-bce-mb-pair-barrier? [instr : CompilerIrInstr]) : bool
+  (or
+    (compiler-ir-effect-has-side-effect? (compiler-ir-instr-effect instr))
+    ;; SafeDiv/SafeMod and checked scalar shifts can abort even though their
+    ;; value-producing effect class is Pure.
+    (match instr
+      [(CompilerIrInstr.BinOp _ op _ _ _) (opt-binop-traps? op)]
+      [_ false])))
+
+;; Find the next check in this block. Reads and pure SSA calculations may sit
+;; between a pair; a store, call, aborting operation, or control effect closes
+;; the window. An intervening incompatible BoundsCheck also closes it because
+;; that check is itself an observable trap point.
+(define (opt-bce-mb-pair-next
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [body-blocks : CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [first-index : CompilerIrValue]
+  [length : CompilerIrValue]) : OptBceMbPairCandidate
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptBceMbPairCandidate.No)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(CompilerIrInstr.BoundsCheck next-index next-length _)
+          (match (opt-bce-mb-invariant-operand body-blocks defs next-length)
+            [(CompilerIrMaybeValue.Some next-length-invariant)
+              (if (opt-value-eq length next-length-invariant)
+                (match (opt-bce-mb-affine-pair
+                  body-blocks
+                  first-index
+                  next-index)
+                  [(OptBceMbAffinePair.Some first-smaller)
+                    (OptBceMbPairCandidate.Some index first-smaller next-index)]
+                  [(OptBceMbAffinePair.No) (OptBceMbPairCandidate.No)])
+                (OptBceMbPairCandidate.No))]
+            [(CompilerIrMaybeValue.No) (OptBceMbPairCandidate.No)])]
+        [_
+          (if (opt-bce-mb-pair-barrier? instr)
+            (OptBceMbPairCandidate.No)
+            (opt-bce-mb-pair-next
+              instrs
+              (+ index 1)
+              body-blocks
+              defs
+              first-index
+              length))]))))
+
+;; --- late paired bounds checks -----------------------------------------------
+;;
+;; This rewrite deliberately runs only from the post-fixpoint program tail,
+;; after scratch reset and immediately before late total-switch materialization.
+;; At that point the exhaustive dispatch loop has its final CFG shape. Pairing
+;; edits those blocks in place: it never invokes BCE, versions a loop, or clones
+;; a block.
+(defenum OptLateBoundsPairPlan
+  (Nil)
+  (Cons String i64 i64 bool CompilerIrValue (Box OptLateBoundsPairPlan)))
+
+(defenum OptLateBoundsPairAt
+  (No)
+  (First bool CompilerIrValue)
+  (Second))
+
+(defstruct OptLateBoundsPairCollect
+  (length CompilerIrMaybeValue)
+  (plans OptLateBoundsPairPlan)
+  (count i64))
+
+(defenum OptLateBoundsPairResult
+  (No)
+  (Some CompilerIrBlockList i64))
+
+(defenum OptLateBoundsPairPreheader
+  (No)
+  (Some CompilerIrBlock))
+
+(defenum OptLateBoundsPairSubst
+  (Nil)
+  (Cons i64 i64 i64 (Box OptLateBoundsPairSubst)))
+
+(define (opt-late-bounds-pair-selected-length?
+  [selected : CompilerIrMaybeValue]
+  [length : CompilerIrValue]) : bool
+  (match selected
+    [(CompilerIrMaybeValue.No) true]
+    [(CompilerIrMaybeValue.Some found) (opt-value-eq found length)]))
+
+(define (opt-late-bounds-pair-collect-block
+  [label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [body-blocks : CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [state : OptLateBoundsPairCollect]) : OptLateBoundsPairCollect
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    state
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BoundsCheck first-index length _)
+        (match (opt-bce-mb-invariant-operand body-blocks defs length)
+          [(CompilerIrMaybeValue.No)
+            (opt-late-bounds-pair-collect-block
+              label
+              instrs
+              (+ index 1)
+              body-blocks
+              defs
+              state)]
+          [(CompilerIrMaybeValue.Some invariant-length)
+            (if (not
+              (opt-late-bounds-pair-selected-length?
+                (struct-get state length)
+                invariant-length))
+              (opt-late-bounds-pair-collect-block
+                label
+                instrs
+                (+ index 1)
+                body-blocks
+                defs
+                state)
+              (match (opt-bce-mb-pair-next
+                instrs
+                (+ index 1)
+                body-blocks
+                defs
+                first-index
+                invariant-length)
+                [(OptBceMbPairCandidate.No)
+                  (opt-late-bounds-pair-collect-block
+                    label
+                    instrs
+                    (+ index 1)
+                    body-blocks
+                    defs
+                    state)]
+                [(OptBceMbPairCandidate.Some second first-smaller second-value)
+                  (opt-late-bounds-pair-collect-block
+                    label
+                    instrs
+                    (+ second 1)
+                    body-blocks
+                    defs
+                    (OptLateBoundsPairCollect
+                      (CompilerIrMaybeValue.Some invariant-length)
+                      (OptLateBoundsPairPlan.Cons
+                        label
+                        index
+                        second
+                        first-smaller
+                        second-value
+                        (box (struct-get state plans)))
+                      (+ (struct-get state count) 1)))]))])]
+      [_
+        (opt-late-bounds-pair-collect-block
+          label
+          instrs
+          (+ index 1)
+          body-blocks
+          defs
+          state)])))
+
+(define (opt-late-bounds-pair-collect-blocks
+  [remaining : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
+  [defs : opt_i64_i64_map.Map]
+  [state : OptLateBoundsPairCollect]) : OptLateBoundsPairCollect
+  (match remaining
+    [(CompilerIrBlockList.Nil) state]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (opt-late-bounds-pair-collect-blocks
+            (box-get rest)
+            body-blocks
+            defs
+            (opt-late-bounds-pair-collect-block
+              label
+              instrs
+              0
+              body-blocks
+              defs
+              state))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-late-bounds-pair-collect-blocks
+        (compiler-ir-block-seq-to-list seq)
+        body-blocks
+        defs
+        state)]))
+
+(define (opt-late-bounds-pair-at
+  [plans : OptLateBoundsPairPlan]
+  [label : String]
+  [index : i64]) : OptLateBoundsPairAt
+  (match plans
+    [(OptLateBoundsPairPlan.Nil) (OptLateBoundsPairAt.No)]
+    [(OptLateBoundsPairPlan.Cons
+        item-label
+        first
+        second
+        first-smaller
+        second-value
+        rest)
+      (if (and (string.eq item-label label) (= index first))
+        (OptLateBoundsPairAt.First first-smaller second-value)
+        (if (and (string.eq item-label label) (= index second))
+          (OptLateBoundsPairAt.Second)
+          (opt-late-bounds-pair-at (box-get rest) label index)))]))
+
+(define (opt-late-bounds-pair-subst-env [substs : OptLateBoundsPairSubst]) : OptCopyEnv
+  (match substs
+    [(OptLateBoundsPairSubst.Nil) (OptCopyEnv.Nil)]
+    [(OptLateBoundsPairSubst.Cons raw resolved replacement rest)
+      (let
+        [tail : OptCopyEnv (opt-late-bounds-pair-subst-env (box-get rest))]
+        (if (= raw resolved)
+          (OptCopyEnv.Cons raw (CompilerIrValue.Var replacement) (box tail))
+          (OptCopyEnv.Cons
+            raw
+            (CompilerIrValue.Var replacement)
+            (box
+              (OptCopyEnv.Cons
+                resolved
+                (CompilerIrValue.Var replacement)
+                (box tail))))))]))
+
+(define (opt-late-bounds-pair-subst-def?
+  [substs : OptLateBoundsPairSubst]
+  [dst : i64]) : bool
+  (match substs
+    [(OptLateBoundsPairSubst.Nil) false]
+    [(OptLateBoundsPairSubst.Cons raw resolved _ rest)
+      (or
+        (= dst raw)
+        (= dst resolved)
+        (opt-late-bounds-pair-subst-def? (box-get rest) dst))]))
+
+;; Emit a single check at the first trap point. When the later operand is the
+;; smaller one, materialize `first - 1` there, substitute it for the later
+;; affine def chain, and drop that dead chain in the same walk. The combined
+;; check therefore does not add per-iteration index arithmetic.
+(define (opt-late-bounds-pair-rewrite-instrs
+  [label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [body-blocks : CompilerIrBlockList]
+  [plans : OptLateBoundsPairPlan]
+  [short-length : CompilerIrValue]
+  [substs : OptLateBoundsPairSubst]
+  [cell : (Array i64)]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [env : OptCopyEnv (opt-late-bounds-pair-subst-env substs)]
+      (match (opt-late-bounds-pair-at plans label index)
+        [(OptLateBoundsPairAt.Second)
+          (opt-late-bounds-pair-rewrite-instrs
+            label
+            instrs
+            (+ index 1)
+            body-blocks
+            plans
+            short-length
+            substs
+            cell)]
+        [(OptLateBoundsPairAt.First first-smaller second-value)
+          (match instr
+            [(CompilerIrInstr.BoundsCheck first-index _ ok-label)
+              (if first-smaller
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BoundsCheck
+                    (opt-copy-resolve env first-index)
+                    short-length
+                    ok-label)
+                  (opt-late-bounds-pair-rewrite-instrs
+                    label
+                    instrs
+                    (+ index 1)
+                    body-blocks
+                    plans
+                    short-length
+                    substs
+                    cell))
+                (match second-value
+                  [(CompilerIrValue.Var raw)
+                    (let
+                      [smaller : i64 (opt-bce-version-alloc-var cell)]
+                      [resolved : i64 (opt-bce-mb-resolve body-blocks raw 16)]
+                      [next-substs : OptLateBoundsPairSubst
+                        (OptLateBoundsPairSubst.Cons
+                          raw
+                          resolved
+                          smaller
+                          (box substs))]
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.BinOp
+                          smaller
+                          (CompilerIrBinOp.Sub)
+                          (opt-copy-resolve env first-index)
+                          (CompilerIrValue.I64 1)
+                          (AstType.I64))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.BoundsCheck
+                            (CompilerIrValue.Var smaller)
+                            short-length
+                            ok-label)
+                          (opt-late-bounds-pair-rewrite-instrs
+                            label
+                            instrs
+                            (+ index 1)
+                            body-blocks
+                            plans
+                            short-length
+                            next-substs
+                            cell))))]
+                  [_
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BoundsCheck
+                        second-value
+                        short-length
+                        ok-label)
+                      (opt-late-bounds-pair-rewrite-instrs
+                        label
+                        instrs
+                        (+ index 1)
+                        body-blocks
+                        plans
+                        short-length
+                        substs
+                        cell))]))]
+            [_
+              (compiler-ir-instr-cons
+                instr
+                (opt-late-bounds-pair-rewrite-instrs
+                  label
+                  instrs
+                  (+ index 1)
+                  body-blocks
+                  plans
+                  short-length
+                  substs
+                  cell))])]
+        [(OptLateBoundsPairAt.No)
+          (let
+            [dst : i64 (compiler-ir-instr-loop-dst-or instr (- 0 1))]
+            (if (and (>= dst 0) (opt-late-bounds-pair-subst-def? substs dst))
+              (opt-late-bounds-pair-rewrite-instrs
+                label
+                instrs
+                (+ index 1)
+                body-blocks
+                plans
+                short-length
+                substs
+                cell)
+              (compiler-ir-instr-cons
+                (opt-copy-subst-instr env instr)
+                (opt-late-bounds-pair-rewrite-instrs
+                  label
+                  instrs
+                  (+ index 1)
+                  body-blocks
+                  plans
+                  short-length
+                  substs
+                  cell))))]))))
+
+;; `len - zext(len >= 1)` is `len - 1` on the guarded path and zero when
+;; len==0. Feeding that saturated short length to the replacement check is a
+;; branch-free encoding of the raw `len >= 1` conjunct: no u64 index is below
+;; zero, so the len==0 case still aborts. This lets the late pass establish the
+;; fact once in the existing preheader without a slow-loop clone.
+(define (opt-late-bounds-pair-preheader-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [length : CompilerIrValue]
+  [nonempty : i64]
+  [nonempty-i64 : i64]
+  [short-length : i64]) : CompilerIrInstrList
+  (if (>= index last)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        nonempty
+        (CompilerIrBinOp.Ge)
+        length
+        (CompilerIrValue.I64 1)
+        (AstType.Bool))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Cast
+          nonempty-i64
+          (CompilerIrValue.Var nonempty)
+          (AstType.Bool)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            short-length
+            (CompilerIrBinOp.Sub)
+            length
+            (CompilerIrValue.Var nonempty-i64)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (compiler-ir-instr-seq-ref instrs last)
+            (CompilerIrInstrList.Nil)))))
+    (compiler-ir-instr-cons
+      (compiler-ir-instr-seq-ref instrs index)
+      (opt-late-bounds-pair-preheader-instrs
+        instrs
+        (+ index 1)
+        last
+        length
+        nonempty
+        nonempty-i64
+        short-length))))
+
+(define (opt-late-bounds-pair-preheader
+  [block : CompilerIrBlock]
+  [header : String]
+  [length : CompilerIrValue]
+  [nonempty : i64]
+  [nonempty-i64 : i64]
+  [short-length : i64]) : OptLateBoundsPairPreheader
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 1)
+          (OptLateBoundsPairPreheader.No)
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Jump target)
+              (if (string.eq target header)
+                (OptLateBoundsPairPreheader.Some
+                  (compiler-ir-block
+                    label
+                    (opt-late-bounds-pair-preheader-instrs
+                      instrs
+                      0
+                      (- count 1)
+                      length
+                      nonempty
+                      nonempty-i64
+                      short-length)))
+                (OptLateBoundsPairPreheader.No))]
+            [_ (OptLateBoundsPairPreheader.No)])))]))
+
+(define (opt-late-bounds-pair-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [body-blocks : CompilerIrBlockList]
+  [preheader-label : String]
+  [rewritten-preheader : CompilerIrBlock]
+  [plans : OptLateBoundsPairPlan]
+  [short-length : CompilerIrValue]
+  [cell : (Array i64)]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (compiler-ir-block-cons
+            (if (string.eq label preheader-label)
+              rewritten-preheader
+              (compiler-ir-block
+                label
+                (opt-late-bounds-pair-rewrite-instrs
+                  label
+                  instrs
+                  0
+                  body-blocks
+                  plans
+                  short-length
+                  (OptLateBoundsPairSubst.Nil)
+                  cell)))
+            (opt-late-bounds-pair-rewrite-blocks
+              (box-get rest)
+              body-blocks
+              preheader-label
+              rewritten-preheader
+              plans
+              short-length
+              cell))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-late-bounds-pair-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        body-blocks
+        preheader-label
+        rewritten-preheader
+        plans
+        short-length
+        cell)]))
+
+(define (opt-late-bounds-pair-try-loop
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loop : OptNaturalLoop]) : OptLateBoundsPairResult
+  (let
+    [body-blocks : CompilerIrBlockList (opt-natural-loop-body-blocks loop)]
+    ;; Keep the late rewrite as narrow as the total-switch lesson: ordinary
+    ;; loops retain byte-identical output, while the marked exhaustive dispatch
+    ;; is handled just before its totality rewrite.
+    (if (not (opt-bce-mb-body-has-total-enum-switch? body-blocks))
+      (OptLateBoundsPairResult.No)
+      (match (opt-natural-loop-preheader loop)
+        [(OptLoopPreheader.No) (OptLateBoundsPairResult.No)]
+        [(OptLoopPreheader.Some preheader-label)
+          (let
+            [defs : opt_i64_i64_map.Map
+              (opt-bce-mb-collect-defs
+                body-blocks
+                (opt_i64_i64_map.with-capacity 64))]
+            [collected : OptLateBoundsPairCollect
+              (opt-late-bounds-pair-collect-blocks
+                body-blocks
+                body-blocks
+                defs
+                (OptLateBoundsPairCollect
+                  (CompilerIrMaybeValue.No)
+                  (OptLateBoundsPairPlan.Nil)
+                  0))]
+            (if (= (struct-get collected count) 0)
+              (OptLateBoundsPairResult.No)
+              (match (struct-get collected length)
+                [(CompilerIrMaybeValue.No) (OptLateBoundsPairResult.No)]
+                [(CompilerIrMaybeValue.Some length)
+                  (match (opt-cfg-find-block blocks preheader-label)
+                    [(OptMaybeBlock.No) (OptLateBoundsPairResult.No)]
+                    [(OptMaybeBlock.Some preheader)
+                      (let
+                        [cell : (Array i64) (array.make-array i64 1)]
+                        [_cell : unit (array-set! cell 0 frame)]
+                        [nonempty : i64 (opt-bce-version-alloc-var cell)]
+                        [nonempty-i64 : i64 (opt-bce-version-alloc-var cell)]
+                        [short-length : i64 (opt-bce-version-alloc-var cell)]
+                        (match (opt-late-bounds-pair-preheader
+                          preheader
+                          (opt-natural-loop-header loop)
+                          length
+                          nonempty
+                          nonempty-i64
+                          short-length)
+                          [(OptLateBoundsPairPreheader.No)
+                            (OptLateBoundsPairResult.No)]
+                          [(OptLateBoundsPairPreheader.Some rewritten-preheader)
+                            (OptLateBoundsPairResult.Some
+                              (opt-late-bounds-pair-rewrite-blocks
+                                blocks
+                                body-blocks
+                                preheader-label
+                                rewritten-preheader
+                                (struct-get collected plans)
+                                (CompilerIrValue.Var short-length)
+                                cell)
+                              (array-ref cell 0))]))])])))]))))
+
+(define (opt-late-bounds-pair-scan-loops
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loops : OptNaturalLoopList]) : OptLateBoundsPairResult
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptLateBoundsPairResult.No)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-late-bounds-pair-try-loop blocks frame loop)
+        [(OptLateBoundsPairResult.Some next-blocks next-frame)
+          (OptLateBoundsPairResult.Some next-blocks next-frame)]
+        [(OptLateBoundsPairResult.No)
+          (opt-late-bounds-pair-scan-loops blocks frame (box-get rest))])]))
+
+(define (opt-late-bounds-pair-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty frame blocks)
+      (match (opt-late-bounds-pair-scan-loops
+        blocks
+        frame
+        (opt-cfg-natural-loops blocks))
+        [(OptLateBoundsPairResult.No) func]
+        [(OptLateBoundsPairResult.Some next-blocks next-frame)
+          (compiler-opt-debug-observe-function
+            "paired_bounds"
+            (CompilerIrFunction.Function
+              name
+              params
+              ret-ty
+              next-frame
+              (compiler-ir-block-list-compact next-blocks)))])]))
+
+(define (opt-late-bounds-pair-function-list
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(CompilerIrFunctionList.Nil) CompilerIrFunctionList.Nil]
+    [(CompilerIrFunctionList.Cons func rest)
+      (compiler-ir-function-cons
+        (opt-late-bounds-pair-function func)
+        (opt-late-bounds-pair-function-list (box-get rest)))]
+    [(CompilerIrFunctionList.Array seq)
+      (opt-late-bounds-pair-function-list
+        (compiler-ir-function-seq-to-list seq))]))
+
 ;; Derivation fold state: the guard accumulator (conditions for REMOVED
 ;; checks), the kept-check set, and how many checks derived -- partial
 ;; versioning requires at least one derivable check to make cloning pay.
@@ -45189,11 +45882,16 @@
                       (opt-scratch-reset-function-list-with-level
                         final-functions
                         level)]
-                    [total-switch-functions : CompilerIrFunctionList
+                    [paired-bounds-functions : CompilerIrFunctionList
                       (if (< level 2)
                         scratch-reset-functions
-                        (opt-late-total-switch-function-list
+                        (opt-late-bounds-pair-function-list
                           scratch-reset-functions))]
+                    [total-switch-functions : CompilerIrFunctionList
+                      (if (< level 2)
+                        paired-bounds-functions
+                        (opt-late-total-switch-function-list
+                          paired-bounds-functions))]
                     (begin
                       (cfg
                         compile-profile
@@ -45501,11 +46199,16 @@
                         (opt-scratch-reset-function-list-with-level
                           final-functions
                           level)]
-                      [total-switch-functions : CompilerIrFunctionList
+                      [paired-bounds-functions : CompilerIrFunctionList
                         (if (< level 2)
                           scratch-reset-functions
-                          (opt-late-total-switch-function-list
+                          (opt-late-bounds-pair-function-list
                             scratch-reset-functions))]
+                      [total-switch-functions : CompilerIrFunctionList
+                        (if (< level 2)
+                          paired-bounds-functions
+                          (opt-late-total-switch-function-list
+                            paired-bounds-functions))]
                       [optimized : CompilerIrProgram
                         (CompilerIrProgram.Program
                           final-globals

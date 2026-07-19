@@ -23064,9 +23064,8 @@
       (if (> end (array-ref lasts end))
         end
         (array-ref lasts end))]
-    [i : i64 0]
+    [i : i64 lo]
     (begin
-      (set! i lo)
       (while (<= i hi)
         (begin
           (if (< (array-ref firsts i) lo)

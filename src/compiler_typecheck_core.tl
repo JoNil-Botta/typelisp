@@ -24421,6 +24421,68 @@
     [base : String (tc-thread-source-name-base source-name)]
     (or (string.eq base "spawn") (tc-thread-legacy-safe-spawn-base? base))))
 
+(define (tc-thread-channel-send-name? [name : String]) : bool
+  (let
+    [base : String (tc-thread-source-name-base name)]
+    (and
+      (tc-string-prefix? base "channel-")
+      (tc-string-has-suffix? base "-send"))))
+
+;; Classifying a call name for the thread-safety checks costs a qualified?
+;; scan plus a last-dot scan over the rendered name, and both checks run for
+;; every call expression in the program. The answers depend only on the
+;; interned source-name id, so they are cached per id: one slot packs the
+;; fill epoch with the two answer bits (bit 0 channel-send, bit 1
+;; spawn-potential), and the epoch/generation/pool-identity guards follow the
+;; backend's user-symbol cache (compat states may reuse a generation while
+;; assigning the same numeric id to different names, so pool identity is
+;; checked as well).
+(define tc-thread-name-kind-slots : (Array i64)
+  (array.make-array i64 (intern-capacity)))
+(define tc-thread-name-kind-epoch : i64
+  1)
+(define tc-thread-name-kind-generation : i64
+  -1)
+(define tc-thread-name-kind-table-id : i64
+  0)
+
+(define (tc-thread-name-kind-ensure-current!) : unit
+  (if (and
+    (= tc-thread-name-kind-generation (intern-generation))
+    (= tc-thread-name-kind-table-id (ci.intern-active-table-id)))
+    unit
+    (begin
+      (set! tc-thread-name-kind-epoch (+ tc-thread-name-kind-epoch 1))
+      (set! tc-thread-name-kind-generation (intern-generation))
+      (set! tc-thread-name-kind-table-id (ci.intern-active-table-id)))))
+
+(define (tc-thread-name-kind-compute [name : String]) : i64
+  (bit-or
+    (if (tc-thread-channel-send-name? name)
+      1
+      0)
+    (if (tc-thread-potential-safe-spawn-source-name? name)
+      2
+      0)))
+
+(define (tc-thread-name-kind [source-name-id : i64] [name : String]) : i64
+  (if (or (< source-name-id 0) (>= source-name-id (intern-capacity)))
+    (tc-thread-name-kind-compute name)
+    (begin
+      (tc-thread-name-kind-ensure-current!)
+      (let
+        [slot : i64 (array-ref tc-thread-name-kind-slots source-name-id)]
+        (if (= (shr slot 2) tc-thread-name-kind-epoch)
+          (bit-and slot 3)
+          (let
+            [kind : i64 (tc-thread-name-kind-compute name)]
+            (begin
+              (array-set!
+                tc-thread-name-kind-slots
+                source-name-id
+                (bit-or (shl tc-thread-name-kind-epoch 2) kind))
+              kind)))))))
+
 (define (tc-thread-safe-spawn-call-name
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -24429,36 +24491,25 @@
     [nid : i64 (tc-expr-var-name-id func)]
     (if (>= nid 0)
       (let
-        [name : String
-          (intern-str (macro-hygiene-global-source-name-id-or nid nid))]
-        (if (tc-thread-potential-safe-spawn-source-name? name)
+        [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
+        [name : String (intern-str source-id)]
+        (if (= (bit-and (tc-thread-name-kind source-id name) 2) 2)
           (if (tc-thread-potential-safe-spawn-name?
             name
-            (tc-thread-spawn-lookup-name
-              ctx
-              env
-              name
-              (macro-hygiene-global-source-name-id-or nid nid)))
+            (tc-thread-spawn-lookup-name ctx env name source-id))
             (TcMaybeString.Some name)
             (TcMaybeString.No))
           (TcMaybeString.No)))
       (TcMaybeString.No))))
-
-(define (tc-thread-channel-send-name? [name : String]) : bool
-  (let
-    [base : String (tc-thread-source-name-base name)]
-    (and
-      (tc-string-prefix? base "channel-")
-      (tc-string-has-suffix? base "-send"))))
 
 (define (tc-thread-channel-send-call-name [func : AstExpr]) : TcMaybeString
   (let
     [nid : i64 (tc-expr-var-name-id func)]
     (if (>= nid 0)
       (let
-        [name : String
-          (intern-str (macro-hygiene-global-source-name-id-or nid nid))]
-        (if (tc-thread-channel-send-name? name)
+        [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
+        [name : String (intern-str source-id)]
+        (if (= (bit-and (tc-thread-name-kind source-id name) 1) 1)
           (TcMaybeString.Some name)
           (TcMaybeString.No)))
       (TcMaybeString.No))))

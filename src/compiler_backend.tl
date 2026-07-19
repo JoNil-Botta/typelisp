@@ -1392,10 +1392,7 @@
   [instr : CompilerIrInstr]
   [fallback : CompilerDiagnostic]
   [message : String]) : CompilerDiagnostic
-  (match (compiler-source-spans-lookup-instr
-    spans
-    (compiler-ir-symbol-text function)
-    instr)
+  (match (compiler-source-spans-lookup-instr spans function instr)
     [(CompilerMaybeSourceSpan.Some span)
       (compiler-diagnostic-from-ast-span "" span message)]
     [(CompilerMaybeSourceSpan.No)

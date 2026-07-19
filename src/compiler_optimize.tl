@@ -22458,9 +22458,10 @@
 
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
 ;; dominating value; existing copy propagation and DCE remove the dead copies.
-(define (opt-gvn-blocks-with-context
+(define (opt-gvn-blocks-with-context-and-call-memory
   [context : OptCfgContext]
   [params : CompilerIrParamList]
+  [call-memory : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [sources : opt_i64_i64_map.Map
@@ -22471,7 +22472,17 @@
     [gvn : CompilerIrBlockList
       (opt-gvn-rewrite-dom context table sources blocks)]
     [hs : OptLoadHeaderSet (opt-load-header-set-from-function params gvn)]
-    (opt-load-gvn-blocks-with-context context sources hs params gvn)))
+    (opt-load-gvn-blocks-with-context context sources hs params call-memory gvn)))
+
+(define (opt-gvn-blocks-with-context
+  [context : OptCfgContext]
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-gvn-blocks-with-context-and-call-memory
+    context
+    params
+    (opt_i64_i64_map.with-capacity 1)
+    blocks))
 
 (define (opt-gvn-blocks
   [params : CompilerIrParamList]
@@ -23591,6 +23602,11 @@
   ;; to keep descriptor header fields live across read-only helper calls without
   ;; treating arbitrary calls as safe.
   (direct-call-clean opt_i64_i64_map.Map)
+  ;; Direct-call memory effects for load GVN. Each packed value records writes
+  ;; through checked-reference parameter indices plus global/unknown flags.
+  ;; Absence means unresolved (including recursive cycles) and remains a full
+  ;; memory barrier.
+  (call-memory opt_i64_i64_map.Map)
   (argc-return opt_i64_i64_map.Map)
   ;; Whole-program table of never-written literal-i64 globals, mapping
   ;; global name -> constant value. Carried alongside the BCE summaries (rather
@@ -23638,6 +23654,7 @@
 (define (opt-loop-bce-empty-summaries) : OptLoopBceSummaries
   (OptLoopBceSummaries
     false
+    (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -26584,6 +26601,7 @@
   (let
     [index : i64 0]
     [sources : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [call-memory : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     [load-state : OptLoadCseState state]
     [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
     [count : i64 (compiler-ir-instr-seq-count instrs)]
@@ -26592,6 +26610,7 @@
         hs
         false
         sources
+        call-memory
         load-state
         (compiler-ir-instr-seq-ref instrs index))
         [(OptLoadCseResult.Result next-load loaded)
@@ -34466,9 +34485,10 @@
                           ret-ty
                           ssa-frame
                           (if run-heavy?
-                            (opt-gvn-blocks-with-context
+                            (opt-gvn-blocks-with-context-and-call-memory
                               ssa-context
                               params
+                              (struct-get summaries call-memory)
                               ssa-blocks)
                             ssa-blocks))]
                       [_p-gvn : unit
@@ -42279,6 +42299,558 @@
     capacity
     (+ (opt-function-list-count functions) 1)))
 
+;; --- direct-call memory summaries for load GVN ------------------------------
+;;
+;; Packed summary layout (kept nonnegative):
+;;   bits 0..59  writes through that checked-reference parameter index
+;;   bit 60      writes direct/reachable global storage
+;;   bit 61      unknown memory effects
+;;
+;; The summary map is intentionally partial. Leaves are discovered first and
+;; callers become eligible in later fixed-point rounds. An internal call whose
+;; target is still absent makes the caller unresolved, so recursive cycles are
+;; never accidentally proven clean.
+(define (opt-call-memory-param-limit) : i64
+  60)
+
+(define (opt-call-memory-global-bit) : i64
+  (shl 1 60))
+
+(define (opt-call-memory-unknown-bit) : i64
+  (shl 1 61))
+
+(define (opt-call-memory-summary-param-write? [summary : i64] [index : i64]) : bool
+  (and
+    (>= index 0)
+    (< index (opt-call-memory-param-limit))
+    (not (= (bit-and summary (shl 1 index)) 0))))
+
+(define (opt-call-memory-summary-global? [summary : i64]) : bool
+  (not (= (bit-and summary (opt-call-memory-global-bit)) 0)))
+
+(define (opt-call-memory-summary-unknown? [summary : i64]) : bool
+  (not (= (bit-and summary (opt-call-memory-unknown-bit)) 0)))
+
+(define (opt-call-memory-summary-has-param-writes? [summary : i64]) : bool
+  (not (= (bit-and summary (- (opt-call-memory-global-bit) 1)) 0)))
+
+(define (opt-call-memory-summary-add-unknown [summary : i64]) : i64
+  (bit-or summary (opt-call-memory-unknown-bit)))
+
+(define (opt-call-memory-summary-add-global [summary : i64]) : i64
+  (bit-or summary (opt-call-memory-global-bit)))
+
+(define (opt-call-memory-function-set
+  [functions : CompilerIrFunctionList]
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match functions
+    [(CompilerIrFunctionList.Nil) set]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (begin
+            (opt_i64_i64_map.insert-ref!
+              (&mut set)
+              (compiler-ir-symbol-id name)
+              1)
+            (opt-call-memory-function-set (box-get rest) set))])]
+    [(CompilerIrFunctionList.Array seq)
+      (opt-call-memory-function-set (compiler-ir-function-seq-to-list seq) set)]))
+
+;; Find the source-level parameter index for a canonical checked-reference root
+;; var. Fresh allocation roots deliberately have no parameter index.
+(define (opt-call-memory-param-index-from
+  [params : CompilerIrParamList]
+  [root-var : i64]
+  [index : i64]) : i64
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) -1]
+    [(CompilerIrParamList.Array seq)
+      (opt-call-memory-param-index-from
+        (compiler-ir-param-seq-to-list seq)
+        root-var
+        index)]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param _ _ var)
+          (if (= var root-var)
+            index
+            (opt-call-memory-param-index-from
+              (box-get rest)
+              root-var
+              (+ index 1)))])]))
+
+(define (opt-call-memory-summary-add-root-write
+  [summary : i64]
+  [params : CompilerIrParamList]
+  [root : OptLicmRoot]) : i64
+  (match root
+    [(OptLicmRoot.Fresh _) summary]
+    [(OptLicmRoot.Exclusive root-var)
+      (let
+        [index : i64 (opt-call-memory-param-index-from params root-var 0)]
+        (if (and (>= index 0) (< index (opt-call-memory-param-limit)))
+          (bit-or summary (shl 1 index))
+          (opt-call-memory-summary-add-unknown summary)))]
+    [(OptLicmRoot.Shared root-var)
+      (let
+        [index : i64 (opt-call-memory-param-index-from params root-var 0)]
+        (if (and (>= index 0) (< index (opt-call-memory-param-limit)))
+          (bit-or summary (shl 1 index))
+          (opt-call-memory-summary-add-unknown summary)))]
+    [(OptLicmRoot.NoRoot) (opt-call-memory-summary-add-unknown summary)]))
+
+;; Summary construction runs before scalar SSA. Track roots only through vars
+;; with one whole-function source, so textual block order or a reused lowered
+;; var can never manufacture provenance. A second scan resolves same-root phis
+;; and later-listed definitions without weakening that single-source gate.
+(define (opt-call-memory-root-update-instr!
+  [sources : opt_i64_i64_map.Map]
+  [roots : OptLicmRootEnv]
+  [instr : CompilerIrInstr]) : unit
+  (match (opt-instr-def-var instr)
+    [(option_i64.None) unit]
+    [(option_i64.Some dst)
+      (if (not (opt-gvn-stable-var? sources dst))
+        (opt-licm-root-env-remove! roots dst)
+        (match instr
+          [(CompilerIrInstr.Alloc _ _)
+            (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))]
+          [(CompilerIrInstr.Gep _ base _ _)
+            (opt-licm-root-env-copy! roots dst base)]
+          [(CompilerIrInstr.Mov _ src _)
+            (opt-licm-root-env-copy! roots dst src)]
+          [(CompilerIrInstr.Cast _ src _ _)
+            (opt-licm-root-env-copy! roots dst src)]
+          [(CompilerIrInstr.Bitcast _ src _ _)
+            (opt-licm-root-env-copy! roots dst src)]
+          [(CompilerIrInstr.Phi _ inputs _)
+            (match (opt-licm-phi-root roots inputs (OptMaybeLicmRoot.No))
+              [(OptMaybeLicmRoot.No) (opt-licm-root-env-remove! roots dst)]
+              [(OptMaybeLicmRoot.Some root)
+                (opt-licm-root-env-bind! roots dst root)])]
+          [(CompilerIrInstr.Call _ name _ _)
+            (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+              (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))
+              (opt-licm-root-env-remove! roots dst))]
+          [_ (opt-licm-root-env-remove! roots dst)]))]))
+
+(define (opt-call-memory-root-scan-instrs!
+  [sources : opt_i64_i64_map.Map]
+  [roots : OptLicmRootEnv]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : unit
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    unit
+    (begin
+      (opt-call-memory-root-update-instr!
+        sources
+        roots
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-call-memory-root-scan-instrs! sources roots instrs (+ index 1)))))
+
+(define (opt-call-memory-root-scan-blocks!
+  [sources : opt_i64_i64_map.Map]
+  [roots : OptLicmRootEnv]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-call-memory-root-scan-instrs! sources roots instrs 0)])
+        (opt-call-memory-root-scan-blocks! sources roots (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-call-memory-root-scan-blocks!
+        sources
+        roots
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-call-memory-roots
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]) : OptLicmRootEnv
+  (let
+    [sources : opt_i64_i64_map.Map
+      (opt-gvn-sources-blocks
+        blocks
+        (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 32)))]
+    [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
+    (begin
+      (opt-licm-root-env-seed-params! roots params)
+      (opt-call-memory-root-scan-blocks! sources roots blocks)
+      (opt-call-memory-root-scan-blocks! sources roots blocks)
+      roots)))
+
+(define (opt-call-memory-arg-at [args : CompilerIrCallArgs] [index : i64]) : CompilerIrMaybeValue
+  (match args
+    [(CompilerIrCallArgs.Nil) (CompilerIrMaybeValue.No)]
+    [(CompilerIrCallArgs.One value)
+      (if (= index 0)
+        (CompilerIrMaybeValue.Some value)
+        (CompilerIrMaybeValue.No))]
+    [(CompilerIrCallArgs.Two a b)
+      (cond
+        [(= index 0) (CompilerIrMaybeValue.Some a)]
+        [(= index 1) (CompilerIrMaybeValue.Some b)]
+        [else (CompilerIrMaybeValue.No)])]
+    [(CompilerIrCallArgs.Array values)
+      (if (and (>= index 0) (< index (array-length values)))
+        (CompilerIrMaybeValue.Some (array-ref values index))
+        (CompilerIrMaybeValue.No))]))
+
+(defenum OptCallMemoryCandidate
+  (Unresolved)
+  (Known i64))
+
+(define (opt-call-memory-map-callee-param-writes
+  [candidate : OptCallMemoryCandidate]
+  [callee-summary : i64]
+  [params : CompilerIrParamList]
+  [roots : OptLicmRootEnv]
+  [args : CompilerIrCallArgs]
+  [index : i64]) : OptCallMemoryCandidate
+  (if (>= index (opt-call-memory-param-limit))
+    candidate
+    (match candidate
+      [(OptCallMemoryCandidate.Unresolved) candidate]
+      [(OptCallMemoryCandidate.Known summary)
+        (if (not (opt-call-memory-summary-param-write? callee-summary index))
+          (opt-call-memory-map-callee-param-writes
+            candidate
+            callee-summary
+            params
+            roots
+            args
+            (+ index 1))
+          (match (opt-call-memory-arg-at args index)
+            [(CompilerIrMaybeValue.No)
+              (OptCallMemoryCandidate.Known
+                (opt-call-memory-summary-add-unknown summary))]
+            [(CompilerIrMaybeValue.Some value)
+              (opt-call-memory-map-callee-param-writes
+                (OptCallMemoryCandidate.Known
+                  (opt-call-memory-summary-add-root-write
+                    summary
+                    params
+                    (opt-licm-root-of-value roots value)))
+                callee-summary
+                params
+                roots
+                args
+                (+ index 1))]))])))
+
+(define (opt-call-memory-apply-direct-call
+  [candidate : OptCallMemoryCandidate]
+  [summaries : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [params : CompilerIrParamList]
+  [roots : OptLicmRootEnv]
+  [name : i64]
+  [args : CompilerIrCallArgs]) : OptCallMemoryCandidate
+  (match candidate
+    [(OptCallMemoryCandidate.Unresolved) candidate]
+    [(OptCallMemoryCandidate.Known summary)
+      (match (opt_i64_i64_map.get (& summaries) (compiler-ir-symbol-id name))
+        [(opt_i64_i64_map.LookupFound callee-summary)
+          (opt-call-memory-map-callee-param-writes
+            (OptCallMemoryCandidate.Known
+              (bit-or
+                summary
+                (bit-and
+                  callee-summary
+                  (bit-or
+                    (opt-call-memory-global-bit)
+                    (opt-call-memory-unknown-bit)))))
+            callee-summary
+            params
+            roots
+            args
+            0)]
+        [(opt_i64_i64_map.LookupMissing)
+          (if (opt_i64_i64_map.contains?
+            (& function-set)
+            (compiler-ir-symbol-id name))
+            (OptCallMemoryCandidate.Unresolved)
+            (match (compiler-ir-direct-call-effect
+              (compiler-ir-symbol-text name))
+              [(CompilerIrEffect.MemoryRead) candidate]
+              [_
+                (OptCallMemoryCandidate.Known
+                  (opt-call-memory-summary-add-unknown summary))]))])]))
+
+(define (opt-call-memory-candidate-instr
+  [candidate : OptCallMemoryCandidate]
+  [summaries : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [params : CompilerIrParamList]
+  [roots : OptLicmRootEnv]
+  [instr : CompilerIrInstr]) : OptCallMemoryCandidate
+  (match candidate
+    [(OptCallMemoryCandidate.Unresolved) candidate]
+    [(OptCallMemoryCandidate.Known summary)
+      (match instr
+        [(CompilerIrInstr.StorePtr ptr _ _)
+          (OptCallMemoryCandidate.Known
+            (opt-call-memory-summary-add-root-write
+              summary
+              params
+              (opt-licm-root-of-value roots ptr)))]
+        [(CompilerIrInstr.CopyBytes dst _ _)
+          (OptCallMemoryCandidate.Known
+            (opt-call-memory-summary-add-root-write
+              summary
+              params
+              (opt-licm-root-of-value roots dst)))]
+        [(CompilerIrInstr.Store _ _ _)
+          (OptCallMemoryCandidate.Known
+            (opt-call-memory-summary-add-global summary))]
+        [(CompilerIrInstr.Call _ name args _)
+          (opt-call-memory-apply-direct-call
+            candidate
+            summaries
+            function-set
+            params
+            roots
+            name
+            args)]
+        [(CompilerIrInstr.TailCall name args _)
+          (opt-call-memory-apply-direct-call
+            candidate
+            summaries
+            function-set
+            params
+            roots
+            name
+            args)]
+        [(CompilerIrInstr.Alloc _ _) candidate]
+        [_
+          (match (compiler-ir-instr-effect instr)
+            [(CompilerIrEffect.Pure) candidate]
+            [(CompilerIrEffect.MemoryRead) candidate]
+            [(CompilerIrEffect.ControlFlow) candidate]
+            [_
+              (OptCallMemoryCandidate.Known
+                (opt-call-memory-summary-add-unknown summary))])])]))
+
+(define (opt-call-memory-candidate-instrs
+  [candidate : OptCallMemoryCandidate]
+  [summaries : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [params : CompilerIrParamList]
+  [roots : OptLicmRootEnv]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : OptCallMemoryCandidate
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    candidate
+    (opt-call-memory-candidate-instrs
+      (opt-call-memory-candidate-instr
+        candidate
+        summaries
+        function-set
+        params
+        roots
+        (compiler-ir-instr-seq-ref instrs index))
+      summaries
+      function-set
+      params
+      roots
+      instrs
+      (+ index 1))))
+
+(define (opt-call-memory-candidate-blocks
+  [candidate : OptCallMemoryCandidate]
+  [summaries : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [params : CompilerIrParamList]
+  [roots : OptLicmRootEnv]
+  [blocks : CompilerIrBlockList]) : OptCallMemoryCandidate
+  (match candidate
+    [(OptCallMemoryCandidate.Unresolved) candidate]
+    [_
+      (match blocks
+        [(CompilerIrBlockList.Nil) candidate]
+        [(CompilerIrBlockList.Cons block rest)
+          (match block
+            [(CompilerIrBlock.Block _ instrs)
+              (opt-call-memory-candidate-blocks
+                (opt-call-memory-candidate-instrs
+                  candidate
+                  summaries
+                  function-set
+                  params
+                  roots
+                  instrs
+                  0)
+                summaries
+                function-set
+                params
+                roots
+                (box-get rest))])]
+        [(CompilerIrBlockList.Array seq)
+          (opt-call-memory-candidate-blocks
+            candidate
+            summaries
+            function-set
+            params
+            roots
+            (compiler-ir-block-seq-to-list seq))])]))
+
+(define (opt-call-memory-direct-needs-roots?
+  [summaries : opt_i64_i64_map.Map]
+  [name : i64]) : bool
+  (match (opt_i64_i64_map.get (& summaries) (compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound summary)
+      (opt-call-memory-summary-has-param-writes? summary)]
+    [(opt_i64_i64_map.LookupMissing) false]))
+
+(define (opt-call-memory-instr-needs-roots?
+  [summaries : opt_i64_i64_map.Map]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.CopyBytes _ _ _) true]
+    [(CompilerIrInstr.Call _ name _ _)
+      (opt-call-memory-direct-needs-roots? summaries name)]
+    [(CompilerIrInstr.TailCall name _ _)
+      (opt-call-memory-direct-needs-roots? summaries name)]
+    [_ false]))
+
+(define (opt-call-memory-instrs-need-roots?
+  [summaries : opt_i64_i64_map.Map]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (or
+      (opt-call-memory-instr-needs-roots?
+        summaries
+        (compiler-ir-instr-seq-ref instrs index))
+      (opt-call-memory-instrs-need-roots? summaries instrs (+ index 1)))))
+
+(define (opt-call-memory-blocks-need-roots?
+  [summaries : opt_i64_i64_map.Map]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-call-memory-instrs-need-roots? summaries instrs 0)
+            (opt-call-memory-blocks-need-roots? summaries (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-call-memory-blocks-need-roots?
+        summaries
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-call-memory-function-candidate
+  [summaries : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [func : CompilerIrFunction]) : OptCallMemoryCandidate
+  (match func
+    [(CompilerIrFunction.Function _ params _ _ blocks)
+      (opt-call-memory-candidate-blocks
+        (OptCallMemoryCandidate.Known 0)
+        summaries
+        function-set
+        params
+        (if (opt-call-memory-blocks-need-roots? summaries blocks)
+          (opt-call-memory-roots params blocks)
+          (opt-licm-root-env-with-capacity 1))
+        blocks)]))
+
+(defenum OptCallMemoryBuildPass
+  (Pass opt_i64_i64_map.Map bool))
+
+(define (opt-call-memory-build-pass
+  [functions : CompilerIrFunctionList]
+  [current : opt_i64_i64_map.Map]
+  [function-set : opt_i64_i64_map.Map]
+  [out : opt_i64_i64_map.Map]
+  [changed : bool]) : OptCallMemoryBuildPass
+  (match functions
+    [(CompilerIrFunctionList.Nil) (OptCallMemoryBuildPass.Pass out changed)]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (let
+            [name-id : i64 (compiler-ir-symbol-id name)]
+            (match (opt_i64_i64_map.get (& current) name-id)
+              [(opt_i64_i64_map.LookupFound summary)
+                (begin
+                  (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                  (opt-call-memory-build-pass
+                    (box-get rest)
+                    current
+                    function-set
+                    out
+                    changed))]
+              [(opt_i64_i64_map.LookupMissing)
+                (match (opt-call-memory-function-candidate
+                  current
+                  function-set
+                  func)
+                  [(OptCallMemoryCandidate.Unresolved)
+                    (opt-call-memory-build-pass
+                      (box-get rest)
+                      current
+                      function-set
+                      out
+                      changed)]
+                  [(OptCallMemoryCandidate.Known summary)
+                    (begin
+                      (opt_i64_i64_map.insert-ref! (&mut out) name-id summary)
+                      (opt-call-memory-build-pass
+                        (box-get rest)
+                        current
+                        function-set
+                        out
+                        true))])]))])]
+    [(CompilerIrFunctionList.Array seq)
+      (opt-call-memory-build-pass
+        (compiler-ir-function-seq-to-list seq)
+        current
+        function-set
+        out
+        changed)]))
+
+(define (opt-call-memory-build-fixed
+  [functions : CompilerIrFunctionList]
+  [function-set : opt_i64_i64_map.Map]
+  [current : opt_i64_i64_map.Map]
+  [capacity : i64]
+  [remaining : i64]) : opt_i64_i64_map.Map
+  (if (<= remaining 0)
+    current
+    (match (opt-call-memory-build-pass
+      functions
+      current
+      function-set
+      (opt_i64_i64_map.with-capacity capacity)
+      false)
+      [(OptCallMemoryBuildPass.Pass next changed)
+        (if changed
+          (opt-call-memory-build-fixed
+            functions
+            function-set
+            next
+            capacity
+            (- remaining 1))
+          next)])))
+
+(define (opt-call-memory-build
+  [functions : CompilerIrFunctionList]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (opt-call-memory-build-fixed
+    functions
+    (opt-call-memory-function-set
+      functions
+      (opt_i64_i64_map.with-capacity capacity))
+    (opt_i64_i64_map.with-capacity capacity)
+    capacity
+    (+ (opt-function-list-count functions) 1)))
+
 ;; Prove which globals are compile-time constants so their value can be
 ;; substituted for the global at its uses. The win is twofold: (a) every global
 ;; use otherwise emits a rip-relative load, so substituting the literal removes a
@@ -42697,10 +43269,10 @@
       (opt_i64_i64_map.with-capacity capacity))))
 
 ;; The whole-program call summaries (argc-return + length-clean +
-;; direct-call-clean) gate on a function-count limit because they scan function
-;; bodies across a fixpoint. The const-divisor table is independent and far
-;; cheaper (one linear store scan), so it is built separately by the program
-;; driver and injected here rather than tied to this gate -- see
+;; direct-call-clean + call-memory) gate on a function-count limit because they
+;; scan function bodies across a fixpoint. The const-divisor table is independent
+;; and far cheaper (one linear store scan), so it is built separately by the
+;; program driver and injected here rather than tied to this gate -- see
 ;; optimize-program-with-level.
 (define (opt-loop-bce-summary-function-limit) : i64
   ;; Dotted stdlib imports can leave small programs with more pre-prune reachable
@@ -42710,7 +43282,8 @@
 
 (define (opt-loop-bce-build-summaries-with-direct-call-clean
   [functions : CompilerIrFunctionList]
-  [build-direct-call-clean : bool]) : OptLoopBceSummaries
+  [build-direct-call-clean : bool]
+  [build-call-memory : bool]) : OptLoopBceSummaries
   (let
     [capacity : i64
       (opt-function-index-capacity (opt-function-list-count functions))]
@@ -42727,10 +43300,15 @@
       (if build-direct-call-clean
         (opt-loop-bce-direct-call-clean-map functions capacity)
         (opt_i64_i64_map.with-capacity 1))]
+    [call-memory : opt_i64_i64_map.Map
+      (if build-call-memory
+        (opt-call-memory-build functions capacity)
+        (opt_i64_i64_map.with-capacity 1))]
     (OptLoopBceSummaries
       true
       length-clean
       direct-call-clean
+      call-memory
       argc-return
       (opt_i64_i64_map.with-capacity 1))))
 
@@ -42741,6 +43319,7 @@
     (struct-get summaries enabled)
     (struct-get summaries length-clean)
     (struct-get summaries direct-call-clean)
+    (struct-get summaries call-memory)
     (struct-get summaries argc-return)
     const-divisors))
 
@@ -42759,7 +43338,8 @@
       (opt-loop-bce-summary-function-limit))
       (opt-loop-bce-build-summaries-with-direct-call-clean
         reachable-functions
-        (>= level 2))
+        (>= level 2)
+        (>= level 1))
       (opt-loop-bce-empty-summaries))
     (if (>= level 2)
       (opt-const-divisors-build globals reachable-functions)
@@ -48933,6 +49513,7 @@
       true
       clean
       clean
+      (opt_i64_i64_map.with-capacity 8)
       argc
       (opt_i64_i64_map.with-capacity 8))))
 
@@ -65613,6 +66194,66 @@
         (opt-load-kinds-step kinds hs instr)
         table-cap)]))
 
+;; Apply one callee parameter-write bit to the cached load table. The callee
+;; summary carries no byte-range fact, so filtering is root-only: a write
+;; through a fresh/exclusive argument preserves entries on different proven
+;; roots; missing/unrooted/shared arguments conservatively empty the table.
+(define (opt-load-table-filter-call-writes
+  [table : OptLoadTable]
+  [facts : OptAliasFacts]
+  [args : CompilerIrCallArgs]
+  [summary : i64]
+  [index : i64]) : OptLoadTable
+  (if (>= index (opt-call-memory-param-limit))
+    table
+    (if (not (opt-call-memory-summary-param-write? summary index))
+      (opt-load-table-filter-call-writes table facts args summary (+ index 1))
+      (match (opt-call-memory-arg-at args index)
+        [(CompilerIrMaybeValue.No) (OptLoadTable.Nil)]
+        [(CompilerIrMaybeValue.Some value)
+          (opt-load-table-filter-call-writes
+            (opt-load-table-filter-store
+              table
+              facts
+              (opt-alias-root-of-value facts value)
+              (OptLoadStoreUnknown))
+            facts
+            args
+            summary
+            (+ index 1))]))))
+
+(define (opt-load-cse-state-direct-call
+  [hs : OptLoadHeaderSet]
+  [call-memory : opt_i64_i64_map.Map]
+  [state : OptLoadCseState]
+  [dst : i64]
+  [name : i64]
+  [args : CompilerIrCallArgs]
+  [instr : CompilerIrInstr]) : OptLoadCseState
+  (match state
+    [(OptLoadCseState.State facts table kinds table-cap)
+      (let
+        [filtered : OptLoadTable
+          (match (opt_i64_i64_map.get
+            (& call-memory)
+            (compiler-ir-symbol-id name))
+            [(opt_i64_i64_map.LookupFound summary)
+              (if (or
+                (opt-call-memory-summary-global? summary)
+                (opt-call-memory-summary-unknown? summary))
+                (OptLoadTable.Nil)
+                (opt-load-table-filter-call-writes table facts args summary 0))]
+            [(opt_i64_i64_map.LookupMissing)
+              (match (compiler-ir-direct-call-effect
+                (compiler-ir-symbol-text name))
+                [(CompilerIrEffect.MemoryRead) table]
+                [_ (OptLoadTable.Nil)])])]
+        (OptLoadCseState.State
+          (opt-load-alias-update-facts facts kinds instr)
+          (opt-load-table-invalidate-var filtered dst)
+          (opt-load-kinds-step kinds hs instr)
+          table-cap))]))
+
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
 ;; forwarded value must be a copy-safe source (no hidden global reads). Sub-word
 ;; forwarding additionally requires a normalized constant or a same-type load
@@ -65785,6 +66426,7 @@
   [hs : OptLoadHeaderSet]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
+  [call-memory : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseResult
   (match instr
@@ -65798,6 +66440,17 @@
         instr)]
     [(CompilerIrInstr.Load dst src ty)
       (opt-load-cse-core-load hs gated? sources state dst src ty instr)]
+    [(CompilerIrInstr.Call dst name args _)
+      (OptLoadCseResult.Result
+        (opt-load-cse-state-direct-call
+          hs
+          call-memory
+          state
+          dst
+          name
+          args
+          instr)
+        instr)]
     [_
       (if (opt-alias-instr-clears-all? instr)
         (OptLoadCseResult.Result
@@ -65810,22 +66463,33 @@
 (define (opt-load-cse-instrs-from
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
+  [call-memory : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
     [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
     [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-load-cse-dispatch hs false sources state instr)
+      (match (opt-load-cse-dispatch hs false sources call-memory state instr)
         [(OptLoadCseResult.Result next-state new-instr)
           (compiler-ir-instr-cons
             new-instr
-            (opt-load-cse-instrs-from hs sources next-state (box-get rest)))])]))
+            (opt-load-cse-instrs-from
+              hs
+              sources
+              call-memory
+              next-state
+              (box-get rest)))])]))
 
 (define (opt-load-cse-instrs
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (opt-load-cse-instrs-from hs (opt_i64_i64_map.with-capacity 1) state instrs))
+  (opt-load-cse-instrs-from
+    hs
+    (opt_i64_i64_map.with-capacity 1)
+    (opt_i64_i64_map.with-capacity 1)
+    state
+    instrs))
 
 ;; --- cross-block redundant-load GVN -----------------------------------------
 (defenum OptMaybeLoadCseState
@@ -66265,6 +66929,7 @@
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
+  [call-memory : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [out-rev : CompilerIrInstrList]) : OptLoadGvnBlockRewrite
@@ -66276,6 +66941,7 @@
       hs
       true
       sources
+      call-memory
       state
       (compiler-ir-instr-seq-ref instrs index))
       [(OptLoadCseResult.Result next-state new-instr)
@@ -66283,6 +66949,7 @@
           hs
           next-state
           sources
+          call-memory
           instrs
           (+ index 1)
           (compiler-ir-instr-cons new-instr out-rev))])))
@@ -66291,6 +66958,7 @@
   [hs : OptLoadHeaderSet]
   [entry-state : OptLoadCseState]
   [sources : opt_i64_i64_map.Map]
+  [call-memory : opt_i64_i64_map.Map]
   [block : CompilerIrBlock]) : OptLoadGvnBlockRewrite
   (match block
     [(CompilerIrBlock.Block _ instrs)
@@ -66298,6 +66966,7 @@
         hs
         entry-state
         sources
+        call-memory
         instrs
         0
         CompilerIrInstrList.Nil)]))
@@ -66306,6 +66975,7 @@
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
+  [call-memory : opt_i64_i64_map.Map]
   [loop-safe : OptLoadGvnLoopSafeList]
   [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
@@ -66330,7 +67000,12 @@
       [(OptMaybeBlock.Some block)
         (match block
           [(CompilerIrBlock.Block block-label _)
-            (match (opt-load-gvn-rewrite-block hs entry-state sources block)
+            (match (opt-load-gvn-rewrite-block
+              hs
+              entry-state
+              sources
+              call-memory
+              block)
               [(OptLoadGvnBlockRewrite.Rewrite exit-state instrs)
                 (begin
                   (array-set!
@@ -66348,6 +67023,7 @@
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
   [sources : opt_i64_i64_map.Map]
+  [call-memory : opt_i64_i64_map.Map]
   [loop-safe : OptLoadGvnLoopSafeList]
   [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
@@ -66367,6 +67043,7 @@
             context
             hs
             sources
+            call-memory
             loop-safe
             blocks
             exit-states
@@ -66378,6 +67055,7 @@
             context
             hs
             sources
+            call-memory
             loop-safe
             blocks
             exit-states
@@ -66433,6 +67111,7 @@
   [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
   [params : CompilerIrParamList]
+  [call-memory : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (if (not (opt-load-gvn-blocks-have-load? blocks))
     ;; No loads: no rewrite can fire, so the pass output equals the input; skip
@@ -66466,6 +67145,7 @@
           context
           hs
           sources
+          call-memory
           loop-safe
           blocks
           exit-states
@@ -66660,6 +67340,24 @@
       (compiler-ir-block-cons
         (compiler-ir-block "entry" instrs)
         (CompilerIrBlockList.Nil)))
+    (opt-load-cse-state-with-caps-and-facts
+      (opt-load-cse-table-cap-for-size (compiler-ir-instr-list-count instrs))
+      (opt-load-cse-kinds-cap-for-size (compiler-ir-instr-list-count instrs))
+      (opt-alias-seed-params params))
+    instrs))
+
+(define (opt-load-cse-run-with-params-and-call-memory
+  [params : CompilerIrParamList]
+  [call-memory : opt_i64_i64_map.Map]
+  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (opt-load-cse-instrs-from
+    (opt-load-header-set-from-function
+      params
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        (CompilerIrBlockList.Nil)))
+    (opt_i64_i64_map.with-capacity 1)
+    call-memory
     (opt-load-cse-state-with-caps-and-facts
       (opt-load-cse-table-cap-for-size (compiler-ir-instr-list-count instrs))
       (opt-load-cse-kinds-cap-for-size (compiler-ir-instr-list-count instrs))
@@ -67607,10 +68305,185 @@
         [(OptLoadLocUnknown) true]
         [_ false]))))
 
+(define (opt-call-memory-test-map [name : i64] [summary : i64]) : opt_i64_i64_map.Map
+  (let
+    [map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
+    (begin
+      (opt_i64_i64_map.insert-ref!
+        (&mut map)
+        (compiler-ir-symbol-id name)
+        summary)
+      map)))
+
+(define (opt-call-memory-test-call-instrs [name : i64] [arg : CompilerIrValue]) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Load 3 (CompilerIrValue.Var 0) (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Call 4 name (CompilerIrCallArgs.One arg) (AstType.Unit))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 5 (CompilerIrValue.Var 0) (AstType.I64))
+        (CompilerIrInstrList.Nil)))))
+
+(define (opt-call-memory-test-function
+  [name : i64]
+  [params : CompilerIrParamList]
+  [instrs : CompilerIrInstrList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    name
+    params
+    (AstType.Unit)
+    16
+    (compiler-ir-block-cons
+      (compiler-ir-block "entry" instrs)
+      (CompilerIrBlockList.Nil))))
+
+(define (opt-call-memory-test-functions
+  [wrapper : i64]
+  [leaf : i64]
+  [global-writer : i64]
+  [raw-writer : i64]
+  [indirect-writer : i64]
+  [recursive : i64]
+  [clean : i64]) : CompilerIrFunctionList
+  (let
+    [params : CompilerIrParamList (opt-load-cse-mixed-ref-params)]
+    (compiler-ir-function-cons
+      ;; Wrapper precedes its leaf so the leaf-to-caller fixed point needs a
+      ;; later round; leaf param 0 is wrapper argument/root 1.
+      (opt-call-memory-test-function
+        wrapper
+        params
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Call
+            3
+            leaf
+            (CompilerIrCallArgs.Two
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 0))
+            (AstType.Unit))
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-function-cons
+        (opt-call-memory-test-function
+          leaf
+          params
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 9)
+              (AstType.I64))
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-function-cons
+          (opt-call-memory-test-function
+            global-writer
+            params
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Store
+                (opt-test-symbol "call_memory_global")
+                (CompilerIrValue.I64 9)
+                (AstType.I64))
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-function-cons
+            (opt-call-memory-test-function
+              raw-writer
+              params
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.StorePtr
+                  (CompilerIrValue.Var 99)
+                  (CompilerIrValue.I64 9)
+                  (AstType.I64))
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-function-cons
+              (opt-call-memory-test-function
+                indirect-writer
+                params
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.CallIndirect
+                    3
+                    (CompilerIrValue.Function leaf)
+                    (CompilerIrCallArgs.Nil)
+                    (AstType.Unit))
+                  (CompilerIrInstrList.Nil)))
+              (compiler-ir-function-cons
+                (opt-call-memory-test-function
+                  recursive
+                  params
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Call
+                      3
+                      recursive
+                      (CompilerIrCallArgs.Two
+                        (CompilerIrValue.Var 0)
+                        (CompilerIrValue.Var 1))
+                      (AstType.Unit))
+                    (CompilerIrInstrList.Nil)))
+                (compiler-ir-function-cons
+                  (opt-call-memory-test-function
+                    clean
+                    params
+                    (CompilerIrInstrList.Nil))
+                  (CompilerIrFunctionList.Nil))))))))))
+
+(define (opt-call-memory-summary-is?
+  [summaries : opt_i64_i64_map.Map]
+  [name : i64]
+  [expected : i64]) : bool
+  (match (opt_i64_i64_map.get (& summaries) (compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound summary) (= summary expected)]
+    [(opt_i64_i64_map.LookupMissing) false]))
+
+(define (opt-call-memory-summary-has?
+  [summaries : opt_i64_i64_map.Map]
+  [name : i64]
+  [flag : i64]) : bool
+  (match (opt_i64_i64_map.get (& summaries) (compiler-ir-symbol-id name))
+    [(opt_i64_i64_map.LookupFound summary) (not (= (bit-and summary flag) 0))]
+    [(opt_i64_i64_map.LookupMissing) false]))
+
 (define (compiler-optimize-load-cse-self-test) : i64
   (let
     [positive : CompilerIrInstrList
       (opt-load-cse-run (opt-load-cse-positive-instrs))]
+    [call-touch : i64 (opt-test-symbol "call_memory_touch")]
+    [call-write-param : opt_i64_i64_map.Map
+      (opt-call-memory-test-map call-touch 1)]
+    [call-disjoint : CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-mixed-ref-params)
+        call-write-param
+        (opt-call-memory-test-call-instrs call-touch (CompilerIrValue.Var 1)))]
+    [call-same-root : CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-mixed-ref-params)
+        call-write-param
+        (opt-call-memory-test-call-instrs call-touch (CompilerIrValue.Var 0)))]
+    [call-global : CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-mixed-ref-params)
+        (opt-call-memory-test-map call-touch (opt-call-memory-global-bit))
+        (opt-call-memory-test-call-instrs call-touch (CompilerIrValue.Var 1)))]
+    [call-unknown : CompilerIrInstrList
+      (opt-load-cse-run-with-params-and-call-memory
+        (opt-load-cse-mixed-ref-params)
+        (opt-call-memory-test-map call-touch (opt-call-memory-unknown-bit))
+        (opt-call-memory-test-call-instrs call-touch (CompilerIrValue.Var 1)))]
+    [summary-wrapper : i64 (opt-test-symbol "call_memory_wrapper")]
+    [summary-leaf : i64 (opt-test-symbol "call_memory_leaf")]
+    [summary-global : i64 (opt-test-symbol "call_memory_global_writer")]
+    [summary-raw : i64 (opt-test-symbol "call_memory_raw_writer")]
+    [summary-indirect : i64 (opt-test-symbol "call_memory_indirect_writer")]
+    [summary-recursive : i64 (opt-test-symbol "call_memory_recursive")]
+    [summary-clean : i64 (opt-test-symbol "call_memory_clean")]
+    [call-summaries : opt_i64_i64_map.Map
+      (opt-call-memory-build
+        (opt-call-memory-test-functions
+          summary-wrapper
+          summary-leaf
+          summary-global
+          summary-raw
+          summary-indirect
+          summary-recursive
+          summary-clean)
+        32)]
     ;; GAP4: a store through an UNKNOWN pointer still clears everything.
     [store : bool
       (opt-load-cse-barrier-blocked?
@@ -67706,6 +68579,27 @@
           9
           (CompilerIrValue.Function (opt-test-symbol "touch"))
           (CompilerIrCallArgs.Nil)
+          (AstType.I64)))]
+    [extern-call : bool
+      (opt-load-cse-barrier-blocked?
+        (CompilerIrInstr.CallIndirectC
+          9
+          (CompilerIrValue.Function (opt-test-symbol "ffi_touch"))
+          (CompilerIrCallArgs.Nil)
+          (AstType.I64)))]
+    [volatile-call : bool
+      (opt-load-cse-barrier-blocked?
+        (CompilerIrInstr.Call
+          9
+          (opt-test-symbol "tl_volatile_i64_load_ptr")
+          (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
+          (AstType.I64)))]
+    [atomic-call : bool
+      (opt-load-cse-barrier-blocked?
+        (CompilerIrInstr.Call
+          9
+          (opt-test-symbol "tl_atomic_i64_load_ptr")
+          (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
           (AstType.I64)))]
     [tail-call : bool
       (opt-load-cse-barrier-blocked?
@@ -67814,4 +68708,39 @@
             (opt-count-mov-dst-var-src descriptor-data-root 7 5 (AstType.I64))
             1))
         59]
+      [(not (= (opt-count-load-instrs call-disjoint) 1)) 60]
+      [(not (= (opt-count-mov-dst-var-src call-disjoint 5 3 (AstType.I64)) 1))
+        61]
+      [(not (= (opt-count-load-instrs call-same-root) 2)) 62]
+      [(not (= (opt-count-mov-dst-instrs call-same-root 5) 0)) 63]
+      [(not (= (opt-count-load-instrs call-global) 2)) 64]
+      [(not (= (opt-count-load-instrs call-unknown) 2)) 65]
+      [(not (opt-call-memory-summary-is? call-summaries summary-leaf 1)) 66]
+      [(not (opt-call-memory-summary-is? call-summaries summary-wrapper 2)) 67]
+      [(not
+          (opt-call-memory-summary-has?
+            call-summaries
+            summary-global
+            (opt-call-memory-global-bit)))
+        68]
+      [(not
+          (opt-call-memory-summary-has?
+            call-summaries
+            summary-raw
+            (opt-call-memory-unknown-bit)))
+        69]
+      [(not
+          (opt-call-memory-summary-has?
+            call-summaries
+            summary-indirect
+            (opt-call-memory-unknown-bit)))
+        70]
+      [(opt_i64_i64_map.contains?
+          (& call-summaries)
+          (compiler-ir-symbol-id summary-recursive))
+        71]
+      [(not (opt-call-memory-summary-is? call-summaries summary-clean 0)) 72]
+      [(not extern-call) 73]
+      [(not volatile-call) 74]
+      [(not atomic-call) 75]
       [else 44])))

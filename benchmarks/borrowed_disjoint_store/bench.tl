@@ -1,8 +1,9 @@
 ;# Checked-reference load-GVN benchmark (#5201).
 ;#
 ;# `borrowed-disjoint-store-loop` repeatedly reads through an immutable checked
-;# reference while writing through a distinct exclusive mutable reference.
-;# Root-aware LICM can move the invariant read out of the loop.
+;# reference while a non-inlined direct helper writes through a distinct
+;# exclusive mutable reference. Root-aware direct-call summaries keep the
+;# invariant load available across the call.
 (import stdlib.io)
 
 (defstruct BorrowedPair
@@ -11,6 +12,24 @@
 
 (define borrowed-disjoint-store-base-iterations : i64
   100000000)
+
+(define (borrowed-disjoint-store-touch
+  [write : (&mut write BorrowedPair)]
+  [value : i64]) : unit
+  ;; The pre-optimization body exceeds the inliner budget; the helper's own
+  ;; scalar optimizer removes the identity chain before code generation.
+  (let
+    [a : i64 (+ value 0)]
+    [b : i64 (+ a 0)]
+    [c : i64 (+ b 0)]
+    [d : i64 (+ c 0)]
+    [e : i64 (+ d 0)]
+    [f : i64 (+ e 0)]
+    [g : i64 (+ f 0)]
+    [h : i64 (+ g 0)]
+    [i : i64 (+ h 0)]
+    [j : i64 (+ i 0)]
+    (set! (struct-get write y) j)))
 
 (define (borrowed-disjoint-store-loop
   [read : (& read BorrowedPair)]
@@ -21,11 +40,14 @@
     [i : i64 0]
     (begin
       (while (< i iterations)
-        (begin
-          (set! (struct-get write y) i)
-          (set! (struct-get write x) (+ (struct-get read x) i))
-          (set! acc (+ acc (struct-get read x)))
-          (set! i (+ i 1))))
+        (let
+          [current : i64 (struct-get read x)]
+          (begin
+            (borrowed-disjoint-store-touch write i)
+            (set! (struct-get write y) (struct-get read x))
+            (set! (struct-get write x) (+ current i))
+            (set! acc (+ acc (struct-get read x)))
+            (set! i (+ i 1)))))
       acc)))
 
 (define (main) : i64

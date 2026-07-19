@@ -7,14 +7,22 @@
 (define (u64-max) : u64
   (cast -1 : u64))
 
+;; Self-recursive, so no inliner admits it: without this barrier opt1's
+;; tiny-leaf inlining plus constant folding evaluates every cast below at
+;; compile time and deletes the runtime lowering this test locks down.
+(define (opaque-u64 [value : u64] [rounds : i64]) : u64
+  (if (> rounds 1)
+    (+ value (opaque-u64 value (- rounds 1)))
+    value))
+
 (define (u64-to-f64 [x : u64]) : f64
-  (cast x : f64))
+  (cast (opaque-u64 x 1) : f64))
 
 (define (u64-to-f32 [x : u64]) : f32
-  (cast x : f32))
+  (cast (opaque-u64 x 1) : f32))
 
 (define (u8-to-f64 [x : u8]) : f64
-  (cast x : f64))
+  (cast (cast (opaque-u64 (cast x : u64) 1) : u8) : f64))
 
 (define (main) : i64
   (let

@@ -27550,12 +27550,24 @@
           (compiler-backend-instr-seq-return-count instrs)
           (compiler-backend-block-seq-return-count blocks (+ index 1)))])))
 
+;; The shared-return tail is only reachable for plans that save callee
+;; registers, so plans without them (every stack-only opt0/opt1 plan) skip
+;; the whole-function return walk; the count is only consumed through
+;; use-shared-return-count?, where 0 and the true count decide identically
+;; once the callee-regs conjunct is false.
+(define (compiler-backend-shared-return-count
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockList]) : i64
+  (if (compiler-backend-plan-uses-callee-regs? assignments)
+    (compiler-backend-block-list-return-count blocks)
+    0))
+
 (define (compiler-backend-use-shared-return?
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]) : bool
   (compiler-backend-use-shared-return-count?
     assignments
-    (compiler-backend-block-list-return-count blocks)))
+    (compiler-backend-shared-return-count assignments blocks)))
 
 (define (compiler-backend-use-shared-return-count?
   [assignments : CompilerRegAssignmentList]
@@ -27584,7 +27596,7 @@
     source-function
     assignments
     vars
-    (compiler-backend-block-list-return-count blocks)))
+    (compiler-backend-shared-return-count assignments blocks)))
 
 (define (compiler-backend-return-epilogue
   [source-function : i64]
@@ -27749,7 +27761,7 @@
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (compiler-backend-emit-return-with-return-count
     source-function
-    (compiler-backend-block-list-return-count blocks)
+    (compiler-backend-shared-return-count assignments blocks)
     value
     assignments
     vars
@@ -27996,7 +28008,7 @@
           (if (string.eq block-label target-label)
             (compiler-backend-emit-trivial-phi-return-edge-instrs
               source-function
-              (compiler-backend-block-list-return-count blocks)
+              (compiler-backend-shared-return-count assignments blocks)
               instrs
               from-label
               assignments
@@ -28134,7 +28146,7 @@
           (if (string.eq block-label target-label)
             (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
               source-function
-              (compiler-backend-block-list-return-count blocks)
+              (compiler-backend-shared-return-count assignments blocks)
               instrs
               from-label
               assignments

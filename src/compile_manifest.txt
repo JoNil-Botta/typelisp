@@ -101,8 +101,6 @@ end
 
 case|integration_nullary_variant_call|tests/integration/nullary_variant_call.tl|assembly|skip|direct
 contains|_tl_code:
-contains|_tl_bias:
-contains|call _tl_bias
 not-contains|call _tl_Red
 not-contains|call _tl_Green
 end
@@ -253,8 +251,6 @@ contains|Method not found
 # repl
 contains|_tl_repl_loop:
 contains|_tl_repl_handle_input:
-contains|_tl_repl_banner:
-contains|_tl_repl_help_text:
 contains|_tl_repl_prompt:
 contains|_tl_repl_dot_command_question:
 contains|_tl_repl_type_command:

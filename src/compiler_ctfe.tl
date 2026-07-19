@@ -4913,22 +4913,26 @@
   (offset i64)
   (len i64))
 
-(define (ctfe-embedded-stdlib-source-byte
-  [source : (& source str)]
-  [index : i64]) : u8
-  (cast (string.string-ref source index) : u8))
+;; Raw byte read for the compressor. Every call site is guarded so `index`
+;; stays inside the source string, matching the checked string.string-ref
+;; accessor path it replaced.
+(define (ctfe-embedded-stdlib-lzss-byte [data : (Ptr u8)] [index : i64]) : i64
+  (cast
+    (unsafe
+      (ptr-read (ptr-offset data index)))
+    : i64))
 
-(define (ctfe-embedded-stdlib-source-byte-i64
-  [source : (& source str)]
-  [index : i64]) : i64
-  (cast (ctfe-embedded-stdlib-source-byte source index) : i64))
+;; Unaligned 8-byte read; caller guarantees index+8 is within the source.
+(define (ctfe-embedded-stdlib-lzss-word [data : (Ptr u8)] [index : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-cast (ptr-offset data index) : (Ptr i64)))))
 
-(define (ctfe-embedded-stdlib-lzss-hash [source : (& source str)] [index : i64]) : i64
+(define (ctfe-embedded-stdlib-lzss-hash [data : (Ptr u8)] [index : i64]) : i64
   (%
     (+
-      (* (ctfe-embedded-stdlib-source-byte-i64 source index) 251)
-      (* (ctfe-embedded-stdlib-source-byte-i64 source (+ index 1)) 31)
-      (ctfe-embedded-stdlib-source-byte-i64 source (+ index 2)))
+      (* (ctfe-embedded-stdlib-lzss-byte data index) 251)
+      (* (ctfe-embedded-stdlib-lzss-byte data (+ index 1)) 31)
+      (ctfe-embedded-stdlib-lzss-byte data (+ index 2)))
     65536))
 
 (define (ctfe-embedded-stdlib-array-fill!
@@ -4942,20 +4946,22 @@
         (set! index (+ index 1))))))
 
 (define (ctfe-embedded-stdlib-lzss-insert!
-  [source : (& source str)]
+  [data : (Ptr u8)]
+  [source-len : i64]
   [head : (&mut head (Array i64))]
   [previous : (&mut previous (Array i64))]
   [index : i64]) : unit
-  (if (> (+ index 2) (- (string.string-length source) 1))
+  (if (> (+ index 2) (- source-len 1))
     unit
     (let
-      [hash : i64 (ctfe-embedded-stdlib-lzss-hash source index)]
+      [hash : i64 (ctfe-embedded-stdlib-lzss-hash data index)]
       (begin
         (array-set! previous index (array-ref head hash))
         (array-set! head hash index)))))
 
 (define (ctfe-embedded-stdlib-lzss-insert-range!
-  [source : (& source str)]
+  [data : (Ptr u8)]
+  [source-len : i64]
   [head : (&mut head (Array i64))]
   [previous : (&mut previous (Array i64))]
   [start : i64]
@@ -4964,59 +4970,99 @@
     [index : i64 0]
     (while (< index count)
       (begin
-        (ctfe-embedded-stdlib-lzss-insert! source head previous (+ start index))
+        (ctfe-embedded-stdlib-lzss-insert!
+          data
+          source-len
+          head
+          previous
+          (+ start index))
         (set! index (+ index 1))))))
 
+;; Longest common prefix of the candidate and cursor spans, capped by `cap`
+;; (= min(18, source-len - index)). Words compare 8 bytes at a time; the byte
+;; tail finds the first mismatch inside a differing word or finishes the
+;; sub-word remainder. Word reads stay in bounds because length+8 <= cap
+;; implies index+length+8 <= source-len (and candidate < index).
 (define (ctfe-embedded-stdlib-lzss-match-len
-  [source : (& source str)]
+  [data : (Ptr u8)]
+  [cap : i64]
   [candidate : i64]
   [index : i64]) : i64
   (let
     [length : i64 0]
-    [source-len : i64 (string.string-length source)]
+    [words-done : bool false]
+    [tail-done : bool false]
     (begin
-      (while (and
-        (< length 18)
-        (< (+ index length) source-len)
-        (=
-          (ctfe-embedded-stdlib-source-byte source (+ candidate length))
-          (ctfe-embedded-stdlib-source-byte source (+ index length))))
-        (set! length (+ length 1)))
+      (while (and (not words-done) (<= (+ length 8) cap))
+        (if (=
+          (ctfe-embedded-stdlib-lzss-word data (+ candidate length))
+          (ctfe-embedded-stdlib-lzss-word data (+ index length)))
+          (set! length (+ length 8))
+          (set! words-done true)))
+      (while (and (not tail-done) (< length cap))
+        (if (=
+          (ctfe-embedded-stdlib-lzss-byte data (+ candidate length))
+          (ctfe-embedded-stdlib-lzss-byte data (+ index length)))
+          (set! length (+ length 1))
+          (set! tail-done true)))
       length)))
 
 (define (ctfe-embedded-stdlib-lzss-find-match
-  [source : (& source str)]
+  [data : (Ptr u8)]
+  [source-len : i64]
   [head : (& head (Array i64))]
   [previous : (& previous (Array i64))]
   [index : i64]) : CtfeEmbeddedStdlibLzssMatch
-  (if (> (+ index 2) (- (string.string-length source) 1))
+  (if (> (+ index 2) (- source-len 1))
     (CtfeEmbeddedStdlibLzssMatch 0 0)
     (let
-      [hash : i64 (ctfe-embedded-stdlib-lzss-hash source index)]
+      [hash : i64 (ctfe-embedded-stdlib-lzss-hash data index)]
       [candidate : i64 (array-ref head hash)]
       [best-offset : i64 0]
       [best-len : i64 0]
+      [cap : i64
+        (let
+          [avail : i64 (- source-len index)]
+          (if (< avail 18)
+            avail
+            18))]
       (begin
+        ;; best-len < cap bounds every filter read (index+best-len < source-len)
+        ;; and exits once no candidate can improve the match; the replaced
+        ;; best-len < 18 condition kept walking candidates that could not win.
         (while (and
           (>= candidate 0)
           (<= (- index candidate) 4096)
-          (< best-len 18))
-          (let
-            [length : i64
-              (ctfe-embedded-stdlib-lzss-match-len source candidate index)]
-            (begin
-              (when
-                (> length best-len)
-                (begin
-                  (set! best-len length)
-                  (set! best-offset (- index candidate))))
-              (set! candidate (array-ref previous candidate)))))
+          (< best-len cap))
+          (begin
+            ;; A candidate can only beat best-len by matching at offset
+            ;; best-len too, so one byte probe skips most full scans without
+            ;; changing which candidate wins.
+            (when
+              (=
+                (ctfe-embedded-stdlib-lzss-byte data (+ candidate best-len))
+                (ctfe-embedded-stdlib-lzss-byte data (+ index best-len)))
+              (let
+                [length : i64
+                  (ctfe-embedded-stdlib-lzss-match-len data cap candidate index)]
+                (when
+                  (> length best-len)
+                  (begin
+                    (set! best-len length)
+                    (set! best-offset (- index candidate))))))
+            (set! candidate (array-ref previous candidate))))
         (CtfeEmbeddedStdlibLzssMatch best-offset best-len)))))
 
 (define (ctfe-embedded-stdlib-lzss-compress [source : String]) : String
   (let
     [source-len : i64 (string.string-length source)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& source)))]
     [head : (Array i64) (array.make-array i64 65536)]
+    ;; `previous` needs no -1 fill: chain reads only visit indices already
+    ;; written by insert! (head points at an inserted index, and previous[i]
+    ;; is stored when i is inserted), so its initial contents are never read.
     [previous : (Array i64) (array.make-array i64 source-len)]
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity
@@ -5024,7 +5070,6 @@
     [index : i64 0]
     (begin
       (ctfe-embedded-stdlib-array-fill! (&mut head) -1)
-      (ctfe-embedded-stdlib-array-fill! (&mut previous) -1)
       (while (< index source-len)
         (let
           [flag-index : i64 (byte_buf_core.byte-buf-builder-len (& out))]
@@ -5034,7 +5079,8 @@
             (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0 : u8))
             (while (and (< bit 8) (< index source-len))
               (match (ctfe-embedded-stdlib-lzss-find-match
-                (& source)
+                data
+                source-len
                 (& head)
                 (& previous)
                 index)
@@ -5050,7 +5096,8 @@
                           (&mut out)
                           (cast (bit-and packed 255) : u8))
                         (ctfe-embedded-stdlib-lzss-insert-range!
-                          (& source)
+                          data
+                          source-len
                           (&mut head)
                           (&mut previous)
                           index
@@ -5060,9 +5107,10 @@
                       (set! flags (bit-or flags (shl 1 bit)))
                       (byte_buf_core.byte-buf-builder-push
                         (&mut out)
-                        (ctfe-embedded-stdlib-source-byte (& source) index))
+                        (cast (ctfe-embedded-stdlib-lzss-byte data index) : u8))
                       (ctfe-embedded-stdlib-lzss-insert!
-                        (& source)
+                        data
+                        source-len
                         (&mut head)
                         (&mut previous)
                         index)

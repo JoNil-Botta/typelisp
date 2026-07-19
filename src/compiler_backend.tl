@@ -36091,6 +36091,18 @@
 (define compiler-backend-emit-current-count : i64
   0)
 
+(define (compiler-backend-emit-needs-current-count?
+  [plan-mask : i64]
+  [const-hoist-sites : i64]
+  [backend-mode : CompilerBackendMode]) : bool
+  (or
+    (not (= plan-mask 0))
+    (not (= const-hoist-sites 0))
+    ;; AVX2 predicated-store lane labels use the instruction point as their
+    ;; identity. Even a stack-only plan therefore needs the exact count so two
+    ;; stores in one block cannot emit the same local labels.
+    (compiler-backend-mode-avx2? backend-mode)))
+
 (define (compiler-backend-emit-instrs-loop
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -36112,21 +36124,23 @@
         (let
           [step-result : ResultCompilerBackend
             (begin
-              ;; The remaining-instruction count exists only to derive the
+              ;; The remaining-instruction count derives the
               ;; scavenge/const-hoist/scratch point 2*(post-base - count).
               ;; When the plan homes nothing in registers (zero plan mask -
               ;; every stack-only opt0/opt1 plan) the occupancy masks carry
               ;; no set bits, so every mask query answers 0 at any point,
               ;; and with no const-hoist sites the point comparisons are
-              ;; unreachable: 0 decides identically everywhere, skipping an
-              ;; O(n^2) remaining-list walk per emitted function.
+              ;; unreachable. Scalar/AVX-512 can then skip the O(n^2)
+              ;; remaining-list walk; AVX2 also uses this point to make
+              ;; predicated-store lane labels unique and retains the count.
               (set!
                 compiler-backend-emit-current-count
-                (if (and
-                  (= compiler-backend-scavenge-ctx-plan-reg-mask 0)
-                  (= compiler-backend-const-hoist-site-count 0))
-                  0
-                  (compiler-ir-instr-list-count current-instrs)))
+                (if (compiler-backend-emit-needs-current-count?
+                  compiler-backend-scavenge-ctx-plan-reg-mask
+                  compiler-backend-const-hoist-site-count
+                  compiler-backend-current-mode)
+                  (compiler-ir-instr-list-count current-instrs)
+                  0))
               (cfg
                 scavenge-self-check
                 (match current-instrs

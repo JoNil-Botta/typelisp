@@ -36312,19 +36312,50 @@
       ;; Inliner input is SSA, where phis form the instruction prefix.
       [_ false])))
 
-(define (opt-inline-blocks-phi-label?
+(define (opt-inline-phi-input-labels-add
+  [inputs : CompilerIrPhiInputList]
+  [labels : OptLabelSet]) : OptLabelSet
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) labels]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-inline-phi-input-labels-add
+        (compiler-ir-phi-input-seq-to-list seq)
+        labels)]
+    [(CompilerIrPhiInputList.Cons _ label rest)
+      (opt-inline-phi-input-labels-add
+        (box-get rest)
+        (opt-label-add labels label))]))
+
+(define (opt-inline-instr-seq-phi-labels-add-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [labels : OptLabelSet]) : OptLabelSet
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    labels
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ inputs _)
+        (opt-inline-instr-seq-phi-labels-add-from
+          instrs
+          (+ index 1)
+          (opt-inline-phi-input-labels-add inputs labels))]
+      ;; Inliner input is SSA, where phis form the instruction prefix.
+      [_ labels])))
+
+(define (opt-inline-blocks-phi-predecessors-add
   [blocks : CompilerIrBlockList]
-  [label : String]) : bool
+  [labels : OptLabelSet]) : OptLabelSet
   (match blocks
-    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Nil) labels]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
-          (if (opt-inline-instr-seq-phi-label-from? instrs 0 label)
-            true
-            (opt-inline-blocks-phi-label? (box-get rest) label))])]
+          (opt-inline-blocks-phi-predecessors-add
+            (box-get rest)
+            (opt-inline-instr-seq-phi-labels-add-from instrs 0 labels))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-inline-blocks-phi-label? (compiler-ir-block-seq-to-list seq) label)]))
+      (opt-inline-blocks-phi-predecessors-add
+        (compiler-ir-block-seq-to-list seq)
+        labels)]))
 
 ;; A successful multiblock inline moves the original block's tail to the
 ;; generated continuation. A matching phi input is itself the old predecessor
@@ -38471,7 +38502,7 @@
 
 (define (opt-inline-rewrite-block
   [block : CompilerIrBlock]
-  [all-blocks : CompilerIrBlockList]
+  [phi-predecessors : OptLabelSet]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : i64]
@@ -38490,7 +38521,7 @@
         (begin
           (set!
             opt-inline-current-phi-predecessor?
-            (opt-inline-blocks-phi-label? all-blocks label))
+            (opt-label-contains phi-predecessors label))
           (opt-inline-try-multiblock-rewrite-seq-from
             seq
             0
@@ -39109,7 +39140,7 @@
 
 (define (opt-inline-rewrite-block-with-spans
   [block : CompilerIrBlock]
-  [all-blocks : CompilerIrBlockList]
+  [phi-predecessors : OptLabelSet]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : i64]
@@ -39131,7 +39162,7 @@
         (begin
           (set!
             opt-inline-current-phi-predecessor?
-            (opt-inline-blocks-phi-label? all-blocks label))
+            (opt-label-contains phi-predecessors label))
           (opt-inline-try-multiblock-span-rewrite-seq-from
             seq
             0
@@ -39151,7 +39182,7 @@
 
 (define (opt-inline-blocks
   [blocks : CompilerIrBlockList]
-  [all-blocks : CompilerIrBlockList]
+  [phi-predecessors : OptLabelSet]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : i64]
@@ -39166,7 +39197,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (match (opt-inline-rewrite-block
         block
-        all-blocks
+        phi-predecessors
         index
         census
         func-name
@@ -39178,7 +39209,7 @@
         [(OptInlineMaybeBlockRewrite.SomeBlockRewrite rewritten vars2 added2)
           (match (opt-inline-blocks
             (box-get rest)
-            all-blocks
+            phi-predecessors
             index
             census
             func-name
@@ -39200,7 +39231,7 @@
     [(CompilerIrBlockList.Array seq)
       (opt-inline-blocks
         (compiler-ir-block-seq-to-list seq)
-        all-blocks
+        phi-predecessors
         index
         census
         func-name
@@ -39212,7 +39243,7 @@
 
 (define (opt-inline-blocks-with-spans
   [blocks : CompilerIrBlockList]
-  [all-blocks : CompilerIrBlockList]
+  [phi-predecessors : OptLabelSet]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : i64]
@@ -39233,7 +39264,7 @@
     [(CompilerIrBlockList.Cons block rest)
       (match (opt-inline-rewrite-block-with-spans
         block
-        all-blocks
+        phi-predecessors
         index
         census
         func-name
@@ -39251,7 +39282,7 @@
             spans2)
           (match (opt-inline-blocks-with-spans
             (box-get rest)
-            all-blocks
+            phi-predecessors
             index
             census
             func-name
@@ -39277,7 +39308,7 @@
     [(CompilerIrBlockList.Array seq)
       (opt-inline-blocks-with-spans
         (compiler-ir-block-seq-to-list seq)
-        all-blocks
+        phi-predecessors
         index
         census
         func-name
@@ -39419,13 +39450,15 @@
     [(CompilerIrFunction.Function name params ret vars blocks)
       (let
         [caller-blocks : i64 (compiler-ir-block-list-count blocks)]
+        [phi-predecessors : OptLabelSet
+          (opt-inline-blocks-phi-predecessors-add blocks (OptLabelSet.Nil))]
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
             (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
         (match (opt-inline-blocks
           blocks
-          blocks
+          phi-predecessors
           index
           census
           name
@@ -39464,13 +39497,15 @@
     [(CompilerIrFunction.Function name params ret vars blocks)
       (let
         [caller-blocks : i64 (compiler-ir-block-list-count blocks)]
+        [phi-predecessors : OptLabelSet
+          (opt-inline-blocks-phi-predecessors-add blocks (OptLabelSet.Nil))]
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
             (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
         (match (opt-inline-blocks-with-spans
           blocks
-          blocks
+          phi-predecessors
           index
           census
           name

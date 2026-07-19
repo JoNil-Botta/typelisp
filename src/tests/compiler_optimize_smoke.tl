@@ -1780,6 +1780,30 @@
       42)
     42))
 
+(define (smoke-inline-phi-header [latch-label : String]) : CompilerIrInstr
+  (CompilerIrInstr.Phi
+    1
+    (compiler-ir-phi-input-cons
+      (CompilerIrValue.I64 0)
+      "entry"
+      (compiler-ir-phi-input-cons
+        (CompilerIrValue.Var 0)
+        latch-label
+        CompilerIrPhiInputList.Nil))
+    (AstType.I64)))
+
+(define (smoke-inline-phi-exit [latch-label : String]) : CompilerIrInstr
+  (CompilerIrInstr.Phi
+    2
+    (compiler-ir-phi-input-cons
+      (CompilerIrValue.Var 1)
+      "header"
+      (compiler-ir-phi-input-cons
+        (CompilerIrValue.Var 0)
+        latch-label
+        CompilerIrPhiInputList.Nil))
+    (AstType.I64)))
+
 (define (smoke-inline-phi-caller-with-call
   [symbols : OptInlineMultiTestSymbols]
   [call : CompilerIrInstr]) : CompilerIrFunction
@@ -1787,7 +1811,7 @@
     (struct-get symbols main)
     CompilerIrParamList.Nil
     (AstType.I64)
-    2
+    3
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
@@ -1798,16 +1822,7 @@
         (compiler-ir-block
           "header"
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Phi
-              1
-              (compiler-ir-phi-input-cons
-                (CompilerIrValue.I64 0)
-                "entry"
-                (compiler-ir-phi-input-cons
-                  (CompilerIrValue.Var 0)
-                  "latch"
-                  CompilerIrPhiInputList.Nil))
-              (AstType.I64))
+            (smoke-inline-phi-header "latch")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch
                 (CompilerIrValue.Bool true)
@@ -1829,9 +1844,11 @@
             (compiler-ir-block
               "exit"
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Return
-                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
-                CompilerIrInstrList.Nil))
+                (smoke-inline-phi-exit "latch")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                  CompilerIrInstrList.Nil)))
             CompilerIrBlockList.Nil))))))
 
 (define (smoke-inline-phi-params) : CompilerIrParamList
@@ -1898,20 +1915,30 @@
 (define (smoke-inline-phi-loop-repaired? [blocks : CompilerIrBlockList]) : bool
   (match (opt-cfg-find-block blocks "header")
     [(OptMaybeBlock.No) false]
-    [(OptMaybeBlock.Some block)
-      (match block
+    [(OptMaybeBlock.Some header)
+      (match header
         [(CompilerIrBlock.Block _ instrs)
           (match (compiler-ir-instr-seq-ref instrs 0)
             [(CompilerIrInstr.Phi _ inputs _)
-              (opt-phi-input-list-eq
+              (if (opt-phi-input-list-eq
                 inputs
-                (compiler-ir-phi-input-cons
-                  (CompilerIrValue.I64 0)
-                  "entry"
-                  (compiler-ir-phi-input-cons
-                    (CompilerIrValue.Var 0)
-                    "inl.latch.0.cont"
-                    CompilerIrPhiInputList.Nil)))]
+                (match (smoke-inline-phi-header "inl.latch.0.cont")
+                  [(CompilerIrInstr.Phi _ expected _) expected]
+                  [_ CompilerIrPhiInputList.Nil]))
+                (match (opt-cfg-find-block blocks "exit")
+                  [(OptMaybeBlock.No) false]
+                  [(OptMaybeBlock.Some exit)
+                    (match exit
+                      [(CompilerIrBlock.Block _ exit-instrs)
+                        (match (compiler-ir-instr-seq-ref exit-instrs 0)
+                          [(CompilerIrInstr.Phi _ exit-inputs _)
+                            (opt-phi-input-list-eq
+                              exit-inputs
+                              (match (smoke-inline-phi-exit "inl.latch.0.cont")
+                                [(CompilerIrInstr.Phi _ expected _) expected]
+                                [_ CompilerIrPhiInputList.Nil]))]
+                          [_ false])])])
+                false)]
             [_ false])])]))
 
 (define (smoke-inline-phi-positive-code) : i64
@@ -1929,7 +1956,7 @@
               11]
             [(not (= (compiler-ir-block-list-count blocks) 7))
               (+ 20 (compiler-ir-block-list-count blocks))]
-            [(not (= (opt-count-phi-blocks blocks) 1))
+            [(not (= (opt-count-phi-blocks blocks) 2))
               (+ 40 (opt-count-phi-blocks blocks))]
             [(not (smoke-inline-phi-loop-repaired? blocks)) 61]
             [(not (opt-inline-structure-ok? blocks)) 62]
@@ -1940,14 +1967,27 @@
   (let
     [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
     [call : CompilerIrInstr (smoke-inline-phi-call symbols)]
+    [header-phi : CompilerIrInstr (smoke-inline-phi-header "latch")]
+    [exit-phi : CompilerIrInstr (smoke-inline-phi-exit "latch")]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
-        (opt-spans-base)
+        (compiler-source-spans-insert-instr
+          (compiler-source-spans-insert-instr
+            (opt-spans-base)
+            "main"
+            call
+            (opt-test-span 161 31))
+          "main"
+          header-phi
+          (opt-test-span 162 33))
         "main"
-        call
-        (opt-test-span 161 31))]
+        exit-phi
+        (opt-test-span 163 35))]
     [result-mov : CompilerIrInstr
-      (CompilerIrInstr.Mov 0 (CompilerIrValue.Var 2) (AstType.I64))]
+      (CompilerIrInstr.Mov 0 (CompilerIrValue.Var 3) (AstType.I64))]
+    [repaired-header : CompilerIrInstr
+      (smoke-inline-phi-header "inl.latch.0.cont")]
+    [repaired-exit : CompilerIrInstr (smoke-inline-phi-exit "inl.latch.0.cont")]
     (match (opt-inline-program-functions-with-spans
       (smoke-inline-phi-functions symbols)
       2
@@ -1961,7 +2001,19 @@
                 (= (opt-count-direct-call-name-blocks blocks "inline_branch") 0)
                 (smoke-inline-phi-loop-repaired? blocks)
                 (opt-inline-structure-ok? blocks)
-                (opt-span-lookup-ok? optimized-spans "main" result-mov 161 31)))]
+                (opt-span-lookup-ok? optimized-spans "main" result-mov 161 31)
+                (opt-span-lookup-ok?
+                  optimized-spans
+                  "main"
+                  repaired-header
+                  162
+                  33)
+                (opt-span-lookup-ok?
+                  optimized-spans
+                  "main"
+                  repaired-exit
+                  163
+                  35)))]
           [(OptMaybeFunction.No) false])])))
 
 (define (smoke-inline-phi-refusal?) : bool

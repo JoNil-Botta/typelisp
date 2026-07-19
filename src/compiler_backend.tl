@@ -55462,18 +55462,42 @@ tl_tlci_call_macro_entry:
     [else (compiler-backend-peephole-owners-empty)]))
 
 ;; Length of the leading non-space token (the mnemonic) starting at `i`.
-(define (compiler-backend-peephole-token-len
-  [data : (Ptr u8)]
-  [i : i64]
-  [end : i64]) : i64
-  (let
-    [j : i64 i]
-    (begin
-      (while (and
-        (< j end)
-        (not (= (compiler-backend-peephole-byte-at data j) 32)))
-        (set! j (+ j 1)))
-      (- j i))))
+;; Length of the leading token at `i`: bytes up to the next space or `end`.
+;; The memchr variant jumps straight to the next space byte instead of
+;; stepping every byte; both return the same span length.
+(cfg
+  feature-tl-memchr
+  (define (compiler-backend-peephole-token-len
+    [data : (Ptr u8)]
+    [i : i64]
+    [end : i64]) : i64
+    (if (>= i end)
+      0
+      (let
+        [offset : i64
+          (unsafe
+            (compiler-backend-runtime-index-of-byte
+              (ptr-offset data i)
+              (- end i)
+              (cast 32 : u8)))]
+        (if (< offset 0)
+          (- end i)
+          offset)))))
+
+(cfg
+  (not feature-tl-memchr)
+  (define (compiler-backend-peephole-token-len
+    [data : (Ptr u8)]
+    [i : i64]
+    [end : i64]) : i64
+    (let
+      [j : i64 i]
+      (begin
+        (while (and
+          (< j end)
+          (not (= (compiler-backend-peephole-byte-at data j) 32)))
+          (set! j (+ j 1)))
+        (- j i)))))
 
 ;; True iff byte `b` is a movq-style size suffix: q, l, w, or b.
 (define (compiler-backend-peephole-size-suffix-byte? [b : i64]) : bool

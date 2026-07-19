@@ -436,17 +436,27 @@
 (define tlci-host-callback-op-reference-element-type : i64
   177)
 
-;; S-expression list construction for natively compiled quasiquote bodies:
-;; empty creates a fresh empty list expression handle; append produces the
-;; handle of a new list expression with one element handle appended. Both are
-;; additive ABI v1 ops -- the embedded image and its consumer are always the
-;; same source-bound binary. Refs #5212.
+;; Construction ops for natively compiled quasiquote bodies. Values under
+;; construction live entirely on a compiler-owned session value stack, so the
+;; image never holds result handles: list-empty pushes a fresh empty
+;; expression list, list-append pops an element then a list and pushes the
+;; appended list, push-operand pushes the macro operand named by immediate
+;; `a`, expr-call pops an argument list then a callee and pushes the call
+;; expression, and commit-result pops the stack top into the session result.
+;; All are additive ABI v1 ops -- the embedded image and its consumer are
+;; always the same source-bound binary. Refs #5212.
 (define tlci-host-callback-op-expr-list-empty : i64
   178)
 (define tlci-host-callback-op-expr-list-append : i64
   179)
+(define tlci-host-callback-op-push-operand : i64
+  180)
+(define tlci-host-callback-op-expr-call : i64
+  181)
+(define tlci-host-callback-op-commit-result : i64
+  182)
 (define tlci-host-callback-stdlib-op-count : i64
-  80)
+  83)
 (define tlci-header-size : i64
   160)
 (define tlci-page-align : i64
@@ -2552,7 +2562,10 @@
     (= tlci-host-callback-op-reference-element-type 177)
     (= tlci-host-callback-op-expr-list-empty 178)
     (= tlci-host-callback-op-expr-list-append 179)
-    (= tlci-host-callback-stdlib-op-count 80)))
+    (= tlci-host-callback-op-push-operand 180)
+    (= tlci-host-callback-op-expr-call 181)
+    (= tlci-host-callback-op-commit-result 182)
+    (= tlci-host-callback-stdlib-op-count 83)))
 
 (define (tlci-test-host-abi-ok?) : bool
   (and

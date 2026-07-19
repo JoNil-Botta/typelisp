@@ -3996,6 +3996,45 @@
       (macro-hygiene-local-id? surface-local-id)
       (not (= direct-local-id surface-local-id)))))
 
+(define (compiler-typecheck-core-and-body-source) : String
+  "(module stdlib.core_macros)
+(defmacro (and [_args : bool ...]) : bool
+  (expr-var \"core-and-body-observed\"))
+(module main)
+(define (main) : bool (and true))")
+
+(define (compiler-typecheck-core-or-body-source) : String
+  "(module stdlib.core_macros)
+(defmacro (or [_args : bool ...]) : bool
+  (expr-var \"core-or-body-observed\"))
+(module main)
+(define (main) : bool (or false))")
+
+(define (compiler-typecheck-core-cond-body-source) : String
+  "(module stdlib.core_macros)
+(defmacro (cond [_arms : ExprClause ...]) : Expr
+  (expr-var \"core-cond-body-observed\"))
+(module main)
+(define (main) : i64 (cond [else 42]))")
+
+(define (compiler-typecheck-core-macro-bodies-observed?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-core-and-body-source)
+      "typecheck: unbound name core-and-body-observed")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-core-or-body-source)
+      "typecheck: unbound name core-or-body-observed")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-core-cond-body-source)
+      "typecheck: unbound name core-cond-body-observed")))
+
+(test
+  compiler-typecheck-core-macro-bodies
+  (unless
+    (compiler-typecheck-core-macro-bodies-observed?)
+    (io.panic "typecheck: stdlib core macro body was bypassed")))
+
 (test
   compiler-typecheck-call-diagnostics
   (unless
@@ -4031,6 +4070,9 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (compiler-typecheck-self-test)
+    (unless
+      (compiler-typecheck-core-macro-bodies-observed?)
+      (io.panic "typecheck: stdlib core macro body was bypassed"))
     (unless
       (compiler-typecheck-scoped-marker-queries-ok?)
       (io.panic "typecheck: scoped marker query smoke failed"))

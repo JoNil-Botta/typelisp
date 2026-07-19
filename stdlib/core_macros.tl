@@ -129,9 +129,8 @@
 ;: `into-iterator` / `into-next` from the source type's defining module.
 ;: Cleanup-owning item bindings must be final when clauses are zipped.
 ;:
-;: The compiler expands this prelude macro directly, just as it does the hot
-;: `and`, `or`, and `cond` prelude macros. The wildcard signature is the
-;: bootstrap-compatible representation of its mixed binding/body operands.
+;: The compiler expands this prelude macro directly. The wildcard signature is
+;: the bootstrap-compatible representation of its mixed binding/body operands.
 (defmacro (for [_forms : Expr ...]) : unit
   ;; Published seed compilers typecheck this declaration before the branch-built
   ;; fast expander exists. The branch compiler always intercepts calls; `unit`

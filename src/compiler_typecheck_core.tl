@@ -61663,6 +61663,7 @@
       [(ResultMacroEnv.Ok env)
         (begin
           (macro-note-stdlib-tlci-route fallback-module macro-name)
+          (ctfe-result-hygiene-free-reset!)
           (cfg compile-profile (compiler-tc-macro-profile-start))
           (match (ctfe-eval-node
             body
@@ -62118,7 +62119,7 @@
       rewrite-env
       decls)))
 
-;; Avoid recursive `core-and-from`/`core-or-from` CTFE for the hot prelude macros.
+;; Fixed syntax builders used by the compiler-owned scalar `for` expander.
 (define (macro-core-bool-lit [value : bool]) : i64
   (ast-node-push (AstExpr.Literal (AstLiteral.Bool value))))
 
@@ -62793,90 +62794,12 @@
                         (macro-core-for-iterator-scopes plans loop-scope))))))]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))))))
 
-(define (macro-core-and-chain [args : (& args AstExprList)] [index : i64]) : i64
-  (if (>= index (struct-get args len))
-    (macro-core-bool-lit true)
-    (ast-expr-if
-      (ast-expr-list-get args index 0)
-      (macro-core-and-chain args (+ index 1))
-      (macro-core-bool-lit false))))
-
-(define (macro-core-or-chain [args : (& args AstExprList)] [index : i64]) : i64
-  (if (>= index (struct-get args len))
-    (macro-core-bool-lit false)
-    (ast-expr-if
-      (ast-expr-list-get args index 0)
-      (macro-core-bool-lit true)
-      (macro-core-or-chain args (+ index 1)))))
-
-(define (macro-core-var-lit [name : String]) : i64
-  (ast-node-push (AstExpr.Var (tc-generated-name-id name))))
-
-(define (macro-core-cond-else? [expr-id : i64]) : bool
-  (match (ast-expr-unspan (ast-node-get expr-id))
-    [(AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-else)]
-    [_ false]))
-
-(define (macro-core-cond-chain
-  [clauses : (& clauses AstExprClauseList)]
-  [index : i64]) : i64
-  (let
-    [n : i64 (struct-get clauses len)]
-    (if (>= index n)
-      (macro-core-var-lit "core-cond-missing-else")
-      (match (ast-expr-clause-list-get clauses index (ast-expr-clause-fallback))
-        [(AstExprClause test result)
-          (if (macro-core-cond-else? test)
-            (if (= (+ index 1) n)
-              result
-              (macro-core-var-lit "core-cond-else-must-be-final"))
-            (if (= (+ index 1) n)
-              (macro-core-var-lit "core-cond-missing-else")
-              (ast-expr-if
-                test
-                result
-                (macro-core-cond-chain clauses (+ index 1)))))]))))
-
-(define (macro-core-boolean-macro?
-  [macro-name : String]
-  [definition-module : String]
-  [base : String]) : bool
-  (and
-    (string.eq definition-module "stdlib.core_macros")
-    (tc-name-spelling-base-eq? macro-name base)))
-
-(define (macro-core-cond-macro?
-  [macro-name : String]
-  [definition-module : String]) : bool
-  (and
-    (string.eq definition-module "stdlib.core_macros")
-    (tc-name-spelling-base-eq? macro-name "cond")))
-
 (define (macro-core-for-macro?
   [macro-name : String]
   [definition-module : String]) : bool
   (and
     (string.eq definition-module "stdlib.core_macros")
     (tc-name-spelling-base-eq? macro-name "for")))
-
-(define (macro-core-boolean-signature?
-  [ctx : TcContext]
-  [definition-module : String]
-  [definition-module-id : i64]
-  [params : AstMacroParamList]) : bool
-  (if (= (ast-macro-param-list-len (& params)) 1)
-    (match (ast-macro-param-list-get (& params) 0 (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty variadic _)
-        (and
-          variadic
-          (tc-type-eq
-            (macro-resolve-signature-type-id
-              ctx
-              definition-module
-              definition-module-id
-              ty)
-            (AstType.Bool)))])
-    false))
 
 (define (macro-core-for-signature?
   [ctx : TcContext]
@@ -62896,96 +62819,6 @@
               ty)
             (AstType.Expr)))])
     false))
-
-(define (macro-core-boolean-fast-expand
-  [ctx : TcContext]
-  [type-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [definition-module : String]
-  [definition-module-id : i64]
-  [params : AstMacroParamList]
-  [_macro-name : String]
-  [args : AstExprList]
-  [depth : i64]
-  [call-expr : AstExpr]
-  [is-or : bool]) : ResultMacroExpr
-  (match (macro-expand-exprs ctx type-env decls depth args)
-    [(ResultMacroExprList.Ok expanded-args)
-      (match (macro-bind-params
-        ctx
-        decls
-        definition-module
-        definition-module-id
-        type-env
-        _macro-name
-        params
-        expanded-args
-        (ctfe-env-empty)
-        false
-        call-expr)
-        [(ResultMacroEnv.Ok _)
-          (begin
-            (cfg compile-profile (compiler-tc-macro-profile-start))
-            (let
-              [expanded : i64
-                (if is-or
-                  (macro-core-or-chain (& expanded-args) 0)
-                  (macro-core-and-chain (& expanded-args) 0))]
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-tc-macro-profile-finish _macro-name expanded-args))
-                (macro-expand-expr
-                  ctx
-                  type-env
-                  decls
-                  (+ depth 1)
-                  (ast-node-get expanded)))))]
-        [(ResultMacroEnv.Err diag) (ResultMacroExpr.Err diag)])]
-    [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)]))
-
-(define (macro-core-cond-fast-expand
-  [ctx : TcContext]
-  [type-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [definition-module : String]
-  [definition-module-id : i64]
-  [params : AstMacroParamList]
-  [_macro-name : String]
-  [args : AstExprList]
-  [depth : i64]
-  [call-expr : AstExpr]) : ResultMacroExpr
-  (match (macro-bind-params
-    ctx
-    decls
-    definition-module
-    definition-module-id
-    type-env
-    _macro-name
-    params
-    args
-    (ctfe-env-empty)
-    false
-    call-expr)
-    [(ResultMacroEnv.Ok _)
-      (match (macro-expr-clause-list-from-args args)
-        [(ResultMacroClauseList.Ok clauses)
-          (begin
-            (cfg compile-profile (compiler-tc-macro-profile-start))
-            (let
-              [expanded : i64 (macro-core-cond-chain (& clauses) 0)]
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-tc-macro-profile-finish _macro-name args))
-                (macro-expand-expr
-                  ctx
-                  type-env
-                  decls
-                  (+ depth 1)
-                  (ast-node-get expanded)))))]
-        [(ResultMacroClauseList.Err diag) (ResultMacroExpr.Err diag)])]
-    [(ResultMacroEnv.Err diag) (ResultMacroExpr.Err diag)]))
 
 (define (macro-core-for-fast-expand
   [ctx : TcContext]
@@ -63085,56 +62918,6 @@
             "typecheck: Decls macro can only be used at module scope")))
       (cond
         [(and
-            (macro-core-boolean-macro? macro-name definition-module "and")
-            (macro-core-boolean-signature?
-              ctx
-              definition-module
-              definition-module-id
-              params))
-          (macro-core-boolean-fast-expand
-            ctx
-            type-env
-            decls
-            definition-module
-            definition-module-id
-            params
-            macro-name
-            args
-            depth
-            call-expr
-            false)]
-        [(and
-            (macro-core-boolean-macro? macro-name definition-module "or")
-            (macro-core-boolean-signature?
-              ctx
-              definition-module
-              definition-module-id
-              params))
-          (macro-core-boolean-fast-expand
-            ctx
-            type-env
-            decls
-            definition-module
-            definition-module-id
-            params
-            macro-name
-            args
-            depth
-            call-expr
-            true)]
-        [(macro-core-cond-macro? macro-name definition-module)
-          (macro-core-cond-fast-expand
-            ctx
-            type-env
-            decls
-            definition-module
-            definition-module-id
-            params
-            macro-name
-            args
-            depth
-            call-expr)]
-        [(and
             (macro-core-for-macro? macro-name definition-module)
             (macro-core-for-signature?
               ctx
@@ -63175,15 +62958,17 @@
                       decls
                       (+ depth 1)
                       (ast-node-get
-                        (macro-hygiene-expr
-                          (ast-node-get expanded)
-                          MacroHygieneEnv.Nil
-                          (MacroHygieneContext
-                            macro-name-id
-                            definition-module-id
-                            declaration-id
-                            (tc-context-symbols ctx))
-                          (+ depth 1))))
+                        (if (= expanded (ctfe-result-hygiene-free-node-id))
+                          expanded
+                          (macro-hygiene-expr
+                            (ast-node-get expanded)
+                            MacroHygieneEnv.Nil
+                            (MacroHygieneContext
+                              macro-name-id
+                              definition-module-id
+                              declaration-id
+                              (tc-context-symbols ctx))
+                            (+ depth 1)))))
                     (ResultMacroExpr.Err
                       (box
                         (ctfe-diagnostic-at-expr
@@ -63202,15 +62987,17 @@
                         decls
                         (+ depth 1)
                         (ast-node-get
-                          (macro-hygiene-expr
-                            (ast-node-get expanded)
-                            MacroHygieneEnv.Nil
-                            (MacroHygieneContext
-                              macro-name-id
-                              definition-module-id
-                              declaration-id
-                              (tc-context-symbols ctx))
-                            (+ depth 1)))))
+                          (if (= expanded (ctfe-result-hygiene-free-node-id))
+                            expanded
+                            (macro-hygiene-expr
+                              (ast-node-get expanded)
+                              MacroHygieneEnv.Nil
+                              (MacroHygieneContext
+                                macro-name-id
+                                definition-module-id
+                                declaration-id
+                                (tc-context-symbols ctx))
+                              (+ depth 1))))))
                     (ResultMacroExpr.Err
                       (box
                         (ctfe-diagnostic-at-expr

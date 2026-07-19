@@ -5,7 +5,8 @@ param(
     [string]$OptLevel = $env:TYPELISP_BOOTSTRAP_BENCH_OPT_LEVEL,
     [string]$WorkDir = $(Join-Path $PSScriptRoot "..\target\bootstrap-bench"),
     [string]$Source = "src\main.tl",
-    [string]$StdlibRoot = "stdlib"
+    [string]$StdlibRoot = "stdlib",
+    [switch]$SelfTestCommandConstruction
 )
 
 Set-StrictMode -Version Latest
@@ -38,6 +39,79 @@ function Resolve-Tool([string]$Name) {
         return $command.Source
     }
     throw "tool does not exist or is not on PATH: $Name"
+}
+
+function New-CompilerCompileArguments {
+    param(
+        [string]$SourcePath,
+        [string]$TargetName,
+        [string]$StdlibPath,
+        [string]$AsmPath,
+        [string]$OptimizationLevel
+    )
+
+    [string[]]$compileArgs = @(
+        "compile",
+        $SourcePath,
+        "--target",
+        $TargetName,
+        "--stdlib-root",
+        $StdlibPath,
+        "-o",
+        $AsmPath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($OptimizationLevel)) {
+        $compileArgs += @("--opt-level", $OptimizationLevel)
+    }
+
+    return $compileArgs
+}
+
+function Test-CompilerCompileArgumentConstruction {
+    [string[]]$withoutOpt = New-CompilerCompileArguments `
+        "source.tl" `
+        "linux-x86_64" `
+        "stdlib-root" `
+        "output.s" `
+        ""
+    [string[]]$withOpt = New-CompilerCompileArguments `
+        "source.tl" `
+        "windows-x86_64" `
+        "stdlib-root" `
+        "output.s" `
+        "2"
+
+    $expectedWithoutOpt = @(
+        "compile",
+        "source.tl",
+        "--target",
+        "linux-x86_64",
+        "--stdlib-root",
+        "stdlib-root",
+        "-o",
+        "output.s"
+    )
+    $expectedWithOpt = @(
+        "compile",
+        "source.tl",
+        "--target",
+        "windows-x86_64",
+        "--stdlib-root",
+        "stdlib-root",
+        "-o",
+        "output.s",
+        "--opt-level",
+        "2"
+    )
+
+    if (($withoutOpt -join "`n") -ne ($expectedWithoutOpt -join "`n")) {
+        throw "compile argument self-test failed without --opt-level"
+    }
+    if (($withOpt -join "`n") -ne ($expectedWithOpt -join "`n")) {
+        throw "compile argument self-test failed with --opt-level"
+    }
+    Write-Host "benchmark bootstrap command-construction self-test passed"
 }
 
 function Invoke-TimedCommand {
@@ -140,32 +214,12 @@ function Invoke-CompilerBuild {
     $objPath = Join-Path $runDir "$OutputStem$objExt"
     $binPath = Join-Path $runDir "$OutputStem$exeExt"
 
-    if ($CompilerKind -eq "stage0-rust") {
-        $compileArgs = @(
-            "compile",
-            $script:SourcePath,
-            "--target",
-            $script:Target,
-            "--stdlib-root",
-            $script:StdlibPath,
-            "-o",
-            $asmPath
-        )
-    } else {
-        $compileArgs = @(
-            $script:SourcePath,
-            "--target",
-            $script:Target,
-            "--stdlib-root",
-            $script:StdlibPath,
-            "-o",
-            $asmPath
-        )
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($script:OptLevel)) {
-        $compileArgs += @("--opt-level", $script:OptLevel)
-    }
+    [string[]]$compileArgs = New-CompilerCompileArguments `
+        $script:SourcePath `
+        $script:Target `
+        $script:StdlibPath `
+        $asmPath `
+        $script:OptLevel
 
     $compile = Invoke-TimedCommand `
         "$CompilerKind compile run $Run" `
@@ -214,6 +268,11 @@ function Get-Stats {
         median_ms = [math]::Round($median, 3)
         avg_ms = [math]::Round($sum / $count, 3)
     }
+}
+
+if ($SelfTestCommandConstruction) {
+    Test-CompilerCompileArgumentConstruction
+    exit 0
 }
 
 if ($Runs -lt 1) {

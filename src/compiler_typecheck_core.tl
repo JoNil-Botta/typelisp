@@ -11584,27 +11584,73 @@
   [index : i64]) : bool
   (if (>= index (ast-type-list-len types))
     false
-    (if (tc-type-needs-resolution?
-      (ty-node-get (ast-type-list-get types index (ast-type-id-fallback))))
+    (if (tc-type-needs-resolution-id?
+      (ast-type-list-get types index (ast-type-id-fallback)))
       true
       (tc-type-list-needs-resolution-at? types (+ index 1)))))
+
+;; Per-type-node memo for the resolution predicate: type nodes are immutable
+;; and hash-consed, so the answer is a pure function of the node id within
+;; one pool generation. One slot packs the fill epoch with the answer bit;
+;; the epoch bumps when the pool generation changes (truncation or a pool
+;; swap), and growth drops warm entries, which the epoch guard treats as
+;; unfilled.
+;; Fixed persistent capacity: the slots are allocated once at global init
+;; (growing under a caller's transient arena would leave the global
+;; dangling), and ids beyond it fall back to the uncached walk.
+(define tc-type-needs-resolution-slots : (Array i64)
+  (array.make-array i64 131072))
+(define tc-type-needs-resolution-epoch : i64
+  1)
+(define tc-type-needs-resolution-generation : i64
+  -1)
+
+(define (tc-type-needs-resolution-ensure-current!) : unit
+  (if (= tc-type-needs-resolution-generation (ty-node-pool-generation-value))
+    unit
+    (begin
+      (set! tc-type-needs-resolution-epoch (+ tc-type-needs-resolution-epoch 1))
+      (set! tc-type-needs-resolution-generation (ty-node-pool-generation-value)))))
+
+(define (tc-type-needs-resolution-id? [ty-id : i64]) : bool
+  (begin
+    (tc-type-needs-resolution-ensure-current!)
+    (when
+      (>= ty-id (array-length tc-type-needs-resolution-slots))
+      (return (tc-type-needs-resolution? (ty-node-get ty-id))))
+    (let
+      [slot : i64 (array-ref tc-type-needs-resolution-slots ty-id)]
+      (if (= (shr slot 1) tc-type-needs-resolution-epoch)
+        (= (bit-and slot 1) 1)
+        (let
+          [answer : bool (tc-type-needs-resolution? (ty-node-get ty-id))]
+          (begin
+            (array-set!
+              tc-type-needs-resolution-slots
+              ty-id
+              (bit-or
+                (shl tc-type-needs-resolution-epoch 1)
+                (if answer
+                  1
+                  0)))
+            answer))))))
 
 (define (tc-type-needs-resolution? [ty : AstType]) : bool
   (match ty
     [(AstType.Func args ret)
       (if (tc-type-list-needs-resolution? (box-get args))
         true
-        (tc-type-needs-resolution? (ty-node-get ret)))]
+        (tc-type-needs-resolution-id? ret))]
     [(AstType.Tuple elems) (tc-type-list-needs-resolution? (box-get elems))]
-    [(AstType.Array elem _) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.DynArray elem) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.Box elem) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.Ptr elem) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.MutPtr elem) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.Ref _ inner) (tc-type-needs-resolution? (ty-node-get inner))]
-    [(AstType.MutRef _ inner) (tc-type-needs-resolution? (ty-node-get inner))]
-    [(AstType.Region _ inner) (tc-type-needs-resolution? (ty-node-get inner))]
-    [(AstType.Consume inner) (tc-type-needs-resolution? (ty-node-get inner))]
+    [(AstType.Array elem _) (tc-type-needs-resolution-id? elem)]
+    [(AstType.DynArray elem) (tc-type-needs-resolution-id? elem)]
+    [(AstType.Box elem) (tc-type-needs-resolution-id? elem)]
+    [(AstType.Ptr elem) (tc-type-needs-resolution-id? elem)]
+    [(AstType.MutPtr elem) (tc-type-needs-resolution-id? elem)]
+    [(AstType.Ref _ inner) (tc-type-needs-resolution-id? inner)]
+    [(AstType.MutRef _ inner) (tc-type-needs-resolution-id? inner)]
+    [(AstType.Region _ inner) (tc-type-needs-resolution-id? inner)]
+    [(AstType.Consume inner) (tc-type-needs-resolution-id? inner)]
     [(AstType.VarArgs _ _) true]
     [(AstType.Var _) true]
     [_ false]))

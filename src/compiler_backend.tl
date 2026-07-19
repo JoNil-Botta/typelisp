@@ -41609,8 +41609,11 @@
                             (set! cand-count (+ cand-count 1)))
                           ;; general line: classify every %rsp occurrence.
                           (let
-                            [w : i64
-                              (compiler-backend-sweep-line-width data m end)]
+                            ;; Width is only consumed when a non-leaq %rsp
+                            ;; memory read is recorded below; most lines have
+                            ;; no such read, so the '%'-jumping width walk is
+                            ;; deferred to the first recording use.
+                            [w : i64 -1]
                             [q : i64 m]
                             (begin
                               ;; Jump between '%' bytes; positions without one
@@ -41689,6 +41692,14 @@
                                                       (set! watermark c)
                                                       unit))
                                                   (begin
+                                                    (if (< w 0)
+                                                      (set!
+                                                        w
+                                                        (compiler-backend-sweep-line-width
+                                                          data
+                                                          m
+                                                          end))
+                                                      unit)
                                                     (set!
                                                       reads-lo
                                                       (compiler-backend-sweep-i64-push

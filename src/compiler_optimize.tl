@@ -18121,116 +18121,6 @@
     0
     deriveds))
 
-;; Keep the shared `base + iv*scale` address explicit when its tag load drives
-;; a switch. The late successor sink can then clone that local pure chain for
-;; a payload-only arm without making a strength-reduced address phi acquire a
-;; new arm use. The exact four-instruction dataflow plus switch terminator keeps
-;; this exclusion local to enum-style dispatch fetches.
-(define (opt-induction-dispatch-address-shape?
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : bool
-  (if (>= (+ index 3) (compiler-ir-instr-seq-count instrs))
-    false
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.BinOp mul-dst (CompilerIrBinOp.Mul) _ _ _)
-        (match (compiler-ir-instr-seq-ref instrs (+ index 1))
-          [(CompilerIrInstr.Gep address-dst _ offset _)
-            (if (opt-value-is-var? offset mul-dst)
-              (match (compiler-ir-instr-seq-ref instrs (+ index 2))
-                [(CompilerIrInstr.Gep tag-gep-dst base _ _)
-                  (if (opt-value-is-var? base address-dst)
-                    (match (compiler-ir-instr-seq-ref instrs (+ index 3))
-                      [(CompilerIrInstr.Load tag-dst src _)
-                        (let
-                          [count : i64 (compiler-ir-instr-seq-count instrs)]
-                          (and
-                            (opt-value-is-var? src tag-gep-dst)
-                            (> count 0)
-                            (match (compiler-ir-instr-seq-ref
-                              instrs
-                              (- count 1))
-                              [(CompilerIrInstr.Switch value _ _ _)
-                                (opt-value-is-var? value tag-dst)]
-                              [_ false])))]
-                      [_ false])
-                    false)]
-                [_ false])
-              false)]
-          [_ false])]
-      [_ (opt-induction-dispatch-address-shape? instrs (+ index 1))])))
-
-(define (opt-induction-dispatch-address-seq?
-  [fact : OptInductionFact]
-  [offsets : opt_i64_i64_map.Map]
-  [scaled : opt_i64_i64_map.Map]
-  [loop-defs : opt_i64_i64_map.Map]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : bool
-  (if (>= (+ index 3) (compiler-ir-instr-seq-count instrs))
-    false
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.BinOp mul-dst (CompilerIrBinOp.Mul) _ _ _)
-        (match (opt-induction-find-derived-instr
-          fact
-          offsets
-          scaled
-          loop-defs
-          (compiler-ir-instr-seq-ref instrs index))
-          [(OptMaybeInductionDerived.Some derived)
-            (match derived
-              [(OptInductionDerived.Mul _ _ _)
-                (match (compiler-ir-instr-seq-ref instrs (+ index 1))
-                  [(CompilerIrInstr.Gep address-dst _ offset _)
-                    (if (opt-value-is-var? offset mul-dst)
-                      (match (compiler-ir-instr-seq-ref instrs (+ index 2))
-                        [(CompilerIrInstr.Gep tag-gep-dst base _ _)
-                          (if (opt-value-is-var? base address-dst)
-                            (match (compiler-ir-instr-seq-ref
-                              instrs
-                              (+ index 3))
-                              [(CompilerIrInstr.Load tag-dst src _)
-                                (let
-                                  [count : i64
-                                    (compiler-ir-instr-seq-count instrs)]
-                                  (and
-                                    (opt-value-is-var? src tag-gep-dst)
-                                    (> count 0)
-                                    (match (compiler-ir-instr-seq-ref
-                                      instrs
-                                      (- count 1))
-                                      [(CompilerIrInstr.Switch value _ _ _)
-                                        (opt-value-is-var? value tag-dst)]
-                                      [_ false])))]
-                              [_ false])
-                            false)]
-                        [_ false])
-                      false)]
-                  [_ false])]
-              [_
-                (opt-induction-dispatch-address-seq?
-                  fact
-                  offsets
-                  scaled
-                  loop-defs
-                  instrs
-                  (+ index 1))])]
-          [(OptMaybeInductionDerived.No)
-            (opt-induction-dispatch-address-seq?
-              fact
-              offsets
-              scaled
-              loop-defs
-              instrs
-              (+ index 1))])]
-      [_
-        (opt-induction-dispatch-address-seq?
-          fact
-          offsets
-          scaled
-          loop-defs
-          instrs
-          (+ index 1))])))
-
 (define (opt-induction-remat-address-dst
   [instr : CompilerIrInstr]
   [mul-dst : i64]) : option_i64.Option
@@ -32099,6 +31989,10 @@
   (No)
   (Some CompilerIrInstr CompilerIrValue AstType))
 
+(defenum OptSuccessorSinkMaybeInductionShape
+  (No)
+  (Some String String))
+
 (defstruct OptSuccessorSinkPrepareContext
   (frame i64)
   (target String)
@@ -32404,6 +32298,176 @@
         (opt-successor-sink-value-zero? blocks value)
         (opt-successor-sink-phi-zero-start? blocks (box-get rest)))]))
 
+(define (opt-successor-sink-phi-zero-label
+  [blocks : CompilerIrBlockList]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeLabel
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (OptSuccessorSinkMaybeLabel.No)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-successor-sink-phi-zero-label
+        blocks
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (opt-successor-sink-value-zero? blocks value)
+        (OptSuccessorSinkMaybeLabel.Some label)
+        (opt-successor-sink-phi-zero-label blocks (box-get rest)))]))
+
+(define (opt-successor-sink-phi-unit-step-value?
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var input-var)
+      (match (opt-successor-sink-find-def blocks input-var)
+        [(OptSuccessorSinkMaybeInstr.Some instr)
+          (match instr
+            [(CompilerIrInstr.BinOp _ (CompilerIrBinOp.Add) lhs rhs _)
+              (or
+                (and
+                  (opt-value-is-var? lhs phi-var)
+                  (match (opt-successor-sink-value-i64 blocks rhs)
+                    [(option_i64.Some step) (= step 1)]
+                    [(option_i64.None) false]))
+                (and
+                  (opt-value-is-var? rhs phi-var)
+                  (match (opt-successor-sink-value-i64 blocks lhs)
+                    [(option_i64.Some step) (= step 1)]
+                    [(option_i64.None) false])))]
+            [_ false])]
+        [(OptSuccessorSinkMaybeInstr.No) false])]
+    [_ false]))
+
+(define (opt-successor-sink-phi-unit-step-label
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeLabel
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (OptSuccessorSinkMaybeLabel.No)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-successor-sink-phi-unit-step-label
+        blocks
+        phi-var
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (opt-successor-sink-phi-unit-step-value? blocks phi-var value)
+        (OptSuccessorSinkMaybeLabel.Some label)
+        (opt-successor-sink-phi-unit-step-label blocks phi-var (box-get rest)))]))
+
+(define (opt-successor-sink-iv-phi-shape
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeInductionShape
+  (if (not (= (compiler-ir-phi-input-list-count inputs) 2))
+    (OptSuccessorSinkMaybeInductionShape.No)
+    (match (opt-successor-sink-phi-zero-label blocks inputs)
+      [(OptSuccessorSinkMaybeLabel.No) (OptSuccessorSinkMaybeInductionShape.No)]
+      [(OptSuccessorSinkMaybeLabel.Some seed-label)
+        (match (opt-successor-sink-phi-unit-step-label blocks phi-var inputs)
+          [(OptSuccessorSinkMaybeLabel.No)
+            (OptSuccessorSinkMaybeInductionShape.No)]
+          [(OptSuccessorSinkMaybeLabel.Some step-label)
+            (if (string.eq seed-label step-label)
+              (OptSuccessorSinkMaybeInductionShape.No)
+              (OptSuccessorSinkMaybeInductionShape.Some seed-label step-label))])])))
+
+(define (opt-successor-sink-pointer-seed-value?
+  [blocks : CompilerIrBlockList]
+  [expected-base : CompilerIrValue]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var input-var)
+      (match (opt-successor-sink-find-def blocks input-var)
+        [(OptSuccessorSinkMaybeInstr.Some instr)
+          (match instr
+            [(CompilerIrInstr.Gep _ base offset _)
+              (and
+                (opt-value-eq base expected-base)
+                (opt-successor-sink-value-zero? blocks offset))]
+            [_ false])]
+        [(OptSuccessorSinkMaybeInstr.No) false])]
+    [_ false]))
+
+(define (opt-successor-sink-pointer-step-value?
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [scale : i64]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var input-var)
+      (match (opt-successor-sink-find-def blocks input-var)
+        [(OptSuccessorSinkMaybeInstr.Some instr)
+          (match instr
+            [(CompilerIrInstr.Gep _ base offset _)
+              (and
+                (opt-value-is-var? base phi-var)
+                (match (opt-successor-sink-value-i64 blocks offset)
+                  [(option_i64.Some found) (= found scale)]
+                  [(option_i64.None) false]))]
+            [_ false])]
+        [(OptSuccessorSinkMaybeInstr.No) false])]
+    [_ false]))
+
+(define (opt-successor-sink-pointer-edge-label
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [base : CompilerIrValue]
+  [scale : i64]
+  [want-step : bool]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeLabel
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (OptSuccessorSinkMaybeLabel.No)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-successor-sink-pointer-edge-label
+        blocks
+        phi-var
+        base
+        scale
+        want-step
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (if want-step
+        (opt-successor-sink-pointer-step-value? blocks phi-var scale value)
+        (opt-successor-sink-pointer-seed-value? blocks base value))
+        (OptSuccessorSinkMaybeLabel.Some label)
+        (opt-successor-sink-pointer-edge-label
+          blocks
+          phi-var
+          base
+          scale
+          want-step
+          (box-get rest)))]))
+
+(define (opt-successor-sink-pointer-phi-shape
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [base : CompilerIrValue]
+  [scale : i64]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeInductionShape
+  (if (not (= (compiler-ir-phi-input-list-count inputs) 2))
+    (OptSuccessorSinkMaybeInductionShape.No)
+    (match (opt-successor-sink-pointer-edge-label
+      blocks
+      phi-var
+      base
+      scale
+      false
+      inputs)
+      [(OptSuccessorSinkMaybeLabel.No) (OptSuccessorSinkMaybeInductionShape.No)]
+      [(OptSuccessorSinkMaybeLabel.Some seed-label)
+        (match (opt-successor-sink-pointer-edge-label
+          blocks
+          phi-var
+          base
+          scale
+          true
+          inputs)
+          [(OptSuccessorSinkMaybeLabel.No)
+            (OptSuccessorSinkMaybeInductionShape.No)]
+          [(OptSuccessorSinkMaybeLabel.Some step-label)
+            (if (string.eq seed-label step-label)
+              (OptSuccessorSinkMaybeInductionShape.No)
+              (OptSuccessorSinkMaybeInductionShape.Some seed-label step-label))])])))
+
 (define (opt-successor-sink-phi-update-scale
   [blocks : CompilerIrBlockList]
   [phi-var : i64]
@@ -32455,10 +32519,57 @@
           [(OptSuccessorSinkMaybeInstr.Some instr)
             (match instr
               [(CompilerIrInstr.Phi _ inputs _)
-                (opt-successor-sink-phi-zero-start? blocks inputs)]
+                (match (opt-successor-sink-iv-phi-shape blocks iv inputs)
+                  [(OptSuccessorSinkMaybeInductionShape.Some _ _) true]
+                  [(OptSuccessorSinkMaybeInductionShape.No) false])]
               [_ false])]
           [(OptSuccessorSinkMaybeInstr.No) false]))]
     [_ false]))
+
+(define (opt-successor-sink-mul-scale-var
+  [blocks : CompilerIrBlockList]
+  [defs : (Array i64)]
+  [frame : i64]
+  [scale : i64]
+  [instr : CompilerIrInstr]) : option_i64.Option
+  (match instr
+    [(CompilerIrInstr.BinOp _ (CompilerIrBinOp.Mul) lhs rhs _)
+      (match lhs
+        [(CompilerIrValue.Var iv)
+          (if (opt-successor-sink-mul-scale-source
+            blocks
+            defs
+            frame
+            lhs
+            rhs
+            scale)
+            (option_i64.Some iv)
+            (match rhs
+              [(CompilerIrValue.Var other-iv)
+                (if (opt-successor-sink-mul-scale-source
+                  blocks
+                  defs
+                  frame
+                  rhs
+                  lhs
+                  scale)
+                  (option_i64.Some other-iv)
+                  (option_i64.None))]
+              [_ (option_i64.None)]))]
+        [_
+          (match rhs
+            [(CompilerIrValue.Var iv)
+              (if (opt-successor-sink-mul-scale-source
+                blocks
+                defs
+                frame
+                rhs
+                lhs
+                scale)
+                (option_i64.Some iv)
+                (option_i64.None))]
+            [_ (option_i64.None)])])]
+    [_ (option_i64.None)]))
 
 (define (opt-successor-sink-find-scale-mul
   [blocks : CompilerIrBlockList]
@@ -32573,11 +32684,59 @@
             scale
             0)
             [(OptSuccessorSinkMaybeInstr.Some mul)
-              (opt-successor-sink-phi-init-recipe
+              (match (opt-successor-sink-phi-init-recipe
                 (struct-get context blocks)
                 phi-var
                 inputs
-                mul)]
+                mul)
+                [(OptSuccessorSinkMaybeRecipe.Some _ base ptr-ty)
+                  (match (opt-successor-sink-mul-scale-var
+                    (struct-get context blocks)
+                    (struct-get context defs)
+                    (struct-get context frame)
+                    scale
+                    mul)
+                    [(option_i64.Some iv)
+                      (match (opt-successor-sink-find-def
+                        (struct-get context blocks)
+                        iv)
+                        [(OptSuccessorSinkMaybeInstr.Some iv-instr)
+                          (match iv-instr
+                            [(CompilerIrInstr.Phi _ iv-inputs _)
+                              (match (opt-successor-sink-iv-phi-shape
+                                (struct-get context blocks)
+                                iv
+                                iv-inputs)
+                                [(OptSuccessorSinkMaybeInductionShape.Some
+                                    iv-seed
+                                    iv-step)
+                                  (match (opt-successor-sink-pointer-phi-shape
+                                    (struct-get context blocks)
+                                    phi-var
+                                    base
+                                    scale
+                                    inputs)
+                                    [(OptSuccessorSinkMaybeInductionShape.Some
+                                        ptr-seed
+                                        ptr-step)
+                                      (if (and
+                                        (string.eq iv-seed ptr-seed)
+                                        (string.eq iv-step ptr-step))
+                                        (OptSuccessorSinkMaybeRecipe.Some
+                                          mul
+                                          base
+                                          ptr-ty)
+                                        (OptSuccessorSinkMaybeRecipe.No))]
+                                    [(OptSuccessorSinkMaybeInductionShape.No)
+                                      (OptSuccessorSinkMaybeRecipe.No)])]
+                                [(OptSuccessorSinkMaybeInductionShape.No)
+                                  (OptSuccessorSinkMaybeRecipe.No)])]
+                            [_ (OptSuccessorSinkMaybeRecipe.No)])]
+                        [(OptSuccessorSinkMaybeInstr.No)
+                          (OptSuccessorSinkMaybeRecipe.No)])]
+                    [(option_i64.None) (OptSuccessorSinkMaybeRecipe.No)])]
+                [(OptSuccessorSinkMaybeRecipe.No)
+                  (OptSuccessorSinkMaybeRecipe.No)])]
             [(OptSuccessorSinkMaybeInstr.No) (OptSuccessorSinkMaybeRecipe.No)])]
         [(option_i64.None) (OptSuccessorSinkMaybeRecipe.No)])]
     [_ (OptSuccessorSinkMaybeRecipe.No)]))
@@ -32961,126 +33120,147 @@
   (if (or
     (> (array-ref (struct-get context planned) var) 0)
     (> (array-ref (struct-get context base-allowed) var) 0)
-    (> (array-ref (struct-get context leaf-uses) var) 0)
-    (> (array-ref (struct-get context loop-phi-leaves) var) 0))
+    (> (array-ref (struct-get context leaf-uses) var) 0))
     true
     (let
       [def-tag : i64 (array-ref (struct-get context defs) var)]
-      (if (<= def-tag 0)
-        ;; A value with no function definition is a parameter. An external value
-        ;; used by a loop header is already live around the natural loop, so it
-        ;; remains a safe leaf in a header successor. Target/terminator uses and
-        ;; Phi leaves returned above cover the other permitted live cases.
-        (or
-          (<= (array-ref (struct-get context all-defs) var) 0)
-          (struct-get context source-loop-target)
-          (> (array-ref (struct-get context terminator-live) var) 0))
-        (if (> (array-ref (struct-get context visiting) var) 0)
-          false
-          (let
-            [index : i64 (- def-tag 1)]
-            [producer : CompilerIrInstr
-              (compiler-ir-instr-seq-ref (struct-get context instrs) index)]
-            [all-move? : bool
-              (=
-                (array-ref (struct-get context total-uses) var)
-                (opt-successor-sink-covered-use-count context pending-moves var))]
-            [can-move? : bool
-              (and
-                all-move?
-                (opt-successor-sink-candidate?
+      (if (> (array-ref (struct-get context loop-phi-leaves) var) 0)
+        (let
+          [_rematerialized : bool
+            (if (> def-tag 0)
+              (opt-successor-sink-try-induction-remat!
+                context
+                var
+                (compiler-ir-instr-seq-ref
                   (struct-get context instrs)
-                  index
-                  (struct-get context terminator-index)
-                  producer))]
-            (begin
-              (array-set! (struct-get context visiting) var 1)
-              (cond
-                [can-move?
-                  (let
-                    [next-pending : CompilerIrInstrList
-                      (compiler-ir-instr-cons producer pending-moves)]
-                    [ok : bool
-                      (opt-successor-sink-prepare-operands!
-                        context
-                        producer
-                        next-pending
-                        (&mut builder)
-                        origins)]
-                    (begin
-                      (if ok
-                        (begin
-                          (opt-successor-sink-append-prepared!
-                            context
-                            (&mut builder)
-                            origins
-                            (opt-successor-sink-subst-instr
-                              (struct-get context frame)
-                              (struct-get context remap)
-                              producer)
-                            index)
-                          (array-set! (struct-get context removed) index 1)
-                          (array-set! (struct-get context planned) var 1))
-                        unit)
-                      (array-set! (struct-get context visiting) var 0)
-                      ok))]
-                [(and
-                    (opt-successor-sink-remat-candidate? producer)
-                    (< (array-ref (struct-get context clone-count) 0) 4))
-                  (begin
-                    ;; Reserve the chain slot before descending so a fifth
-                    ;; in-progress clone cannot pass a count that has not yet
-                    ;; been committed while recursion unwinds.
-                    (array-set!
-                      (struct-get context clone-count)
-                      0
-                      (+ (array-ref (struct-get context clone-count) 0) 1))
+                  (- def-tag 1))
+                (&mut builder)
+                origins)
+              false)]
+          ;; A loop phi is already live around the natural loop. If the
+          ;; specialized pointer recipe cannot prove a synchronized unit-step
+          ;; IV, retaining the phi as the moved instruction's leaf is safe.
+          true)
+        (if (<= def-tag 0)
+          ;; A value with no function definition is a parameter. An external value
+          ;; used by a loop header is already live around the natural loop, so it
+          ;; remains a safe leaf in a header successor. Target/terminator uses and
+          ;; Phi leaves returned above cover the other permitted live cases.
+          (or
+            (<= (array-ref (struct-get context all-defs) var) 0)
+            (struct-get context source-loop-target)
+            (> (array-ref (struct-get context terminator-live) var) 0))
+          (if (> (array-ref (struct-get context visiting) var) 0)
+            false
+            (let
+              [index : i64 (- def-tag 1)]
+              [producer : CompilerIrInstr
+                (compiler-ir-instr-seq-ref (struct-get context instrs) index)]
+              [all-move? : bool
+                (=
+                  (array-ref (struct-get context total-uses) var)
+                  (opt-successor-sink-covered-use-count
+                    context
+                    pending-moves
+                    var))]
+              [can-move? : bool
+                (and
+                  all-move?
+                  (opt-successor-sink-candidate?
+                    (struct-get context instrs)
+                    index
+                    (struct-get context terminator-index)
+                    producer))]
+              (begin
+                (array-set! (struct-get context visiting) var 1)
+                (cond
+                  [can-move?
                     (let
-                      ;; The original producer remains in the source. Do not
-                      ;; put it in `pending-moves`: its operand uses remain
-                      ;; there and force transitive rematerialization as needed.
+                      [next-pending : CompilerIrInstrList
+                        (compiler-ir-instr-cons producer pending-moves)]
                       [ok : bool
                         (opt-successor-sink-prepare-operands!
                           context
                           producer
-                          pending-moves
+                          next-pending
                           (&mut builder)
                           origins)]
-                      (if ok
-                        (let
-                          [fresh : i64
-                            (opt-bce-version-alloc-var
-                              (struct-get context frame-cell))]
-                          [rewritten : CompilerIrInstr
-                            (opt-successor-sink-subst-instr
-                              (struct-get context frame)
-                              (struct-get context remap)
-                              producer)]
+                      (begin
+                        (if ok
                           (begin
-                            (array-set!
-                              (struct-get context remap)
-                              var
-                              (+ fresh 1))
                             (opt-successor-sink-append-prepared!
                               context
                               (&mut builder)
                               origins
-                              (opt-successor-sink-remat-clone fresh rewritten)
-                              (- 0 1))
-                            (array-set! (struct-get context planned) var 1)
+                              (opt-successor-sink-subst-instr
+                                (struct-get context frame)
+                                (struct-get context remap)
+                                producer)
+                              index)
+                            (array-set! (struct-get context removed) index 1)
+                            (array-set! (struct-get context planned) var 1))
+                          unit)
+                        (array-set! (struct-get context visiting) var 0)
+                        ok))]
+                  [(and
+                      (opt-successor-sink-remat-candidate? producer)
+                      (< (array-ref (struct-get context clone-count) 0) 4))
+                    (begin
+                      ;; Reserve the chain slot before descending so a fifth
+                      ;; in-progress clone cannot pass a count that has not yet
+                      ;; been committed while recursion unwinds.
+                      (array-set!
+                        (struct-get context clone-count)
+                        0
+                        (+ (array-ref (struct-get context clone-count) 0) 1))
+                      (let
+                        ;; The original producer remains in the source. Do not
+                        ;; put it in `pending-moves`: its operand uses remain
+                        ;; there and force transitive rematerialization as needed.
+                        [ok : bool
+                          (opt-successor-sink-prepare-operands!
+                            context
+                            producer
+                            pending-moves
+                            (&mut builder)
+                            origins)]
+                        (if ok
+                          (let
+                            [fresh : i64
+                              (opt-bce-version-alloc-var
+                                (struct-get context frame-cell))]
+                            [rewritten : CompilerIrInstr
+                              (opt-successor-sink-subst-instr
+                                (struct-get context frame)
+                                (struct-get context remap)
+                                producer)]
+                            (begin
+                              (array-set!
+                                (struct-get context remap)
+                                var
+                                (+ fresh 1))
+                              (opt-successor-sink-append-prepared!
+                                context
+                                (&mut builder)
+                                origins
+                                (opt-successor-sink-remat-clone fresh rewritten)
+                                (- 0 1))
+                              (array-set! (struct-get context planned) var 1)
+                              (array-set! (struct-get context visiting) var 0)
+                              true))
+                          (begin
+                            (array-set!
+                              (struct-get context clone-count)
+                              0
+                              (-
+                                (array-ref (struct-get context clone-count) 0)
+                                1))
                             (array-set! (struct-get context visiting) var 0)
-                            true))
-                        (begin
-                          (array-set!
-                            (struct-get context clone-count)
-                            0
-                            (- (array-ref (struct-get context clone-count) 0) 1))
-                          (array-set! (struct-get context visiting) var 0)
-                          false))))]
-                [else
-                  (begin
-                    (array-set! (struct-get context visiting) var 0)
-                    false)]))))))))
+                            false))))]
+                  [else
+                    (begin
+                      (array-set! (struct-get context visiting) var 0)
+                      false)])))))))))
 
 (define (opt-successor-sink-prepare-root
   [frame : i64]
@@ -46336,7 +46516,7 @@
 
 ;; Strength-reduced loop-pointer form used by vm_run. The dead block-local Mul
 ;; is the retained rematerialization recipe; v12 itself must not reach `use`.
-(define (opt-successor-sink-induction-remat-blocks) : CompilerIrBlockList
+(define (opt-successor-sink-induction-remat-blocks-with-step [step : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
       "preheader"
@@ -46438,7 +46618,7 @@
                   3
                   (CompilerIrBinOp.Add)
                   (CompilerIrValue.Var 2)
-                  (CompilerIrValue.I64 1)
+                  (CompilerIrValue.I64 step)
                   (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Gep
@@ -46450,6 +46630,9 @@
                     (CompilerIrInstr.Jump "header")
                     CompilerIrInstrList.Nil))))
             CompilerIrBlockList.Nil))))))
+
+(define (opt-successor-sink-induction-remat-blocks) : CompilerIrBlockList
+  (opt-successor-sink-induction-remat-blocks-with-step 1))
 
 ;; v2 is read in both successors, so neither successor owns every use.
 (define (opt-successor-sink-multi-use-blocks) : CompilerIrBlockList
@@ -46649,6 +46832,12 @@
         "successor_sink_induction_remat"
         (opt-successor-sink-induction-remat-blocks))]
     [induction : CompilerIrBlockList (opt-function-blocks induction-function)]
+    [induction-step-two-function : CompilerIrFunction
+      (opt-successor-sink-run-function
+        "successor_sink_induction_step_two"
+        (opt-successor-sink-induction-remat-blocks-with-step 2))]
+    [induction-step-two : CompilerIrBlockList
+      (opt-function-blocks induction-step-two-function)]
     [multi-use : CompilerIrBlockList
       (opt-successor-sink-run
         "successor_sink_multi_use"
@@ -46719,16 +46908,36 @@
         (return 13))
       (unless
         (and
-          (= (array-ref induction-cell 0) 16)
+          (= (array-ref induction-cell 0) 18)
           (string.eq (opt-successor-sink-def-label induction-direct 6 "") "use")
-          (string.eq (opt-successor-sink-def-label induction-direct 5 "") "use"))
+          (string.eq (opt-successor-sink-def-label induction-direct 5 "") "use")
+          (string.eq
+            (opt-successor-sink-def-label induction-direct 16 "")
+            "use")
+          (string.eq
+            (opt-successor-sink-def-label induction-direct 17 "")
+            "use"))
         (return 14))
       (unless
         (and
-          (= (opt-function-frame induction-function) 16)
+          (= (opt-function-frame induction-function) 18)
           (string.eq (opt-successor-sink-def-label induction 6 "") "use")
-          (string.eq (opt-successor-sink-def-label induction 5 "") "use"))
+          (string.eq (opt-successor-sink-def-label induction 5 "") "use")
+          (string.eq (opt-successor-sink-def-label induction 16 "") "use")
+          (string.eq (opt-successor-sink-def-label induction 17 "") "use"))
         (return 15))
+      (unless
+        (and
+          (= (opt-function-frame induction-step-two-function) 16)
+          (string.eq
+            (opt-successor-sink-def-label induction-step-two 6 "")
+            "use")
+          (string.eq
+            (opt-successor-sink-def-label induction-step-two 5 "")
+            "use")
+          (string.eq (opt-successor-sink-def-label induction-step-two 16 "") "")
+          (string.eq (opt-successor-sink-def-label induction-step-two 17 "") ""))
+        (return 16))
       42)))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it

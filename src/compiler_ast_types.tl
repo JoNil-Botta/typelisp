@@ -397,7 +397,29 @@
   (SpmdCallable (Box AstSpmdSpecializationList)))
 
 (defenum AstExternMetadata
-  (Metadata AstExternAbi i64 AstExternLinkInputList bool))
+  ;; The final word packs whether the ABI was explicit and whether the
+  ;; link-symbol spelling is the declaration's source spelling. The latter is
+  ;; established at the parser/loader boundary so lowering never has to render
+  ;; two ids and compare their bytes to recover that identity fact. Packing the
+  ;; bits preserves the compact boxed metadata layout.
+  (Metadata AstExternAbi i64 AstExternLinkInputList i64))
+
+(define (ast-extern-metadata-flags
+  [explicit-abi : bool]
+  [symbol-matches-source : bool]) : i64
+  (+
+    (if explicit-abi
+      1
+      0)
+    (if symbol-matches-source
+      2
+      0)))
+
+(define (ast-extern-metadata-flags-explicit-abi? [flags : i64]) : bool
+  (not (= (bit-and flags 1) 0)))
+
+(define (ast-extern-metadata-flags-symbol-matches-source? [flags : i64]) : bool
+  (not (= (bit-and flags 2) 0)))
 
 (defenum AstStructCleanup
   (No)
@@ -5810,12 +5832,12 @@
   [remap : AstProgramCompactionRemap]
   [metadata : AstExternMetadata]) : AstExternMetadata
   (match metadata
-    [(AstExternMetadata.Metadata abi symbol links no-mangle)
+    [(AstExternMetadata.Metadata abi symbol links flags)
       (AstExternMetadata.Metadata
         (ast-compaction-remap-extern-abi remap abi)
         symbol
         (ast-compaction-remap-extern-link-input-list links)
-        no-mangle)]))
+        flags)]))
 
 (define (ast-compaction-remap-variant-payload-cleanup
   [cleanup : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup
@@ -7213,6 +7235,17 @@
 (define (ast-extern-metadata-link-inputs [metadata : AstExternMetadata]) : AstExternLinkInputList
   (match metadata
     [(AstExternMetadata.Metadata _ _ link-inputs _) link-inputs]))
+
+(define (ast-extern-metadata-explicit-abi? [metadata : AstExternMetadata]) : bool
+  (match metadata
+    [(AstExternMetadata.Metadata _ _ _ flags)
+      (ast-extern-metadata-flags-explicit-abi? flags)]))
+
+(define (ast-extern-metadata-symbol-matches-source?
+  [metadata : AstExternMetadata]) : bool
+  (match metadata
+    [(AstExternMetadata.Metadata _ _ _ flags)
+      (ast-extern-metadata-flags-symbol-matches-source? flags)]))
 
 (define (ast-struct-cleanup? [cleanup : AstStructCleanup]) : bool
   (match cleanup

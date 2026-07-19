@@ -9046,7 +9046,9 @@
                   parsed-abi
                   parsed-symbol-id
                   link-inputs
-                  explicit-abi)
+                  (ast-extern-metadata-flags
+                    explicit-abi
+                    (= parsed-symbol-id name)))
                 ty))]
           [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)]))]
     [(ResultAstExternHeader.Err message) (ResultAstDecl.Err message)]))
@@ -9084,7 +9086,9 @@
                       parsed-abi
                       parsed-symbol-id
                       link-inputs
-                      explicit-abi)
+                      (ast-extern-metadata-flags
+                        explicit-abi
+                        (= parsed-symbol-id name)))
                     parsed-ty))]
               [(ResultAstExternParts.Err message) (ResultAstDecl.Err message)]))]
         [_

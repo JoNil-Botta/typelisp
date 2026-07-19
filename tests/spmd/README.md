@@ -95,12 +95,12 @@ compile and run in `avx2` and `avx512`.
 - `masked_if_match_i64.tl` - AVX2/AVX-512 varying `match` nested inside a
   masked varying `if` branch, covering branch-mask composition with match arm
   masks. Exit 42.
-- `varying_while_i64.tl` - AVX-512-only varying `while` over `n = 13` i64
+- `varying_while_i64.tl` - AVX2/AVX-512 varying `while` over `n = 13` i64
   lanes, covering per-lane loop convergence and a masked tail. Exit 42.
-- `varying_while_f32_i32.tl` - AVX-512-only varying `while` over `n = 19`
+- `varying_while_f32_i32.tl` - AVX2/AVX-512 varying `while` over `n = 19`
   f32/i32 lanes, covering masked subtraction/multiplication, divergent
   iteration counts, and a masked tail. Exit 42.
-- `masked_if_varying_while_i64.tl` - AVX-512-only varying `while` nested under
+- `masked_if_varying_while_i64.tl` - AVX2/AVX-512 varying `while` nested under
   a masked varying `if`, covering parent branch masks plus loop-carried masks.
   Exit 42.
 - `varying_match_i64.tl` - AVX2/AVX-512 value-producing varying `match` over

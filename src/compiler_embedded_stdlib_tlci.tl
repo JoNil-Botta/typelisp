@@ -6,6 +6,12 @@
   (not (any stage0-seed-bootstrap test))
   (import compiler_embedded_stdlib_tlci_payload as payload))
 (import "tlci_loader.tl")
+
+;; compiler_ctfe instantiates (hashmap i64 i64); the generated-module import
+;; needs stdlib.hashmap in this program graph even though full compiler
+;; builds get it from other modules (small graphs like the embedded verifier
+;; would otherwise fail the instantiation).
+(import stdlib.hashmap)
 (import "tlci_core.tl")
 (import "compiler_ast_types.tl")
 (import "compiler_ctfe.tl")

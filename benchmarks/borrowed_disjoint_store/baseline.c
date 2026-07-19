@@ -10,14 +10,22 @@ typedef struct BorrowedPair {
     uint64_t y;
 } BorrowedPair;
 
+__attribute__((noinline)) static void borrowed_disjoint_store_touch(
+    BorrowedPair *write,
+    uint64_t value) {
+    write->y = value;
+}
+
 __attribute__((noinline)) static uint64_t borrowed_disjoint_store_loop(
     const BorrowedPair *read,
     BorrowedPair *write,
     uint64_t iterations) {
     uint64_t acc = 0;
     for (uint64_t i = 0; i < iterations; i++) {
-        write->y = i;
-        write->x = read->x + i;
+        uint64_t current = read->x;
+        borrowed_disjoint_store_touch(write, i);
+        write->y = read->x;
+        write->x = current + i;
         acc += read->x;
     }
     return acc;

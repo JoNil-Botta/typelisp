@@ -2292,6 +2292,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-stdlib-tlci-native-dispatches : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-stdlib-source-interpreted : i64
     0))
 (cfg
@@ -2431,6 +2435,7 @@
       (set! compiler-tc-macro-stdlib-tlci-catalog-misses 0)
       (set! compiler-tc-macro-stdlib-tlci-load-failures 0)
       (set! compiler-tc-macro-stdlib-tlci-interpreted-fallbacks 0)
+      (set! compiler-tc-macro-stdlib-tlci-native-dispatches 0)
       (set! compiler-tc-macro-stdlib-source-interpreted 0)
       (set! compiler-tc-macro-walk-decls-shared 0)
       (set! compiler-tc-macro-walk-decls-expanded 0)
@@ -3097,6 +3102,9 @@
       (compiler-tc-macro-counter-profile-line
         "stdlib_tlci_interpreted_fallbacks"
         compiler-tc-macro-stdlib-tlci-interpreted-fallbacks)
+      (compiler-tc-macro-counter-profile-line
+        "stdlib_tlci_native_dispatches"
+        compiler-tc-macro-stdlib-tlci-native-dispatches)
       (compiler-tc-macro-counter-profile-line
         "stdlib_source_interpreted"
         compiler-tc-macro-stdlib-source-interpreted)
@@ -62086,6 +62094,123 @@
           (+ compiler-tc-macro-stdlib-source-interpreted 1))))
     unit))
 
+(defenum MacroNativeStdlibTlciResult
+  (No)
+  (Value CompilerCtfeValue)
+  (Err CompilerDiagnostic))
+
+;; The one identity whose embedded entry carries a source-compiled native
+;; body in this slice; the per-entry inventory that replaces this constant is
+;; the generalization issue's deliverable. Refs #5212.
+(define macro-stdlib-tlci-native-identity : String
+  "stdlib.array/length")
+(define macro-stdlib-tlci-native-cookie : i64
+  0x1cf1)
+
+;; Execute a cataloged native entry with the exact operand values the
+;; interpreted binding produced: the bound CTFE environment is consulted per
+;; parameter name, so marshalling cannot diverge from interpretation. Any
+;; unavailable session keeps the counted interpreted fallback; a nonzero
+;; dispatch status surfaces as the same diagnostic contract the interpreter
+;; uses.
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-try-stdlib-tlci-native
+    [ctx : TcContext]
+    [definition-module : String]
+    [macro-name : String]
+    [params : AstMacroParamList]
+    [env : CtfeEnv]
+    [call-expr : AstExpr]) : MacroNativeStdlibTlciResult
+    (let
+      [identity : String
+        (if (ctfe-string-prefix? macro-name "stdlib.")
+          macro-name
+          (str_cat.str-cat definition-module "/" macro-name))]
+      (if (or
+        (not macro-expand-stdlib-tlci-route-active)
+        (not (string.eq identity macro-stdlib-tlci-native-identity)))
+        MacroNativeStdlibTlciResult.No
+        (if (not (compiler-embedded-stdlib-tlci-session-open!))
+          MacroNativeStdlibTlciResult.No
+          (let
+            [count : i64 (struct-get params len)]
+            [operands : (Array CompilerCtfeValue)
+              (array.make-array CompilerCtfeValue 8)]
+            [index : i64 0]
+            [ok : bool (<= count 8)]
+            (begin
+              (while (and ok (< index count))
+                (match (array-ref (struct-get params slots) index)
+                  [(AstMacroParam.Param pname _ _ _)
+                    (match (ctfe-env-lookup-id env pname)
+                      [(CtfeMaybeValue.Some value)
+                        (begin
+                          (array-set! operands index value)
+                          (set! index (+ index 1)))]
+                      [(CtfeMaybeValue.None) (set! ok false)])]))
+              (if (not ok)
+                MacroNativeStdlibTlciResult.No
+                (begin
+                  (compiler-comptime-host-session-open!
+                    (tc-context-pools ctx)
+                    operands
+                    count
+                    (ctfe-fuel-limit)
+                    macro-stdlib-tlci-native-cookie)
+                  (match (compiler-embedded-stdlib-tlci-session-dispatch
+                    identity
+                    macro-stdlib-tlci-native-cookie)
+                    [(ResultTlciMacroDispatch.Err message)
+                      (begin
+                        (compiler-comptime-host-session-close!)
+                        (MacroNativeStdlibTlciResult.Err
+                          (ctfe-diagnostic-at-expr call-expr message)))]
+                    [(ResultTlciMacroDispatch.Ok dispatch)
+                      (if (and
+                        (= (struct-get dispatch status) 0)
+                        (compiler-comptime-host-result-ready?))
+                        (let
+                          [value : CompilerCtfeValue
+                            (compiler-comptime-host-result-value)]
+                          (begin
+                            (compiler-comptime-host-session-close!)
+                            (cfg
+                              compile-profile
+                              (begin
+                                (set!
+                                  compiler-tc-macro-stdlib-tlci-catalog-hits
+                                  (+
+                                    compiler-tc-macro-stdlib-tlci-catalog-hits
+                                    1))
+                                (set!
+                                  compiler-tc-macro-stdlib-tlci-native-dispatches
+                                  (+
+                                    compiler-tc-macro-stdlib-tlci-native-dispatches
+                                    1))))
+                            (MacroNativeStdlibTlciResult.Value value)))
+                        (let
+                          [status : i64 (struct-get dispatch status)]
+                          (begin
+                            (compiler-comptime-host-session-close!)
+                            (MacroNativeStdlibTlciResult.Err
+                              (ctfe-diagnostic-at-expr
+                                call-expr
+                                (tlci-loader-macro-status-diagnostic
+                                  identity
+                                  status))))))]))))))))))
+
+(cfg
+  (not embedded-stdlib-tlci)
+  (define (macro-try-stdlib-tlci-native
+    [_ctx : TcContext]
+    [_definition-module : String]
+    [_macro-name : String]
+    [_params : AstMacroParamList]
+    [_env : CtfeEnv]
+    [_call-expr : AstExpr]) : MacroNativeStdlibTlciResult
+    MacroNativeStdlibTlciResult.No))
+
 ;; Run a macro transformer via CTFE. Module/declaration macro expansion also
 ;; needs the bound CTFE environment while normalizing generated import operands.
 (define (macro-eval-transformer-expanded-with-env
@@ -62132,30 +62257,48 @@
       (tc-string-list-contains macro-expand-expr-type-macro-names macro-name)
       call-expr)
       [(ResultMacroEnv.Ok env)
-        (begin
-          (macro-note-stdlib-tlci-route fallback-module macro-name)
-          (ctfe-result-hygiene-free-reset!)
-          (cfg compile-profile (compiler-tc-macro-profile-start))
-          (match (ctfe-eval-node
-            body
-            (ctfe-env-extend-id
-              env
-              (ctfe-hygiene-enabled-id)
-              (CompilerCtfeValue.Bool true))
-            (ctfe-fuel-limit))
-            [(ResultCtfe.Ok value _)
-              (begin
-                (tc-context-install-pools! ctx)
-                (cfg
-                  compile-profile
-                  (compiler-tc-macro-profile-finish macro-name expanded-args))
-                (ResultMacroValueEnv.Ok value env))]
-            [(ResultCtfe.Err diag)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-tc-macro-profile-finish macro-name expanded-args))
-                (ResultMacroValueEnv.Err diag))]))]
+        (match (macro-try-stdlib-tlci-native
+          ctx
+          fallback-module
+          macro-name
+          params
+          env
+          call-expr)
+          [(MacroNativeStdlibTlciResult.Value value)
+            (begin
+              (tc-context-install-pools! ctx)
+              (ResultMacroValueEnv.Ok value env))]
+          [(MacroNativeStdlibTlciResult.Err diag)
+            (ResultMacroValueEnv.Err (box diag))]
+          [(MacroNativeStdlibTlciResult.No)
+            (begin
+              (macro-note-stdlib-tlci-route fallback-module macro-name)
+              (ctfe-result-hygiene-free-reset!)
+              (cfg compile-profile (compiler-tc-macro-profile-start))
+              (match (ctfe-eval-node
+                body
+                (ctfe-env-extend-id
+                  env
+                  (ctfe-hygiene-enabled-id)
+                  (CompilerCtfeValue.Bool true))
+                (ctfe-fuel-limit))
+                [(ResultCtfe.Ok value _)
+                  (begin
+                    (tc-context-install-pools! ctx)
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-finish
+                        macro-name
+                        expanded-args))
+                    (ResultMacroValueEnv.Ok value env))]
+                [(ResultCtfe.Err diag)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-finish
+                        macro-name
+                        expanded-args))
+                    (ResultMacroValueEnv.Err diag))]))])]
       [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)])))
 
 ;; Run a macro transformer via CTFE. Callers decide how to interpret the

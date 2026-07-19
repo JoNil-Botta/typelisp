@@ -8957,6 +8957,199 @@
       CompilerIrFunctionList.Nil)
     CompilerIrExternList.Nil))
 
+(define (compiler-backend-total-switch-test-cases) : CompilerIrSwitchCaseList
+  (compiler-ir-switch-case-cons
+    0
+    "zero"
+    (compiler-ir-switch-case-cons
+      1
+      "one"
+      (compiler-ir-switch-case-cons
+        2
+        "two"
+        (compiler-ir-switch-case-cons
+          3
+          "three"
+          (compiler-ir-switch-case-cons
+            4
+            "four"
+            (compiler-ir-switch-case-cons 5 "five" CompilerIrSwitchCaseList.Nil)))))))
+
+(define (compiler-backend-total-switch-return-block
+  [label : String]
+  [value : i64]
+  [rest : CompilerIrBlockList]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      label
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Return
+          (CompilerIrMaybeValue.Some (CompilerIrValue.I64 value)))
+        CompilerIrInstrList.Nil))
+    rest))
+
+(define (compiler-backend-total-switch-trap-test-block) : CompilerIrBlock
+  (compiler-ir-block
+    "match_total_trap"
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Call
+        1
+        cbi.compiler-builtin-id-tl-oob-abort
+        (CompilerIrCallArgs.Nil)
+        (AstType.Unit))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump "match_total_trap")
+        CompilerIrInstrList.Nil))))
+
+(define (compiler-backend-total-switch-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Switch
+          (CompilerIrValue.Var 0)
+          0
+          (compiler-backend-total-switch-test-cases)
+          "match_total_trap")
+        CompilerIrInstrList.Nil))
+    (compiler-backend-total-switch-return-block
+      "zero"
+      0
+      (compiler-backend-total-switch-return-block
+        "one"
+        1
+        (compiler-backend-total-switch-return-block
+          "two"
+          2
+          (compiler-backend-total-switch-return-block
+            "three"
+            3
+            (compiler-backend-total-switch-return-block
+              "four"
+              4
+              (compiler-backend-total-switch-return-block
+                "five"
+                5
+                (compiler-ir-block-cons
+                  (compiler-backend-total-switch-trap-test-block)
+                  CompilerIrBlockList.Nil)))))))))
+
+(define (compiler-backend-total-switch-test-program) : CompilerIrProgram
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
+    (compiler-ir-function-cons
+      (CompilerIrFunction.Function
+        (ci.intern "main")
+        CompilerIrParamList.Nil
+        (AstType.I64)
+        2
+        (compiler-backend-total-switch-test-blocks))
+      CompilerIrFunctionList.Nil)
+    CompilerIrExternList.Nil))
+
+(define (compiler-backend-total-switch-source) : String
+  "(defenum TotalSwitchValue
+  (Zero)
+  (One)
+  (Two)
+  (Three)
+  (Four)
+  (Five))
+(define (total-switch-score [value : TotalSwitchValue]) : i64
+  (match value
+    [(TotalSwitchValue.Zero) 1]
+    [(TotalSwitchValue.One) 2]
+    [(TotalSwitchValue.Two) 3]
+    [(TotalSwitchValue.Three) 4]
+    [(TotalSwitchValue.Four) 5]
+    [(TotalSwitchValue.Five) 6]))
+(define (keep-total-switch [f : (-> TotalSwitchValue i64)]) : i64 0)
+(define (main) : i64 (keep-total-switch total-switch-score))")
+
+(define (compiler-backend-total-switch-lowered-opt2-asm-ok?) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (compiler-backend-total-switch-source)
+    (CompilerBackendTarget.Linux))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "_switch_table")
+        (not (compiler-backend-string-contains? asm "    cmpq $5"))
+        (not (compiler-backend-string-contains? asm "    ja "))
+        (not (compiler-backend-string-contains? asm "match_total_trap(%rip)")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-total-switch-asm-ok?) : bool
+  (match (compiler-backend-emit-program-linux
+    (compiler-backend-total-switch-test-program))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "main")]
+        (and
+          (compiler-backend-string-contains?
+            body
+            "    jmp *.Lf0_entry_switch_table(,%r8,8)\n")
+          (not (compiler-backend-string-contains? body "    cmpq $5"))
+          (not (compiler-backend-string-contains? body "    ja "))
+          (not
+            (compiler-backend-string-contains?
+              body
+              "leaq .Lf0_match_total_trap"))
+          (= (compiler-backend-string-count asm "    .quad .Lf0_") 6)
+          (compiler-backend-string-contains? asm "    .quad .Lf0_zero\n")
+          (compiler-backend-string-contains? asm "    .quad .Lf0_five\n")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-total-switch-pic-asm-ok?) : bool
+  (match (compiler-backend-emit-program-pic-target-with-mode
+    (compiler-backend-total-switch-test-program)
+    (CompilerBackendTarget.Linux)
+    (CompilerBackendMode.Scalar)
+    (compiler-source-spans-empty)
+    true)
+    [(ResultCompilerBackendPic.Ok output)
+      (let
+        [asm : String (struct-get output asm)]
+        [body : String (compiler-backend-asm-function-body asm "main")]
+        (and
+          (compiler-backend-string-contains?
+            body
+            "    leaq .Lf0_entry_switch_table(%rip), ")
+          (compiler-backend-string-contains? body "    jmp *(")
+          (not (compiler-backend-string-contains? body "    cmpq $5"))
+          (not (compiler-backend-string-contains? body "    ja "))
+          (not
+            (compiler-backend-string-contains?
+              body
+              "leaq .Lf0_match_total_trap"))))]
+    [(ResultCompilerBackendPic.Err _) false]))
+
+(define (compiler-backend-total-switch-object-image-ok?) : bool
+  (match (compiler-backend-emit-program-object-image-linux
+    (compiler-backend-total-switch-test-program)
+    (compiler-source-spans-empty))
+    [(ResultCompilerBackendObject.Ok image)
+      (let
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [relocs : cobj.CompilerObjectRelocationList
+          (struct-get image relocations)]
+        (and
+          (not
+            (cobj.compiler-object-section-contains-bytes?
+              sections
+              (compiler-backend-object-cmp-imm32-rax-bytes 5)))
+          (cobj.compiler-object-section-contains-label?
+            sections
+            (cobj.CompilerObjectSectionKind.Rodata)
+            ".Lf0_entry_switch_table_entry_5")
+          (cobj.compiler-object-relocation-list-contains?
+            relocs
+            (cobj.CompilerObjectRelocationKind.Abs64)
+            ".Lf0_five")
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-switch-indirect-jump-bytes))))]
+    [(ResultCompilerBackendObject.Err _) false]))
+
 (define (compiler-backend-switch-asm-ok?) : bool
   (match (compiler-backend-emit-program-linux
     (compiler-backend-switch-test-program))
@@ -9277,6 +9470,10 @@
       40
       11)
     (compiler-backend-switch-asm-ok?)
+    (compiler-backend-total-switch-asm-ok?)
+    (compiler-backend-total-switch-pic-asm-ok?)
+    (compiler-backend-total-switch-object-image-ok?)
+    (compiler-backend-total-switch-lowered-opt2-asm-ok?)
     (compiler-backend-switch-base-asm-ok?)
     (compiler-backend-switch-shape-diagnostic-ok?)
     (compiler-backend-switch-phi-edge-copy-ok?)
@@ -18457,6 +18654,40 @@
               (compiler-backend-todo-marker)))))]
     [(ResultCompilerBackend.Err _) false]))
 
+;; Signed i64 magic div/mod must keep the pre-shift quotient sign in %rax and
+;; retain the dividend in one non-fixed SRC register. This exact remainder
+;; expansion is the nine-instruction Clang shape used by the VM hot arm.
+(define (compiler-backend-signed-constant-divisor-clang-shape-ok?) : bool
+  (let
+    [magic : i64 -8543223828751151131]
+    [reg-asm : String
+      (compiler-backend-signed-magic-divmod-src-asm
+        1000000007
+        false
+        true
+        "%r8"
+        "%r10"
+        "%r10"
+        (CompilerBackendConstHoistHomeReg "%r8" magic false))]
+    [frame-asm : String
+      (compiler-backend-signed-magic-divmod-src-asm
+        1000000007
+        false
+        true
+        "%r8"
+        "%r10"
+        "%r10"
+        (CompilerBackendConstHoistHomeFrame "-40(%rbp)" magic))]
+    (and
+      (string.eq
+        reg-asm
+        "    movq %r10, %rax\n    imulq %r8\n    addq %r10, %rdx\n    movq %rdx, %rax\n    shrq $63, %rax\n    sarq $29, %rdx\n    addq %rax, %rdx\n    imulq $1000000007, %rdx, %rax\n    subq %rax, %r10\n")
+      (string.eq
+        frame-asm
+        "    movq %r10, %rax\n    imulq -40(%rbp)\n    addq %r10, %rdx\n    movq %rdx, %rax\n    shrq $63, %rax\n    sarq $29, %rdx\n    addq %rax, %rdx\n    imulq $1000000007, %rdx, %rax\n    subq %rax, %r10\n")
+      (not (compiler-backend-string-contains? reg-asm "sarq $63"))
+      (not (compiler-backend-string-contains? reg-asm "subq %r9, %rdx")))))
+
 (define (compiler-backend-divrem-binop-types [ty : AstType]) : CompilerRegVarTypeList
   (compiler-reg-var-type-cons
     (CompilerRegVarType.Type 0 ty)
@@ -24432,7 +24663,9 @@
             (and
               (compiler-backend-string-contains? asm "%r12")
               (compiler-backend-string-contains? asm "%r13")
-              (compiler-backend-string-contains? asm "%r14"))]
+              ;; Signed literal divmod consumes magic + one SRC copy; the old
+              ;; quotient-sign mask/tertiary scratch is deliberately unused.
+              (not (compiler-backend-string-contains? asm "%r14")))]
           [(CompilerBackendMaybeAsm.No) false])]
       (and
         (not
@@ -24865,6 +25098,7 @@
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)
+        (compiler-backend-signed-constant-divisor-clang-shape-ok?)
         (compiler-backend-divrem-rax-rhs-preserved-ok?)
         (compiler-backend-safe-divrem-guard-elision-ok?))
       (and

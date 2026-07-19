@@ -226,6 +226,55 @@
         [(CompilerIrInstr.Mov _ _ _) true]
         [_ false])]))
 
+(define (opt-switch-test-cases-have?
+  [cases : CompilerIrSwitchCaseList]
+  [want-tag : i64]
+  [want-label : String]) : bool
+  (match (compiler-ir-switch-case-list-force-cons cases)
+    [(CompilerIrSwitchCaseList.Nil) false]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case tag label)
+          (if (= tag want-tag)
+            (string.eq label want-label)
+            (opt-switch-test-cases-have? (box-get rest) want-tag want-label))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-switch-test-cases-have?
+        (compiler-ir-switch-case-seq-to-list seq)
+        want-tag
+        want-label)]))
+
+(define (opt-switch-test-block-tail-has-case?
+  [block : CompilerIrBlock]
+  [tag : i64]
+  [label : String]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (match (compiler-ir-instr-seq-ref
+        instrs
+        (- (compiler-ir-instr-seq-count instrs) 1))
+        [(CompilerIrInstr.Switch _ _ cases _)
+          (opt-switch-test-cases-have? cases tag label)]
+        [_ false])]))
+
+(define (opt-switch-test-total-trap-ok?
+  [blocks : CompilerIrBlockList]
+  [label : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (and
+            (= (compiler-ir-instr-seq-count instrs) 2)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(CompilerIrInstr.Call _ name _ _)
+                (= name cbi.compiler-builtin-id-tl-oob-abort)]
+              [_ false])
+            (match (compiler-ir-instr-seq-ref instrs 1)
+              [(CompilerIrInstr.Jump target) (string.eq target label)]
+              [_ false]))])]))
+
 (define (opt-switch-test-chain-blocks
   [tag0 : i64]
   [tag1 : i64]
@@ -476,6 +525,32 @@
       (match (opt-cfg-find-block copy-head-blocks "entry")
         [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
         [(OptMaybeBlock.Some block) block])]
+    [total-final-label : String "match_total_enum_default.4"]
+    [total-trap-label : String "match_total_trap__entry"]
+    [total : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-chain-blocks 0 1 2 3 total-final-label)))]
+    [total-blocks : CompilerIrBlockList (opt-function-blocks total)]
+    [total-entry : CompilerIrBlock
+      (match (opt-cfg-find-block total-blocks "entry")
+        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+        [(OptMaybeBlock.Some block) block])]
+    [total-late : CompilerIrFunction (opt-late-total-switch-function total)]
+    [total-late-blocks : CompilerIrBlockList (opt-function-blocks total-late)]
+    [total-late-entry : CompilerIrBlock
+      (match (opt-cfg-find-block total-late-blocks "entry")
+        [(OptMaybeBlock.No) (opt-switch-test-return-block "missing" 0)]
+        [(OptMaybeBlock.Some block) block])]
+    [total-twice : CompilerIrFunction
+      (opt-late-total-switch-function total-late)]
+    [marked-sparse-final-label : String "match_total_enum_default.sparse"]
+    [marked-sparse : CompilerIrFunction
+      (opt-switch-form-function
+        (opt-switch-test-function
+          (opt-switch-test-chain-blocks 0 1 3 4 marked-sparse-final-label)))]
+    [marked-sparse-blocks : CompilerIrBlockList
+      (opt-function-blocks marked-sparse)]
     [level1 : CompilerIrFunction
       (optimize-function-with-level (opt-switch-test-function dense-source) 1)]
     [level2 : CompilerIrFunction
@@ -536,6 +611,44 @@
         33]
       [(not (opt-switch-test-block-starts-with-mov? copy-head-entry)) 34]
       [(not (opt-verify-ok? (opt-verify-function copy-head))) 35]
+      ;; Switch formation preserves the classic final fallthrough throughout
+      ;; the optimizer fixpoint. Only the dedicated late pass consumes the
+      ;; marker, adds the final table case, and installs the trap default.
+      [(not (= (opt-count-switch-blocks total-blocks) 1)) 36]
+      [(not (= (opt-switch-test-block-tail-base total-entry) 0)) 37]
+      [(not (= (opt-switch-test-block-tail-case-count total-entry) 4)) 38]
+      [(not
+          (string.eq
+            (opt-switch-test-block-tail-default total-entry)
+            total-final-label))
+        39]
+      [(opt-block-list-has-label? total-blocks total-trap-label) 40]
+      [(not (= (opt-count-switch-blocks total-late-blocks) 1)) 41]
+      [(not (= (opt-switch-test-block-tail-base total-late-entry) 0)) 43]
+      [(not (= (opt-switch-test-block-tail-case-count total-late-entry) 5)) 44]
+      [(not
+          (opt-switch-test-block-tail-has-case?
+            total-late-entry
+            4
+            total-final-label))
+        45]
+      [(not
+          (string.eq
+            (opt-switch-test-block-tail-default total-late-entry)
+            total-trap-label))
+        46]
+      [(not (opt-switch-test-total-trap-ok? total-late-blocks total-trap-label))
+        47]
+      [(not (opt-verify-ok? (opt-verify-function total-late))) 48]
+      [(not (= (opt-count-switch-blocks (opt-function-blocks total-twice)) 1))
+        49]
+      ;; A lowering marker alone is not authority: a sparse chain fails the
+      ;; pre-existing density criterion, so neither Switch nor trap is added.
+      [(not (= (opt-count-switch-blocks marked-sparse-blocks) 0)) 50]
+      [(opt-block-list-has-label?
+          marked-sparse-blocks
+          "match_total_trap__entry")
+        51]
       [else 42])))
 
 (define (smoke-mov-dst-var-type?
@@ -2136,6 +2249,10 @@
       (compiler-optimize-bce-version-mb-self-test)
       42)
     (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-bce-version-mb-switch-self-test"
+      (compiler-optimize-bce-version-mb-switch-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
       "compiler-optimize-bce-version-mb-negative-self-test"
       (compiler-optimize-bce-version-mb-negative-self-test)
       42)
@@ -2230,6 +2347,13 @@
     (compiler-optimize-bce-version-mb-self-test)
     42
     "multi-block counted-loop bounds-check versioning"))
+
+(test
+  bce-version-multiblock-switch-cloning
+  (test.assert-i64-eq
+    (compiler-optimize-bce-version-mb-switch-self-test)
+    42
+    "multi-block versioning remaps total-switch case and trap edges"))
 
 (test
   bce-version-multiblock-rejections

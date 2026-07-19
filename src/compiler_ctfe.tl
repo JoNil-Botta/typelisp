@@ -6591,7 +6591,7 @@
   (match (ast-expr-unspan-with-pools
     pools
     (ast-node-pool-context-expr-get pools node))
-    [(AstExpr.Var name) (string.eq (intern-str name) "else")]
+    [(AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-else)]
     [_ false]))
 
 (define (ctfe-eval-expr-clause-list-fold-if-plain-at
@@ -7143,11 +7143,8 @@
 (define (ctfe-source-helper-struct-get
   [env : CtfeEnv]
   [target : i64]
-  [field : String]) : i64
-  (ast-expr-struct-get-id-with-pools
-    (ctfe-env-pools env)
-    target
-    (ctfe-materialize-generated-name-id field)))
+  [field-id : i64]) : i64
+  (ast-expr-struct-get-id-with-pools (ctfe-env-pools env) target field-id))
 
 (define (ctfe-source-helper-array-ref
   [env : CtfeEnv]
@@ -7182,10 +7179,10 @@
     (ctfe-source-helper-string env message)))
 
 (define (ctfe-source-helper-sequence-len [env : CtfeEnv] [items : i64]) : i64
-  (ctfe-source-helper-struct-get env items "len"))
+  (ctfe-source-helper-struct-get env items cbi.compiler-builtin-id-fix-len))
 
 (define (ctfe-source-helper-sequence-items [env : CtfeEnv] [items : i64]) : i64
-  (ctfe-source-helper-struct-get env items "items"))
+  (ctfe-source-helper-struct-get env items cbi.compiler-builtin-id-fix-items))
 
 (define (ctfe-source-helper-sequence-empty? [env : CtfeEnv] [items : i64]) : i64
   (ctfe-source-helper-binary
@@ -7427,13 +7424,25 @@
           (ctfe-source-helper-var env "index")
           "expr-clause-list-nth index out of range")]
       [(string.eq name "expr-binding-clause-name")
-        (ctfe-source-helper-struct-get env scrutinee "name")]
+        (ctfe-source-helper-struct-get
+          env
+          scrutinee
+          cbi.compiler-builtin-id-fix-name)]
       [(string.eq name "expr-binding-clause-has-type?")
-        (ctfe-source-helper-struct-get env scrutinee "has-type")]
+        (ctfe-source-helper-struct-get
+          env
+          scrutinee
+          cbi.compiler-builtin-id-fix-has_type)]
       [(string.eq name "expr-binding-clause-type")
-        (ctfe-source-helper-struct-get env scrutinee "ty")]
+        (ctfe-source-helper-struct-get
+          env
+          scrutinee
+          cbi.compiler-builtin-id-fix-ty)]
       [(string.eq name "expr-binding-clause-init")
-        (ctfe-source-helper-struct-get env scrutinee "init")]
+        (ctfe-source-helper-struct-get
+          env
+          scrutinee
+          cbi.compiler-builtin-id-fix-init)]
       [(string.eq name "expr-binding-clause-list-empty?")
         (ctfe-source-helper-sequence-empty? env scrutinee)]
       [(string.eq name "expr-binding-clause-list-length")
@@ -7824,9 +7833,6 @@
       (ctfe-eval-box-get-value value expr next-fuel)]
     [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
-(define (ctfe-comptime-field-name? [field : i64] [want : String]) : bool
-  (string.eq (intern-str field) want))
-
 (define (ctfe-comptime-field-error [field : i64] [expr : AstExpr]) : ResultCtfe
   (ResultCtfe.Err
     (box
@@ -7868,198 +7874,205 @@
   [field : i64]
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
-  (match value
-    [(CompilerCtfeValue.ExprList nodes)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok (CompilerCtfeValue.ExprList nodes) fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.CapturedExprList nodes pools)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok (CompilerCtfeValue.CapturedExprList nodes pools) fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.ExprClause clause)
-      (cond
-        [(ctfe-comptime-field-name? field "first")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.Expr
-              (ctfe-expr-clause-first clause)
-              (ctfe-untyped-expr-type))
-            fuel)]
-        [(ctfe-comptime-field-name? field "second")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.Expr
-              (ctfe-expr-clause-second clause)
-              (ctfe-untyped-expr-type))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.CapturedExprClause clause pools)
-      (cond
-        [(ctfe-comptime-field-name? field "first")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.CapturedExpr
-              (ctfe-expr-clause-first clause)
-              (ctfe-untyped-expr-type)
-              pools)
-            fuel)]
-        [(ctfe-comptime-field-name? field "second")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.CapturedExpr
-              (ctfe-expr-clause-second clause)
-              (ctfe-untyped-expr-type)
-              pools)
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.ExprClauseList clauses)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok (CompilerCtfeValue.ExprClauseList clauses) fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.CapturedExprClauseList clauses pools)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.CapturedExprClauseList clauses pools)
-            fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.ExprBindingClause clause)
-      (cond
-        [(ctfe-comptime-field-name? field "name")
-          (ResultCtfe.Ok
-            (ctfe-name-value (ctfe-expr-binding-clause-name-id clause))
-            fuel)]
-        [(ctfe-comptime-field-name? field "has-type")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.Bool (ctfe-expr-binding-clause-has-type? clause))
-            fuel)]
-        [(ctfe-comptime-field-name? field "ty")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.Expr
-              (ctfe-expr-binding-clause-type clause)
-              (ctfe-untyped-expr-type))
-            fuel)]
-        [(ctfe-comptime-field-name? field "init")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.Expr
-              (ctfe-expr-binding-clause-init clause)
-              (ctfe-untyped-expr-type))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.ExprBindingClauseList clauses)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok (CompilerCtfeValue.ExprBindingClauseList clauses) fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64
-              (ctfe-expr-binding-clause-list-length clauses))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.PatternList patterns)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok (CompilerCtfeValue.PatternList patterns) fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-pattern-list-length patterns))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.MatchArm arm)
-      (match arm
-        [(AstMatchArm.Arm pattern body)
-          (cond
-            [(ctfe-comptime-field-name? field "pattern")
-              (ResultCtfe.Ok (CompilerCtfeValue.Pattern pattern) fuel)]
-            [(ctfe-comptime-field-name? field "body")
-              (ResultCtfe.Ok
-                (CompilerCtfeValue.Expr body (ctfe-untyped-expr-type))
-                fuel)]
-            [else (ctfe-comptime-field-error field expr)])])]
-    [(CompilerCtfeValue.MatchArmList arms)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok (CompilerCtfeValue.MatchArmList arms) fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-match-arm-list-length arms))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.TypeInfoList items)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok (CompilerCtfeValue.TypeInfoList items) fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-type-list-count items))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.TypeField name ty)
-      (cond
-        [(ctfe-comptime-field-name? field "name")
-          (ResultCtfe.Ok (ctfe-generated-string-value name) fuel)]
-        [(ctfe-comptime-field-name? field "ty")
-          (ResultCtfe.Ok (CompilerCtfeValue.TypeInfo ty) fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.TypeFieldList fields)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok (CompilerCtfeValue.TypeFieldList fields) fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-reflect-field-list-count fields))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.TypeVariantPayload ty)
-      (if (ctfe-comptime-field-name? field "ty")
-        (ResultCtfe.Ok (CompilerCtfeValue.TypeInfo ty) fuel)
-        (ctfe-comptime-field-error field expr))]
-    [(CompilerCtfeValue.TypeVariantPayloadList payloads)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.TypeVariantPayloadList payloads)
-            fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-type-list-count payloads))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.TypeVariant name payloads)
-      (cond
-        [(ctfe-comptime-field-name? field "name")
-          (ResultCtfe.Ok (ctfe-generated-string-value name) fuel)]
-        [(ctfe-comptime-field-name? field "payloads")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.TypeVariantPayloadList payloads)
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [(CompilerCtfeValue.TypeVariantList variants)
-      (cond
-        [(ctfe-comptime-field-name? field "items")
-          (ResultCtfe.Ok (CompilerCtfeValue.TypeVariantList variants) fuel)]
-        [(ctfe-comptime-field-name? field "len")
-          (ResultCtfe.Ok
-            (CompilerCtfeValue.I64 (ctfe-reflect-variant-list-count variants))
-            fuel)]
-        [else (ctfe-comptime-field-error field expr)])]
-    [_ (ctfe-comptime-struct-get-type-error expr)]))
+  (let
+    [field-kind : i64 field]
+    (match value
+      [(CompilerCtfeValue.ExprList nodes)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok (CompilerCtfeValue.ExprList nodes) fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.CapturedExprList nodes pools)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.CapturedExprList nodes pools)
+              fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.ExprClause clause)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-first)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.Expr
+                (ctfe-expr-clause-first clause)
+                (ctfe-untyped-expr-type))
+              fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-second)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.Expr
+                (ctfe-expr-clause-second clause)
+                (ctfe-untyped-expr-type))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.CapturedExprClause clause pools)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-first)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.CapturedExpr
+                (ctfe-expr-clause-first clause)
+                (ctfe-untyped-expr-type)
+                pools)
+              fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-second)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.CapturedExpr
+                (ctfe-expr-clause-second clause)
+                (ctfe-untyped-expr-type)
+                pools)
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.ExprClauseList clauses)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok (CompilerCtfeValue.ExprClauseList clauses) fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.CapturedExprClauseList clauses pools)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.CapturedExprClauseList clauses pools)
+              fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.ExprBindingClause clause)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-name)
+            (ResultCtfe.Ok
+              (ctfe-name-value (ctfe-expr-binding-clause-name-id clause))
+              fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-has_type)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.Bool
+                (ctfe-expr-binding-clause-has-type? clause))
+              fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-ty)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.Expr
+                (ctfe-expr-binding-clause-type clause)
+                (ctfe-untyped-expr-type))
+              fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-init)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.Expr
+                (ctfe-expr-binding-clause-init clause)
+                (ctfe-untyped-expr-type))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.ExprBindingClauseList clauses)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.ExprBindingClauseList clauses)
+              fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64
+                (ctfe-expr-binding-clause-list-length clauses))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.PatternList patterns)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok (CompilerCtfeValue.PatternList patterns) fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-pattern-list-length patterns))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.MatchArm arm)
+        (match arm
+          [(AstMatchArm.Arm pattern body)
+            (cond
+              [(= field-kind cbi.compiler-builtin-id-fix-pattern)
+                (ResultCtfe.Ok (CompilerCtfeValue.Pattern pattern) fuel)]
+              [(= field-kind cbi.compiler-builtin-id-fix-body)
+                (ResultCtfe.Ok
+                  (CompilerCtfeValue.Expr body (ctfe-untyped-expr-type))
+                  fuel)]
+              [else (ctfe-comptime-field-error field expr)])])]
+      [(CompilerCtfeValue.MatchArmList arms)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok (CompilerCtfeValue.MatchArmList arms) fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-match-arm-list-length arms))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.TypeInfoList items)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok (CompilerCtfeValue.TypeInfoList items) fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-type-list-count items))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.TypeField name ty)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-name)
+            (ResultCtfe.Ok (ctfe-generated-string-value name) fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-ty)
+            (ResultCtfe.Ok (CompilerCtfeValue.TypeInfo ty) fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.TypeFieldList fields)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok (CompilerCtfeValue.TypeFieldList fields) fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-reflect-field-list-count fields))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.TypeVariantPayload ty)
+        (if (= field-kind cbi.compiler-builtin-id-fix-ty)
+          (ResultCtfe.Ok (CompilerCtfeValue.TypeInfo ty) fuel)
+          (ctfe-comptime-field-error field expr))]
+      [(CompilerCtfeValue.TypeVariantPayloadList payloads)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.TypeVariantPayloadList payloads)
+              fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-type-list-count payloads))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.TypeVariant name payloads)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-name)
+            (ResultCtfe.Ok (ctfe-generated-string-value name) fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-payloads)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.TypeVariantPayloadList payloads)
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [(CompilerCtfeValue.TypeVariantList variants)
+        (cond
+          [(= field-kind cbi.compiler-builtin-id-fix-items)
+            (ResultCtfe.Ok (CompilerCtfeValue.TypeVariantList variants) fuel)]
+          [(= field-kind cbi.compiler-builtin-id-fix-len)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.I64 (ctfe-reflect-variant-list-count variants))
+              fuel)]
+          [else (ctfe-comptime-field-error field expr)])]
+      [_ (ctfe-comptime-struct-get-type-error expr)])))
 
 (define (ctfe-eval-struct-get
   [inner : AstExpr]
@@ -15069,6 +15082,202 @@
         false)]
     [_ false]))
 
+(cfg
+  test
+  (define (compiler-ctfe-structural-field-ok?
+    [value : CompilerCtfeValue]
+    [field-id : i64]
+    [expr : AstExpr]) : bool
+    (match (ctfe-eval-struct-get-value value field-id expr 7)
+      [(ResultCtfe.Ok _ next-fuel) (= next-fuel 7)]
+      [(ResultCtfe.Err _) false])))
+
+(cfg
+  test
+  (define (compiler-ctfe-comptime-structural-fields-ok?) : bool
+    (let
+      [env : CtfeEnv (ctfe-env-empty)]
+      [pools : AstNodePoolContext (ctfe-env-pools env)]
+      [expr : AstExpr (AstExpr.Literal (AstLiteral.Unit))]
+      [exprs : AstExprList (ast-expr-list-new)]
+      [clause : AstExprClause (ast-expr-clause 0 0)]
+      [clauses : AstExprClauseList (ast-expr-clause-list-new)]
+      [binding : AstExprBindingClause
+        (ast-expr-binding-clause-id
+          cbi.compiler-builtin-id-fix-name
+          false
+          0
+          0
+          (ast-source-span 0 0 0 0))]
+      [bindings : AstExprBindingClauseList (ast-expr-binding-clause-list-new)]
+      [patterns : AstPatternList (ast-pattern-list-new)]
+      [arm : AstMatchArm (ast-match-arm AstPattern.Wildcard 0)]
+      [arms : AstMatchArmList (ast-match-arm-list-new)]
+      [types : AstTypeList (ast-type-list-new)]
+      [fields : CtfeReflectFieldList (ctfe-reflect-field-list-with-capacity 0)]
+      [variants : CtfeReflectVariantList
+        (ctfe-reflect-variant-list-with-capacity 0)]
+      [generated-items : i64 (ci.intern-generated-canonical-name "items")]
+      (and
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprList exprs)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprList exprs)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.CapturedExprList exprs pools)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.CapturedExprList exprs pools)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprClause clause)
+          cbi.compiler-builtin-id-fix-first
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprClause clause)
+          cbi.compiler-builtin-id-fix-second
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.CapturedExprClause clause pools)
+          cbi.compiler-builtin-id-fix-first
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.CapturedExprClause clause pools)
+          cbi.compiler-builtin-id-fix-second
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprClauseList clauses)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprClauseList clauses)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.CapturedExprClauseList clauses pools)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.CapturedExprClauseList clauses pools)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprBindingClause binding)
+          cbi.compiler-builtin-id-fix-name
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprBindingClause binding)
+          cbi.compiler-builtin-id-fix-has_type
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprBindingClause binding)
+          cbi.compiler-builtin-id-fix-ty
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprBindingClause binding)
+          cbi.compiler-builtin-id-fix-init
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprBindingClauseList bindings)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.ExprBindingClauseList bindings)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.PatternList patterns)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.PatternList patterns)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.MatchArm arm)
+          cbi.compiler-builtin-id-fix-pattern
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.MatchArm arm)
+          cbi.compiler-builtin-id-fix-body
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.MatchArmList arms)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.MatchArmList arms)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeInfoList types)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeInfoList types)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeField "value" (AstType.I64))
+          cbi.compiler-builtin-id-fix-name
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeField "value" (AstType.I64))
+          cbi.compiler-builtin-id-fix-ty
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeFieldList fields)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeFieldList fields)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeVariantPayload (AstType.I64))
+          cbi.compiler-builtin-id-fix-ty
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeVariantPayloadList types)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeVariantPayloadList types)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeVariant "Some" types)
+          cbi.compiler-builtin-id-fix-name
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeVariant "Some" types)
+          cbi.compiler-builtin-id-fix-payloads
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeVariantList variants)
+          cbi.compiler-builtin-id-fix-items
+          expr)
+        (compiler-ctfe-structural-field-ok?
+          (CompilerCtfeValue.TypeVariantList variants)
+          cbi.compiler-builtin-id-fix-len
+          expr)
+        (match (ctfe-eval-struct-get-value
+          (CompilerCtfeValue.ExprList exprs)
+          generated-items
+          expr
+          7)
+          [(ResultCtfe.Err diag)
+            (string.eq
+              (compiler-diagnostic-message (box-get diag))
+              "unsupported stdlib.comptime field 'items'")]
+          [(ResultCtfe.Ok _ _) false])))))
+
 (define (compiler-ctfe-self-test) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -15095,6 +15304,10 @@
     (unless (compiler-ctfe-expr-pattern-match-ok?) (return 1))
     (unless (compiler-ctfe-local-while-ok?) (return 1))
     (unless (compiler-ctfe-generated-dotted-suffix-id-ok?) (return 1))
+    (cfg
+      test
+      (unless (compiler-ctfe-comptime-structural-fields-ok?) (return 1))
+      unit)
     42))
 
 (cfg

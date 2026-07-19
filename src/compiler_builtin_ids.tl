@@ -1,6 +1,7 @@
 ;; compiler_builtin_ids.tl - reset-aware intern ids for fixed compiler builtins.
 (import stdlib.io)
 (import compiler_intern as ci)
+(cfg test (import stdlib.test))
 
 (define compiler-builtin-generation : i64
   -1)
@@ -2769,6 +2770,38 @@
   [c : i64]
   [d : i64]) : bool
   (or (= name-id a) (compiler-builtin-id-any3? name-id b c d)))
+
+(cfg
+  test
+  (define (compiler-builtin-comptime-structural-fields-current-ok?) : bool
+    (let
+      [generated-items : i64 (ci.intern-generated-canonical-name "items")]
+      (and
+        (= (ci.intern-source-slice "items" 0 5) compiler-builtin-id-fix-items)
+        (not (= generated-items compiler-builtin-id-fix-items))))))
+
+(cfg
+  test
+  (define (compiler-builtin-comptime-structural-fields-reset-ok?) : bool
+    (begin
+      (ci.intern-reset!)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (unless
+        (compiler-builtin-comptime-structural-fields-current-ok?)
+        (return false))
+      (ci.intern-reset!)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (compiler-builtin-comptime-structural-fields-current-ok?))))
+
+(cfg
+  test
+  (test
+    compiler-builtin-comptime-structural-fields
+    (if (compiler-builtin-comptime-structural-fields-reset-ok?)
+      unit
+      (io.panic "compiler builtin comptime structural field IDs failed"))))
 
 (define (compiler-builtin-backend-runtime-core-id? [name-id : i64]) : bool
   (begin

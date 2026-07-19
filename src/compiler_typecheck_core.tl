@@ -35664,41 +35664,140 @@
             (tc-nominal-name-id-display struct-name-id)
             (intern-str field-id)))))))
 
-(define (tc-comptime-unknown-field [owner : String] [field : String]) : ResultTcType
+(define (tc-comptime-unknown-field-id [owner : String] [field-id : i64]) : ResultTcType
   (ResultTcType.Err
     (string.append
       "typecheck: unknown struct field "
-      (compiler-struct-field-key owner field))))
+      (compiler-struct-field-key owner (intern-str field-id)))))
 
 (define (tc-comptime-sequence-field-type
   [owner : String]
   [elem-ty : AstType]
-  [field : String]) : ResultTcType
+  [field-id : i64]) : ResultTcType
   (cond
-    [(string.eq field "items")
+    [(= field-id cbi.compiler-builtin-id-fix-items)
       (ResultTcType.Ok (AstType.DynArray (ty-node-push elem-ty)))]
-    [(string.eq field "len") (ResultTcType.Ok (AstType.I64))]
-    [else (tc-comptime-unknown-field owner field)]))
+    [(= field-id cbi.compiler-builtin-id-fix-len)
+      (ResultTcType.Ok (AstType.I64))]
+    [else (tc-comptime-unknown-field-id owner field-id)]))
 
-(define (tc-comptime-expr-clause-field-type [field : String]) : ResultTcType
+(define (tc-comptime-expr-clause-field-type [field-id : i64]) : ResultTcType
   (cond
-    [(string.eq field "first") (ResultTcType.Ok (AstType.Expr))]
-    [(string.eq field "second") (ResultTcType.Ok (AstType.Expr))]
-    [else (tc-comptime-unknown-field "ExprClause" field)]))
+    [(= field-id cbi.compiler-builtin-id-fix-first)
+      (ResultTcType.Ok (AstType.Expr))]
+    [(= field-id cbi.compiler-builtin-id-fix-second)
+      (ResultTcType.Ok (AstType.Expr))]
+    [else (tc-comptime-unknown-field-id "ExprClause" field-id)]))
 
-(define (tc-comptime-expr-binding-clause-field-type [field : String]) : ResultTcType
+(define (tc-comptime-expr-binding-clause-field-type [field-id : i64]) : ResultTcType
   (cond
-    [(string.eq field "name") (ResultTcType.Ok (AstType.String))]
-    [(string.eq field "has-type") (ResultTcType.Ok (AstType.Bool))]
-    [(string.eq field "ty") (ResultTcType.Ok (AstType.Expr))]
-    [(string.eq field "init") (ResultTcType.Ok (AstType.Expr))]
-    [else (tc-comptime-unknown-field "ExprBindingClause" field)]))
+    [(= field-id cbi.compiler-builtin-id-fix-name)
+      (ResultTcType.Ok (AstType.String))]
+    [(= field-id cbi.compiler-builtin-id-fix-has_type)
+      (ResultTcType.Ok (AstType.Bool))]
+    [(= field-id cbi.compiler-builtin-id-fix-ty)
+      (ResultTcType.Ok (AstType.Expr))]
+    [(= field-id cbi.compiler-builtin-id-fix-init)
+      (ResultTcType.Ok (AstType.Expr))]
+    [else (tc-comptime-unknown-field-id "ExprBindingClause" field-id)]))
 
-(define (tc-comptime-match-arm-field-type [field : String]) : ResultTcType
+(define (tc-comptime-match-arm-field-type [field-id : i64]) : ResultTcType
   (cond
-    [(string.eq field "pattern") (ResultTcType.Ok (tc-macro-pattern-type))]
-    [(string.eq field "body") (ResultTcType.Ok (AstType.Expr))]
-    [else (tc-comptime-unknown-field "MatchArm" field)]))
+    [(= field-id cbi.compiler-builtin-id-fix-pattern)
+      (ResultTcType.Ok (tc-macro-pattern-type))]
+    [(= field-id cbi.compiler-builtin-id-fix-body)
+      (ResultTcType.Ok (AstType.Expr))]
+    [else (tc-comptime-unknown-field-id "MatchArm" field-id)]))
+
+(cfg
+  test
+  (define (tc-comptime-sequence-field-pair-ok?
+    [owner : String]
+    [elem-ty : AstType]) : bool
+    (and
+      (match (tc-comptime-sequence-field-type
+        owner
+        elem-ty
+        cbi.compiler-builtin-id-fix-items)
+        [(ResultTcType.Ok (AstType.DynArray _)) true]
+        [_ false])
+      (match (tc-comptime-sequence-field-type
+        owner
+        elem-ty
+        cbi.compiler-builtin-id-fix-len)
+        [(ResultTcType.Ok (AstType.I64)) true]
+        [_ false]))))
+
+(cfg
+  test
+  (define (tc-comptime-structural-field-ids-ok?) : bool
+    (begin
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (let
+        [generated-items : i64 (ci.intern-generated-canonical-name "items")]
+        (and
+          (tc-comptime-sequence-field-pair-ok? "ExprList" (AstType.Expr))
+          (tc-comptime-sequence-field-pair-ok?
+            "ExprClauseList"
+            (tc-macro-expr-clause-type))
+          (tc-comptime-sequence-field-pair-ok?
+            "ExprBindingClauseList"
+            (tc-macro-expr-binding-clause-type))
+          (tc-comptime-sequence-field-pair-ok?
+            "PatternList"
+            (tc-macro-pattern-type))
+          (tc-comptime-sequence-field-pair-ok?
+            "MatchArmList"
+            (tc-macro-match-arm-type))
+          (match (tc-comptime-expr-clause-field-type
+            cbi.compiler-builtin-id-fix-first)
+            [(ResultTcType.Ok (AstType.Expr)) true]
+            [_ false])
+          (match (tc-comptime-expr-clause-field-type
+            cbi.compiler-builtin-id-fix-second)
+            [(ResultTcType.Ok (AstType.Expr)) true]
+            [_ false])
+          (match (tc-comptime-expr-binding-clause-field-type
+            cbi.compiler-builtin-id-fix-name)
+            [(ResultTcType.Ok (AstType.String)) true]
+            [_ false])
+          (match (tc-comptime-expr-binding-clause-field-type
+            cbi.compiler-builtin-id-fix-has_type)
+            [(ResultTcType.Ok (AstType.Bool)) true]
+            [_ false])
+          (match (tc-comptime-expr-binding-clause-field-type
+            cbi.compiler-builtin-id-fix-ty)
+            [(ResultTcType.Ok (AstType.Expr)) true]
+            [_ false])
+          (match (tc-comptime-expr-binding-clause-field-type
+            cbi.compiler-builtin-id-fix-init)
+            [(ResultTcType.Ok (AstType.Expr)) true]
+            [_ false])
+          (match (tc-comptime-match-arm-field-type
+            cbi.compiler-builtin-id-fix-pattern)
+            [(ResultTcType.Ok _) true]
+            [_ false])
+          (match (tc-comptime-match-arm-field-type
+            cbi.compiler-builtin-id-fix-body)
+            [(ResultTcType.Ok (AstType.Expr)) true]
+            [_ false])
+          (match (tc-comptime-sequence-field-type
+            "ExprList"
+            (AstType.Expr)
+            generated-items)
+            [(ResultTcType.Err message)
+              (string.eq
+                message
+                "typecheck: unknown struct field ExprList.items")]
+            [_ false]))))))
+
+(cfg
+  test
+  (test
+    tc-comptime-structural-field-ids
+    (if (tc-comptime-structural-field-ids-ok?)
+      unit
+      (io.panic "typecheck: comptime structural field ID test failed"))))
 
 (define (tc-struct-get-result-type-id
   [ctx : TcContext]
@@ -35738,38 +35837,35 @@
           (ResultTcType.Ok (tc-tag-region lifetime field-ty))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstType.ExprList)
-      (tc-comptime-sequence-field-type
-        "ExprList"
-        (AstType.Expr)
-        (intern-str field-id))]
+      (tc-comptime-sequence-field-type "ExprList" (AstType.Expr) field-id)]
     [(AstType.Var name)
       (cond
         [(= name cbi.compiler-builtin-id-fix-ExprClause)
-          (tc-comptime-expr-clause-field-type (intern-str field-id))]
+          (tc-comptime-expr-clause-field-type field-id)]
         [(= name cbi.compiler-builtin-id-fix-ExprClauseList)
           (tc-comptime-sequence-field-type
             "ExprClauseList"
             (tc-macro-expr-clause-type)
-            (intern-str field-id))]
+            field-id)]
         [(= name cbi.compiler-builtin-id-fix-ExprBindingClause)
-          (tc-comptime-expr-binding-clause-field-type (intern-str field-id))]
+          (tc-comptime-expr-binding-clause-field-type field-id)]
         [(= name cbi.compiler-builtin-id-fix-ExprBindingClauseList)
           (tc-comptime-sequence-field-type
             "ExprBindingClauseList"
             (tc-macro-expr-binding-clause-type)
-            (intern-str field-id))]
+            field-id)]
         [(= name cbi.compiler-builtin-id-fix-PatternList)
           (tc-comptime-sequence-field-type
             "PatternList"
             (tc-macro-pattern-type)
-            (intern-str field-id))]
+            field-id)]
         [(= name cbi.compiler-builtin-id-fix-MatchArm)
-          (tc-comptime-match-arm-field-type (intern-str field-id))]
+          (tc-comptime-match-arm-field-type field-id)]
         [(= name cbi.compiler-builtin-id-fix-MatchArmList)
           (tc-comptime-sequence-field-type
             "MatchArmList"
             (tc-macro-match-arm-type)
-            (intern-str field-id))]
+            field-id)]
         [else (ResultTcType.Err "typecheck: struct-get requires struct")])]
     [_ (ResultTcType.Err "typecheck: struct-get requires struct")]))
 

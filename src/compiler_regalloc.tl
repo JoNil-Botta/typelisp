@@ -24284,7 +24284,7 @@
   (let
     [requirement : CompilerRegScratchRequirement
       (compiler-reg-early-scratch-expansion-requirement
-        (compiler-reg-scratch-requirement
+        (compiler-reg-scratch-requirement-local
           abi
           policy
           assignment-list

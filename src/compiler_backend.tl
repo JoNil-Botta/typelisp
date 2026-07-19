@@ -49279,6 +49279,15 @@ tl_tlci_call_image_entry:
 
 "))
 
+;; tl_tlci_call_macro_entry is the outbound bridge into a mapped image
+;; entry. The comptime-host cells and inbound trampoline below bridge the
+;; opposite direction: the image's callback-invoke pointer targets
+;; .L_tl_comptime_host_invoke_entry, which discards the host-context
+;; argument, installs the registered TypeLisp function value's environment
+;; word, and tail-jumps its code word -- every remaining argument is
+;; already in the correct register (or stack slot) for the callee. The
+;; symbols ride the tlci-macro-entry gate because they are only referenced
+;; by the embedded-stdlib dispatch path, which always links the loader.
 (define (compiler-backend-runtime-tlci-macro-entry-functions
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
@@ -49298,6 +49307,27 @@ tl_tlci_call_macro_entry:
     addq $56, %rsp
     ret
 
+    .data
+    .globl tl_comptime_host_invoke_fn
+    .balign 8
+tl_comptime_host_invoke_fn:
+    .quad 0
+    .globl tl_comptime_host_invoke_entry_ptr
+tl_comptime_host_invoke_entry_ptr:
+    .quad .L_tl_comptime_host_invoke_entry
+
+    .text
+    .globl tl_comptime_host_invoke_set
+tl_comptime_host_invoke_set:
+    movq %rcx, tl_comptime_host_invoke_fn(%rip)
+    xorl %eax, %eax
+    ret
+
+.L_tl_comptime_host_invoke_entry:
+    movq tl_comptime_host_invoke_fn(%rip), %r11
+    movq 8(%r11), %rcx
+    jmp *(%r11)
+
 "
     "    .globl tl_tlci_call_macro_entry
 tl_tlci_call_macro_entry:
@@ -49312,6 +49342,27 @@ tl_tlci_call_macro_entry:
     call *%rax
     addq $8, %rsp
     ret
+
+    .data
+    .globl tl_comptime_host_invoke_fn
+    .balign 8
+tl_comptime_host_invoke_fn:
+    .quad 0
+    .globl tl_comptime_host_invoke_entry_ptr
+tl_comptime_host_invoke_entry_ptr:
+    .quad .L_tl_comptime_host_invoke_entry
+
+    .text
+    .globl tl_comptime_host_invoke_set
+tl_comptime_host_invoke_set:
+    movq %rdi, tl_comptime_host_invoke_fn(%rip)
+    xorl %eax, %eax
+    ret
+
+.L_tl_comptime_host_invoke_entry:
+    movq tl_comptime_host_invoke_fn(%rip), %r11
+    movq 8(%r11), %rdi
+    jmp *(%r11)
 
 "))
 
@@ -52564,6 +52615,15 @@ tl_tlci_call_macro_entry:
       [(string.eq name "tl_memchr") true]
       [(string.eq name "tl_tlci_call_image_entry") true]
       [(string.eq name "tl_tlci_call_macro_entry")
+        (compiler-backend-runtime-tail-tlci-macro-entry?
+          (compiler-backend-runtime-plan-tail plan))]
+      [(string.eq name "tl_comptime_host_invoke_set")
+        (compiler-backend-runtime-tail-tlci-macro-entry?
+          (compiler-backend-runtime-plan-tail plan))]
+      [(string.eq name "tl_comptime_host_invoke_entry_ptr")
+        (compiler-backend-runtime-tail-tlci-macro-entry?
+          (compiler-backend-runtime-plan-tail plan))]
+      [(string.eq name "tl_comptime_host_invoke_fn")
         (compiler-backend-runtime-tail-tlci-macro-entry?
           (compiler-backend-runtime-plan-tail plan))]
       [(string.eq name "tl_shift_abort")

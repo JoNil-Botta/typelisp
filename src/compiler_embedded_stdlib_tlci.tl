@@ -187,6 +187,15 @@
 (define compiler-comptime-host-diagnostic : (Array String)
   (make-array ""))
 
+;; Runtime bridge: the image's callback-invoke pointer targets a backend
+;; trampoline that reads the registered function value from a runtime cell,
+;; installs its environment word, and tail-jumps its code word (discarding
+;; the host-context argument, which is why the dispatcher takes five
+;; parameters). The setter stores the dispatcher's function value; the
+;; entry-ptr cell supplies the raw invoke address for the host table.
+(extern (tl-comptime-host-invoke-set [fn-value : i64]) : i64 (:symbol "tl_comptime_host_invoke_set"))
+(extern tl-comptime-host-invoke-entry-ptr (:symbol "tl_comptime_host_invoke_entry_ptr") : i64)
+
 (define (compiler-comptime-host-session-open!
   [pools : AstNodePoolContext]
   [operands : (Array CompilerCtfeValue)]
@@ -209,6 +218,11 @@
     (set! compiler-comptime-host-stack-len 0)
     (set! compiler-comptime-host-result-ready false)
     (array-set! compiler-comptime-host-diagnostic 0 "")
+    (tl-comptime-host-invoke-set
+      (cast
+        (unsafe
+          (cast compiler-comptime-host-invoke : u64))
+        : i64))
     (set! compiler-comptime-host-session-cookie cookie)))
 
 (define (compiler-comptime-host-session-close!) : unit
@@ -256,7 +270,6 @@
 ;; integer registers, so this function is directly callable from the mapped
 ;; image on Linux; the Windows adapter is tracked with the dispatch slice.
 (define (compiler-comptime-host-invoke
-  [_host-context : i64]
   [session : i64]
   [operation : i64]
   [arg-a : i64]
@@ -392,8 +405,5 @@
     0
     0
     0
-    (cast
-      (unsafe
-        (cast compiler-comptime-host-invoke : u64))
-      : i64)
+    tl-comptime-host-invoke-entry-ptr
     8192))

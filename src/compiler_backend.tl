@@ -13970,6 +13970,16 @@
     (compiler-backend-scavenge-reg-here exclude exclude-n fallback)
     planned))
 
+(define (compiler-backend-planned-or-scavenge-xmm-reg
+  [planned : String]
+  [dst : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]) : String
+  (if (string.eq planned "")
+    (compiler-backend-scavenge-xmm-reg dst exclude exclude-n fallback)
+    planned))
+
 (define (compiler-backend-scavenge-divmod-src-reg
   [dst : i64]
   [exclude : (Array String)]
@@ -15803,7 +15813,8 @@
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
-  [fty : AstType]) : ResultCompilerBackend
+  [fty : AstType]
+  [planned-result : String]) : ResultCompilerBackend
   (let
     [rhs-reg : String (compiler-backend-float-value-register assignments rhs)]
     [exclude : (Array String)
@@ -15815,7 +15826,12 @@
         0
         1)]
     [result-reg : String
-      (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2")]
+      (compiler-backend-planned-or-scavenge-xmm-reg
+        planned-result
+        dst
+        exclude
+        exclude-n
+        "%xmm2")]
     [rhs-operand : String
       (compiler-backend-float-direct-rhs-operand assignments rhs fty result-reg)]
     (if (string.eq rhs-operand "")
@@ -15875,10 +15891,12 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [fty : AstType]
-  [result-ty : AstType]) : ResultCompilerBackend
+  [result-ty : AstType]
+  [planned-result : String]) : ResultCompilerBackend
   (let
     [result-reg : String
-      (compiler-backend-scavenge-reg
+      (compiler-backend-planned-or-scavenge-reg
+        planned-result
         dst
         (compiler-backend-binop-scavenge-exclude-build)
         5
@@ -15908,7 +15926,10 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [fty : AstType]
-  [result-ty : AstType]) : ResultCompilerBackend
+  [result-ty : AstType]
+  [planned-primary : String]
+  [planned-rhs : String]
+  [planned-result-gp : String]) : ResultCompilerBackend
   (if (compiler-backend-compare-op? op)
     (let
       [rhs-reg : String (compiler-backend-float-value-register assignments rhs)]
@@ -15921,7 +15942,8 @@
           0
           1)]
       [lhs-reg : String
-        (compiler-backend-scavenge-xmm-reg
+        (compiler-backend-planned-or-scavenge-xmm-reg
+          planned-primary
           dst
           xmm-exclude
           xmm-exclude-n
@@ -15931,7 +15953,8 @@
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       [result-reg : String
         (if (string.eq dst-home "")
-          (compiler-backend-scavenge-reg
+          (compiler-backend-planned-or-scavenge-reg
+            planned-result-gp
             dst
             (compiler-backend-binop-scavenge-exclude-build)
             5
@@ -15950,7 +15973,12 @@
           [rhs-temp-exclude : (Array String)
             (compiler-backend-one-exclude lhs-reg)]
           [rhs-temp : String
-            (compiler-backend-scavenge-xmm-reg dst rhs-temp-exclude 1 "%xmm3")]
+            (compiler-backend-planned-or-scavenge-xmm-reg
+              planned-rhs
+              dst
+              rhs-temp-exclude
+              1
+              "%xmm3")]
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             rhs
@@ -16009,7 +16037,12 @@
             0
             1)]
         [result-reg : String
-          (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2")]
+          (compiler-backend-planned-or-scavenge-xmm-reg
+            planned-primary
+            dst
+            exclude
+            exclude-n
+            "%xmm2")]
         [rhs-operand : String
           (compiler-backend-float-direct-rhs-operand
             assignments
@@ -16021,7 +16054,12 @@
             [rhs-temp-exclude : (Array String)
               (compiler-backend-one-exclude result-reg)]
             [rhs-temp : String
-              (compiler-backend-scavenge-xmm-reg dst rhs-temp-exclude 1 "%xmm3")]
+              (compiler-backend-planned-or-scavenge-xmm-reg
+                planned-rhs
+                dst
+                rhs-temp-exclude
+                1
+                "%xmm3")]
             (match (compiler-backend-emit-load-float-value-with-plan
               assignments
               rhs
@@ -16774,6 +16812,12 @@
         (compiler-backend-float-direct-rhs-operand assignments rhs fty "")]
       [lhs-float-reg : String
         (compiler-backend-float-value-register assignments lhs)]
+      [planned0-xmm? : bool
+        (compiler-backend-string-prefix-at? planned0 "%xmm" 0)]
+      [planned1-xmm? : bool
+        (compiler-backend-string-prefix-at? planned1 "%xmm" 0)]
+      [planned2-xmm? : bool
+        (compiler-backend-string-prefix-at? planned2 "%xmm" 0)]
       (if (and
         (compiler-backend-compare-op? op)
         (not (string.eq lhs-float-reg ""))
@@ -16791,7 +16835,8 @@
             lhs
             rhs
             fty
-            result-ty)
+            result-ty
+            planned0)
           (compiler-backend-emit-float-compare-direct
             assignments
             dst-home
@@ -16806,7 +16851,15 @@
             (and
               (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
               (not (string.eq rhs-operand "")))
-            (and (string.eq dst-home "") (not (string.eq spill-rhs-operand "")))))
+            (and
+              (string.eq dst-home "")
+              (not (string.eq spill-rhs-operand ""))
+              (or
+                (string.eq planned0 "")
+                (not
+                  (string.eq
+                    (compiler-backend-float-value-register assignments rhs)
+                    planned0))))))
           (if (string.eq dst-home "")
             (compiler-backend-emit-float-binop-spill-direct
               assignments
@@ -16814,7 +16867,8 @@
               op
               lhs
               rhs
-              fty)
+              fty
+              planned0)
             (compiler-backend-emit-float-binop-direct
               assignments
               dst-home
@@ -16829,7 +16883,24 @@
             lhs
             rhs
             fty
-            result-ty))))
+            result-ty
+            (if planned0-xmm?
+              planned0
+              (if planned1-xmm?
+                planned1
+                ""))
+            (if planned0-xmm?
+              (if planned1-xmm?
+                planned1
+                "")
+              (if planned2-xmm?
+                planned2
+                ""))
+            (if planned0-xmm?
+              (if (and (not (string.eq planned1 "")) (not planned1-xmm?))
+                planned1
+                planned2)
+              planned0)))))
     (let
       [operand-ty : AstType
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
@@ -17719,6 +17790,8 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [fty : AstType]
+  [_planned-result : String]
+  [planned-rhs : String]
   [return-tail : String]) : ResultCompilerBackend
   (let
     [rhs-operand : String
@@ -17754,7 +17827,12 @@
             0
             1)]
         [rhs-temp : String
-          (compiler-backend-scavenge-xmm-reg -1 exclude exclude-n "%xmm2")]
+          (compiler-backend-planned-or-scavenge-xmm-reg
+            planned-rhs
+            -1
+            exclude
+            exclude-n
+            "%xmm2")]
         (match (compiler-backend-emit-load-float-value-with-plan
           assignments
           rhs
@@ -17789,6 +17867,9 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [fty : AstType]
+  [_planned-result : String]
+  [planned-lhs : String]
+  [planned-rhs : String]
   [return-tail : String]) : ResultCompilerBackend
   (if (compiler-backend-compare-op? op)
     (let
@@ -17818,7 +17899,8 @@
               0
               1)]
           [lhs-temp : String
-            (compiler-backend-scavenge-xmm-reg
+            (compiler-backend-planned-or-scavenge-xmm-reg
+              planned-lhs
               -1
               xmm-exclude
               xmm-exclude-n
@@ -17845,7 +17927,8 @@
                   1
                   2)]
               [rhs-temp : String
-                (compiler-backend-scavenge-xmm-reg
+                (compiler-backend-planned-or-scavenge-xmm-reg
+                  planned-rhs
                   -1
                   rhs-temp-exclude
                   rhs-temp-exclude-n
@@ -17934,7 +18017,7 @@
   [rhs : CompilerIrValue]
   [ty : AstType]
   [planned0 : String]
-  [_planned1 : String]
+  [planned1 : String]
   [planned2 : String]
   [planned3 : String]
   [planned4 : String]) : ResultCompilerBackend
@@ -17952,6 +18035,8 @@
             lhs
             rhs
             fty
+            planned0
+            planned1
             return-tail)
           (compiler-backend-emit-float-compare-return
             assignments
@@ -17959,6 +18044,9 @@
             lhs
             rhs
             fty
+            planned0
+            planned1
+            planned2
             return-tail)))
       (let
         [operand-ty : AstType
@@ -19327,7 +19415,7 @@
   [op : CompilerIrUnOp]
   [src : CompilerIrValue]
   [ty : AstType]
-  [planned-gp : String]) : ResultCompilerBackend
+  [planned-result : String]) : ResultCompilerBackend
   (if (compiler-backend-direct-float-unop? op ty)
     (let
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
@@ -19347,7 +19435,8 @@
             (ResultCompilerBackend.Err message)])
         (let
           [result-reg : String
-            (compiler-backend-scavenge-xmm-reg
+            (compiler-backend-planned-or-scavenge-xmm-reg
+              planned-result
               dst
               (array.make-array String 0)
               0
@@ -19380,7 +19469,7 @@
         (let
           [result-reg : String
             (compiler-backend-planned-or-scavenge-reg
-              planned-gp
+              planned-result
               dst
               (compiler-backend-binop-scavenge-exclude-build)
               5

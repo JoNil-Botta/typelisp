@@ -9425,6 +9425,7 @@
         decl-path)]
     [logical : String
       (compiler-load-package-decl-logical-name "" logical-path module name-str)]
+    [link-name : String (compiler-load-package-user-symbol logical)]
     (AstDecl.Extern
       ast-decl-meta-runtime
       name
@@ -9432,10 +9433,9 @@
       (box
         (AstExternMetadata.Metadata
           (AstExternAbi.C)
-          (ci.intern-generated-canonical-name
-            (compiler-load-package-user-symbol logical))
+          (ci.intern-generated-canonical-name link-name)
           (ast-extern-link-input-list-new)
-          false))
+          (ast-extern-metadata-flags false (string.eq link-name logical))))
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl

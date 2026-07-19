@@ -1423,10 +1423,13 @@
       (string.eq (tc-env-key-name-text name) "tl_str_view")
       (lower-bytes-view-from-parts-name? (tc-env-key-name-text name)))))
 
-(define (lower-name-env-lookup-with-id [names : LowerNameEnv] [source-id : i64]) : TcMaybeString
+(define (lower-name-env-lookup-symbol-id
+  [names : LowerNameEnv]
+  [source-id : i64]
+  [fallback : i64]) : i64
   (let
     [cur : LowerNameEnv names]
-    [result : TcMaybeString (TcMaybeString.No)]
+    [result : i64 fallback]
     [done : bool false]
     (begin
       (while (and
@@ -1439,12 +1442,17 @@
           [(LowerNameEnv.Bind bind-id _ symbol-id rest)
             (if (and (>= source-id 0) (= bind-id source-id))
               (begin
-                (set!
-                  result
-                  (TcMaybeString.Some (tc-env-key-name-text symbol-id)))
+                (set! result symbol-id)
                 (set! done true))
               (set! cur (box-get rest)))]))
       result)))
+
+(define (lower-name-env-lookup-with-id [names : LowerNameEnv] [source-id : i64]) : TcMaybeString
+  (let
+    [symbol-id : i64 (lower-name-env-lookup-symbol-id names source-id -1)]
+    (if (>= symbol-id 0)
+      (TcMaybeString.Some (tc-env-key-name-text symbol-id))
+      (TcMaybeString.No))))
 
 (define (lower-name-env-resolve-with-id
   [names : LowerNameEnv]
@@ -1510,13 +1518,27 @@
     8
     (* count 2)))
 
-(define (lower-logical-display-name [display : String] [logical-id : i64]) : String
-  (if (and
-    (>= logical-id 0)
-    (< logical-id (intern-capacity))
-    (string.eq (intern-str logical-id) display))
+(define (lower-logical-display-name-select
+  [display : String]
+  [logical-id : i64]
+  [direct : bool]) : String
+  (if direct
     (intern-str logical-id)
     display))
+
+(define (lower-derived-symbol-id [logical-name : String]) : i64
+  (ci.intern-generated-canonical-name logical-name))
+
+(define (lower-logical-symbol-id-select
+  [logical-name : String]
+  [logical-id : i64]
+  [direct : bool]) : i64
+  (if direct
+    logical-id
+    (lower-derived-symbol-id logical-name)))
+
+(define (lower-logical-symbol-id-direct? [logical-id : i64] [source-id : i64]) : bool
+  (and (= logical-id source-id) (tc-env-key-has-name-id? logical-id)))
 
 (define (lower-name-cache-logical-module-id [logical-id : i64]) : i64
   (cond
@@ -1590,7 +1612,7 @@
   (LowerNameEnv.Bind
     source-id
     logical-id
-    (lower-name-cache-symbol-id logical-name logical-id)
+    (lower-derived-symbol-id logical-name)
     (box rest)))
 
 (define (lower-name-env-bind-logical-symbol-id
@@ -1600,24 +1622,32 @@
   [rest : LowerNameEnv]) : LowerNameEnv
   (LowerNameEnv.Bind source-id logical-id symbol-id (box rest)))
 
-(define (lower-name-cache-symbol-id [logical-name : String] [logical-id : i64]) : i64
-  (if (and
-    (tc-env-key-has-name-id? logical-id)
-    (string.eq (intern-str logical-id) logical-name))
+(define (lower-name-env-bind-cached-logical-id
+  [source-id : i64]
+  [logical-name : String]
+  [logical-id : i64]
+  [cache : LowerNameCache]
+  [rest : LowerNameEnv]) : LowerNameEnv
+  (lower-name-env-bind-logical-symbol-id
+    source-id
     logical-id
-    (ci.intern-generated-canonical-name logical-name)))
+    (lower-name-cache-lookup-symbol-id
+      (& cache)
+      logical-id
+      (lower-derived-symbol-id logical-name))
+    rest))
 
 (define (lower-extern-logical-symbol-id
   [logical-id : i64]
   [logical-name : String]
+  [source-id : i64]
   [metadata : AstExternMetadata]) : i64
   (let
+    [direct : bool (lower-logical-symbol-id-direct? logical-id source-id)]
     [link-id : i64 (ast-extern-metadata-symbol-id metadata)]
-    (if (and
-      (tc-env-key-has-name-id? link-id)
-      (string.eq (intern-str link-id) logical-name))
+    (if (and (ast-extern-metadata-symbol-matches-source? metadata) direct)
       link-id
-      (lower-name-cache-symbol-id logical-name logical-id))))
+      (lower-logical-symbol-id-select logical-name logical-id direct))))
 
 (define (lower-name-cache-add-id
   [cache : LowerNameCache]
@@ -2413,7 +2443,14 @@
   (match (lower-name-env-lookup-with-id names source-id)
     [(TcMaybeString.Some _) names]
     [(TcMaybeString.No)
-      (lower-name-env-bind-logical-id source-id logical-name logical-id names)]))
+      (lower-name-env-bind-logical-symbol-id
+        source-id
+        logical-id
+        (lower-logical-symbol-id-select
+          logical-name
+          logical-id
+          (lower-logical-symbol-id-direct? logical-id source-id))
+        names)]))
 
 (define (lower-name-env-add-import-alias-binding-symbol-id
   [names : LowerNameEnv]
@@ -2461,7 +2498,8 @@
   [source-name : String]
   [source-id : i64]
   [logical-name : String]
-  [logical-id : i64]) : LowerNameEnv
+  [logical-id : i64]
+  [direct : bool]) : LowerNameEnv
   (lower-name-env-add-import-alias-binding-symbol-id
     names
     alias
@@ -2469,7 +2507,7 @@
     source-id
     logical-name
     logical-id
-    (lower-name-cache-symbol-id logical-name logical-id)))
+    (lower-logical-symbol-id-select logical-name logical-id direct)))
 
 (define (lower-name-env-add-import-alias-binding-base-id
   [names : LowerNameEnv]
@@ -2478,14 +2516,51 @@
   [base-name : String]
   [base-id : i64]
   [logical-id : i64]
-  [logical-name : String]) : LowerNameEnv
+  [logical-name : String]
+  [direct : bool]) : LowerNameEnv
   (lower-name-env-add-import-alias-binding-id
     names
     alias
     (compiler-symbol-module-key alias base-name)
     (compiler-symbol-module-key-id-by-id alias-id base-id)
     logical-name
-    logical-id))
+    logical-id
+    direct))
+
+(define (lower-name-env-add-decl-import-alias-binding-base-id
+  [names : LowerNameEnv]
+  [entry-path : String]
+  [decl-path : String]
+  [alias : String]
+  [alias-id : i64]
+  [module : String]
+  [module-id : i64]
+  [source-name : String]
+  [source-id : i64]
+  [path-aware : bool]) : LowerNameEnv
+  (let
+    [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
+    (lower-name-env-add-import-alias-binding-base-id
+      names
+      alias
+      alias-id
+      source-name
+      source-id
+      logical-id
+      (lower-alias-logical-name-id
+        entry-path
+        decl-path
+        module
+        module-id
+        source-id
+        source-name
+        path-aware)
+      (lower-alias-logical-symbol-direct?
+        entry-path
+        decl-path
+        logical-id
+        source-id
+        path-aware))))
 
 (define (lower-name-env-add-import-alias-binding-base-symbol-id
   [names : LowerNameEnv]
@@ -2579,7 +2654,10 @@
     base-id
     logical-id
     logical-name
-    (lower-name-cache-symbol-id logical-name logical-id)))
+    (lower-name-cache-lookup-symbol-id
+      (& base-cache)
+      logical-id
+      (lower-derived-symbol-id logical-name))))
 
 (define (lower-module-name-key-id-by-id [module-id : i64] [name-id : i64]) : i64
   (if (compiler-symbol-root-module-id? module-id)
@@ -2593,10 +2671,64 @@
   [_ : String]
   [source-id : i64]
   [logical-name : String]
-  [logical-id : i64]) : LowerNameEnv
-  (if (compiler-symbol-root-module-id? module-id)
-    (lower-name-env-bind-logical-id source-id logical-name logical-id names)
-    (lower-name-env-bind-logical-id logical-id logical-name logical-id names)))
+  [logical-id : i64]
+  [direct : bool]) : LowerNameEnv
+  (let
+    [symbol-id : i64
+      (lower-logical-symbol-id-select
+        logical-name
+        (if direct
+          source-id
+          logical-id)
+        direct)]
+    (if (compiler-symbol-root-module-id? module-id)
+      (lower-name-env-bind-logical-symbol-id
+        source-id
+        logical-id
+        symbol-id
+        names)
+      (lower-name-env-bind-logical-symbol-id
+        logical-id
+        logical-id
+        symbol-id
+        names))))
+
+(define (lower-name-env-add-decl-module-binding-id
+  [names : LowerNameEnv]
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [module-id : i64]
+  [source-name : String]
+  [source-id : i64]) : LowerNameEnv
+  (let
+    [logical-id : i64
+      (lower-decl-logical-id
+        entry-path
+        decl-path
+        module
+        module-id
+        source-id
+        source-name)]
+    (lower-name-env-add-module-binding-id
+      names
+      module
+      module-id
+      source-name
+      source-id
+      (lower-decl-logical-name-id
+        entry-path
+        decl-path
+        module
+        module-id
+        source-id
+        source-name)
+      logical-id
+      (lower-decl-logical-symbol-direct?
+        entry-path
+        decl-path
+        logical-id
+        source-id))))
 
 (define (lower-name-env-add-module-extern-binding-id
   [names : LowerNameEnv]
@@ -2608,7 +2740,7 @@
   (let
     [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
     [symbol-id : i64
-      (lower-extern-logical-symbol-id logical-id source-name metadata)]
+      (lower-extern-logical-symbol-id logical-id source-name source-id metadata)]
     (LowerNameEnv.Bind
       (if (compiler-symbol-root-module-id? module-id)
         source-id
@@ -2629,26 +2761,14 @@
     [(AstStructCleanup.Fn cleanup-name)
       (let
         [cleanup-str : String (tc-env-key-name-text cleanup-name)]
-        (lower-name-env-add-module-binding-id
+        (lower-name-env-add-decl-module-binding-id
           names
+          entry-path
+          decl-path
           module
           module-id
           cleanup-str
-          cleanup-name
-          (lower-decl-logical-name-id
-            entry-path
-            decl-path
-            module
-            module-id
-            cleanup-name
-            cleanup-str)
-          (lower-decl-logical-id
-            entry-path
-            decl-path
-            module
-            module-id
-            cleanup-name
-            cleanup-str)))]))
+          cleanup-name))]))
 
 (define (lower-name-env-add-enum-cleanup-in-module
   [names : LowerNameEnv]
@@ -2662,26 +2782,14 @@
     [(AstEnumCleanup.Fn cleanup-name)
       (let
         [cleanup-str : String (tc-env-key-name-text cleanup-name)]
-        (lower-name-env-add-module-binding-id
+        (lower-name-env-add-decl-module-binding-id
           names
+          entry-path
+          decl-path
           module
           module-id
           cleanup-str
-          cleanup-name
-          (lower-decl-logical-name-id
-            entry-path
-            decl-path
-            module
-            module-id
-            cleanup-name
-            cleanup-str)
-          (lower-decl-logical-id
-            entry-path
-            decl-path
-            module
-            module-id
-            cleanup-name
-            cleanup-str)))]))
+          cleanup-name))]))
 
 (define (lower-name-env-add-local-struct-cleanup
   [names : LowerNameEnv]
@@ -2693,7 +2801,7 @@
     [(AstStructCleanup.Fn cleanup-name)
       (let
         [cleanup-str : String (tc-env-key-name-text cleanup-name)]
-        (lower-name-env-bind-logical-id
+        (lower-name-env-bind-cached-logical-id
           cleanup-name
           (lower-current-decl-logical-name-cache-id
             name-cache
@@ -2708,6 +2816,7 @@
             (lower-module-name-key-id-by-id
               (struct-get name-cache module-id)
               cleanup-name))
+          name-cache
           names))]))
 
 (define (lower-name-env-add-local-enum-cleanup
@@ -2720,7 +2829,7 @@
     [(AstEnumCleanup.Fn cleanup-name)
       (let
         [cleanup-str : String (tc-env-key-name-text cleanup-name)]
-        (lower-name-env-bind-logical-id
+        (lower-name-env-bind-cached-logical-id
           cleanup-name
           (lower-current-decl-logical-name-cache-id
             name-cache
@@ -2735,6 +2844,7 @@
             (lower-module-name-key-id-by-id
               (struct-get name-cache module-id)
               cleanup-name))
+          name-cache
           names))]))
 
 (define (lower-name-has-clone-prefix? [name : String]) : bool
@@ -2765,14 +2875,32 @@
       (lower-name-cache-resolve-symbol-id (& names) source-id -1)]
     (if (>= symbol-id 0)
       symbol-id
-      (lower-ir-symbol logical-id resolved-name))))
+      (lower-logical-symbol-id-select
+        resolved-name
+        logical-id
+        (lower-logical-symbol-id-direct? logical-id source-id)))))
 
-(define (lower-ir-symbol [name-id : i64] [name : String]) : i64
-  (if (and
-    (tc-env-key-has-name-id? name-id)
-    (string.eq (tc-env-key-name-text name-id) name))
-    name-id
-    (ci.intern-generated-canonical-name name)))
+(define (lower-name-cache-ir-symbol
+  [names : LowerNameCache]
+  [logical-id : i64]
+  [source-id : i64]
+  [display-name : String]) : i64
+  (lower-name-cache-lookup-symbol-id
+    (& names)
+    logical-id
+    (lower-logical-symbol-id-select
+      display-name
+      logical-id
+      (lower-logical-symbol-id-direct? logical-id source-id))))
+
+(define (lower-decl-function-symbol-id
+  [names : LowerNameCache]
+  [logical-id : i64]
+  [source-id : i64]
+  [logical-name : String]) : i64
+  (if (= logical-id cbi.compiler-builtin-id-fix-main)
+    source-id
+    (lower-name-cache-ir-symbol names logical-id source-id logical-name)))
 
 (define (lower-tl-alloc-symbol) : i64
   (begin
@@ -2871,7 +2999,10 @@
         (lower-name-cache-resolve-symbol-id (& state-names) source-id -1))]
     (if (>= symbol-id 0)
       symbol-id
-      (lower-ir-symbol logical-id resolved-name))))
+      (lower-logical-symbol-id-select
+        resolved-name
+        logical-id
+        (lower-logical-symbol-id-direct? logical-id source-id)))))
 
 (define (lower-resolve-call-name-id-with-display
   [state : LowerState]
@@ -2903,7 +3034,10 @@
         (lower-name-cache-resolve-symbol-id (& state-names) source-id -1))]
     (if (>= symbol-id 0)
       symbol-id
-      (lower-ir-symbol logical-id logical-display))))
+      (lower-logical-symbol-id-select
+        logical-display
+        logical-id
+        (lower-logical-symbol-id-direct? logical-id source-id)))))
 
 (define (lower-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
@@ -3199,6 +3333,13 @@
       (lower-normalize-path entry-path)
       (lower-normalize-path decl-path))))
 
+(define (lower-decl-logical-symbol-direct?
+  [_ : String]
+  [_ : String]
+  [logical-id : i64]
+  [_ : i64]) : bool
+  (= logical-id cbi.compiler-builtin-id-fix-main))
+
 (define (lower-decl-owner-module-id
   [paths : (& paths AstDeclPathList)]
   [index : i64]
@@ -3373,6 +3514,31 @@
     cbi.compiler-builtin-id-fix-main
     -1))
 
+(define (lower-decl-logical-name-display
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [module-id : i64]
+  [source-id : i64]
+  [source-name : String]) : String
+  (let
+    [logical-id : i64
+      (lower-decl-logical-id
+        entry-path
+        decl-path
+        module
+        module-id
+        source-id
+        source-name)]
+    (if (= logical-id cbi.compiler-builtin-id-fix-main)
+      "main"
+      (if (string.eq module "")
+        (lower-module-logical-name entry-path decl-path source-name)
+        (lower-module-logical-name
+          entry-path
+          decl-path
+          (compiler-symbol-module-key module source-name))))))
+
 (define (lower-decl-logical-name-id
   [entry-path : String]
   [decl-path : String]
@@ -3389,16 +3555,20 @@
         module-id
         source-id
         source-name)]
-    (lower-logical-display-name
-      (if (= logical-id cbi.compiler-builtin-id-fix-main)
-        "main"
-        (if (string.eq module "")
-          (lower-module-logical-name entry-path decl-path source-name)
-          (lower-module-logical-name
-            entry-path
-            decl-path
-            (compiler-symbol-module-key module source-name))))
-      logical-id)))
+    (lower-logical-display-name-select
+      (lower-decl-logical-name-display
+        entry-path
+        decl-path
+        module
+        module-id
+        source-id
+        source-name)
+      logical-id
+      (lower-decl-logical-symbol-direct?
+        entry-path
+        decl-path
+        logical-id
+        source-id))))
 
 (define (lower-current-decl-logical-name-id
   [names : LowerNameEnv]
@@ -3409,15 +3579,12 @@
   (let
     [key : String (compiler-symbol-module-key module source-name)]
     [key-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
-    [resolved : String (lower-name-env-resolve-with-id names key key-id)]
-    (lower-logical-display-name
-      (if (and
-        (string.eq module "main")
-        (string.eq source-name "main")
-        (string.eq resolved key))
+    [symbol-id : i64 (lower-name-env-lookup-symbol-id names key-id -1)]
+    (if (>= symbol-id 0)
+      (tc-env-key-name-text symbol-id)
+      (if (and (string.eq module "main") (string.eq source-name "main"))
         "main"
-        resolved)
-      key-id)))
+        key))))
 
 (define (lower-current-decl-logical-name-cache-id
   [names : LowerNameCache]
@@ -3428,20 +3595,12 @@
     [key : String (compiler-symbol-module-key module source-name)]
     [key-id : i64
       (lower-module-name-key-id-by-id (struct-get names module-id) source-id)]
-    [resolved : String
-      (match (lower-name-cache-lookup-id names key-id)
-        [(TcMaybeString.Some logical-name) logical-name]
-        [(TcMaybeString.No) key])]
-    [logical-id : i64
-      (lower-name-cache-lookup-logical-id (& names) key-id key-id)]
-    (lower-logical-display-name
-      (if (and
-        (string.eq module "main")
-        (string.eq source-name "main")
-        (string.eq resolved key))
+    [symbol-id : i64 (lower-name-cache-lookup-symbol-id (& names) key-id -1)]
+    (if (>= symbol-id 0)
+      (tc-env-key-name-text symbol-id)
+      (if (and (string.eq module "main") (string.eq source-name "main"))
         "main"
-        resolved)
-      logical-id)))
+        key))))
 
 (define (lower-name-env-add-decl-in-module
   [names : LowerNameEnv]
@@ -3454,72 +3613,36 @@
     [(AstDecl.Def decl-meta name _ _)
       (let
         [name-str : String (tc-env-key-name-text name)]
-        (lower-name-env-add-module-binding-id
+        (lower-name-env-add-decl-module-binding-id
           names
+          entry-path
+          decl-path
           module
           module-id
           name-str
-          name
-          (lower-decl-logical-name-id
-            entry-path
-            decl-path
-            module
-            module-id
-            name
-            name-str)
-          (lower-decl-logical-id
-            entry-path
-            decl-path
-            module
-            module-id
-            name
-            name-str)))]
+          name))]
     [(AstDecl.DefFn decl-meta name _ _ _ _)
       (let
         [name-str : String (tc-env-key-name-text name)]
-        (lower-name-env-add-module-binding-id
+        (lower-name-env-add-decl-module-binding-id
           names
+          entry-path
+          decl-path
           module
           module-id
           name-str
-          name
-          (lower-decl-logical-name-id
-            entry-path
-            decl-path
-            module
-            module-id
-            name
-            name-str)
-          (lower-decl-logical-id
-            entry-path
-            decl-path
-            module
-            module-id
-            name
-            name-str)))]
+          name))]
     [(AstDecl.DefDispatch decl-meta name _)
       (let
         [name-str : String (tc-env-key-name-text name)]
-        (lower-name-env-add-module-binding-id
+        (lower-name-env-add-decl-module-binding-id
           names
+          entry-path
+          decl-path
           module
           module-id
           name-str
-          name
-          (lower-decl-logical-name-id
-            entry-path
-            decl-path
-            module
-            module-id
-            name
-            name-str)
-          (lower-decl-logical-id
-            entry-path
-            decl-path
-            module
-            module-id
-            name
-            name-str)))]
+          name))]
     [(AstDecl.Extern decl-meta name _ metadata _)
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
@@ -3703,26 +3826,14 @@
       (let
         [name-str : String (tc-env-key-name-text name)]
         (if (lower-name-has-clone-prefix? name-str)
-          (lower-name-env-add-module-binding-id
+          (lower-name-env-add-decl-module-binding-id
             names
+            entry-path
+            decl-path
             module
             module-id
             name-str
-            name
-            (lower-decl-logical-name-id
-              entry-path
-              decl-path
-              module
-              module-id
-              name
-              name-str)
-            (lower-decl-logical-id
-              entry-path
-              decl-path
-              module
-              module-id
-              name
-              name-str))
+            name)
           names))]
     [(AstDecl.Unsafe inner-box)
       (let
@@ -3748,26 +3859,14 @@
       (if (string.eq generator "stdlib.clone/synthesize-helpers")
         (match (ast-decl-unwrapped decl)
           [(AstDecl.DefFn decl-meta name _ _ _ _)
-            (lower-name-env-add-module-binding-id
+            (lower-name-env-add-decl-module-binding-id
               names
+              entry-path
+              decl-path
               module
               module-id
               item
-              name
-              (lower-decl-logical-name-id
-                entry-path
-                decl-path
-                module
-                module-id
-                name
-                item)
-              (lower-decl-logical-id
-                entry-path
-                decl-path
-                module
-                module-id
-                name
-                item))]
+              name)]
           [_ names])
         (lower-name-env-add-clone-decl-in-module-inner
           names
@@ -3850,6 +3949,20 @@
       source-name)
     (compiler-symbol-module-key module source-name)))
 
+(define (lower-alias-logical-symbol-direct?
+  [entry-path : String]
+  [decl-path : String]
+  [logical-id : i64]
+  [source-id : i64]
+  [path-aware : bool]) : bool
+  (if path-aware
+    (lower-decl-logical-symbol-direct?
+      entry-path
+      decl-path
+      logical-id
+      source-id)
+    (lower-logical-symbol-id-direct? logical-id source-id)))
+
 (define (lower-import-alias-key [importer-module : String] [alias : String]) : String
   (if (string.eq alias "")
     importer-module
@@ -3874,57 +3987,45 @@
     [(AstDecl.Def decl-meta name _ _)
       (let
         [name-str : String (tc-env-key-name-text name)]
-        (lower-name-env-add-import-alias-binding-base-id
+        (lower-name-env-add-decl-import-alias-binding-base-id
           names
+          entry-path
+          decl-path
           alias
           alias-id
+          module
+          module-id
           name-str
           name
-          (lower-module-name-key-id-by-id module-id name)
-          (lower-alias-logical-name-id
-            entry-path
-            decl-path
-            module
-            module-id
-            name
-            name-str
-            path-aware)))]
+          path-aware))]
     [(AstDecl.DefFn decl-meta name _ _ _ _)
       (let
         [name-str : String (tc-env-key-name-text name)]
-        (lower-name-env-add-import-alias-binding-base-id
+        (lower-name-env-add-decl-import-alias-binding-base-id
           names
+          entry-path
+          decl-path
           alias
           alias-id
+          module
+          module-id
           name-str
           name
-          (lower-module-name-key-id-by-id module-id name)
-          (lower-alias-logical-name-id
-            entry-path
-            decl-path
-            module
-            module-id
-            name
-            name-str
-            path-aware)))]
+          path-aware))]
     [(AstDecl.DefDispatch decl-meta name _)
       (let
         [name-str : String (tc-env-key-name-text name)]
-        (lower-name-env-add-import-alias-binding-base-id
+        (lower-name-env-add-decl-import-alias-binding-base-id
           names
+          entry-path
+          decl-path
           alias
           alias-id
+          module
+          module-id
           name-str
           name
-          (lower-module-name-key-id-by-id module-id name)
-          (lower-alias-logical-name-id
-            entry-path
-            decl-path
-            module
-            module-id
-            name
-            name-str
-            path-aware)))]
+          path-aware))]
     [(AstDecl.Extern decl-meta name _ metadata _)
       (let
         [name-str : String (tc-env-key-name-text name)]
@@ -3940,6 +4041,7 @@
           (lower-extern-logical-symbol-id
             logical-id
             name-str
+            name
             (box-get metadata))))]
     [(AstDecl.DefEnum decl-meta _ cleanup _)
       (match cleanup
@@ -3947,84 +4049,68 @@
         [(AstEnumCleanup.Fn cleanup-name)
           (let
             [cleanup-str : String (tc-env-key-name-text cleanup-name)]
-            (lower-name-env-add-import-alias-binding-base-id
+            (lower-name-env-add-decl-import-alias-binding-base-id
               names
+              entry-path
+              decl-path
               alias
               alias-id
+              module
+              module-id
               cleanup-str
               cleanup-name
-              (lower-module-name-key-id-by-id module-id cleanup-name)
-              (lower-alias-logical-name-id
-                entry-path
-                decl-path
-                module
-                module-id
-                cleanup-name
-                cleanup-str
-                path-aware)))])]
+              path-aware))])]
     [(AstDecl.DefEnumLifetimes decl-meta _ _ cleanup _)
       (match cleanup
         [(AstEnumCleanup.No) names]
         [(AstEnumCleanup.Fn cleanup-name)
           (let
             [cleanup-str : String (tc-env-key-name-text cleanup-name)]
-            (lower-name-env-add-import-alias-binding-base-id
+            (lower-name-env-add-decl-import-alias-binding-base-id
               names
+              entry-path
+              decl-path
               alias
               alias-id
+              module
+              module-id
               cleanup-str
               cleanup-name
-              (lower-module-name-key-id-by-id module-id cleanup-name)
-              (lower-alias-logical-name-id
-                entry-path
-                decl-path
-                module
-                module-id
-                cleanup-name
-                cleanup-str
-                path-aware)))])]
+              path-aware))])]
     [(AstDecl.DefStruct decl-meta _ _ cleanup _)
       (match cleanup
         [(AstStructCleanup.No) names]
         [(AstStructCleanup.Fn cleanup-name)
           (let
             [cleanup-str : String (tc-env-key-name-text cleanup-name)]
-            (lower-name-env-add-import-alias-binding-base-id
+            (lower-name-env-add-decl-import-alias-binding-base-id
               names
+              entry-path
+              decl-path
               alias
               alias-id
+              module
+              module-id
               cleanup-str
               cleanup-name
-              (lower-module-name-key-id-by-id module-id cleanup-name)
-              (lower-alias-logical-name-id
-                entry-path
-                decl-path
-                module
-                module-id
-                cleanup-name
-                cleanup-str
-                path-aware)))])]
+              path-aware))])]
     [(AstDecl.DefStructLifetimes decl-meta _ _ _ cleanup _)
       (match cleanup
         [(AstStructCleanup.No) names]
         [(AstStructCleanup.Fn cleanup-name)
           (let
             [cleanup-str : String (tc-env-key-name-text cleanup-name)]
-            (lower-name-env-add-import-alias-binding-base-id
+            (lower-name-env-add-decl-import-alias-binding-base-id
               names
+              entry-path
+              decl-path
               alias
               alias-id
+              module
+              module-id
               cleanup-str
               cleanup-name
-              (lower-module-name-key-id-by-id module-id cleanup-name)
-              (lower-alias-logical-name-id
-                entry-path
-                decl-path
-                module
-                module-id
-                cleanup-name
-                cleanup-str
-                path-aware)))])]
+              path-aware))])]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -4118,6 +4204,7 @@
           (lower-extern-logical-symbol-id
             logical-id
             name-str
+            name
             (box-get metadata))))]
     [(AstDecl.DefEnum decl-meta _ cleanup _)
       (match cleanup
@@ -4626,7 +4713,7 @@
     [(AstDecl.Def decl-meta name _ _)
       (let
         [name-str : String (tc-env-key-name-text name)]
-        (lower-name-env-bind-logical-id
+        (lower-name-env-bind-cached-logical-id
           name
           (lower-current-decl-logical-name-cache-id
             name-cache
@@ -4641,11 +4728,12 @@
             (lower-module-name-key-id-by-id
               (struct-get name-cache module-id)
               name))
+          name-cache
           names))]
     [(AstDecl.DefFn decl-meta name _ _ _ _)
       (let
         [name-str : String (tc-env-key-name-text name)]
-        (lower-name-env-bind-logical-id
+        (lower-name-env-bind-cached-logical-id
           name
           (lower-current-decl-logical-name-cache-id
             name-cache
@@ -4660,11 +4748,12 @@
             (lower-module-name-key-id-by-id
               (struct-get name-cache module-id)
               name))
+          name-cache
           names))]
     [(AstDecl.DefDispatch decl-meta name _)
       (let
         [name-str : String (tc-env-key-name-text name)]
-        (lower-name-env-bind-logical-id
+        (lower-name-env-bind-cached-logical-id
           name
           (lower-current-decl-logical-name-id
             resolve-env
@@ -4680,6 +4769,7 @@
             (lower-module-name-key-id-by-id
               (struct-get name-cache module-id)
               name))
+          name-cache
           names))]
     [(AstDecl.Extern decl-meta name _ metadata _)
       (let
@@ -4693,19 +4783,11 @@
             (lower-module-name-key-id-by-id
               (struct-get name-cache module-id)
               name))]
-        [logical-name : String
-          (lower-current-decl-logical-name-cache-id
-            name-cache
-            module
-            name-str
-            name)]
+        [logical-name : String (compiler-symbol-module-key module name-str)]
         (LowerNameEnv.Bind
           name
           logical-id
-          (lower-extern-logical-symbol-id
-            logical-id
-            logical-name
-            (box-get metadata))
+          (lower-derived-symbol-id logical-name)
           (box names)))]
     [(AstDecl.DefEnum decl-meta _ cleanup _)
       (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
@@ -11064,23 +11146,10 @@
     [(AstVariantDef.Def _ fields _)
       (lower-variant-fields-storage-size ctx fields)]))
 
-(define (lower-enum-variant-symbol-id
-  [enum-name-id : i64]
-  [variant-name-id : i64]) : i64
-  (if (compiler-composite-pair-key-id? enum-name-id)
-    (compiler-composite-triple-key-id
-      (compiler-composite-pair-left-id enum-name-id)
-      (compiler-composite-pair-right-id enum-name-id)
-      variant-name-id)
-    (compiler-composite-pair-key-id enum-name-id variant-name-id)))
-
 (define (lower-nullary-variant-object-symbol
-  [enum-name-id : i64]
   [enum-name : String]
-  [variant-name-id : i64]
   [variant-name : String]) : i64
-  (lower-ir-symbol
-    (lower-enum-variant-symbol-id enum-name-id variant-name-id)
+  (lower-derived-symbol-id
     (string.append
       "__enum_obj_"
       (string.append enum-name (string.append "_" variant-name)))))
@@ -11104,9 +11173,7 @@
               (let
                 [object-name : i64
                   (lower-nullary-variant-object-symbol
-                    enum-name-id
                     enum-name
-                    variant-name
                     (tc-env-key-name-text variant-name))]
                 (compiler-ir-global-cons
                   (CompilerIrGlobal.Global
@@ -11382,7 +11449,7 @@
                 call-state
                 (CompilerIrInstr.Call
                   call-var
-                  (lower-ir-symbol -1 "tl_memcpy")
+                  (lower-derived-symbol-id "tl_memcpy")
                   (compiler-ir-call-args-from-list
                     (compiler-ir-value-cons
                       dst-addr
@@ -11410,7 +11477,7 @@
                 call-state
                 (CompilerIrInstr.Call
                   call-var
-                  (lower-ir-symbol -1 "tl_memcpy")
+                  (lower-derived-symbol-id "tl_memcpy")
                   (compiler-ir-call-args-from-list
                     (compiler-ir-value-cons
                       dst-addr
@@ -12751,22 +12818,10 @@
   (begin
     (cbi.compiler-builtin-refresh!)
     (cond
-      [(= count 3)
-        (lower-ir-symbol
-          cbi.compiler-builtin-id-tl-string-concat3
-          "tl_string_concat3")]
-      [(= count 4)
-        (lower-ir-symbol
-          cbi.compiler-builtin-id-tl-string-concat4
-          "tl_string_concat4")]
-      [(= count 5)
-        (lower-ir-symbol
-          cbi.compiler-builtin-id-tl-string-concat5
-          "tl_string_concat5")]
-      [else
-        (lower-ir-symbol
-          cbi.compiler-builtin-id-tl-string-concat
-          "tl_string_concat")])))
+      [(= count 3) cbi.compiler-builtin-id-tl-string-concat3]
+      [(= count 4) cbi.compiler-builtin-id-tl-string-concat4]
+      [(= count 5) cbi.compiler-builtin-id-tl-string-concat5]
+      [else cbi.compiler-builtin-id-tl-string-concat])))
 
 (define (lower-string-concat-values-rev-at
   [ctx : TcContext]
@@ -19860,15 +19915,13 @@
                     (match (compiler-registries-variant-name-id-indexed
                       symbols
                       handle)
-                      [(option_i64.Some variant-name-id)
+                      [(option_i64.Some _)
                         (ResultLowerExpr.Ok
                           (LowerExpr.Expr
                             args-state
                             (CompilerIrValue.GlobalAddr
                               (lower-nullary-variant-object-symbol
-                                (lower-enum-type-name-id-or enum-ty -1)
                                 enum-name
-                                variant-name-id
                                 variant-name))
                             enum-ty))]
                       [(option_i64.None)
@@ -28991,8 +29044,7 @@
     (AstType.I64)))
 
 (define (lower-atomic-raw-symbol [symbol : String]) : i64
-  (lower-ir-symbol
-    -1
+  (lower-derived-symbol-id
     (cond
       [(string.eq symbol "tl_atomic_i64_load") "tl_atomic_i64_load_ptr"]
       [(string.eq symbol "tl_atomic_i64_store") "tl_atomic_i64_store_ptr"]
@@ -29061,8 +29113,7 @@
     [else "cas_ptr"]))
 
 (define (lower-atomic-pointer-raw-symbol [name : String] [elem-ty : AstType]) : i64
-  (lower-ir-symbol
-    -1
+  (lower-derived-symbol-id
     (str_cat.str-cat
       (lower-atomic-pointer-width-prefix name elem-ty)
       (lower-atomic-pointer-op-suffix name)
@@ -51718,7 +51769,8 @@
             [(TcMaybeString.No)
               (intern-str (macro-hygiene-global-source-name-id-or name name))])]
         (ResultLowerValue.Ok
-          (CompilerIrValue.Global (lower-ir-symbol logical-id display-name))))]
+          (CompilerIrValue.Global
+            (lower-name-cache-ir-symbol names logical-id name display-name))))]
     [_
       (ResultLowerValue.Err
         (box (lower-diagnostic "lower: unsupported global initializer")))]))
@@ -52529,21 +52581,15 @@
       (ast-dispatch-variant-fallback))
       [(AstDispatchVariant.Variant isa variant-name)
         (if (tc-dispatch-isa-eq? isa wanted)
-          (let
-            [key-id : i64
-              (lower-dispatch-variant-source-id module-id variant-name)]
-            [logical-id : i64
-              (lower-name-cache-lookup-logical-id (& names) key-id key-id)]
-            (LowerMaybeIrSymbol.Some
-              (lower-ir-symbol
-                logical-id
-                (lower-dispatch-variant-internal-name
-                  dispatch-name
-                  isa
-                  (lower-dispatch-variant-logical-name
-                    module-id
-                    names
-                    variant-name)))))
+          (LowerMaybeIrSymbol.Some
+            (lower-derived-symbol-id
+              (lower-dispatch-variant-internal-name
+                dispatch-name
+                isa
+                (lower-dispatch-variant-logical-name
+                  module-id
+                  names
+                  variant-name))))
           (lower-dispatch-find-internal-name-from
             variants
             (+ index 1)
@@ -53030,10 +53076,8 @@
       (let
         [variant-logical : String
           (lower-dispatch-variant-logical-name module-id names variant-name)]
-        [key-id : i64 (lower-dispatch-variant-source-id module-id variant-name)]
         [internal-name : i64
-          (lower-ir-symbol
-            (lower-name-cache-lookup-logical-id (& names) key-id key-id)
+          (lower-derived-symbol-id
             (lower-dispatch-variant-internal-name
               dispatch-name
               isa
@@ -53172,7 +53216,8 @@
     [key-id : i64 (lower-module-name-key-id-by-id logical-module-id name-id)]
     [logical-id : i64
       (lower-name-cache-lookup-logical-id (& name-cache) key-id key-id)]
-    [logical-symbol : i64 (lower-ir-symbol logical-id logical-name)]
+    [logical-symbol : i64
+      (lower-name-cache-ir-symbol name-cache logical-id name-id logical-name)]
     [cache-text : String (lower-dispatch-cache-name logical-name)]
     [cache-id : i64 (ci.intern-generated-name cache-text)]
     [cache-symbol : i64 cache-id]
@@ -53511,7 +53556,11 @@
                               global-key-id
                               global-key-id)]
                           [global-symbol : i64
-                            (lower-ir-symbol global-id global-name)]
+                            (lower-name-cache-ir-symbol
+                              decl-name-cache
+                              global-id
+                              name
+                              global-name)]
                           (match (lower-global-value
                             decl-ctx
                             decl-name-cache
@@ -53624,6 +53673,7 @@
                               (lower-extern-logical-symbol-id
                                 logical-id
                                 logical-name
+                                name
                                 (box-get metadata))
                               name
                               logical-name
@@ -53657,7 +53707,11 @@
                           (tc-env-key-name-text name)
                           name))]
                     [function-symbol : i64
-                      (lower-ir-symbol logical-id logical-name)]
+                      (lower-decl-function-symbol-id
+                        decl-name-cache
+                        logical-id
+                        name
+                        logical-name)]
                     (if (lower_i64_i64_map.contains?
                       (& dispatch-variants)
                       logical-id)
@@ -53869,11 +53923,13 @@
                               (lower-module-name-key-id-by-id
                                 logical-module-id
                                 cleanup-name)]
-                            (lower-ir-symbol
+                            (lower-name-cache-ir-symbol
+                              decl-name-cache
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
+                              cleanup-name
                               (lower-current-decl-logical-name-cache-id
                                 decl-name-cache
                                 logical-module
@@ -53945,11 +54001,13 @@
                               (lower-module-name-key-id-by-id
                                 logical-module-id
                                 cleanup-name)]
-                            (lower-ir-symbol
+                            (lower-name-cache-ir-symbol
+                              decl-name-cache
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
+                              cleanup-name
                               (lower-current-decl-logical-name-cache-id
                                 decl-name-cache
                                 logical-module
@@ -54016,11 +54074,13 @@
                               (lower-module-name-key-id-by-id
                                 logical-module-id
                                 cleanup-name)]
-                            (lower-ir-symbol
+                            (lower-name-cache-ir-symbol
+                              decl-name-cache
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
+                              cleanup-name
                               (lower-current-decl-logical-name-cache-id
                                 decl-name-cache
                                 logical-module
@@ -54070,11 +54130,13 @@
                               (lower-module-name-key-id-by-id
                                 logical-module-id
                                 cleanup-name)]
-                            (lower-ir-symbol
+                            (lower-name-cache-ir-symbol
+                              decl-name-cache
                               (lower-name-cache-lookup-logical-id
                                 (& decl-name-cache)
                                 key-id
                                 key-id)
+                              cleanup-name
                               (lower-current-decl-logical-name-cache-id
                                 decl-name-cache
                                 logical-module

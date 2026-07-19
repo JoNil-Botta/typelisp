@@ -41335,8 +41335,9 @@
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
-    [(AstExternMetadata.Metadata abi _ _ explicit-abi)
+    [(AstExternMetadata.Metadata abi _ _ _)
       (let
+        [explicit-abi : bool (ast-extern-metadata-explicit-abi? metadata)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         (match kind
           [(AstExternKind.Function)

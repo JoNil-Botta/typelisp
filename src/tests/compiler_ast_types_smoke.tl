@@ -730,8 +730,14 @@
   (match decl
     [(ast.AstDecl.Extern _ _ _ metadata _)
       (match (box-get metadata)
-        [(ast.AstExternMetadata.Metadata (ast.AstExternAbi.C) symbol links true)
+        [(ast.AstExternMetadata.Metadata
+            (ast.AstExternAbi.C)
+            symbol
+            links
+            flags)
           (and
+            (ast.ast-extern-metadata-flags-explicit-abi? flags)
+            (not (ast.ast-extern-metadata-flags-symbol-matches-source? flags))
             (string.eq (ci.intern-str symbol) "native_symbol")
             (match (ast.ast-extern-link-input-list-get
               (& links)
@@ -864,7 +870,7 @@
                     (ast.AstExternAbi.C)
                     (ci.intern-generated-name "native_symbol")
                     links
-                    true)
+                    (ast.ast-extern-metadata-flags true false))
                   (ast.AstType.I64))
                 (ast.ast-decl-cons
                   (ast.AstDecl.Import

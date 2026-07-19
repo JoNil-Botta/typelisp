@@ -164,11 +164,13 @@ use.
 - `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
   future collections. Import it with `(import stdlib.hash)`.
 - `hashmap.tl`: generated hashmap modules (collections v1, #817) over
-  open-addressed linear-probing slot arrays. Import a specialization such as
-  `(import (hashmap String i64) as map)` and use its `Map`, `with-capacity`,
-  `get`, `contains?`, `len`, `capacity`, bucket-order cursor helpers, and
-  place-taking `insert!`, `insert-or-update!`, `remove!`, and
-  `entry-or-insert!` mutators. String-key modules also expose borrowed-key
+  open-addressed linear-probing slot arrays. Every specialization emits its
+  complete slot, probe, map, lookup, mutation, and iteration implementation;
+  there are no manually maintained concrete backing families. Import a
+  specialization such as `(import (hashmap String i64) as map)` and use its
+  `Map`, `with-capacity`, `get`, `contains?`, `len`, `capacity`, bucket-order
+  cursor helpers, and place-taking `insert!`, `insert-or-update!`, `remove!`,
+  and `entry-or-insert!` mutators. String-key modules also expose borrowed-key
   lookup, containment, removal, and mutable-entry helpers. Generated metadata
   uses explicit key descriptor identities:
   `stdlib/hashmap/string-key-v1` for `String` keys and
@@ -176,10 +178,11 @@ use.
   inferred through traits. These descriptors also support nominal struct and
   enum value types; values move into the map, owned lookup moves the value out
   through the result, and `get-value-borrowed` returns a map-lifetime borrow
-  for field or payload inspection until the map is mutated. Aggregate keys are
-  still unsupported. Use these stdlib maps for ordinary program data and keep
-  compiler-specialized symbol tables where their value domain or lifecycle is
-  deliberately narrower. Import it with
+  for field or payload inspection until the map is mutated. The checked-in
+  aggregate-key fixture derives deterministic hash and equality from its
+  declaration-order fields. Use these stdlib maps for ordinary program data
+  and keep compiler-specialized symbol tables where their value domain or
+  lifecycle is deliberately narrower. Import it with
   `(import stdlib.hashmap)`. Module imports expose `Map`, `&` readers, and
   place-taking bang mutators: `insert!`,
   `insert-or-update!`, `insert-if-absent!` where supported, `remove!`,

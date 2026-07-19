@@ -97,6 +97,7 @@ licm_alias_stress|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl std
 loadcse_forward|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 loadcse_alias|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 switch_dispatch_scavenge|tests/integration/switch_dispatch_scavenge.tl|42|-|-|stdlib/io.tl stdlib/array.tl
+total_switch_runtime|tests/integration/total_switch_runtime.tl|42|-|-|stdlib/array.tl
 cmp_fold_load|tests/integration/cmp_fold_load.tl|42|-|-|stdlib/io.tl stdlib/array.tl
 gep_value_direct|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 const_index_bounds|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl stdlib/array.tl

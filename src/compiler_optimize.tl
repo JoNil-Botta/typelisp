@@ -20839,6 +20839,241 @@
       min-tag
       CompilerIrSwitchCaseList.Nil)))
 
+(define (opt-switch-total-enum-trap-block [label : String] [dst : i64]) : CompilerIrBlock
+  (compiler-ir-block
+    label
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Call
+        dst
+        cbi.compiler-builtin-id-tl-oob-abort
+        (CompilerIrCallArgs.Nil)
+        (AstType.Unit))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump label)
+        CompilerIrInstrList.Nil))))
+
+;; Totality is intentionally materialized only after the complete per-function
+;; optimization fixpoint and the final scratch-reset pass. Mid-pipeline loop,
+;; versioning, GVN, and verifier gates therefore see the same classic Switch as
+;; clean HEAD: cases 0..N-2 and the last exhaustive arm as the default.
+(defenum OptLateTotalSwitchCases
+  (No)
+  (Some CompilerIrSwitchCaseList i64))
+
+(defenum OptLateTotalSwitchBlock
+  (Unchanged CompilerIrBlock)
+  (Rewritten CompilerIrBlock CompilerIrBlock))
+
+(defenum OptLateTotalSwitchBlocks
+  (Result CompilerIrBlockList CompilerIrBlockList))
+
+(define (opt-late-total-switch-marker-label? [label : String]) : bool
+  (let
+    [marker : String "match_total_enum_default"]
+    (string.contains (& label) (& marker))))
+
+(define (opt-late-total-switch-cases-from
+  [cases : CompilerIrSwitchCaseList]
+  [expected : i64]
+  [final-label : String]) : OptLateTotalSwitchCases
+  (match cases
+    [(CompilerIrSwitchCaseList.Nil)
+      (OptLateTotalSwitchCases.Some
+        (compiler-ir-switch-case-cons-linked
+          expected
+          final-label
+          CompilerIrSwitchCaseList.Nil)
+        0)]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case tag label)
+          (if (= tag expected)
+            (match (opt-late-total-switch-cases-from
+              (box-get rest)
+              (+ expected 1)
+              final-label)
+              [(OptLateTotalSwitchCases.No) (OptLateTotalSwitchCases.No)]
+              [(OptLateTotalSwitchCases.Some tail count)
+                (OptLateTotalSwitchCases.Some
+                  (compiler-ir-switch-case-cons-linked tag label tail)
+                  (+ count 1))])
+            (OptLateTotalSwitchCases.No))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-late-total-switch-cases-from
+        (compiler-ir-switch-case-seq-to-list seq)
+        expected
+        final-label)]))
+
+(define (opt-late-total-switch-mark-params!
+  [occupied : (Array i64)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! occupied index 1)
+      (opt-late-total-switch-mark-params! occupied (+ index 1) count))))
+
+(define (opt-late-total-switch-reserve-var!
+  [occupied : (Array i64)]
+  [frame-cell : (Array i64)]
+  [index : i64]) : i64
+  (if (>= index (array-length occupied))
+    (let
+      [fresh : i64 (array-ref frame-cell 0)]
+      (begin
+        (array-set! frame-cell 0 (+ fresh 1))
+        fresh))
+    (if (= (array-ref occupied index) 0)
+      (begin
+        (array-set! occupied index 1)
+        index)
+      (opt-late-total-switch-reserve-var! occupied frame-cell (+ index 1)))))
+
+(define (opt-late-total-switch-block
+  [block : CompilerIrBlock]
+  [occupied : (Array i64)]
+  [frame-cell : (Array i64)]) : OptLateTotalSwitchBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (<= count 0)
+          (OptLateTotalSwitchBlock.Unchanged block)
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Switch index base cases default-label)
+              (if (and
+                (= base 0)
+                (opt-late-total-switch-marker-label? default-label))
+                (match (opt-late-total-switch-cases-from cases 0 default-label)
+                  [(OptLateTotalSwitchCases.No)
+                    (OptLateTotalSwitchBlock.Unchanged block)]
+                  [(OptLateTotalSwitchCases.Some total-cases case-count)
+                    ;; Four comparisons is switch formation's existing gate.
+                    ;; Rechecking it here prevents a marker from authorizing a
+                    ;; small or otherwise foreign Switch shape.
+                    (if (< case-count 4)
+                      (OptLateTotalSwitchBlock.Unchanged block)
+                      (let
+                        [trap-label : String
+                          (string.append "match_total_trap__" label)]
+                        ;; Switch formation removes at least four compare
+                        ;; destinations but deliberately leaves the frame
+                        ;; numbering stable. Reuse one such unmentioned slot so
+                        ;; the cold abort result cannot perturb register/frame
+                        ;; allocation; grow only as a defensive fallback.
+                        [trap-var : i64
+                          (opt-late-total-switch-reserve-var!
+                            occupied
+                            frame-cell
+                            0)]
+                        (OptLateTotalSwitchBlock.Rewritten
+                          (compiler-ir-block
+                            label
+                            (opt-switch-head-instrs
+                              instrs
+                              0
+                              (- count 1)
+                              (CompilerIrInstr.Switch
+                                index
+                                base
+                                (compiler-ir-switch-case-list-compact
+                                  total-cases)
+                                trap-label)))
+                          (opt-switch-total-enum-trap-block trap-label trap-var))))])
+                (OptLateTotalSwitchBlock.Unchanged block))]
+            [_ (OptLateTotalSwitchBlock.Unchanged block)])))]))
+
+(define (opt-late-total-switch-blocks
+  [blocks : CompilerIrBlockList]
+  [occupied : (Array i64)]
+  [frame-cell : (Array i64)]) : OptLateTotalSwitchBlocks
+  (match blocks
+    [(CompilerIrBlockList.Nil)
+      (OptLateTotalSwitchBlocks.Result
+        CompilerIrBlockList.Nil
+        CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match (opt-late-total-switch-block block occupied frame-cell)
+        [(OptLateTotalSwitchBlock.Unchanged unchanged)
+          (match (opt-late-total-switch-blocks
+            (box-get rest)
+            occupied
+            frame-cell)
+            [(OptLateTotalSwitchBlocks.Result tail traps)
+              (OptLateTotalSwitchBlocks.Result
+                (compiler-ir-block-cons unchanged tail)
+                traps)])]
+        [(OptLateTotalSwitchBlock.Rewritten rewritten trap)
+          (match (opt-late-total-switch-blocks
+            (box-get rest)
+            occupied
+            frame-cell)
+            [(OptLateTotalSwitchBlocks.Result tail traps)
+              (OptLateTotalSwitchBlocks.Result
+                (compiler-ir-block-cons rewritten tail)
+                (compiler-ir-block-cons trap traps))])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-late-total-switch-blocks
+        (compiler-ir-block-seq-to-list seq)
+        occupied
+        frame-cell)]))
+
+(define (opt-late-total-switch-append-blocks
+  [blocks : CompilerIrBlockList]
+  [tail : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) tail]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        block
+        (opt-late-total-switch-append-blocks (box-get rest) tail))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-late-total-switch-append-blocks
+        (compiler-ir-block-seq-to-list seq)
+        tail)]))
+
+(define (opt-late-total-switch-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [frame-cell : (Array i64) (array.make-array i64 1)]
+        [_frame : unit (array-set! frame-cell 0 frame)]
+        [occupied : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
+        [_defs : unit (opt-successor-sink-fill-all-defs! frame blocks occupied)]
+        [_params : unit
+          (opt-late-total-switch-mark-params!
+            occupied
+            0
+            (compiler-ir-param-list-count params))]
+        [blocks-result : OptLateTotalSwitchBlocks
+          (opt-late-total-switch-blocks blocks occupied frame-cell)]
+        [next-blocks : CompilerIrBlockList
+          (match blocks-result
+            [(OptLateTotalSwitchBlocks.Result main-blocks trap-blocks)
+              (compiler-ir-block-list-compact
+                (opt-late-total-switch-append-blocks main-blocks trap-blocks))])]
+        [rewritten : CompilerIrFunction
+          (CompilerIrFunction.Function
+            name
+            params
+            ret-ty
+            (array-ref frame-cell 0)
+            next-blocks)]
+        (compiler-opt-debug-observe-function "total_switch" rewritten))]))
+
+(define (opt-late-total-switch-function-list
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(CompilerIrFunctionList.Nil) CompilerIrFunctionList.Nil]
+    [(CompilerIrFunctionList.Cons func rest)
+      (compiler-ir-function-cons
+        (opt-late-total-switch-function func)
+        (opt-late-total-switch-function-list (box-get rest)))]
+    [(CompilerIrFunctionList.Array seq)
+      (opt-late-total-switch-function-list
+        (compiler-ir-function-seq-to-list seq))]))
+
 (define (opt-switch-block-starts-with-phi?
   [blocks : CompilerIrBlockList]
   [label : String]) : bool
@@ -29687,7 +29922,7 @@
 ;; This pass recognizes such a loop from its natural-loop back edge (header
 ;; dominating latch, a single dedicated preheader whose only successor is the
 ;; header, <= (opt-bce-mb-block-max) blocks, clonable whitelist instructions
-;; only, Jump/Branch or intra-loop fallthrough terminators only) and versions
+;; only, Jump/Branch/Switch or intra-loop fallthrough terminators only) and versions
 ;; like the single-block pass: a guard block on the preheader edge branches
 ;; to a fast clone of the whole loop when the guard conjunction holds and to
 ;; the original checked loop otherwise. PARTIAL elimination: every BoundsCheck
@@ -29973,7 +30208,7 @@
 
 ;; One loop block's BoundsCheck count, or -1 when the block is not clonable:
 ;; phis only as a prefix, whitelist body instructions, and either a
-;; Jump/Branch terminator or a plain fallthrough (the fallthrough TARGET is
+;; Jump/Branch/Switch terminator or a plain fallthrough (the fallthrough TARGET is
 ;; validated separately against the block list).
 (define (opt-bce-mb-block-checks [block : CompilerIrBlock]) : i64
   (match block
@@ -29996,6 +30231,7 @@
                 (match (compiler-ir-instr-seq-ref instrs last)
                   [(CompilerIrInstr.Jump _) true]
                   [(CompilerIrInstr.Branch _ _ _) true]
+                  [(CompilerIrInstr.Switch _ _ _ _) true]
                   [_ false])
                 (opt-bce-version-body-ok? instrs phi-count last))
                 (opt-bce-version-check-count instrs phi-count last 0)
@@ -30014,6 +30250,31 @@
           (opt-bce-mb-body-checks (box-get rest) (+ acc checks))))]
     [(CompilerIrBlockList.Array seq)
       (opt-bce-mb-body-checks (compiler-ir-block-seq-to-list seq) acc)]))
+
+;; Exhaustive enum dispatches carry their totality proof on the classic Switch
+;; default until the dedicated late rewrite. Cloning one of these high-fanout
+;; interpreter loops duplicates every arm, pushes the combined CFG over the
+;; backend's compact allocation shape, and loses far more than BCE removes.
+;; Ordinary Switch loops remain clonable (and are covered by the fixture).
+(define (opt-bce-mb-body-has-total-enum-switch? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (or
+              (and
+                (> count 0)
+                (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                  [(CompilerIrInstr.Switch _ _ _ default-label)
+                    (opt-late-total-switch-marker-label? default-label)]
+                  [_ false]))
+              (opt-bce-mb-body-has-total-enum-switch? (box-get rest))))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bce-mb-body-has-total-enum-switch?
+        (compiler-ir-block-seq-to-list seq))]))
 
 ;; Fallthrough is positional: a loop block without a terminator may only
 ;; fall into another loop block (the fast clone group preserves loop order,
@@ -30122,6 +30383,7 @@
       (> (opt-label-count body-labels) (opt-bce-mb-block-max))
       (opt-cfg-block-exists? blocks (string.append header "__bce_guard"))
       (opt-bce-mb-has-nested-loop? loops header body-labels)
+      (opt-bce-mb-body-has-total-enum-switch? body-blocks)
       (not (opt-bce-mb-fast-labels-fresh? blocks body-labels))
       (not (opt-bce-mb-fallthroughs-ok? blocks body-labels)))
       (OptBceMbMaybeShape.No)
@@ -30701,6 +30963,37 @@
     [(CompilerIrValue.Var fresh) fresh]
     [_ dst]))
 
+(define (opt-bce-mb-clone-switch-cases-acc
+  [cases : CompilerIrSwitchCaseList]
+  [body-labels : OptLabelSet]
+  [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (match (compiler-ir-switch-case-list-force-cons cases)
+    [(CompilerIrSwitchCaseList.Nil) acc]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case tag label)
+          (opt-bce-mb-clone-switch-cases-acc
+            (box-get rest)
+            body-labels
+            (compiler-ir-switch-case-cons-linked
+              tag
+              (opt-bce-mb-fast-label body-labels label)
+              acc))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-bce-mb-clone-switch-cases-acc
+        (compiler-ir-switch-case-seq-to-list seq)
+        body-labels
+        acc)]))
+
+(define (opt-bce-mb-clone-switch-cases
+  [cases : CompilerIrSwitchCaseList]
+  [body-labels : OptLabelSet]) : CompilerIrSwitchCaseList
+  (compiler-ir-switch-case-list-compact-reversed
+    (opt-bce-mb-clone-switch-cases-acc
+      cases
+      body-labels
+      CompilerIrSwitchCaseList.Nil)))
+
 (define (opt-bce-mb-clone-phi-inputs
   [inputs : CompilerIrPhiInputList]
   [remap : (Array CompilerIrValue)]
@@ -30802,6 +31095,12 @@
         (opt-unroll-subst-value remap cond)
         (opt-bce-mb-fast-label body-labels then-label)
         (opt-bce-mb-fast-label body-labels else-label))]
+    [(CompilerIrInstr.Switch index base cases default-label)
+      (CompilerIrInstr.Switch
+        (opt-unroll-subst-value remap index)
+        base
+        (opt-bce-mb-clone-switch-cases cases body-labels)
+        (opt-bce-mb-fast-label body-labels default-label))]
     ;; A kept (underivable) check: remap operands and the ok edge. An ok-label
     ;; naming a real loop block remaps to its fast clone; one naming a real
     ;; block OUTSIDE the loop stays shared; anything else is a synthetic
@@ -42325,6 +42624,11 @@
                       (opt-scratch-reset-function-list-with-level
                         final-functions
                         level)]
+                    [total-switch-functions : CompilerIrFunctionList
+                      (if (< level 2)
+                        scratch-reset-functions
+                        (opt-late-total-switch-function-list
+                          scratch-reset-functions))]
                     (begin
                       (cfg
                         compile-profile
@@ -42332,7 +42636,7 @@
                       (CompilerIrProgram.Program
                         final-globals
                         (compiler-ir-function-list-compact
-                          scratch-reset-functions)
+                          total-switch-functions)
                         externs)))))))))]))
 
 (define (opt-remap-spans-prepend-entry
@@ -42655,11 +42959,16 @@
                         (opt-scratch-reset-function-list-with-level
                           final-functions
                           level)]
+                      [total-switch-functions : CompilerIrFunctionList
+                        (if (< level 2)
+                          scratch-reset-functions
+                          (opt-late-total-switch-function-list
+                            scratch-reset-functions))]
                       [optimized : CompilerIrProgram
                         (CompilerIrProgram.Program
                           final-globals
                           (compiler-ir-function-list-compact
-                            scratch-reset-functions)
+                            total-switch-functions)
                           externs)]
                       (begin
                         (cfg
@@ -58368,8 +58677,11 @@
 ;; makes the swap check's index underivable (store+1 used directly) -- which
 ;; PARTIALLY versions now (the counter check still derives, the swap check
 ;; stays in the fast clone) -- 2 puts a call in the swap block, 3 makes the
-;; counter step +2 -- the latter two must leave the function untouched.
-(define (opt-bce-mb-test-header-block) : CompilerIrBlock
+;; counter step +2 -- the latter two must leave the function untouched. Variant
+;; 4 gives the header a total-switch terminator so cloning exercises every
+;; switch edge, including the compiler trap default. Variant 5 uses the late
+;; total-enum marker and must remain unversioned by the profitability gate.
+(define (opt-bce-mb-test-header-block [variant : i64]) : CompilerIrBlock
   (compiler-ir-block
     "body"
     (compiler-ir-instr-cons
@@ -58407,7 +58719,21 @@
               (CompilerIrValue.I64 4)
               (AstType.Bool))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "then" "else")
+              (if (or (= variant 4) (= variant 5))
+                (CompilerIrInstr.Switch
+                  (CompilerIrValue.Var 5)
+                  0
+                  (compiler-ir-switch-case-cons
+                    0
+                    "else"
+                    (compiler-ir-switch-case-cons
+                      1
+                      "then"
+                      CompilerIrSwitchCaseList.Nil))
+                  (if (= variant 5)
+                    "match_total_enum_default"
+                    "match_total_trap"))
+                (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "then" "else"))
               (CompilerIrInstrList.Nil))))))))
 
 (define (opt-bce-mb-test-then-block [variant : i64]) : CompilerIrBlock
@@ -58518,6 +58844,24 @@
           (CompilerIrMaybeValue.Some (CompilerIrValue.Var 10)))
         (CompilerIrInstrList.Nil)))))
 
+(define (opt-bce-mb-test-total-trap-block [variant : i64]) : CompilerIrBlock
+  (let
+    [label : String
+      (if (= variant 5)
+        "match_total_enum_default"
+        "match_total_trap")]
+    (compiler-ir-block
+      label
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Call
+          12
+          cbi.compiler-builtin-id-tl-oob-abort
+          (CompilerIrCallArgs.Nil)
+          (AstType.Unit))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump label)
+          CompilerIrInstrList.Nil)))))
+
 (define (opt-bce-mb-test-blocks [variant : i64]) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -58526,7 +58870,7 @@
         (CompilerIrInstr.Jump "body")
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
-      (opt-bce-mb-test-header-block)
+      (opt-bce-mb-test-header-block variant)
       (compiler-ir-block-cons
         (opt-bce-mb-test-then-block variant)
         (compiler-ir-block-cons
@@ -58535,14 +58879,18 @@
             (opt-bce-mb-test-merge-block variant)
             (compiler-ir-block-cons
               (opt-bce-mb-test-exit-block)
-              (CompilerIrBlockList.Nil))))))))
+              (if (or (= variant 4) (= variant 5))
+                (compiler-ir-block-cons
+                  (opt-bce-mb-test-total-trap-block variant)
+                  CompilerIrBlockList.Nil)
+                CompilerIrBlockList.Nil))))))))
 
 (define (opt-bce-mb-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
     (opt-test-symbol "bce_version_mb_fixture")
     (opt-bce-version-test-params)
     (AstType.I64)
-    12
+    13
     blocks))
 
 (define (opt-bce-mb-test-jump-block [label : String] [target : String]) : CompilerIrBlock
@@ -58652,6 +59000,76 @@
       [(not (= (opt-bce-version-test-block-checks out "then") 1)) 8]
       ;; the exit phi gained the parallel fast-edge input.
       [(not (= (opt-bce-version-test-exit-phi-inputs out "exit") 2)) 9]
+      [else 42])))
+
+(define (opt-bce-mb-test-cloned-switch-cases-ok?
+  [cases : CompilerIrSwitchCaseList]) : bool
+  (match (compiler-ir-switch-case-list-force-cons cases)
+    [(CompilerIrSwitchCaseList.Cons first first-rest)
+      (match first
+        [(CompilerIrSwitchCase.Case first-tag first-label)
+          (and
+            (= first-tag 0)
+            (string.eq first-label "else__bce_fast")
+            (match (compiler-ir-switch-case-list-force-cons
+              (box-get first-rest))
+              [(CompilerIrSwitchCaseList.Cons second second-rest)
+                (match second
+                  [(CompilerIrSwitchCase.Case second-tag second-label)
+                    (and
+                      (= second-tag 1)
+                      (string.eq second-label "then__bce_fast")
+                      (match (compiler-ir-switch-case-list-force-cons
+                        (box-get second-rest))
+                        [(CompilerIrSwitchCaseList.Nil) true]
+                        [_ false]))])]
+              [_ false]))])]
+    [_ false]))
+
+(define (opt-bce-mb-test-cloned-switch-ok? [blocks : CompilerIrBlockList]) : bool
+  (match (opt-cfg-find-block blocks "body__bce_fast")
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (if (< count 1)
+              false
+              (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                [(CompilerIrInstr.Switch index base cases default-label)
+                  (and
+                    (= base 0)
+                    (match index
+                      [(CompilerIrValue.Var id) (not (= id 5))]
+                      [_ false])
+                    (opt-bce-mb-test-cloned-switch-cases-ok? cases)
+                    ;; The no-return trap is outside the natural loop and stays
+                    ;; shared; all in-loop case targets are remapped above.
+                    (string.eq default-label "match_total_trap"))]
+                [_ false])))])]))
+
+(define (compiler-optimize-bce-version-mb-switch-self-test) : i64
+  (let
+    [versioned : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 4)))]
+    [out : CompilerIrBlockList (opt-function-blocks versioned)]
+    [marked : CompilerIrFunction
+      (opt-bce-version-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 5)))]
+    [marked-out : CompilerIrBlockList (opt-function-blocks marked)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function versioned))) 1]
+      ;; Original seven blocks + guard + four fast loop blocks.
+      [(not (= (compiler-ir-block-list-count out) 12)) 2]
+      [(not (opt-bce-mb-test-cloned-switch-ok? out)) 3]
+      [(not (= (opt-bce-version-test-block-checks out "body__bce_fast") 0)) 4]
+      ;; A lowering-proven exhaustive enum dispatch is totalized after BCE;
+      ;; cloning its high-fanout loop here would collapse vm_run allocation.
+      [(not (opt-verify-ok? (opt-verify-function marked))) 5]
+      [(not (= (compiler-ir-block-list-count marked-out) 7)) 6]
+      [(opt-block-list-has-label? marked-out "body__bce_fast") 7]
       [else 42])))
 
 (define (compiler-optimize-bce-version-mb-negative-self-test) : i64

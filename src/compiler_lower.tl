@@ -48356,6 +48356,48 @@
         [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
     [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))
 
+;; The switch-form pass is deliberately the only place that may materialize
+;; the final enum tag and unreachable default.  Lowering keeps the classic
+;; fallthrough instruction shape and carries only a compiler-owned label marker
+;; on exhaustive all-variant matches large enough to meet switch formation's
+;; existing four-comparison threshold.  Two-variant (and all other small)
+;; matches therefore remain byte-for-byte identical at the lowered-IR stage.
+(define (lower-total-enum-switch-rest-explicit-from?
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    true
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pat _)
+        (match pat
+          [(AstPattern.Binding _)
+            (lower-total-enum-switch-rest-explicit-from? arms (+ index 1))]
+          [(AstPattern.Variant _ _)
+            (lower-total-enum-switch-rest-explicit-from? arms (+ index 1))]
+          [_ false])])))
+
+(define (lower-enum-match-next-label-base
+  [current-label : String]
+  [rest : AstMatchArmList]) : String
+  ;; Seed the proof once four explicit comparisons remain, carry it only along
+  ;; the outer compare chain, and put the durable marker on the final arm's
+  ;; classic fallthrough label. The distinct chain/default spellings prevent a
+  ;; nested match lowered inside the final arm from inheriting the outer proof.
+  (let
+    [remaining : i64 (ast-match-arm-list-len (& rest))]
+    [chain-marker : String "match_total_enum_chain"]
+    [total-chain? : bool
+      (or
+        (string.contains (& current-label) (& chain-marker))
+        (and
+          (= remaining 4)
+          (lower-total-enum-switch-rest-explicit-from? (& rest) 0)))]
+    (if total-chain?
+      (if (= remaining 1)
+        "match_total_enum_default"
+        "match_total_enum_chain")
+      "match_next")))
+
 (define (lower-match-variant-arm
   [ctx : TcContext]
   [state : LowerState]
@@ -48413,7 +48455,9 @@
                         [(LowerLabel.Label body-label-state body-label)
                           (match (lower-state-fresh-label
                             body-label-state
-                            "match_next")
+                            (lower-enum-match-next-label-base
+                              (lower-state-current-label state)
+                              rest))
                             [(LowerLabel.Label next-label-state next-label)
                               (let
                                 [body-start : LowerState
@@ -50666,7 +50710,9 @@
                   [(LowerLabel.Label body-label-state body-label)
                     (match (lower-state-fresh-label
                       body-label-state
-                      "match_next")
+                      (lower-enum-match-next-label-base
+                        (lower-state-current-label state)
+                        rest))
                       [(LowerLabel.Label next-label-state next-label)
                         (let
                           [body-start : LowerState
@@ -56671,6 +56717,17 @@
   (+ (score (Maybe.Some 4))
      (+ (zero-call Maybe.None) (or-zero (Maybe.Pair 3 4)))))")
 
+;; Pins the classic exhaustive lowering policy: only the first of two explicit
+;; variants is compared; the final variant is direct fallthrough, with no
+;; abort/trap materialized by lowering.
+(define (compiler-lower-two-variant-fallthrough-source) : String
+  "(defenum Two (First) (Second))
+(define (score [value : Two]) : i64
+  (match value
+    [Two.First 10]
+    [Two.Second 20]))
+(define (main) : i64 0)")
+
 ;; A refutable literal payload subpattern: `(Some 0)` tests the payload
 ;; and, on mismatch, falls through to the `(Some n)` binding arm. The trailing
 ;; `(Some n)` keeps the match exhaustive.
@@ -60930,6 +60987,23 @@
             (= (lower-test-function-phi-count functions "touch") 0)
             (> (lower-test-function-load-count functions "score") 1)
             (> (lower-test-function-load-count functions "or-zero") 1))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-two-variant-fallthrough-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-two-variant-fallthrough-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "score"
+                CompilerIrBinOp.Eq)
+              1)
+            (=
+              (lower-test-function-call-count functions "score" "tl_oob_abort")
+              0))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-enum-string-literal-payload-shape-ok?) : bool

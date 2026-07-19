@@ -30769,6 +30769,100 @@
         (compiler-ir-switch-case-seq-to-list seq)
         expected)]))
 
+(define (compiler-backend-total-switch-trap-instrs?
+  [instrs : CompilerIrInstrSeq]
+  [label : String]) : bool
+  (and
+    (= (compiler-ir-instr-seq-count instrs) 2)
+    (match (compiler-ir-instr-seq-ref instrs 0)
+      [(CompilerIrInstr.Call _ name _ _)
+        (cbi.compiler-builtin-backend-tl-oob-abort-id? name)]
+      [_ false])
+    (match (compiler-ir-instr-seq-ref instrs 1)
+      [(CompilerIrInstr.Jump target) (string.eq target label)]
+      [_ false])))
+
+(define (compiler-backend-total-switch-trap-block-from?
+  [all-blocks : CompilerIrBlockList]
+  [cursor : CompilerIrBlockList]
+  [label : String]
+  [fuel : i64]) : bool
+  (if (<= fuel 0)
+    false
+    (match cursor
+      [(CompilerIrBlockList.Nil) false]
+      [(CompilerIrBlockList.Cons block rest)
+        (match block
+          [(CompilerIrBlock.Block block-label instrs)
+            (if (string.eq block-label label)
+              (or
+                (compiler-backend-total-switch-trap-instrs? instrs label)
+                ;; Loop canonicalization treats the self-looping no-return
+                ;; trap as a loop and may retarget the switch through a tiny
+                ;; preheader. Follow only a compiler-marked, jump-only forwarder.
+                (and
+                  (= (compiler-ir-instr-seq-count instrs) 1)
+                  (match (compiler-ir-instr-seq-ref instrs 0)
+                    [(CompilerIrInstr.Jump target)
+                      (and
+                        (not (string.eq target label))
+                        (compiler-backend-string-contains?
+                          target
+                          "match_total_trap")
+                        (compiler-backend-total-switch-trap-block-from?
+                          all-blocks
+                          all-blocks
+                          target
+                          (- fuel 1)))]
+                    [_ false])))
+              (compiler-backend-total-switch-trap-block-from?
+                all-blocks
+                (box-get rest)
+                label
+                fuel))])]
+      [(CompilerIrBlockList.Array seq)
+        (compiler-backend-total-switch-trap-block-from?
+          all-blocks
+          (compiler-ir-block-seq-to-list seq)
+          label
+          fuel)])))
+
+(define (compiler-backend-total-switch-trap-block?
+  [blocks : CompilerIrBlockList]
+  [label : String]) : bool
+  ;; The marker is compiler-owned.  Requiring it as well as the exact abort
+  ;; block prevents a user integer switch with a trapping default from being
+  ;; mistaken for a type-proven enum dispatch.  Inline/BCE label remapping and
+  ;; loop-preheader insertion preserve the marker substring.
+  (and
+    (compiler-backend-string-contains? label "match_total_trap")
+    (compiler-backend-total-switch-trap-block-from? blocks blocks label 8)))
+
+(define (compiler-backend-total-switch?
+  [blocks : CompilerIrBlockList]
+  [base : i64]
+  [cases : CompilerIrSwitchCaseList]
+  [default-label : String]) : bool
+  (and
+    (= base 0)
+    (> (compiler-backend-switch-case-count cases) 0)
+    (compiler-backend-switch-cases-contiguous-from? cases 0)
+    (compiler-backend-total-switch-trap-block? blocks default-label)))
+
+(define (compiler-backend-object-total-switch?
+  [base : i64]
+  [cases : CompilerIrSwitchCaseList]
+  [default-label : String]) : bool
+  (and
+    (= base 0)
+    (> (compiler-backend-switch-case-count cases) 0)
+    (compiler-backend-switch-cases-contiguous-from? cases 0)
+    ;; Direct-object emission consumes the same verified function immediately,
+    ;; but does not retain its owning block list at each instruction.  The
+    ;; compiler-owned marker is the totality proof here; source assembly also
+    ;; checks the exact abort block before taking the unchecked path.
+    (compiler-backend-string-contains? default-label "match_total_trap")))
+
 (define (compiler-backend-switch-cases-target-phi?
   [cases : CompilerIrSwitchCaseList]) : bool
   (match cases
@@ -31115,6 +31209,7 @@
   [function : String]
   [current-label : String]
   [default-label : String]
+  [total-switch : bool]
   [case-count : i64]
   [base : i64]
   [index-reg : String]
@@ -31139,42 +31234,67 @@
     ;; suppresses the wrap's trailing restore. Must be spliced AFTER the target
     ;; stash and BEFORE the indirect jump.
     [restore : String (compiler-backend-emergency-restore-before-jumps)]
-    (str-cat
-      load-index
-      (if (= base 0)
-        ""
-        (str-cat "    subq $" (int->string base) ", " index-reg "\n" ""))
-      "    leaq "
-      (compiler-backend-asm-label function default-label)
-      "(%rip), "
-      table-reg
-      "\n    cmpq $"
-      (int->string (- case-count 1))
-      ", "
-      index-reg
-      "\n    ja "
-      done-label
-      "\n    leaq "
-      (compiler-backend-switch-table-label function current-label)
-      "(%rip), "
-      table-reg
-      "\n    movq ("
-      table-reg
-      ","
-      index-reg
-      ",8), "
-      table-reg
-      "\n"
-      done-label
-      ":\n    movq "
-      table-reg
-      ", "
-      target-slot
-      "\n"
-      restore
-      "    jmp *"
-      target-slot
-      "\n")))
+    (if total-switch
+      (str-cat
+        load-index
+        (if (= base 0)
+          ""
+          (str-cat "    subq $" (int->string base) ", " index-reg "\n" ""))
+        "    leaq "
+        (compiler-backend-switch-table-label function current-label)
+        "(%rip), "
+        table-reg
+        "\n    movq ("
+        table-reg
+        ","
+        index-reg
+        ",8), "
+        table-reg
+        "\n    movq "
+        table-reg
+        ", "
+        target-slot
+        "\n"
+        restore
+        "    jmp *"
+        target-slot
+        "\n")
+      (str-cat
+        load-index
+        (if (= base 0)
+          ""
+          (str-cat "    subq $" (int->string base) ", " index-reg "\n" ""))
+        "    leaq "
+        (compiler-backend-asm-label function default-label)
+        "(%rip), "
+        table-reg
+        "\n    cmpq $"
+        (int->string (- case-count 1))
+        ", "
+        index-reg
+        "\n    ja "
+        done-label
+        "\n    leaq "
+        (compiler-backend-switch-table-label function current-label)
+        "(%rip), "
+        table-reg
+        "\n    movq ("
+        table-reg
+        ","
+        index-reg
+        ",8), "
+        table-reg
+        "\n"
+        done-label
+        ":\n    movq "
+        table-reg
+        ", "
+        target-slot
+        "\n"
+        restore
+        "    jmp *"
+        target-slot
+        "\n"))))
 
 (define (compiler-backend-emit-switch-dispatch
   [function : String]
@@ -31183,6 +31303,7 @@
   [base : i64]
   [case-count : i64]
   [default-label : String]
+  [total-switch : bool]
   [assignments : CompilerRegAssignmentList]
   [planned-index-reg : String]
   [planned-table-reg : String]) : ResultCompilerBackend
@@ -31226,45 +31347,8 @@
             ;; all, so the dispatch never borrows one. Pending emergency
             ;; occupants from earlier borrows are restored before the compare
             ;; (movq loads keep the ja flags intact), covering both edges.
-            (str-cat
-              load-index
-              (if (= base 0)
-                ""
-                (str_cat.str-cat
-                  "    subq $"
-                  (int->string base)
-                  ", "
-                  index-reg
-                  "\n"
-                  ""))
-              (if compiler-backend-emergency-pending
-                (compiler-backend-emergency-restore-before-jumps)
-                "")
-              "    cmpq $"
-              (int->string (- case-count 1))
-              ", "
-              index-reg
-              "\n    ja "
-              (compiler-backend-asm-label function default-label)
-              "\n    jmp *"
-              (compiler-backend-switch-table-label function current-label)
-              "(,"
-              index-reg
-              ",8)\n")
-            (if compiler-backend-emergency-pending
-              ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
-              ;; a trailing restore after the indirect jmp is unreachable. Emit the
-              ;; slot-indirect form with the restore BEFORE the transfer.
-              (compiler-backend-emit-switch-dispatch-emergency
-                function
-                current-label
-                default-label
-                case-count
-                base
-                index-reg
-                table-reg
-                load-index)
-              (str_cat.str-cat
+            (if total-switch
+              (str-cat
                 load-index
                 (if (= base 0)
                   ""
@@ -31275,21 +31359,100 @@
                     index-reg
                     "\n"
                     ""))
+                (if compiler-backend-emergency-pending
+                  (compiler-backend-emergency-restore-before-jumps)
+                  "")
+                "    jmp *"
+                (compiler-backend-switch-table-label function current-label)
+                "(,"
+                index-reg
+                ",8)\n")
+              (str-cat
+                load-index
+                (if (= base 0)
+                  ""
+                  (str_cat.str-cat
+                    "    subq $"
+                    (int->string base)
+                    ", "
+                    index-reg
+                    "\n"
+                    ""))
+                (if compiler-backend-emergency-pending
+                  (compiler-backend-emergency-restore-before-jumps)
+                  "")
                 "    cmpq $"
                 (int->string (- case-count 1))
                 ", "
                 index-reg
                 "\n    ja "
                 (compiler-backend-asm-label function default-label)
-                "\n    leaq "
+                "\n    jmp *"
                 (compiler-backend-switch-table-label function current-label)
-                "(%rip), "
-                table-reg
-                "\n    jmp *("
-                table-reg
-                ","
+                "(,"
                 index-reg
-                ",8)\n"))))]
+                ",8)\n"))
+            (if compiler-backend-emergency-pending
+              ;; GAP2b-v2: a scratch was emergency-borrowed from a live occupant;
+              ;; a trailing restore after the indirect jmp is unreachable. Emit the
+              ;; slot-indirect form with the restore BEFORE the transfer.
+              (compiler-backend-emit-switch-dispatch-emergency
+                function
+                current-label
+                default-label
+                total-switch
+                case-count
+                base
+                index-reg
+                table-reg
+                load-index)
+              (if total-switch
+                (str_cat.str-cat
+                  load-index
+                  (if (= base 0)
+                    ""
+                    (str_cat.str-cat
+                      "    subq $"
+                      (int->string base)
+                      ", "
+                      index-reg
+                      "\n"
+                      ""))
+                  "    leaq "
+                  (compiler-backend-switch-table-label function current-label)
+                  "(%rip), "
+                  table-reg
+                  "\n    jmp *("
+                  table-reg
+                  ","
+                  index-reg
+                  ",8)\n")
+                (str_cat.str-cat
+                  load-index
+                  (if (= base 0)
+                    ""
+                    (str_cat.str-cat
+                      "    subq $"
+                      (int->string base)
+                      ", "
+                      index-reg
+                      "\n"
+                      ""))
+                  "    cmpq $"
+                  (int->string (- case-count 1))
+                  ", "
+                  index-reg
+                  "\n    ja "
+                  (compiler-backend-asm-label function default-label)
+                  "\n    leaq "
+                  (compiler-backend-switch-table-label function current-label)
+                  "(%rip), "
+                  table-reg
+                  "\n    jmp *("
+                  table-reg
+                  ","
+                  index-reg
+                  ",8)\n")))))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-switch
@@ -31307,6 +31470,8 @@
   [vars : i64]) : ResultCompilerBackend
   (let
     [case-count : i64 (compiler-backend-switch-case-count cases)]
+    [total-switch : bool
+      (compiler-backend-total-switch? blocks base cases default-label)]
     (cond
       [(= case-count 0)
         (ResultCompilerBackend.Err
@@ -31368,6 +31533,7 @@
                     (if default-needs-edge
                       (compiler-backend-switch-default-edge-label current-label)
                       default-label)
+                    total-switch
                     assignments
                     planned-index-reg
                     planned-table-reg)
@@ -31390,6 +31556,7 @@
           base
           case-count
           default-label
+          total-switch
           assignments
           planned-index-reg
           planned-table-reg)
@@ -50523,7 +50690,8 @@ tl_tlci_call_macro_entry:
   [index : CompilerIrValue]
   [base : i64]
   [case-count : i64]
-  [default-label : String]) : CompilerBackendObjectParts
+  [default-label : String]
+  [total-switch : bool]) : CompilerBackendObjectParts
   (let
     [default-symbol : String
       (compiler-backend-asm-label label-scope default-label)]
@@ -50543,18 +50711,22 @@ tl_tlci_call_macro_entry:
           (cobj.CompilerObjectX64Instr.Bytes
             (compiler-backend-object-sub-imm32-rax-bytes base))))]
     [with-cmp : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
+      (if total-switch
         with-base
-        (cobj.CompilerObjectX64Instr.Bytes
-          (compiler-backend-object-cmp-imm32-rax-bytes (- case-count 1))))]
+        (compiler-backend-object-add-text
+          with-base
+          (cobj.CompilerObjectX64Instr.Bytes
+            (compiler-backend-object-cmp-imm32-rax-bytes (- case-count 1)))))]
     [with-ja : CompilerBackendObjectParts
-      (compiler-backend-object-add-text
-        (compiler-backend-object-add-text-relocation
-          with-cmp
-          function-symbol
-          (cobj.CompilerObjectRelocationKind.Branch)
-          default-symbol)
-        (cobj.CompilerObjectX64Instr.Ja default-symbol))]
+      (if total-switch
+        with-cmp
+        (compiler-backend-object-add-text
+          (compiler-backend-object-add-text-relocation
+            with-cmp
+            function-symbol
+            (cobj.CompilerObjectRelocationKind.Branch)
+            default-symbol)
+          (cobj.CompilerObjectX64Instr.Ja default-symbol)))]
     [with-table : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
@@ -50577,15 +50749,25 @@ tl_tlci_call_macro_entry:
   [base : i64]
   [cases : CompilerIrSwitchCaseList]
   [default-label : String]) : CompilerBackendObjectParts
-  (compiler-backend-object-switch-dispatch
-    (compiler-backend-object-switch-table parts label-scope current-label cases)
-    function-symbol
-    label-scope
-    current-label
-    index
-    base
-    (compiler-backend-switch-case-count cases)
-    default-label))
+  (let
+    ;; Decide before the table walker consumes its case-list cursor.
+    [total-switch : bool
+      (compiler-backend-object-total-switch? base cases default-label)]
+    [case-count : i64 (compiler-backend-switch-case-count cases)]
+    (compiler-backend-object-switch-dispatch
+      (compiler-backend-object-switch-table
+        parts
+        label-scope
+        current-label
+        cases)
+      function-symbol
+      label-scope
+      current-label
+      index
+      base
+      case-count
+      default-label
+      total-switch)))
 
 (define (compiler-backend-object-binop-bytes [op : CompilerIrBinOp]) : String
   (match op

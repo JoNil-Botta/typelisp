@@ -1729,18 +1729,52 @@
 (define compiler-backend-rax-forward-pending-var : i64
   -1)
 
+;; Short, emission-local home overrides used by the adjacent constant-divmod
+;; folds.  They never alter the allocator plan: a producer and the divmod it
+;; feeds may temporarily agree on the divmod SRC, and a single-use result may
+;; remain there through its direct store.  Two slots cover those two SSA values
+;; while the fused bundle is emitted.  Unlike the call-result %rax override,
+;; these apply even when the dense assignment index is disabled (unit helpers
+;; and small functions still use the assignment list directly).
+(define compiler-backend-emit-home-override0-var : i64
+  -1)
+(define compiler-backend-emit-home-override0-reg : String
+  "")
+(define compiler-backend-emit-home-override1-var : i64
+  -1)
+(define compiler-backend-emit-home-override1-reg : String
+  "")
+
+(define (compiler-backend-emit-home-overrides-disable!) : unit
+  (begin
+    (set! compiler-backend-emit-home-override0-var -1)
+    (set! compiler-backend-emit-home-override0-reg "")
+    (set! compiler-backend-emit-home-override1-var -1)
+    (set! compiler-backend-emit-home-override1-reg "")))
+
 (define (compiler-backend-emit-assignment-lookup
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : CompilerRegMaybeLocation
-  (if compiler-backend-emit-assignment-index-active
-    (if (and
-      (>= compiler-backend-rax-override-var 0)
-      (= var compiler-backend-rax-override-var))
-      (CompilerRegMaybeLocation.Some (CompilerRegLocation.Register "%rax"))
-      (compiler-reg-assignment-index-lookup
-        compiler-backend-emit-assignment-index
-        var))
-    (compiler-reg-assignment-lookup assignments var)))
+  (cond
+    [(and
+        (>= compiler-backend-emit-home-override0-var 0)
+        (= var compiler-backend-emit-home-override0-var))
+      (CompilerRegMaybeLocation.Some
+        (CompilerRegLocation.Register compiler-backend-emit-home-override0-reg))]
+    [(and
+        (>= compiler-backend-emit-home-override1-var 0)
+        (= var compiler-backend-emit-home-override1-var))
+      (CompilerRegMaybeLocation.Some
+        (CompilerRegLocation.Register compiler-backend-emit-home-override1-reg))]
+    [compiler-backend-emit-assignment-index-active
+      (if (and
+        (>= compiler-backend-rax-override-var 0)
+        (= var compiler-backend-rax-override-var))
+        (CompilerRegMaybeLocation.Some (CompilerRegLocation.Register "%rax"))
+        (compiler-reg-assignment-index-lookup
+          compiler-backend-emit-assignment-index
+          var))]
+    [else (compiler-reg-assignment-lookup assignments var)]))
 
 (define (compiler-backend-vector-var-home
   [assignments : CompilerRegAssignmentList]
@@ -16597,6 +16631,8 @@
     [own-src? : bool
       (and
         (compiler-backend-divmod-src-register? lhs-home)
+        (not (string.eq lhs-home magic))
+        (not (string.eq lhs-home hoist-reg))
         (not lhs-live-after))]
     [dst-src? : bool
       (and
@@ -36081,6 +36117,914 @@
               (box-get message)
               instr-diag)))])))
 
+;; ---------------------------------------------------------------------------
+;; Constant-divmod adjacent value forwarding.
+;;
+;; The signed literal expansion owns one non-fixed SRC register.  When its
+;; dividend is the single-use result of the immediately preceding scalar op,
+;; steer that producer into SRC instead of first defining a fixed %rax/%rdx
+;; home.  Independently, when the divmod result has one use in the direct
+;; Gep+StorePtr shape, leave the result in SRC and let the store read it there.
+;; The home overrides below exist only while the fused IR bundle is emitted;
+;; allocator assignments, liveness, and the IR itself remain unchanged.
+(defenum CompilerBackendMaybeDivmodPolish
+  (No)
+  (Some ResultCompilerBackend))
+
+(define (compiler-backend-divmod-producer-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Add) true]
+    [(CompilerIrBinOp.Mul) true]
+    [(CompilerIrBinOp.BitXor) true]
+    [_ false]))
+
+(define (compiler-backend-divmod-fixed-home? [home : String]) : bool
+  (or (string.eq home "%rax") (string.eq home "%rdx")))
+
+;; Conservative retargetability gate for the producer forms this fold owns.
+;; A register LHS plus a direct register/immediate RHS makes Add/Mul/BitXor a
+;; no-extra-scratch destination-targetable instruction (LEA/two-address
+;; add/imul/xor).  Wider fallback shapes keep their ordinary home.
+(define (compiler-backend-divmod-producer-retargetable?
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : bool
+  (and
+    (compiler-backend-divmod-producer-op? op)
+    (match ty
+      [(AstType.I64) true]
+      [_ false])
+    (compiler-backend-divmod-fixed-home?
+      (compiler-backend-var-register-home assignments dst))
+    (not
+      (string.eq (compiler-backend-value-scalar-register assignments lhs) ""))
+    (match (compiler-backend-immediate-operand rhs)
+      [(CompilerBackendMaybeImmediate.Some _)
+        (and
+          (compiler-backend-binop-direct-width-ok? op ty)
+          (compiler-backend-binop-direct-immediate-ok?
+            (compiler-backend-binop-direct-mnemonic op)
+            op
+            rhs
+            ty))]
+      [(CompilerBackendMaybeImmediate.No)
+        (let
+          [lhs-reg : String
+            (compiler-backend-value-scalar-register assignments lhs)]
+          [rhs-reg : String
+            (compiler-backend-value-scalar-register assignments rhs)]
+          (and
+            (not (string.eq rhs-reg ""))
+            ;; %rbp cannot be a SIB index.  The only direct Add form with both
+            ;; operands there therefore stays on the ordinary emitter.
+            (not
+              (and
+                (match op
+                  [(CompilerIrBinOp.Add) true]
+                  [_ false])
+                (string.eq lhs-reg "%rbp")
+                (string.eq rhs-reg "%rbp")))))])))
+
+;; Emit exactly the direct producer forms admitted above.  This avoids the
+;; ordinary binop emitter's eagerly-computed fallback scavenge: after changing
+;; the destination home to SRC that unused probe can otherwise manufacture an
+;; emergency save/restore even though the selected LEA/IMUL/XOR needs no
+;; scratch at all.
+(define (compiler-backend-emit-divmod-producer-to-src
+  [assignments : CompilerRegAssignmentList]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [src : String]) : ResultCompilerBackend
+  (let
+    [lhs-reg : String (compiler-backend-value-scalar-register assignments lhs)]
+    (match (compiler-backend-immediate-operand rhs)
+      [(CompilerBackendMaybeImmediate.Some imm)
+        (match op
+          [(CompilerIrBinOp.Add)
+            (ResultCompilerBackend.Ok
+              (string.append
+                (str_cat.str-cat
+                  "    leaq "
+                  (substring imm 1 (- (string-length imm) 1))
+                  "("
+                  lhs-reg)
+                (str_cat.str-cat "), " src "\n")))]
+          [(CompilerIrBinOp.Mul)
+            (ResultCompilerBackend.Ok
+              (string.append
+                (str_cat.str-cat "    imulq " imm ", " lhs-reg)
+                (str_cat.str-cat ", " src "\n")))]
+          [(CompilerIrBinOp.BitXor)
+            (ResultCompilerBackend.Ok
+              (string.append
+                (compiler-backend-divmod-result-move lhs-reg src)
+                (str_cat.str-cat "    xorq " imm ", " src "\n")))]
+          [_
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: non-retargetable divmod producer")))])]
+      [(CompilerBackendMaybeImmediate.No)
+        (let
+          [rhs-reg : String
+            (compiler-backend-value-scalar-register assignments rhs)]
+          (match op
+            [(CompilerIrBinOp.Add)
+              (ResultCompilerBackend.Ok
+                (string.append
+                  (str_cat.str-cat
+                    "    leaq ("
+                    (if (string.eq lhs-reg "%rbp")
+                      rhs-reg
+                      lhs-reg)
+                    ","
+                    (if (string.eq lhs-reg "%rbp")
+                      lhs-reg
+                      rhs-reg))
+                  (str_cat.str-cat "), " src "\n")))]
+            [(CompilerIrBinOp.Mul)
+              (ResultCompilerBackend.Ok
+                (if (string.eq src lhs-reg)
+                  (str_cat.str-cat "    imulq " rhs-reg ", " src "\n")
+                  (if (string.eq src rhs-reg)
+                    (str_cat.str-cat "    imulq " lhs-reg ", " src "\n")
+                    (string.append
+                      (compiler-backend-divmod-result-move lhs-reg src)
+                      (str_cat.str-cat "    imulq " rhs-reg ", " src "\n")))))]
+            [(CompilerIrBinOp.BitXor)
+              (ResultCompilerBackend.Ok
+                (if (string.eq src lhs-reg)
+                  (str_cat.str-cat "    xorq " rhs-reg ", " src "\n")
+                  (if (string.eq src rhs-reg)
+                    (str_cat.str-cat "    xorq " lhs-reg ", " src "\n")
+                    (string.append
+                      (compiler-backend-divmod-result-move lhs-reg src)
+                      (str_cat.str-cat "    xorq " rhs-reg ", " src "\n")))))]
+            [_
+              (ResultCompilerBackend.Err
+                (box
+                  (compiler-diagnostic-at-start
+                    ""
+                    "backend: non-retargetable divmod producer")))]))])))
+
+(define (compiler-backend-divmod-producer-feeds?
+  [ctx : CompilerBackendEmissionContext]
+  [producer-dst : i64]
+  [producer-op : CompilerIrBinOp]
+  [producer-lhs : CompilerIrValue]
+  [producer-rhs : CompilerIrValue]
+  [producer-ty : AstType]
+  [div-op : CompilerIrBinOp]
+  [div-lhs : CompilerIrValue]
+  [div-rhs : CompilerIrValue]
+  [div-ty : AstType]) : bool
+  (and
+    (compiler-backend-var-single-use? ctx.use-counts producer-dst)
+    (compiler-backend-divmod-producer-retargetable?
+      ctx.assignments
+      producer-dst
+      producer-op
+      producer-lhs
+      producer-rhs
+      producer-ty)
+    (compiler-backend-branch-uses-var? div-lhs producer-dst)
+    (compiler-backend-signed-literal-divmod-src-shape? div-op div-rhs div-ty)))
+
+;; The existing Gep+StorePtr fusion accepts the stored scalar in any GP
+;; register when its address is already directly encodable.  Requiring that
+;; direct address shape keeps SRC out of all later planned address scratches.
+(define (compiler-backend-divmod-direct-gep-store?
+  [assignments : CompilerRegAssignmentList]
+  [result-dst : i64]
+  [gep-dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [store-ptr : CompilerIrValue]
+  [store-value : CompilerIrValue]) : bool
+  (and
+    (compiler-backend-branch-uses-var? store-ptr gep-dst)
+    (compiler-backend-branch-uses-var? store-value result-dst)
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some _)
+        (not
+          (string.eq (compiler-backend-value-register-home assignments base) ""))]
+      [(option_i64.None)
+        (let
+          [base-home : String
+            (compiler-backend-address-base-filter
+              (compiler-backend-value-scalar-register assignments base))]
+          [offset-home : String
+            (compiler-backend-value-scalar-register assignments offset)]
+          (and
+            (not (string.eq base-home ""))
+            (not (string.eq offset-home ""))
+            (not
+              (string.eq
+                (compiler-backend-gep-index-address-disp
+                  0
+                  base-home
+                  (compiler-backend-type-size elem-ty)
+                  offset-home)
+                ""))))])))
+
+;; An emergency SRC is preserved around the complete Div/Mod+Gep+StorePtr
+;; bundle.  That preservation cannot restore a register before the fused store,
+;; so SRC must not also be one of the store address inputs.
+(define (compiler-backend-divmod-direct-gep-store-src-safe?
+  [assignments : CompilerRegAssignmentList]
+  [src : String]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]) : bool
+  (and
+    (not
+      (string.eq src (compiler-backend-value-scalar-register assignments base)))
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some _) true]
+      [(option_i64.None)
+        (not
+          (string.eq
+            src
+            (compiler-backend-value-scalar-register assignments offset)))])))
+
+;; The divmod emitter can discover an emergency scratch after the polish SRC
+;; has been selected.  Restore any borrowed address input before the fused
+;; store reads it; other borrowed registers (including SRC) remain protected
+;; until the bundle's ordinary trailing restore.
+(define (compiler-backend-divmod-address-emergency-restore-asm
+  [assignments : CompilerRegAssignmentList]
+  [src : String]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [index : i64]) : String
+  (if (>= index compiler-backend-emergency-pending-count)
+    ""
+    (let
+      [reg : String (array-ref compiler-backend-emergency-regs index)]
+      [base-home : String
+        (compiler-backend-value-scalar-register assignments base)]
+      [offset-home : String
+        (match (compiler-backend-value-as-i64 offset)
+          [(option_i64.Some _) ""]
+          [(option_i64.None)
+            (compiler-backend-value-scalar-register assignments offset)])]
+      (str_cat.str-cat
+        (if (and
+          (not (string.eq reg src))
+          (or (string.eq reg base-home) (string.eq reg offset-home)))
+          (compiler-backend-emergency-reg-restore-asm
+            reg
+            (compiler-backend-emergency-reg-offset index))
+          "")
+        (compiler-backend-divmod-address-emergency-restore-asm
+          assignments
+          src
+          base
+          offset
+          (+ index 1))))))
+
+;; Select the same SRC class as the ordinary divmod emitter.  At a divmod site
+;; a dead non-fixed dividend home wins; otherwise a suitable result home wins,
+;; then the planned SRC.  The producer fold calls with allow-own=false because
+;; its dividend is still being defined at the current point.  The final
+;; scavenger fallback queries a forward occupancy window, so an emergency pick
+;; is preserved around the complete fused bundle below.
+(define (compiler-backend-divmod-polish-src
+  [ctx : CompilerBackendEmissionContext]
+  [dst : i64]
+  [lhs : CompilerIrValue]
+  [planned-magic : String]
+  [planned-src : String]
+  [allow-own : bool]
+  [scavenge-dst : i64]) : String
+  (let
+    [lhs-home : String
+      (compiler-backend-value-scalar-register ctx.assignments lhs)]
+    [dst-home : String (compiler-backend-var-register-home ctx.assignments dst)]
+    [own-src? : bool
+      (and
+        allow-own
+        (compiler-backend-divmod-src-register? lhs-home)
+        (not (string.eq lhs-home planned-magic))
+        (not (compiler-backend-value-live-after-here? lhs)))]
+    [dst-src? : bool
+      (and
+        (not own-src?)
+        (compiler-backend-divmod-src-register? dst-home)
+        (not (string.eq dst-home planned-magic))
+        (not (string.eq dst-home lhs-home)))]
+    (cond
+      [own-src? lhs-home]
+      [dst-src? dst-home]
+      [(compiler-backend-divmod-src-register? planned-src) planned-src]
+      [else
+        (compiler-backend-scavenge-divmod-src-reg
+          scavenge-dst
+          (compiler-backend-divmod-dividend-exclude planned-magic)
+          5)])))
+
+(define (compiler-backend-divmod-overrides-install!
+  [first-var : i64]
+  [first-reg : String]
+  [second-var : i64]
+  [second-reg : String]) : unit
+  (begin
+    (set! compiler-backend-emit-home-override0-var first-var)
+    (set! compiler-backend-emit-home-override0-reg first-reg)
+    (set! compiler-backend-emit-home-override1-var second-var)
+    (set! compiler-backend-emit-home-override1-reg second-reg)))
+
+;; Emit a Gep+StorePtr as the already-existing direct fused store, but return
+;; only its assembly so the surrounding divmod bundle can own one emergency
+;; save/restore region.
+(define (compiler-backend-emit-divmod-direct-gep-store
+  [ctx : CompilerBackendEmissionContext]
+  [gep-dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [value : CompilerIrValue]
+  [store-ty : AstType]) : ResultCompilerBackend
+  (let
+    [_reserved : unit
+      (set!
+        compiler-backend-current-instr-reserved-mask
+        (compiler-backend-instr-reserved-home-mask
+          (CompilerIrInstr.Gep gep-dst base offset elem-ty)))]
+    [gep-disp : i64 (compiler-backend-gep-fold-next! offset elem-ty)]
+    (compiler-backend-emit-store-to-gep
+      ctx.assignments
+      base
+      offset
+      elem-ty
+      value
+      store-ty
+      ctx.program-index
+      gep-disp
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        0)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        0
+        1)
+      (compiler-backend-scratch-plan-register-ahead
+        (compiler-backend-runtime-plan-scratch ctx.plan)
+        1
+        1))))
+
+(define (compiler-backend-emit-divmod-polish-continue
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [result : ResultCompilerBackend]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (match result
+    [(ResultCompilerBackend.Ok asm)
+      (compiler-backend-emit-instrs
+        ctx
+        fallthrough
+        rest
+        (text_buf.append buf (compiler-backend-emergency-wrap asm)))]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
+
+(define (compiler-backend-emit-divmod-result-gep-store-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [div-instr : CompilerIrInstr]
+  [div-dst : i64]
+  [src : String]
+  [gep-dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [store-value : CompilerIrValue]
+  [store-ty : AstType]
+  [after-store : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (let
+    [saved-count : i64 compiler-backend-emit-current-count]
+    [saved-reserved : i64 compiler-backend-current-instr-reserved-mask]
+    [saved0-var : i64 compiler-backend-emit-home-override0-var]
+    [saved0-reg : String compiler-backend-emit-home-override0-reg]
+    [saved1-var : i64 compiler-backend-emit-home-override1-var]
+    [saved1-reg : String compiler-backend-emit-home-override1-reg]
+    [result : ResultCompilerBackend
+      (begin
+        (compiler-backend-divmod-overrides-install! div-dst src -1 "")
+        (match (compiler-backend-emit-instr
+          ctx
+          (CompilerBackendMaybeLabel.No)
+          div-instr)
+          [(ResultCompilerBackend.Ok div-asm)
+            (begin
+              (set! compiler-backend-emit-current-count (- saved-count 1))
+              (let
+                [address-restore : String
+                  (compiler-backend-divmod-address-emergency-restore-asm
+                    ctx.assignments
+                    src
+                    base
+                    offset
+                    0)]
+                (match (compiler-backend-emit-divmod-direct-gep-store
+                  ctx
+                  gep-dst
+                  base
+                  offset
+                  elem-ty
+                  store-value
+                  store-ty)
+                  [(ResultCompilerBackend.Ok store-asm)
+                    (ResultCompilerBackend.Ok
+                      (string.append
+                        div-asm
+                        (string.append address-restore store-asm)))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]
+    [_restore : unit
+      (begin
+        (set! compiler-backend-emit-current-count saved-count)
+        (set! compiler-backend-current-instr-reserved-mask saved-reserved)
+        (compiler-backend-divmod-overrides-install!
+          saved0-var
+          saved0-reg
+          saved1-var
+          saved1-reg))]
+    (compiler-backend-emit-divmod-polish-continue
+      ctx
+      fallthrough
+      result
+      after-store
+      buf)))
+
+(define (compiler-backend-emit-steered-producer-divmod-plain-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [producer-instr : CompilerIrInstr]
+  [producer-dst : i64]
+  [div-instr : CompilerIrInstr]
+  [src : String]
+  [after-div : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (let
+    [saved-count : i64 compiler-backend-emit-current-count]
+    [saved-reserved : i64 compiler-backend-current-instr-reserved-mask]
+    [saved0-var : i64 compiler-backend-emit-home-override0-var]
+    [saved0-reg : String compiler-backend-emit-home-override0-reg]
+    [saved1-var : i64 compiler-backend-emit-home-override1-var]
+    [saved1-reg : String compiler-backend-emit-home-override1-reg]
+    [result : ResultCompilerBackend
+      (begin
+        (compiler-backend-divmod-overrides-install! producer-dst src -1 "")
+        (match (match producer-instr
+          [(CompilerIrInstr.BinOp _ op lhs rhs _)
+            (compiler-backend-emit-divmod-producer-to-src
+              ctx.assignments
+              op
+              lhs
+              rhs
+              src)]
+          [_
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: non-retargetable divmod producer")))])
+          [(ResultCompilerBackend.Ok producer-asm)
+            (begin
+              (set! compiler-backend-emit-current-count (- saved-count 1))
+              (match (compiler-backend-emit-instr
+                ctx
+                (CompilerBackendMaybeLabel.No)
+                div-instr)
+                [(ResultCompilerBackend.Ok div-asm)
+                  (ResultCompilerBackend.Ok
+                    (string.append producer-asm div-asm))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]
+    [_restore : unit
+      (begin
+        (set! compiler-backend-emit-current-count saved-count)
+        (set! compiler-backend-current-instr-reserved-mask saved-reserved)
+        (compiler-backend-divmod-overrides-install!
+          saved0-var
+          saved0-reg
+          saved1-var
+          saved1-reg))]
+    (compiler-backend-emit-divmod-polish-continue
+      ctx
+      fallthrough
+      result
+      after-div
+      buf)))
+
+(define (compiler-backend-emit-steered-producer-divmod-gep-store-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [producer-instr : CompilerIrInstr]
+  [producer-dst : i64]
+  [div-instr : CompilerIrInstr]
+  [div-dst : i64]
+  [src : String]
+  [gep-dst : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [store-value : CompilerIrValue]
+  [store-ty : AstType]
+  [after-store : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (let
+    [saved-count : i64 compiler-backend-emit-current-count]
+    [saved-reserved : i64 compiler-backend-current-instr-reserved-mask]
+    [saved0-var : i64 compiler-backend-emit-home-override0-var]
+    [saved0-reg : String compiler-backend-emit-home-override0-reg]
+    [saved1-var : i64 compiler-backend-emit-home-override1-var]
+    [saved1-reg : String compiler-backend-emit-home-override1-reg]
+    [result : ResultCompilerBackend
+      (begin
+        (compiler-backend-divmod-overrides-install!
+          producer-dst
+          src
+          div-dst
+          src)
+        (match (match producer-instr
+          [(CompilerIrInstr.BinOp _ op lhs rhs _)
+            (compiler-backend-emit-divmod-producer-to-src
+              ctx.assignments
+              op
+              lhs
+              rhs
+              src)]
+          [_
+            (ResultCompilerBackend.Err
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: non-retargetable divmod producer")))])
+          [(ResultCompilerBackend.Ok producer-asm)
+            (begin
+              (set! compiler-backend-emit-current-count (- saved-count 1))
+              (match (compiler-backend-emit-instr
+                ctx
+                (CompilerBackendMaybeLabel.No)
+                div-instr)
+                [(ResultCompilerBackend.Ok div-asm)
+                  (begin
+                    (set! compiler-backend-emit-current-count (- saved-count 2))
+                    (let
+                      [address-restore : String
+                        (compiler-backend-divmod-address-emergency-restore-asm
+                          ctx.assignments
+                          src
+                          base
+                          offset
+                          0)]
+                      (match (compiler-backend-emit-divmod-direct-gep-store
+                        ctx
+                        gep-dst
+                        base
+                        offset
+                        elem-ty
+                        store-value
+                        store-ty)
+                        [(ResultCompilerBackend.Ok store-asm)
+                          (ResultCompilerBackend.Ok
+                            (string.append
+                              producer-asm
+                              (string.append
+                                div-asm
+                                (string.append address-restore store-asm))))]
+                        [(ResultCompilerBackend.Err message)
+                          (ResultCompilerBackend.Err message)])))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]
+    [_restore : unit
+      (begin
+        (set! compiler-backend-emit-current-count saved-count)
+        (set! compiler-backend-current-instr-reserved-mask saved-reserved)
+        (compiler-backend-divmod-overrides-install!
+          saved0-var
+          saved0-reg
+          saved1-var
+          saved1-reg))]
+    (compiler-backend-emit-divmod-polish-continue
+      ctx
+      fallthrough
+      result
+      after-store
+      buf)))
+
+(define (compiler-backend-emit-steered-producer-divmod-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [producer-instr : CompilerIrInstr]
+  [producer-dst : i64]
+  [div-instr : CompilerIrInstr]
+  [div-dst : i64]
+  [src : String]
+  [after-div : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (if (compiler-backend-var-single-use? ctx.use-counts div-dst)
+    (match after-div
+      [(CompilerIrInstrList.Cons maybe-gep after-gep)
+        (match maybe-gep
+          [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
+            (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
+              (match (box-get after-gep)
+                [(CompilerIrInstrList.Cons maybe-store after-store)
+                  (match maybe-store
+                    [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
+                      (if (and
+                        (compiler-backend-divmod-direct-gep-store?
+                          ctx.assignments
+                          div-dst
+                          gep-dst
+                          base
+                          offset
+                          elem-ty
+                          store-ptr
+                          store-value)
+                        (compiler-backend-divmod-direct-gep-store-src-safe?
+                          ctx.assignments
+                          src
+                          base
+                          offset))
+                        (compiler-backend-emit-steered-producer-divmod-gep-store-rest
+                          ctx
+                          fallthrough
+                          producer-instr
+                          producer-dst
+                          div-instr
+                          div-dst
+                          src
+                          gep-dst
+                          base
+                          offset
+                          elem-ty
+                          store-value
+                          store-ty
+                          (box-get after-store)
+                          buf)
+                        (compiler-backend-emit-steered-producer-divmod-plain-rest
+                          ctx
+                          fallthrough
+                          producer-instr
+                          producer-dst
+                          div-instr
+                          src
+                          after-div
+                          buf))]
+                    [_
+                      (compiler-backend-emit-steered-producer-divmod-plain-rest
+                        ctx
+                        fallthrough
+                        producer-instr
+                        producer-dst
+                        div-instr
+                        src
+                        after-div
+                        buf)])]
+                [_
+                  (compiler-backend-emit-steered-producer-divmod-plain-rest
+                    ctx
+                    fallthrough
+                    producer-instr
+                    producer-dst
+                    div-instr
+                    src
+                    after-div
+                    buf)])
+              (compiler-backend-emit-steered-producer-divmod-plain-rest
+                ctx
+                fallthrough
+                producer-instr
+                producer-dst
+                div-instr
+                src
+                after-div
+                buf))]
+          [_
+            (compiler-backend-emit-steered-producer-divmod-plain-rest
+              ctx
+              fallthrough
+              producer-instr
+              producer-dst
+              div-instr
+              src
+              after-div
+              buf)])]
+      [_
+        (compiler-backend-emit-steered-producer-divmod-plain-rest
+          ctx
+          fallthrough
+          producer-instr
+          producer-dst
+          div-instr
+          src
+          after-div
+          buf)])
+    (compiler-backend-emit-steered-producer-divmod-plain-rest
+      ctx
+      fallthrough
+      producer-instr
+      producer-dst
+      div-instr
+      src
+      after-div
+      buf)))
+
+(define (compiler-backend-try-divmod-result-gep-store
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [div-instr : CompilerIrInstr]
+  [div-dst : i64]
+  [div-op : CompilerIrBinOp]
+  [div-lhs : CompilerIrValue]
+  [div-rhs : CompilerIrValue]
+  [div-ty : AstType]
+  [after-div : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : CompilerBackendMaybeDivmodPolish
+  (if (and
+    (compiler-backend-var-single-use? ctx.use-counts div-dst)
+    (compiler-backend-signed-literal-divmod-src-shape? div-op div-rhs div-ty))
+    (match after-div
+      [(CompilerIrInstrList.Cons maybe-gep after-gep)
+        (match maybe-gep
+          [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
+            (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
+              (match (box-get after-gep)
+                [(CompilerIrInstrList.Cons maybe-store after-store)
+                  (match maybe-store
+                    [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
+                      (if (compiler-backend-divmod-direct-gep-store?
+                        ctx.assignments
+                        div-dst
+                        gep-dst
+                        base
+                        offset
+                        elem-ty
+                        store-ptr
+                        store-value)
+                        (let
+                          [_reserved : unit
+                            (set!
+                              compiler-backend-current-instr-reserved-mask
+                              (compiler-backend-instr-reserved-home-mask
+                                div-instr))]
+                          [src : String
+                            (compiler-backend-divmod-polish-src
+                              ctx
+                              div-dst
+                              div-lhs
+                              (compiler-backend-scratch-plan-register-ahead
+                                (compiler-backend-runtime-plan-scratch ctx.plan)
+                                0
+                                2)
+                              (compiler-backend-scratch-plan-register-ahead
+                                (compiler-backend-runtime-plan-scratch ctx.plan)
+                                0
+                                3)
+                              true
+                              div-dst)]
+                          (if (compiler-backend-divmod-direct-gep-store-src-safe?
+                            ctx.assignments
+                            src
+                            base
+                            offset)
+                            (CompilerBackendMaybeDivmodPolish.Some
+                              (compiler-backend-emit-divmod-result-gep-store-rest
+                                ctx
+                                fallthrough
+                                div-instr
+                                div-dst
+                                src
+                                gep-dst
+                                base
+                                offset
+                                elem-ty
+                                store-value
+                                store-ty
+                                (box-get after-store)
+                                buf))
+                            (CompilerBackendMaybeDivmodPolish.No)))
+                        (CompilerBackendMaybeDivmodPolish.No))]
+                    [_ (CompilerBackendMaybeDivmodPolish.No)])]
+                [_ (CompilerBackendMaybeDivmodPolish.No)])
+              (CompilerBackendMaybeDivmodPolish.No))]
+          [_ (CompilerBackendMaybeDivmodPolish.No)])]
+      [_ (CompilerBackendMaybeDivmodPolish.No)])
+    (CompilerBackendMaybeDivmodPolish.No)))
+
+(define (compiler-backend-try-divmod-polish
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : CompilerIrInstr]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : CompilerBackendMaybeDivmodPolish
+  (match instr
+    [(CompilerIrInstr.BinOp
+        producer-dst
+        producer-op
+        producer-lhs
+        producer-rhs
+        producer-ty)
+      (match rest
+        [(CompilerIrInstrList.Cons next after-div)
+          (match next
+            [(CompilerIrInstr.BinOp div-dst div-op div-lhs div-rhs div-ty)
+              (if (compiler-backend-divmod-producer-feeds?
+                ctx
+                producer-dst
+                producer-op
+                producer-lhs
+                producer-rhs
+                producer-ty
+                div-op
+                div-lhs
+                div-rhs
+                div-ty)
+                (let
+                  [_reserved : unit
+                    (set!
+                      compiler-backend-current-instr-reserved-mask
+                      (compiler-backend-instr-reserved-home-mask instr))]
+                  [src : String
+                    (compiler-backend-divmod-polish-src
+                      ctx
+                      div-dst
+                      div-lhs
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        1
+                        2)
+                      (compiler-backend-scratch-plan-register-ahead
+                        (compiler-backend-runtime-plan-scratch ctx.plan)
+                        1
+                        3)
+                      false
+                      producer-dst)]
+                  (CompilerBackendMaybeDivmodPolish.Some
+                    (compiler-backend-emit-steered-producer-divmod-rest
+                      ctx
+                      fallthrough
+                      instr
+                      producer-dst
+                      next
+                      div-dst
+                      src
+                      (box-get after-div)
+                      buf)))
+                (compiler-backend-try-divmod-result-gep-store
+                  ctx
+                  fallthrough
+                  instr
+                  producer-dst
+                  producer-op
+                  producer-lhs
+                  producer-rhs
+                  producer-ty
+                  rest
+                  buf))]
+            [_
+              (compiler-backend-try-divmod-result-gep-store
+                ctx
+                fallthrough
+                instr
+                producer-dst
+                producer-op
+                producer-lhs
+                producer-rhs
+                producer-ty
+                rest
+                buf)])]
+        [_
+          (compiler-backend-try-divmod-result-gep-store
+            ctx
+            fallthrough
+            instr
+            producer-dst
+            producer-op
+            producer-lhs
+            producer-rhs
+            producer-ty
+            rest
+            buf)])]
+    [_ (CompilerBackendMaybeDivmodPolish.No)]))
+
 (define (compiler-backend-emit-instrs-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -37477,6 +38421,24 @@
             (box-get rest)
             buf)])]))
 
+(define (compiler-backend-emit-instrs-divmod-polish-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instrs : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (match instrs
+    [(CompilerIrInstrList.Cons instr rest)
+      (match (compiler-backend-try-divmod-polish
+        ctx
+        fallthrough
+        instr
+        (box-get rest)
+        buf)
+        [(CompilerBackendMaybeDivmodPolish.Some result) result]
+        [(CompilerBackendMaybeDivmodPolish.No)
+          (compiler-backend-emit-instrs-step ctx fallthrough instrs buf)])]
+    [_ (compiler-backend-emit-instrs-step ctx fallthrough instrs buf)]))
+
 ;; Drift-proof per-instruction position for the scavenge coordinate. `post-base`
 ;; is the cumulative instruction count through the current block (accumulated per
 ;; block in emit-blocks-into, reset per function in install-ctx); the structural
@@ -37570,7 +38532,7 @@
               (set! compiler-backend-emit-instrs-continue-pending false)
               (match current-mode
                 [(CompilerBackendEmitInstrsMode.Normal)
-                  (compiler-backend-emit-instrs-step
+                  (compiler-backend-emit-instrs-divmod-polish-step
                     ctx
                     fallthrough
                     current-instrs
@@ -43421,7 +44383,8 @@
                 (set! compiler-backend-emit-assignment-index-active true))
               (set! compiler-backend-emit-assignment-index-active false))
             (set! compiler-backend-rax-override-var -1)
-            (set! compiler-backend-rax-forward-pending-var -1))]
+            (set! compiler-backend-rax-forward-pending-var -1)
+            (compiler-backend-emit-home-overrides-disable!))]
         [scavenge-assignments
           : CompilerRegAssignmentList
           ;; Start ordinary scavenging from real IR homes. Planned scratch

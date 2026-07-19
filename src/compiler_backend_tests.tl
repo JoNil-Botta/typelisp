@@ -13885,6 +13885,91 @@
           (compiler-backend-string-contains? asm "    movq -24(%rbp), %r10\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
+;; StorePtr consumes the same fused Gep address forms as Load: zero and
+;; nonzero displacements, plus a register-homed scaled index, emit directly in
+;; the store memory operand. A second non-memory use keeps the Gep materialized.
+(define (compiler-backend-gep-store-fold-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rsi"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rax"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%rdi"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%rcx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              4
+              (CompilerRegLocation.Register "%r8"))
+            CompilerRegAssignmentList.Nil))))))
+
+(define (compiler-backend-gep-store-fold-positive-ok?
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [expected : String]) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 0) offset elem-ty)
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
+        CompilerIrInstrList.Nil))
+    (compiler-backend-gep-store-fold-test-assignments)
+    5)
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm expected)
+        (not (compiler-backend-string-contains? asm "    leaq ")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-gep-store-fold-shapes-ok?) : bool
+  (and
+    (compiler-backend-gep-store-fold-positive-ok?
+      (CompilerIrValue.I64 0)
+      (AstType.U8)
+      "    movq %rax, (%rsi)\n")
+    (compiler-backend-gep-store-fold-positive-ok?
+      (CompilerIrValue.I64 8)
+      (AstType.U8)
+      "    movq %rax, 8(%rsi)\n")
+    (compiler-backend-gep-store-fold-positive-ok?
+      (CompilerIrValue.Var 2)
+      (AstType.I64)
+      "    movq %rax, (%rsi,%rdi,8)\n")
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          3
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 8)
+          (AstType.U8))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              4
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            CompilerIrInstrList.Nil)))
+      (compiler-backend-gep-store-fold-test-assignments)
+      5)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm "    leaq 8(%rsi), %rcx\n")
+          (compiler-backend-string-contains? asm "    movq %rax, (%rcx)\n"))]
+      [(ResultCompilerBackend.Err _) false])))
+
 (define (compiler-backend-store-value-scratch-shape-ok?) : bool
   (and
     (match (compiler-backend-emit-test-instrs
@@ -14993,7 +15078,8 @@
       (compiler-backend-gep-fold-multi-use-keeps-add-ok?)
       (compiler-backend-gep-fold-builders-ok?))
     (compiler-backend-gep-fold-drift-detected-ok?)
-    (compiler-backend-chained-gep-same-home-ok?)))
+    (compiler-backend-chained-gep-same-home-ok?)
+    (compiler-backend-gep-store-fold-shapes-ok?)))
 
 ;; When a variable-index Gep and its constant-offset consumer share the same
 ;; register, the first Gep can still write that home directly. The second Gep's
@@ -18737,6 +18823,210 @@
         "    movq %r10, %rax\n    imulq -40(%rbp)\n    addq %r10, %rdx\n    movq %rdx, %rax\n    shrq $63, %rax\n    sarq $29, %rdx\n    addq %rax, %rdx\n    imulq $1000000007, %rdx, %rax\n    subq %rax, %r10\n")
       (not (compiler-backend-string-contains? reg-asm "sarq $63"))
       (not (compiler-backend-string-contains? reg-asm "subq %r9, %rdx")))))
+
+;; Exercise the adjacent producer/result forwarding at the IR emission layer,
+;; where fixed allocator homes can make both otherwise-redundant copies
+;; deterministic.  The local context wrapper keeps the scratch/liveness and
+;; Gep-fold globals hermetic: this predicate is also run after tests that seed
+;; those tables deliberately.
+(define (compiler-backend-divmod-polish-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%rdx"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%rax"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              4
+              (CompilerRegLocation.Register "%rdi"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                5
+                (CompilerRegLocation.Register "%rsi"))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment.Assignment
+                  6
+                  (CompilerRegLocation.Register "%r10"))
+                (compiler-reg-assignment-cons
+                  (CompilerRegAssignment.Assignment
+                    7
+                    (CompilerRegLocation.Register "%r14"))
+                  CompilerRegAssignmentList.Nil)))))))))
+
+(define (compiler-backend-divmod-polish-instrs
+  [multi-use-result : bool]
+  [multi-use-producer : bool]) : CompilerIrInstrList
+  (let
+    [after-store : CompilerIrInstrList
+      (if multi-use-result
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov 7 (CompilerIrValue.Var 3) (AstType.I64))
+          CompilerIrInstrList.Nil)
+        (if multi-use-producer
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 7 (CompilerIrValue.Var 2) (AstType.I64))
+            CompilerIrInstrList.Nil)
+          CompilerIrInstrList.Nil))]
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.BinOp
+        2
+        (CompilerIrBinOp.Add)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          3
+          (CompilerIrBinOp.SafeMod)
+          (CompilerIrValue.Var 2)
+          (CompilerIrValue.I64 1000000007)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            6
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Var 5)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 6)
+              (CompilerIrValue.Var 3)
+              (AstType.I64))
+            after-store))))))
+
+(define (compiler-backend-divmod-polish-asm
+  [multi-use-result : bool]
+  [multi-use-producer : bool]) : ResultCompilerBackend
+  (let
+    [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
+    [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+    [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+    [prev-current-count : i64 compiler-backend-emit-current-count]
+    [prev-win64 : bool (compiler-backend-current-fn-win64?)]
+    [prev-gep-ready : bool compiler-backend-gep-fold-ready]
+    [prev-gep-disp : (Array i64) compiler-backend-gep-fold-disp-table]
+    [prev-gep-kind : (Array i64) compiler-backend-gep-fold-kind-table]
+    [prev-gep-scale : (Array i64) compiler-backend-gep-fold-scale-table]
+    [prev-gep-cursor : i64 compiler-backend-gep-fold-cursor]
+    [prev-gep-drift : bool compiler-backend-gep-fold-drift]
+    [prev0-var : i64 compiler-backend-emit-home-override0-var]
+    [prev0-reg : String compiler-backend-emit-home-override0-reg]
+    [prev1-var : i64 compiler-backend-emit-home-override1-var]
+    [prev1-reg : String compiler-backend-emit-home-override1-reg]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-divmod-polish-assignments)]
+    [instrs : CompilerIrInstrList
+      (compiler-backend-divmod-polish-instrs
+        multi-use-result
+        multi-use-producer)]
+    [count : i64 (compiler-ir-instr-list-count instrs)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
+    [_ctx : unit
+      (begin
+        (compiler-backend-set-current-fn-linux!)
+        (compiler-backend-gep-fold-disable!)
+        (compiler-backend-emit-home-overrides-disable!)
+        (compiler-backend-test-scavenge-install-ctx!
+          "divmod_polish"
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          8
+          blocks
+          assignments)
+        (set! compiler-backend-emit-instr-post-base count)
+        (set! compiler-backend-emit-current-count count))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-test-instrs instrs assignments 8)]
+    [_restore : unit
+      (begin
+        (compiler-backend-set-scavenge-ctx-ready!
+          prev-starts
+          prev-ends
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
+          prev-vars)
+        (set! compiler-backend-emit-instr-post-base prev-post-base)
+        (set! compiler-backend-emit-current-count prev-current-count)
+        (if prev-win64
+          (compiler-backend-set-current-fn-win64!)
+          (compiler-backend-set-current-fn-linux!))
+        (set! compiler-backend-gep-fold-ready prev-gep-ready)
+        (set! compiler-backend-gep-fold-disp-table prev-gep-disp)
+        (set! compiler-backend-gep-fold-kind-table prev-gep-kind)
+        (set! compiler-backend-gep-fold-scale-table prev-gep-scale)
+        (set! compiler-backend-gep-fold-cursor prev-gep-cursor)
+        (set! compiler-backend-gep-fold-drift prev-gep-drift)
+        (compiler-backend-divmod-overrides-install!
+          prev0-var
+          prev0-reg
+          prev1-var
+          prev1-reg))]
+    result))
+
+(define (compiler-backend-divmod-producer-result-forwarding-ok?) : bool
+  (match (compiler-backend-divmod-polish-asm false false)
+    [(ResultCompilerBackend.Ok forwarded)
+      (match (compiler-backend-divmod-polish-asm true false)
+        [(ResultCompilerBackend.Ok multi-result)
+          (match (compiler-backend-divmod-polish-asm false true)
+            [(ResultCompilerBackend.Ok multi-producer)
+              (and
+                ;; Positive: producer lands in SRC and the single-use result is
+                ;; stored from SRC after the exact nine-instruction expansion.
+                (compiler-backend-string-contains?
+                  forwarded
+                  "    leaq (%r12,%r13), %r9\n    movq %r9, %rax\n")
+                (compiler-backend-string-contains?
+                  forwarded
+                  "    subq %rax, %r9\n    movq %r9, (%rdi,%rsi,8)\n")
+                (not
+                  (compiler-backend-string-contains?
+                    forwarded
+                    "    movq %rdx, %r9\n"))
+                (not
+                  (compiler-backend-string-contains?
+                    forwarded
+                    "    movq %r9, %rax\n    movq %rax, (%rdi,%rsi,8)\n"))
+                ;; Negative: a multi-use divmod result returns to its canonical
+                ;; %rax home before both consumers read it.
+                (compiler-backend-string-contains?
+                  multi-result
+                  "    leaq (%r12,%r13), %r9\n    movq %r9, %rax\n")
+                (compiler-backend-string-contains?
+                  multi-result
+                  "    subq %rax, %r9\n    movq %r9, %rax\n")
+                (compiler-backend-string-contains?
+                  multi-result
+                  "    movq %rax, (%rdi,%rsi,8)\n")
+                ;; Negative: another use of the producer keeps its fixed %rdx
+                ;; home, so the divmod performs the ordinary SRC copy.
+                (compiler-backend-string-contains?
+                  multi-producer
+                  "    leaq (%r12,%r13), %rdx\n    movq %rdx, %r9\n")
+                (not
+                  (compiler-backend-string-contains?
+                    multi-producer
+                    "    leaq (%r12,%r13), %r9\n")))]
+            [(ResultCompilerBackend.Err _) false])]
+        [(ResultCompilerBackend.Err _) false])]
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-divrem-binop-types [ty : AstType]) : CompilerRegVarTypeList
   (compiler-reg-var-type-cons
@@ -25149,6 +25439,7 @@
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)
         (compiler-backend-signed-constant-divisor-clang-shape-ok?)
+        (compiler-backend-divmod-producer-result-forwarding-ok?)
         (compiler-backend-divrem-rax-rhs-preserved-ok?)
         (compiler-backend-safe-divrem-guard-elision-ok?))
       (and

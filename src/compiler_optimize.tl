@@ -12847,6 +12847,42 @@
         [(option_i64.None) instr])]
     [(OptMaybeGlobalExprKey.No) instr]))
 
+;; The late And-branch rewrite clones shared pure compares into its source and
+;; fresh `__bool_and` blocks so both the original branch and the new guard edge
+;; reach backend compare/branch fusion. On the next optimizer fixpoint
+;; iteration, CSE must not merge those clones back into a dominating comparison
+;; -- doing so recreates the setcc/test materialization the CFG rewrite removed.
+(define (opt-bool-branch-chain-generated-label? [label : String]) : bool
+  (let
+    [marker : String "__bool_and."]
+    (string.contains (& label) (& marker))))
+
+(define (opt-bool-branch-chain-check-block?
+  [block-label : String]
+  [instrs : CompilerIrInstrSeq]) : bool
+  (if (opt-bool-branch-chain-generated-label? block-label)
+    true
+    (let
+      [count : i64 (compiler-ir-instr-seq-count instrs)]
+      (if (<= count 0)
+        false
+        (match (compiler-ir-instr-seq-ref instrs (- count 1))
+          [(CompilerIrInstr.Branch _ true-label false-label)
+            (or
+              (opt-bool-branch-chain-generated-label? true-label)
+              (opt-bool-branch-chain-generated-label? false-label))]
+          [_ false])))))
+
+(define (opt-global-cse-bool-chain-compare?
+  [block-label : String]
+  [instrs : CompilerIrInstrSeq]
+  [instr : CompilerIrInstr]) : bool
+  (and
+    (opt-bool-branch-chain-check-block? block-label instrs)
+    (match instr
+      [(CompilerIrInstr.BinOp _ op _ _ _) (opt-bool-branch-compare-op? op)]
+      [_ false])))
+
 (define (opt-global-cse-instr-seq
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
@@ -12859,18 +12895,20 @@
     [out : CompilerIrInstrList (CompilerIrInstrList.Nil)]
     (begin
       (while (>= index 0)
-        (begin
-          (set!
-            out
-            (compiler-ir-instr-cons
-              (opt-global-cse-instr
-                facts
-                doms
-                block-id
-                (+ index 1)
-                (array-ref slots index))
-              out))
-          (set! index (- index 1))))
+        (let
+          [instr : CompilerIrInstr (array-ref slots index)]
+          (begin
+            (set!
+              out
+              (compiler-ir-instr-cons
+                (if (opt-global-cse-bool-chain-compare?
+                  block-label
+                  instrs
+                  instr)
+                  instr
+                  (opt-global-cse-instr facts doms block-id (+ index 1) instr))
+                out))
+            (set! index (- index 1)))))
       out)))
 
 (define (opt-global-cse-blocks
@@ -16005,6 +16043,11 @@
         [base-kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs base-var)]
         (match base-kind
           [(OptLicmPtrKind.DataBuffer object)
+            (OptLicmPtrKind.DataElement object)]
+          [(OptLicmPtrKind.DataElement object)
+            ;; Address adjustment within a loaded data buffer stays in that
+            ;; buffer. Lowering commonly emits one Gep for the scaled slot
+            ;; address and another for an inline field within the slot.
             (OptLicmPtrKind.DataElement object)]
           [_
             (if (opt-licm-array-header-var? types base-var)
@@ -19248,12 +19291,39 @@
 ;; setcc/movzbq/test. Redirect the two predecessor jumps to the final branch
 ;; targets instead. The variable arm is accepted only when its value is the
 ;; immediately preceding pure scalar comparison; calls, loads, and other
-;; potentially effectful condition producers stay untouched. The phi result
-;; must have no use beyond the branch, and successor phis conservatively block
-;; the rewrite because redirecting edges would require repairing their labels.
+;; potentially effectful condition producers stay untouched. A match whose arms
+;; all return literal booleans produces the simpler `%cond = phi [true/false,
+;; pred]` form. Thread every such predecessor directly to the selected final
+;; target, expanding any successor-phi input from the merge block over the
+;; redirected predecessors. Both forms require the phi result to have no use
+;; beyond the branch; blocks with any other instruction (including another phi)
+;; stay untouched.
+(defenum OptBoolBranchDef
+  (No)
+  (Some CompilerIrInstr String))
+
+(defenum OptBoolBranchConjBuild
+  (No)
+  (Some CompilerIrInstrList))
+
+(defenum OptBoolBranchLabelList
+  (Nil)
+  (Cons String (Box OptBoolBranchLabelList)))
+
+(defenum OptBoolBranchChainRewrite
+  (No)
+  (Some CompilerIrBlockList i64))
+
+(defenum OptBoolBranchChainResult
+  (Result CompilerIrBlockList i64 bool))
+
 (defenum OptBoolBranchPhiInputs
   (No)
   (Two CompilerIrValue String CompilerIrValue String))
+
+(defenum OptBoolBranchConstantInputs
+  (No)
+  (Some OptLabelSet OptLabelSet i64))
 
 (defenum OptBoolBranchPredRewrite
   (No)
@@ -19261,6 +19331,9 @@
 
 (defenum OptBoolBranchFuseResult
   (Result CompilerIrBlockList bool))
+
+(defenum OptBoolBranchFunctionResult
+  (Result CompilerIrFunction bool))
 
 (define (opt-bool-branch-compare-op? [op : CompilerIrBinOp]) : bool
   (match op
@@ -19277,6 +19350,710 @@
     0
     (array-ref uses var)))
 
+;; A materialized boolean And tree feeding one Branch is the same late
+;; opportunity as the phi threading below, but it needs real short-circuit CFG
+;; edges rather than predecessor retargeting:
+;;
+;;   %a = compare ...
+;;   %b = compare ...
+;;   %ab = and %a, %b
+;;   branch %ab, yes, no
+;;
+;; becomes `compare; branch` in the source block followed by one fresh block per
+;; remaining conjunct. And results must have no uses outside the condition DAG.
+;; A comparison leaf may also feed another branch (BCE guards commonly share
+;; the loop-entry compare after GVN); clone that pure compare into the chain so
+;; both uses become single-use compare/branch pairs. Repeated leaves are emitted
+;; once, folding the compiler-generated `x && y && y` guard shape as part of the
+;; rewrite. Or is deliberately not admitted in this first cut.
+(define (opt-bool-branch-defs-fill-instrs!
+  [defs : (Array OptBoolBranchDef)]
+  [label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : unit
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    unit
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (begin
+        (match instr
+          [(CompilerIrInstr.BinOp dst _ _ _ _)
+            (if (and (>= dst 0) (< dst (array-length defs)))
+              (array-set! defs dst (OptBoolBranchDef.Some instr label))
+              unit)]
+          [_ unit])
+        (opt-bool-branch-defs-fill-instrs! defs label instrs (+ index 1))))))
+
+(define (opt-bool-branch-defs-fill-blocks!
+  [defs : (Array OptBoolBranchDef)]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block label instrs)
+            (opt-bool-branch-defs-fill-instrs! defs label instrs 0)])
+        (opt-bool-branch-defs-fill-blocks! defs (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bool-branch-defs-fill-blocks!
+        defs
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bool-branch-defs [frame : i64] [blocks : CompilerIrBlockList]) : (Array
+    OptBoolBranchDef)
+  (let
+    [defs : (Array OptBoolBranchDef) (array.make-array OptBoolBranchDef frame)]
+    [index : i64 0]
+    (begin
+      (while (< index frame)
+        (begin
+          (array-set! defs index (OptBoolBranchDef.No))
+          (set! index (+ index 1))))
+      (opt-bool-branch-defs-fill-blocks! defs blocks)
+      defs)))
+
+(define (opt-bool-branch-def [defs : (Array OptBoolBranchDef)] [var : i64]) : OptBoolBranchDef
+  (if (and (>= var 0) (< var (array-length defs)))
+    (array-ref defs var)
+    (OptBoolBranchDef.No)))
+
+(define (opt-bool-branch-chain-note-ref! [refs : (Array i64)] [var : i64]) : bool
+  (if (or (< var 0) (>= var (array-length refs)))
+    false
+    (begin
+      (array-set! refs var (+ (array-ref refs var) 1))
+      true)))
+
+(define (opt-bool-branch-chain-collect-value!
+  [defs : (Array OptBoolBranchDef)]
+  [refs : (Array i64)]
+  [visited : (Array bool)]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var var)
+      (and
+        (opt-bool-branch-chain-note-ref! refs var)
+        (if (array-ref visited var)
+          true
+          (begin
+            (array-set! visited var true)
+            (match (opt-bool-branch-def defs var)
+              [(OptBoolBranchDef.No) false]
+              [(OptBoolBranchDef.Some instr _)
+                (match instr
+                  [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+                    (if (not (= dst var))
+                      false
+                      (match op
+                        [(CompilerIrBinOp.And)
+                          (and
+                            (opt-type-eq ty (AstType.Bool))
+                            (opt-bool-branch-chain-collect-value!
+                              defs
+                              refs
+                              visited
+                              lhs)
+                            (opt-bool-branch-chain-collect-value!
+                              defs
+                              refs
+                              visited
+                              rhs))]
+                        [(CompilerIrBinOp.Eq) true]
+                        [(CompilerIrBinOp.Ne) true]
+                        [(CompilerIrBinOp.Lt) true]
+                        [(CompilerIrBinOp.Le) true]
+                        [(CompilerIrBinOp.Gt) true]
+                        [(CompilerIrBinOp.Ge) true]
+                        [_ false]))]
+                  [_ false])]))))]
+    [_ false]))
+
+(define (opt-bool-branch-chain-uses-ok-from?
+  [defs : (Array OptBoolBranchDef)]
+  [uses : (Array i64)]
+  [refs : (Array i64)]
+  [visited : (Array bool)]
+  [index : i64]) : bool
+  (if (>= index (array-length visited))
+    true
+    (if (not (array-ref visited index))
+      (opt-bool-branch-chain-uses-ok-from? defs uses refs visited (+ index 1))
+      (match (opt-bool-branch-def defs index)
+        [(OptBoolBranchDef.No) false]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(CompilerIrInstr.BinOp _ op _ _ _)
+              (and
+                (match op
+                  [(CompilerIrBinOp.And)
+                    (=
+                      (opt-bool-branch-use-count uses index)
+                      (array-ref refs index))]
+                  [_
+                    (>=
+                      (opt-bool-branch-use-count uses index)
+                      (array-ref refs index))])
+                (opt-bool-branch-chain-uses-ok-from?
+                  defs
+                  uses
+                  refs
+                  visited
+                  (+ index 1)))]
+            [_ false])]))))
+
+(define (opt-bool-branch-chain-flatten-value
+  [defs : (Array OptBoolBranchDef)]
+  [uses : (Array i64)]
+  [refs : (Array i64)]
+  [expanded : (Array bool)]
+  [emitted : (Array bool)]
+  [remove : (Array bool)]
+  [source-label : String]
+  [cell : (Array i64)]
+  [value : CompilerIrValue]) : OptBoolBranchConjBuild
+  (match value
+    [(CompilerIrValue.Var var)
+      (match (opt-bool-branch-def defs var)
+        [(OptBoolBranchDef.No) (OptBoolBranchConjBuild.No)]
+        [(OptBoolBranchDef.Some instr def-label)
+          (match instr
+            [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+              (match op
+                [(CompilerIrBinOp.And)
+                  (if (array-ref expanded var)
+                    (OptBoolBranchConjBuild.Some (CompilerIrInstrList.Nil))
+                    (begin
+                      (array-set! expanded var true)
+                      (if (string.eq def-label source-label)
+                        (array-set! remove dst true)
+                        unit)
+                      (match (opt-bool-branch-chain-flatten-value
+                        defs
+                        uses
+                        refs
+                        expanded
+                        emitted
+                        remove
+                        source-label
+                        cell
+                        lhs)
+                        [(OptBoolBranchConjBuild.No)
+                          (OptBoolBranchConjBuild.No)]
+                        [(OptBoolBranchConjBuild.Some left)
+                          (match (opt-bool-branch-chain-flatten-value
+                            defs
+                            uses
+                            refs
+                            expanded
+                            emitted
+                            remove
+                            source-label
+                            cell
+                            rhs)
+                            [(OptBoolBranchConjBuild.No)
+                              (OptBoolBranchConjBuild.No)]
+                            [(OptBoolBranchConjBuild.Some right)
+                              (OptBoolBranchConjBuild.Some
+                                (opt-aggregate-instr-list-append left right))])])))]
+                [_
+                  (if (array-ref emitted var)
+                    (OptBoolBranchConjBuild.Some (CompilerIrInstrList.Nil))
+                    (let
+                      [move? : bool
+                        (and
+                          (string.eq def-label source-label)
+                          (=
+                            (opt-bool-branch-use-count uses var)
+                            (array-ref refs var)))]
+                      [next-dst : i64
+                        (if move?
+                          dst
+                          (let
+                            [fresh : i64 (array-ref cell 0)]
+                            (begin
+                              (array-set! cell 0 (+ fresh 1))
+                              fresh)))]
+                      (begin
+                        (array-set! emitted var true)
+                        (if move?
+                          (array-set! remove dst true)
+                          unit)
+                        (OptBoolBranchConjBuild.Some
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.BinOp next-dst op lhs rhs ty)
+                            (CompilerIrInstrList.Nil))))))])]
+            [_ (OptBoolBranchConjBuild.No)])])]
+    [_ (OptBoolBranchConjBuild.No)]))
+
+(define (opt-bool-branch-chain-conj-count [conjs : CompilerIrInstrList]) : i64
+  (match conjs
+    [(CompilerIrInstrList.Nil) 0]
+    [(CompilerIrInstrList.Cons _ rest)
+      (+ 1 (opt-bool-branch-chain-conj-count (box-get rest)))]))
+
+(define (opt-bool-branch-chain-label-candidate
+  [source-label : String]
+  [suffix : i64]) : String
+  (string.append
+    source-label
+    (string.append "__bool_and." (string.int->string suffix))))
+
+(define (opt-bool-branch-chain-labels
+  [blocks : CompilerIrBlockList]
+  [source-label : String]
+  [remaining : i64]
+  [suffix : i64]
+  [made : OptLabelSet]) : OptBoolBranchLabelList
+  (if (<= remaining 0)
+    (OptBoolBranchLabelList.Nil)
+    (let
+      [candidate : String
+        (opt-bool-branch-chain-label-candidate source-label suffix)]
+      (if (or
+        (opt-cfg-block-exists? blocks candidate)
+        (opt-label-contains made candidate))
+        (opt-bool-branch-chain-labels
+          blocks
+          source-label
+          remaining
+          (+ suffix 1)
+          made)
+        (OptBoolBranchLabelList.Cons
+          candidate
+          (box
+            (opt-bool-branch-chain-labels
+              blocks
+              source-label
+              (- remaining 1)
+              (+ suffix 1)
+              (opt-label-add made candidate))))))))
+
+(define (opt-bool-branch-chain-label-set
+  [labels : OptBoolBranchLabelList]
+  [set : OptLabelSet]) : OptLabelSet
+  (match labels
+    [(OptBoolBranchLabelList.Nil) set]
+    [(OptBoolBranchLabelList.Cons label rest)
+      (opt-bool-branch-chain-label-set (box-get rest) (opt-label-add set label))]))
+
+(define (opt-bool-branch-chain-last-label
+  [labels : OptBoolBranchLabelList]
+  [fallback : String]) : String
+  (match labels
+    [(OptBoolBranchLabelList.Nil) fallback]
+    [(OptBoolBranchLabelList.Cons label rest)
+      (match (box-get rest)
+        [(OptBoolBranchLabelList.Nil) label]
+        [_ (opt-bool-branch-chain-last-label (box-get rest) label)])]))
+
+(define (opt-bool-branch-chain-first-label
+  [labels : OptBoolBranchLabelList]
+  [fallback : String]) : String
+  (match labels
+    [(OptBoolBranchLabelList.Nil) fallback]
+    [(OptBoolBranchLabelList.Cons label _) label]))
+
+(define (opt-bool-branch-chain-prefix
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]
+  [remove : (Array bool)]) : CompilerIrInstrList
+  (if (>= index last)
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [tail : CompilerIrInstrList
+        (opt-bool-branch-chain-prefix instrs (+ index 1) last remove)]
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst)
+          (if (and
+            (>= dst 0)
+            (< dst (array-length remove))
+            (array-ref remove dst))
+            tail
+            (compiler-ir-instr-cons instr tail))]
+        [(option_i64.None) (compiler-ir-instr-cons instr tail)]))))
+
+(define (opt-bool-branch-chain-conj-var [instr : CompilerIrInstr]) : i64
+  (match instr
+    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [_ (- 0 1)]))
+
+(define (opt-bool-branch-chain-fresh-blocks
+  [conjs : CompilerIrInstrList]
+  [labels : OptBoolBranchLabelList]
+  [true-label : String]
+  [false-label : String]) : CompilerIrBlockList
+  (match conjs
+    [(CompilerIrInstrList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrInstrList.Cons conj conj-rest)
+      (match labels
+        [(OptBoolBranchLabelList.Nil) (CompilerIrBlockList.Nil)]
+        [(OptBoolBranchLabelList.Cons label label-rest)
+          (let
+            [next-label : String
+              (opt-bool-branch-chain-first-label
+                (box-get label-rest)
+                true-label)]
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                label
+                (compiler-ir-instr-cons
+                  conj
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Branch
+                      (CompilerIrValue.Var
+                        (opt-bool-branch-chain-conj-var conj))
+                      next-label
+                      false-label)
+                    (CompilerIrInstrList.Nil))))
+              (opt-bool-branch-chain-fresh-blocks
+                (box-get conj-rest)
+                (box-get label-rest)
+                true-label
+                false-label)))])]))
+
+(define (opt-bool-branch-chain-prepend-blocks
+  [prefix : CompilerIrBlockList]
+  [tail : CompilerIrBlockList]) : CompilerIrBlockList
+  (match prefix
+    [(CompilerIrBlockList.Nil) tail]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        block
+        (opt-bool-branch-chain-prepend-blocks (box-get rest) tail))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bool-branch-chain-prepend-blocks
+        (compiler-ir-block-seq-to-list seq)
+        tail)]))
+
+(define (opt-bool-branch-chain-replace-block
+  [blocks : CompilerIrBlockList]
+  [source-label : String]
+  [source : CompilerIrBlock]
+  [fresh : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label _)
+          (if (string.eq label source-label)
+            (compiler-ir-block-cons
+              source
+              (opt-bool-branch-chain-prepend-blocks fresh (box-get rest)))
+            (compiler-ir-block-cons
+              block
+              (opt-bool-branch-chain-replace-block
+                (box-get rest)
+                source-label
+                source
+                fresh)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bool-branch-chain-replace-block
+        (compiler-ir-block-seq-to-list seq)
+        source-label
+        source
+        fresh)]))
+
+(define (opt-bool-branch-chain-phi-inputs-have-none-except?
+  [inputs : CompilerIrPhiInputList]
+  [labels : OptLabelSet]
+  [old-label : String]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Cons label rest)
+      (and
+        (if (string.eq label old-label)
+          true
+          (not (opt-bool-branch-phi-input-has-label? inputs label)))
+        (opt-bool-branch-chain-phi-inputs-have-none-except?
+          inputs
+          (box-get rest)
+          old-label))]))
+
+(define (opt-bool-branch-chain-target-phis-repairable-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [old-label : String]
+  [new-preds : OptLabelSet]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ inputs _)
+        (and
+          (opt-bool-branch-phi-input-has-label? inputs old-label)
+          (opt-bool-branch-chain-phi-inputs-have-none-except?
+            inputs
+            new-preds
+            old-label)
+          (opt-bool-branch-chain-target-phis-repairable-from?
+            instrs
+            (+ index 1)
+            old-label
+            new-preds))]
+      [_ true])))
+
+(define (opt-bool-branch-chain-target-phis-repairable?
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [old-label : String]
+  [new-preds : OptLabelSet]) : bool
+  (match (opt-cfg-find-block blocks target-label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bool-branch-chain-target-phis-repairable-from?
+            instrs
+            0
+            old-label
+            new-preds)])]))
+
+(define (opt-bool-branch-chain-try-block
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [defs : (Array OptBoolBranchDef)]
+  [uses : (Array i64)]
+  [block : CompilerIrBlock]) : OptBoolBranchChainRewrite
+  (match block
+    [(CompilerIrBlock.Block source-label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (<= count 0)
+          (OptBoolBranchChainRewrite.No)
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch
+                (CompilerIrValue.Var root)
+                true-label
+                false-label)
+              (if (or
+                (string.eq source-label true-label)
+                (string.eq source-label false-label))
+                (OptBoolBranchChainRewrite.No)
+                (match (opt-bool-branch-def defs root)
+                  [(OptBoolBranchDef.No) (OptBoolBranchChainRewrite.No)]
+                  [(OptBoolBranchDef.Some root-instr _)
+                    (match root-instr
+                      [(CompilerIrInstr.BinOp _ root-op _ _ _)
+                        (let
+                          [and-root? : bool
+                            (match root-op
+                              [(CompilerIrBinOp.And) true]
+                              [_ false])]
+                          (if (not and-root?)
+                            (OptBoolBranchChainRewrite.No)
+                            (let
+                              [refs : (Array i64) (opt-used-array-new frame)]
+                              [visited : (Array bool)
+                                (array.make-array bool frame)]
+                              [_visited : unit
+                                (opt-cfg-fill-bool! visited frame false)]
+                              [collected? : bool
+                                (opt-bool-branch-chain-collect-value!
+                                  defs
+                                  refs
+                                  visited
+                                  (CompilerIrValue.Var root))]
+                              (if (or
+                                (not collected?)
+                                (not
+                                  (opt-bool-branch-chain-uses-ok-from?
+                                    defs
+                                    uses
+                                    refs
+                                    visited
+                                    0)))
+                                (OptBoolBranchChainRewrite.No)
+                                (let
+                                  [expanded : (Array bool)
+                                    (array.make-array bool frame)]
+                                  [emitted : (Array bool)
+                                    (array.make-array bool frame)]
+                                  [remove : (Array bool)
+                                    (array.make-array bool frame)]
+                                  [_expanded : unit
+                                    (opt-cfg-fill-bool! expanded frame false)]
+                                  [_emitted : unit
+                                    (opt-cfg-fill-bool! emitted frame false)]
+                                  [_remove : unit
+                                    (opt-cfg-fill-bool! remove frame false)]
+                                  [cell : (Array i64) (array.make-array i64 1)]
+                                  [_cell : unit (array-set! cell 0 frame)]
+                                  [built : OptBoolBranchConjBuild
+                                    (opt-bool-branch-chain-flatten-value
+                                      defs
+                                      uses
+                                      refs
+                                      expanded
+                                      emitted
+                                      remove
+                                      source-label
+                                      cell
+                                      (CompilerIrValue.Var root))]
+                                  (match built
+                                    [(OptBoolBranchConjBuild.No)
+                                      (OptBoolBranchChainRewrite.No)]
+                                    [(OptBoolBranchConjBuild.Some conjs)
+                                      (match conjs
+                                        [(CompilerIrInstrList.Nil)
+                                          (OptBoolBranchChainRewrite.No)]
+                                        [(CompilerIrInstrList.Cons first rest)
+                                          (let
+                                            [labels : OptBoolBranchLabelList
+                                              (opt-bool-branch-chain-labels
+                                                blocks
+                                                source-label
+                                                (-
+                                                  (opt-bool-branch-chain-conj-count
+                                                    conjs)
+                                                  1)
+                                                0
+                                                (OptLabelSet.Nil))]
+                                            [false-preds : OptLabelSet
+                                              (opt-bool-branch-chain-label-set
+                                                labels
+                                                (opt-label-add
+                                                  (OptLabelSet.Nil)
+                                                  source-label))]
+                                            [true-preds : OptLabelSet
+                                              (opt-label-add
+                                                (OptLabelSet.Nil)
+                                                (opt-bool-branch-chain-last-label
+                                                  labels
+                                                  source-label))]
+                                            [same-target? : bool
+                                              (string.eq true-label false-label)]
+                                            [all-preds : OptLabelSet
+                                              (if same-target?
+                                                false-preds
+                                                (OptLabelSet.Nil))]
+                                            (if (if same-target?
+                                              (not
+                                                (opt-bool-branch-chain-target-phis-repairable?
+                                                  blocks
+                                                  true-label
+                                                  source-label
+                                                  all-preds))
+                                              (or
+                                                (not
+                                                  (opt-bool-branch-chain-target-phis-repairable?
+                                                    blocks
+                                                    true-label
+                                                    source-label
+                                                    true-preds))
+                                                (not
+                                                  (opt-bool-branch-chain-target-phis-repairable?
+                                                    blocks
+                                                    false-label
+                                                    source-label
+                                                    false-preds))))
+                                              (OptBoolBranchChainRewrite.No)
+                                              (let
+                                                [source-prefix : CompilerIrInstrList
+                                                  (opt-bool-branch-chain-prefix
+                                                    instrs
+                                                    0
+                                                    (- count 1)
+                                                    remove)]
+                                                [source : CompilerIrBlock
+                                                  (compiler-ir-block
+                                                    source-label
+                                                    (opt-aggregate-instr-list-append
+                                                      source-prefix
+                                                      (compiler-ir-instr-cons
+                                                        first
+                                                        (compiler-ir-instr-cons
+                                                          (CompilerIrInstr.Branch
+                                                            (CompilerIrValue.Var
+                                                              (opt-bool-branch-chain-conj-var
+                                                                first))
+                                                            (opt-bool-branch-chain-first-label
+                                                              labels
+                                                              true-label)
+                                                            false-label)
+                                                          (CompilerIrInstrList.Nil)))))]
+                                                [fresh : CompilerIrBlockList
+                                                  (opt-bool-branch-chain-fresh-blocks
+                                                    (box-get rest)
+                                                    labels
+                                                    true-label
+                                                    false-label)]
+                                                (begin
+                                                  (if same-target?
+                                                    (opt-bool-branch-repair-target-phis!
+                                                      blocks
+                                                      true-label
+                                                      source-label
+                                                      all-preds)
+                                                    (begin
+                                                      (opt-bool-branch-repair-target-phis!
+                                                        blocks
+                                                        true-label
+                                                        source-label
+                                                        true-preds)
+                                                      (opt-bool-branch-repair-target-phis!
+                                                        blocks
+                                                        false-label
+                                                        source-label
+                                                        false-preds)))
+                                                  (OptBoolBranchChainRewrite.Some
+                                                    (opt-bool-branch-chain-replace-block
+                                                      blocks
+                                                      source-label
+                                                      source
+                                                      fresh)
+                                                    (array-ref cell 0))))))])]))))))]
+                      [_ (OptBoolBranchChainRewrite.No)])]))]
+            [_ (OptBoolBranchChainRewrite.No)])))]))
+
+(define (opt-bool-branch-chain-first-list
+  [all-blocks : CompilerIrBlockList]
+  [frame : i64]
+  [defs : (Array OptBoolBranchDef)]
+  [uses : (Array i64)]
+  [blocks : CompilerIrBlockList]) : OptBoolBranchChainRewrite
+  (match blocks
+    [(CompilerIrBlockList.Nil) (OptBoolBranchChainRewrite.No)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match (opt-bool-branch-chain-try-block all-blocks frame defs uses block)
+        [(OptBoolBranchChainRewrite.Some next next-frame)
+          (OptBoolBranchChainRewrite.Some next next-frame)]
+        [(OptBoolBranchChainRewrite.No)
+          (opt-bool-branch-chain-first-list
+            all-blocks
+            frame
+            defs
+            uses
+            (box-get rest))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bool-branch-chain-first-list
+        all-blocks
+        frame
+        defs
+        uses
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bool-branch-chain-blocks-raw
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [remaining : i64]) : OptBoolBranchChainResult
+  (if (<= remaining 0)
+    (OptBoolBranchChainResult.Result blocks frame false)
+    (let
+      [defs : (Array OptBoolBranchDef) (opt-bool-branch-defs frame blocks)]
+      [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
+      (match (opt-bool-branch-chain-first-list blocks frame defs uses blocks)
+        [(OptBoolBranchChainRewrite.No)
+          (OptBoolBranchChainResult.Result blocks frame false)]
+        [(OptBoolBranchChainRewrite.Some next next-frame)
+          (match (opt-bool-branch-chain-blocks-raw
+            next
+            next-frame
+            (- remaining 1))
+            [(OptBoolBranchChainResult.Result final final-frame _)
+              (OptBoolBranchChainResult.Result final final-frame true)])]))))
+
 (define (opt-bool-branch-phi-inputs [inputs : CompilerIrPhiInputList]) : OptBoolBranchPhiInputs
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Cons first first-label first-rest)
@@ -19288,6 +20065,331 @@
             [_ (OptBoolBranchPhiInputs.No)])]
         [_ (OptBoolBranchPhiInputs.No)])]
     [_ (OptBoolBranchPhiInputs.No)]))
+
+(define (opt-bool-branch-constant-inputs-acc
+  [inputs : CompilerIrPhiInputList]
+  [true-preds : OptLabelSet]
+  [false-preds : OptLabelSet]
+  [count : i64]) : OptBoolBranchConstantInputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil)
+      (OptBoolBranchConstantInputs.Some true-preds false-preds count)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bool-branch-constant-inputs-acc
+        (compiler-ir-phi-input-seq-to-list seq)
+        true-preds
+        false-preds
+        count)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (or
+        (opt-label-contains true-preds label)
+        (opt-label-contains false-preds label))
+        (OptBoolBranchConstantInputs.No)
+        (match value
+          [(CompilerIrValue.Bool known)
+            (opt-bool-branch-constant-inputs-acc
+              (box-get rest)
+              (if known
+                (opt-label-add true-preds label)
+                true-preds)
+              (if known
+                false-preds
+                (opt-label-add false-preds label))
+              (+ count 1))]
+          [_ (OptBoolBranchConstantInputs.No)]))]))
+
+(define (opt-bool-branch-constant-inputs [inputs : CompilerIrPhiInputList]) : OptBoolBranchConstantInputs
+  (opt-bool-branch-constant-inputs-acc
+    inputs
+    (OptLabelSet.Nil)
+    (OptLabelSet.Nil)
+    0))
+
+(define (opt-bool-branch-label-union [from : OptLabelSet] [into : OptLabelSet]) : OptLabelSet
+  (match from
+    [(OptLabelSet.Nil) into]
+    [(OptLabelSet.Cons label rest)
+      (opt-bool-branch-label-union (box-get rest) (opt-label-add into label))]))
+
+(define (opt-bool-branch-pred-constant-rewriteable?
+  [blocks : CompilerIrBlockList]
+  [merge-label : String]
+  [pred-label : String]) : bool
+  (match (opt-cfg-find-block blocks pred-label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (and
+              (> count 0)
+              (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                [(CompilerIrInstr.Jump target) (string.eq target merge-label)]
+                [_ false])))])]))
+
+(define (opt-bool-branch-preds-constant-rewriteable?
+  [blocks : CompilerIrBlockList]
+  [merge-label : String]
+  [preds : OptLabelSet]) : bool
+  (match preds
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Cons pred-label rest)
+      (and
+        (opt-bool-branch-pred-constant-rewriteable?
+          blocks
+          merge-label
+          pred-label)
+        (opt-bool-branch-preds-constant-rewriteable?
+          blocks
+          merge-label
+          (box-get rest)))]))
+
+(define (opt-bool-branch-phi-input-has-label?
+  [inputs : CompilerIrPhiInputList]
+  [needle : String]) : bool
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) false]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bool-branch-phi-input-has-label?
+        (compiler-ir-phi-input-seq-to-list seq)
+        needle)]
+    [(CompilerIrPhiInputList.Cons _ label rest)
+      (if (string.eq label needle)
+        true
+        (opt-bool-branch-phi-input-has-label? (box-get rest) needle))]))
+
+(define (opt-bool-branch-phi-inputs-have-none?
+  [inputs : CompilerIrPhiInputList]
+  [labels : OptLabelSet]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Cons label rest)
+      (and
+        (not (opt-bool-branch-phi-input-has-label? inputs label))
+        (opt-bool-branch-phi-inputs-have-none? inputs (box-get rest)))]))
+
+(define (opt-bool-branch-target-phis-repairable-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [merge-label : String]
+  [new-preds : OptLabelSet]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ inputs _)
+        (and
+          (opt-bool-branch-phi-input-has-label? inputs merge-label)
+          (opt-bool-branch-phi-inputs-have-none? inputs new-preds)
+          (opt-bool-branch-target-phis-repairable-from?
+            instrs
+            (+ index 1)
+            merge-label
+            new-preds))]
+      [_ true])))
+
+(define (opt-bool-branch-target-phis-repairable?
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [merge-label : String]
+  [new-preds : OptLabelSet]) : bool
+  (match (opt-cfg-find-block blocks target-label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bool-branch-target-phis-repairable-from?
+            instrs
+            0
+            merge-label
+            new-preds)])]))
+
+(define (opt-bool-branch-prepend-phi-inputs
+  [value : CompilerIrValue]
+  [preds : OptLabelSet]
+  [tail : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match preds
+    [(OptLabelSet.Nil) tail]
+    [(OptLabelSet.Cons pred-label rest)
+      (compiler-ir-phi-input-cons
+        value
+        pred-label
+        (opt-bool-branch-prepend-phi-inputs value (box-get rest) tail))]))
+
+(define (opt-bool-branch-repair-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [merge-label : String]
+  [new-preds : OptLabelSet]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bool-branch-repair-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        merge-label
+        new-preds)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (let
+        [tail : CompilerIrPhiInputList
+          (opt-bool-branch-repair-phi-inputs
+            (box-get rest)
+            merge-label
+            new-preds)]
+        (if (string.eq label merge-label)
+          (opt-bool-branch-prepend-phi-inputs value new-preds tail)
+          (compiler-ir-phi-input-cons value label tail)))]))
+
+(define (opt-bool-branch-repair-target-phis-from!
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [merge-label : String]
+  [new-preds : OptLabelSet]) : unit
+  (if (< index (compiler-ir-instr-seq-count instrs))
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi dst inputs ty)
+        (begin
+          (compiler-ir-instr-seq-set!
+            instrs
+            index
+            (CompilerIrInstr.Phi
+              dst
+              (opt-bool-branch-repair-phi-inputs inputs merge-label new-preds)
+              ty))
+          (opt-bool-branch-repair-target-phis-from!
+            instrs
+            (+ index 1)
+            merge-label
+            new-preds))]
+      [_ unit])
+    unit))
+
+(define (opt-bool-branch-repair-target-phis!
+  [blocks : CompilerIrBlockList]
+  [target-label : String]
+  [merge-label : String]
+  [new-preds : OptLabelSet]) : unit
+  (match (opt-cfg-find-block blocks target-label)
+    [(OptMaybeBlock.No) unit]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bool-branch-repair-target-phis-from!
+            instrs
+            0
+            merge-label
+            new-preds)])]))
+
+(define (opt-bool-branch-apply-constant-pred-rewrites!
+  [blocks : CompilerIrBlockList]
+  [preds : OptLabelSet]
+  [target-label : String]) : unit
+  (match preds
+    [(OptLabelSet.Nil) unit]
+    [(OptLabelSet.Cons pred-label rest)
+      (begin
+        (match (opt-cfg-find-block blocks pred-label)
+          [(OptMaybeBlock.No) unit]
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(CompilerIrBlock.Block _ instrs)
+                (let
+                  [last : i64 (- (compiler-ir-instr-seq-count instrs) 1)]
+                  (compiler-ir-instr-seq-set!
+                    instrs
+                    last
+                    (CompilerIrInstr.Jump target-label)))])])
+        (opt-bool-branch-apply-constant-pred-rewrites!
+          blocks
+          (box-get rest)
+          target-label))]))
+
+(define (opt-bool-branch-fuse-constant-phi!
+  [blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (Array i64)]
+  [merge-label : String]
+  [dst : i64]
+  [inputs : CompilerIrPhiInputList]
+  [ty : AstType]
+  [cond-var : i64]
+  [true-label : String]
+  [false-label : String]) : bool
+  (if (or
+    (not (= dst cond-var))
+    (not (= (opt-bool-branch-use-count uses dst) 1))
+    (not (opt-type-eq ty (AstType.Bool)))
+    (string.eq merge-label true-label)
+    (string.eq merge-label false-label))
+    false
+    (match (opt-bool-branch-constant-inputs inputs)
+      [(OptBoolBranchConstantInputs.No) false]
+      [(OptBoolBranchConstantInputs.Some true-preds false-preds input-count)
+        (let
+          [preds : OptLabelSet (opt-cfg-index-predecessors index merge-label)]
+          [same-target? : bool (string.eq true-label false-label)]
+          [all-preds : OptLabelSet
+            (opt-bool-branch-label-union true-preds false-preds)]
+          (if (or
+            (<= input-count 0)
+            (not (= input-count (opt-label-count preds)))
+            (not (opt-label-set-eq? all-preds preds))
+            (not
+              (opt-bool-branch-preds-constant-rewriteable?
+                blocks
+                merge-label
+                true-preds))
+            (not
+              (opt-bool-branch-preds-constant-rewriteable?
+                blocks
+                merge-label
+                false-preds))
+            (if same-target?
+              (not
+                (opt-bool-branch-target-phis-repairable?
+                  blocks
+                  true-label
+                  merge-label
+                  all-preds))
+              (or
+                (not
+                  (opt-bool-branch-target-phis-repairable?
+                    blocks
+                    true-label
+                    merge-label
+                    true-preds))
+                (not
+                  (opt-bool-branch-target-phis-repairable?
+                    blocks
+                    false-label
+                    merge-label
+                    false-preds)))))
+            false
+            (begin
+              (opt-bool-branch-apply-constant-pred-rewrites!
+                blocks
+                true-preds
+                true-label)
+              (opt-bool-branch-apply-constant-pred-rewrites!
+                blocks
+                false-preds
+                false-label)
+              (if same-target?
+                (opt-bool-branch-repair-target-phis!
+                  blocks
+                  true-label
+                  merge-label
+                  all-preds)
+                (begin
+                  (opt-bool-branch-repair-target-phis!
+                    blocks
+                    true-label
+                    merge-label
+                    true-preds)
+                  (opt-bool-branch-repair-target-phis!
+                    blocks
+                    false-label
+                    merge-label
+                    false-preds)))
+              true)))])))
 
 (define (opt-bool-branch-target-has-phi?
   [blocks : CompilerIrBlockList]
@@ -19378,7 +20480,7 @@
               (compiler-ir-instr-seq-set! second-instrs second-pos second-term)
               true))])]))
 
-(define (opt-bool-branch-fuse-phi!
+(define (opt-bool-branch-fuse-compare-phi!
   [blocks : CompilerIrBlockList]
   [index : OptCfgIndex]
   [uses : (Array i64)]
@@ -19424,6 +20526,41 @@
                 second-label
                 true-label
                 false-label))))])))
+
+(define (opt-bool-branch-fuse-phi!
+  [blocks : CompilerIrBlockList]
+  [index : OptCfgIndex]
+  [uses : (Array i64)]
+  [merge-label : String]
+  [dst : i64]
+  [inputs : CompilerIrPhiInputList]
+  [ty : AstType]
+  [cond-var : i64]
+  [true-label : String]
+  [false-label : String]) : bool
+  (if (opt-bool-branch-fuse-constant-phi!
+    blocks
+    index
+    uses
+    merge-label
+    dst
+    inputs
+    ty
+    cond-var
+    true-label
+    false-label)
+    true
+    (opt-bool-branch-fuse-compare-phi!
+      blocks
+      index
+      uses
+      merge-label
+      dst
+      inputs
+      ty
+      cond-var
+      true-label
+      false-label)))
 
 (define (opt-bool-branch-fuse-block!
   [blocks : CompilerIrBlockList]
@@ -19481,7 +20618,19 @@
               (set! pos (+ pos 1))))
           false))]))
 
-(define (opt-bool-branch-fuse-blocks
+(define (opt-bool-branch-clone-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block label (compiler-ir-instr-seq-to-list instrs))
+            (opt-bool-branch-clone-blocks (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bool-branch-clone-blocks (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bool-branch-fuse-blocks-raw
   [blocks : CompilerIrBlockList]
   [frame : i64]
   [remaining : i64]) : OptBoolBranchFuseResult
@@ -19491,13 +20640,191 @@
       [index : OptCfgIndex (opt-cfg-index-build blocks)]
       [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
       (if (opt-bool-branch-fuse-first-list! blocks index uses blocks)
-        (match (opt-bool-branch-fuse-blocks
+        (match (opt-bool-branch-fuse-blocks-raw
           (opt-cfg-simplify-blocks blocks)
           frame
           (- remaining 1))
           [(OptBoolBranchFuseResult.Result next _)
             (OptBoolBranchFuseResult.Result next true)])
         (OptBoolBranchFuseResult.Result blocks false)))))
+
+(define (opt-bool-branch-fuse-blocks
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [remaining : i64]) : OptBoolBranchFuseResult
+  (opt-bool-branch-fuse-blocks-raw
+    (opt-bool-branch-clone-blocks blocks)
+    frame
+    remaining))
+
+(define (opt-bool-branch-block-candidate? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (and
+        (= (compiler-ir-instr-seq-count instrs) 2)
+        (match (compiler-ir-instr-seq-ref instrs 0)
+          [(CompilerIrInstr.Phi dst _ ty)
+            (and
+              (opt-type-eq ty (AstType.Bool))
+              (match (compiler-ir-instr-seq-ref instrs 1)
+                [(CompilerIrInstr.Branch (CompilerIrValue.Var cond-var) _ _)
+                  (= dst cond-var)]
+                [_ false]))]
+          [_ false]))]))
+
+(define (opt-bool-branch-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-bool-branch-block-candidate? block)
+        true
+        (opt-bool-branch-blocks-have-candidate? (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bool-branch-blocks-have-candidate?
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bool-branch-function-with-context-result
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : CompilerIrFunction]) : OptBoolBranchFunctionResult
+  ;; The block pass mutates instruction sequences, so it always works on a deep
+  ;; block/instruction clone. A failed post-pass verify can therefore return the
+  ;; byte-for-byte input function instead of retaining a partial edge rewrite.
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (not (opt-bool-branch-blocks-have-candidate? blocks))
+        (OptBoolBranchFunctionResult.Result func false)
+        (match (opt-verify-gate verified? func context)
+          [(ResultCompilerOptimizeVerify.Err _)
+            (OptBoolBranchFunctionResult.Result func false)]
+          [(ResultCompilerOptimizeVerify.Ok)
+            (match (opt-bool-branch-fuse-blocks blocks frame 16)
+              [(OptBoolBranchFuseResult.Result next-blocks changed)
+                (if changed
+                  (let
+                    [next : CompilerIrFunction
+                      (CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        frame
+                        next-blocks)]
+                    [next-context : OptCfgContext
+                      (opt-cfg-context-build next-blocks)]
+                    (match (opt-verify-function-with-context next next-context)
+                      [(ResultCompilerOptimizeVerify.Ok)
+                        (OptBoolBranchFunctionResult.Result next true)]
+                      [(ResultCompilerOptimizeVerify.Err _)
+                        (OptBoolBranchFunctionResult.Result func false)]))
+                  (OptBoolBranchFunctionResult.Result func false))])]))]))
+
+(define (opt-bool-branch-chain-instrs-define-root-and?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [root : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp dst op _ _ _)
+        (if (and
+          (= dst root)
+          (match op
+            [(CompilerIrBinOp.And) true]
+            [_ false]))
+          true
+          (opt-bool-branch-chain-instrs-define-root-and?
+            instrs
+            (+ index 1)
+            root))]
+      [_
+        (opt-bool-branch-chain-instrs-define-root-and? instrs (+ index 1) root)])))
+
+(define (opt-bool-branch-chain-blocks-define-root-and?
+  [blocks : CompilerIrBlockList]
+  [root : i64]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-bool-branch-chain-instrs-define-root-and? instrs 0 root)
+            (opt-bool-branch-chain-blocks-define-root-and? (box-get rest) root))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bool-branch-chain-blocks-define-root-and?
+        (compiler-ir-block-seq-to-list seq)
+        root)]))
+
+(define (opt-bool-branch-chain-block-candidate?
+  [all-blocks : CompilerIrBlockList]
+  [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (and
+          (> count 0)
+          (match (compiler-ir-instr-seq-ref instrs (- count 1))
+            [(CompilerIrInstr.Branch (CompilerIrValue.Var cond-var) _ _)
+              (opt-bool-branch-chain-blocks-define-root-and?
+                all-blocks
+                cond-var)]
+            [_ false])))]))
+
+(define (opt-bool-branch-chain-blocks-have-candidate-from?
+  [all-blocks : CompilerIrBlockList]
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-bool-branch-chain-block-candidate? all-blocks block)
+        true
+        (opt-bool-branch-chain-blocks-have-candidate-from?
+          all-blocks
+          (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-bool-branch-chain-blocks-have-candidate-from?
+        all-blocks
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-bool-branch-chain-blocks-have-candidate?
+  [blocks : CompilerIrBlockList]) : bool
+  (opt-bool-branch-chain-blocks-have-candidate-from? blocks blocks))
+
+(define (opt-bool-branch-chain-function-with-context-result
+  [context : OptCfgContext]
+  [verified? : bool]
+  [func : CompilerIrFunction]) : OptBoolBranchFunctionResult
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty frame blocks)
+      (if (not (opt-bool-branch-chain-blocks-have-candidate? blocks))
+        (OptBoolBranchFunctionResult.Result func false)
+        (match (opt-verify-gate verified? func context)
+          [(ResultCompilerOptimizeVerify.Err _)
+            (OptBoolBranchFunctionResult.Result func false)]
+          [(ResultCompilerOptimizeVerify.Ok)
+            (match (opt-bool-branch-chain-blocks-raw
+              (opt-bool-branch-clone-blocks blocks)
+              frame
+              64)
+              [(OptBoolBranchChainResult.Result next-blocks next-frame changed)
+                (if changed
+                  (let
+                    [next : CompilerIrFunction
+                      (CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        next-frame
+                        next-blocks)]
+                    [next-context : OptCfgContext
+                      (opt-cfg-context-build next-blocks)]
+                    (match (opt-verify-function-with-context next next-context)
+                      [(ResultCompilerOptimizeVerify.Ok)
+                        (OptBoolBranchFunctionResult.Result next true)]
+                      [(ResultCompilerOptimizeVerify.Err _)
+                        (OptBoolBranchFunctionResult.Result func false)]))
+                  (OptBoolBranchFunctionResult.Result func false))])]))]))
 
 ;; --- sparse conditional constant propagation -------------------------------
 ;;
@@ -22354,7 +23681,9 @@
           [(OptMaybeBlock.Some block)
             (match block
               [(CompilerIrBlock.Block label instrs)
-                (match (if (opt-induction-switch-arm? index blocks label instrs)
+                (match (if (or
+                  (opt-induction-switch-arm? index blocks label instrs)
+                  (opt-bool-branch-chain-check-block? label instrs))
                   (OptGvnRewriteResult.Result block false)
                   (opt-gvn-rewrite-block table sources block))
                   [(OptGvnRewriteResult.Result rewritten block-changed)
@@ -31971,11 +33300,16 @@
       (opt-gep-split-seed-params! (compiler-ir-param-seq-to-list seq) counts)]))
 
 ;; Memory-address uses only (Load src / StorePtr dst): counted per var so the
-;; all-uses-are-addresses test can compare against the total use count.
+;; all-uses-are-addresses test can compare against the total use count. A
+;; zero-offset Gep base is also an address-only use: the wrapper is pointer
+;; identity, so rewriting it with the wrapped Gep's operands exposes the
+;; existing single-Gep memory fusion. chainuses distinguishes that useful
+;; single-use case from the multi-use splitting this pass originally owned.
 (define (opt-gep-split-memuses-instrs!
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [memuses : (Array i64)]) : unit
+  [memuses : (Array i64)]
+  [chainuses : (Array i64)]) : unit
   (if (>= index (compiler-ir-instr-seq-count instrs))
     unit
     (begin
@@ -31990,6 +33324,18 @@
             [(CompilerIrValue.Var v)
               (array-set! memuses v (+ (array-ref memuses v) 1))]
             [_ unit])]
+        [(CompilerIrInstr.Gep _ base offset _)
+          (match offset
+            [(CompilerIrValue.I64 n)
+              (if (= n 0)
+                (match base
+                  [(CompilerIrValue.Var v)
+                    (begin
+                      (array-set! memuses v (+ (array-ref memuses v) 1))
+                      (array-set! chainuses v (+ (array-ref chainuses v) 1)))]
+                  [_ unit])
+                unit)]
+            [_ unit])]
         ;; A Mov of the Gep result is replaced by a fresh Gep, so it counts as
         ;; an address use too (its dst's role does not matter: the fresh Gep
         ;; yields the same address value).
@@ -31999,23 +33345,25 @@
               (array-set! memuses v (+ (array-ref memuses v) 1))]
             [_ unit])]
         [_ unit])
-      (opt-gep-split-memuses-instrs! instrs (+ index 1) memuses))))
+      (opt-gep-split-memuses-instrs! instrs (+ index 1) memuses chainuses))))
 
 (define (opt-gep-split-memuses-blocks!
   [blocks : CompilerIrBlockList]
-  [memuses : (Array i64)]) : unit
+  [memuses : (Array i64)]
+  [chainuses : (Array i64)]) : unit
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (begin
-            (opt-gep-split-memuses-instrs! instrs 0 memuses)
-            (opt-gep-split-memuses-blocks! (box-get rest) memuses))])]
+            (opt-gep-split-memuses-instrs! instrs 0 memuses chainuses)
+            (opt-gep-split-memuses-blocks! (box-get rest) memuses chainuses))])]
     [(CompilerIrBlockList.Array seq)
       (opt-gep-split-memuses-blocks!
         (compiler-ir-block-seq-to-list seq)
-        memuses)]))
+        memuses
+        chainuses)]))
 
 ;; Record each SIB-scale Gep def's operands for cloning. marks[dst] = 1 means
 ;; the parallel arrays hold a splittable Gep for dst.
@@ -32079,26 +33427,29 @@
   [v : i64]
   [uses : (Array i64)]
   [memuses : (Array i64)]
+  [chainuses : (Array i64)]
   [defs : (Array i64)]
   [marks : (Array i64)]
   [bases : (Array CompilerIrValue)]
   [offsets : (Array CompilerIrValue)]) : bool
   (and
     (= (array-ref marks v) 1)
-    (>= (array-ref uses v) 2)
+    (or (>= (array-ref uses v) 2) (>= (array-ref chainuses v) 1))
     ;; every use is a memory address (Load src / StorePtr dst): the total use
     ;; count equals the address-use count.
     (= (array-ref uses v) (array-ref memuses v))
     (opt-gep-split-source-ok? (array-ref bases v) v defs)
     (opt-gep-split-source-ok? (array-ref offsets v) v defs)))
 
-;; Compute the final candidate set: splittable Geps with >= 2 uses, all of
-;; them memory addresses, with single-source base/index. Fills every entry
-;; (no early exit) and returns whether any candidate exists.
+;; Compute the final candidate set: splittable Geps with >= 2 uses, or one
+;; zero-Gep chain use, all of them memory addresses, with single-source
+;; base/index. Fills every entry (no early exit) and returns whether any
+;; candidate exists.
 (define (opt-gep-split-candidates!
   [cands : (Array i64)]
   [uses : (Array i64)]
   [memuses : (Array i64)]
+  [chainuses : (Array i64)]
   [defs : (Array i64)]
   [marks : (Array i64)]
   [bases : (Array CompilerIrValue)]
@@ -32111,12 +33462,21 @@
       cands
       uses
       memuses
+      chainuses
       defs
       marks
       bases
       offsets
       (- v 1)
-      (if (opt-gep-split-candidate? v uses memuses defs marks bases offsets)
+      (if (opt-gep-split-candidate?
+        v
+        uses
+        memuses
+        chainuses
+        defs
+        marks
+        bases
+        offsets)
         (begin
           (array-set! cands v 1)
           true)
@@ -32136,6 +33496,58 @@
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (match instr
+        [(CompilerIrInstr.Gep dst base offset ty)
+          (match base
+            [(CompilerIrValue.Var v)
+              (match offset
+                [(CompilerIrValue.I64 n)
+                  (if (and (= n 0) (= (array-ref cands v) 1))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Gep
+                        dst
+                        (array-ref bases v)
+                        (array-ref offsets v)
+                        (array-ref tys v))
+                      (opt-gep-split-rewrite-instrs
+                        instrs
+                        (+ index 1)
+                        cands
+                        bases
+                        offsets
+                        tys
+                        cell))
+                    (compiler-ir-instr-cons
+                      instr
+                      (opt-gep-split-rewrite-instrs
+                        instrs
+                        (+ index 1)
+                        cands
+                        bases
+                        offsets
+                        tys
+                        cell)))]
+                [_
+                  (compiler-ir-instr-cons
+                    instr
+                    (opt-gep-split-rewrite-instrs
+                      instrs
+                      (+ index 1)
+                      cands
+                      bases
+                      offsets
+                      tys
+                      cell))])]
+            [_
+              (compiler-ir-instr-cons
+                instr
+                (opt-gep-split-rewrite-instrs
+                  instrs
+                  (+ index 1)
+                  cands
+                  bases
+                  offsets
+                  tys
+                  cell))])]
         [(CompilerIrInstr.Load dst src ty)
           (match src
             [(CompilerIrValue.Var v)
@@ -32335,6 +33747,7 @@
       (let
         [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
         [memuses : (Array i64) (array.make-array i64 frame)]
+        [chainuses : (Array i64) (array.make-array i64 frame)]
         [defs : (Array i64) (array.make-array i64 frame)]
         [bases : (Array CompilerIrValue)
           (array.make-array CompilerIrValue frame)]
@@ -32343,7 +33756,7 @@
         [tys : (Array AstType) (array.make-array AstType frame)]
         [marks : (Array i64) (array.make-array i64 frame)]
         [cands : (Array i64) (array.make-array i64 frame)]
-        [_uses : unit (opt-gep-split-memuses-blocks! blocks memuses)]
+        [_uses : unit (opt-gep-split-memuses-blocks! blocks memuses chainuses)]
         [_defs : unit
           (begin
             (opt-gep-split-seed-params! params defs)
@@ -32355,6 +33768,7 @@
             cands
             uses
             memuses
+            chainuses
             defs
             marks
             bases
@@ -34570,8 +35984,24 @@
                           unit)]
                       [_t-bool-branch : i64
                         (cfg compile-profile (profile.now-ms) 0)]
-                      [bool-branch-result : OptBoolBranchFuseResult
-                        (opt-bool-branch-fuse-blocks sccp frame 16)]
+                      [bool-branch-input : CompilerIrFunction
+                        (CompilerIrFunction.Function
+                          name
+                          params
+                          ret-ty
+                          ssa-frame
+                          sccp)]
+                      [bool-branch-context : OptCfgContext
+                        (if sccp-context-valid
+                          sccp-context
+                          (if (opt-bool-branch-blocks-have-candidate? sccp)
+                            (opt-cfg-context-build sccp)
+                            (opt-cfg-context-empty)))]
+                      [bool-branch-result : OptBoolBranchFunctionResult
+                        (opt-bool-branch-function-with-context-result
+                          bool-branch-context
+                          false
+                          bool-branch-input)]
                       [bool-branch : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           "bool_branch"
@@ -34580,10 +36010,12 @@
                           ret-ty
                           ssa-frame
                           (match bool-branch-result
-                            [(OptBoolBranchFuseResult.Result b _) b]))]
+                            [(OptBoolBranchFunctionResult.Result f _)
+                              (opt-function-blocks f)]))]
                       [bool-branch-changed : bool
                         (match bool-branch-result
-                          [(OptBoolBranchFuseResult.Result _ changed) changed])]
+                          [(OptBoolBranchFunctionResult.Result _ changed)
+                            changed])]
                       [_p-bool-branch : unit
                         (cfg
                           compile-profile
@@ -35066,19 +36498,67 @@
                             name
                             _t-successor-sink)
                           unit)]
+                      ;; BCE versioning runs after the early bool-branch pass
+                      ;; and may be the final CFG rewrite at the two-iteration
+                      ;; fixpoint cap. Lower its materialized And guards here,
+                      ;; after the passes that consume a single condition value
+                      ;; and before DCE/regalloc. The shared helper retains its
+                      ;; clone + verify rollback boundary.
+                      [_t-bool-branch-late : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [bool-branch-late-input : CompilerIrFunction
+                        (CompilerIrFunction.Function
+                          name
+                          params
+                          ret-ty
+                          successor-sink-frame
+                          successor-sink)]
+                      [bool-branch-late-result : OptBoolBranchFunctionResult
+                        (if run-heavy?
+                          (opt-bool-branch-chain-function-with-context-result
+                            (if (opt-bool-branch-chain-blocks-have-candidate?
+                              successor-sink)
+                              (opt-cfg-context-build successor-sink)
+                              (opt-cfg-context-empty))
+                            false
+                            bool-branch-late-input)
+                          (OptBoolBranchFunctionResult.Result
+                            bool-branch-late-input
+                            false))]
+                      [bool-branch-late-function : CompilerIrFunction
+                        (match bool-branch-late-result
+                          [(OptBoolBranchFunctionResult.Result f _) f])]
+                      [bool-branch-late : CompilerIrBlockList
+                        (compiler-opt-debug-observe-blocks
+                          "bool_branch_late"
+                          name
+                          params
+                          ret-ty
+                          (opt-function-frame bool-branch-late-function)
+                          (opt-function-blocks bool-branch-late-function))]
+                      [bool-branch-late-frame : i64
+                        (opt-function-frame bool-branch-late-function)]
+                      [_p-bool-branch-late : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "bool_branch_late"
+                            name
+                            _t-bool-branch-late)
+                          unit)]
                       [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [used : (Array i64)
                         (opt-collect-blocks-uses-array
-                          successor-sink-frame
-                          successor-sink)]
+                          bool-branch-late-frame
+                          bool-branch-late)]
                       [dced : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           "dce"
                           name
                           params
                           ret-ty
-                          successor-sink-frame
-                          (opt-dce-block-list-array used successor-sink))]
+                          bool-branch-late-frame
+                          (opt-dce-block-list-array used bool-branch-late))]
                       [_p-dce : unit
                         (cfg
                           compile-profile
@@ -35088,7 +36568,7 @@
                         name
                         params
                         ret-ty
-                        successor-sink-frame
+                        bool-branch-late-frame
                         dced))]))]))])))
 
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
@@ -56008,6 +57488,376 @@
     16
     blocks))
 
+(define (opt-bool-branch-two-cond-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "left" (AstType.Bool) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "right" (AstType.Bool) 1)
+      (CompilerIrParamList.Nil))))
+
+(define (opt-bool-branch-constant-phi-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "true-left" "choose")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "choose"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var 1)
+            "false-middle"
+            "true-right")
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "true-left"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "false-middle"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "merge")
+              (CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "true-right"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "merge"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    4
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.Bool true)
+                      "true-left"
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Bool false)
+                        "false-middle"
+                        (compiler-ir-phi-input-cons
+                          (CompilerIrValue.Bool true)
+                          "true-right"
+                          (CompilerIrPhiInputList.Nil))))
+                    (AstType.Bool))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "yes" "no")
+                    (CompilerIrInstrList.Nil))))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "yes"
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Phi
+                      5
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.I64 11)
+                        "merge"
+                        (CompilerIrPhiInputList.Nil))
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Return
+                        (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+                      (CompilerIrInstrList.Nil))))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    "no"
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Phi
+                        6
+                        (compiler-ir-phi-input-cons
+                          (CompilerIrValue.I64 22)
+                          "merge"
+                          (CompilerIrPhiInputList.Nil))
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Return
+                          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
+                        (CompilerIrInstrList.Nil))))
+                  (CompilerIrBlockList.Nil))))))))))
+
+(define (opt-bool-branch-nonconstant-phi-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "left"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "merge")
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "right"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "merge"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                4
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 0)
+                  "left"
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.Var 1)
+                    "right"
+                    (CompilerIrPhiInputList.Nil)))
+                (AstType.Bool))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "yes" "no")
+                (CompilerIrInstrList.Nil))))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "yes"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "no"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+                  (CompilerIrInstrList.Nil)))
+              (CompilerIrBlockList.Nil))))))))
+
+(define (opt-bool-branch-multi-phi-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "left"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "merge")
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "right"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "merge")
+            (CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "merge"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                3
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.I64 11)
+                  "left"
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.I64 22)
+                    "right"
+                    (CompilerIrPhiInputList.Nil)))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Phi
+                  4
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.Bool true)
+                    "left"
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.Bool false)
+                      "right"
+                      (CompilerIrPhiInputList.Nil)))
+                  (AstType.Bool))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "yes" "no")
+                  (CompilerIrInstrList.Nil)))))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "yes"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "no"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                  (CompilerIrInstrList.Nil)))
+              (CompilerIrBlockList.Nil))))))))
+
+(define (opt-bool-branch-constant-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "bool-branch-constant")
+    (opt-bool-branch-two-cond-params)
+    (AstType.I64)
+    16
+    blocks))
+
+(define (opt-bool-branch-first-phi-has-label?
+  [blocks : CompilerIrBlockList]
+  [block-label : String]
+  [pred-label : String]) : bool
+  (match (opt-cfg-find-block blocks block-label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (and
+            (> (compiler-ir-instr-seq-count instrs) 0)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(CompilerIrInstr.Phi _ inputs _)
+                (opt-bool-branch-phi-input-has-label? inputs pred-label)]
+              [_ false]))])]))
+
+(define (opt-bool-branch-chain-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "a" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "b" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "c" (AstType.I64) 2)
+        (CompilerIrParamList.Nil)))))
+
+;; mode 0: a three-comparison And tree; mode 1: its first And result also
+;; escapes to a Mov and must block the rewrite; mode 2: an Or-mixed tree, which
+;; is outside the first-cut transform.
+(define (opt-bool-branch-chain-test-blocks [mode : i64]) : CompilerIrBlockList
+  (let
+    [first-op : CompilerIrBinOp
+      (if (= mode 2)
+        (CompilerIrBinOp.Or)
+        (CompilerIrBinOp.And))]
+    [after-first : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          6
+          first-op
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.Var 4)
+          (AstType.Bool))
+        (if (= mode 1)
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 8 (CompilerIrValue.Var 6) (AstType.Bool))
+            (CompilerIrInstrList.Nil))
+          (CompilerIrInstrList.Nil)))]
+    [entry-tail : CompilerIrInstrList
+      (opt-aggregate-instr-list-append
+        after-first
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            7
+            (CompilerIrBinOp.And)
+            (CompilerIrValue.Var 6)
+            (CompilerIrValue.Var 5)
+            (AstType.Bool))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 7) "yes" "no")
+            (CompilerIrInstrList.Nil))))]
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            3
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              4
+              (CompilerIrBinOp.Ge)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.I64 0)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                5
+                (CompilerIrBinOp.Le)
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.Var 2)
+                (AstType.I64))
+              entry-tail))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "yes"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              9
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.I64 11)
+                "entry"
+                (CompilerIrPhiInputList.Nil))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
+              (CompilerIrInstrList.Nil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "no"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                10
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.I64 22)
+                  "entry"
+                  (CompilerIrPhiInputList.Nil))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 10)))
+                (CompilerIrInstrList.Nil))))
+          (CompilerIrBlockList.Nil))))))
+
+(define (opt-bool-branch-chain-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "bool-branch-chain")
+    (opt-bool-branch-chain-test-params)
+    (AstType.I64)
+    16
+    blocks))
+
+(define (opt-bool-branch-chain-test-run [mode : i64]) : OptBoolBranchFunctionResult
+  (let
+    [blocks : CompilerIrBlockList (opt-bool-branch-chain-test-blocks mode)]
+    [func : CompilerIrFunction (opt-bool-branch-chain-test-function blocks)]
+    (opt-bool-branch-chain-function-with-context-result
+      (opt-cfg-context-build blocks)
+      false
+      func)))
+
+(define (opt-bool-branch-chain-compare-branch-block?
+  [blocks : CompilerIrBlockList]
+  [label : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (and
+            (= (compiler-ir-instr-seq-count instrs) 2)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(CompilerIrInstr.BinOp dst op _ _ _)
+                (and
+                  (opt-bool-branch-compare-op? op)
+                  (match (compiler-ir-instr-seq-ref instrs 1)
+                    [(CompilerIrInstr.Branch (CompilerIrValue.Var cond) _ _)
+                      (= dst cond)]
+                    [_ false]))]
+              [_ false]))])]))
+
 (define (opt-cfg-switch-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -57332,6 +59182,47 @@
                 (opt-licm-loop-finish-instrs)))))))
     8))
 
+;; Hashmap slots add an inline-field Gep after the scaled slot-address Gep.
+;; Both hops remain inside the separately allocated data buffer, so neither
+;; store can change the descriptor's data/length fields.
+(define (opt-licm-header-load-element-gep-chain-store-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        7
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 8 (CompilerIrValue.Var 7) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            9
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.I64 0)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 10 (CompilerIrValue.Var 9) (AstType.U64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                11
+                (CompilerIrValue.Var 10)
+                (CompilerIrValue.Var 4)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Gep
+                  12
+                  (CompilerIrValue.Var 11)
+                  (CompilerIrValue.I64 8)
+                  (AstType.U8))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.StorePtr
+                    (CompilerIrValue.Var 12)
+                    (CompilerIrValue.I64 100)
+                    (AstType.I64))
+                  (opt-licm-loop-finish-instrs))))))))
+    8))
+
 (define (opt-licm-header-load-header-store-blocks) : CompilerIrBlockList
   (opt-licm-loop-blocks-with-body
     (compiler-ir-instr-cons
@@ -57446,6 +59337,32 @@
             (CompilerIrValue.I64 103)
             (AstType.I64))
           (opt-licm-loop-finish-instrs))))
+    8))
+
+;; A Gep does not sanitize an unknown/escaped raw pointer. Its store remains a
+;; full alias barrier for descriptor loads.
+(define (opt-licm-header-load-unknown-gep-store-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        7
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 8 (CompilerIrValue.Var 7) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            9
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 8)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 9)
+              (CompilerIrValue.I64 103)
+              (AstType.I64))
+            (opt-licm-loop-finish-instrs)))))
     8))
 
 (define (opt-licm-element-load-element-store-blocks) : CompilerIrBlockList
@@ -58096,6 +60013,11 @@
         (opt-licm-header-load-element-store-blocks))]
     [header-element : CompilerIrBlockList
       (opt-function-blocks header-element-func)]
+    [header-element-chain-func : CompilerIrFunction
+      (opt-licm-array-optimized-function
+        (opt-licm-header-load-element-gep-chain-store-blocks))]
+    [header-element-chain : CompilerIrBlockList
+      (opt-function-blocks header-element-chain-func)]
     [header-store-func : CompilerIrFunction
       (opt-licm-array-optimized-function
         (opt-licm-header-load-header-store-blocks))]
@@ -58129,6 +60051,11 @@
         (opt-licm-header-load-unknown-store-blocks))]
     [unknown-store : CompilerIrBlockList
       (opt-function-blocks unknown-store-func)]
+    [unknown-gep-store-func : CompilerIrFunction
+      (opt-licm-array-optimized-function
+        (opt-licm-header-load-unknown-gep-store-blocks))]
+    [unknown-gep-store : CompilerIrBlockList
+      (opt-function-blocks unknown-gep-store-func)]
     [element-load-func : CompilerIrFunction
       (opt-licm-array-optimized-function
         (opt-licm-element-load-element-store-blocks))]
@@ -58241,6 +60168,16 @@
           (& direct-clean-built)
           (compiler-ir-symbol-id (struct-get symbols leaf)))
         64]
+      ;; A descriptor load crosses the two-Gep data-buffer store chain.
+      [(not (opt-verify-ok? (opt-verify-function header-element-chain-func)))
+        65]
+      [(not (= (opt-count-load-label-blocks header-element-chain "entry") 2))
+        66]
+      [(not (= (opt-count-load-label-blocks header-element-chain "loop") 0)) 67]
+      ;; The corresponding unknown-pointer chain must remain a barrier.
+      [(not (opt-verify-ok? (opt-verify-function unknown-gep-store-func))) 68]
+      [(not (= (opt-count-load-label-blocks unknown-gep-store "entry") 0)) 69]
+      [(not (= (opt-count-load-label-blocks unknown-gep-store "loop") 1)) 70]
       [else 42])))
 
 (define (opt-induction-params) : CompilerIrParamList
@@ -60141,6 +62078,77 @@
                 (CompilerIrInstrList.Nil)))))))
     (CompilerIrBlockList.Nil)))
 
+;; Lowering can wrap a field/index address in `Gep address, 0 : u8` before a
+;; memory operation. The wrapper must inherit the inner Gep recipe so the dead
+;; inner definition can be removed and the backend sees one fusible Gep.
+(define (opt-gep-split-test-chain-blocks
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [other-use : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 2) offset elem-ty)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            4
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 0)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.Var 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (if other-use
+                (CompilerIrInstr.BinOp
+                  5
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 3)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
+                (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64)))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                (CompilerIrInstrList.Nil)))))))
+    (CompilerIrBlockList.Nil)))
+
+(define (opt-gep-split-test-chain-function
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [other-use : bool]) : CompilerIrFunction
+  (opt-gep-split-function
+    (CompilerIrFunction.Function
+      (opt-test-symbol "gep_split_chain")
+      (opt-bce-version-test-params)
+      (AstType.I64)
+      6
+      (opt-gep-split-test-chain-blocks offset elem-ty other-use))))
+
+(define (opt-gep-split-test-chain-shape?
+  [func : CompilerIrFunction]
+  [expected-base : CompilerIrValue]
+  [expected-offset : CompilerIrValue]
+  [expected-ty : AstType]) : bool
+  (match (opt-function-blocks func)
+    [(CompilerIrBlockList.Cons block _)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (> (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 1)
+              [(CompilerIrInstr.Gep dst base offset elem-ty)
+                (and
+                  (= dst 4)
+                  (opt-value-eq base expected-base)
+                  (opt-value-eq offset expected-offset)
+                  (opt-type-eq elem-ty expected-ty))]
+              [_ false])
+            false)])]
+    [_ false]))
+
 (define (compiler-optimize-gep-split-self-test) : i64
   (let
     [split : CompilerIrFunction
@@ -60160,6 +62168,26 @@
           (AstType.I64)
           8
           (opt-gep-split-test-shared-blocks true)))]
+    [chain-zero : CompilerIrFunction
+      (opt-gep-split-test-chain-function
+        (CompilerIrValue.I64 0)
+        (AstType.U8)
+        false)]
+    [chain-disp : CompilerIrFunction
+      (opt-gep-split-test-chain-function
+        (CompilerIrValue.I64 8)
+        (AstType.U8)
+        false)]
+    [chain-index : CompilerIrFunction
+      (opt-gep-split-test-chain-function
+        (CompilerIrValue.Var 0)
+        (AstType.I64)
+        false)]
+    [chain-other-use : CompilerIrFunction
+      (opt-gep-split-test-chain-function
+        (CompilerIrValue.I64 8)
+        (AstType.U8)
+        true)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function split))) 1]
       ;; the shared Gep is cloned per use (Load + StorePtr get one fresh
@@ -60171,6 +62199,40 @@
           (= (opt-gep-split-test-gep-count (opt-function-blocks untouched)) 1))
         3]
       [(not (opt-verify-ok? (opt-verify-function untouched))) 4]
+      [(not
+          (opt-gep-split-test-chain-shape?
+            chain-zero
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 0)
+            (AstType.U8)))
+        5]
+      [(not
+          (opt-gep-split-test-chain-shape?
+            chain-disp
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 8)
+            (AstType.U8)))
+        6]
+      [(not
+          (opt-gep-split-test-chain-shape?
+            chain-index
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.Var 0)
+            (AstType.I64)))
+        7]
+      ;; A non-memory use of the inner address rejects the collapse; the outer
+      ;; Gep still reads var 3 and therefore remains materialized by the backend.
+      [(not
+          (opt-gep-split-test-chain-shape?
+            chain-other-use
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 0)
+            (AstType.U8)))
+        8]
+      [(not (opt-verify-ok? (opt-verify-function chain-zero))) 9]
+      [(not (opt-verify-ok? (opt-verify-function chain-disp))) 10]
+      [(not (opt-verify-ok? (opt-verify-function chain-index))) 11]
+      [(not (opt-verify-ok? (opt-verify-function chain-other-use))) 12]
       [else 42])))
 
 ;; --- multi-block versioning pipeline self-test --------------------------------------
@@ -62177,6 +64239,78 @@
     [reused-branch-changed : bool
       (match reused-branch-result
         [(OptBoolBranchFuseResult.Result _ changed) changed])]
+    [constant-phi-source : CompilerIrBlockList
+      (opt-bool-branch-constant-phi-blocks)]
+    [constant-phi-function : CompilerIrFunction
+      (opt-bool-branch-constant-test-function constant-phi-source)]
+    [constant-phi-result : OptBoolBranchFunctionResult
+      (opt-bool-branch-function-with-context-result
+        (opt-cfg-context-build constant-phi-source)
+        false
+        constant-phi-function)]
+    [constant-phi-optimized : CompilerIrFunction
+      (match constant-phi-result
+        [(OptBoolBranchFunctionResult.Result func _) func])]
+    [constant-phi-changed : bool
+      (match constant-phi-result
+        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
+    [constant-phi-blocks : CompilerIrBlockList
+      (opt-function-blocks constant-phi-optimized)]
+    [nonconstant-phi-source : CompilerIrBlockList
+      (opt-bool-branch-nonconstant-phi-blocks)]
+    [nonconstant-phi-function : CompilerIrFunction
+      (opt-bool-branch-constant-test-function nonconstant-phi-source)]
+    [nonconstant-phi-result : OptBoolBranchFunctionResult
+      (opt-bool-branch-function-with-context-result
+        (opt-cfg-context-build nonconstant-phi-source)
+        false
+        nonconstant-phi-function)]
+    [nonconstant-phi-optimized : CompilerIrFunction
+      (match nonconstant-phi-result
+        [(OptBoolBranchFunctionResult.Result func _) func])]
+    [nonconstant-phi-changed : bool
+      (match nonconstant-phi-result
+        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
+    [multi-phi-source : CompilerIrBlockList (opt-bool-branch-multi-phi-blocks)]
+    [multi-phi-function : CompilerIrFunction
+      (opt-bool-branch-constant-test-function multi-phi-source)]
+    [multi-phi-result : OptBoolBranchFunctionResult
+      (opt-bool-branch-function-with-context-result
+        (opt-cfg-context-build multi-phi-source)
+        false
+        multi-phi-function)]
+    [multi-phi-optimized : CompilerIrFunction
+      (match multi-phi-result
+        [(OptBoolBranchFunctionResult.Result func _) func])]
+    [multi-phi-changed : bool
+      (match multi-phi-result
+        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
+    [and-chain-result : OptBoolBranchFunctionResult
+      (opt-bool-branch-chain-test-run 0)]
+    [and-chain-function : CompilerIrFunction
+      (match and-chain-result
+        [(OptBoolBranchFunctionResult.Result func _) func])]
+    [and-chain-blocks : CompilerIrBlockList
+      (opt-function-blocks and-chain-function)]
+    [and-chain-changed : bool
+      (match and-chain-result
+        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
+    [and-chain-reused-result : OptBoolBranchFunctionResult
+      (opt-bool-branch-chain-test-run 1)]
+    [and-chain-reused-function : CompilerIrFunction
+      (match and-chain-reused-result
+        [(OptBoolBranchFunctionResult.Result func _) func])]
+    [and-chain-reused-changed : bool
+      (match and-chain-reused-result
+        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
+    [and-chain-or-result : OptBoolBranchFunctionResult
+      (opt-bool-branch-chain-test-run 2)]
+    [and-chain-or-function : CompilerIrFunction
+      (match and-chain-or-result
+        [(OptBoolBranchFunctionResult.Result func _) func])]
+    [and-chain-or-changed : bool
+      (match and-chain-or-result
+        [(OptBoolBranchFunctionResult.Result _ changed) changed])]
     (begin
       (unless (= (compiler-ir-block-list-count constant-if) 2) (return 1))
       (unless (not (opt-block-list-has-label? constant-if "else")) (return 2))
@@ -62229,6 +64363,111 @@
         (opt-verify-ok?
           (opt-verify-function (opt-cfg-test-function folded-edge-phi)))
         (return 30))
+      (unless constant-phi-changed (return 31))
+      (unless
+        (not (opt-block-list-has-label? constant-phi-blocks "merge"))
+        (return 32))
+      (unless
+        (= (opt-count-jump-to-blocks constant-phi-blocks "yes") 2)
+        (return 33))
+      (unless
+        (= (opt-count-jump-to-blocks constant-phi-blocks "no") 1)
+        (return 34))
+      (unless (= (opt-count-phi-blocks constant-phi-blocks) 1) (return 35))
+      (unless
+        (opt-bool-branch-first-phi-has-label?
+          constant-phi-blocks
+          "yes"
+          "true-left")
+        (return 36))
+      (unless
+        (opt-bool-branch-first-phi-has-label?
+          constant-phi-blocks
+          "yes"
+          "true-right")
+        (return 37))
+      (unless
+        (opt-verify-ok? (opt-verify-function constant-phi-optimized))
+        (return 38))
+      (unless (not nonconstant-phi-changed) (return 39))
+      (unless
+        (opt-block-list-has-label?
+          (opt-function-blocks nonconstant-phi-optimized)
+          "merge")
+        (return 40))
+      (unless
+        (opt-function-eq nonconstant-phi-function nonconstant-phi-optimized)
+        (return 41))
+      (unless (not multi-phi-changed) (return 42))
+      (unless
+        (and
+          (opt-block-list-has-label?
+            (opt-function-blocks multi-phi-optimized)
+            "merge")
+          (= (opt-count-phi-blocks (opt-function-blocks multi-phi-optimized)) 2)
+          (opt-function-eq multi-phi-function multi-phi-optimized))
+        (return 43))
+      (unless
+        (and
+          (opt-verify-ok? (opt-verify-function nonconstant-phi-optimized))
+          (opt-verify-ok? (opt-verify-function multi-phi-optimized)))
+        (return 44))
+      (unless and-chain-changed (return 46))
+      (unless (= (compiler-ir-block-list-count and-chain-blocks) 5) (return 47))
+      (unless (= (opt-count-branches-blocks and-chain-blocks) 3) (return 48))
+      (unless
+        (= (opt-count-binop-op-blocks and-chain-blocks (CompilerIrBinOp.And)) 0)
+        (return 49))
+      (unless
+        (and
+          (opt-bool-branch-chain-compare-branch-block? and-chain-blocks "entry")
+          (opt-bool-branch-chain-compare-branch-block?
+            and-chain-blocks
+            "entry__bool_and.0")
+          (opt-bool-branch-chain-compare-branch-block?
+            and-chain-blocks
+            "entry__bool_and.1"))
+        (return 50))
+      (unless
+        (and
+          (opt-bool-branch-first-phi-has-label?
+            and-chain-blocks
+            "yes"
+            "entry__bool_and.1")
+          (not
+            (opt-bool-branch-first-phi-has-label?
+              and-chain-blocks
+              "yes"
+              "entry"))
+          (opt-bool-branch-first-phi-has-label? and-chain-blocks "no" "entry")
+          (opt-bool-branch-first-phi-has-label?
+            and-chain-blocks
+            "no"
+            "entry__bool_and.0")
+          (opt-bool-branch-first-phi-has-label?
+            and-chain-blocks
+            "no"
+            "entry__bool_and.1"))
+        (return 51))
+      (unless
+        (opt-verify-ok? (opt-verify-function and-chain-function))
+        (return 52))
+      (unless
+        (and
+          (not and-chain-reused-changed)
+          (opt-function-eq
+            and-chain-reused-function
+            (opt-bool-branch-chain-test-function
+              (opt-bool-branch-chain-test-blocks 1))))
+        (return 53))
+      (unless
+        (and
+          (not and-chain-or-changed)
+          (opt-function-eq
+            and-chain-or-function
+            (opt-bool-branch-chain-test-function
+              (opt-bool-branch-chain-test-blocks 2))))
+        (return 54))
       42)))
 
 (define (compiler-optimize-fixed-point-self-test) : i64
@@ -65357,7 +67596,12 @@
                             (opt-load-header-var? hs bvar)))
                         invalidated))]
                   [_ invalidated])]
-              [(OptLoadLocScaledField _ _ _ _) invalidated])]
+              [(OptLoadLocScaledField _ _ _ _)
+                ;; A Gep from a scaled data-buffer address may no longer fit
+                ;; the canonical ScaledField key, but it is still an element
+                ;; address. Keep the coarser location fact so stores through
+                ;; inline slot-field Geps do not masquerade as unknown writes.
+                (opt-load-kinds-bind invalidated dst (OptLoadLocElement))])]
           [_ invalidated])]
       [(CompilerIrInstr.Load dst src ty)
         (match src
@@ -68243,6 +70487,56 @@
                 (CompilerIrInstr.Load 7 (CompilerIrValue.Var 4) (AstType.I64))
                 (CompilerIrInstrList.Nil)))))))))
 
+;; Hashmap slot stores use a scaled data-buffer Gep followed by an unscaled
+;; inline-field Gep. The latter must retain element provenance so it preserves
+;; cached descriptor-field loads while still invalidating buffer loads.
+(define (opt-load-cse-element-gep-chain-store-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 0)
+          (AstType.U64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.U64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              6
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.Var 3)
+              (AstType.U8))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                7
+                (CompilerIrValue.Var 6)
+                (CompilerIrValue.I64 8)
+                (AstType.U8))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.StorePtr
+                  (CompilerIrValue.Var 7)
+                  (CompilerIrValue.I64 9)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    8
+                    (CompilerIrValue.Var 0)
+                    (CompilerIrValue.I64 1)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Load
+                      9
+                      (CompilerIrValue.Var 8)
+                      (AstType.I64))
+                    (CompilerIrInstrList.Nil)))))))))))
+
 (define (opt-load-cse-cap-self-test?) : bool
   (let
     [key0 : OptLoadKey
@@ -68543,6 +70837,9 @@
       (opt-load-cse-run-with-params
         (opt-load-cse-descriptor-ref-params)
         (opt-load-cse-descriptor-data-root-instrs))]
+    [element-gep-chain-store : CompilerIrInstrList
+      (opt-load-cse-run-with-array-param
+        (opt-load-cse-element-gep-chain-store-instrs))]
     [global-store : bool
       (opt-load-cse-barrier-blocked?
         (CompilerIrInstr.Store
@@ -68743,4 +71040,14 @@
       [(not extern-call) 73]
       [(not volatile-call) 74]
       [(not atomic-call) 75]
+      [(not (= (opt-count-load-instrs element-gep-chain-store) 2)) 76]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              element-gep-chain-store
+              9
+              3
+              (AstType.I64))
+            1))
+        77]
       [else 44])))

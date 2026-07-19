@@ -4,6 +4,7 @@
 (import (vector String) as svec)
 (import "../compiler_typecheck.tl")
 (import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
 (import stdlib.string)
 (import sym_i64_env)
 
@@ -2399,17 +2400,53 @@
                 (compiler-typecheck-smoke-program-parsed-id
                   (ast-program decls)
                   "value")]
-              (and
-                (tc-name-id-list-contains names hook-id)
-                (macro-surface-macro-in-module?
-                  "tc.surface.macro.provider"
-                  "hook")
-                (not
-                  (macro-surface-macro-in-module?
-                    "tc.surface.macro.provider"
-                    "missing"))
-                (ctfe-module-macro-export-id? provider-id hook-id)
-                (not (ctfe-module-macro-export-id? provider-id non-macro-id)))))]
+              [missing-id : i64 (intern "missing")]
+              [generated-provider-id : i64
+                (ci.intern-generated-name "tc.surface.macro.provider")]
+              [generated-hook-id : i64 (ci.intern-generated-name "hook")]
+              [before-reset : bool
+                (and
+                  (tc-name-id-list-contains names hook-id)
+                  (macro-surface-macro-in-module? provider-id hook-id)
+                  (not (macro-surface-macro-in-module? provider-id missing-id))
+                  (macro-surface-module-has-macro? provider-id)
+                  (string.eq
+                    (intern-str generated-provider-id)
+                    (intern-str provider-id))
+                  (string.eq
+                    (intern-str generated-hook-id)
+                    (intern-str hook-id))
+                  (not (= generated-provider-id provider-id))
+                  (not (= generated-hook-id hook-id))
+                  (not
+                    (macro-surface-macro-in-module?
+                      generated-provider-id
+                      hook-id))
+                  (not
+                    (macro-surface-macro-in-module?
+                      provider-id
+                      generated-hook-id))
+                  (not (macro-surface-module-has-macro? generated-provider-id))
+                  (match (macro-surface-call-decl-in-module provider-id hook-id)
+                    [(MacroMaybeDecl.Some _ _ _ _ _ _) true]
+                    [(MacroMaybeDecl.No) false])
+                  (match (macro-surface-call-decl-in-module
+                    generated-provider-id
+                    generated-hook-id)
+                    [(MacroMaybeDecl.Some _ _ _ _ _ _) false]
+                    [(MacroMaybeDecl.No) true])
+                  (ctfe-module-macro-export-id? provider-id hook-id)
+                  (not (ctfe-module-macro-export-id? provider-id non-macro-id)))]
+              (begin
+                (compiler-load-surface-summaries-reset!)
+                (macro-surface-call-decl-cache-reset!)
+                (and
+                  before-reset
+                  (not (macro-surface-macro-in-module? provider-id hook-id))
+                  (not (macro-surface-module-has-macro? provider-id))
+                  (match (macro-surface-call-decl-in-module provider-id hook-id)
+                    [(MacroMaybeDecl.Some _ _ _ _ _ _) false]
+                    [(MacroMaybeDecl.No) true])))))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-typecheck-smoke-record-surface-summary?
@@ -2909,6 +2946,17 @@
       [old-alias-value-id : i64 (intern "old.alias/value")]
       [old-full-value-id : i64 (intern "old.full/value")]
       [old-variant-value-id : i64 (intern "old.choice/Full")]
+      [old-table-id : i64 (ci.intern-active-table-id)]
+      [old-generation : i64 (intern-generation)]
+      [old-result-module-id : i64 (intern "stdlib.result")]
+      [old-result-name-id : i64 (intern "result")]
+      [_old-result-identity : unit (macro-stdlib-result-identity-ensure!)]
+      [old-result-ids-current : bool
+        (and
+          (= macro-stdlib-result-identity-table-id old-table-id)
+          (= macro-stdlib-result-identity-generation old-generation)
+          (= macro-stdlib-result-module-id old-result-module-id)
+          (= macro-stdlib-result-macro-id old-result-name-id))]
       (begin
         (tc-source-dotted-alias-key-cache-put!
           old-module-id
@@ -2932,6 +2980,9 @@
           [alias-name-id : i64 (intern "alias.value")]
           [full-name-id : i64 (intern "full.path.value")]
           [variant-name-id : i64 (intern "Choice.Full")]
+          [result-module-id : i64 (intern "stdlib.result")]
+          [result-name-id : i64 (intern "result")]
+          [_result-identity : unit (macro-stdlib-result-identity-ensure!)]
           [alias-miss : i64
             (tc-source-dotted-alias-key-cache-get module-id alias-name-id)]
           [full-miss : i64
@@ -2943,7 +2994,17 @@
               variant-name-id)]
           (begin
             (compiler-typecheck-reset-file-state!)
-            (and (= alias-miss -2) (= full-miss -2) (= variant-miss -2))))))))
+            (and
+              old-result-ids-current
+              (= (ci.intern-active-table-id) old-table-id)
+              (> (intern-generation) old-generation)
+              (= macro-stdlib-result-identity-table-id old-table-id)
+              (= macro-stdlib-result-identity-generation (intern-generation))
+              (= macro-stdlib-result-module-id result-module-id)
+              (= macro-stdlib-result-macro-id result-name-id)
+              (= alias-miss -2)
+              (= full-miss -2)
+              (= variant-miss -2))))))))
 
 (define (compiler-typecheck-smoke-qualified-enum-variant-precedence-source) : String
   "(module provider.enums)

@@ -11615,34 +11615,37 @@
 ;; `tc-name-qualified-id? (intern name)`, so threading the already-interned id
 ;; from callers is semantics-preserving and skips the hash. Refs #4427.
 (define (tc-name-first-dot-id [name-id : i64]) : i64
-  (cond
-    [(or
-        (macro-hygiene-global-id? name-id)
-        (tc-structural-local-name-id? name-id))
+  ;; Ids inside the intern pool range are the common case and can never be
+  ;; structural/hygiene ids (every structural family's base is >= stride^2),
+  ;; so dispatch on the pool range first and keep the layered predicate
+  ;; checks for the out-of-pool families only.
+  (if (and (>= name-id 0) (< name-id (intern-capacity)))
+    (intern-first-dot name-id)
+    (if (or
+      (macro-hygiene-global-id? name-id)
+      (tc-structural-local-name-id? name-id))
       (intern-first-dot
-        (macro-hygiene-global-source-name-id-or name-id name-id))]
-    [(and (>= name-id 0) (< name-id (intern-capacity)))
-      (intern-first-dot name-id)]
-    [else -1]))
+        (macro-hygiene-global-source-name-id-or name-id name-id))
+      -1)))
 
 (define (tc-name-qualified-id? [name-id : i64]) : bool
-  (cond
-    [(< name-id 0) false]
-    [(tc-structural-local-name-id? name-id) false]
-    [(macro-hygiene-global-id? name-id)
-      (not
-        (compiler-symbol-root-module-id?
-          (macro-hygiene-global-module-id name-id)))]
-    [else
-      (if (< name-id (intern-capacity))
-        (and
-          (or
-            (< name-id (intern-pool-len))
-            (not (tc-hygiene-local-name? (intern-str name-id))))
-          (intern-qualified? name-id))
+  (if (and (>= name-id 0) (< name-id (intern-capacity)))
+    (and
+      (or
+        (< name-id (intern-pool-len))
+        (not (tc-hygiene-local-name? (intern-str name-id))))
+      (intern-qualified? name-id))
+    (cond
+      [(< name-id 0) false]
+      [(tc-structural-local-name-id? name-id) false]
+      [(macro-hygiene-global-id? name-id)
+        (not
+          (compiler-symbol-root-module-id?
+            (macro-hygiene-global-module-id name-id)))]
+      [else
         (or
           (compiler-composite-pair-key-id? name-id)
-          (compiler-composite-triple-key-id? name-id)))]))
+          (compiler-composite-triple-key-id? name-id))])))
 
 (define (tc-qualified-name-module-id [name-id : i64]) : i64
   (cond
@@ -57436,18 +57439,22 @@
 (define (macro-hygiene-global-source-name-id-or
   [name-id : i64]
   [fallback : i64]) : i64
-  (cond
-    [(ci.intern-structural-local-id? name-id)
-      (ci.intern-structural-local-source-name-id name-id)]
-    [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
-      (macro-hygiene-structural-source-name-id name-id)]
-    [(and
-        (>= name-id 0)
-        (< name-id (intern-capacity))
-        (ci.intern-qualified? name-id)
-        (tc-hygiene-global-name? (intern-str name-id)))
-      (ci.intern-qualified-base-id name-id)]
-    [else fallback]))
+  ;; Ids inside the intern pool range are the common case and can never be
+  ;; structural/hygiene ids (every structural family's base is >= stride^2),
+  ;; so dispatch on the pool range first and keep the layered predicate
+  ;; checks for the out-of-pool families only.
+  (if (and (>= name-id 0) (< name-id (intern-capacity)))
+    (if (and
+      (ci.intern-qualified? name-id)
+      (tc-hygiene-global-name? (intern-str name-id)))
+      (ci.intern-qualified-base-id name-id)
+      fallback)
+    (cond
+      [(ci.intern-structural-local-id? name-id)
+        (ci.intern-structural-local-source-name-id name-id)]
+      [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
+        (macro-hygiene-structural-source-name-id name-id)]
+      [else fallback])))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
   (match env

@@ -23813,123 +23813,49 @@
         (string.char-eq (string.string-ref name slash) '/')
         (tc-string-has-suffix? name base)))))
 
-(define (tc-arena-type-name) : String
-  "stdlib.arena/Arena")
-
-(define (tc-arena-module-name) : String
-  "stdlib.arena")
-
-(define (tc-arena-mark-type-name) : String
-  "stdlib.arena/ArenaMark")
-
-(define (tc-arena-phase-type-name) : String
-  "stdlib.arena/ArenaPhase")
-
-(define (tc-nominal-struct-type-name-eq?
+(define (tc-nominal-struct-type-id-eq?
   [ctx : TcContext]
   [ty : AstType]
-  [name : String]) : bool
+  [expected-id : i64]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstType.Struct actual)
-      (string.eq (tc-nominal-name-id-display actual) name)]
-    [(AstType.StructArgs actual _)
-      (string.eq (tc-nominal-name-id-display actual) name)]
+    [(AstType.Struct actual) (tc-nominal-name-id-eq? actual expected-id)]
+    [(AstType.StructArgs actual _) (tc-nominal-name-id-eq? actual expected-id)]
     [_ false]))
 
 (define (tc-arena-type? [ctx : TcContext] [ty : AstType]) : bool
-  (tc-nominal-struct-type-name-eq? ctx ty (tc-arena-type-name)))
+  (tc-nominal-struct-type-id-eq? ctx ty cbi.compiler-builtin-id-arena-type))
 
 (define (tc-arena-mark-type? [ctx : TcContext] [ty : AstType]) : bool
-  (tc-nominal-struct-type-name-eq? ctx ty (tc-arena-mark-type-name)))
+  (tc-nominal-struct-type-id-eq? ctx ty cbi.compiler-builtin-id-arena-mark-type))
 
 (define (tc-arena-phase-type? [ctx : TcContext] [ty : AstType]) : bool
-  (tc-nominal-struct-type-name-eq? ctx ty (tc-arena-phase-type-name)))
+  (tc-nominal-struct-type-id-eq?
+    ctx
+    ty
+    cbi.compiler-builtin-id-arena-phase-type))
 
-(define (tc-arena-owner-call-name?
+(define (tc-arena-source-call-base-id?
   [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : String]
+  [_env : TcTypeEnv]
   [name-id : i64]
-  [base : String]) : bool
+  [base-id : i64]) : bool
   (if (tc-name-qualified-id? name-id)
-    (let
-      [base-id : i64 (tc-qualified-name-base-id name-id)]
-      (and
-        (>= base-id 0)
-        (< base-id (intern-capacity))
-        (string.eq (intern-str base-id) base)))
     (and
-      (string.eq name base)
-      (or
-        (not (tc-name-local-bound-before-module-scan-id? env name-id))
-        (string.eq (tc-context-module ctx) (tc-arena-module-name))))))
-
-;; Allocation-free equivalent of
-;;   (string.eq text (compiler-symbol-module-key module base))
-;; for non-empty modules: the arena-safety checks run per call expression, and
-;; building the module/base key string allocated on every one of them.
-(define (tc-module-key-text-matches?
-  [text : String]
-  [module : String]
-  [base : String]) : bool
-  (let
-    [text-len : i64 (string.string-length text)]
-    [module-len : i64 (string.string-length module)]
-    [base-len : i64 (string.string-length base)]
-    (if (not (= text-len (+ module-len (+ base-len 1))))
-      false
-      (if (not (= (string.string-ref text module-len) '/'))
-        false
-        (let
-          [ok : bool true]
-          [i : i64 0]
-          (begin
-            (while (and ok (< i module-len))
-              (begin
-                (if (= (string.string-ref text i) (string.string-ref module i))
-                  unit
-                  (set! ok false))
-                (set! i (+ i 1))))
-            (set! i 0)
-            (while (and ok (< i base-len))
-              (begin
-                (if (=
-                  (string.string-ref text (+ module-len (+ 1 i)))
-                  (string.string-ref base i))
-                  unit
-                  (set! ok false))
-                (set! i (+ i 1))))
-            ok))))))
-
-(define (tc-arena-canonical-call-name-id? [lookup-id : i64] [base : String]) : bool
-  (let
-    [module-id : i64 (tc-qualified-name-module-id lookup-id)]
-    [base-id : i64 (tc-qualified-name-base-id lookup-id)]
+      (=
+        (tc-qualified-name-module-id name-id)
+        cbi.compiler-builtin-id-arena-module)
+      (= (tc-qualified-name-base-id name-id) base-id))
     (and
-      (tc-name-qualified-id? lookup-id)
-      (>= module-id 0)
-      (< module-id (intern-capacity))
-      (>= base-id 0)
-      (< base-id (intern-capacity))
-      (string.eq (intern-str module-id) (tc-arena-module-name))
-      (string.eq (intern-str base-id) base))))
+      (= name-id base-id)
+      (= (tc-context-module-id ctx) cbi.compiler-builtin-id-arena-module))))
 
-(define (tc-arena-safe-call-name-id?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : String]
-  [name-id : i64]
-  [lookup-id : i64]
-  [base : String]) : bool
-  (or
-    (tc-arena-canonical-call-name-id? lookup-id base)
-    (and
-      (tc-arena-owner-call-name? ctx env name name-id base)
-      (or
-        (tc-source-name-bound-exact-id? env name-id)
-        (and
-          (not (tc-name-qualified-id? name-id))
-          (string.eq (tc-context-module ctx) (tc-arena-module-name)))))))
+(define (tc-arena-canonical-call-base-id? [lookup-id : i64] [base-id : i64]) : bool
+  (and
+    (tc-name-qualified-id? lookup-id)
+    (=
+      (tc-qualified-name-module-id lookup-id)
+      cbi.compiler-builtin-id-arena-module)
+    (= (tc-qualified-name-base-id lookup-id) base-id)))
 
 (define (tc-arena-safe-call-kind-none) : i64
   0)
@@ -23944,15 +23870,14 @@
   3)
 
 (define (tc-arena-safe-call-base-kind-id [base-id : i64]) : i64
-  (if (and (>= base-id 0) (< base-id (intern-capacity)))
-    (let
-      [base : String (intern-str base-id)]
-      (cond
-        [(string.eq base "phase") (tc-arena-safe-call-kind-phase)]
-        [(string.eq base "rewind-safe!") (tc-arena-safe-call-kind-rewind)]
-        [(string.eq base "destroy-safe!") (tc-arena-safe-call-kind-destroy)]
-        [else (tc-arena-safe-call-kind-none)]))
-    (tc-arena-safe-call-kind-none)))
+  (cond
+    [(= base-id cbi.compiler-builtin-id-arena-phase-base)
+      (tc-arena-safe-call-kind-phase)]
+    [(= base-id cbi.compiler-builtin-id-arena-rewind-safe-base)
+      (tc-arena-safe-call-kind-rewind)]
+    [(= base-id cbi.compiler-builtin-id-arena-destroy-safe-base)
+      (tc-arena-safe-call-kind-destroy)]
+    [else (tc-arena-safe-call-kind-none)]))
 
 ;; Call dispatch has already resolved dotted module aliases into `lookup-id`.
 ;; Classify that canonical id once, then check the source-name owner fallback
@@ -23966,10 +23891,7 @@
   (let
     [canonical-module-id : i64 (tc-qualified-name-module-id lookup-id)]
     [canonical-kind : i64
-      (if (and
-        (>= canonical-module-id 0)
-        (< canonical-module-id (intern-capacity))
-        (string.eq (intern-str canonical-module-id) (tc-arena-module-name)))
+      (if (= canonical-module-id cbi.compiler-builtin-id-arena-module)
         (tc-arena-safe-call-base-kind-id (tc-qualified-name-base-id lookup-id))
         (tc-arena-safe-call-kind-none))]
     (if (not (= canonical-kind (tc-arena-safe-call-kind-none)))
@@ -23981,22 +23903,19 @@
             (tc-qualified-name-base-id name-id)
             name-id)]
         [source-kind : i64 (tc-arena-safe-call-base-kind-id source-base-id)]
-        (if (= source-kind (tc-arena-safe-call-kind-none))
-          source-kind
-          (if qualified
-            (if (tc-source-name-bound-exact-id? env name-id)
-              source-kind
-              (tc-arena-safe-call-kind-none))
-            (let
-              [in-arena-module : bool
-                (string.eq (tc-context-module ctx) (tc-arena-module-name))]
-              (if (or
-                in-arena-module
-                (and
-                  (not (tc-name-local-bound-before-module-scan-id? env name-id))
-                  (tc-source-name-bound-exact-id? env name-id)))
-                source-kind
-                (tc-arena-safe-call-kind-none)))))))))
+        (cond
+          [(= source-kind (tc-arena-safe-call-kind-none)) source-kind]
+          [(and
+              qualified
+              (=
+                (tc-qualified-name-module-id name-id)
+                cbi.compiler-builtin-id-arena-module)
+              (tc-source-name-bound-exact-id? env name-id))
+            source-kind]
+          [qualified (tc-arena-safe-call-kind-none)]
+          [(= (tc-context-module-id ctx) cbi.compiler-builtin-id-arena-module)
+            source-kind]
+          [else (tc-arena-safe-call-kind-none)])))))
 
 (define (tc-arena-owner-kind-none) : i64
   0)
@@ -24006,6 +23925,111 @@
 
 (define (tc-arena-owner-kind-atomic) : i64
   2)
+
+(cfg
+  test
+  (define (tc-arena-classifier-identity-ids-ok?) : bool
+    (begin
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (let
+        [generated-module : i64
+          (ci.intern-generated-canonical-name "stdlib.arena")]
+        [generated-type : i64
+          (ci.intern-generated-canonical-name "stdlib.arena/Arena")]
+        [generated-phase : i64 (ci.intern-generated-canonical-name "phase")]
+        [canonical-phase : i64
+          (tc-qualified-name-key-id
+            cbi.compiler-builtin-id-arena-module
+            cbi.compiler-builtin-id-arena-phase-base)]
+        [generated-module-phase : i64
+          (tc-qualified-name-key-id
+            generated-module
+            cbi.compiler-builtin-id-arena-phase-base)]
+        [generated-base-phase : i64
+          (tc-qualified-name-key-id
+            cbi.compiler-builtin-id-arena-module
+            generated-phase)]
+        (and
+          (tc-nominal-name-id-eq?
+            cbi.compiler-builtin-id-arena-type
+            cbi.compiler-builtin-id-arena-type)
+          (not
+            (tc-nominal-name-id-eq?
+              generated-type
+              cbi.compiler-builtin-id-arena-type))
+          (=
+            (tc-arena-safe-call-base-kind-id
+              cbi.compiler-builtin-id-arena-phase-base)
+            (tc-arena-safe-call-kind-phase))
+          (=
+            (tc-arena-safe-call-base-kind-id
+              cbi.compiler-builtin-id-arena-rewind-safe-base)
+            (tc-arena-safe-call-kind-rewind))
+          (=
+            (tc-arena-safe-call-base-kind-id
+              cbi.compiler-builtin-id-arena-destroy-safe-base)
+            (tc-arena-safe-call-kind-destroy))
+          (=
+            (tc-arena-safe-call-base-kind-id generated-phase)
+            (tc-arena-safe-call-kind-none))
+          (tc-arena-canonical-call-base-id?
+            canonical-phase
+            cbi.compiler-builtin-id-arena-phase-base)
+          (not
+            (tc-arena-canonical-call-base-id?
+              generated-module-phase
+              cbi.compiler-builtin-id-arena-phase-base))
+          (not
+            (tc-arena-canonical-call-base-id?
+              generated-base-phase
+              cbi.compiler-builtin-id-arena-phase-base)))))))
+
+(cfg
+  test
+  (test
+    tc-arena-classifier-identity-ids
+    (if (tc-arena-classifier-identity-ids-ok?)
+      unit
+      (io.panic "typecheck: arena classifier identity ID test failed"))))
+
+(define (tc-arena-call-lookup-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [source-id : i64]) : i64
+  (if (or (< source-id 0) (tc-name-qualified-id? source-id))
+    source-id
+    (let
+      [first-dot : i64 (tc-name-first-dot-id source-id)]
+      (if (or
+        (< first-dot 0)
+        (tc-source-leading-segment-wins-over-exact-id-from-dot?
+          env
+          source-id
+          first-dot))
+        source-id
+        (let
+          [current-module-id : i64 (tc-context-module-id ctx)]
+          [alias-id : i64 (intern-leading-dot-id source-id)]
+          [module-id : i64 (intern-dotted-prefix-id source-id)]
+          [base-id : i64 (intern-dotted-final-id source-id)]
+          [alias-target-id : i64
+            (match (tc-context-program ctx)
+              [(AstProgram.Program decls-box)
+                (match (tc-source-dotted-alias-target-id
+                  (box-get decls-box)
+                  current-module-id
+                  alias-id)
+                  [(TcMaybeNameId.Some target-id) target-id]
+                  [(TcMaybeNameId.No) -1])])]
+          (if (= alias-target-id cbi.compiler-builtin-id-arena-module)
+            (tc-qualified-name-key-id alias-target-id base-id)
+            (if (and
+              (= module-id cbi.compiler-builtin-id-arena-module)
+              (or
+                (= current-module-id module-id)
+                (tc-imported-module-identity-id? ctx module-id)))
+              (tc-qualified-name-key-id module-id base-id)
+              source-id)))))))
 
 (define (tc-arena-owner-call-kind
   [ctx : TcContext]
@@ -24019,27 +24043,27 @@
           (if (>= nid 0)
             (let
               [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
-              [name : String (intern-str source-id)]
-              [lookup-id : i64
-                (tc-call-builtin-lookup-id ctx env name source-id)]
+              [lookup-id : i64 (tc-arena-call-lookup-id ctx env source-id)]
               (cond
                 [(or
-                    (tc-arena-owner-call-name?
+                    (tc-arena-source-call-base-id?
                       ctx
                       env
-                      name
                       source-id
-                      "arena-make-atomic")
-                    (tc-arena-canonical-call-name-id? lookup-id "make-atomic"))
+                      cbi.compiler-builtin-id-arena-make-atomic)
+                    (tc-arena-canonical-call-base-id?
+                      lookup-id
+                      cbi.compiler-builtin-id-arena-make-atomic-base))
                   (tc-arena-owner-kind-atomic)]
                 [(or
-                    (tc-arena-owner-call-name?
+                    (tc-arena-source-call-base-id?
                       ctx
                       env
-                      name
                       source-id
-                      "arena-make")
-                    (tc-arena-canonical-call-name-id? lookup-id "make"))
+                      cbi.compiler-builtin-id-arena-make)
+                    (tc-arena-canonical-call-base-id?
+                      lookup-id
+                      cbi.compiler-builtin-id-arena-make-base))
                   (tc-arena-owner-kind-ordinary)]
                 [else (tc-arena-owner-kind-none)]))
             (tc-arena-owner-kind-none)))
@@ -24059,16 +24083,10 @@
           (if (>= nid 0)
             (let
               [source-id : i64 (macro-hygiene-global-source-name-id-or nid nid)]
-              [name : String (intern-str source-id)]
-              [lookup-id : i64
-                (tc-call-builtin-lookup-id ctx env name source-id)]
-              (if (tc-arena-safe-call-name-id?
-                ctx
-                env
-                name
-                source-id
-                lookup-id
-                "phase")
+              [lookup-id : i64 (tc-arena-call-lookup-id ctx env source-id)]
+              (if (=
+                (tc-arena-safe-call-kind-id ctx env source-id lookup-id)
+                (tc-arena-safe-call-kind-phase))
                 (let
                   [oid : i64 (tc-expr-var-name-id owner-expr)]
                   (if (>= oid 0)

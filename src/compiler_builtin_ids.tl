@@ -183,6 +183,24 @@
   -1)
 (define compiler-builtin-id-arena-rewind : i64
   -1)
+(define compiler-builtin-id-arena-module : i64
+  -1)
+(define compiler-builtin-id-arena-type : i64
+  -1)
+(define compiler-builtin-id-arena-mark-type : i64
+  -1)
+(define compiler-builtin-id-arena-phase-type : i64
+  -1)
+(define compiler-builtin-id-arena-make-base : i64
+  -1)
+(define compiler-builtin-id-arena-make-atomic-base : i64
+  -1)
+(define compiler-builtin-id-arena-phase-base : i64
+  -1)
+(define compiler-builtin-id-arena-rewind-safe-base : i64
+  -1)
+(define compiler-builtin-id-arena-destroy-safe-base : i64
+  -1)
 (define compiler-builtin-id-tls-current-arena : i64
   -1)
 (define compiler-builtin-id-tls-current-arena-set-bang : i64
@@ -621,7 +639,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 299)]
+    [ids : (Array i64) (make-array i64 308)]
     [ctfe-ids : (Array i64) (make-array i64 219)]
     [i : i64 0]
     (begin
@@ -629,7 +647,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 299)
+      (while (< i 308)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -1087,6 +1105,15 @@
     (state-set! state 296 compiler-builtin-id-tl-private-float-sqrt)
     (state-set! state 297 compiler-builtin-id-tl-private-float-to-bits)
     (state-set! state 298 compiler-builtin-id-tl-private-float-from-bits)
+    (state-set! state 299 compiler-builtin-id-arena-module)
+    (state-set! state 300 compiler-builtin-id-arena-type)
+    (state-set! state 301 compiler-builtin-id-arena-mark-type)
+    (state-set! state 302 compiler-builtin-id-arena-phase-type)
+    (state-set! state 303 compiler-builtin-id-arena-make-base)
+    (state-set! state 304 compiler-builtin-id-arena-make-atomic-base)
+    (state-set! state 305 compiler-builtin-id-arena-phase-base)
+    (state-set! state 306 compiler-builtin-id-arena-rewind-safe-base)
+    (state-set! state 307 compiler-builtin-id-arena-destroy-safe-base)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1471,6 +1498,15 @@
     (set! compiler-builtin-id-tl-private-float-sqrt (state-ref state 296))
     (set! compiler-builtin-id-tl-private-float-to-bits (state-ref state 297))
     (set! compiler-builtin-id-tl-private-float-from-bits (state-ref state 298))
+    (set! compiler-builtin-id-arena-module (state-ref state 299))
+    (set! compiler-builtin-id-arena-type (state-ref state 300))
+    (set! compiler-builtin-id-arena-mark-type (state-ref state 301))
+    (set! compiler-builtin-id-arena-phase-type (state-ref state 302))
+    (set! compiler-builtin-id-arena-make-base (state-ref state 303))
+    (set! compiler-builtin-id-arena-make-atomic-base (state-ref state 304))
+    (set! compiler-builtin-id-arena-phase-base (state-ref state 305))
+    (set! compiler-builtin-id-arena-rewind-safe-base (state-ref state 306))
+    (set! compiler-builtin-id-arena-destroy-safe-base (state-ref state 307))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -2728,6 +2764,33 @@
       (compiler-builtin-resolve-name
         insert-missing
         "feature-cleanup-owner-reflection"))
+    (set!
+      compiler-builtin-id-arena-module
+      (compiler-builtin-resolve-name insert-missing "stdlib.arena"))
+    (set!
+      compiler-builtin-id-arena-type
+      (compiler-builtin-resolve-name insert-missing "stdlib.arena/Arena"))
+    (set!
+      compiler-builtin-id-arena-mark-type
+      (compiler-builtin-resolve-name insert-missing "stdlib.arena/ArenaMark"))
+    (set!
+      compiler-builtin-id-arena-phase-type
+      (compiler-builtin-resolve-name insert-missing "stdlib.arena/ArenaPhase"))
+    (set!
+      compiler-builtin-id-arena-make-base
+      (compiler-builtin-resolve-name insert-missing "make"))
+    (set!
+      compiler-builtin-id-arena-make-atomic-base
+      (compiler-builtin-resolve-name insert-missing "make-atomic"))
+    (set!
+      compiler-builtin-id-arena-phase-base
+      (compiler-builtin-resolve-name insert-missing "phase"))
+    (set!
+      compiler-builtin-id-arena-rewind-safe-base
+      (compiler-builtin-resolve-name insert-missing "rewind-safe!"))
+    (set!
+      compiler-builtin-id-arena-destroy-safe-base
+      (compiler-builtin-resolve-name insert-missing "destroy-safe!"))
     (set! compiler-builtin-generation (ci.intern-generation))
     (set! compiler-builtin-table-id (ci.intern-active-table-id))
     (set! compiler-builtin-pool-len (ci.intern-pool-len))
@@ -2802,6 +2865,112 @@
     (if (compiler-builtin-comptime-structural-fields-reset-ok?)
       unit
       (io.panic "compiler builtin comptime structural field IDs failed"))))
+
+(cfg
+  test
+  (define (compiler-builtin-arena-identities-current-ok?) : bool
+    (begin
+      (compiler-builtin-refresh!)
+      (and
+        (=
+          compiler-builtin-id-arena-module
+          (ci.intern-source-slice "stdlib.arena" 0 12))
+        (=
+          compiler-builtin-id-arena-type
+          (ci.intern-source-slice "stdlib.arena/Arena" 0 18))
+        (=
+          compiler-builtin-id-arena-mark-type
+          (ci.intern-source-slice "stdlib.arena/ArenaMark" 0 22))
+        (=
+          compiler-builtin-id-arena-phase-type
+          (ci.intern-source-slice "stdlib.arena/ArenaPhase" 0 23))
+        (=
+          compiler-builtin-id-arena-make-base
+          (ci.intern-source-slice "make" 0 4))
+        (=
+          compiler-builtin-id-arena-make-atomic-base
+          (ci.intern-source-slice "make-atomic" 0 11))
+        (=
+          compiler-builtin-id-arena-phase-base
+          (ci.intern-source-slice "phase" 0 5))
+        (=
+          compiler-builtin-id-arena-rewind-safe-base
+          (ci.intern-source-slice "rewind-safe!" 0 12))
+        (=
+          compiler-builtin-id-arena-destroy-safe-base
+          (ci.intern-source-slice "destroy-safe!" 0 13))
+        (not
+          (=
+            compiler-builtin-id-arena-type
+            (ci.intern-generated-canonical-name "stdlib.arena/Arena")))))))
+
+(cfg
+  test
+  (define (compiler-builtin-arena-identities-snapshot-ok?) : bool
+    (let
+      [expected : i64 compiler-builtin-id-arena-module]
+      [snapshot : CompilerBuiltinIdsState (state-capture)]
+      (begin
+        (set! compiler-builtin-id-arena-module -1)
+        (state-install! snapshot)
+        (and
+          (= compiler-builtin-id-arena-module expected)
+          (compiler-builtin-arena-identities-current-ok?))))))
+
+(cfg
+  test
+  (define (compiler-builtin-arena-identities-two-state-ok?) : bool
+    (let
+      [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
+      [intern-b : ci.InternCompatState (ci.intern-compat-state-new)]
+      [_a-prefix : i64 (ci.intern-compat-state-intern intern-a "a-only")]
+      [_b-prefix-1 : i64 (ci.intern-compat-state-intern intern-b "b-only-1")]
+      [_b-prefix-2 : i64 (ci.intern-compat-state-intern intern-b "b-only-2")]
+      [builtins-a : CompilerBuiltinIdsState (state-new)]
+      [builtins-b : CompilerBuiltinIdsState (state-new)]
+      [arena-a : i64 -1]
+      [arena-b : i64 -1]
+      (begin
+        (ci.intern-compat-state-install! intern-a)
+        (compiler-builtin-reset!)
+        (compiler-builtin-initialize-for-parse!)
+        (set! arena-a compiler-builtin-id-arena-module)
+        (state-capture-from-globals! builtins-a)
+        (ci.intern-compat-state-capture-from-globals! intern-a)
+        (ci.intern-compat-state-install! intern-b)
+        (compiler-builtin-reset!)
+        (compiler-builtin-initialize-for-parse!)
+        (set! arena-b compiler-builtin-id-arena-module)
+        (state-capture-from-globals! builtins-b)
+        (ci.intern-compat-state-capture-from-globals! intern-b)
+        (unless (not (= arena-a arena-b)) (return false))
+        (ci.intern-compat-state-install! intern-a)
+        (state-install! builtins-a)
+        (unless
+          (and
+            (= compiler-builtin-id-arena-module arena-a)
+            (compiler-builtin-arena-identities-current-ok?))
+          (return false))
+        (ci.intern-compat-state-install! intern-b)
+        (state-install! builtins-b)
+        (and
+          (= compiler-builtin-id-arena-module arena-b)
+          (compiler-builtin-arena-identities-current-ok?))))))
+
+(cfg
+  test
+  (test
+    compiler-builtin-arena-identities
+    (begin
+      (ci.intern-reset!)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (if (and
+        (compiler-builtin-arena-identities-current-ok?)
+        (compiler-builtin-arena-identities-snapshot-ok?)
+        (compiler-builtin-arena-identities-two-state-ok?))
+        unit
+        (io.panic "compiler builtin arena identity lifecycle failed")))))
 
 (define (compiler-builtin-backend-runtime-core-id? [name-id : i64]) : bool
   (begin

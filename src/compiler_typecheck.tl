@@ -6875,6 +6875,41 @@
     [arena-rewind : (-> i64 unit) (lambda ([mark : i64]) : unit unit)]
     (arena-rewind 1)))"))
 
+(define (compiler-typecheck-arena-adversarial-alias-source) : String
+  "(module fake.arena)
+(defstruct Arena (value i64))
+(define (make) : Arena (Arena 1))
+(define (phase [value : i64]) : i64 value)
+(define (rewind-safe! [value : i64]) : i64 value)
+(define (destroy-safe! [value : i64]) : i64 value)
+(module main)
+(import fake.arena as arena)
+(define (phase [value : i64]) : i64 value)
+(define (rewind-safe! [value : i64]) : i64 value)
+(define (destroy-safe! [value : i64]) : i64 value)
+(define (main) : i64
+  (let
+    [owner : arena.Arena (arena.make)]
+    (+
+      (struct-get owner value)
+      (+ (arena.phase 10)
+        (+
+          (arena.rewind-safe! 20)
+          (+
+            (arena.destroy-safe! 11)
+            (+ (phase 1) (+ (rewind-safe! 2) (destroy-safe! 3)))))))))")
+
+(define (compiler-typecheck-arena-adversarial-nominal-source) : String
+  "(module fake.arena)
+(defstruct Arena (value i64))
+(define (make) : Arena (Arena 1))
+(module main)
+(import fake.arena as arena)
+(define (main) : i64
+  (let
+    [owner : arena.Arena (arena.make)]
+    (in-arena owner 42)))")
+
 (define (compiler-typecheck-arena-unsafe-mutate-source) : String
   (compiler-typecheck-with-arena-source
     "(define (main) : unit
@@ -6939,6 +6974,15 @@
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-arena-local-shadow-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-ok?
+        (compiler-typecheck-arena-adversarial-alias-source))
+        unit
+        (set! ok false))
+      (if (compiler-typecheck-error-ok?
+        (compiler-typecheck-arena-adversarial-nominal-source)
+        "typecheck: in-arena arena must be Arena")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

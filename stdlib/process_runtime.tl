@@ -21,6 +21,7 @@
 ;# Usage: imported by `tl` (which provides the public wrappers).
 (import stdlib.array)
 (import stdlib.byte_buf_core)
+(import stdlib.env)
 
 ;: Private runtime argv list. `tl` converts the public process model to
 ;: this no-cycle representation before invoking the OS runtime.
@@ -410,7 +411,7 @@
 ;: seed bootstrap working).
 (define (linux-envp) : (Ptr (Ptr u8))
   (unsafe
-    (ptr-offset (program-argv) (+ (program-argc) 1))))
+    (env.linux-environ)))
 
 ;: Windows kernel32 bindings used by the captured-output path. Referenced only
 ;: from the Windows branch.

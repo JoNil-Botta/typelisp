@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import stdlib.env)
 (import stdlib.io)
 (import stdlib.string)
@@ -20,6 +21,17 @@
   [expected : String]
   [message : String]) : unit
   (env-api-assert-true (string.eq actual expected) message))
+
+;: Construct an owned three-byte string containing an interior NUL.
+(define (env-api-string-with-nul) : String
+  (let
+    [bytes : (Array u8) (array.make-array u8 3)]
+    (begin
+      (array-set! bytes 0 (cast 'a' : u8))
+      (array-set! bytes 1 (cast 0 : u8))
+      (array-set! bytes 2 (cast 'b' : u8))
+      (unsafe
+        (string-from-bytes (ptr-cast (array-data bytes) : (Ptr u8)) 3)))))
 
 (define (env-api-assert-none [value : env.EnvMaybeString] [message : String]) : unit
   (match value
@@ -176,6 +188,48 @@
 (test
   env-api
   (begin
+    (let
+      [name : String "TYPELISP_STDLIB_TEST_MUTATION_5167"]
+      (begin
+        (env-api-assert-true (env.unset! (& name)) "env initial unset")
+        (env-api-assert-true
+          (not (env.var-exists? name))
+          "env initially missing")
+        (env-api-assert-true
+          (not (env.set! "" "value"))
+          "env rejects empty name")
+        (env-api-assert-true
+          (not (env.set! "TYPELISP=INVALID" "value"))
+          "env rejects equals in name")
+        (env-api-assert-true
+          (not (env.unset! "TYPELISP=INVALID"))
+          "env unset rejects equals in name")
+        (let
+          [with-nul : String (env-api-string-with-nul)]
+          (begin
+            (env-api-assert-true
+              (not (env.set! (& with-nul) "value"))
+              "env rejects nul in name")
+            (env-api-assert-true
+              (not (env.set! (& name) (& with-nul)))
+              "env rejects nul in value")))
+        (env-api-assert-true (env.set! (& name) "first") "env set value")
+        (env-api-assert-true (env.var-exists? name) "env set exists")
+        (env-api-assert-string-eq
+          (env.var-value name)
+          "first"
+          "env set round trip")
+        (env-api-assert-some (env.get (& name)) "first" "env set get")
+        (env-api-assert-true (env.set! (& name) "") "env set empty")
+        (env-api-assert-true (env.var-exists? name) "env empty exists")
+        (env-api-assert-string-eq
+          (env.var-value name)
+          ""
+          "env empty round trip")
+        (env-api-assert-true (env.unset! (& name)) "env unset")
+        (env-api-assert-true (not (env.var-exists? name)) "env unset missing")
+        (env-api-assert-none (env.get (& name)) "env unset get")
+        (env-api-assert-true (env.unset! (& name)) "env repeated unset")))
     (let
       [name : String "TYPELISP_STDLIB_TEST_MISSING_854"]
       (env-api-assert-none (env.get (& name)) "env missing"))

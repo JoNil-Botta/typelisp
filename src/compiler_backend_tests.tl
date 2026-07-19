@@ -22492,6 +22492,47 @@
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
       CompilerRegAssignmentList.Nil)))
 
+(define (compiler-backend-scratch-vreg-fused-sibling-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              4
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 2)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
+              CompilerIrInstrList.Nil)))))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-fused-sibling-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r8"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -8))
+      (compiler-reg-assignment-cons
+        ;; The first fused Load publishes this result before the second
+        ;; Gep+Load is emitted. No planned scratch in the four-instruction
+        ;; group may use its home.
+        (CompilerRegAssignment.Assignment
+          3
+          (CompilerRegLocation.Register "%r9"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 4 (CompilerRegLocation.Spill -16))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment 5 (CompilerRegLocation.Spill -24))
+            CompilerRegAssignmentList.Nil))))))
+
 (define (compiler-backend-scratch-vreg-float-load-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -23518,6 +23559,106 @@
         (not (string.eq planned-index "%r10"))))
     true))
 
+(define (compiler-backend-scratch-items-registers-differ-from?
+  [items : (Array CompilerRegScratchAssignment)]
+  [index : i64]
+  [reg : String]) : bool
+  (if (>= index (array-length items))
+    true
+    (and
+      (not (string.eq reg (struct-get (array-ref items index) register)))
+      (compiler-backend-scratch-items-registers-differ-from?
+        items
+        (+ index 1)
+        reg))))
+
+(define (compiler-backend-scratch-items-registers-unique-from?
+  [items : (Array CompilerRegScratchAssignment)]
+  [index : i64]) : bool
+  (if (>= index (array-length items))
+    true
+    (let
+      [reg : String (struct-get (array-ref items index) register)]
+      (and
+        (not (string.eq reg ""))
+        (compiler-backend-scratch-items-registers-differ-from?
+          items
+          (+ index 1)
+          reg)
+        (compiler-backend-scratch-items-registers-unique-from?
+          items
+          (+ index 1))))))
+
+(define (compiler-backend-scratch-fused-items-shape-from?
+  [items : (Array CompilerRegScratchAssignment)]
+  [dense-items : (Array CompilerRegScratchAssignment)]
+  [index : i64]) : bool
+  (if (>= index (array-length items))
+    (= (array-length items) (array-length dense-items))
+    (let
+      [item : CompilerRegScratchAssignment (array-ref items index)]
+      [requirement : CompilerRegScratchRequirement
+        (struct-get item requirement)]
+      [excluded : CompilerRegStringList
+        (struct-get (struct-get requirement constraint) excluded)]
+      (and
+        (< index (array-length dense-items))
+        (= (struct-get requirement lo) 0)
+        (= (struct-get requirement hi) 7)
+        (compiler-reg-string-list-contains? excluded "%r8")
+        (compiler-reg-string-list-contains? excluded "%r9")
+        (not (string.eq (struct-get item register) "%r8"))
+        (not (string.eq (struct-get item register) "%r9"))
+        (string.eq
+          (struct-get item register)
+          (struct-get (array-ref dense-items index) register))
+        (compiler-backend-scratch-fused-items-shape-from?
+          items
+          dense-items
+          (+ index 1))))))
+
+(define (compiler-backend-scratch-vreg-fused-sibling-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-fused-sibling-test-blocks)]
+      [assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-fused-sibling-test-assignments)]
+      [listed : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_fused_sibling"
+          blocks
+          6
+          assignments)]
+      [dense : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_fused_sibling_dense"
+          (compiler-ir-block-list-compact blocks)
+          6
+          assignments)]
+      (match listed
+        [(CompilerRegScratchPlanResult.Result _ plan)
+          (match dense
+            [(CompilerRegScratchPlanResult.Result _ dense-plan)
+              (let
+                [items : (Array CompilerRegScratchAssignment)
+                  (struct-get plan items)]
+                [dense-items : (Array CompilerRegScratchAssignment)
+                  (struct-get dense-plan items)]
+                (and
+                  (= (array-length items) 7)
+                  (= (compiler-backend-scratch-test-success-count listed) 7)
+                  (= (compiler-backend-scratch-test-success-count dense) 7)
+                  (compiler-backend-scratch-items-registers-unique-from?
+                    items
+                    0)
+                  (compiler-backend-scratch-fused-items-shape-from?
+                    items
+                    dense-items
+                    0)))])]))
+    true))
+
 (define (compiler-backend-scratch-vreg-memory-plan-ok?) : bool
   (cfg
     scratch-vreg
@@ -24133,6 +24274,7 @@
           0)
         (=
           (compiler-reg-scratch-vreg-slots
+            (CompilerRegTargetAbi.Linux)
             same-home
             (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.F64))
             CompilerRegStringList.Nil
@@ -24263,6 +24405,94 @@
                 [(ResultCompilerBackend.Err _) false])]
             [(ResultCompilerBackend.Err _) false])]
         [(ResultCompilerBackend.Err _) false]))
+    true))
+
+(define (compiler-backend-scratch-vreg-incomplete-group-fallback-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [items : (Array CompilerRegScratchAssignment)
+        (array.make-array CompilerRegScratchAssignment 2)]
+      [starts : (Array i64) (array.make-array i64 2)]
+      [ends : (Array i64) (array.make-array i64 2)]
+      [segments : (Array CompilerRegIntervalList)
+        (array.make-array CompilerRegIntervalList 2)]
+      [present : (Array i64) (array.make-array i64 2)]
+      [types : (Array AstType) (array.make-array AstType 2)]
+      [assignments : CompilerRegAssignmentTable
+        (compiler-reg-assignment-table-make 2)]
+      [ref-counts : (Array i64) (array.make-array i64 2)]
+      [fixed-rcx : CompilerRegScratchConstraint
+        (CompilerRegScratchConstraint
+          (CompilerRegScratchClass.Gp)
+          CompilerRegStringList.Nil
+          CompilerRegStringList.Nil
+          "%rcx")]
+      (begin
+        (compiler-reg-fill-i64-array starts -1)
+        (compiler-reg-fill-i64-array ends -1)
+        (compiler-reg-fill-i64-array present 0)
+        (compiler-reg-fill-i64-array ref-counts 0)
+        (compiler-reg-fill-interval-list-array! segments 0)
+        (array-set!
+          items
+          0
+          (CompilerRegScratchAssignment
+            (CompilerRegScratchRequirement
+              0
+              0
+              (CompilerRegScratchRole.MemoryAddress)
+              fixed-rcx
+              0
+              3
+              0)
+            ""))
+        (array-set!
+          items
+          1
+          (CompilerRegScratchAssignment
+            (CompilerRegScratchRequirement
+              2
+              0
+              (CompilerRegScratchRole.MemoryAddress)
+              fixed-rcx
+              0
+              3
+              1)
+            ""))
+        (compiler-reg-scratch-mark-requirement!
+          starts
+          ends
+          segments
+          present
+          types
+          (struct-get (array-ref items 0) requirement))
+        (compiler-reg-scratch-mark-requirement!
+          starts
+          ends
+          segments
+          present
+          types
+          (struct-get (array-ref items 1) requirement))
+        (compiler-reg-scratch-assign-items!
+          (CompilerRegTargetAbi.Linux)
+          items
+          0
+          assignments
+          (CompilerRegIntervalIndex starts ends segments)
+          ref-counts
+          2)
+        (let
+          [partial? : bool
+            (and
+              (string.eq (struct-get (array-ref items 0) register) "%rcx")
+              (string.eq (struct-get (array-ref items 1) register) ""))]
+          (begin
+            (compiler-reg-scratch-clear-incomplete-groups! items 0)
+            (and
+              partial?
+              (string.eq (struct-get (array-ref items 0) register) "")
+              (string.eq (struct-get (array-ref items 1) register) ""))))))
     true))
 
 (define (compiler-backend-scratch-vreg-constraint-shapes-ok?) : bool
@@ -25250,6 +25480,7 @@
         (compiler-backend-scratch-vreg-future-window-ok?)
         (compiler-backend-scratch-vreg-c-abi-return-plan-ok?)
         (compiler-backend-scratch-vreg-bounds-plan-ok?)
+        (compiler-backend-scratch-vreg-fused-sibling-plan-ok?)
         (compiler-backend-scratch-vreg-memory-plan-ok?)
         (compiler-backend-scratch-vreg-copy-xmm-plan-ok?)
         (compiler-backend-scratch-vreg-c-memory-plan-ok?)
@@ -25265,6 +25496,7 @@
         (compiler-backend-scratch-vreg-scalar-return-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
+        (compiler-backend-scratch-vreg-incomplete-group-fallback-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-emit-current-count-gate-ok?)

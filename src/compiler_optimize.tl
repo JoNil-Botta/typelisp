@@ -33730,16 +33730,8 @@
         tys
         cell)]))
 
-;; The experimental scratch-vreg planner (cfg-gated, CI-only) miscompiles the
-;; fused Gep+memop shapes this pass produces for opt-inline-slot-order (the
-;; Windows scratch-vreg bootstrap aborts with an array OOB compiling
-;; src/main.tl). Skip the pass under that cfg; the default planner emits the
-;; same clones correctly (326-test batch, benchmarks, and the Linux/Windows
-;; normal bootstraps all pass with the split enabled).
 (define (opt-gep-split-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (if (cfg scratch-vreg true false)
-    func
-    (opt-gep-split-function-inner func)))
+  (opt-gep-split-function-inner func))
 
 (define (opt-gep-split-function-inner [func : CompilerIrFunction]) : CompilerIrFunction
   (match func

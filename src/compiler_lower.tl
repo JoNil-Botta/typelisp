@@ -34775,6 +34775,8 @@
     [(AstBinOp.Sub) true]
     [(AstBinOp.Mod) true]
     [(AstBinOp.BitAnd) true]
+    [(AstBinOp.BitOr) true]
+    [(AstBinOp.BitXor) true]
     [(AstBinOp.Eq) true]
     [(AstBinOp.Ne) true]
     [(AstBinOp.Lt) true]
@@ -43498,6 +43500,36 @@
         lanes
         expr
         (CompilerIrBinOp.BitAnd)
+        left
+        right)]
+    [(AstBinOp.BitOr)
+      (lower-avx512-masked-vector-binop
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        expr
+        (CompilerIrBinOp.BitOr)
+        left
+        right)]
+    [(AstBinOp.BitXor)
+      (lower-avx512-masked-vector-binop
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        expr
+        (CompilerIrBinOp.BitXor)
         left
         right)]
     [(AstBinOp.Mul)
@@ -57669,6 +57701,18 @@
         [(CompilerIrInstrVectorBinOpPayload.Payload _ _ _ _ _ _) 1])]
     [_ 0]))
 
+(define (lower-test-instr-vector-binop-op-count
+  [instr : CompilerIrInstr]
+  [want : CompilerIrBinOp]) : i64
+  (match instr
+    [(CompilerIrInstr.VectorBinOp payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorBinOpPayload.Payload _ op _ _ _ _)
+          (if (lower-test-binop-same? op want)
+            1
+            0)])]
+    [_ 0]))
+
 (define (lower-test-instr-vector-reduce-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(CompilerIrInstr.VectorReduce _ _ _ _ _) 1]
@@ -58418,6 +58462,27 @@
           (set! index (+ index 1))))
       acc)))
 
+(define (lower-test-instr-seq-vector-binop-op-count
+  [instrs : CompilerIrInstrSeq]
+  [want : CompilerIrBinOp]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-vector-binop-op-count
+                (array-ref slots index)
+                want)))
+          (set! index (+ index 1))))
+      acc)))
+
 (define (lower-test-instr-seq-vector-reduce-count [instrs : CompilerIrInstrSeq]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -58959,6 +59024,22 @@
             (lower-test-blocks-vector-binop-count (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (lower-test-blocks-vector-binop-count (compiler-ir-block-seq-to-list seq))]))
+
+(define (lower-test-blocks-vector-binop-op-count
+  [blocks : CompilerIrBlockList]
+  [want : CompilerIrBinOp]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-vector-binop-op-count instrs want)
+            (lower-test-blocks-vector-binop-op-count (box-get rest) want))])]
+    [(CompilerIrBlockList.Array seq)
+      (lower-test-blocks-vector-binop-op-count
+        (compiler-ir-block-seq-to-list seq)
+        want)]))
 
 (define (lower-test-blocks-vector-reduce-count [blocks : CompilerIrBlockList]) : i64
   (match blocks
@@ -59613,6 +59694,24 @@
       (lower-test-function-vector-binop-count
         (compiler-ir-function-seq-to-list seq)
         name)]))
+
+(define (lower-test-function-vector-binop-op-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [want : CompilerIrBinOp]) : i64
+  (match funcs
+    [(CompilerIrFunctionList.Nil) (- 0 1)]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function fname _ _ _ blocks)
+          (if (string.eq (compiler-ir-symbol-text fname) name)
+            (lower-test-blocks-vector-binop-op-count blocks want)
+            (lower-test-function-vector-binop-op-count (box-get rest) name want))])]
+    [(CompilerIrFunctionList.Array seq)
+      (lower-test-function-vector-binop-op-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        want)]))
 
 (define (lower-test-function-vector-reduce-count
   [funcs : CompilerIrFunctionList]
@@ -63805,6 +63904,19 @@
         (+ (array-ref xs i) bias)
         (- (array-ref xs i) bias)))))")
 
+(define (compiler-lower-masked-if-bitwise-value-source) : String
+  "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (let
+      [x : i64 (array-ref xs i)]
+      (array-set! out i
+        (if (< x 8)
+          (bit-or 1 x)
+          (match (bit-and x 3)
+            [0 (bit-xor x 3)]
+            [_ (bit-or (bit-xor x 5) 2)]))))))")
+
 (define (compiler-lower-avx512-masked-if-nested-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
@@ -64016,6 +64128,50 @@
               (= select-count 2)
               (= tail-mask-count 2)
               (>= shape-count 16)))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-masked-if-bitwise-value-shape-ok?
+  [mode : CompilerLowerMode]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-masked-if-bitwise-value-source)
+    mode)
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (let
+            [lanes : i64 (lower-simd-lanes-for-elem mode (AstType.I64))]
+            [binop-count : i64
+              (lower-test-function-vector-binop-count functions "fill")]
+            [bit-or-count : i64
+              (lower-test-function-vector-binop-op-count
+                functions
+                "fill"
+                (CompilerIrBinOp.BitOr))]
+            [bit-xor-count : i64
+              (lower-test-function-vector-binop-op-count
+                functions
+                "fill"
+                (CompilerIrBinOp.BitXor))]
+            [pred-load-count : i64
+              (lower-test-function-predicated-load-count functions "fill")]
+            [pred-store-count : i64
+              (lower-test-function-predicated-store-count functions "fill")]
+            [select-count : i64
+              (lower-test-function-select-count functions "fill")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                lanes
+                (AstType.I64))]
+            (and
+              (>= binop-count 8)
+              (>= bit-or-count 4)
+              (>= bit-xor-count 4)
+              (>= pred-load-count 2)
+              (= pred-store-count 2)
+              (>= select-count 4)
+              (>= shape-count 18)))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-masked-if-nested-shape-ok?) : bool
@@ -64335,6 +64491,9 @@
     (compiler-lower-avx512-masked-if-value-shape-ok?)
     (compiler-lower-masked-if-bitand-value-shape-ok? (CompilerLowerMode.Avx2))
     (compiler-lower-masked-if-bitand-value-shape-ok? (CompilerLowerMode.Avx512))
+    (compiler-lower-masked-if-bitwise-value-shape-ok? (CompilerLowerMode.Avx2))
+    (compiler-lower-masked-if-bitwise-value-shape-ok?
+      (CompilerLowerMode.Avx512))
     (compiler-lower-avx512-masked-if-nested-shape-ok?)
     (compiler-lower-avx2-masked-if-shape-ok?)))
 

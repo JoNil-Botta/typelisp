@@ -104,6 +104,7 @@ tests/spmd/masked_if_index_value_i64.tl
 tests/spmd/masked_if_index_mod_i64.tl
 tests/spmd/masked_if_value_i64.tl
 tests/spmd/masked_if_bitand_value_i64.tl
+tests/spmd/masked_if_bitwise_value_types.tl
 tests/spmd/masked_if_value_types.tl
 tests/spmd/masked_if_nested_i64.tl
 tests/spmd/masked_if_i16_u16.tl
@@ -358,6 +359,61 @@ verify_avx2_varying_enum_match_shape() {
     fi
 }
 
+verify_masked_bitwise_shape() {
+    _mode=$1
+    compile_spmd_mode tests/spmd/masked_if_bitwise_value_types.tl "$_mode"
+    _tag=tests_spmd_masked_if_bitwise_value_types_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] masked-bitwise $_mode shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/masked_if_bitwise_value_types.tl $_mode (shape compile)" >> "$FAILURES"
+        return
+    fi
+    for lane in i8 u8 i16 u16 i32 u32 i64 u64; do
+        _func="$WORKDIR/$_tag.$_mode.$lane.s"
+        sed -n \
+            "/^_tl_masked_if_bitwise_value_types_case_$lane:/,/^$/p" \
+            "$_asm" > "$_func"
+        if [ ! -s "$_func" ]; then
+            echo "[spmd-simd] masked-bitwise $_mode missing case-$lane body" >&2
+            echo "tests/spmd/masked_if_bitwise_value_types.tl $_mode (missing case-$lane)" >> "$FAILURES"
+            continue
+        fi
+        if [ "$_mode" = avx2 ]; then
+            _or_opcode=vpor
+            _xor_opcode=vpxor
+        else
+            case "$lane" in
+                i64 | u64)
+                    _or_opcode=vporq
+                    _xor_opcode=vpxorq
+                    ;;
+                *)
+                    _or_opcode=vpord
+                    _xor_opcode=vpxord
+                    ;;
+            esac
+        fi
+        for opcode in "$_or_opcode" "$_xor_opcode"; do
+            if ! grep -F -- "$opcode" "$_func" > /dev/null; then
+                echo "[spmd-simd] masked-bitwise $_mode case-$lane missing $opcode" >&2
+                echo "tests/spmd/masked_if_bitwise_value_types.tl $_mode case-$lane (missing $opcode)" >> "$FAILURES"
+            fi
+        done
+        if [ "$_mode" = avx2 ] &&
+            ! grep -F -- "%ymm" "$_func" > /dev/null; then
+            echo "[spmd-simd] masked-bitwise AVX2 case-$lane lacks vector code" >&2
+            echo "tests/spmd/masked_if_bitwise_value_types.tl avx2 case-$lane (scalar fallback)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx512 ] &&
+            ! grep -E -- '%zmm[0-9]+.*\{%k[0-7]\}' "$_func" > /dev/null; then
+            echo "[spmd-simd] masked-bitwise AVX-512 case-$lane lacks predication" >&2
+            echo "tests/spmd/masked_if_bitwise_value_types.tl avx512 case-$lane (scalar fallback)" >> "$FAILURES"
+        fi
+    done
+}
+
 while IFS= read -r prog; do
     [ -n "$prog" ] || continue
     if [ ! -f "$prog" ]; then
@@ -424,6 +480,8 @@ done
 
 verify_avx2_varying_while_shape
 verify_avx2_varying_enum_match_shape
+verify_masked_bitwise_shape avx2
+verify_masked_bitwise_shape avx512
 
 # Gather safety is a runtime property, not a same-exit result. Exercise a full
 # gang with multiple invalid active lanes in every runnable mode. The lowering

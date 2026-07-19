@@ -1780,6 +1780,287 @@
       42)
     42))
 
+(define (smoke-inline-phi-header [latch-label : String]) : CompilerIrInstr
+  (CompilerIrInstr.Phi
+    1
+    (compiler-ir-phi-input-cons
+      (CompilerIrValue.I64 0)
+      "entry"
+      (compiler-ir-phi-input-cons
+        (CompilerIrValue.Var 0)
+        latch-label
+        CompilerIrPhiInputList.Nil))
+    (AstType.I64)))
+
+(define (smoke-inline-phi-exit [latch-label : String]) : CompilerIrInstr
+  (CompilerIrInstr.Phi
+    2
+    (compiler-ir-phi-input-cons
+      (CompilerIrValue.Var 1)
+      "header"
+      (compiler-ir-phi-input-cons
+        (CompilerIrValue.Var 0)
+        latch-label
+        CompilerIrPhiInputList.Nil))
+    (AstType.I64)))
+
+(define (smoke-inline-phi-caller-with-call
+  [symbols : OptInlineMultiTestSymbols]
+  [call : CompilerIrInstr]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols main)
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "header")
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "header"
+          (compiler-ir-instr-cons
+            (smoke-inline-phi-header "latch")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch
+                (CompilerIrValue.Bool true)
+                "latch"
+                "exit")
+              CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "latch"
+            (compiler-ir-instr-cons
+              call
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Bool true)
+                  "header"
+                  "exit")
+                CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons
+                (smoke-inline-phi-exit "latch")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                  CompilerIrInstrList.Nil)))
+            CompilerIrBlockList.Nil))))))
+
+(define (smoke-inline-phi-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "a" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "b" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "c" (AstType.I64) 2)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "d" (AstType.I64) 3)
+          CompilerIrParamList.Nil)))))
+
+(define (smoke-inline-phi-callee-mov) : CompilerIrInstr
+  (CompilerIrInstr.Mov 4 (CompilerIrValue.I64 7) (AstType.I64)))
+
+(define (smoke-inline-phi-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols inline-branch)
+    (smoke-inline-phi-params)
+    (AstType.I64)
+    5
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (smoke-inline-phi-callee-mov)
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "exit")
+            CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "exit"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+(define (smoke-inline-phi-call [symbols : OptInlineMultiTestSymbols]) : CompilerIrInstr
+  (let
+    [values : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
+    (begin
+      (array-set! values 0 (CompilerIrValue.I64 1))
+      (array-set! values 1 (CompilerIrValue.I64 2))
+      (array-set! values 2 (CompilerIrValue.I64 3))
+      (array-set! values 3 (CompilerIrValue.I64 4))
+      (CompilerIrInstr.Call
+        0
+        (struct-get symbols inline-branch)
+        (CompilerIrCallArgs.Array values)
+        (AstType.I64)))))
+
+(define (smoke-inline-phi-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (smoke-inline-phi-caller-with-call symbols (smoke-inline-phi-call symbols)))
+
+(define (smoke-inline-phi-functions [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (smoke-inline-phi-caller symbols)
+    (compiler-ir-function-cons
+      (smoke-inline-phi-callee symbols)
+      CompilerIrFunctionList.Nil)))
+
+(define (smoke-inline-phi-loop-repaired? [blocks : CompilerIrBlockList]) : bool
+  (match (opt-cfg-find-block blocks "header")
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some header)
+      (match header
+        [(CompilerIrBlock.Block _ instrs)
+          (match (compiler-ir-instr-seq-ref instrs 0)
+            [(CompilerIrInstr.Phi _ inputs _)
+              (if (opt-phi-input-list-eq
+                inputs
+                (match (smoke-inline-phi-header "inl.latch.0.cont")
+                  [(CompilerIrInstr.Phi _ expected _) expected]
+                  [_ CompilerIrPhiInputList.Nil]))
+                (match (opt-cfg-find-block blocks "exit")
+                  [(OptMaybeBlock.No) false]
+                  [(OptMaybeBlock.Some exit)
+                    (match exit
+                      [(CompilerIrBlock.Block _ exit-instrs)
+                        (match (compiler-ir-instr-seq-ref exit-instrs 0)
+                          [(CompilerIrInstr.Phi _ exit-inputs _)
+                            (opt-phi-input-list-eq
+                              exit-inputs
+                              (match (smoke-inline-phi-exit "inl.latch.0.cont")
+                                [(CompilerIrInstr.Phi _ expected _) expected]
+                                [_ CompilerIrPhiInputList.Nil]))]
+                          [_ false])])])
+                false)]
+            [_ false])])]))
+
+(define (smoke-inline-phi-positive-code) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions (smoke-inline-phi-functions symbols) 2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptMaybeFunction.Some main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (cond
+            [(not
+                (= (opt-count-direct-call-name-blocks blocks "inline_branch") 0))
+              11]
+            [(not (= (compiler-ir-block-list-count blocks) 7))
+              (+ 20 (compiler-ir-block-list-count blocks))]
+            [(not (= (opt-count-phi-blocks blocks) 2))
+              (+ 40 (opt-count-phi-blocks blocks))]
+            [(not (smoke-inline-phi-loop-repaired? blocks)) 61]
+            [(not (opt-inline-structure-ok? blocks)) 62]
+            [else 42]))]
+      [(OptMaybeFunction.No) 10])))
+
+(define (smoke-inline-phi-spans?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [call : CompilerIrInstr (smoke-inline-phi-call symbols)]
+    [header-phi : CompilerIrInstr (smoke-inline-phi-header "latch")]
+    [exit-phi : CompilerIrInstr (smoke-inline-phi-exit "latch")]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (compiler-source-spans-insert-instr
+            (opt-spans-base)
+            "main"
+            call
+            (opt-test-span 161 31))
+          "main"
+          header-phi
+          (opt-test-span 162 33))
+        "main"
+        exit-phi
+        (opt-test-span 163 35))]
+    [result-mov : CompilerIrInstr
+      (CompilerIrInstr.Mov 0 (CompilerIrValue.Var 3) (AstType.I64))]
+    [repaired-header : CompilerIrInstr
+      (smoke-inline-phi-header "inl.latch.0.cont")]
+    [repaired-exit : CompilerIrInstr (smoke-inline-phi-exit "inl.latch.0.cont")]
+    (match (opt-inline-program-functions-with-spans
+      (smoke-inline-phi-functions symbols)
+      2
+      spans)
+      [(OptInlineSpanProgram.Program optimized optimized-spans)
+        (match (opt-function-list-find optimized "main")
+          [(OptMaybeFunction.Some main)
+            (let
+              [blocks : CompilerIrBlockList (opt-function-blocks main)]
+              (and
+                (= (opt-count-direct-call-name-blocks blocks "inline_branch") 0)
+                (smoke-inline-phi-loop-repaired? blocks)
+                (opt-inline-structure-ok? blocks)
+                (opt-span-lookup-ok? optimized-spans "main" result-mov 161 31)
+                (opt-span-lookup-ok?
+                  optimized-spans
+                  "main"
+                  repaired-header
+                  162
+                  33)
+                (opt-span-lookup-ok?
+                  optimized-spans
+                  "main"
+                  repaired-exit
+                  163
+                  35)))]
+          [(OptMaybeFunction.No) false])])))
+
+(define (smoke-inline-phi-refusal?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [caller : CompilerIrFunction (smoke-inline-phi-caller symbols)]
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (compiler-ir-function-cons caller CompilerIrFunctionList.Nil)
+        2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptMaybeFunction.Some main) (opt-function-eq main caller)]
+      [(OptMaybeFunction.No) false])))
+
+(define (smoke-inline-phi-nonleaf-cost?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [caller : CompilerIrFunction
+      (smoke-inline-phi-caller-with-call
+        symbols
+        (CompilerIrInstr.Call
+          0
+          (struct-get symbols inline-nonleaf)
+          CompilerIrCallArgs.Nil
+          (AstType.I64)))]
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (compiler-ir-function-cons
+          caller
+          (compiler-ir-function-cons
+            (opt-inline-nonleaf-callee symbols)
+            CompilerIrFunctionList.Nil))
+        2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptMaybeFunction.Some main) (opt-function-eq main caller)]
+      [(OptMaybeFunction.No) false])))
+
+(define (smoke-inline-phi-predecessor-self-test) : i64
+  (let
+    [positive : i64 (smoke-inline-phi-positive-code)]
+    (cond
+      [(not (= positive 42)) positive]
+      [(not (smoke-inline-phi-spans?)) 2]
+      [(not (smoke-inline-phi-refusal?)) 3]
+      [(not (smoke-inline-phi-nonleaf-cost?)) 4]
+      [else 42])))
+
 (define (smoke-optimizer-late-self-tests) : i64
   (begin
     (compiler-optimize-self-test-require-i64!
@@ -1793,6 +2074,10 @@
     (compiler-optimize-self-test-require-i64!
       "compiler-optimize-inline-self-test"
       (compiler-optimize-inline-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-inline-phi-predecessor-self-test"
+      (smoke-inline-phi-predecessor-self-test)
       42)
     (compiler-optimize-self-test-require-i64!
       "compiler-optimize-fixed-point-self-test"
@@ -2001,3 +2286,10 @@
     (compiler-optimize-successor-sink-self-test)
     42
     "Successor sinking moves pure chains and rejects unsafe CFG/memory/trap cases"))
+
+(test
+  inline-multiblock-phi-predecessor
+  (test.assert-i64-eq
+    (smoke-inline-phi-predecessor-self-test)
+    42
+    "multiblock inline repairs loop phi predecessors and source spans"))

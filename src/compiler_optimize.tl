@@ -16006,6 +16006,11 @@
         (match base-kind
           [(OptLicmPtrKind.DataBuffer object)
             (OptLicmPtrKind.DataElement object)]
+          [(OptLicmPtrKind.DataElement object)
+            ;; Address adjustment within a loaded data buffer stays in that
+            ;; buffer. Lowering commonly emits one Gep for the scaled slot
+            ;; address and another for an inline field within the slot.
+            (OptLicmPtrKind.DataElement object)]
           [_
             (if (opt-licm-array-header-var? types base-var)
               (if (opt-bounds-object-length-slot? offset ty)
@@ -58120,6 +58125,47 @@
                 (opt-licm-loop-finish-instrs)))))))
     8))
 
+;; Hashmap slots add an inline-field Gep after the scaled slot-address Gep.
+;; Both hops remain inside the separately allocated data buffer, so neither
+;; store can change the descriptor's data/length fields.
+(define (opt-licm-header-load-element-gep-chain-store-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        7
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 8 (CompilerIrValue.Var 7) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            9
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.I64 0)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 10 (CompilerIrValue.Var 9) (AstType.U64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                11
+                (CompilerIrValue.Var 10)
+                (CompilerIrValue.Var 4)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Gep
+                  12
+                  (CompilerIrValue.Var 11)
+                  (CompilerIrValue.I64 8)
+                  (AstType.U8))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.StorePtr
+                    (CompilerIrValue.Var 12)
+                    (CompilerIrValue.I64 100)
+                    (AstType.I64))
+                  (opt-licm-loop-finish-instrs))))))))
+    8))
+
 (define (opt-licm-header-load-header-store-blocks) : CompilerIrBlockList
   (opt-licm-loop-blocks-with-body
     (compiler-ir-instr-cons
@@ -58234,6 +58280,32 @@
             (CompilerIrValue.I64 103)
             (AstType.I64))
           (opt-licm-loop-finish-instrs))))
+    8))
+
+;; A Gep does not sanitize an unknown/escaped raw pointer. Its store remains a
+;; full alias barrier for descriptor loads.
+(define (opt-licm-header-load-unknown-gep-store-blocks) : CompilerIrBlockList
+  (opt-licm-loop-blocks-with-body
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        7
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 8 (CompilerIrValue.Var 7) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            9
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 8)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 9)
+              (CompilerIrValue.I64 103)
+              (AstType.I64))
+            (opt-licm-loop-finish-instrs)))))
     8))
 
 (define (opt-licm-element-load-element-store-blocks) : CompilerIrBlockList
@@ -58884,6 +58956,11 @@
         (opt-licm-header-load-element-store-blocks))]
     [header-element : CompilerIrBlockList
       (opt-function-blocks header-element-func)]
+    [header-element-chain-func : CompilerIrFunction
+      (opt-licm-array-optimized-function
+        (opt-licm-header-load-element-gep-chain-store-blocks))]
+    [header-element-chain : CompilerIrBlockList
+      (opt-function-blocks header-element-chain-func)]
     [header-store-func : CompilerIrFunction
       (opt-licm-array-optimized-function
         (opt-licm-header-load-header-store-blocks))]
@@ -58917,6 +58994,11 @@
         (opt-licm-header-load-unknown-store-blocks))]
     [unknown-store : CompilerIrBlockList
       (opt-function-blocks unknown-store-func)]
+    [unknown-gep-store-func : CompilerIrFunction
+      (opt-licm-array-optimized-function
+        (opt-licm-header-load-unknown-gep-store-blocks))]
+    [unknown-gep-store : CompilerIrBlockList
+      (opt-function-blocks unknown-gep-store-func)]
     [element-load-func : CompilerIrFunction
       (opt-licm-array-optimized-function
         (opt-licm-element-load-element-store-blocks))]
@@ -59029,6 +59111,16 @@
           (& direct-clean-built)
           (compiler-ir-symbol-id (struct-get symbols leaf)))
         64]
+      ;; A descriptor load crosses the two-Gep data-buffer store chain.
+      [(not (opt-verify-ok? (opt-verify-function header-element-chain-func)))
+        65]
+      [(not (= (opt-count-load-label-blocks header-element-chain "entry") 2))
+        66]
+      [(not (= (opt-count-load-label-blocks header-element-chain "loop") 0)) 67]
+      ;; The corresponding unknown-pointer chain must remain a barrier.
+      [(not (opt-verify-ok? (opt-verify-function unknown-gep-store-func))) 68]
+      [(not (= (opt-count-load-label-blocks unknown-gep-store "entry") 0)) 69]
+      [(not (= (opt-count-load-label-blocks unknown-gep-store "loop") 1)) 70]
       [else 42])))
 
 (define (opt-induction-params) : CompilerIrParamList
@@ -66365,7 +66457,12 @@
                             (opt-load-header-var? hs bvar)))
                         invalidated))]
                   [_ invalidated])]
-              [(OptLoadLocScaledField _ _ _ _) invalidated])]
+              [(OptLoadLocScaledField _ _ _ _)
+                ;; A Gep from a scaled data-buffer address may no longer fit
+                ;; the canonical ScaledField key, but it is still an element
+                ;; address. Keep the coarser location fact so stores through
+                ;; inline slot-field Geps do not masquerade as unknown writes.
+                (opt-load-kinds-bind invalidated dst (OptLoadLocElement))])]
           [_ invalidated])]
       [(CompilerIrInstr.Load dst src ty)
         (match src
@@ -69251,6 +69348,56 @@
                 (CompilerIrInstr.Load 7 (CompilerIrValue.Var 4) (AstType.I64))
                 (CompilerIrInstrList.Nil)))))))))
 
+;; Hashmap slot stores use a scaled data-buffer Gep followed by an unscaled
+;; inline-field Gep. The latter must retain element provenance so it preserves
+;; cached descriptor-field loads while still invalidating buffer loads.
+(define (opt-load-cse-element-gep-chain-store-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          4
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 0)
+          (AstType.U64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.U64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              6
+              (CompilerIrValue.Var 5)
+              (CompilerIrValue.Var 3)
+              (AstType.U8))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                7
+                (CompilerIrValue.Var 6)
+                (CompilerIrValue.I64 8)
+                (AstType.U8))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.StorePtr
+                  (CompilerIrValue.Var 7)
+                  (CompilerIrValue.I64 9)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    8
+                    (CompilerIrValue.Var 0)
+                    (CompilerIrValue.I64 1)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Load
+                      9
+                      (CompilerIrValue.Var 8)
+                      (AstType.I64))
+                    (CompilerIrInstrList.Nil)))))))))))
+
 (define (opt-load-cse-cap-self-test?) : bool
   (let
     [key0 : OptLoadKey
@@ -69551,6 +69698,9 @@
       (opt-load-cse-run-with-params
         (opt-load-cse-descriptor-ref-params)
         (opt-load-cse-descriptor-data-root-instrs))]
+    [element-gep-chain-store : CompilerIrInstrList
+      (opt-load-cse-run-with-array-param
+        (opt-load-cse-element-gep-chain-store-instrs))]
     [global-store : bool
       (opt-load-cse-barrier-blocked?
         (CompilerIrInstr.Store
@@ -69751,4 +69901,14 @@
       [(not extern-call) 73]
       [(not volatile-call) 74]
       [(not atomic-call) 75]
+      [(not (= (opt-count-load-instrs element-gep-chain-store) 2)) 76]
+      [(not
+          (=
+            (opt-count-mov-dst-var-src
+              element-gep-chain-store
+              9
+              3
+              (AstType.I64))
+            1))
+        77]
       [else 44])))

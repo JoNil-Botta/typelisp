@@ -33124,24 +33124,25 @@
     true
     (let
       [def-tag : i64 (array-ref (struct-get context defs) var)]
-      (if (> (array-ref (struct-get context loop-phi-leaves) var) 0)
-        (let
-          [_rematerialized : bool
-            (if (> def-tag 0)
-              (opt-successor-sink-try-induction-remat!
-                context
-                var
-                (compiler-ir-instr-seq-ref
-                  (struct-get context instrs)
-                  (- def-tag 1))
-                (&mut builder)
-                origins)
-              false)]
-          ;; A loop phi is already live around the natural loop. If the
-          ;; specialized pointer recipe cannot prove a synchronized unit-step
-          ;; IV, retaining the phi as the moved instruction's leaf is safe.
-          true)
-        (if (<= def-tag 0)
+      (cond
+        [(> (array-ref (struct-get context loop-phi-leaves) var) 0)
+          (let
+            [_rematerialized : bool
+              (if (> def-tag 0)
+                (opt-successor-sink-try-induction-remat!
+                  context
+                  var
+                  (compiler-ir-instr-seq-ref
+                    (struct-get context instrs)
+                    (- def-tag 1))
+                  (&mut builder)
+                  origins)
+                false)]
+            ;; A loop phi is already live around the natural loop. If the
+            ;; specialized pointer recipe cannot prove a synchronized unit-step
+            ;; IV, retaining the phi as the moved instruction's leaf is safe.
+            true)]
+        [(<= def-tag 0)
           ;; A value with no function definition is a parameter. An external value
           ;; used by a loop header is already live around the natural loop, so it
           ;; remains a safe leaf in a header successor. Target/terminator uses and
@@ -33149,118 +33150,113 @@
           (or
             (<= (array-ref (struct-get context all-defs) var) 0)
             (struct-get context source-loop-target)
-            (> (array-ref (struct-get context terminator-live) var) 0))
-          (if (> (array-ref (struct-get context visiting) var) 0)
-            false
-            (let
-              [index : i64 (- def-tag 1)]
-              [producer : CompilerIrInstr
-                (compiler-ir-instr-seq-ref (struct-get context instrs) index)]
-              [all-move? : bool
-                (=
-                  (array-ref (struct-get context total-uses) var)
-                  (opt-successor-sink-covered-use-count
-                    context
-                    pending-moves
-                    var))]
-              [can-move? : bool
-                (and
-                  all-move?
-                  (opt-successor-sink-candidate?
-                    (struct-get context instrs)
-                    index
-                    (struct-get context terminator-index)
-                    producer))]
-              (begin
-                (array-set! (struct-get context visiting) var 1)
-                (cond
-                  [can-move?
+            (> (array-ref (struct-get context terminator-live) var) 0))]
+        [(> (array-ref (struct-get context visiting) var) 0) false]
+        [else
+          (let
+            [index : i64 (- def-tag 1)]
+            [producer : CompilerIrInstr
+              (compiler-ir-instr-seq-ref (struct-get context instrs) index)]
+            [all-move? : bool
+              (=
+                (array-ref (struct-get context total-uses) var)
+                (opt-successor-sink-covered-use-count context pending-moves var))]
+            [can-move? : bool
+              (and
+                all-move?
+                (opt-successor-sink-candidate?
+                  (struct-get context instrs)
+                  index
+                  (struct-get context terminator-index)
+                  producer))]
+            (begin
+              (array-set! (struct-get context visiting) var 1)
+              (cond
+                [can-move?
+                  (let
+                    [next-pending : CompilerIrInstrList
+                      (compiler-ir-instr-cons producer pending-moves)]
+                    [ok : bool
+                      (opt-successor-sink-prepare-operands!
+                        context
+                        producer
+                        next-pending
+                        (&mut builder)
+                        origins)]
+                    (begin
+                      (if ok
+                        (begin
+                          (opt-successor-sink-append-prepared!
+                            context
+                            (&mut builder)
+                            origins
+                            (opt-successor-sink-subst-instr
+                              (struct-get context frame)
+                              (struct-get context remap)
+                              producer)
+                            index)
+                          (array-set! (struct-get context removed) index 1)
+                          (array-set! (struct-get context planned) var 1))
+                        unit)
+                      (array-set! (struct-get context visiting) var 0)
+                      ok))]
+                [(and
+                    (opt-successor-sink-remat-candidate? producer)
+                    (< (array-ref (struct-get context clone-count) 0) 4))
+                  (begin
+                    ;; Reserve the chain slot before descending so a fifth
+                    ;; in-progress clone cannot pass a count that has not yet
+                    ;; been committed while recursion unwinds.
+                    (array-set!
+                      (struct-get context clone-count)
+                      0
+                      (+ (array-ref (struct-get context clone-count) 0) 1))
                     (let
-                      [next-pending : CompilerIrInstrList
-                        (compiler-ir-instr-cons producer pending-moves)]
+                      ;; The original producer remains in the source. Do not
+                      ;; put it in `pending-moves`: its operand uses remain
+                      ;; there and force transitive rematerialization as needed.
                       [ok : bool
                         (opt-successor-sink-prepare-operands!
                           context
                           producer
-                          next-pending
+                          pending-moves
                           (&mut builder)
                           origins)]
-                      (begin
-                        (if ok
+                      (if ok
+                        (let
+                          [fresh : i64
+                            (opt-bce-version-alloc-var
+                              (struct-get context frame-cell))]
+                          [rewritten : CompilerIrInstr
+                            (opt-successor-sink-subst-instr
+                              (struct-get context frame)
+                              (struct-get context remap)
+                              producer)]
                           (begin
+                            (array-set!
+                              (struct-get context remap)
+                              var
+                              (+ fresh 1))
                             (opt-successor-sink-append-prepared!
                               context
                               (&mut builder)
                               origins
-                              (opt-successor-sink-subst-instr
-                                (struct-get context frame)
-                                (struct-get context remap)
-                                producer)
-                              index)
-                            (array-set! (struct-get context removed) index 1)
-                            (array-set! (struct-get context planned) var 1))
-                          unit)
-                        (array-set! (struct-get context visiting) var 0)
-                        ok))]
-                  [(and
-                      (opt-successor-sink-remat-candidate? producer)
-                      (< (array-ref (struct-get context clone-count) 0) 4))
-                    (begin
-                      ;; Reserve the chain slot before descending so a fifth
-                      ;; in-progress clone cannot pass a count that has not yet
-                      ;; been committed while recursion unwinds.
-                      (array-set!
-                        (struct-get context clone-count)
-                        0
-                        (+ (array-ref (struct-get context clone-count) 0) 1))
-                      (let
-                        ;; The original producer remains in the source. Do not
-                        ;; put it in `pending-moves`: its operand uses remain
-                        ;; there and force transitive rematerialization as needed.
-                        [ok : bool
-                          (opt-successor-sink-prepare-operands!
-                            context
-                            producer
-                            pending-moves
-                            (&mut builder)
-                            origins)]
-                        (if ok
-                          (let
-                            [fresh : i64
-                              (opt-bce-version-alloc-var
-                                (struct-get context frame-cell))]
-                            [rewritten : CompilerIrInstr
-                              (opt-successor-sink-subst-instr
-                                (struct-get context frame)
-                                (struct-get context remap)
-                                producer)]
-                            (begin
-                              (array-set!
-                                (struct-get context remap)
-                                var
-                                (+ fresh 1))
-                              (opt-successor-sink-append-prepared!
-                                context
-                                (&mut builder)
-                                origins
-                                (opt-successor-sink-remat-clone fresh rewritten)
-                                (- 0 1))
-                              (array-set! (struct-get context planned) var 1)
-                              (array-set! (struct-get context visiting) var 0)
-                              true))
-                          (begin
-                            (array-set!
-                              (struct-get context clone-count)
-                              0
-                              (-
-                                (array-ref (struct-get context clone-count) 0)
-                                1))
+                              (opt-successor-sink-remat-clone fresh rewritten)
+                              (- 0 1))
+                            (array-set! (struct-get context planned) var 1)
                             (array-set! (struct-get context visiting) var 0)
-                            false))))]
-                  [else
-                    (begin
-                      (array-set! (struct-get context visiting) var 0)
-                      false)])))))))))
+                            true))
+                        (begin
+                          (array-set!
+                            (struct-get context clone-count)
+                            0
+                            (- (array-ref (struct-get context clone-count) 0) 1))
+                          (array-set! (struct-get context visiting) var 0)
+                          false))))]
+                [else
+                  (begin
+                    (array-set! (struct-get context visiting) var 0)
+                    false)])))]))))
 
 (define (opt-successor-sink-prepare-root
   [frame : i64]

@@ -56896,81 +56896,86 @@
 
 (define (macro-surface-decl-macro-in-module?
   [decl : CompilerLoadSurfaceDecl]
-  [target-module : String]
-  [base : String]) : bool
+  [target-module-id : i64]
+  [base-id : i64]) : bool
   (and
-    (string.eq (intern-str (struct-get decl module)) target-module)
-    (string.eq (intern-str (struct-get decl name)) base)
+    (= (struct-get decl module) target-module-id)
+    (= (struct-get decl name) base-id)
     (match (struct-get decl kind)
       [(CompilerLoadSurfaceMacro) true]
       [_ false])))
 
 (define (macro-surface-decls-macro-in-module?
   [decls : CompilerLoadSurfaceDeclList]
-  [target-module : String]
-  [base : String]) : bool
+  [target-module-id : i64]
+  [base-id : i64]) : bool
   (match decls
     [(CompilerLoadSurfaceDeclNil) false]
     [(CompilerLoadSurfaceDeclCons decl rest)
       (or
-        (macro-surface-decl-macro-in-module? decl target-module base)
-        (macro-surface-decls-macro-in-module? (box-get rest) target-module base))]))
+        (macro-surface-decl-macro-in-module? decl target-module-id base-id)
+        (macro-surface-decls-macro-in-module?
+          (box-get rest)
+          target-module-id
+          base-id))]))
 
 (define (macro-surface-summaries-macro-in-module?
   [summaries : CompilerLoadSurfaceSummaryList]
-  [target-module : String]
-  [base : String]) : bool
+  [target-module-id : i64]
+  [base-id : i64]) : bool
   (match summaries
     [(CompilerLoadSurfaceSummaryNil) false]
     [(CompilerLoadSurfaceSummaryCons summary rest)
       (or
         (macro-surface-decls-macro-in-module?
           (struct-get summary decls)
-          target-module
-          base)
+          target-module-id
+          base-id)
         (macro-surface-summaries-macro-in-module?
           (box-get rest)
-          target-module
-          base))]))
+          target-module-id
+          base-id))]))
 
 (define (macro-surface-macro-in-module?
-  [target-module : String]
-  [base : String]) : bool
+  [target-module-id : i64]
+  [base-id : i64]) : bool
   (macro-surface-summaries-macro-in-module?
     (compiler-load-surface-summaries)
-    target-module
-    base))
+    target-module-id
+    base-id))
 
 (define (macro-surface-decls-module-has-macro?
   [decls : CompilerLoadSurfaceDeclList]
-  [target-module : String]) : bool
+  [target-module-id : i64]) : bool
   (match decls
     [(CompilerLoadSurfaceDeclNil) false]
     [(CompilerLoadSurfaceDeclCons decl rest)
       (or
         (and
-          (string.eq (intern-str (struct-get decl module)) target-module)
+          (= (struct-get decl module) target-module-id)
           (match (struct-get decl kind)
             [(CompilerLoadSurfaceMacro) true]
             [_ false]))
-        (macro-surface-decls-module-has-macro? (box-get rest) target-module))]))
+        (macro-surface-decls-module-has-macro? (box-get rest) target-module-id))]))
 
 (define (macro-surface-summaries-module-has-macro?
   [summaries : CompilerLoadSurfaceSummaryList]
-  [target-module : String]) : bool
+  [target-module-id : i64]) : bool
   (match summaries
     [(CompilerLoadSurfaceSummaryNil) false]
     [(CompilerLoadSurfaceSummaryCons summary rest)
       (or
         (macro-surface-decls-module-has-macro?
           (struct-get summary decls)
-          target-module)
-        (macro-surface-summaries-module-has-macro? (box-get rest) target-module))]))
+          target-module-id)
+        (macro-surface-summaries-module-has-macro?
+          (box-get rest)
+          target-module-id))]))
 
-(define (macro-surface-module-has-macro? [target-module : String]) : bool
+(define (macro-surface-module-has-macro? [target-module-id : i64]) : bool
   (macro-surface-summaries-module-has-macro?
     (compiler-load-surface-summaries)
-    target-module))
+    target-module-id))
 
 (defenum MacroSurfaceCallDeclCacheLookup
   (Miss)
@@ -60058,32 +60063,69 @@
   [_call-expr : AstExpr]) : ResultMacroCallDecl
   (macro-prelude-resolve (tc-context-symbols ctx) lookup-name-id))
 
+(define macro-stdlib-result-identity-table-id : i64
+  -1)
+(define macro-stdlib-result-identity-generation : i64
+  -1)
+(define macro-stdlib-result-identity-pool-len : i64
+  -1)
+(define macro-stdlib-result-module-id : i64
+  -1)
+(define macro-stdlib-result-macro-id : i64
+  -1)
+
+(define (macro-stdlib-result-identity-ensure!) : unit
+  (let
+    [table-id : i64 (ci.intern-active-table-id)]
+    [generation : i64 (intern-generation)]
+    [pool-len : i64 (intern-pool-len)]
+    (if (and
+      (= macro-stdlib-result-identity-table-id table-id)
+      (= macro-stdlib-result-identity-generation generation)
+      (= macro-stdlib-result-identity-pool-len pool-len))
+      unit
+      (begin
+        (set!
+          macro-stdlib-result-module-id
+          (match (ci.intern-lookup "stdlib.result")
+            [(ci.InternLookupFound module-id) module-id]
+            [(ci.InternLookupMissing) -1]))
+        (set!
+          macro-stdlib-result-macro-id
+          (match (ci.intern-lookup "result")
+            [(ci.InternLookupFound macro-id) macro-id]
+            [(ci.InternLookupMissing) -1]))
+        (set! macro-stdlib-result-identity-table-id table-id)
+        (set! macro-stdlib-result-identity-generation generation)
+        (set! macro-stdlib-result-identity-pool-len pool-len)))))
+
 (define (macro-refresh-stdlib-result-surface-if-needed!
   [ctx : TcContext]
   [target-module-id : i64]
-  [target-module : String]
-  [lookup-name : String]) : unit
-  (if (and
-    (string.eq target-module "stdlib.result")
-    (string.eq lookup-name "result"))
-    (match (compiler-load-surface-summary-find-module target-module-id)
-      [(CompilerLoadSomeSurfaceSummary summary)
-        (begin
-          (compiler-load-surface-summary-refresh-with-pools
-            (struct-get summary source-path)
-            (struct-get summary source-path-id)
-            (svec.new)
-            (AstMaybeModuleName.Some target-module-id)
-            "stdlib"
-            (compiler-cfg-empty)
-            (tc-context-pools ctx))
-          ;; The surface parser pushes through the explicit context. The retry below
-          ;; reads the retained body through ast-node-get, so publish that updated
-          ;; context before materializing the macro declaration.
-          (tc-context-install-pools! ctx)
-          (macro-surface-call-decl-cache-reset!))]
-      [(CompilerLoadNoSurfaceSummary) unit])
-    unit))
+  [lookup-name-id : i64]) : unit
+  (begin
+    (macro-stdlib-result-identity-ensure!)
+    (if (and
+      (= target-module-id macro-stdlib-result-module-id)
+      (= lookup-name-id macro-stdlib-result-macro-id))
+      (match (compiler-load-surface-summary-find-module target-module-id)
+        [(CompilerLoadSomeSurfaceSummary summary)
+          (begin
+            (compiler-load-surface-summary-refresh-with-pools
+              (struct-get summary source-path)
+              (struct-get summary source-path-id)
+              (svec.new)
+              (AstMaybeModuleName.Some target-module-id)
+              "stdlib"
+              (compiler-cfg-empty)
+              (tc-context-pools ctx))
+            ;; The surface parser pushes through the explicit context. The retry below
+            ;; reads the retained body through ast-node-get, so publish that updated
+            ;; context before materializing the macro declaration.
+            (tc-context-install-pools! ctx)
+            (macro-surface-call-decl-cache-reset!))]
+        [(CompilerLoadNoSurfaceSummary) unit])
+      unit)))
 
 (define (macro-unqualified-imported-target-call-decl
   [ctx : TcContext]
@@ -60091,8 +60133,6 @@
   [lookup-name-id : i64]
   [_call-expr : AstExpr]) : ResultMacroCallDecl
   (let
-    [target-module : String (intern-str target-module-id)]
-    [lookup-name : String (intern-str lookup-name-id)]
     [handle : i64
       (compiler-symbols-lookup-macro-in-module-id-or
         (tc-context-symbols ctx)
@@ -60143,8 +60183,7 @@
             (macro-refresh-stdlib-result-surface-if-needed!
               ctx
               target-module-id
-              target-module
-              lookup-name)
+              lookup-name-id)
             (match (macro-surface-call-decl-in-module
               target-module-id
               lookup-name-id)
@@ -60177,9 +60216,7 @@
       lookup-name-id
       (compiler-symbols-missing-handle)))
     target-module-id
-    (if (macro-surface-macro-in-module?
-      (intern-str target-module-id)
-      (intern-str lookup-name-id))
+    (if (macro-surface-macro-in-module? target-module-id lookup-name-id)
       target-module-id
       -1)))
 
@@ -67312,7 +67349,7 @@
   (if (macro-import-kind-summary-backed? kind)
     (match target
       [(AstMaybeModuleName.Some target-module)
-        (macro-surface-module-has-macro? (intern-str target-module))]
+        (macro-surface-module-has-macro? target-module)]
       [(AstMaybeModuleName.No) false])
     false))
 

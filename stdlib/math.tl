@@ -295,6 +295,7 @@
 ;; sources pinned in MATH_LICENSES.md. Keep the constants as exact IEEE-754
 ;; bit patterns and preserve the written operation order: the polynomial error
 ;; bounds and compensated argument reduction depend on both.
+;: Internal quadrant and compensated remainder from pi/2 argument reduction.
 (defstruct MathTrigReduction
   (quadrant i64)
   (hi f64)
@@ -305,6 +306,7 @@
 ;; complete 66-limb fdlibm double table is retained so reducer recomputation
 ;; always has headroom. A lookup function keeps the constants in code instead
 ;; of creating a heap-allocated module-global array during startup.
+;: Return one exact 24-bit limb of the internal 2/pi reduction table.
 (define (math-trig-two-over-pi-limb [index : i64]) : u32
   (cond
     [(= index 0) 0xA2F983]
@@ -377,6 +379,7 @@
 
 ;; pi/2 split into non-overlapping 24-bit pieces. As above, the lookup avoids
 ;; startup allocation for a global fixed array.
+;: Return one exact non-overlapping piece of the internal pi/2 table.
 (define (math-trig-pi-over-two-piece [index : i64]) : f64
   (cond
     [(= index 0) (stdlib.math.f64-from-bits 0x3FF921FB40000000)]
@@ -388,6 +391,7 @@
     [(= index 6) (stdlib.math.f64-from-bits 0x36E3822280000000)]
     [else (stdlib.math.f64-from-bits 0x3569F31D00000000)]))
 
+;: Return one limb from the decomposed reducer input.
 (define (math-trig-input-limb [index : i64] [x0 : f64] [x1 : f64] [x2 : f64]) : f64
   (if (= index 0)
     x0
@@ -399,6 +403,7 @@
 ;; positive significand split into one (binary32) or three (binary64) 24-bit
 ;; limbs. Only precisions 0 (one-term float remainder) and 1 (two-term double
 ;; remainder) are needed here.
+;: Reduce a positive, limb-decomposed input by pi/2 across the full exponent range.
 (define (math-trig-rem-pio2-large
   [x0 : f64]
   [x1 : f64]
@@ -655,9 +660,11 @@
                 tail
                 (- 0.0 tail)))))))))
 
+;: Construct an internal binary64 constant from its exact IEEE-754 bits.
 (define (math-trig-f64-constant [bits : u64]) : f64
   (stdlib.math.f64-from-bits bits))
 
+;: Clear the low binary64 word for compensated tangent arithmetic.
 (define (math-trig-truncate-low-word [value : f64]) : f64
   (stdlib.math.f64-from-bits
     (bit-and (stdlib.math.f64-to-bits value) (cast 0xffffffff00000000 : u64))))
@@ -665,6 +672,7 @@
 ;; Binary64 pi/2 reduction. The medium path uses three compensated 33-bit
 ;; pieces; the large path decomposes the significand into 24-bit limbs for the
 ;; shared Payne-Hanek reducer above.
+;: Reduce any binary64 input to a compensated remainder modulo pi/2.
 (define (math-trig-rem-pio2-f64 [value : f64]) : MathTrigReduction
   (let
     [bits : u64 (stdlib.math.f64-to-bits value)]
@@ -819,6 +827,7 @@
 
 ;; Binary32 reduction keeps all arithmetic in binary64, then returns the
 ;; one-term remainder expected by the float kernels.
+;: Reduce any binary32 input to a binary64 remainder modulo pi/2.
 (define (math-trig-rem-pio2-f32 [value : f32]) : MathTrigReduction
   (let
     [bits : u32 (stdlib.math.f32-to-bits value)]
@@ -904,6 +913,7 @@
             large))))))
 
 ;; Polynomial kernels on the reduced interval [-pi/4, pi/4].
+;: Evaluate the internal binary64 sine kernel on the reduced interval.
 (define (math-trig-kernel-sin-f64 [x : f64] [tail : f64] [tail-present : bool]) : f64
   (let
     [z : f64 (* x x)]
@@ -935,6 +945,7 @@
           v
           (+ (math-trig-f64-constant (cast 0xBFC5555555555549 : u64)) (* z r)))))))
 
+;: Evaluate the internal binary64 cosine kernel on the reduced interval.
 (define (math-trig-kernel-cos-f64 [x : f64] [tail : f64]) : f64
   (let
     [z : f64 (* x x)]
@@ -964,6 +975,7 @@
     [base : f64 (- 1.0 half-z)]
     (+ base (+ (- (- 1.0 base) half-z) (- (* z r) (* x tail))))))
 
+;: Evaluate tangent or negative cotangent on the reduced binary64 interval.
 (define (math-trig-kernel-tan-f64
   [input-x : f64]
   [input-tail : f64]
@@ -1076,6 +1088,7 @@
             [a0 : f64 (math-trig-truncate-low-word reciprocal)]
             (+ a0 (* reciprocal (+ 1.0 (+ (* a0 w0) (* a0 correction)))))))))))
 
+;: Evaluate the internal binary32 sine kernel on the reduced interval.
 (define (math-trig-kernel-sin-f32 [x : f64]) : f32
   (let
     [z : f64 (* x x)]
@@ -1097,6 +1110,7 @@
         (* s w r))
       : f32)))
 
+;: Evaluate the internal binary32 cosine kernel on the reduced interval.
 (define (math-trig-kernel-cos-f32 [x : f64]) : f32
   (let
     [z : f64 (* x x)]
@@ -1113,6 +1127,7 @@
         (* (* w z) r))
       : f32)))
 
+;: Evaluate tangent or negative cotangent on the reduced binary32 interval.
 (define (math-trig-kernel-tan-f32 [x : f64] [odd : bool]) : f32
   (let
     [z : f64 (* x x)]

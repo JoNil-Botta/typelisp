@@ -63,6 +63,8 @@ reject_diag() {
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/math_sqrt_non_float_reject.tl)
             printf 'math.sqrt: expected f64 or f32, found i64' ;;
+        stdlib/tests/math_exp_non_float_reject.tl)
+            printf 'math.exp: expected f64 or f32, found i64' ;;
         stdlib/tests/hashmap_value_borrow_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/hashmap_value_borrow_insert_live.tl)

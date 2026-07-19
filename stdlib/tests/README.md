@@ -138,10 +138,12 @@ Inline stdlib coverage:
   bounds, explicit signed-min fallback behavior for integer abs, exact float
   bit round trips (including NaN payloads and both zeros), classification,
   copy-sign, `scalbn` normal/subnormal/tie-to-even/overflow behavior, typed and
-  generic square root, single evaluation, exact correctly-rounded f64/f32
-  vectors, subnormal boundaries, shared trigonometric argument reduction,
-  sin/cos/tan special values, signed zero, infinities, and NaN behavior.
-  `math_sqrt_non_float_reject.tl` keeps the generic macro restricted to f64/f32.
+  generic square root and natural exponential, single evaluation, exact
+  correctly-rounded f64/f32 vectors, subnormal boundaries, shared
+  trigonometric argument reduction, sin/cos/tan special values, signed zero,
+  infinities, and NaN behavior.
+  `math_sqrt_non_float_reject.tl` and `math_exp_non_float_reject.tl` keep the
+  generic macros restricted to f64/f32.
   `tests/integration/stdlib_math_ieee.tl` runs the foundation and square-root
   surface natively on both Linux and Windows; the assembly-shape gate proves
   public f64/f32 probes contain `sqrtsd`/`sqrtss` with no call.
@@ -150,6 +152,11 @@ Inline stdlib coverage:
   CORE-MATH hard-to-round inputs, quadrant neighbors, reducer boundaries,
   randomized exponent coverage, max finite values, signed zero, infinities,
   and NaNs.
+  `tests/integration/stdlib_math_exp.tl` checks both exponential entry points
+  against MPFR-256 results across CORE-MATH hard cases, overflow and gradual
+  underflow thresholds, deterministic samples, signed zero, infinities, and
+  NaNs. `scripts/generate-math-exp-vectors.sh` independently regenerates or
+  verifies the checked-in results without consulting host libm.
 - `hash.tl` owns inline tests for stable deterministic hashes,
   equal-values-same-hash checks, primitive key equality predicates, known
   collision behavior, hash range normalization, and string edge cases.

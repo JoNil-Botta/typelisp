@@ -5387,6 +5387,16 @@ cosine of either zero is exactly one, infinities produce NaN, and NaN inputs
 remain NaN. Floating exception flags and signaling-NaN payload behavior are
 not part of this initial contract.
 
+`stdlib.math.f64-exp` and `stdlib.math.f32-exp` provide natural exponential
+functions through deterministic table reduction and polynomial evaluation.
+`stdlib.math.exp` preserves an `f64` or `f32` operand type and evaluates its
+expression once. Under the default round-to-nearest, ties-to-even mode, finite
+results are within one ULP; overflow returns positive infinity and underflow
+is gradual through subnormals. Both signed zeros map to one, negative infinity
+maps to zero, positive infinity is unchanged, and NaNs remain NaN. The
+implementations allocate no storage and reference no runtime, libc, libm, CRT,
+x87 transcendental, or FMA facility.
+
 **Fixed-array element operations.** The public `Array` type is the fixed
 `(Array T N)` form. The core element operations are:
 

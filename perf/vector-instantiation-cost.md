@@ -49,20 +49,18 @@ The deterministic counters attribute why those phases grow:
 | --- | ---: | ---: | ---: |
 | generated module materializations | 1 | 5 | +4 |
 | generated module memo hits | 0 | 0 | 0 |
-| generated catalog declarations constructed | 11 | 55 | +44 |
 | generated declaration checks | 11 | 55 | +44 |
-| functions before specialization | 106 | 150 | +44 |
-| functions after specialization | 106 | 150 | +44 |
+| checked functions entering lowering | 106 | 150 | +44 |
 | declarations retained by reachability | 91 | 147 | +56 |
 | functions retained by reachability | 23 | 63 | +40 |
 | emitted IR functions | 23 | 63 | +40 |
 | emitted IR blocks | 50 | 193 | +143 |
 | emitted IR instructions | 245 | 985 | +740 |
 
-The unchanged function count across specialization shows that this compact
-vector pair is already concrete; its incremental specialization cost is scan
-and bookkeeping rather than new specialized functions. Reachability removes
-unused generated declarations only after all 11 declarations per identity have
-been checked, preserving full-body diagnostics.
+The compact vector modules are already concrete, so their incremental
+specialization phase cost is scan and bookkeeping rather than generic
+instantiation. Reachability removes unused generated declarations only after
+all 11 declarations per identity have been checked, preserving full-body
+diagnostics.
 
 Refs #5250, #4523, and #5262.

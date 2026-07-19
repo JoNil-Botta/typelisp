@@ -334,15 +334,12 @@ done
 for counter in \
     typecheck.macro.generated_module_materializations \
     typecheck.macro.generated_module_memo_hits \
-    typecheck.macro.generated_module_materialized_decls \
     typecheck.macro.generated_decl_checks; do
     append_metric counter "$counter" 3
 done
 for counter in \
-    lower.checked_program.pre_specialize.decls \
-    lower.checked_program.pre_specialize.functions \
-    lower.checked_program.post_specialize.decls \
-    lower.checked_program.post_specialize.functions \
+    lower.checked_program.pre_decls.decls \
+    lower.checked_program.pre_decls.functions \
     lower.checked_program.reachable.decls \
     lower.checked_program.reachable.functions \
     lower.ir.after_decls.functions \

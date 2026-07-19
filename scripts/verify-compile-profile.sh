@@ -694,7 +694,6 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_tail_fallb
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_materializations|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_materialized_slots|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materializations|"
-assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materialized_decls|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_decl_checks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_memo_hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_catalog_builds|"
@@ -893,18 +892,6 @@ assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 
-VECTOR_ONE_MATERIALIZED_DECLS=$(profile_counter_value_in \
-    "$VECTOR_ONE_STDERR" \
-    "typecheck.macro.generated_module_materialized_decls")
-VECTOR_FIVE_MATERIALIZED_DECLS=$(profile_counter_value_in \
-    "$VECTOR_FIVE_STDERR" \
-    "typecheck.macro.generated_module_materialized_decls")
-if [ "$VECTOR_FIVE_MATERIALIZED_DECLS" -ne $((VECTOR_ONE_MATERIALIZED_DECLS * 5)) ]; then
-    show_failure_logs "$VECTOR_ONE_STDOUT" "$VECTOR_ONE_STDERR"
-    show_failure_logs "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR"
-    fail "five compact identities did not materialize five equal catalogs: one=$VECTOR_ONE_MATERIALIZED_DECLS five=$VECTOR_FIVE_MATERIALIZED_DECLS"
-fi
-
 VECTOR_ONE_DECL_CHECKS=$(profile_counter_value_in \
     "$VECTOR_ONE_STDERR" \
     "typecheck.macro.generated_decl_checks")
@@ -912,15 +899,14 @@ VECTOR_FIVE_DECL_CHECKS=$(profile_counter_value_in \
     "$VECTOR_FIVE_STDERR" \
     "typecheck.macro.generated_decl_checks")
 if [ "$VECTOR_ONE_DECL_CHECKS" -le 0 ] ||
-    [ "$VECTOR_FIVE_DECL_CHECKS" -le "$VECTOR_ONE_DECL_CHECKS" ]; then
+    [ "$VECTOR_FIVE_DECL_CHECKS" -ne $((VECTOR_ONE_DECL_CHECKS * 5)) ]; then
     show_failure_logs "$VECTOR_ONE_STDOUT" "$VECTOR_ONE_STDERR"
     show_failure_logs "$VECTOR_FIVE_STDOUT" "$VECTOR_FIVE_STDERR"
     fail "generated declaration checks did not grow from one to five identities: one=$VECTOR_ONE_DECL_CHECKS five=$VECTOR_FIVE_DECL_CHECKS"
 fi
 
 for counter in \
-    checked_program.pre_specialize.functions \
-    checked_program.post_specialize.functions \
+    checked_program.pre_decls.functions \
     checked_program.reachable.decls \
     checked_program.reachable.functions \
     ir.after_decls.functions \
@@ -939,7 +925,7 @@ for counter in \
     fi
 done
 
-echo "[compile-profile] compact vector identity counters materialized_decls=$VECTOR_ONE_MATERIALIZED_DECLS/$VECTOR_FIVE_MATERIALIZED_DECLS generated_decl_checks=$VECTOR_ONE_DECL_CHECKS/$VECTOR_FIVE_DECL_CHECKS"
+echo "[compile-profile] compact vector identity counters generated_decl_checks=$VECTOR_ONE_DECL_CHECKS/$VECTOR_FIVE_DECL_CHECKS"
 
 echo "[compile-profile] check generated import fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import.tl \
@@ -999,8 +985,8 @@ fi
 # contains uses the shared generated equality module, so the compilation
 # materializes exactly two identities: `(vector i64)` and `(eq.eq i64)`. The
 # vector catalog currently exceeds the large-catalog cutoff and is materialized
-# in full, so ordinary typechecking validates all of it and the separate
-# partial-catalog shadow-validation counter remains zero.
+# in full, so ordinary typechecking validates generated declarations while the
+# separate partial-catalog shadow-validation counter remains zero.
 assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_memo_hits" \
@@ -1013,17 +999,12 @@ assert_profile_counter_eq_in \
     2 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"
-CROSS_SINGLE_MATERIALIZED_DECLS=$(profile_counter_value_in \
-    "$CROSS_SINGLE_STDERR" \
-    "typecheck.macro.generated_module_materialized_decls")
 CROSS_SINGLE_DECL_CHECKS=$(profile_counter_value_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_decl_checks")
-if [ "$CROSS_SINGLE_MATERIALIZED_DECLS" -le 0 ] ||
-    [ "$CROSS_SINGLE_DECL_CHECKS" -le 0 ] ||
-    [ "$CROSS_SINGLE_DECL_CHECKS" -gt "$CROSS_SINGLE_MATERIALIZED_DECLS" ]; then
+if [ "$CROSS_SINGLE_DECL_CHECKS" -le 0 ]; then
     show_failure_logs "$CROSS_SINGLE_STDOUT" "$CROSS_SINGLE_STDERR"
-    fail "repeated generated identity checks exceeded its single materialized catalog: materialized_decls=$CROSS_SINGLE_MATERIALIZED_DECLS decl_checks=$CROSS_SINGLE_DECL_CHECKS"
+    fail "repeated generated identity emitted no generated declaration checks"
 fi
 assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
@@ -1215,10 +1196,6 @@ assert_lower_row "ast_expr_pool.pre_decls.len"
 assert_lower_row "ast_expr_pool.pre_decls.capacity"
 assert_lower_row "ast_type_pool.pre_decls.len"
 assert_lower_row "ast_type_pool.pre_decls.capacity"
-assert_lower_row "checked_program.pre_specialize.decls"
-assert_lower_row "checked_program.pre_specialize.functions"
-assert_lower_row "checked_program.post_specialize.decls"
-assert_lower_row "checked_program.post_specialize.functions"
 assert_lower_row "checked_program.pre_decls.decls"
 assert_lower_row "checked_program.pre_decls.functions"
 assert_lower_row "checked_program.reachable.decls"

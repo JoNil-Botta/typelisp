@@ -54871,7 +54871,7 @@
      ,body
      unit))
 (define (main) : unit
-  (let ([macro-helper : bool true])
+  (let [macro-helper : bool true]
     (unless2 false unit)))")
 
 ;; A fixed-array literal `(array ...)`: it type-checks to `(Array i64 N)` and now
@@ -56772,8 +56772,8 @@
 (define (read [flag : bool] [n : i64]) : result_i64_string.Result
   (if flag (result_i64_string.Ok n) (result_i64_string.Err \"read failed\")))
 (define (sum [a : bool] [b : bool]) : result_i64_string.Result
-  (let ([x : i64 (try (read a 40))]
-        [y : i64 0])
+  (let [x : i64 (try (read a 40))]
+    [y : i64 0]
     (begin
       (set! y (try (read b 2)))
       (result_i64_string.Ok (+ x y)))))
@@ -56788,7 +56788,7 @@
 (define (read [flag : bool] [n : i64]) : option_i64.Option
   (if flag (option_i64.Some n) option_i64.None))
 (define (main [a : bool] [b : bool]) : option_i64.Option
-  (let ([x : i64 (try (read a 40))])
+  (let [x : i64 (try (read a 40))]
     (option_i64.Some (+ x (try (read b 2))))))")
 
 (define (compiler-lower-return-source) : String
@@ -59616,7 +59616,7 @@
   (+
     (d.get)
     (+
-      (let ([p : d.Point (d.Point 7)])
+      (let [p : d.Point (d.Point 7)]
         (struct-get p x))
       (match (d.Maybe.Some 3)
         [(d.Maybe.Some v) v]
@@ -60388,7 +60388,7 @@
     (finish acc)
     (step (- n 1) (+ acc 1))))
 (define (main) : i64
-  (let ([value : Big (step 3 39)])
+  (let [value : Big (step 3 39)]
     (struct-get value c)))")
 
 (define (compiler-lower-tail-aggregate-param-source) : String
@@ -60443,7 +60443,7 @@
 (define (step [f : (-> i64 Big)] [x : i64]) : Big
   (f x))
 (define (main) : i64
-  (let ([value : Big (step finish 39)])
+  (let [value : Big (step finish 39)]
     (struct-get value c)))")
 
 (define (compiler-lower-tail-cleanup-source) : String
@@ -63653,7 +63653,7 @@
   (foreach
     ([i : i64 0 n])
     (let
-      ([x : i64 (+ i 1)])
+      [x : i64 (+ i 1)]
       (array-set! out i (heavy x)))))")
 
 (define (compiler-lower-spmd-uniform-arg-call-source) : String

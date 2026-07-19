@@ -119,7 +119,7 @@ $tl run                           # builds/runs nearest binary typelisp.pkg
     [(Rect w h)   (* w h)]))
 
 (define (main) : i64
-  (let ([p : Point (Point 3 4)])
+  (let [p : Point (Point 3 4)]
     (+ (struct-get p x)            ; 3
        (area (Rect 5 6)))))        ; 30  -> main returns 33
 ```
@@ -141,8 +141,8 @@ struct/enum fields, and (optionally) `let` bindings.
 (define (add [a : i64] [b : i64]) : i64 (+ a b))
 
 ;; Local bindings (sequential, let* scoping)
-(let ([x : i64 10]
-      [y     (* x 2)])   ; type inferred
+(let [x : i64 10]
+  [y     (* x 2)]   ; type inferred
   (+ x y))
 
 ;; Control flow
@@ -153,8 +153,8 @@ struct/enum fields, and (optionally) `let` bindings.
 ;; Casts and zero/identity initialization
 (cast 300 : u8)
 (import stdlib.array)
-(let ([n : i64 (init)]
-      [items : (Array i64 4) (init : (Array i64 4))])
+(let [n : i64 (init)]
+  [items : (Array i64 4) (init : (Array i64 4))]
   (+ n (array-ref items 0)))
 ```
 

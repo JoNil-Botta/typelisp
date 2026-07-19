@@ -1326,11 +1326,11 @@ same-name user variable inside an unquoted body.
 
 ```lisp test=ignore name=macro-hygiene-temp-binder reason=illustrative
 (defmacro (with-temp-plus [value : i64] [body : i64]) : i64
-  `(let ([tmp : i64 ,value])
+  `(let [tmp : i64 ,value]
      (+ tmp ,body)))
 
 (define (main) : i64
-  (let ([tmp : i64 40])
+  (let [tmp : i64 40]
     (with-temp-plus 1 (+ tmp 1))))
 ```
 
@@ -1351,7 +1351,7 @@ definition environment even when the use site shadows the same printed name.
      unit))
 
 (define (main) : unit
-  (let ([macro-helper : bool true])
+  (let [macro-helper : bool true]
     (unless2 false (print-string "ok"))))
 ```
 
@@ -3141,7 +3141,7 @@ declaring its own cleanup ownership and without marking the field `(:owned)`.
 
 (define (bad-copy [fd : i64]) : i64
   (with ([h (open-handle fd) close-file-handle])
-    (let ([copy h])
+    (let [copy h]
       (struct-get h fd))))
 ```
 
@@ -3644,8 +3644,8 @@ guards.
 - Type annotation is optional. If omitted, the initializer type is inferred.
 - The body is one or more expressions. Multiple body expressions are evaluated
   as an implicit `begin`; the last expression provides the `let` result.
-- Empty binding wrappers `(let [] body...)` and `(let () body...)` are
-  accepted as no-op body sequences, but a missing body is rejected.
+- The empty binding wrapper `(let [] body...)` is a no-op body sequence, but a
+  missing body is rejected.
 
 ### 5.8 `(begin expr ... last_expr)` — sequence
 
@@ -6622,7 +6622,7 @@ and one `None*` absence variant (option-like).
     (ErrI64 (str_cat.str-cat "bad: " text))))
 
 (define (read-plus-one [text : String]) : ResultI64
-  (let ([value : i64 (try (read-small text))])
+  (let [value : i64 (try (read-small text))]
     (OkI64 (+ value 1))))
 ```
 
@@ -7070,7 +7070,6 @@ expr          ::= literal
                 | "(" "when" expr expr+ ")"
                 | "(" "unless" expr expr+ ")"
                 | "(" "let" binding+ expr+ ")"
-                | "(" "let" "(" binding* ")" expr+ ")"
                 | "(" "let" "[]" expr+ ")"
                 | "(" "while" expr expr+ ")"
                 | "(" "break" ")"

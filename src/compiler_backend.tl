@@ -55630,12 +55630,12 @@ tl_tlci_call_macro_entry:
     (begin
       (io.print-error \"runtime driver: expected input and output paths\")
       2)
-    (let ([input : String (io.arg 1)]
-          [output : String (io.arg 2)])
-      (let ([content : String (io.read-file input)])
+    (let [input : String (io.arg 1)]
+      [output : String (io.arg 2)]
+      (let [content : String (io.read-file input)]
         (if (io.file-exists? input)
-          (let ([n : i64 (string.>int content)])
-            (let ([rendered : String (string.int->string (+ n 1))])
+          (let [n : i64 (string.>int content)]
+            (let [rendered : String (string.int->string (+ n 1))]
               (begin
                 (if (string.eq content \"41\")
                   (io.print-error \"ok\")

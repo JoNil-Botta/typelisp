@@ -749,7 +749,7 @@ verify_compiler_driver_arrays_and_traps() {
     _asm="$_dir/array.s"
     cat > "$_src" <<'EOF'
 (define (main) : i64
-  (let ([a : (Array i64) (make-array i64 2)])
+  (let [a : (Array i64) (make-array i64 2)]
     (begin
       (array-set! a 0 40)
       (array-set! a 1 2)

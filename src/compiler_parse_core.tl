@@ -677,14 +677,6 @@
   (Ok AstLetBinding)
   (Err String))
 
-(defenum ResultAstLetBindingList
-  (Ok AstLetBindingList)
-  (Err String))
-
-(defenum ResultAstLetBindingListBuild
-  (Ok)
-  (Err String))
-
 (defenum ResultAstResourceBinding
   (Ok AstResourceBinding)
   (Err String))
@@ -5296,38 +5288,6 @@
         [_ (ResultAstLetBinding.Err "parse: malformed let binding")])]
     (parse-ast-error-span-note-let-binding dispatch s result)))
 
-(define (parse-ast-let-binding-list-into
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.SpannedSexpr]
-  [out : (&mut out AstLetBindingList)]) : ResultAstLetBindingListBuild
-  (match s
-    [(reader.SpannedSexpr.Nil _) (ResultAstLetBindingListBuild.Ok)]
-    [(reader.SpannedSexpr.Cons head tail _)
-      (match (parse-ast-let-binding dispatch pools (reader.sp-node-get head))
-        [(ResultAstLetBinding.Ok parsed-head)
-          (begin
-            (ast-let-binding-list-push out parsed-head)
-            (parse-ast-let-binding-list-into
-              dispatch
-              pools
-              (reader.sp-node-get tail)
-              out))]
-        [(ResultAstLetBinding.Err message)
-          (ResultAstLetBindingListBuild.Err message)])]
-    [_ (ResultAstLetBindingListBuild.Err "parse: malformed let binding list")]))
-
-(define (parse-ast-let-binding-list
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.SpannedSexpr]) : ResultAstLetBindingList
-  (let
-    [out : AstLetBindingList (ast-let-binding-list-new)]
-    (match (parse-ast-let-binding-list-into dispatch pools s (&mut out))
-      [(ResultAstLetBindingListBuild.Ok) (ResultAstLetBindingList.Ok out)]
-      [(ResultAstLetBindingListBuild.Err message)
-        (ResultAstLetBindingList.Err message)])))
-
 (define (parse-ast-let-flat-tail-into
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
@@ -5396,37 +5356,24 @@
   [pools : AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(reader.SpannedSexpr.Cons bindings tail _)
+    [(reader.SpannedSexpr.Cons bindings _ _)
       (match (reader.sp-node-get bindings)
         [(reader.SpannedSexpr.BracketList _ _)
           (parse-ast-let-flat dispatch pools rest)]
         [(reader.SpannedSexpr.Nil _)
-          (parse-ast-body-tail
-            dispatch
-            pools
-            (reader.sp-node-get tail)
-            "parse: let missing body")]
+          (begin
+            (parse-ast-error-span-note!
+              dispatch
+              (reader.spanned-sexpr-span (reader.sp-node-get bindings)))
+            (ResultAstExpr.Err
+              "parse: (let () body...) was removed; write (let [] body...)"))]
         [(reader.SpannedSexpr.Cons _ _ _)
-          (match (parse-ast-let-binding-list
-            dispatch
-            pools
-            (reader.sp-node-get bindings))
-            [(ResultAstLetBindingList.Ok parsed-bindings)
-              (match (parse-ast-body-tail
-                dispatch
-                pools
-                (reader.sp-node-get tail)
-                "parse: let missing body")
-                [(ResultAstExpr.Ok parsed-body)
-                  (if (ast-let-binding-list-empty? (& parsed-bindings))
-                    (ResultAstExpr.Ok parsed-body)
-                    (ResultAstExpr.Ok
-                      (ast-expr-let-with-pools
-                        pools
-                        parsed-bindings
-                        parsed-body)))]
-                [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-            [(ResultAstLetBindingList.Err message) (ResultAstExpr.Err message)])]
+          (begin
+            (parse-ast-error-span-note!
+              dispatch
+              (reader.spanned-sexpr-span (reader.sp-node-get bindings)))
+            (ResultAstExpr.Err
+              "parse: parenthesized let bindings were removed; write leading [name [: type] init] bindings without parentheses"))]
         [_ (ResultAstExpr.Err "parse: let requires at least one binding")])]
     [_ (ResultAstExpr.Err "parse: malformed let")]))
 
@@ -11198,6 +11145,20 @@
   (let [x : i64] x))"
       "parse: malformed let binding"
       2
+      8)
+    (compiler-parse-diagnostic-location-ok?
+      "legacy-let-bindings.tl"
+      "(define (main) : i64
+  (let ([x : i64 1]) x))"
+      "parse: parenthesized let bindings were removed; write leading [name [: type] init] bindings without parentheses"
+      2
+      8)
+    (compiler-parse-diagnostic-location-ok?
+      "legacy-empty-let.tl"
+      "(define (main) : i64
+  (let () 0))"
+      "parse: (let () body...) was removed; write (let [] body...)"
+      2
       8)))
 
 (define (compiler-parse-reader-delimiter-diagnostics-ok?) : bool
@@ -11804,7 +11765,7 @@
     (compiler-parse-ok? "(define (main) : (Box i64) (box 7))")
     (compiler-parse-ok? "(define (main [b : (Box i64)]) : i64 (box-get b))")
     (compiler-parse-ok?
-      "(define (main) : i64 (with-arena r (let ([b : (in r (Box i64)) (box 7)]) (box-get b))))")))
+      "(define (main) : i64 (with-arena r (let [b : (in r (Box i64)) (box 7)] (box-get b))))")))
 
 (define (compiler-parse-reference-source) : String
   "(define (use [s : (& n String)] [view : (& n str)] [items : (&mut value (Array i64))]) : unit unit)")
@@ -12510,7 +12471,13 @@
       "parse: let missing body")
     (compiler-parse-error-ok?
       "(define (main) : i64 (let ()))"
-      "parse: let missing body")))
+      "parse: (let () body...) was removed; write (let [] body...)")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (let ([x : i64 1]) x))"
+      "parse: parenthesized let bindings were removed; write leading [name [: type] init] bindings without parentheses")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (let ([x 1] [y (+ x 1)]) y))"
+      "parse: parenthesized let bindings were removed; write leading [name [: type] init] bindings without parentheses")))
 
 (define (compiler-parse-abstraction-policy-tests-ok?) : bool
   (and
@@ -12860,24 +12827,20 @@
       "(define (f [box : (RefBox n)]) : (& n i64) (struct-get box value))")))
 
 ;
-;; let-binding parsing: accept untyped, multi-binding, legacy
-;; parenthesized binding forms, and empty-binding body wrappers. Completes the
-;; let family alongside the existing flat-let accept and let error tests.
+;; Let-binding parsing accepts only leading bracket bindings, including the
+;; canonical empty `[]` wrapper.
 (define (compiler-parse-let-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (let [x 1] x))")
     (compiler-parse-ok?
       "(define (main) : i64 (let [x : i64 1] [y : i64 2] (+ x y)))")
-    (compiler-parse-ok? "(define (main) : i64 (let ([x : i64 1]) x))")
-    (compiler-parse-ok? "(define (main) : i64 (let [] 0))")
-    (compiler-parse-ok? "(define (main) : i64 (let () 0))")))
+    (compiler-parse-ok? "(define (main) : i64 (let [x 1] [y (+ x 1)] y))")
+    (compiler-parse-ok? "(define (main) : i64 (let [] 0))")))
 
 (define (compiler-parse-implicit-body-tail-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (let [x : i64 1] x (+ x 1)))")
-    (compiler-parse-ok? "(define (main) : i64 (let ([x : i64 1]) x (+ x 1)))")
     (compiler-parse-ok? "(define (main) : i64 (let [] 1 2))")
-    (compiler-parse-ok? "(define (main) : i64 (let () 1 2))")
     (compiler-parse-ok?
       "(define (main) : i64 (begin (while false unit unit) 0))")
     (compiler-parse-ok? "(define (main) : i64 unit 42)")
@@ -13095,7 +13058,7 @@
   (and
     (compiler-parse-with-escape-shape-ok?)
     (compiler-parse-ok?
-      "(define (main) : i64 (let ([scratch : Arena (arena-make)]) (with-escape scratch 1 2 3)))")
+      "(define (main) : i64 (let [scratch : Arena (arena-make)] (with-escape scratch 1 2 3)))")
     (compiler-parse-error-ok?
       "(define (main) : i64 (with-escape))"
       "parse: with-escape requires a scratch arena before its body")
@@ -13168,7 +13131,7 @@
   (and
     (compiler-parse-in-arena-shape-ok?)
     (compiler-parse-ok?
-      "(define (main) : i64 (let ([arena : Arena (arena-current)]) (in-arena arena 1 2 3)))")
+      "(define (main) : i64 (let [arena : Arena (arena-current)] (in-arena arena 1 2 3)))")
     (compiler-parse-error-ok?
       "(define (main) : i64 (in-arena))"
       "parse: in-arena requires an arena before its body")

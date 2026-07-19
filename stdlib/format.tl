@@ -9,7 +9,7 @@
 ;# (import stdlib.string)
 ;#
 ;# (define (main) : i64
-;#   (let ([name : String "Ada"])
+;#   (let [name : String "Ada"]
 ;#     (if (string.eq (format.format "hello, {}" name) "hello, Ada") 42 1)))
 ;# ```
 ;#

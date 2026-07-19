@@ -20,7 +20,7 @@
 ;; implicit scratch-region candidates/blockers, and validates
 ;; unused call-graph/SCC infrastructure for the next inliner phases; returns 42
 ;; only when every self-test passes.
-(import "../compiler_optimize.tl")
+(import "../compiler_optimize_tests.tl")
 (import stdlib.string)
 (import stdlib.test)
 

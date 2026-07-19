@@ -7207,6 +7207,56 @@
       1
       0)))")
 
+(define (compiler-typecheck-module-value-reflection-source) : String
+  "(define answer : i64 42)
+(define (make [value : i64]) : bool (> value 0))
+(defstruct Pair (value i64))
+(defenum Maybe (None) (Some i64))
+(defmacro (ignored [value : Expr]) : Expr value)
+(import stdlib.comptime)
+(define (main) : i64
+  (comptime
+    (if (comptime.module-value? \"\" \"answer\")
+      (if (comptime.module-value? \"\" \"make\")
+        (if (= (comptime.module-value-type \"\" \"answer\") (type i64))
+          (if (= (comptime.module-value-type \"\" \"make\") (type (-> i64 bool)))
+            (if (= (comptime.module-value-type \"\" \"Pair\") (type (-> i64 Pair)))
+              (if (= (comptime.module-value-type \"\" \"Some\") (type (-> i64 Maybe)))
+                (if (comptime.module-value? \"\" \"Maybe\")
+                  0
+                  (if (comptime.module-value? \"\" \"ignored\") 0 42))
+                0)
+              0)
+            0)
+          0)
+        0)
+      0)))")
+
+(define (compiler-typecheck-reference-element-macro-source) : String
+  "(import stdlib.comptime)
+(defmacro (identity-reference [value : Expr]) : Expr
+  (let
+    [referent : Expr
+      (comptime.reference-element-type (comptime.expr-type value))]
+    value))
+(define (shared-id [value : (& caller_shared i64)]) : (& caller_shared i64)
+  (identity-reference value))
+(define (mutable-id [value : (&mut caller_mutable i64)]) : (&mut caller_mutable i64)
+  (identity-reference value))
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-module-value-missing-source) : String
+  "(define answer : i64 42)
+(import stdlib.comptime)
+(define (main) : i64
+  (comptime (if (= (comptime.module-value-type \"\" \"missing\") (type i64)) 1 0)))")
+
+(define (compiler-typecheck-reference-element-kind-mismatch-source) : String
+  "(import stdlib.comptime)
+(define (main) : i64
+  (comptime
+    (if (= (comptime.reference-element-type (type i64)) (type i64)) 1 0)))")
+
 (define (compiler-typecheck-reflection-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-reflection-source))
@@ -7247,6 +7297,8 @@
       (compiler-typecheck-macro-abstract-alias-shadow-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-module-macro-type-kind-constraint-source))
+    (compiler-typecheck-ok? (compiler-typecheck-module-value-reflection-source))
+    (compiler-typecheck-ok? (compiler-typecheck-reference-element-macro-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-type-kind-constraint-reject-source)
       "typecheck: macro record-module type operand T rejects (Array i64 4): expected one of :kind struct, enum")
@@ -7270,7 +7322,13 @@
       "tuple-element-count requires tuple type")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-tuple-index-source)
-      "tuple-element-type index out of range")))
+      "tuple-element-type index out of range")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-module-value-missing-source)
+      "module-value-type: module  does not define value missing")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reference-element-kind-mismatch-source)
+      "reference-element-type requires reference type")))
 
 (define (compiler-typecheck-defmacro-source) : String
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool

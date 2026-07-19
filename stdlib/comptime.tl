@@ -327,9 +327,23 @@
 (define (box-element-type [ty : Expr]) : Expr
   ty)
 
+;: Return the referent type of a shared or mutable reference during macro CTFE.
+;: The compiler replaces this bootstrap body with reflected type syntax.
+(define (reference-element-type [ty : Expr]) : Expr
+  ty)
+
 ;: Return the canonical identity string for a module strategy operand.
 (define (module-name [module : String]) : String
   module)
+
+;: Return true when a module defines a public value named `name`.
+(define (module-value? [_module : String] [_name : String]) : bool
+  false)
+
+;: Return the signature type of a public module value during macro CTFE.
+;: Missing values produce a compile-time diagnostic.
+(define (module-value-type [_module : String] [_name : String]) : Expr
+  (comptime-error "module-value-type is compile-time only"))
 
 ;: Return true when a module strategy exports a macro hook with `name`.
 (define (module-export-macro? [_module : String] [_name : String]) : bool

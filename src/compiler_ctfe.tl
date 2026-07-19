@@ -223,6 +223,7 @@
         (ctfe-builtin-ref 87))
       (= name-id (ctfe-builtin-ref 89))
       (= name-id (ctfe-builtin-ref 214))
+      (= name-id (ctfe-builtin-ref 218))
       (ctfe-builtin-id-any2?
         name-id
         (ctfe-builtin-ref 210)
@@ -248,6 +249,14 @@
   (or
     (ctfe-builtin-reflection-primary-id? name-id)
     (ctfe-builtin-reflection-secondary-id? name-id)))
+
+(define (ctfe-builtin-module-value-id? [name-id : i64]) : bool
+  (begin
+    (ctfe-builtin-refresh!)
+    (ctfe-builtin-id-any2?
+      name-id
+      (ctfe-builtin-ref 216)
+      (ctfe-builtin-ref 217))))
 
 (define (ctfe-builtin-source-helper-id? [name-id : i64]) : bool
   (begin
@@ -1317,6 +1326,51 @@
   (ctfe_key_map.contains?
     (& (box-get ctfe-module-macro-export-keys))
     (ctfe-module-macro-export-key-id module-id name-id)))
+
+;; Public value signatures are indexed separately from CtfeEnv. Keeping this
+;; reset-scoped side table avoids widening every immutable CTFE environment
+;; node. Values are type-pool handles, so the map retains only two i64s per
+;; public signature and identical top-level types remain hash-consed.
+(define ctfe-module-value-type-ids : (Box ctfe_key_map.Map)
+  (box (ctfe_key_map.with-capacity 1)))
+(define ctfe-module-value-reflection-enabled : bool
+  false)
+
+(defenum CtfeMaybeModuleValueType
+  (None)
+  (Some AstType))
+
+(define (ctfe-module-value-reflection-enable! [enabled : bool]) : unit
+  (set! ctfe-module-value-reflection-enabled enabled))
+
+(define (ctfe-module-value-reset!) : unit
+  (set!
+    (box-get ctfe-module-value-type-ids)
+    (ctfe_key_map.with-capacity
+      (if ctfe-module-value-reflection-enabled
+        1024
+        1))))
+
+(define (ctfe-module-value-add-id!
+  [module-id : i64]
+  [name-id : i64]
+  [ty : AstType]) : unit
+  (if ctfe-module-value-reflection-enabled
+    (ctfe_key_map.insert-ref!
+      (&mut (box-get ctfe-module-value-type-ids))
+      (ctfe-qualified-name-key-id module-id name-id)
+      (ty-node-push ty))
+    unit))
+
+(define (ctfe-module-value-type-id [module-id : i64] [name-id : i64]) : CtfeMaybeModuleValueType
+  (if ctfe-module-value-reflection-enabled
+    (match (ctfe_key_map.get
+      (& (box-get ctfe-module-value-type-ids))
+      (ctfe-qualified-name-key-id module-id name-id))
+      [(ctfe_key_map.LookupFound type-id)
+        (CtfeMaybeModuleValueType.Some (ty-node-get type-id))]
+      [(ctfe_key_map.LookupMissing) (CtfeMaybeModuleValueType.None)])
+    (CtfeMaybeModuleValueType.None)))
 
 (define (ctfe-reflect-info-list-add-if-missing-id
   [infos : CtfeReflectInfoList]
@@ -3991,6 +4045,22 @@
                         (ctfe-diagnostic-at-expr
                           expr
                           "box-element-type requires box type")))])]
+              [(string.eq name "reference-element-type")
+                (match ty
+                  [(AstType.Ref _ elem)
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
+                      arg-fuel)]
+                  [(AstType.MutRef _ elem)
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
+                      arg-fuel)]
+                  [_
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          "reference-element-type requires reference type")))])]
               [(string.eq name "array-length")
                 (match ty
                   [(AstType.Array _ count)
@@ -5307,6 +5377,49 @@
         (ctfe-diagnostic-at-expr
           expr
           "module-export-macro? expects exactly two args")))))
+
+(define (ctfe-module-value-missing-message [module : String] [name : String]) : String
+  (string.append
+    "module-value-type: module "
+    (string.append module (string.append " does not define value " name))))
+
+(define (ctfe-eval-module-value-call
+  [query-name : String]
+  [type-query : bool]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [module-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [name-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      (match (ctfe-eval-string-arg module-arg expr env fuel query-name)
+        [(ResultCtfeStringArg.Ok module module-id module-fuel)
+          (match (ctfe-eval-string-arg name-arg expr env module-fuel query-name)
+            [(ResultCtfeStringArg.Ok name name-id name-fuel)
+              (match (ctfe-module-value-type-id module-id name-id)
+                [(CtfeMaybeModuleValueType.Some ty)
+                  (ResultCtfe.Ok
+                    (if type-query
+                      (CompilerCtfeValue.Type ty)
+                      (CompilerCtfeValue.Bool true))
+                    name-fuel)]
+                [(CtfeMaybeModuleValueType.None)
+                  (if type-query
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          (ctfe-module-value-missing-message module name))))
+                    (ResultCtfe.Ok (CompilerCtfeValue.Bool false) name-fuel))])]
+            [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
+        [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          (string.append query-name " expects exactly two args"))))))
 
 (define (ctfe-eval-module-hook-call
   [args : AstExprList]
@@ -7585,6 +7698,22 @@
             (ctfe-eval-module-export-macro-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 49))
             (ctfe-eval-module-hook-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 216))
+            (ctfe-eval-module-value-call
+              "module-value?"
+              false
+              args
+              expr
+              env
+              fuel)]
+          [(= call-id (ctfe-builtin-ref 217))
+            (ctfe-eval-module-value-call
+              "module-value-type"
+              true
+              args
+              expr
+              env
+              fuel)]
           [(ctfe-builtin-sequence-length-id? call-id)
             (ctfe-eval-comptime-sequence-length-call
               call-name
@@ -13408,6 +13537,115 @@
         (set! ok false))
       ok)))
 
+(define (compiler-ctfe-module-value-query-ok?) : bool
+  (let
+    [module-id : i64 (intern "ctfe.module.values")]
+    [make-id : i64 (intern "make")]
+    [missing-id : i64 (intern "missing")]
+    [module-expr : i64
+      (ast-node-push (AstExpr.Literal (AstLiteral.String module-id)))]
+    [make-expr : i64
+      (ast-node-push (AstExpr.Literal (AstLiteral.String make-id)))]
+    [missing-expr : i64
+      (ast-node-push (AstExpr.Literal (AstLiteral.String missing-id)))]
+    [signature : AstType
+      (ast-ty-func
+        (ast-type-cons (AstType.I64) (ast-type-list-new))
+        (AstType.Bool))]
+    [shared-ref : i64
+      (ast-node-push
+        (AstExpr.TypeLiteral
+          (ast-ty-ref (intern "query_region") (AstType.String))))]
+    [mutable-ref : i64
+      (ast-node-push
+        (AstExpr.TypeLiteral
+          (ast-ty-mut-ref (intern "query_region") (AstType.I64))))]
+    [nested-referent : AstType
+      (ast-ty-ref (intern "inner_query_region") (AstType.Bool))]
+    [nested-ref : i64
+      (ast-node-push
+        (AstExpr.TypeLiteral
+          (ast-ty-ref (intern "outer_query_region") nested-referent)))]
+    [non-ref : i64 (ast-node-push (AstExpr.TypeLiteral (AstType.Bool)))]
+    [env : CtfeEnv (ctfe-env-empty)]
+    (begin
+      (ctfe-module-value-reflection-enable! true)
+      (ctfe-module-value-reset!)
+      (ctfe-module-value-add-id! module-id make-id signature)
+      (let
+        [ok : bool
+          (and
+            (compiler-ctfe-eval-bool-ok?
+              (compiler-ctfe-call2 (ctfe-builtin-ref 216) module-expr make-expr)
+              env
+              true)
+            (compiler-ctfe-eval-bool-ok?
+              (compiler-ctfe-call2
+                (ctfe-builtin-ref 216)
+                module-expr
+                missing-expr)
+              env
+              false)
+            (compiler-ctfe-eval-type-ok?
+              (compiler-ctfe-call2 (ctfe-builtin-ref 217) module-expr make-expr)
+              env
+              signature)
+            (compiler-ctfe-eval-error-ok?
+              (compiler-ctfe-call2
+                (ctfe-builtin-ref 217)
+                module-expr
+                missing-expr)
+              env
+              "module-value-type: module ctfe.module.values does not define value missing")
+            (compiler-ctfe-eval-type-ok?
+              (compiler-ctfe-call1 (ctfe-builtin-ref 218) shared-ref)
+              env
+              (AstType.String))
+            (compiler-ctfe-eval-type-ok?
+              (compiler-ctfe-call1 (ctfe-builtin-ref 218) mutable-ref)
+              env
+              (AstType.I64))
+            (compiler-ctfe-eval-type-ok?
+              (compiler-ctfe-call1 (ctfe-builtin-ref 218) nested-ref)
+              env
+              nested-referent)
+            (compiler-ctfe-eval-error-ok?
+              (compiler-ctfe-call1 (ctfe-builtin-ref 218) non-ref)
+              env
+              "reference-element-type requires reference type"))]
+        (begin
+          (ctfe-module-value-reflection-enable! false)
+          ok)))))
+
+(define (compiler-ctfe-module-value-index-state-ok?) : bool
+  (let
+    [module-id : i64 (intern "ctfe.module.index.state")]
+    [name-id : i64 (intern "value")]
+    (begin
+      (ctfe-module-value-reflection-enable! false)
+      (ctfe-module-value-reset!)
+      (ctfe-module-value-add-id! module-id name-id (AstType.I64))
+      (match (ctfe-module-value-type-id module-id name-id)
+        [(CtfeMaybeModuleValueType.Some _) false]
+        [(CtfeMaybeModuleValueType.None)
+          (begin
+            (ctfe-module-value-reflection-enable! true)
+            (ctfe-module-value-reset!)
+            (ctfe-module-value-add-id! module-id name-id (AstType.I64))
+            (match (ctfe-module-value-type-id module-id name-id)
+              [(CtfeMaybeModuleValueType.Some ty)
+                (let
+                  [found : bool (ctfe-type-eq ty (AstType.I64))]
+                  (begin
+                    (ctfe-module-value-reflection-enable! false)
+                    (ctfe-module-value-reset!)
+                    (and
+                      found
+                      (match (ctfe-module-value-type-id module-id name-id)
+                        [(CtfeMaybeModuleValueType.Some _) false]
+                        [(CtfeMaybeModuleValueType.None) true]))))]
+              [(CtfeMaybeModuleValueType.None) false]))]))))
+
 (define (compiler-ctfe-reflection-program) : AstProgram
   (let
     [fields : AstFieldDefList
@@ -14813,6 +15051,8 @@
     (unless (compiler-ctfe-f64-ok?) (return 1))
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))
+    (unless (compiler-ctfe-module-value-index-state-ok?) (return 1))
+    (unless (compiler-ctfe-module-value-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-from-program-ok?) (return 1))
     (unless (compiler-ctfe-type-info-reflection-ok?) (return 1))
     (unless (compiler-ctfe-expr-eq-ok?) (return 1))

@@ -61,7 +61,9 @@ use.
   `expr-clause-list->expr-list`, `pattern-variant`,
   `pattern-list-bindings`, `match-arm`, and `expr-match`. Reflection intrinsics
   include `type-cleanup-owning?` and `type-cleanup-function` for generated
-  ownership-safe families. `expr-type` returns
+  ownership-safe families. `module-value?` and `module-value-type` query public
+  signatures by canonical module identity, while `reference-element-type`
+  returns the referent of a shared or mutable reference. `expr-type` returns
   the produced type of a captured expression for macro-time reflection. Dense
   sequence accessors use the public `items` and `len` fields in ordinary stdlib
   source; remaining compiler intrinsics are syntax constructors, reflection

@@ -609,7 +609,7 @@
 (define compiler-builtin-id-cfg-feature-cleanup-owner-reflection : i64
   -1)
 (define compiler-builtin-ctfe-ids : (Array i64)
-  (make-array i64 216))
+  (make-array i64 219))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -621,7 +621,7 @@
   (let
     [metadata : (Array i64) (make-array i64 4)]
     [ids : (Array i64) (make-array i64 299)]
-    [ctfe-ids : (Array i64) (make-array i64 216)]
+    [ctfe-ids : (Array i64) (make-array i64 219)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
@@ -633,7 +633,7 @@
           (array-set! ids i -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 216)
+      (while (< i 219)
         (begin
           (array-set! ctfe-ids i -1)
           (set! i (+ i 1))))
@@ -695,7 +695,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 216)
+    (while (< i 219)
       (begin
         (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -703,7 +703,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 216)
+    (while (< i 219)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
@@ -1762,7 +1762,10 @@
       213
       "__typelisp internal binary data")
     (compiler-builtin-load-ctfe-id! insert-missing 214 "box-element-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 215 "expr-list-type-nth")))
+    (compiler-builtin-load-ctfe-id! insert-missing 215 "expr-list-type-nth")
+    (compiler-builtin-load-ctfe-id! insert-missing 216 "module-value?")
+    (compiler-builtin-load-ctfe-id! insert-missing 217 "module-value-type")
+    (compiler-builtin-load-ctfe-id! insert-missing 218 "reference-element-type")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin

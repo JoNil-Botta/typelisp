@@ -52077,26 +52077,63 @@ tl_tlci_call_macro_entry:
       (= (compiler-backend-peephole-byte-at asm-data (+ start 7)) 113)
       (= (compiler-backend-peephole-byte-at asm-data (+ start 8)) 32))))
 
-(define (compiler-backend-peephole-find-comma-space-range
-  [asm-data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : i64
-  (let
-    [i : i64 start]
-    [found : i64 -1]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (if (< (+ i 1) end)
-          (if (and
-            (= (compiler-backend-peephole-byte-at asm-data i) 44)
-            (= (compiler-backend-peephole-byte-at asm-data (+ i 1)) 32))
-            (begin
-              (set! found i)
-              (set! done true))
-            (set! i (+ i 1)))
-          (set! done true)))
-      found)))
+;; First ", " in [start, end), or -1. The memchr variant jumps between ','
+;; bytes instead of stepping every byte; both variants return the same
+;; first-match index.
+(cfg
+  feature-tl-memchr
+  (define (compiler-backend-peephole-find-comma-space-range
+    [asm-data : (Ptr u8)]
+    [start : i64]
+    [end : i64]) : i64
+    (let
+      [i : i64 start]
+      [found : i64 -1]
+      [done : bool false]
+      (begin
+        (while (and (not done) (< (+ i 1) end))
+          (let
+            [offset : i64
+              (unsafe
+                (compiler-backend-runtime-index-of-byte
+                  (ptr-offset asm-data i)
+                  (- (- end 1) i)
+                  (cast 44 : u8)))]
+            (if (< offset 0)
+              (set! done true)
+              (let
+                [pos : i64 (+ i offset)]
+                (if (=
+                  (compiler-backend-peephole-byte-at asm-data (+ pos 1))
+                  32)
+                  (begin
+                    (set! found pos)
+                    (set! done true))
+                  (set! i (+ pos 1)))))))
+        found))))
+
+(cfg
+  (not feature-tl-memchr)
+  (define (compiler-backend-peephole-find-comma-space-range
+    [asm-data : (Ptr u8)]
+    [start : i64]
+    [end : i64]) : i64
+    (let
+      [i : i64 start]
+      [found : i64 -1]
+      [done : bool false]
+      (begin
+        (while (not done)
+          (if (< (+ i 1) end)
+            (if (and
+              (= (compiler-backend-peephole-byte-at asm-data i) 44)
+              (= (compiler-backend-peephole-byte-at asm-data (+ i 1)) 32))
+              (begin
+                (set! found i)
+                (set! done true))
+              (set! i (+ i 1)))
+            (set! done true)))
+        found))))
 
 (define (compiler-backend-peephole-movq-range
   [asm : String]

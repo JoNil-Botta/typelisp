@@ -14,15 +14,23 @@
     [missing : hashmap.HashNestedKey (hashmap.hash-key-missing)]
     [m : map_nested_i64.Map (map_nested_i64.with-capacity 2)]
     (begin
-      (test.assert-i64-eq (map_nested_i64.len m) 0 "fresh aggregate-key len")
+      (test.assert-i64-eq
+        (map_nested_i64.len (& m))
+        0
+        "fresh aggregate-key len")
       (test.assert-true
-        (map_nested_i64.is-empty? m)
+        (map_nested_i64.is-empty? (& m))
         "fresh aggregate-key empty")
       (map_nested_i64.insert! m alpha 10)
       (map_nested_i64.insert! m beta 20)
-      (test.assert-i64-eq (map_nested_i64.len m) 2 "aggregate-key insert len")
       (test.assert-i64-eq
-        (map_nested_i64.lookup-value-or (map_nested_i64.get m alpha-copy) -1)
+        (map_nested_i64.len (& m))
+        2
+        "aggregate-key insert len")
+      (test.assert-i64-eq
+        (map_nested_i64.lookup-value-or
+          (map_nested_i64.get (& m) alpha-copy)
+          -1)
         10
         "aggregate-key owned get by equal copy")
       (test.assert-true
@@ -30,13 +38,13 @@
           (map_nested_i64.get-value-borrowed (& m) beta))
         "aggregate-key borrowed value get")
       (test.assert-false
-        (map_nested_i64.contains? m missing)
+        (map_nested_i64.contains? (& m) missing)
         "aggregate-key missing absent")
       (test.assert-true
         (map_nested_i64.remove-ok? (map_nested_i64.remove! m beta))
         "aggregate-key remove")
       (test.assert-false
-        (map_nested_i64.contains? m beta)
+        (map_nested_i64.contains? (& m) beta)
         "aggregate-key removed absent")
       (match (map_nested_i64.entry-or-insert! m beta 22)
         [(map_nested_i64.EntryOrInsertInserted value)
@@ -49,11 +57,11 @@
         [(map_nested_i64.EntryOrInsertInserted _)
           (test.assert-true false "aggregate-key entry-or-insert should find")])
       (let
-        [cursor : i64 (map_nested_i64.next-occupied m 0)]
+        [cursor : i64 (map_nested_i64.next-occupied (& m) 0)]
         (test.assert-true
           (>=
             (map_nested_i64.entry-value-or
-              (map_nested_i64.entry-at m cursor)
+              (map_nested_i64.entry-at (& m) cursor)
               -1)
             0)
           "aggregate-key entry cursor returns a value")))))
@@ -68,7 +76,7 @@
       (test.assert-i64-eq
         (hashmap.hash-payload-score
           (map_string_payload.lookup-value-or
-            (map_string_payload.get m "alpha")
+            (map_string_payload.get (& m) "alpha")
             (hashmap.HashPayload 0 0)))
         7
         "aggregate struct value owned get")
@@ -83,7 +91,7 @@
       (test.assert-i64-eq
         (hashmap.hash-payload-score
           (map_string_payload.lookup-value-or
-            (map_string_payload.get m "alpha")
+            (map_string_payload.get (& m) "alpha")
             (hashmap.HashPayload 0 0)))
         21
         "aggregate struct value update")
@@ -102,12 +110,12 @@
         [(map_string_payload.EntryOrInsertFound _)
           (test.assert-true false "aggregate struct value entry should insert")])
       (let
-        [cursor : i64 (map_string_payload.next-occupied m 0)]
+        [cursor : i64 (map_string_payload.next-occupied (& m) 0)]
         (test.assert-true
           (>
             (hashmap.hash-payload-score
               (map_string_payload.entry-value-or
-                (map_string_payload.entry-at m cursor)
+                (map_string_payload.entry-at (& m) cursor)
                 (hashmap.HashPayload 0 0)))
             0)
           "aggregate struct value entry cursor returns a value")))))
@@ -122,7 +130,7 @@
       (test.assert-i64-eq
         (hashmap.hash-state-score
           (map_i64_state.lookup-value-or
-            (map_i64_state.get m 1)
+            (map_i64_state.get (& m) 1)
             (hashmap.HashFailed)))
         10
         "aggregate enum value owned get")
@@ -134,7 +142,7 @@
       (test.assert-i64-eq
         (hashmap.hash-state-score
           (map_i64_state.lookup-value-or
-            (map_i64_state.get m 1)
+            (map_i64_state.get (& m) 1)
             (hashmap.HashFailed)))
         -7
         "aggregate enum value update")
@@ -150,12 +158,12 @@
         [(map_i64_state.EntryOrInsertFound _)
           (test.assert-true false "aggregate enum value entry should insert")])
       (let
-        [cursor : i64 (map_i64_state.next-occupied m 0)]
+        [cursor : i64 (map_i64_state.next-occupied (& m) 0)]
         (test.assert-true
           (>=
             (hashmap.hash-state-score
               (map_i64_state.entry-value-or
-                (map_i64_state.entry-at m cursor)
+                (map_i64_state.entry-at (& m) cursor)
                 (hashmap.HashFailed)))
             -7)
           "aggregate enum value entry cursor returns a value")))))

@@ -188,7 +188,15 @@
   (has-decl-emitting-macro bool))
 
 (defstruct CompilerLoadSurfaceSummary
+  ;; `module-id` is the load/dedup identity. Moduleless legacy path imports can
+  ;; declare into their caller's module, so aliases target the separate
+  ;; `declaration-module-id`.
   (module-id i64)
+  (declaration-module-id i64)
+  (explicit-module bool)
+  ;; True when this source was established through a module-qualified identity
+  ;; (a dotted import or an explicit-module path import).
+  (qualified-load bool)
   (source-path-id i64)
   (source-path String)
   (root-id String)
@@ -1869,7 +1877,7 @@
                       [(CompilerLoadSomePath embedded-path) embedded-path]
                       [(CompilerLoadNoPath) primary]))]))
             primary))]
-      (ResultPkgResolve.Ok resolved))))
+      (ResultPkgResolve.Ok (compiler-load-normalize-path resolved)))))
 
 (define (compiler-load-session-state-dotted-path-cache-clear-ready!
   [state : CompilerLoadSessionState]
@@ -3262,20 +3270,51 @@
     [_ false]))
 
 (define (compiler-load-after-import-expected-module
+  [state : CompilerLoadSessionState]
+  [source-path-id : i64]
   [kind : AstImportKind]
   [expected : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]
   [imported-decls : AstDeclList]) : AstMaybeModuleName
-  (if (compiler-load-legacy-path-flat-module-import?
-    kind
-    expected
-    alias
-    imported-decls)
-    (AstMaybeModuleName.Some
-      (compiler-load-decls-source-module-id imported-decls))
-    expected))
+  (match kind
+    [(AstImportKind.Module)
+      (match (compiler-load-session-state-surface-summary-find-source
+        state
+        source-path-id)
+        [(CompilerLoadSomeSurfaceSummary summary)
+          (AstMaybeModuleName.Some (struct-get summary declaration-module-id))]
+        [(CompilerLoadNoSurfaceSummary)
+          (if (compiler-load-decl-list-has-module? imported-decls)
+            (AstMaybeModuleName.Some
+              (compiler-load-decls-source-module-id imported-decls))
+            expected)])]
+    [_
+      (if (compiler-load-legacy-path-flat-module-import?
+        kind
+        expected
+        alias
+        imported-decls)
+        (AstMaybeModuleName.Some
+          (compiler-load-decls-source-module-id imported-decls))
+        (match expected
+          [(AstMaybeModuleName.Some _) expected]
+          [(AstMaybeModuleName.No)
+            (match alias
+              [(AstMaybeImportAlias.Some _) expected]
+              [(AstMaybeImportAlias.No)
+                (match (compiler-load-session-state-surface-summary-find-source
+                  state
+                  source-path-id)
+                  [(CompilerLoadSomeSurfaceSummary summary)
+                    (if (struct-get summary qualified-load)
+                      (AstMaybeModuleName.Some
+                        (struct-get summary declaration-module-id))
+                      expected)]
+                  [(CompilerLoadNoSurfaceSummary) expected])])]))]))
 
 (define (compiler-load-after-import-alias
+  [state : CompilerLoadSessionState]
+  [source-path-id : i64]
   [kind : AstImportKind]
   [expected : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]
@@ -3286,7 +3325,24 @@
     alias
     imported-decls)
     (AstMaybeImportAlias.Some cbi.compiler-builtin-id-fix-empty)
-    alias))
+    (match kind
+      [(AstImportKind.Path)
+        (match expected
+          [(AstMaybeModuleName.Some _) alias]
+          [(AstMaybeModuleName.No)
+            (match alias
+              [(AstMaybeImportAlias.Some _) alias]
+              [(AstMaybeImportAlias.No)
+                (match (compiler-load-session-state-surface-summary-find-source
+                  state
+                  source-path-id)
+                  [(CompilerLoadSomeSurfaceSummary summary)
+                    (if (struct-get summary qualified-load)
+                      (AstMaybeImportAlias.Some
+                        cbi.compiler-builtin-id-fix-empty)
+                      alias)]
+                  [(CompilerLoadNoSurfaceSummary) alias])])])]
+      [_ alias])))
 
 (define (compiler-load-dotted-import-alias-key
   [module-id : i64]
@@ -3494,17 +3550,26 @@
   [source-path-id : i64]
   [expected-module : AstMaybeModuleName]
   [seen : sym_i64_env.SymI64Env]) : bool
-  (match expected-module
-    [(AstMaybeModuleName.No) false]
-    [(AstMaybeModuleName.Some expected-id)
+  (match (compiler-load-session-state-surface-summary-find-source
+    state
+    source-path-id)
+    [(CompilerLoadNoSurfaceSummary) false]
+    [(CompilerLoadSomeSurfaceSummary summary)
       (and
-        (compiler-load-seen-module-contains? seen "" expected-id)
-        (match (compiler-load-session-state-surface-summary-find-source
-          state
-          source-path-id)
-          [(CompilerLoadNoSurfaceSummary) false]
-          [(CompilerLoadSomeSurfaceSummary summary)
-            (= (struct-get summary module-id) expected-id)]))]))
+        (match expected-module
+          [(AstMaybeModuleName.Some _)
+            ;; A moduleless path import at the root has no target namespace for
+            ;; a later qualified alias. Preserve its legacy reload behavior;
+            ;; nested/module-owned flat imports have a canonical alias target.
+            (not
+              (=
+                (struct-get summary declaration-module-id)
+                cbi.compiler-builtin-id-fix-empty))]
+          [(AstMaybeModuleName.No) (struct-get summary qualified-load)])
+        (compiler-load-seen-module-contains?
+          seen
+          ""
+          (struct-get summary module-id)))]))
 
 (define (compiler-load-surface-summary-seen-expected-module?
   [source-path-id : i64]
@@ -3517,26 +3582,56 @@
     seen))
 
 (define (compiler-load-seen-expected-module-with-paths
+  [state : CompilerLoadSessionState]
   [path : String]
   [source-path-id : i64]
   [expected-module : AstMaybeModuleName]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (match expected-module
-    [(AstMaybeModuleName.No)
+  (match (compiler-load-session-state-surface-summary-find-source
+    state
+    source-path-id)
+    [(CompilerLoadNoSurfaceSummary)
       (ResultCompilerLoadWithPaths.Ok
         (ast-decl-list-new)
         (ast-decl-path-list-new)
         (ast-decl-module-list-new)
         seen)]
-    [(AstMaybeModuleName.Some module-id)
-      (ResultCompilerLoadWithPaths.Ok
-        (ast-decl-cons (ast-decl-module-id module-id) (ast-decl-list-new))
-        (ast-decl-path-list-prepend-builder-with-owner-id
-          path
-          source-path-id
-          (ast-decl-path-list-new))
-        (ast-decl-module-cons-id module-id (ast-decl-module-list-new))
-        seen)]))
+    [(CompilerLoadSomeSurfaceSummary summary)
+      (let
+        [module-id : i64 (struct-get summary module-id)]
+        (match expected-module
+          [(AstMaybeModuleName.Some expected-id)
+            (when
+              (and
+                (struct-get summary explicit-module)
+                (not (= module-id expected-id)))
+              (return
+                (ResultCompilerLoadWithPaths.Err
+                  (box
+                    (compiler-diagnostic-at-start
+                      path
+                      (string.append
+                        "compiler-load: import expected module "
+                        (string.append
+                          (intern-str expected-id)
+                          (string.append " but loaded " (intern-str module-id)))))))))]
+          [(AstMaybeModuleName.No) unit])
+        (if (match expected-module
+          [(AstMaybeModuleName.Some expected-id) (= module-id expected-id)]
+          [(AstMaybeModuleName.No) false])
+          (ResultCompilerLoadWithPaths.Ok
+            (ast-decl-cons (ast-decl-module-id module-id) (ast-decl-list-new))
+            (ast-decl-path-list-prepend-builder-with-owner-id
+              path
+              source-path-id
+              (ast-decl-path-list-new))
+            (ast-decl-module-cons-id module-id (ast-decl-module-list-new))
+            seen)
+          (ResultCompilerLoadWithPaths.Ok
+            (ast-decl-list-new)
+            (ast-decl-path-list-new)
+            (ast-decl-module-list-new)
+            seen)))]))
 
 (define (compiler-load-resolved-path-id-for-generated-import
   [resolved : String]
@@ -3629,7 +3724,8 @@
           source-path-id
           import-root
           program
-          fallback-id)
+          fallback-id
+          (not (compiler-load-no-expected-module? expected-module)))
           [(ResultCompilerLoadSurfaceSummary.Ok summary)
             (compiler-load-session-state-record-surface-summary!
               load-state
@@ -6148,6 +6244,9 @@
   (CompilerLoadSurfaceSummary
     cbi.compiler-builtin-id-fix-empty
     cbi.compiler-builtin-id-fix-empty
+    false
+    false
+    cbi.compiler-builtin-id-fix-empty
     ""
     ""
     (CompilerLoadSurfaceImportNil)
@@ -6945,6 +7044,9 @@
   [source-path-id : i64]
   [root-id : String]
   [module-id : i64]
+  [declaration-module-id : i64]
+  [explicit-module : bool]
+  [qualified-load : bool]
   [decls : AstDeclList]) : CompilerLoadSurfaceSummary
   (let
     [source-path : String (compiler-load-normalize-path path)]
@@ -6952,6 +7054,9 @@
       (compiler-load-surface-build-decls source-path module-id decls)]
     (CompilerLoadSurfaceSummary
       module-id
+      declaration-module-id
+      explicit-module
+      qualified-load
       source-path-id
       source-path
       (compiler-load-normalize-path root-id)
@@ -6973,7 +7078,8 @@
   [source-path-id : i64]
   [root-id : String]
   [program : AstProgram]
-  [fallback-id : i64]) : ResultCompilerLoadSurfaceSummary
+  [fallback-id : i64]
+  [qualified-load : bool]) : ResultCompilerLoadSurfaceSummary
   (match program
     [(AstProgram.Program decls-box)
       (let
@@ -6992,6 +7098,9 @@
                     source-path-id
                     root-id
                     module-id
+                    module-id
+                    (compiler-load-decl-list-has-module? decls)
+                    qualified-load
                     decls))]
               [(ResultCompilerLoadAliasCheck.Err diag)
                 (ResultCompilerLoadSurfaceSummary.Err diag)])]
@@ -7344,12 +7453,16 @@
                               (let
                                 [after-import-expected : AstMaybeModuleName
                                   (compiler-load-after-import-expected-module
+                                    (struct-get traversal load-state)
+                                    resolved-id
                                     kind
                                     expected-module
                                     alias
                                     imported-decls)]
                                 [after-import-alias : AstMaybeImportAlias
                                   (compiler-load-after-import-alias
+                                    (struct-get traversal load-state)
+                                    resolved-id
                                     kind
                                     expected-module
                                     alias
@@ -7805,6 +7918,11 @@
                         source-module)
                         [(ResultCompilerLoadAliasCheck.Ok)
                           (begin
+                            ;; Replace a speculative lazy summary with the
+                            ;; identity established by the actual load.
+                            (compiler-load-session-state-surface-summary-remove-source!
+                              load-state
+                              source-path-id)
                             (compiler-load-session-state-record-surface-summary!
                               load-state
                               (compiler-load-surface-summary-from-decls
@@ -7812,6 +7930,11 @@
                                 source-path-id
                                 import-root
                                 module-name-id
+                                source-module-id
+                                (compiler-load-decl-list-has-module? decls)
+                                (not
+                                  (compiler-load-no-expected-module?
+                                    expected-module))
                                 load-decls))
                             (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                               (CompilerLoadTraversalContext
@@ -8787,6 +8910,7 @@
       expected-module
       seen)
       (compiler-load-seen-expected-module-with-paths
+        compiler-load-active-session-state
         path
         source-path-id
         expected-module
@@ -8925,6 +9049,7 @@
       expected-module
       seen)
       (compiler-load-seen-expected-module-with-paths
+        load-state
         path
         source-path-id
         expected-module
@@ -10034,12 +10159,16 @@
                               (let
                                 [after-import-expected : AstMaybeModuleName
                                   (compiler-load-after-import-expected-module
+                                    compiler-load-active-session-state
+                                    resolved-id
                                     kind
                                     expected-module
                                     alias
                                     imported-decls)]
                                 [after-import-alias : AstMaybeImportAlias
                                   (compiler-load-after-import-alias
+                                    compiler-load-active-session-state
+                                    resolved-id
                                     kind
                                     expected-module
                                     alias
@@ -10390,12 +10519,21 @@
                         source-module)
                         [(ResultCompilerLoadAliasCheck.Ok)
                           (begin
+                            ;; Replace a speculative lazy summary with the
+                            ;; identity established by the actual load.
+                            (compiler-load-surface-summary-remove-source!
+                              source-path-id)
                             (compiler-load-record-surface-summary!
                               (compiler-load-surface-summary-from-decls
                                 source-path
                                 source-path-id
                                 manifest-dir
                                 module-name-id
+                                source-module-id
+                                (compiler-load-decl-list-has-module? decls)
+                                (not
+                                  (compiler-load-no-expected-module?
+                                    expected-module))
                                 load-decls))
                             (compiler-load-package-decls-with-module-and-roots
                               load-decls
@@ -10749,6 +10887,21 @@
       (let
         [rest : AstDeclList rest]
         (+ 1 (compiler-load-decl-list-count rest)))]))
+
+(define (compiler-load-decl-list-value-name-count
+  [decls : AstDeclList]
+  [want : String]) : i64
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
+      (+
+        (match decl
+          [(AstDecl.Def _ name _ _)
+            (if (string.eq (intern-str name) want)
+              1
+              0)]
+          [_ 0])
+        (compiler-load-decl-list-value-name-count rest want))]))
 
 (define (compiler-load-first-string-def?
   [decls : AstDeclList]
@@ -11312,7 +11465,8 @@
             source-path-id
             "src\\..\\src"
             program
-            fallback-id)
+            fallback-id
+            false)
             [(ResultCompilerLoadSurfaceSummary.Ok summary)
               (compiler-load-surface-summary-shape-ok? summary)]
             [(ResultCompilerLoadSurfaceSummary.Err _) false]))]
@@ -12173,6 +12327,75 @@
             (compiler-load-test-seen-contains? seen "provider")
             (compiler-load-test-seen-contains? seen "helper"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
+
+(define (compiler-load-canonical-source-import-order-ok? [path-first : bool]) : bool
+  (let
+    [shared : String "target/cl_canonical_source_shared.tl"]
+    [entry : String
+      (if path-first
+        "target/cl_canonical_source_path_first.tl"
+        "target/cl_canonical_source_dotted_first.tl")]
+    [path-import : String "(import \"cl_canonical_source_shared.tl\")"]
+    [dotted-import : String "(import cl_canonical_source_shared as shared)"]
+    [expected-module : String
+      (if path-first
+        "canonical.import.path_first"
+        "cl_canonical_source_shared")]
+    (begin
+      (io.write-file
+        shared
+        "(defstruct SharedValue (value i64))
+(defenum SharedChoice (Chosen SharedValue) (Missing))
+(define canonical-source-marker : i64 42)
+(define (make-shared) : SharedChoice
+  (SharedChoice.Chosen (SharedValue canonical-source-marker)))")
+      (io.write-file
+        entry
+        (str_cat.str-cat
+          (if path-first
+            "(module canonical.import.path_first)\n"
+            "")
+          (if path-first
+            path-import
+            dotted-import)
+          "\n"
+          (if path-first
+            dotted-import
+            path-import)
+          "\n(define (main) : i64 canonical-source-marker)"))
+      (match (compiler-load-file-with-paths entry (sym_i64_env.sym-i64-empty))
+        [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
+          (and
+            (=
+              (compiler-load-decl-list-value-name-count
+                decls
+                "canonical-source-marker")
+              1)
+            (compiler-load-decl-list-has-import-alias?
+              decls
+              expected-module
+              "shared"))]
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
+
+(define (compiler-load-canonical-source-explicit-mismatch-ok?) : bool
+  (begin
+    (io.write-file
+      "target/cl_canonical_source_explicit.tl"
+      "(module canonical.actual)
+(define value : i64 42)")
+    (io.write-file
+      "target/cl_canonical_source_explicit_entry.tl"
+      "(import \"cl_canonical_source_explicit.tl\" module canonical.actual as actual)
+(import cl_canonical_source_explicit as wrong)
+(define (main) : i64 (+ actual.value wrong.value))")
+    (match (compiler-load-file-with-paths
+      "target/cl_canonical_source_explicit_entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (string.eq
+          (compiler-diagnostic-message (box-get diag))
+          "compiler-load: import expected module cl_canonical_source_explicit but loaded canonical.actual")]
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
 (define (compiler-load-package-dotted-import-resolution-ok?) : bool
   (let
@@ -15011,6 +15234,9 @@
     [summary : CompilerLoadSurfaceSummary
       (CompilerLoadSurfaceSummary
         alias-a-id
+        alias-a-id
+        false
+        false
         alias-b-id
         "state.tl"
         ""
@@ -15272,6 +15498,20 @@
       (compiler-load-dotted-after-path-import-ok?)
       (return
         (io.panic "compiler-load: dotted after path import smoke mismatch")))
+    (unless
+      (compiler-load-canonical-source-import-order-ok? true)
+      (return
+        (io.panic
+          "compiler-load: canonical source path-first import smoke mismatch")))
+    (unless
+      (compiler-load-canonical-source-import-order-ok? false)
+      (return
+        (io.panic
+          "compiler-load: canonical source dotted-first import smoke mismatch")))
+    (unless
+      (compiler-load-canonical-source-explicit-mismatch-ok?)
+      (return
+        (io.panic "compiler-load: canonical source mismatch smoke mismatch")))
     (unless
       (compiler-load-package-dotted-import-resolution-ok?)
       (return

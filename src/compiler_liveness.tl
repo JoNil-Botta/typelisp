@@ -847,6 +847,19 @@
             _
             _)
           (compiler-live-values3-vars base index-base index)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (compiler-live-set-union
+            (compiler-live-values3-vars source selector-low active-lanes)
+            (compiler-live-maybe-value-vars selector-high))])]
     [(CompilerIrInstr.TailMask _ index len _)
       (compiler-live-values2-vars index len)]
     [(CompilerIrInstr.EntryArgc _) (compiler-live-set-empty)]
@@ -934,6 +947,10 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+          (compiler-live-set1 dst)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
           (compiler-live-set1 dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.EntryArgc dst) (compiler-live-set1 dst)]

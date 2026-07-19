@@ -1,0 +1,144 @@
+; SIMD intra-gang shuffle coverage. Identity shuffles cover a partial tail;
+; selectors that use the backend gang width operate on full gangs.
+(import stdlib.array)
+
+(define (init [xs : (Array i64)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! xs i (+ (* i 3) 1))
+        (set! i (+ i 1))))))
+
+(define (sum [xs : (Array i64)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set! acc (+ acc (array-ref xs i)))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (init32 [xs : (Array i32)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! xs i (cast (+ (* i 5) 2) : i32))
+        (set! i (+ i 1))))))
+
+(define (sum32 [xs : (Array i32)] [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set! acc (+ acc (cast (array-ref xs i) : i64)))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (same64 [left : (Array i64)] [right : (Array i64)] [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (not (= (array-ref left i) (array-ref right i)))
+            (set! ok false)
+            unit)
+          (set! i (+ i 1))))
+      ok)))
+
+(define (main) : i64
+  (let
+    [n : i64 19]
+    [xs : (Array i64) (array.make-array i64 n)]
+    [out : (Array i64) (array.make-array i64 n)]
+    [rev1 : (Array i64) (array.make-array i64 n)]
+    [rev2 : (Array i64) (array.make-array i64 n)]
+    [xs32 : (Array i32) (array.make-array i32 n)]
+    [out32 : (Array i32) (array.make-array i32 n)]
+    [full : i64 16]
+    [rot1 : (Array i64) (array.make-array i64 full)]
+    [rot2 : (Array i64) (array.make-array i64 full)]
+    [repeat : (Array i64) (array.make-array i64 full)]
+    [uniform-selector : (Array i64) (array.make-array i64 full)]
+    [uniform-source : (Array i64) (array.make-array i64 full)]
+    (begin
+      (init xs n)
+      (init32 xs32 n)
+      (foreach
+        ([i : i64 0 n])
+        (array-set! out i (spmd-shuffle (array-ref xs i) (program-index))))
+      (foreach
+        ([i : i64 0 full])
+        (array-set!
+          rev1
+          i
+          (spmd-shuffle
+            (array-ref xs i)
+            (+ (* -1 (program-index)) (+ (program-count) -1)))))
+      (foreach
+        ([i : i64 0 full])
+        (array-set!
+          rev2
+          i
+          (spmd-shuffle
+            (array-ref rev1 i)
+            (+ (* -1 (program-index)) (+ (program-count) -1)))))
+      (foreach
+        ([i : i64 0 n])
+        (array-set! out32 i (spmd-shuffle (array-ref xs32 i) (program-index))))
+      ; Full-gang rotate followed by the inverse rotate. `program-count` is a
+      ; power of two in both native modes, so bit-and implements lane modulo.
+      (foreach
+        ([i : i64 0 full])
+        (array-set!
+          rot1
+          i
+          (spmd-shuffle
+            (array-ref xs i)
+            (bit-and (+ (program-index) 1) (+ (program-count) -1)))))
+      (foreach
+        ([i : i64 0 full])
+        (array-set!
+          rot2
+          i
+          (spmd-shuffle
+            (array-ref rot1 i)
+            (bit-and
+              (+ (program-index) (+ (program-count) -1))
+              (+ (program-count) -1)))))
+      ; Repeated and uniform selectors use lane identity as their source so
+      ; their expected values are independent of the selected SIMD width.
+      (foreach
+        ([i : i64 0 full])
+        (array-set!
+          repeat
+          i
+          (spmd-shuffle (program-index) (bit-and (program-index) 1))))
+      (foreach
+        ([i : i64 0 full])
+        (array-set! uniform-selector i (spmd-shuffle (program-index) 0)))
+      ; A uniform source must still evaluate and validate every varying
+      ; selector, even though every valid permutation produces the same value.
+      (foreach
+        ([i : i64 0 full])
+        (array-set!
+          uniform-source
+          i
+          (spmd-shuffle (cast 77 : i64) (program-index))))
+      (if (and
+        (= (sum out n) 532)
+        (= (sum32 out32 n) 893)
+        (same64 xs rev2 full)
+        (same64 xs rot2 full)
+        (or (= (sum repeat full) 0) (= (sum repeat full) 8))
+        (= (sum uniform-selector full) 0)
+        (= (sum uniform-source full) 1232))
+        42
+        1))))

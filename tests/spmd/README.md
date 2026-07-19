@@ -191,10 +191,14 @@ Coverage map:
   scalar, AVX2, and AVX-512 modes through `scripts/verify-spmd-simd.sh`.
 - `spmd-broadcast` executable coverage lives in the `broadcast_lane*_{i64,u64,u32}.tl`
   fixtures, with mode-specific expectations in `scripts/verify-spmd-broadcast.sh`.
-- `spmd-shuffle` scalar executable coverage lives in
-  `../integration/spmd_shuffle_scalar.tl` and the invalid-lane trap fixture
-  `../integration/spmd_shuffle_lane1_trap.tl`; explicit SIMD diagnostics are
-  pinned by `src/compiler_lower.tl` and safety fixtures.
+- `spmd-shuffle` scalar and native AVX2/AVX-512 coverage lives in
+  `../integration/spmd_shuffle_{scalar,simd,types,reduce}.tl`. The SIMD fixtures
+  cover identity, reverse, rotate, repeated/uniform selectors, all six numeric
+  value types, bit-preserving float permutations, full gangs, and tails.
+  `spmd_shuffle_tail_selector.tl` proves inactive lanes do not load operands;
+  the `spmd_shuffle_*trap.tl` fixtures pin negative, out-of-range, and inactive
+  tail selectors to the standard bounds abort. Opcode gates live in
+  `scripts/verify-spmd-simd.sh`.
 - `program-index`/`program-count` executable coverage lives in
   `lane_identity_i64.tl` and `lane_identity_reduce_i64.tl`, with mode-specific
   expectations in `scripts/verify-spmd-lane-identity.sh`; scalar same-exit

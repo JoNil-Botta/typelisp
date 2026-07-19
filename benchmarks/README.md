@@ -49,6 +49,7 @@ space-separated command-line arguments used by
 | `spmd_zip` | Data-parallel three-input fused multiply-add (`out[i] = a[i] * b[i] + c[i] + r`) via `foreach` (refs #1125). |
 | `spmd_mask` | Data-parallel masked conditional (`out[i] = (a[i] odd) ? a[i]+r : a[i]-r`) via `foreach`, exercising a divergent lane body (refs #1125). |
 | `spmd_reduce` | Data-parallel sum reduction (`sum_i (a[i] + r)`) via `spmd-reduce` vs a scalar accumulation baseline (refs #1125). |
+| `spmd_shuffle` | Identity intra-gang permutation of `a[i] + r`, exercising ordered selector validation and native AVX2/AVX-512 shuffle codegen against an observable-equivalent C map (refs #5351). |
 | `spmd_short_tail` | Data-parallel elementwise map over a non-lane-aligned length (1000) exercising the SIMD remainder/tail (refs #1125). |
 | `opt_arithmetic_loops` | Optimizer-sensitive scalar recurrence. |
 | `opt_array_sum` | Optimizer-corpus array fill and sum case, distinct from the generic `array_sum` benchmark. |

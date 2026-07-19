@@ -450,6 +450,15 @@ ref_tuple_return
 EOF
 }
 
+# This partial-gang fixture intentionally has selectors that are valid only
+# within an AVX2/AVX-512 gang. The scalar backend has one active lane and must
+# reject selectors 1 and 2, so verify-spmd-simd.sh owns its SIMD-only run.
+spmd_simd_manifest_cases() {
+    cat <<'EOF'
+spmd_shuffle_tail_selector
+EOF
+}
+
 validate_manifest() {
     _known="$WORKDIR/manifest-known.txt"
     _known_sorted="$WORKDIR/manifest-known.sorted"
@@ -470,6 +479,7 @@ validate_manifest() {
         linux_integration_non_applicable_cases >> "$_known"
     fi
     selfhost_native_manifest_cases >> "$_known"
+    spmd_simd_manifest_cases >> "$_known"
 
     find tests/integration -maxdepth 1 -type f -name '*.tl' |
         sed 's#^tests/integration/##; s#\.tl$##' | sort > "$_actual"

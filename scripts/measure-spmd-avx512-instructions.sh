@@ -8,7 +8,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-CASES=spmd_map,spmd_zip,spmd_reduce,spmd_short_tail,spmd_mask
+CASES=spmd_map,spmd_zip,spmd_reduce,spmd_shuffle,spmd_short_tail,spmd_mask
 SUPPORT_TABLE=${TYPELISP_AVX512_IR_SUPPORT:-$ROOT/perf/spmd-avx512-support.tsv}
 BASELINE=${TYPELISP_AVX512_IR_BASELINE:-$ROOT/perf/spmd-avx512-retired-baseline.tsv}
 WORKDIR=${TYPELISP_AVX512_IR_OUT:-target/spmd-avx512-instructions}
@@ -147,7 +147,7 @@ validate_support_table() {
             } else failed = 1
             rows++
         }
-        END { exit failed || rows != 5 ? 1 : 0 }
+        END { exit failed || rows != 6 ? 1 : 0 }
     ' "$SUPPORT_TABLE" || fail "invalid support table: $SUPPORT_TABLE"
     _old_ifs=$IFS
     IFS=,
@@ -498,9 +498,12 @@ CPU_VENDOR=$(cpu_field vendor_id); CPU_FAMILY=$(cpu_field 'cpu family'); CPU_MOD
 CLANG_VERSION=$(clang --version | sed -n '1p'); AS_VERSION=$(as --version | sed -n '1p'); LD_VERSION=$(ld --version | sed -n '1p')
 TL_VERSION=$("$COMPILER" --version | sed -n '1p'); TL_HASH=$(sha256sum "$COMPILER" | awk '{print $1}')
 COUNTER_SOURCE_HASH=$(sha256sum tools/spmd-avx512-perf/counter.tl | awk '{print $1}')
-if GIT_HEAD=$(git rev-parse HEAD 2>/dev/null); then
+if GIT_HEAD=$(git -c safe.directory="$ROOT" rev-parse HEAD 2>/dev/null); then
     :
-elif command -v git.exe >/dev/null 2>&1 && command -v wslpath >/dev/null 2>&1; then
+elif command -v git.exe >/dev/null 2>&1 &&
+    git.exe --version >/dev/null 2>&1 &&
+    command -v wslpath >/dev/null 2>&1
+then
     GIT_HEAD=$(git.exe -C "$(wslpath -w "$ROOT")" rev-parse HEAD | tr -d '\r')
 else
     GIT_HEAD=unknown

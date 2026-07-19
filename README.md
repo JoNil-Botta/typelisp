@@ -415,17 +415,20 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
 - `(program-index)` and `(program-count)` are lane identity forms inside
   SPMD scopes; programs using them intentionally observe backend gang
   width.
+- AVX2 and AVX-512 lower eligible numeric `spmd-shuffle` values/selectors to
+  native dword/qword permutations. Ordered selector checks and gang-preserving
+  tails retain the scalar bounds-trap contract.
 - `defdispatch` declares one logical function with scalar/AVX2/AVX-512
   variants; ordinary calls resolve once per process via the CPUID/XGETBV
   checks exposed by `stdlib/cpu.tl` (AVX-512 dispatch requires F+BW+DQ and OS
   ZMM/opmask state).
 
-Public vector/mask value types are deferred by design. Vectorized scans and
-shuffles remain tracked under [#5349](https://github.com/JoNil-Botta/typelisp/issues/5349),
-[#5350](https://github.com/JoNil-Botta/typelisp/issues/5350), and
-[#5351](https://github.com/JoNil-Botta/typelisp/issues/5351). Non-inlined
-varying helper calls compile and run through the private scalar/AVX-512 ABI;
-AVX2 native emission remains tracked under
+Public vector/mask value types are deferred by design. Vectorized scans remain
+tracked under [#5349](https://github.com/JoNil-Botta/typelisp/issues/5349) and
+[#5350](https://github.com/JoNil-Botta/typelisp/issues/5350); numeric
+`spmd-shuffle` maps and reduction values have native AVX2/AVX-512 lowering.
+Non-inlined varying helper calls compile and run through the private
+scalar/AVX-512 ABI; AVX2 native emission remains tracked under
 [#5151](https://github.com/JoNil-Botta/typelisp/issues/5151). See SPEC.md
 sections 5.15 and 8.
 
@@ -656,7 +659,7 @@ generation, a docs site, and an LSP diagnostics server.
 
 Not yet (see [SPEC.md §8](SPEC.md) for the authoritative matrix): general
 GC/`free` (deferred by design in favor of arenas), vectorized SPMD
-scans/shuffles and public vector/mask values, AVX2 native emission for
+scans and public vector/mask values, AVX2 native emission for
 out-of-line varying helper calls, reference captures in escaping closures
 (rejected by design), package registry and workspaces, and richer IDE
 features. Codegen quality versus `clang -O2` is an active work stream

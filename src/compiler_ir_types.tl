@@ -220,6 +220,22 @@
 (defenum CompilerIrInstrGatherLoadPayload
   (Payload i64 CompilerIrValue CompilerIrValue CompilerIrValue bool i64 AstType))
 
+;; A checked intra-gang permutation. `selector-low` contains the first
+;; min(lanes, selector vector width) i64 source-lane indexes and
+;; `selector-high` contains the remaining indexes for 32-bit lane shapes.
+;; The backend validates selectors for active destination lanes in logical
+;; lane order before issuing the native permutation. `active-lanes` is the
+;; current gang size, which is less than `lanes` for a tail gang.
+(defenum CompilerIrInstrVectorShufflePayload
+  (Payload
+    i64
+    CompilerIrValue
+    CompilerIrValue
+    CompilerIrMaybeValue
+    CompilerIrValue
+    i64
+    AstType))
+
 (defenum CompilerIrInstrCallCAbiStoreResultPayload
   (Payload CompilerIrValue i64 CompilerIrCallArgs CompilerIrCAbiReturnSlotList))
 
@@ -281,6 +297,7 @@
   (PredicatedStore (Box CompilerIrInstrPredicatedStorePayload))
   (PredicatedLoad (Box CompilerIrInstrPredicatedLoadPayload))
   (GatherLoad (Box CompilerIrInstrGatherLoadPayload))
+  (VectorShuffle (Box CompilerIrInstrVectorShufflePayload))
   (TailMask i64 CompilerIrValue CompilerIrValue i64)
   (EntryArgc i64)
   (EntryArgv i64)
@@ -443,6 +460,25 @@
         index-base
         index
         lane-offset
+        lanes
+        ty))))
+
+(define (ir-instr-vector-shuffle
+  [dst : i64]
+  [source : CompilerIrValue]
+  [selector-low : CompilerIrValue]
+  [selector-high : CompilerIrMaybeValue]
+  [active-lanes : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : CompilerIrInstr
+  (CompilerIrInstr.VectorShuffle
+    (box
+      (CompilerIrInstrVectorShufflePayload.Payload
+        dst
+        source
+        selector-low
+        selector-high
+        active-lanes
         lanes
         ty))))
 
@@ -2392,6 +2428,24 @@
             lane-offset
             lanes
             (compiler-ir-clone-type ty))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            dst
+            source
+            selector-low
+            selector-high
+            active-lanes
+            lanes
+            ty)
+          (ir-instr-vector-shuffle
+            dst
+            (compiler-ir-clone-value source)
+            (compiler-ir-clone-value selector-low)
+            (compiler-ir-clone-maybe-value selector-high)
+            (compiler-ir-clone-value active-lanes)
+            lanes
+            (compiler-ir-clone-type ty))])]
     [(CompilerIrInstr.TailMask dst index len lanes)
       (CompilerIrInstr.TailMask
         dst
@@ -3677,6 +3731,30 @@
             (string.int->string lanes)
             " : "
             (compiler-ir-type-render ty))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            dst
+            source
+            selector-low
+            selector-high
+            active-lanes
+            lanes
+            ty)
+          (str_cat.str-cat
+            (compiler-ir-dst-render dst)
+            "vector_shuffle "
+            (compiler-ir-value-render source)
+            ", "
+            (compiler-ir-value-render selector-low)
+            ", "
+            (compiler-ir-maybe-value-render selector-high)
+            " active "
+            (compiler-ir-value-render active-lanes)
+            " lanes "
+            (string.int->string lanes)
+            " : "
+            (compiler-ir-type-render ty))])]
     [(CompilerIrInstr.TailMask dst index length lanes)
       (str_cat.str-cat
         (compiler-ir-dst-render dst)
@@ -4117,6 +4195,10 @@
         [(CompilerIrInstrPredicatedLoadPayload.Payload _ _ _ _ _ _)
           CompilerIrEffect.MemoryRead])]
     [(CompilerIrInstr.GatherLoad _) CompilerIrEffect.MemoryRead]
+    ;; Selector validation may call the standard nonreturning OOB abort path,
+    ;; but the valid path falls through like an ordinary instruction. Unknown
+    ;; keeps it effectful without classifying it as a CFG terminator.
+    [(CompilerIrInstr.VectorShuffle _) CompilerIrEffect.Unknown]
     [(CompilerIrInstr.EntryArgc _) CompilerIrEffect.MemoryRead]
     [(CompilerIrInstr.EntryArgv _) CompilerIrEffect.MemoryRead]
     [(CompilerIrInstr.EntryEnvp _) CompilerIrEffect.MemoryRead]
@@ -4517,6 +4599,13 @@
             spans
             (compiler-source-spans-value-key function dst)
             span)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
+          (compiler-source-spans-insert-instr-entry
+            spans
+            (compiler-source-spans-value-key function dst)
+            span)])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -4708,6 +4797,12 @@
         [(CompilerIrInstr.GatherLoad payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+              (compiler-source-spans-entry-list-lookup
+                instr-entries
+                (compiler-source-spans-value-key function dst))])]
+        [(CompilerIrInstr.VectorShuffle payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
               (compiler-source-spans-entry-list-lookup
                 instr-entries
                 (compiler-source-spans-value-key function dst))])]
@@ -5806,6 +5901,28 @@
             (if lane-offset
               " lane-offset"
               "")
+            (compiler-ir-vector-suffix lanes elem-ty))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            dst
+            source
+            selector-low
+            selector-high
+            active-lanes
+            lanes
+            elem-ty)
+          (str_cat.str-cat
+            "  "
+            (compiler-ir-value-describe (CompilerIrValue.Var dst))
+            " = vector_shuffle "
+            (compiler-ir-value-describe source)
+            ", "
+            (compiler-ir-value-describe selector-low)
+            ", "
+            (compiler-ir-maybe-value-render selector-high)
+            " active "
+            (compiler-ir-value-describe active-lanes)
             (compiler-ir-vector-suffix lanes elem-ty))])]
     [(CompilerIrInstr.TailMask dst index len lanes)
       (str_cat.str-cat

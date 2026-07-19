@@ -120,6 +120,9 @@ tests/integration/spmd_foreach.tl
 tests/integration/spmd_gather_read.tl
 tests/integration/spmd_reduce_scalar.tl
 tests/integration/spmd_scan_scalar.tl
+tests/integration/spmd_shuffle_simd.tl
+tests/integration/spmd_shuffle_types.tl
+tests/integration/spmd_shuffle_reduce.tl
 benchmarks/ispc/perfbench_gathers/bench.tl
 EOF
 }
@@ -256,6 +259,31 @@ verify_gather_reduce_opcodes() {
     done
 }
 
+verify_shuffle_opcodes() {
+    _mode=$1
+    compile_spmd_mode tests/integration/spmd_shuffle_simd.tl "$_mode"
+    _tag=tests_integration_spmd_shuffle_simd_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] shuffle opcode compile failed in $_mode:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/integration/spmd_shuffle_simd.tl $_mode (opcode compile)" >> "$FAILURES"
+        return
+    fi
+    if ! grep -F -- "vpermd" "$_asm" > /dev/null; then
+        echo "[spmd-simd] shuffle $_mode assembly missing vpermd" >&2
+        echo "tests/integration/spmd_shuffle_simd.tl $_mode (missing vpermd)" >> "$FAILURES"
+    fi
+    if [ "$_mode" = avx512 ] && ! grep -F -- "vpermq" "$_asm" > /dev/null; then
+        echo "[spmd-simd] shuffle avx512 assembly missing vpermq" >&2
+        echo "tests/integration/spmd_shuffle_simd.tl avx512 (missing vpermq)" >> "$FAILURES"
+    fi
+    if [ "$_mode" = avx2 ] && grep -E -- '%zmm[0-9]+|%k[0-7]' "$_asm" > /dev/null; then
+        echo "[spmd-simd] shuffle AVX2 assembly uses AVX-512 registers" >&2
+        echo "tests/integration/spmd_shuffle_simd.tl avx2 (AVX-512 register)" >> "$FAILURES"
+    fi
+}
+
 verify_reduce_accumulator_shape() {
     _mode=$1
     compile_spmd_mode tests/integration/spmd_reduce_scalar.tl "$_mode" 2
@@ -390,6 +418,7 @@ for mode in avx2 avx512; do
     # host even when that ISA is unavailable for the execution corpus below.
     verify_gather_opcodes "$mode"
     verify_gather_reduce_opcodes "$mode"
+    verify_shuffle_opcodes "$mode"
     verify_reduce_accumulator_shape "$mode"
 done
 
@@ -415,6 +444,52 @@ for gather_oob in tests/integration/spmd_gather_oob.tl tests/integration/spmd_ga
             echo "$gather_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
         else
             echo "[spmd-simd] gather-oob $gather_oob $mode -> bounds abort OK"
+        fi
+    done
+done
+
+# A three-lane partial gang uses exactly-sized value and selector arrays.
+# Execute it only in SIMD modes: scalar mode intentionally has one-lane gangs
+# and therefore gives the varying selector a different source contract.
+for pair in "avx2 avx2" "avx512 avx512"; do
+    mode=${pair%% *}
+    isa=${pair##* }
+    if ! isa_available "$isa"; then
+        echo "[spmd-simd]   skip shuffle-tail-selector $mode ($isa not runnable)"
+        continue
+    fi
+    run_spmd_mode tests/integration/spmd_shuffle_tail_selector.tl "$mode"
+    if [ "$mode_code" != 42 ] || [ -s "$mode_err" ]; then
+        echo "[spmd-simd] shuffle tail selector $mode failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/integration/spmd_shuffle_tail_selector.tl $mode (expected 42, got $mode_code)" >> "$FAILURES"
+    else
+        echo "[spmd-simd] shuffle tail selector $mode -> 42 OK"
+    fi
+done
+
+# Invalid, negative, and inactive-tail selectors use the ordinary bounds abort
+# in every mode. The tail fixture also proves a uniform value does not make
+# selector evaluation/validation disappear.
+for shuffle_oob in \
+    tests/integration/spmd_shuffle_lane1_trap.tl \
+    tests/integration/spmd_shuffle_negative_trap.tl \
+    tests/integration/spmd_shuffle_tail_oob.tl
+do
+    for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
+        mode=${pair%% *}
+        isa=${pair##* }
+        if [ "$mode" != scalar ] && ! isa_available "$isa"; then
+            echo "[spmd-simd]   skip $shuffle_oob $mode ($isa not runnable)"
+            continue
+        fi
+        run_spmd_mode "$shuffle_oob" "$mode"
+        if [ "$mode_code" != 134 ] || ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
+            echo "[spmd-simd] $shuffle_oob $mode did not take the bounds abort path:" >&2
+            sed 's/^/    /' "$mode_err" >&2
+            echo "$shuffle_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
+        else
+            echo "[spmd-simd] $shuffle_oob $mode -> bounds abort OK"
         fi
     done
 done

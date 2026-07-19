@@ -15112,20 +15112,29 @@
     ResultTcUnit.Ok
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
       [(AstMacroParam.Param _ ty variadic _)
-        (if (tc-macro-type-param-kind? ty)
-          (if variadic
+        (cond
+          [(and
+              variadic
+              (< (+ index 1) (ast-macro-param-list-len params))
+              (not
+                (tc-macro-expr-binding-clause-type? (tc-resolve-type ctx ty))))
             (ResultTcUnit.Err
-              "typecheck: type macro operand cannot be variadic")
-            (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))
-          (if (tc-macro-module-param-kind? ty)
+              "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")]
+          [(tc-macro-type-param-kind? ty)
+            (if variadic
+              (ResultTcUnit.Err
+                "typecheck: type macro operand cannot be variadic")
+              (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))]
+          [(tc-macro-module-param-kind? ty)
             (if variadic
               (ResultTcUnit.Err
                 "typecheck: Module macro operand cannot be variadic")
-              (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))
+              (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))]
+          [else
             (match (tc-source-type-policy-ok ctx ty)
               [(ResultTcUnit.Ok)
                 (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1))]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))])))
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])])))
 
 (define (tc-macro-result-name-id?
   [ty : AstType]
@@ -54173,6 +54182,7 @@
     ty
     (& exprs)
     0
+    (struct-get (& exprs) len)
     env
     fuel
     call-expr))
@@ -54184,10 +54194,11 @@
   [ty : AstType]
   [exprs : (& exprs AstExprList)]
   [index : i64]
+  [end : i64]
   [env : CtfeEnv]
   [fuel : i64]
   [call-expr : AstExpr]) : ResultGenKey
-  (if (>= index (struct-get exprs len))
+  (if (>= index end)
     (ResultGenKey.Ok "" fuel)
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
@@ -54208,6 +54219,7 @@
             ty
             exprs
             (+ index 1)
+            end
             env
             head-fuel
             call-expr)
@@ -54237,6 +54249,7 @@
     macro-name
     (& params)
     (& args)
+    0
     0
     env
     fuel
@@ -54307,53 +54320,110 @@
   [macro-name : String]
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
-  [index : i64]
+  [param-index : i64]
+  [arg-index : i64]
   [env : CtfeEnv]
   [fuel : i64]
   [call-expr : AstExpr]) : ResultGenKey
   (cond
-    [(>= index (ast-macro-param-list-len params))
-      (if (>= index (struct-get args len))
+    [(>= param-index (ast-macro-param-list-len params))
+      (if (>= arg-index (struct-get args len))
         (ResultGenKey.Ok "" fuel)
         (ResultGenKey.Err
           (box
             (ctfe-diagnostic-at-expr
-              (ast-node-get (ast-expr-list-get args index 0))
+              (ast-node-get (ast-expr-list-get args arg-index 0))
               "macro call has too many arguments"))))]
     [else
-      (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      (match (ast-macro-param-list-get
+        params
+        param-index
+        (ast-macro-param-fallback))
         [(AstMacroParam.Param param-name ty variadic type-kinds)
           (if variadic
-            (cond
-              [(tc-macro-type-param-kind? ty)
-                (ResultGenKey.Err
-                  (box
-                    (ctfe-diagnostic-at-expr
-                      call-expr
-                      "typecheck: type macro operand cannot be variadic")))]
-              [(tc-macro-module-param-kind? ty)
-                (ResultGenKey.Err
-                  (box
-                    (ctfe-diagnostic-at-expr
-                      call-expr
-                      "typecheck: Module macro operand cannot be variadic")))]
-              [(macro-identity-syntax-param-type?
-                  ctx
-                  fallback-module
-                  fallback-module-id
-                  ty)
-                (macro-identity-key-param-exprs-at
-                  ctx
-                  fallback-module
-                  fallback-module-id
-                  ty
+            (if (>= (+ param-index 1) (ast-macro-param-list-len params))
+              (cond
+                [(tc-macro-type-param-kind? ty)
+                  (ResultGenKey.Err
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "typecheck: type macro operand cannot be variadic")))]
+                [(tc-macro-module-param-kind? ty)
+                  (ResultGenKey.Err
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        call-expr
+                        "typecheck: Module macro operand cannot be variadic")))]
+                [(macro-identity-syntax-param-type?
+                    ctx
+                    fallback-module
+                    fallback-module-id
+                    ty)
+                  (macro-identity-key-param-exprs-at
+                    ctx
+                    fallback-module
+                    fallback-module-id
+                    ty
+                    args
+                    arg-index
+                    (struct-get args len)
+                    env
+                    fuel
+                    call-expr)]
+                [else
+                  (macro-identity-key-string-exprs-at args arg-index env fuel)])
+              (if (macro-param-expr-binding-clause?
+                ctx
+                fallback-module
+                fallback-module-id
+                ty)
+                (match (macro-expr-binding-clause-prefix-from-args
                   args
-                  index
-                  env
-                  fuel
-                  call-expr)]
-              [else (macro-identity-key-string-exprs-at args index env fuel)])
-            (if (>= index (struct-get args len))
+                  arg-index)
+                  [(ResultMacroBindingClauseList.Ok clauses)
+                    (let
+                      [next-arg-index : i64
+                        (+ arg-index (struct-get (& clauses) len))]
+                      (match (macro-identity-key-param-exprs-at
+                        ctx
+                        fallback-module
+                        fallback-module-id
+                        ty
+                        args
+                        arg-index
+                        next-arg-index
+                        env
+                        fuel
+                        call-expr)
+                        [(ResultGenKey.Ok head-key head-fuel)
+                          (match (macro-identity-key-params-at
+                            ctx
+                            decls
+                            fallback-module
+                            fallback-module-id
+                            macro-name
+                            params
+                            args
+                            (+ param-index 1)
+                            next-arg-index
+                            env
+                            head-fuel
+                            call-expr)
+                            [(ResultGenKey.Ok tail tail-fuel)
+                              (ResultGenKey.Ok
+                                (macro-identity-key-join head-key tail)
+                                tail-fuel)]
+                            [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
+                        [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))]
+                  [(ResultMacroBindingClauseList.Err diag)
+                    (ResultGenKey.Err diag)])
+                (ResultGenKey.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
+            (if (>= arg-index (struct-get args len))
               (ResultGenKey.Err
                 (box
                   (ctfe-diagnostic-at-expr
@@ -54361,7 +54431,7 @@
                     "macro call has too few arguments")))
               (let
                 [head-expr : AstExpr
-                  (ast-node-get (ast-expr-list-get args index 0))]
+                  (ast-node-get (ast-expr-list-get args arg-index 0))]
                 (match (macro-identity-key-fixed-param
                   ctx
                   decls
@@ -54384,7 +54454,8 @@
                       macro-name
                       params
                       args
-                      (+ index 1)
+                      (+ param-index 1)
+                      (+ arg-index 1)
                       env
                       head-fuel
                       call-expr)
@@ -61210,6 +61281,41 @@
             (macro-expr-binding-clause-list-from-args-into args (+ index 1) out))]
         [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)]))))
 
+(define (macro-expr-binding-clause-prefix-from-args
+  [args : (& args AstExprList)]
+  [start : i64]) : ResultMacroBindingClauseList
+  (let
+    [out : AstExprBindingClauseList
+      (ast-expr-binding-clause-list-with-capacity
+        (- (struct-get args len) start))]
+    (match (macro-expr-binding-clause-prefix-from-args-into
+      args
+      start
+      (&mut out))
+      [(ResultMacroCheck.Ok) (ResultMacroBindingClauseList.Ok out)]
+      [(ResultMacroCheck.Err diag) (ResultMacroBindingClauseList.Err diag)])))
+
+(define (macro-expr-binding-clause-prefix-from-args-into
+  [args : (& args AstExprList)]
+  [index : i64]
+  [out : (&mut out AstExprBindingClauseList)]) : ResultMacroCheck
+  (if (>= index (struct-get args len))
+    ResultMacroCheck.Ok
+    (let
+      [head-expr : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (ast-expr-unspan head-expr)
+        [(AstExpr.BracketClause _)
+          (match (macro-expr-binding-clause-from-arg head-expr)
+            [(ResultMacroBindingClause.Ok clause)
+              (begin
+                (ast-expr-binding-clause-list-push out clause)
+                (macro-expr-binding-clause-prefix-from-args-into
+                  args
+                  (+ index 1)
+                  out))]
+            [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)])]
+        [_ ResultMacroCheck.Ok]))))
+
 (define (macro-signature-resolution-context-id
   [ctx : TcContext]
   [fallback-module : String]
@@ -61606,7 +61712,9 @@
           [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)]))]))
 
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
-;; A trailing variadic parameter collects the remaining operands as an ExprList.
+;; A trailing variadic parameter collects the remaining operands. A non-final
+;; ExprBindingClause variadic instead collects the maximal bracket-clause
+;; prefix, then binding continues with the first ordinary operand.
 (define (macro-bind-params
   [ctx : TcContext]
   [decls : AstDeclList]
@@ -61629,6 +61737,7 @@
     (& params)
     (& args)
     0
+    0
     env
     capture-expr-types
     call-expr))
@@ -61642,13 +61751,14 @@
   [macro-name : String]
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
-  [index : i64]
+  [param-index : i64]
+  [arg-index : i64]
   [env : CtfeEnv]
   [capture-expr-types : bool]
   [call-expr : AstExpr]) : ResultMacroEnv
   (cond
-    [(>= index (ast-macro-param-list-len params))
-      (if (>= index (struct-get args len))
+    [(>= param-index (ast-macro-param-list-len params))
+      (if (>= arg-index (struct-get args len))
         (ResultMacroEnv.Ok env)
         (ResultMacroEnv.Err
           (box
@@ -61656,26 +61766,63 @@
               call-expr
               "macro call has too many arguments"))))]
     [else
-      (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      (match (ast-macro-param-list-get
+        params
+        param-index
+        (ast-macro-param-fallback))
         [(AstMacroParam.Param pname pty variadic type-kinds)
           (if variadic
-            (macro-bind-variadic-param
-              ctx
-              type-env
-              fallback-module
-              fallback-module-id
-              pname
-              pty
-              (ast-expr-list-tail-from-ref args index)
-              env)
-            (if (>= index (struct-get args len))
+            (if (>= (+ param-index 1) (ast-macro-param-list-len params))
+              (macro-bind-variadic-param
+                ctx
+                type-env
+                fallback-module
+                fallback-module-id
+                pname
+                pty
+                (ast-expr-list-tail-from-ref args arg-index)
+                env)
+              (if (macro-param-expr-binding-clause?
+                ctx
+                fallback-module
+                fallback-module-id
+                pty)
+                (match (macro-expr-binding-clause-prefix-from-args
+                  args
+                  arg-index)
+                  [(ResultMacroBindingClauseList.Ok clauses)
+                    (macro-bind-params-at
+                      ctx
+                      decls
+                      fallback-module
+                      fallback-module-id
+                      type-env
+                      macro-name
+                      params
+                      args
+                      (+ param-index 1)
+                      (+ arg-index (struct-get (& clauses) len))
+                      (ctfe-env-extend-id
+                        env
+                        pname
+                        (CompilerCtfeValue.ExprBindingClauseList clauses))
+                      capture-expr-types
+                      call-expr)]
+                  [(ResultMacroBindingClauseList.Err diag)
+                    (ResultMacroEnv.Err diag)])
+                (ResultMacroEnv.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
+            (if (>= arg-index (struct-get args len))
               (ResultMacroEnv.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     call-expr
                     "macro call has too few arguments")))
               (let
-                [arg : i64 (ast-expr-list-get args index 0)]
+                [arg : i64 (ast-expr-list-get args arg-index 0)]
                 [arg-expr : AstExpr (ast-node-get arg)]
                 (match (macro-bind-fixed-param
                   ctx
@@ -61701,7 +61848,8 @@
                       macro-name
                       params
                       args
-                      (+ index 1)
+                      (+ param-index 1)
+                      (+ arg-index 1)
                       next-env
                       capture-expr-types
                       call-expr)]
@@ -61991,47 +62139,92 @@
     (macro-generated-type-param-expr env (ast-node-get arg))
     arg))
 
+(define (macro-generated-import-bracket-prefix-count
+  [args : (& args AstExprList)]
+  [index : i64]) : i64
+  (if (>= index (struct-get args len))
+    0
+    (match (ast-expr-unspan (ast-node-get (ast-expr-list-get args index 0)))
+      [(AstExpr.BracketClause _)
+        (+ 1 (macro-generated-import-bracket-prefix-count args (+ index 1)))]
+      [_ 0])))
+
+(define (macro-generated-import-prepend-range
+  [args : (& args AstExprList)]
+  [index : i64]
+  [end : i64]
+  [tail : AstExprList]) : AstExprList
+  (if (>= index end)
+    tail
+    (ast-expr-cons
+      (ast-expr-list-get args index 0)
+      (macro-generated-import-prepend-range args (+ index 1) end tail))))
+
 (define (macro-generated-import-type-args-for-param
   [param : AstMacroParam]
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
-  [index : i64]
+  [param-index : i64]
+  [arg-index : i64]
   [env : CtfeEnv]) : AstExprList
   (match param
     [(AstMacroParam.Param _ ty variadic _)
       (if variadic
-        (let
-          [remaining : AstExprList (ast-expr-list-tail-from-ref args index)]
-          (if (tc-macro-type-param-kind? ty)
-            (macro-generated-type-param-expr-list env remaining)
-            remaining))
+        (if (>= (+ param-index 1) (ast-macro-param-list-len params))
+          (let
+            [remaining : AstExprList
+              (ast-expr-list-tail-from-ref args arg-index)]
+            (if (tc-macro-type-param-kind? ty)
+              (macro-generated-type-param-expr-list env remaining)
+              remaining))
+          (let
+            [prefix-count : i64
+              (macro-generated-import-bracket-prefix-count args arg-index)]
+            [next-arg-index : i64 (+ arg-index prefix-count)]
+            (macro-generated-import-prepend-range
+              args
+              arg-index
+              next-arg-index
+              (macro-generated-import-type-args-at
+                params
+                args
+                (+ param-index 1)
+                next-arg-index
+                env))))
         (ast-expr-cons
           (macro-generated-import-type-arg
             ty
-            (ast-expr-list-get args index 0)
+            (ast-expr-list-get args arg-index 0)
             env)
-          (macro-generated-import-type-args-at params args (+ index 1) env)))]))
+          (macro-generated-import-type-args-at
+            params
+            args
+            (+ param-index 1)
+            (+ arg-index 1)
+            env)))]))
 
 (define (macro-generated-import-type-args
   [params : AstMacroParamList]
   [args : AstExprList]
   [env : CtfeEnv]) : AstExprList
-  (macro-generated-import-type-args-at (& params) (& args) 0 env))
+  (macro-generated-import-type-args-at (& params) (& args) 0 0 env))
 
 (define (macro-generated-import-type-args-at
   [params : (& params AstMacroParamList)]
   [args : (& args AstExprList)]
-  [index : i64]
+  [param-index : i64]
+  [arg-index : i64]
   [env : CtfeEnv]) : AstExprList
-  (if (>= index (ast-macro-param-list-len params))
-    (ast-expr-list-tail-from-ref args index)
-    (if (>= index (struct-get args len))
+  (if (>= param-index (ast-macro-param-list-len params))
+    (ast-expr-list-tail-from-ref args arg-index)
+    (if (>= arg-index (struct-get args len))
       (ast-expr-list-new)
       (macro-generated-import-type-args-for-param
-        (ast-macro-param-list-get params index (ast-macro-param-fallback))
+        (ast-macro-param-list-get params param-index (ast-macro-param-fallback))
         params
         args
-        index
+        param-index
+        arg-index
         env))))
 
 (define (macro-rewrite-generated-import-call-with-decl

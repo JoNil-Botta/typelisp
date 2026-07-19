@@ -7571,6 +7571,109 @@
   `(sum-bindings ,@(expr-binding-clause-list->expr-list bindings)))
 (define (main) : i64 (forward-bindings [a : i64 20] [b 22]))")
 
+(define (compiler-typecheck-macro-binding-clause-prefix-source) : String
+  "(defmacro (binding-do
+  [bindings : ExprBindingClause ...]
+  [body : Expr ...]) : i64
+  (if (= (expr-list-length body) 0)
+    (expr-int 0)
+    (if (= (expr-binding-clause-list-length bindings) 0)
+      (expr-list-nth body 0)
+      (if (= (expr-binding-clause-list-length bindings) 1)
+        (let
+          [first : ExprBindingClause
+            (expr-binding-clause-list-nth bindings 0)]
+          (if (__tl_string_eq (expr-binding-clause-name first) \"item\")
+            (if (expr-binding-clause-has-type? first)
+              (expr-int 0)
+              `(+ ,(expr-binding-clause-init first) ,(expr-list-nth body 0)))
+            (expr-int 0)))
+        (if (= (expr-binding-clause-list-length bindings) 2)
+          (let
+            [first : ExprBindingClause
+              (expr-binding-clause-list-nth bindings 0)]
+            [second : ExprBindingClause
+              (expr-binding-clause-list-nth bindings 1)]
+            (if (__tl_string_eq (expr-binding-clause-name first) \"item\")
+              (if (__tl_string_eq (expr-binding-clause-name second) \"other\")
+                (if (expr-binding-clause-has-type? first)
+                  (if (expr-binding-clause-has-type? second)
+                    (expr-int 0)
+                    `(+ ,(expr-binding-clause-init first)
+                      (+ ,(expr-binding-clause-init second)
+                        ,(expr-list-nth body 0))))
+                  (expr-int 0))
+                (expr-int 0))
+              (expr-int 0)))
+          (expr-int 0))))))
+(defmacro (nested-binding-do [body : Expr]) : i64
+  `(binding-do [item 0] ,body))
+(defmacro (binding-units
+  [bindings : ExprBindingClause ...]
+  [body : unit ...]) : unit
+  (if (= (expr-list-length body) 0)
+    `unit
+    (expr-list-nth body (- (expr-list-length body) 1))))
+(define (empty-prefix) : i64
+  (binding-do 20 22))
+(define (one-binding) : i64
+  (binding-do [item 1] 41))
+(define (many-bindings) : i64
+  (binding-do
+    [item : i64 1]
+    [other 2]
+    39))
+(define (typed-body-rest) : unit
+  (binding-units [item 0] unit unit))
+(define (nested-hygiene) : i64
+  (let [tmp : i64 42]
+    (nested-binding-do tmp)))
+(define (main) : i64
+  (begin
+    (typed-body-rest)
+    (+
+      (empty-prefix)
+      (+
+        (one-binding)
+        (+
+          (many-bindings)
+          (nested-hygiene))))))")
+
+(define (compiler-typecheck-macro-binding-clause-prefix-malformed-source) : String
+  "(defmacro (binding-do
+  [bindings : ExprBindingClause ...]
+  [body : Expr ...]) : Expr
+  (expr-list-nth body 0))
+(define (main) : i64
+  (binding-do [item : i64] 42))")
+
+(define (compiler-typecheck-macro-binding-clause-prefix-too-few-source) : String
+  "(defmacro (binding-one
+  [bindings : ExprBindingClause ...]
+  [body : i64]) : i64
+  body)
+(define (main) : i64
+  (binding-one [item 42]))")
+
+(define (compiler-typecheck-macro-binding-clause-prefix-tail-mismatch-source) : String
+  "(defmacro (binding-one
+  [bindings : ExprBindingClause ...]
+  [body : i64]) : i64
+  body)
+(define (main) : i64
+  (binding-one [item 42] true))")
+
+(define (compiler-typecheck-macro-binding-clause-prefix-module-source) : String
+  "(defmacro (binding-box
+  [bindings : ExprBindingClause ...]
+  [T : type]) : Module
+  `(begin
+    (module generated.binding_box)
+    (define (id [value : ,T]) : ,T value)))
+(import (binding-box [item 0] i64) as box)
+(define (main) : i64
+  (box.id 42))")
+
 (define (compiler-typecheck-macro-binding-clause-non-bracket-source) : String
   "(defmacro (take-binding [binding : ExprBindingClause]) : i64 (expr-int 0))
 (define (main) : i64 (take-binding 1))")
@@ -8351,6 +8454,19 @@
       (compiler-typecheck-macro-binding-clause-fixed-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-macro-binding-clause-variadic-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-binding-clause-prefix-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-binding-clause-prefix-malformed-source)
+      "typecheck: ExprBindingClause macro operand expects bracket clause [name expr] or [name : Type expr]")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-binding-clause-prefix-too-few-source)
+      "macro call has too few arguments")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-macro-binding-clause-prefix-tail-mismatch-source)
+      "typecheck: macro operand type mismatch: expected i64, got bool")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-binding-clause-prefix-module-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-binding-clause-non-bracket-source)
       "typecheck: ExprBindingClause macro operand expects bracket syntax")

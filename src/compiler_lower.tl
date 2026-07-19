@@ -294,6 +294,9 @@
   (BroadcastArray i64 CompilerIrValue)
   (LaneIndex)
   (LaneCount)
+  ;; Intra-gang permutation. The selector plan always has i64 elements even
+  ;; when the shuffled value uses 32-bit lanes.
+  (Shuffle (Box LowerVectorMapValue) (Box LowerVectorMapValue))
   (BinOp CompilerIrBinOp (Box LowerVectorMapValue) (Box LowerVectorMapValue)))
 
 (defenum LowerMaybeVectorMapValue
@@ -38351,6 +38354,7 @@
   [op : AstBinOp]) : bool
   (match op
     [(AstBinOp.Add) true]
+    [(AstBinOp.BitAnd) true]
     [(AstBinOp.Mul)
       (and
         (> (lower-simd-lanes-for-elem mode elem-ty) 0)
@@ -38603,6 +38607,41 @@
           [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)]))]
     [_ (LowerMaybeVectorMapValue.No)]))
 
+(define (lower-vector-shuffle-value-type? [ty : AstType]) : bool
+  (match (tc-type-without-regions ty)
+    [(AstType.I32) true]
+    [(AstType.U32) true]
+    [(AstType.I64) true]
+    [(AstType.U64) true]
+    [(AstType.F32) true]
+    [(AstType.F64) true]
+    [_ false]))
+
+;; Keep shuffle operand evaluation to plans whose inactive lanes can be
+;; suppressed by the existing predicated vector machinery. Gather and
+;; broadcast plans need their own ordered gang-tail treatment and remain a
+;; focused diagnostic instead of silently changing to one-lane semantics.
+(define (lower-vector-shuffle-operand-plan? [plan : LowerVectorMapValue]) : bool
+  (match plan
+    [(LowerVectorMapValue.Array _) true]
+    [(LowerVectorMapValue.Uniform _) true]
+    [(LowerVectorMapValue.LaneIndex) true]
+    [(LowerVectorMapValue.LaneCount) true]
+    [(LowerVectorMapValue.BinOp _ lhs rhs)
+      (and
+        (lower-vector-shuffle-operand-plan? (box-get lhs))
+        (lower-vector-shuffle-operand-plan? (box-get rhs)))]
+    [_ false]))
+
+(define (lower-vector-map-value-has-shuffle? [plan : LowerVectorMapValue]) : bool
+  (match plan
+    [(LowerVectorMapValue.Shuffle _ _) true]
+    [(LowerVectorMapValue.BinOp _ lhs rhs)
+      (or
+        (lower-vector-map-value-has-shuffle? (box-get lhs))
+        (lower-vector-map-value-has-shuffle? (box-get rhs)))]
+    [_ false]))
+
 (define (lower-simple-vector-map-value
   [ctx : TcContext]
   [mode : CompilerLowerMode]
@@ -38679,6 +38718,42 @@
                 type-env
                 dst-elem
                 value)])])]
+    [(AstExpr.SpmdShuffle value-box lane-box)
+      (let
+        [source : AstExpr (lower-context-expr-get ctx value-box)]
+        [selector : AstExpr (lower-context-expr-get ctx lane-box)]
+        (if (and
+          (lower-vector-shuffle-value-type? dst-elem)
+          (> (lower-simd-lanes-for-elem mode dst-elem) 0))
+          (match (lower-simple-vector-map-value
+            ctx
+            mode
+            env
+            type-env
+            index
+            dst-elem
+            source)
+            [(LowerMaybeVectorMapValue.Some source-plan)
+              (match (lower-simple-vector-map-value
+                ctx
+                mode
+                env
+                type-env
+                index
+                (AstType.I64)
+                selector)
+                [(LowerMaybeVectorMapValue.Some selector-plan)
+                  (if (and
+                    (lower-vector-shuffle-operand-plan? source-plan)
+                    (lower-vector-shuffle-operand-plan? selector-plan))
+                    (LowerMaybeVectorMapValue.Some
+                      (LowerVectorMapValue.Shuffle
+                        (box source-plan)
+                        (box selector-plan)))
+                    (LowerMaybeVectorMapValue.No))]
+                [(LowerMaybeVectorMapValue.No) (LowerMaybeVectorMapValue.No)])]
+            [(LowerMaybeVectorMapValue.No) (LowerMaybeVectorMapValue.No)])
+          (LowerMaybeVectorMapValue.No)))]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [source : AstExpr (lower-context-expr-get ctx value-box)]
@@ -38806,6 +38881,10 @@
       (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
     [(LowerVectorMapValue.LaneIndex) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.LaneCount) (lower-array-var-set-empty)]
+    [(LowerVectorMapValue.Shuffle source selector)
+      (lower-array-var-set-merge
+        (lower-vector-map-value-array-vars (box-get source))
+        (lower-vector-map-value-array-vars (box-get selector)))]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (lower-array-var-set-merge
         (lower-vector-map-value-array-vars (box-get lhs))
@@ -38822,6 +38901,10 @@
       (or (= source array-var) (= offsets array-var))]
     [(LowerVectorMapValue.LaneArray found) (= found array-var)]
     [(LowerVectorMapValue.BroadcastArray found _) (= found array-var)]
+    [(LowerVectorMapValue.Shuffle source selector)
+      (or
+        (lower-vector-map-value-uses-array? (box-get source) array-var)
+        (lower-vector-map-value-uses-array? (box-get selector) array-var))]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (or
         (lower-vector-map-value-uses-array? (box-get lhs) array-var)
@@ -39152,11 +39235,13 @@
                           elem
                           lanes)]
                       [_
-                        (if (=
-                          (struct-get
-                            (lower-vector-map-value-array-vars value-plan)
-                            count)
-                          0)
+                        (if (or
+                          (lower-vector-map-value-has-shuffle? value-plan)
+                          (=
+                            (struct-get
+                              (lower-vector-map-value-array-vars value-plan)
+                              count)
+                            0))
                           (LowerMaybeVectorReduce.Value
                             value-plan
                             (lower-simple-vector-reduce-op op)
@@ -39218,6 +39303,30 @@
             index-base
             index
             lane-offset
+            lanes
+            elem-ty))
+        (CompilerIrValue.Var v)
+        elem-ty)]))
+
+(define (lower-emit-vector-shuffle-instr
+  [state : LowerState]
+  [source : CompilerIrValue]
+  [selector-low : CompilerIrValue]
+  [selector-high : CompilerIrMaybeValue]
+  [active-lanes : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc s v)
+      (LowerExpr.Expr
+        (lower-state-emit
+          s
+          (ir-instr-vector-shuffle
+            v
+            source
+            selector-low
+            selector-high
+            active-lanes
             lanes
             elem-ty))
         (CompilerIrValue.Var v)
@@ -40909,6 +41018,237 @@
       (array-push! values value)
       (LowerVectorMapValueCache keys values (+ count 1)))))
 
+(define (lower-emit-shuffle-selector-plan
+  [state : LowerState]
+  [index : CompilerIrValue]
+  [lane-offset : i64]
+  [gang-count : CompilerIrValue]
+  [lanes : i64]
+  [plan : LowerVectorMapValue]
+  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  (match plan
+    [(LowerVectorMapValue.Array array-var)
+      (match emit-mode
+        [(LowerVectorMapEmitMode.Full)
+          (lower-emit-vector-load
+            state
+            (CompilerIrValue.Var array-var)
+            index
+            lanes
+            (AstType.I64))]
+        [(LowerVectorMapEmitMode.Predicated _ mask)
+          (lower-emit-predicated-load
+            state
+            (CompilerIrValue.Var array-var)
+            index
+            mask
+            lanes
+            (AstType.I64))])]
+    [(LowerVectorMapValue.Uniform value)
+      (lower-emit-splat state value lanes (AstType.I64))]
+    [(LowerVectorMapValue.LaneIndex)
+      (match (lower-emit-lane-id state lanes (AstType.I64))
+        [(LowerExpr.Expr lane-state lane-value _)
+          (if (= lane-offset 0)
+            (LowerExpr.Expr lane-state lane-value (AstType.I64))
+            (match (lower-emit-splat
+              lane-state
+              (CompilerIrValue.I64 lane-offset)
+              lanes
+              (AstType.I64))
+              [(LowerExpr.Expr offset-state offset-value _)
+                (lower-emit-vector-binop
+                  offset-state
+                  CompilerIrBinOp.Add
+                  lane-value
+                  offset-value
+                  lanes
+                  (AstType.I64))]))])]
+    [(LowerVectorMapValue.LaneCount)
+      (lower-emit-splat state (CompilerIrValue.I64 lanes) lanes (AstType.I64))]
+    [(LowerVectorMapValue.BinOp op lhs rhs)
+      (match (lower-emit-shuffle-selector-plan
+        state
+        index
+        lane-offset
+        gang-count
+        lanes
+        (box-get lhs)
+        emit-mode)
+        [(LowerExpr.Expr lhs-state lhs-value _)
+          (match (lower-emit-shuffle-selector-plan
+            lhs-state
+            index
+            lane-offset
+            gang-count
+            lanes
+            (box-get rhs)
+            emit-mode)
+            [(LowerExpr.Expr rhs-state rhs-value _)
+              (lower-emit-vector-binop
+                rhs-state
+                op
+                lhs-value
+                rhs-value
+                lanes
+                (AstType.I64))])])]
+    ;; The planner rejects these forms before constructing Shuffle.
+    [_ (LowerExpr.Expr state CompilerIrValue.Unit (AstType.I64))]))
+
+(define (lower-emit-vector-shuffle
+  [ctx : TcContext]
+  [state : LowerState]
+  [index-var : i64]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [source-plan : LowerVectorMapValue]
+  [selector-plan : LowerVectorMapValue]
+  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  (let
+    [selector-lanes : i64
+      (lower-simd-lanes-for-elem (lower-state-mode state) (AstType.I64))]
+    [index-value : CompilerIrValue (CompilerIrValue.Var index-var)]
+    (match emit-mode
+      [(LowerVectorMapEmitMode.Full)
+        (match (lower-emit-vector-map-value
+          ctx
+          state
+          index-var
+          lanes
+          elem-ty
+          source-plan)
+          [(LowerExpr.Expr source-state source-value _)
+            (match (lower-emit-shuffle-selector-plan
+              source-state
+              index-value
+              0
+              (CompilerIrValue.I64 lanes)
+              selector-lanes
+              selector-plan
+              (LowerVectorMapEmitMode.Full))
+              [(LowerExpr.Expr low-state selector-low _)
+                (if (> lanes selector-lanes)
+                  (match (lower-emit-binop
+                    low-state
+                    CompilerIrBinOp.Add
+                    index-value
+                    (CompilerIrValue.I64 selector-lanes)
+                    (AstType.I64))
+                    [(LowerExpr.Expr high-index-state high-index _)
+                      (match (lower-emit-shuffle-selector-plan
+                        high-index-state
+                        high-index
+                        selector-lanes
+                        (CompilerIrValue.I64 lanes)
+                        selector-lanes
+                        selector-plan
+                        (LowerVectorMapEmitMode.Full))
+                        [(LowerExpr.Expr high-state selector-high _)
+                          (lower-emit-vector-shuffle-instr
+                            high-state
+                            source-value
+                            selector-low
+                            (CompilerIrMaybeValue.Some selector-high)
+                            (CompilerIrValue.I64 lanes)
+                            lanes
+                            elem-ty)])])
+                  (lower-emit-vector-shuffle-instr
+                    low-state
+                    source-value
+                    selector-low
+                    (CompilerIrMaybeValue.No)
+                    (CompilerIrValue.I64 lanes)
+                    lanes
+                    elem-ty))])])]
+      [(LowerVectorMapEmitMode.Predicated end-value source-mask)
+        (match (lower-emit-binop
+          state
+          CompilerIrBinOp.Sub
+          end-value
+          index-value
+          (AstType.I64))
+          [(LowerExpr.Expr count-state active-lanes _)
+            (match (lower-emit-predicated-vector-map-value
+              ctx
+              count-state
+              index-var
+              end-value
+              source-mask
+              lanes
+              elem-ty
+              source-plan)
+              [(LowerExpr.Expr source-state source-value _)
+                (match (lower-emit-tail-mask
+                  source-state
+                  index-value
+                  end-value
+                  selector-lanes)
+                  [(LowerExpr.Expr low-mask-state low-mask _)
+                    (match (lower-emit-shuffle-selector-plan
+                      low-mask-state
+                      index-value
+                      0
+                      active-lanes
+                      selector-lanes
+                      selector-plan
+                      (LowerVectorMapEmitMode.Predicated end-value low-mask))
+                      [(LowerExpr.Expr low-state selector-low _)
+                        (if (> lanes selector-lanes)
+                          (match (lower-emit-binop
+                            low-state
+                            CompilerIrBinOp.Add
+                            index-value
+                            (CompilerIrValue.I64 selector-lanes)
+                            (AstType.I64))
+                            [(LowerExpr.Expr high-index-state high-index _)
+                              (match high-index
+                                [(CompilerIrValue.Var high-index-var)
+                                  (match (lower-emit-tail-mask
+                                    high-index-state
+                                    high-index
+                                    end-value
+                                    selector-lanes)
+                                    [(LowerExpr.Expr
+                                        high-mask-state
+                                        high-mask
+                                        _)
+                                      (match (lower-emit-shuffle-selector-plan
+                                        high-mask-state
+                                        high-index
+                                        selector-lanes
+                                        active-lanes
+                                        selector-lanes
+                                        selector-plan
+                                        (LowerVectorMapEmitMode.Predicated
+                                          end-value
+                                          high-mask))
+                                        [(LowerExpr.Expr
+                                            high-state
+                                            selector-high
+                                            _)
+                                          (lower-emit-vector-shuffle-instr
+                                            high-state
+                                            source-value
+                                            selector-low
+                                            (CompilerIrMaybeValue.Some
+                                              selector-high)
+                                            active-lanes
+                                            lanes
+                                            elem-ty)])])]
+                                [_
+                                  (LowerExpr.Expr
+                                    high-index-state
+                                    CompilerIrValue.Unit
+                                    elem-ty)])])
+                          (lower-emit-vector-shuffle-instr
+                            low-state
+                            source-value
+                            selector-low
+                            (CompilerIrMaybeValue.No)
+                            active-lanes
+                            lanes
+                            elem-ty))])])])])])))
+
 (define (lower-emit-vector-map-value
   [ctx : TcContext]
   [state : LowerState]
@@ -41013,6 +41353,16 @@
     [(LowerVectorMapValue.LaneIndex) (lower-emit-lane-id state lanes elem-ty)]
     [(LowerVectorMapValue.LaneCount)
       (lower-emit-splat state (CompilerIrValue.I64 lanes) lanes elem-ty)]
+    [(LowerVectorMapValue.Shuffle source selector)
+      (lower-emit-vector-shuffle
+        ctx
+        state
+        index-var
+        lanes
+        elem-ty
+        (box-get source)
+        (box-get selector)
+        (LowerVectorMapEmitMode.Full))]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-vector-map-value
         ctx
@@ -41225,6 +41575,18 @@
               emit-mode)
             (LowerVectorMapValueKey.LaneCount)
             cache)])]
+    [(LowerVectorMapValue.Shuffle source selector)
+      (match (lower-emit-vector-shuffle
+        ctx
+        state
+        index-var
+        lanes
+        elem-ty
+        (box-get source)
+        (box-get selector)
+        emit-mode)
+        [(LowerExpr.Expr shuffle-state shuffle-value _)
+          (LowerVectorMapCachedEmit.Emit shuffle-state shuffle-value cache)])]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-vector-map-value-cached
         ctx
@@ -41334,6 +41696,16 @@
     [(LowerVectorMapValue.LaneIndex) (lower-emit-lane-id state lanes elem-ty)]
     [(LowerVectorMapValue.LaneCount)
       (lower-emit-splat state (CompilerIrValue.I64 lanes) lanes elem-ty)]
+    [(LowerVectorMapValue.Shuffle source selector)
+      (lower-emit-vector-shuffle
+        ctx
+        state
+        index-var
+        lanes
+        elem-ty
+        (box-get source)
+        (box-get selector)
+        (LowerVectorMapEmitMode.Predicated end-value mask))]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-predicated-vector-map-value
         ctx
@@ -41371,6 +41743,7 @@
     [(LowerVectorMapValue.LaneArray _) true]
     [(LowerVectorMapValue.LaneIndex) true]
     [(LowerVectorMapValue.LaneCount) true]
+    [(LowerVectorMapValue.Shuffle _ _) true]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
       (or
         (lower-vector-map-value-needs-scalar-tail? (box-get lhs))
@@ -41417,6 +41790,21 @@
               (set! index (+ index 1)))]))
       has-gather)))
 
+(define (lower-vector-map-store-list-has-shuffle?
+  [stores : LowerVectorMapStoreList]) : bool
+  (let
+    [count : i64 (struct-get stores count)]
+    [index : i64 0]
+    [has-shuffle : bool false]
+    (begin
+      (while (and (not has-shuffle) (< index count))
+        (match (lower-vector-map-store-list-ref stores index)
+          [(LowerVectorMapStore _ value-plan)
+            (if (lower-vector-map-value-has-shuffle? value-plan)
+              (set! has-shuffle true)
+              (set! index (+ index 1)))]))
+      has-shuffle)))
+
 (define (lower-maybe-vector-map-needs-scalar-tail? [plan : LowerMaybeVectorMap]) : bool
   (match plan
     [(LowerMaybeVectorMap.Some stores _ _)
@@ -41427,6 +41815,12 @@
   (match plan
     [(LowerMaybeVectorMap.Some stores _ _)
       (lower-vector-map-store-list-has-gather? stores)]
+    [(LowerMaybeVectorMap.No) false]))
+
+(define (lower-maybe-vector-map-has-shuffle? [plan : LowerMaybeVectorMap]) : bool
+  (match plan
+    [(LowerMaybeVectorMap.Some stores _ _)
+      (lower-vector-map-store-list-has-shuffle? stores)]
     [(LowerMaybeVectorMap.No) false]))
 
 (define (lower-emit-scalar-vector-map-value
@@ -41557,6 +41951,41 @@
         elem-ty)]
     [(LowerVectorMapValue.LaneCount)
       (LowerExpr.Expr state (CompilerIrValue.I64 lanes) elem-ty)]
+    [(LowerVectorMapValue.Shuffle source selector)
+      (match (lower-emit-scalar-vector-map-value
+        ctx
+        state
+        base-index-var
+        current-index-var
+        lane-index
+        active-lanes
+        lanes
+        (AstType.I64)
+        (box-get selector))
+        [(LowerExpr.Expr selector-state selector-value _)
+          (match (lower-state-alloc-var
+            (lower-emit-spmd-broadcast-lane-check
+              selector-state
+              selector-value
+              active-lanes))
+            [(LowerAlloc.Alloc source-index-state source-index-var)
+              (lower-emit-scalar-vector-map-value
+                ctx
+                (lower-state-emit
+                  source-index-state
+                  (CompilerIrInstr.BinOp
+                    source-index-var
+                    CompilerIrBinOp.Add
+                    (CompilerIrValue.Var base-index-var)
+                    selector-value
+                    (AstType.I64)))
+                base-index-var
+                source-index-var
+                selector-value
+                active-lanes
+                lanes
+                elem-ty
+                (box-get source))])])]
     [(LowerVectorMapValue.BinOp op lhs rhs)
       (match (lower-emit-scalar-vector-map-value
         ctx
@@ -46883,7 +47312,8 @@
                 (lower-maybe-vector-map-needs-scalar-tail? plan)
                 (or
                   (not (lower-mode-avx512? (lower-state-mode s)))
-                  (lower-maybe-vector-map-has-gather? plan)))
+                  (lower-maybe-vector-map-has-gather? plan)
+                  (lower-maybe-vector-map-has-shuffle? plan)))
                 (match plan
                   [(LowerMaybeVectorMap.Some stores elem-ty store-lanes)
                     (lower-avx2-broadcast-tail-map-body

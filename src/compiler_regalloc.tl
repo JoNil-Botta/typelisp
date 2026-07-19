@@ -5033,6 +5033,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
           (compiler-live-set-insert set dst)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
+          (compiler-live-set-insert set dst)])]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ backend _ _ _ result)
@@ -5900,6 +5904,9 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _) dst])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _) dst])]
     [(CompilerIrInstr.TailMask dst _ _ _) dst]
     [(CompilerIrInstr.EntryArgc dst) dst]
     [(CompilerIrInstr.EntryArgv dst) dst]
@@ -7737,6 +7744,7 @@
     [(CompilerIrInstr.PredicatedStore _) true]
     [(CompilerIrInstr.PredicatedLoad _) true]
     [(CompilerIrInstr.GatherLoad _) true]
+    [(CompilerIrInstr.VectorShuffle _) true]
     [(CompilerIrInstr.TailMask _ _ _ _) true]
     [(CompilerIrInstr.EntryArgc _) true]
     [(CompilerIrInstr.EntryArgv _) true]
@@ -18793,6 +18801,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ lanes elem-ty)
           (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ lanes elem-ty)
+          (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ backend lanes _ _ result)
@@ -19725,6 +19737,24 @@
             (compiler-reg-color-invalidate-value! roots invalid base)
             (compiler-reg-color-invalidate-value! roots invalid index-base)
             (compiler-reg-color-invalidate-value! roots invalid index))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid source)
+            (compiler-reg-color-invalidate-value! roots invalid selector-low)
+            (match selector-high
+              [(CompilerIrMaybeValue.Some value)
+                (compiler-reg-color-invalidate-value! roots invalid value)]
+              [(CompilerIrMaybeValue.No) unit])
+            (compiler-reg-color-invalidate-value! roots invalid active-lanes))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid index)
@@ -20940,6 +20970,24 @@
             lane-offset
             lanes
             ty)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            dst
+            source
+            selector-low
+            selector-high
+            active-lanes
+            lanes
+            ty)
+          (ir-instr-vector-shuffle
+            (compiler-reg-remap-id remap dst)
+            (compiler-reg-remap-value remap source)
+            (compiler-reg-remap-value remap selector-low)
+            (compiler-reg-remap-maybe-value remap selector-high)
+            (compiler-reg-remap-value remap active-lanes)
+            lanes
+            ty)])]
     [(CompilerIrInstr.TailMask dst index length lanes)
       (CompilerIrInstr.TailMask
         (compiler-reg-remap-id remap dst)
@@ -21264,6 +21312,8 @@
   (SwitchTable)
   (BoundsLength)
   (BoundsIndex)
+  (ShuffleActive)
+  (ShuffleSelector)
   (MemoryAddress)
   (MemoryIndex)
   (MemoryValue)
@@ -21719,6 +21769,9 @@
       [(CompilerIrInstr.CpuId _ _ _ _) 1]
       [(CompilerIrInstr.Switch _ _ _ _) 2]
       [(CompilerIrInstr.BoundsCheck _ _ _) 2]
+      ;; Ordered selector validation keeps active-lanes and the current selector
+      ;; in independent GP temporaries.
+      [(CompilerIrInstr.VectorShuffle _) 2]
       [(CompilerIrInstr.AddrOf dst _)
         (if (compiler-reg-scratch-var-register-homed? _assignments dst)
           0
@@ -22141,6 +22194,30 @@
       (compiler-reg-string-list-append
         (compiler-reg-scratch-value-registers assignments index)
         (compiler-reg-scratch-value-registers assignments length))]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            dst
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-location-registers assignments dst)
+            (compiler-reg-string-list-append
+              (compiler-reg-scratch-value-registers assignments source)
+              (compiler-reg-string-list-append
+                (compiler-reg-scratch-value-registers assignments selector-low)
+                (compiler-reg-string-list-append
+                  (match selector-high
+                    [(CompilerIrMaybeValue.Some value)
+                      (compiler-reg-scratch-value-registers assignments value)]
+                    [(CompilerIrMaybeValue.No) CompilerRegStringList.Nil])
+                  (compiler-reg-scratch-value-registers
+                    assignments
+                    active-lanes)))))])]
     [(CompilerIrInstr.BinOp dst _ lhs rhs _)
       (compiler-reg-string-list-append
         (compiler-reg-scratch-location-registers assignments dst)
@@ -22641,6 +22718,17 @@
         (if (= ordinal 0)
           (CompilerRegScratchRole.BoundsLength)
           (CompilerRegScratchRole.BoundsIndex))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.VectorShuffle _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.ShuffleActive)
+          (CompilerRegScratchRole.ShuffleSelector))
         (compiler-reg-scratch-memory-constraint assignments instr)
         point
         (+ point 1)

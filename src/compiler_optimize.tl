@@ -1453,6 +1453,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
           (opt-invalidate-def env dst instr)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.EntryArgc dst) (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.EntryArgv dst) (opt-invalidate-def env dst instr)]
@@ -1562,6 +1566,10 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
           (opt-invalidate-def env dst instr)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.EntryArgc dst) (opt-invalidate-def env dst instr)]
@@ -1810,6 +1818,29 @@
               (opt-collect-value-uses set base)
               index-base)
             index)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (opt-collect-value-uses
+            (match selector-high
+              [(CompilerIrMaybeValue.Some value)
+                (opt-collect-value-uses
+                  (opt-collect-value-uses
+                    (opt-collect-value-uses set source)
+                    selector-low)
+                  value)]
+              [(CompilerIrMaybeValue.No)
+                (opt-collect-value-uses
+                  (opt-collect-value-uses set source)
+                  selector-low)])
+            active-lanes)])]
     [(CompilerIrInstr.TailMask _ index length _)
       (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(CompilerIrInstr.EntryArgc _) set]
@@ -2259,6 +2290,24 @@
             (opt-collect-value-uses-array items base)
             (opt-collect-value-uses-array items index-base)
             (opt-collect-value-uses-array items index))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (begin
+            (opt-collect-value-uses-array items source)
+            (opt-collect-value-uses-array items selector-low)
+            (match selector-high
+              [(CompilerIrMaybeValue.Some value)
+                (opt-collect-value-uses-array items value)]
+              [(CompilerIrMaybeValue.No) unit])
+            (opt-collect-value-uses-array items active-lanes))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (opt-collect-value-uses-array items index)
@@ -2993,6 +3042,24 @@
             (opt-aggregate-value-has-pointer? base ptrs load-base)
             (opt-aggregate-value-has-pointer? base ptrs index-base)
             (opt-aggregate-value-has-pointer? base ptrs index))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs source)
+            (opt-aggregate-value-has-pointer? base ptrs selector-low)
+            (match selector-high
+              [(CompilerIrMaybeValue.Some value)
+                (opt-aggregate-value-has-pointer? base ptrs value)]
+              [(CompilerIrMaybeValue.No) false])
+            (opt-aggregate-value-has-pointer? base ptrs active-lanes))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs index)
@@ -3780,6 +3847,10 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+          (opt-aggregate-field-facts-invalidate-var facts dst)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
           (opt-aggregate-field-facts-invalidate-var facts dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
@@ -4975,6 +5046,36 @@
                     (= alanes blanes)
                     (opt-type-eq aty bty))])]
             [_ false])])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            ad
+            asource
+            aselector-low
+            aselector-high
+            aactive-lanes
+            alanes
+            aty)
+          (match b
+            [(CompilerIrInstr.VectorShuffle other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrVectorShufflePayload.Payload
+                    bd
+                    bsource
+                    bselector-low
+                    bselector-high
+                    bactive-lanes
+                    blanes
+                    bty)
+                  (and
+                    (= ad bd)
+                    (opt-value-eq asource bsource)
+                    (opt-value-eq aselector-low bselector-low)
+                    (opt-maybe-value-eq aselector-high bselector-high)
+                    (opt-value-eq aactive-lanes bactive-lanes)
+                    (= alanes blanes)
+                    (opt-type-eq aty bty))])]
+            [_ false])])]
     [(CompilerIrInstr.TailMask ad aindex alength alanes)
       (match b
         [(CompilerIrInstr.TailMask bd bindex blength blanes)
@@ -5576,6 +5677,8 @@
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
           (OptCseResult.Result (OptExprTable.Nil) instr)])]
+    [(CompilerIrInstr.VectorShuffle _)
+      (OptCseResult.Result (OptExprTable.Nil) instr)]
     [(CompilerIrInstr.TailCall _ _ _)
       (OptCseResult.Result (OptExprTable.Nil) instr)]
     [(CompilerIrInstr.Store _ _ _)
@@ -5921,6 +6024,7 @@
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload _ _ _ _ _ _) instr])]
     [(CompilerIrInstr.GatherLoad _) instr]
+    [(CompilerIrInstr.VectorShuffle _) instr]
     [(CompilerIrInstr.TailMask _ _ _ _) instr]
     [(CompilerIrInstr.EntryArgc _) instr]
     [(CompilerIrInstr.EntryArgv _) instr]
@@ -6095,6 +6199,10 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+          (opt-copy-invalidate-var env dst)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
           (opt-copy-invalidate-var env dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(CompilerIrInstr.EntryArgc dst) (opt-copy-invalidate-var env dst)]
@@ -6384,6 +6492,7 @@
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
           (OptBoundsFacts.Nil)])]
+    [(CompilerIrInstr.VectorShuffle _) (OptBoundsFacts.Nil)]
     [(CompilerIrInstr.TailCall _ _ _) (OptBoundsFacts.Nil)]
     [(CompilerIrInstr.Store _ _ _) (OptBoundsFacts.Nil)]
     [(CompilerIrInstr.StorePtr _ _ _) (OptBoundsFacts.Nil)]
@@ -7626,6 +7735,35 @@
     [(option_i64.Some id) (array-ref (struct-get index reachable) id)]
     [(option_i64.None) false]))
 
+(define (opt-cfg-csr-row-contains-id?
+  [csr : OptCfgCsr]
+  [row : i64]
+  [wanted : i64]) : bool
+  (let
+    [edge : i64 (array-ref (struct-get csr offsets) row)]
+    [end : i64 (array-ref (struct-get csr offsets) (+ row 1))]
+    [edges : (Array i64) (struct-get csr edges)]
+    (begin
+      (while (< edge end)
+        (if (= (array-ref edges edge) wanted)
+          (return true)
+          (set! edge (+ edge 1))))
+      false)))
+
+(define (opt-cfg-index-reachable-predecessor?
+  [index : OptCfgIndex]
+  [block-id : i64]
+  [predecessor-label : String]) : bool
+  (match (opt-cfg-index-id index predecessor-label)
+    [(option_i64.Some predecessor-id)
+      (and
+        (array-ref (struct-get index reachable) predecessor-id)
+        (opt-cfg-csr-row-contains-id?
+          (struct-get index preds)
+          block-id
+          predecessor-id))]
+    [(option_i64.None) false]))
+
 (define (opt-cfg-index-reachable-labels-from
   [index : OptCfgIndex]
   [id : i64]
@@ -8542,6 +8680,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
           (option_i64.Some dst)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
+          (option_i64.Some dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (option_i64.Some dst)]
     [(CompilerIrInstr.EntryArgc dst) (option_i64.Some dst)]
     [(CompilerIrInstr.EntryArgv dst) (option_i64.Some dst)]
@@ -9063,6 +9205,28 @@
             (opt-verify-two
               (opt-verify-value-use defs doms index-base block-label pos)
               (opt-verify-value-use defs doms index block-label pos)))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms source block-label pos)
+            (opt-verify-two
+              (opt-verify-value-use defs doms selector-low block-label pos)
+              (opt-verify-two
+                (opt-verify-maybe-value-use
+                  defs
+                  doms
+                  selector-high
+                  block-label
+                  pos)
+                (opt-verify-value-use defs doms active-lanes block-label pos))))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (opt-verify-two
         (opt-verify-value-use defs doms index block-label pos)
@@ -9725,6 +9889,10 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+          (opt-ssa-facts-add-def-bad facts dst)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
           (opt-ssa-facts-add-def-bad facts dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
     [(CompilerIrInstr.EntryArgv dst) (opt-ssa-facts-add-def-bad facts dst)]
@@ -10659,6 +10827,27 @@
               (opt-ssa-rewrite-value env base)
               (opt-ssa-rewrite-value env index)
               (opt-ssa-rewrite-value env mask)
+              lanes
+              ty)
+            env
+            next-var)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            dst
+            source
+            selector-low
+            selector-high
+            active-lanes
+            lanes
+            ty)
+          (OptSsaInstrResult.Result
+            (ir-instr-vector-shuffle
+              dst
+              (opt-ssa-rewrite-value env source)
+              (opt-ssa-rewrite-value env selector-low)
+              (opt-ssa-rewrite-maybe-value env selector-high)
+              (opt-ssa-rewrite-value env active-lanes)
               lanes
               ty)
             env
@@ -12368,6 +12557,7 @@
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload _ _ _ _ _ _) instr])]
     [(CompilerIrInstr.GatherLoad _) instr]
+    [(CompilerIrInstr.VectorShuffle _) instr]
     [(CompilerIrInstr.TailMask _ _ _ _) instr]
     [(CompilerIrInstr.AddrOf _ _) instr]
     [(CompilerIrInstr.Alloc _ _) instr]
@@ -18842,25 +19032,28 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (opt-induction-function-with-context (opt-cfg-context-build blocks) func)]))
 
-;; Membership uses the CFG index's O(1) reachability (label -> dense id ->
-;; reachable bool) instead of an O(n) string_eq scan over an OptLabelSet. The
-;; index is already built for this block list, so the set of reachable labels is
-;; identical -- only the lookup cost changes (the per-block / per-phi-input scans
-;; were ~half of string_eq in an opt1 self-compile).
+;; Branch folding can leave both source blocks reachable while removing only
+;; one source-to-phi edge. Filter against the destination's actual reachable
+;; predecessor set, not global reachability alone, so neither stale edges from
+;; reachable blocks nor edges from unreachable blocks survive CFG cleanup.
 (define (opt-cfg-filter-phi-inputs
   [index : OptCfgIndex]
+  [block-id : i64]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
     [(CompilerIrPhiInputList.Array seq)
-      (opt-cfg-filter-phi-inputs index (compiler-ir-phi-input-seq-to-list seq))]
+      (opt-cfg-filter-phi-inputs
+        index
+        block-id
+        (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value label rest)
-      (if (opt-cfg-index-reachable? index label)
+      (if (opt-cfg-index-reachable-predecessor? index block-id label)
         (compiler-ir-phi-input-cons
           value
           label
-          (opt-cfg-filter-phi-inputs index (box-get rest)))
-        (opt-cfg-filter-phi-inputs index (box-get rest)))]))
+          (opt-cfg-filter-phi-inputs index block-id (box-get rest)))
+        (opt-cfg-filter-phi-inputs index block-id (box-get rest)))]))
 
 (define (opt-phi-input-count [inputs : CompilerIrPhiInputList]) : i64
   (match (compiler-ir-phi-input-list-force-cons inputs)
@@ -18884,11 +19077,15 @@
         [_ (CompilerIrMaybeValue.No)])]
     [_ (CompilerIrMaybeValue.No)]))
 
-(define (opt-cfg-clean-instr [index : OptCfgIndex] [instr : CompilerIrInstr]) : CompilerIrInstr
+(define (opt-cfg-clean-instr
+  [index : OptCfgIndex]
+  [block-id : i64]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(CompilerIrInstr.Phi dst inputs ty)
       (let
-        [kept : CompilerIrPhiInputList (opt-cfg-filter-phi-inputs index inputs)]
+        [kept : CompilerIrPhiInputList
+          (opt-cfg-filter-phi-inputs index block-id inputs)]
         (if (= (opt-phi-input-count kept) 1)
           (match (opt-phi-single-value kept)
             [(CompilerIrMaybeValue.Some value)
@@ -18901,8 +19098,13 @@
 
 (define (opt-cfg-clean-instr-seq
   [index : OptCfgIndex]
+  [block-label : String]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
+    [block-id : i64
+      (match (opt-cfg-index-id index block-label)
+        [(option_i64.Some id) id]
+        [(option_i64.None) (- 0 1)])]
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [pos : i64 (- (struct-get instrs len) 1)]
     [out : CompilerIrInstrList CompilerIrInstrList.Nil]
@@ -18912,7 +19114,7 @@
           (set!
             out
             (compiler-ir-instr-cons
-              (opt-cfg-clean-instr index (array-ref slots pos))
+              (opt-cfg-clean-instr index block-id (array-ref slots pos))
               out))
           (set! pos (- pos 1))))
       out)))
@@ -18920,7 +19122,7 @@
 (define (opt-cfg-clean-block [index : OptCfgIndex] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-cfg-clean-instr-seq index instrs))]))
+      (compiler-ir-block label (opt-cfg-clean-instr-seq index label instrs))]))
 
 (define (opt-cfg-filter-clean-blocks
   [index : OptCfgIndex]
@@ -18946,15 +19148,23 @@
 
 (define (opt-cfg-clean-instr-seq-rewrite!
   [index : OptCfgIndex]
+  [block-label : String]
   [used : (Array i64)]
   [instrs : CompilerIrInstrSeq]) : unit
   (let
+    [block-id : i64
+      (match (opt-cfg-index-id index block-label)
+        [(option_i64.Some id) id]
+        [(option_i64.None) (- 0 1)])]
     [pos : i64 0]
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     (while (< pos count)
       (let
         [cleaned : CompilerIrInstr
-          (opt-cfg-clean-instr index (compiler-ir-instr-seq-ref instrs pos))]
+          (opt-cfg-clean-instr
+            index
+            block-id
+            (compiler-ir-instr-seq-ref instrs pos))]
         (begin
           (compiler-ir-instr-seq-set! instrs pos cleaned)
           (opt-collect-instr-uses-array used cleaned)
@@ -18978,8 +19188,8 @@
               [block : CompilerIrBlock (array-ref slots read)]
               (begin
                 (match block
-                  [(CompilerIrBlock.Block _ instrs)
-                    (opt-cfg-clean-instr-seq-rewrite! index used instrs)])
+                  [(CompilerIrBlock.Block label instrs)
+                    (opt-cfg-clean-instr-seq-rewrite! index label used instrs)])
                 (if (not (= write read))
                   (array-set! slots write block)
                   unit)
@@ -19380,6 +19590,9 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _) dst])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _) dst])]
     [(CompilerIrInstr.TailMask dst _ _ _) dst]
     [(CompilerIrInstr.Call dst _ _ _) dst]
     [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
@@ -19764,6 +19977,10 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
           (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
@@ -20378,6 +20595,24 @@
             (opt-sccp-rewrite-value env base)
             (opt-sccp-rewrite-value env index)
             (opt-sccp-rewrite-value env mask)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            dst
+            source
+            selector-low
+            selector-high
+            active-lanes
+            lanes
+            ty)
+          (ir-instr-vector-shuffle
+            dst
+            (opt-sccp-rewrite-value env source)
+            (opt-sccp-rewrite-value env selector-low)
+            (opt-sccp-rewrite-maybe-value env selector-high)
+            (opt-sccp-rewrite-value env active-lanes)
             lanes
             ty)])]
     [(CompilerIrInstr.TailMask dst index length lanes)
@@ -21631,6 +21866,9 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _) dst])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _) dst])]
     [(CompilerIrInstr.TailMask dst _ _ _) dst]
     [(CompilerIrInstr.EntryArgc dst) dst]
     [(CompilerIrInstr.EntryArgv dst) dst]
@@ -25149,6 +25387,11 @@
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
           (opt-loop-bce-state-invalidate-def state dst)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
+          (opt-loop-bce-state-clear-lengths
+            (opt-loop-bce-state-invalidate-def state dst))])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (opt-loop-bce-state-invalidate-def state dst)]
     [(CompilerIrInstr.EntryArgc dst)
@@ -26792,6 +27035,24 @@
             (opt-scan-note-value-uses items generation base)
             (opt-scan-note-value-uses items generation index-base)
             (opt-scan-note-value-uses items generation index))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (begin
+            (opt-scan-note-value-uses items generation source)
+            (opt-scan-note-value-uses items generation selector-low)
+            (match selector-high
+              [(CompilerIrMaybeValue.Some value)
+                (opt-scan-note-value-uses items generation value)]
+              [(CompilerIrMaybeValue.No) unit])
+            (opt-scan-note-value-uses items generation active-lanes))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (opt-scan-note-value-uses items generation index)
@@ -28002,11 +28263,7 @@
       fresh)))
 
 (define (opt-unroll-copy-suffix [copy : i64]) : String
-  (cond
-    [(= copy 0) "__u0"]
-    [(= copy 1) "__u1"]
-    [(= copy 2) "__u2"]
-    [else "__u3"]))
+  (string.append "__u" (string.int->string copy)))
 
 ;; Clone one whitelisted body instruction: substitute uses through the remap
 ;; first, then allocate a fresh dst and record it. Only the kinds accepted by
@@ -35802,6 +36059,26 @@
               (opt-inline-census-value index census base)
               index-base)
             idx)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (opt-inline-census-value
+            index
+            (opt-inline-census-maybe-value
+              index
+              (opt-inline-census-value
+                index
+                (opt-inline-census-value index census source)
+                selector-low)
+              selector-high)
+            active-lanes)])]
     [(CompilerIrInstr.TailMask _ idx length _)
       (opt-inline-census-value
         index
@@ -40993,6 +41270,26 @@
               (opt-reach-value index state base)
               index-base)
             idx)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (opt-reach-value
+            index
+            (opt-reach-maybe-value
+              index
+              (opt-reach-value
+                index
+                (opt-reach-value index state source)
+                selector-low)
+              selector-high)
+            active-lanes)])]
     [(CompilerIrInstr.TailMask _ idx length _)
       (opt-reach-value index (opt-reach-value index state idx) length)]
     [(CompilerIrInstr.EntryArgc _) state]
@@ -42181,6 +42478,23 @@
               (opt-const-globals-disq-value disq base)
               index-base)
             idx)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (opt-const-globals-disq-value
+            (opt-const-globals-disq-maybe
+              (opt-const-globals-disq-value
+                (opt-const-globals-disq-value disq source)
+                selector-low)
+              selector-high)
+            active-lanes)])]
     [(CompilerIrInstr.TailMask _ idx length _)
       (opt-const-globals-disq-value
         (opt-const-globals-disq-value disq idx)
@@ -42720,6 +43034,10 @@
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
+          (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
           (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
@@ -54920,6 +55238,42 @@
                 (CompilerIrInstrList.Nil))))
           (CompilerIrBlockList.Nil))))))
 
+;; Both entry and header remain reachable after folding entry's true branch,
+;; but entry no longer has a direct edge to tail. The stale entry phi arm must
+;; be removed based on tail's actual predecessors.
+(define (opt-cfg-folded-edge-phi-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch (CompilerIrValue.Bool true) "header" "tail")
+        (CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "header"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "tail")
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "tail"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              1
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.I64 10)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.I64 20)
+                  "header"
+                  (CompilerIrPhiInputList.Nil)))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+              (CompilerIrInstrList.Nil))))
+        (CompilerIrBlockList.Nil)))))
+
 (define (opt-cfg-trap-path-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -58364,6 +58718,9 @@
       [(< (opt-unroll-test-count-add-in-block out "body__unroll_body") 32) 3]
       ;; a non-unit counter step is not canonical: blocks stay untouched.
       [(not (= (compiler-ir-block-list-count nonunit) 3)) 4]
+      ;; Bounds-check labels must remain unique at the sixteen-copy factor.
+      [(not (string.eq (opt-unroll-copy-suffix 15) "__u15")) 5]
+      [(string.eq (opt-unroll-copy-suffix 3) (opt-unroll-copy-suffix 15)) 6]
       [else 42])))
 
 ;; --- bounds-check loop versioning self-test ------------------------------------
@@ -61157,6 +61514,8 @@
       (opt-cfg-simplify-blocks (opt-cfg-loop-guard-blocks))]
     [phi-cfg : CompilerIrBlockList
       (opt-cfg-simplify-blocks (opt-cfg-phi-blocks))]
+    [folded-edge-phi : CompilerIrBlockList
+      (opt-cfg-simplify-blocks (opt-cfg-folded-edge-phi-blocks))]
     [phi-blocks : CompilerIrBlockList
       (opt-function-blocks
         (optimize-function (opt-cfg-test-function (opt-cfg-phi-blocks))))]
@@ -61264,6 +61623,12 @@
           (opt-verify-function
             (opt-bool-branch-test-function reused-branch-blocks)))
         (return 27))
+      (unless (= (opt-count-phi-blocks folded-edge-phi) 0) (return 28))
+      (unless (= (opt-count-mov-dst-blocks folded-edge-phi 1) 1) (return 29))
+      (unless
+        (opt-verify-ok?
+          (opt-verify-function (opt-cfg-test-function folded-edge-phi)))
+        (return 30))
       42)))
 
 (define (compiler-optimize-fixed-point-self-test) : i64
@@ -61741,6 +62106,10 @@
         (match (box-get payload-box)
           [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
             (opt-alias-mark-may-alias base dst)])]
+      [(CompilerIrInstr.VectorShuffle payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
+            (opt-alias-mark-may-alias base dst)])]
       [_ base])))
 
 ;; Transfer function for the scratch/report alias consumer. Memory-mutating or
@@ -62066,6 +62435,23 @@
                 (opt-scratch-value-derived? roots facts base)
                 (opt-scratch-value-derived? roots facts index-base)
                 (opt-scratch-value-derived? roots facts index))
+                (OptScratchBlockerReason.Blocked "raw_pointer")
+                (OptScratchBlockerReason.NoBlocker))])]
+        [(CompilerIrInstr.VectorShuffle payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrVectorShufflePayload.Payload
+                _
+                source
+                selector-low
+                selector-high
+                active-lanes
+                _
+                _)
+              (if (or
+                (opt-scratch-value-derived? roots facts source)
+                (opt-scratch-value-derived? roots facts selector-low)
+                (opt-scratch-maybe-value-derived? roots facts selector-high)
+                (opt-scratch-value-derived? roots facts active-lanes))
                 (OptScratchBlockerReason.Blocked "raw_pointer")
                 (OptScratchBlockerReason.NoBlocker))])]
         [(CompilerIrInstr.Return maybe)

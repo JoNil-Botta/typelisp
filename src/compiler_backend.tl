@@ -4768,6 +4768,446 @@
       elem-ty
       instr-diag)))
 
+(define (compiler-backend-shuffle-label
+  [function : String]
+  [current-label : String]
+  [dst : i64]
+  [suffix : String]) : String
+  (compiler-backend-asm-label
+    function
+    (str_cat.str-cat
+      "vector_shuffle_"
+      current-label
+      "_v"
+      (string.int->string dst)
+      suffix)))
+
+(define (compiler-backend-shuffle-selector-offset
+  [lane : i64]
+  [selector-lanes : i64]
+  [width-bytes : i64]) : i64
+  (if (< lane selector-lanes)
+    (* lane 8)
+    (+ width-bytes (* (- lane selector-lanes) 8))))
+
+(define (compiler-backend-shuffle-index-lane-asm
+  [function : String]
+  [current-label : String]
+  [dst : i64]
+  [lane : i64]
+  [lanes : i64]
+  [selector-lanes : i64]
+  [width-bytes : i64]
+  [index-offset : i64]
+  [dword : bool]
+  [avx512 : bool]
+  [active-reg : String]
+  [value-reg : String]
+  [abort-label : String]) : String
+  (if (>= lane lanes)
+    ""
+    (let
+      [skip-label : String
+        (compiler-backend-shuffle-label
+          function
+          current-label
+          dst
+          (str_cat.str-cat "_skip_" (string.int->string lane)))]
+      [selector-slot : String
+        (compiler-backend-address-add-byte-offset
+          "(%rsp)"
+          (compiler-backend-shuffle-selector-offset
+            lane
+            selector-lanes
+            width-bytes))]
+      [index-slot : String
+        (compiler-backend-address-add-byte-offset
+          "(%rsp)"
+          (+
+            index-offset
+            (if dword
+              (* lane 4)
+              (* lane 8))))]
+      [value-reg32 : String (compiler-backend-reg-part value-reg 4)]
+      [copy-asm : String
+        (if dword
+          (str_cat.str-cat "    movl " value-reg32 ", " index-slot "\n")
+          (if avx512
+            (str_cat.str-cat "    movq " value-reg ", " index-slot "\n")
+            (str_cat.str-cat
+              "    shll $1, "
+              value-reg32
+              "\n    movl "
+              value-reg32
+              ", "
+              index-slot
+              "\n    addl $1, "
+              value-reg32
+              "\n    movl "
+              value-reg32
+              ", "
+              (compiler-backend-address-add-byte-offset
+                "(%rsp)"
+                (+ index-offset (* lane 8) 4))
+              "\n")))]
+      (str_cat.str-cat
+        "    cmpq $"
+        (string.int->string lane)
+        ", "
+        active-reg
+        "\n    jbe "
+        skip-label
+        "\n    movq "
+        selector-slot
+        ", "
+        value-reg
+        "\n    cmpq "
+        active-reg
+        ", "
+        value-reg
+        "\n    jae "
+        abort-label
+        "\n"
+        copy-asm
+        skip-label
+        ":\n"
+        (compiler-backend-shuffle-index-lane-asm
+          function
+          current-label
+          dst
+          (+ lane 1)
+          lanes
+          selector-lanes
+          width-bytes
+          index-offset
+          dword
+          avx512
+          active-reg
+          value-reg
+          abort-label)))))
+
+(define (compiler-backend-emit-vector-shuffle
+  [target : CompilerBackendTarget]
+  [function : String]
+  [current-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [source : CompilerIrValue]
+  [selector-low : CompilerIrValue]
+  [selector-high : CompilerIrMaybeValue]
+  [active-lanes : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [planned-active : String]
+  [planned-value : String]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [avx512 : bool (compiler-backend-avx512-shape-ok? elem-ty lanes)]
+    [shape-ok : bool
+      (or avx512 (compiler-backend-avx2-shape-ok? elem-ty lanes))]
+    [width : String
+      (if avx512
+        "zmm"
+        "ymm")]
+    [width-bytes : i64
+      (if avx512
+        64
+        32)]
+    [selector-lanes : i64
+      (if avx512
+        8
+        4)]
+    [dword : bool
+      (match elem-ty
+        [(AstType.I32) true]
+        [(AstType.U32) true]
+        [(AstType.F32) true]
+        [_ false])]
+    [needs-high : bool (> lanes selector-lanes)]
+    [active-reg : String
+      (if (string.eq planned-active "")
+        "%r10"
+        planned-active)]
+    [value-reg : String
+      (if (string.eq planned-value "")
+        "%r11"
+        planned-value)]
+    [index-reg : String
+      (if avx512
+        "%zmm0"
+        "%ymm0")]
+    [dst-scratch : String
+      (if avx512
+        "%zmm1"
+        "%ymm1")]
+    ;; Vector homes start at vec2, so vec0/vec1 are backend-owned scratch.
+    ;; Operand spills reuse vec0 sequentially before it becomes the index.
+    [source-scratch : String
+      (if avx512
+        "%zmm0"
+        "%ymm0")]
+    [selector-scratch : String
+      (if avx512
+        "%zmm0"
+        "%ymm0")]
+    [high-error : String
+      (match selector-high
+        [(CompilerIrMaybeValue.Some high-value)
+          (match (compiler-backend-vector-register-use
+            assignments
+            high-value
+            "shuffle selector high"
+            width
+            (AstType.I64)
+            selector-scratch)
+            [(ResultBackendVectorUse.Ok _) ""]
+            [(ResultBackendVectorUse.Err message) message])]
+        [(CompilerIrMaybeValue.No) ""])]
+    [selector-count : i64
+      (if needs-high
+        2
+        1)]
+    [index-offset : i64 (* selector-count width-bytes)]
+    [source-offset : i64 (+ index-offset width-bytes)]
+    [stack-bytes : i64 (+ source-offset width-bytes)]
+    [abort-label : String
+      (compiler-backend-shuffle-label function current-label dst "_abort")]
+    [permute-label : String
+      (compiler-backend-shuffle-label function current-label dst "_permute")]
+    [call-space : i64
+      (compiler-backend-call-arg-space
+        target
+        (CompilerIrCallArgs.Nil)
+        (ast-type-list-new)
+        false
+        program-index)]
+    (if (not shape-ok)
+      (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)
+      (if (or
+        (and
+          needs-high
+          (match selector-high
+            [(CompilerIrMaybeValue.Some _) false]
+            [(CompilerIrMaybeValue.No) true]))
+        (not (string.eq high-error "")))
+        (ResultCompilerBackend.Err
+          (box
+            (compiler-diagnostic-with-message
+              instr-diag
+              (if (string.eq high-error "")
+                "backend: 32-bit vector shuffle is missing its high selector half"
+                high-error))))
+        (match (compiler-backend-vector-register-use
+          assignments
+          source
+          "shuffle source"
+          width
+          elem-ty
+          source-scratch)
+          [(ResultBackendVectorUse.Ok source-use)
+            (match source-use
+              [(CompilerBackendVectorUse.Use source-asm source-reg)
+                (match (compiler-backend-vector-register-use
+                  assignments
+                  selector-low
+                  "shuffle selector low"
+                  width
+                  (AstType.I64)
+                  selector-scratch)
+                  [(ResultBackendVectorUse.Ok low-use)
+                    (match low-use
+                      [(CompilerBackendVectorUse.Use low-asm low-reg)
+                        (match (compiler-backend-vector-dst-reg
+                          assignments
+                          dst
+                          "shuffle dst"
+                          width
+                          dst-scratch)
+                          [(ResultBackendReg.Ok dst-reg)
+                            (match (compiler-backend-emit-load-value-with-plan
+                              assignments
+                              active-lanes
+                              active-reg)
+                              [(ResultCompilerBackend.Ok active-asm)
+                                (let
+                                  [high-asm : String
+                                    (match selector-high
+                                      [(CompilerIrMaybeValue.Some high-value)
+                                        (match (compiler-backend-vector-register-use
+                                          assignments
+                                          high-value
+                                          "shuffle selector high"
+                                          width
+                                          (AstType.I64)
+                                          selector-scratch)
+                                          [(ResultBackendVectorUse.Ok high-use)
+                                            (match high-use
+                                              [(CompilerBackendVectorUse.Use
+                                                  load-asm
+                                                  high-reg)
+                                                (str_cat.str-cat
+                                                  load-asm
+                                                  "    "
+                                                  (compiler-backend-vector-move-for-width
+                                                    width
+                                                    (AstType.I64))
+                                                  " "
+                                                  high-reg
+                                                  ", "
+                                                  (compiler-backend-address-add-byte-offset
+                                                    "(%rsp)"
+                                                    width-bytes)
+                                                  "\n")])]
+                                          [(ResultBackendVectorUse.Err _) ""])]
+                                      [(CompilerIrMaybeValue.No) ""])]
+                                  [zero-index-asm : String
+                                    (if avx512
+                                      (str_cat.str-cat
+                                        "    vpxord "
+                                        index-reg
+                                        ", "
+                                        index-reg
+                                        ", "
+                                        index-reg
+                                        "\n    vmovdqu64 "
+                                        index-reg
+                                        ", "
+                                        (compiler-backend-address-add-byte-offset
+                                          "(%rsp)"
+                                          index-offset)
+                                        "\n")
+                                      (str_cat.str-cat
+                                        "    vpxor "
+                                        index-reg
+                                        ", "
+                                        index-reg
+                                        ", "
+                                        index-reg
+                                        "\n    vmovdqu "
+                                        index-reg
+                                        ", "
+                                        (compiler-backend-address-add-byte-offset
+                                          "(%rsp)"
+                                          index-offset)
+                                        "\n"))]
+                                  [permute : String
+                                    (str_cat.str-cat
+                                      "    "
+                                      (if dword
+                                        "vpermd"
+                                        (if avx512
+                                          "vpermq"
+                                          "vpermd"))
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        source-offset)
+                                      ", "
+                                      index-reg
+                                      ", "
+                                      dst-reg
+                                      "\n")]
+                                  (ResultCompilerBackend.Ok
+                                    (str_cat.str-cat
+                                      source-asm
+                                      active-asm
+                                      "    subq $"
+                                      (string.int->string stack-bytes)
+                                      ", %rsp\n"
+                                      "    "
+                                      (compiler-backend-vector-move-for-width
+                                        width
+                                        elem-ty)
+                                      " "
+                                      source-reg
+                                      ", "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        source-offset)
+                                      "\n"
+                                      low-asm
+                                      "    "
+                                      (compiler-backend-vector-move-for-width
+                                        width
+                                        (AstType.I64))
+                                      " "
+                                      low-reg
+                                      ", (%rsp)\n"
+                                      high-asm
+                                      zero-index-asm
+                                      (compiler-backend-shuffle-index-lane-asm
+                                        function
+                                        current-label
+                                        dst
+                                        0
+                                        lanes
+                                        selector-lanes
+                                        width-bytes
+                                        index-offset
+                                        dword
+                                        avx512
+                                        active-reg
+                                        value-reg
+                                        abort-label)
+                                      "    jmp "
+                                      permute-label
+                                      "\n"
+                                      abort-label
+                                      ":\n"
+                                      (compiler-backend-emit-call-space-sub
+                                        call-space)
+                                      "    call "
+                                      (compiler-backend-call-symbol-index
+                                        cbi.compiler-builtin-id-tl-oob-abort
+                                        plan
+                                        program-index)
+                                      "\n"
+                                      (compiler-backend-emit-call-space-add
+                                        call-space)
+                                      permute-label
+                                      ":\n    "
+                                      (compiler-backend-vector-move-for-width
+                                        width
+                                        (AstType.I64))
+                                      " "
+                                      (compiler-backend-address-add-byte-offset
+                                        "(%rsp)"
+                                        index-offset)
+                                      ", "
+                                      index-reg
+                                      "\n"
+                                      permute
+                                      (compiler-backend-vector-store-dst
+                                        assignments
+                                        dst
+                                        width
+                                        elem-ty
+                                        dst-reg)
+                                      "    addq $"
+                                      (string.int->string stack-bytes)
+                                      ", %rsp\n")))]
+                              [(ResultCompilerBackend.Err message)
+                                (ResultCompilerBackend.Err
+                                  (box
+                                    (compiler-backend-apply-instr-diagnostic
+                                      (box-get message)
+                                      instr-diag)))])]
+                          [(ResultBackendReg.Err message)
+                            (ResultCompilerBackend.Err
+                              (box
+                                (compiler-diagnostic-with-message
+                                  instr-diag
+                                  message)))])])]
+                  [(ResultBackendVectorUse.Err message)
+                    (ResultCompilerBackend.Err
+                      (box
+                        (compiler-diagnostic-with-message instr-diag message)))])])]
+          [(ResultBackendVectorUse.Err message)
+            (ResultCompilerBackend.Err
+              (box (compiler-diagnostic-with-message instr-diag message)))])))))
+
 (define (compiler-backend-emit-vector-binop
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -32165,6 +32605,33 @@
               lanes
               elem-ty
               instr-diag)])]
+      [(CompilerIrInstr.VectorShuffle payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorShufflePayload.Payload
+              dst
+              source
+              selector-low
+              selector-high
+              active-lanes
+              lanes
+              elem-ty)
+            (compiler-backend-emit-vector-shuffle
+              ctx.target
+              ctx.function
+              ctx.current-label
+              ctx.assignments
+              dst
+              source
+              selector-low
+              selector-high
+              active-lanes
+              lanes
+              elem-ty
+              planned-scratch0
+              planned-scratch1
+              ctx.plan
+              ctx.program-index
+              instr-diag)])]
       [(CompilerIrInstr.TailMask dst index len lanes)
         (compiler-backend-emit-tail-mask
           ctx.function
@@ -32801,6 +33268,24 @@
             (compiler-backend-count-value-use counts base)
             (compiler-backend-count-value-use counts index-base)
             (compiler-backend-count-value-use counts index))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (begin
+            (compiler-backend-count-value-use counts source)
+            (compiler-backend-count-value-use counts selector-low)
+            (match selector-high
+              [(CompilerIrMaybeValue.Some value)
+                (compiler-backend-count-value-use counts value)]
+              [(CompilerIrMaybeValue.No) unit])
+            (compiler-backend-count-value-use counts active-lanes))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (compiler-backend-count-value-use counts index)
@@ -44785,6 +45270,23 @@
                 lanes
                 elem-ty)
               values))])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            _)
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-maybe-value-collections
+              (compiler-backend-collect-value-collections
+                (compiler-backend-collect-value-collections collections source)
+                selector-low)
+              selector-high)
+            active-lanes)])]
     [(CompilerIrInstr.TailMask _ index length _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections index)
@@ -51369,6 +51871,32 @@ tl_tlci_call_macro_entry:
               index-base)
             function
             index)])]
+    [(CompilerIrInstr.VectorShuffle payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorShufflePayload.Payload
+            _
+            source
+            selector-low
+            selector-high
+            active-lanes
+            _
+            elem-ty)
+          (let
+            [with-low : CompilerBackendObjectParts
+              (compiler-backend-object-value-ref
+                (compiler-backend-object-value-ref-with-type
+                  parts
+                  function
+                  source
+                  elem-ty)
+                function
+                selector-low)]
+            [with-high : CompilerBackendObjectParts
+              (match selector-high
+                [(CompilerIrMaybeValue.Some value)
+                  (compiler-backend-object-value-ref with-low function value)]
+                [(CompilerIrMaybeValue.No) with-low])]
+            (compiler-backend-object-value-ref with-high function active-lanes))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function index)

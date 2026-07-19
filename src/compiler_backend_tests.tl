@@ -10831,6 +10831,55 @@
         [(ResultCompilerBackend.Err _) false])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-backend-shuffle-asm-contains?
+  [src : String]
+  [lower-mode : CompilerLowerMode]
+  [backend-mode : CompilerBackendMode]
+  [opcode : String]
+  [extra : String]) : bool
+  (match (lower-compiler-source-with-mode src lower-mode)
+    [(ResultCompilerLower.Ok program spans)
+      (match (compiler-backend-emit-program-target-with-mode
+        program
+        (CompilerBackendTarget.Linux)
+        backend-mode
+        spans
+        true)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm opcode)
+            (compiler-backend-string-contains? asm extra)
+            (compiler-backend-string-contains? asm "    call tl_oob_abort\n"))]
+        [(ResultCompilerBackend.Err _) false])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-backend-vector-shuffle-ok?) : bool
+  (and
+    (compiler-backend-shuffle-asm-contains?
+      "(define (f [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
+      (CompilerLowerMode.Avx2)
+      (CompilerBackendMode.Avx2)
+      "    vpermd "
+      "    shll $1, ")
+    (compiler-backend-shuffle-asm-contains?
+      "(define (f [xs : (Array i32)] [out : (Array i32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
+      (CompilerLowerMode.Avx2)
+      (CompilerBackendMode.Avx2)
+      "    vpermd "
+      "%rsp), %ymm0, %ymm")
+    (compiler-backend-shuffle-asm-contains?
+      "(define (f [xs : (Array f64)] [out : (Array f64)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
+      (CompilerLowerMode.Avx512)
+      (CompilerBackendMode.Avx512)
+      "    vpermq "
+      "%zmm")
+    (compiler-backend-shuffle-asm-contains?
+      "(define (f [xs : (Array f32)] [out : (Array f32)] [n : i64]) : unit (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) (program-index)))))"
+      (CompilerLowerMode.Avx512)
+      (CompilerBackendMode.Avx512)
+      "    vpermd "
+      "%zmm")))
+
 (define (compiler-backend-avx2-vector-reduce-ok?) : bool
   (and
     (compiler-backend-avx2-reduce-asm-contains?
@@ -12023,6 +12072,7 @@
     (compiler-backend-avx512-masked-if-ok?)
     (compiler-backend-avx2-vector-reduce-ok?)
     (compiler-backend-avx512-vector-reduce-ok?)
+    (compiler-backend-vector-shuffle-ok?)
     (compiler-backend-vector-reduce-direct-store-ok?)
     (compiler-backend-xmm-family-conversion-ok?)
     (compiler-backend-avx2-vector-homes-ok?)

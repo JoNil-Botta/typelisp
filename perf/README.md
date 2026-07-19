@@ -158,8 +158,8 @@ The committed `perf/spmd-avx512-retired-baseline.tsv` is keyed by a SHA-256 of
 the counter source, OS/kernel, CPU identity and logical CPU, ISA tokens,
 clang/as/ld versions, flags, and counter configuration. The 1000 ppm tolerance
 is enforced only for an exact fingerprint; other hosts are report-only.
-The baseline includes every supported benchmark, including the measured
-`spmd_mask/avx512` row.
+The baseline includes every supported benchmark, including measured
+`spmd_mask/avx512` and `spmd_shuffle/avx512` rows.
 Only a full 11-run measurement may update the baseline. The heavy hardware
 measurement is never part of required correctness CI; only fast mutation
 self-tests run there:
@@ -233,7 +233,7 @@ introduces them; accept intentional changes by committing an explicit
 ## SPMD scalar/AVX2 mode matrix
 
 `scripts/measure-spmd-mode-instruction-counts.sh` is the opt-in deterministic
-mode comparison for the five SPMD benchmarks. It builds TypeLisp explicitly at
+mode comparison for the six SPMD benchmarks. It builds TypeLisp explicitly at
 `--opt-level 2 --backend-mode scalar|avx2`; scalar rows are paired with
 `clang -O2 -fno-vectorize -fno-slp-vectorize`, while AVX2 rows are paired with
 auto-vectorized `clang -O2 -mavx2 -mno-avx512f`. Thus each
@@ -254,7 +254,7 @@ TYPELISP_BIN=target/stage0/typelisp \
   --runs 1 --check-baseline
 ```
 
-Use `--cases spmd_map --modes scalar,avx2` for a focused run and
+Use `--cases spmd_shuffle --modes scalar,avx2` for a focused run and
 `--update-baseline` only for an intentional full-matrix refresh. Output under
 `target/spmd-mode-instruction-counts/` includes compiler/tool/flag metadata,
 raw runs, stable summaries, per-benchmark TypeLisp/clang ratios, and per-mode

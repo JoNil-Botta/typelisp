@@ -4252,7 +4252,8 @@ semantics in every backend mode. SIMD backend modes vectorize eligible
 contiguous array folds and checked gather-only folds through either an i64
 index array or `i + offsets[program-index]`, and otherwise keep scalar semantics
 rather than changing source behavior; per-backend matrices are specified in
-section 8.
+section 8. Eligible `spmd-shuffle` expressions over the numeric types above use
+native AVX2/AVX-512 permutations in `foreach` maps and reduction value plans.
 
 Purity and varying rules:
 
@@ -4296,8 +4297,9 @@ Cross-lane operations:
 - In SIMD backend modes the source lane must be active in the current gang:
   full gangs accept `0 <= lane < gang-width`; tail gangs accept only active
   source lanes. Inactive source lanes trap through the standard out-of-bounds
-  abort path. Inactive tail lanes do not evaluate the source value or perform
-  memory effects.
+  abort path. Active destination selectors are validated in increasing logical
+  lane order. Inactive tail destination lanes do not evaluate either shuffle
+  operand, perform memory effects, or participate in fault selection.
 - IR and backend work may add private horizontal-reduction primitives as
   needed to implement `spmd-reduce`; those primitives are not user-denotable
   source operations.
@@ -6433,7 +6435,9 @@ in documentation passes.
   all scalar integer and float lane types, including straight-line
   multi-destination maps with one shared lane shape, distinct destinations,
   and no destination read by a fused value; eligible vectorized
-  `spmd-reduce` folds; AVX2/AVX-512 masked varying `if` subsets including
+  `spmd-reduce` folds; native AVX2/AVX-512 `spmd-shuffle` permutations for
+  i32/u32/i64/u64/f32/f64 maps and reduction values, including active-count
+  preserving tails and ordered bounds traps; AVX2/AVX-512 masked varying `if` subsets including
   nested branch-mask composition and value-producing selects; AVX2/AVX-512
   scalar-lane varying `match`; AVX2 enum tag/payload varying `match` with
   active-lane-only scalar field loads; AVX2/AVX-512
@@ -6458,7 +6462,7 @@ in documentation passes.
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
-| Vectorized `spmd-scan` and shuffles | Deferred under #5349, #5350, and #5351. |
+| Vectorized `spmd-scan` | Deferred under #5349 and #5350. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Frontend analysis plus private scalar/AVX-512 IR lowering and native emission are implemented; AVX2 native emission is deferred under #5151. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |

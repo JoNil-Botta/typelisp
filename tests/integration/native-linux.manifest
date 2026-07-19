@@ -218,7 +218,12 @@ spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
 spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|-
 spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|-
 spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|-
+spmd_shuffle_simd|tests/integration/spmd_shuffle_simd.tl|42|-|-|-
+spmd_shuffle_types|tests/integration/spmd_shuffle_types.tl|42|-|-|-
+spmd_shuffle_reduce|tests/integration/spmd_shuffle_reduce.tl|42|-|-|-
 spmd_shuffle_lane1_trap|tests/integration/spmd_shuffle_lane1_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+spmd_shuffle_negative_trap|tests/integration/spmd_shuffle_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+spmd_shuffle_tail_oob|tests/integration/spmd_shuffle_tail_oob.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 stdlib_eq_aggregate|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl stdlib/comptime.tl
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl

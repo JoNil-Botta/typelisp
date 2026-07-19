@@ -4073,6 +4073,10 @@ Masked varying control flow:
   or a simple uniform offset from it. `array-set!` in a masked branch writes
   only active lanes; `array-ref` reads and checks bounds only for active
   lanes.
+- Integer masked value lanes support `bit-and`, `bit-or`, and `bit-xor` for
+  every contiguous integer array lane type (`i8`/`u8` through `i64`/`u64`).
+  Leading integer literals are contextually typed from the other operand.
+  These operators do not accept `f32` or `f64` lanes.
 - Side effects other than supported contiguous `array-set!` and explicit
   `stdlib/atomic.tl` integer element operations are rejected in masked
   branches. This includes `set!` to bindings declared outside the `foreach`,

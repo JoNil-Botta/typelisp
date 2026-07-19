@@ -3570,6 +3570,29 @@
         expr
         (tc-type-mismatch-message actual expected message)))))
 
+;; Call-argument variant of tc-expect-at-expr. The mismatch prefix is real
+;; work (a callee-name walk, int->string, a parameter-name lookup, and four
+;; string appends) consumed only on the error path, which never fires while
+;; typechecking well-formed code - materialize it only there, mirroring
+;; TcArityMessage's arity-message deferral. Diagnostics for rejected
+;; programs are byte-identical.
+(define (tc-expect-call-arg-at-expr
+  [expr : AstExpr]
+  [actual : AstType]
+  [expected : AstType]
+  [ctx : TcContext]
+  [arity-msg : TcArityMessage]
+  [index : i64]) : ResultTcUnit
+  (if (tc-type-compatible? expected actual)
+    ResultTcUnit.Ok
+    (ResultTcUnit.Err
+      (tc-locate-error-at-expr
+        expr
+        (tc-type-mismatch-message
+          actual
+          expected
+          (tc-argument-message-prefix-text ctx arity-msg index))))))
+
 (define (tc-empty-env) : TcTypeEnv
   TcTypeEnv.Nil)
 
@@ -25560,11 +25583,13 @@
                     (tc-expr-with-expected-or-actual ctx env effective-arg want)])]
               (match typed-arg
                 [(ResultTcType.Ok got)
-                  (match (tc-expect-at-expr
+                  (match (tc-expect-call-arg-at-expr
                     arg
                     got
                     want
-                    (tc-argument-message-prefix-text ctx arity-msg index))
+                    ctx
+                    arity-msg
+                    index)
                     [(ResultTcUnit.Ok)
                       (match (tc-raw-c-fnptr-flow-ok
                         ctx

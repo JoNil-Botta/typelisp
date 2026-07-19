@@ -12495,37 +12495,84 @@
 (define tc-module-import-index-positions : (Array i64)
   (array.make-array i64 0))
 
+;; Reset marks the index maybe-stale instead of destroying it. The macro
+;; expander resets these caches every round, but most rounds leave the
+;; module/import shape of the declaration list unchanged; ensure! revalidates
+;; the kept index against the recorded per-decl shape sequence and only
+;; rebuilds when the shape actually changed. The kept arena is destroyed by
+;; the next real rebuild, so no stale data survives a content change.
+(define tc-module-decl-index-maybe-stale : bool
+  false)
+(define tc-module-decl-index-seq : (Array i64)
+  (array.make-array i64 0))
+
 (define (tc-module-decl-index-reset!) : unit
-  (begin
-    (set! tc-module-decl-index-ready false)
-    (set! tc-module-decl-index-decl-count -1)
-    (set! tc-module-decl-index-decl-offset -1)
-    ;; The stale array/map globals are never read while ready is false (every
-    ;; consumer goes through ensure!), so destroying their arena here is safe.
-    (if (= tc-module-decl-index-arena 0)
-      unit
-      (begin
-        (unsafe
-          (arena.tl_arena_destroy tc-module-decl-index-arena))
-        (set! tc-module-decl-index-arena 0)))))
+  (set! tc-module-decl-index-maybe-stale true))
+
+;; Shape code of one declaration as the index build reads it: a module marker
+;; carries its module id (never negative), imports are -1, everything else -2.
+(define (tc-module-decl-index-shape-code [decl : AstDecl]) : i64
+  (match decl
+    [(AstDecl.Module next-module) next-module]
+    [_
+      (match (ast-decl-unwrapped decl)
+        [(AstDecl.Import decl-meta _) -1]
+        [_ -2])]))
+
+(define (tc-module-decl-index-seq-matches? [decls : AstDeclList]) : bool
+  (let
+    [count : i64 (struct-get decls len)]
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    (if (not (= (array-length tc-module-decl-index-seq) count))
+      false
+      (let
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (let
+              [code : i64
+                (tc-module-decl-index-shape-code
+                  (array-ref decl-slots (+ decl-offset i)))]
+              (if (or
+                (< code -2)
+                (not (= code (array-ref tc-module-decl-index-seq i))))
+                (return false)
+                (set! i (+ i 1)))))
+          true)))))
 
 (define (tc-module-decl-index-ensure! [decls : AstDeclList]) : unit
-  (if (and
-    tc-module-decl-index-ready
-    (= tc-module-decl-index-decl-count (struct-get decls len))
-    (= tc-module-decl-index-decl-offset (struct-get decls offset))
-    (= tc-module-decl-index-generation (intern-generation)))
-    unit
+  (begin
+    (when
+      (and
+        tc-module-decl-index-ready
+        (= tc-module-decl-index-decl-count (struct-get decls len))
+        (= tc-module-decl-index-decl-offset (struct-get decls offset)))
+      (begin
+        (when
+          (and
+            (not tc-module-decl-index-maybe-stale)
+            (= tc-module-decl-index-generation (intern-generation)))
+          (return unit))
+        ;; The kept index is valid whenever the module/import shape of the
+        ;; declaration list is unchanged: the index stores only per-module
+        ;; declaration and import positions, so in-place declaration rewrites
+        ;; that preserve the shape cannot change it.
+        (when
+          (tc-module-decl-index-seq-matches? decls)
+          (begin
+            (set! tc-module-decl-index-maybe-stale false)
+            (set! tc-module-decl-index-generation (intern-generation))
+            (return unit)))))
     (let
       [count : i64 (struct-get decls len)]
       [decl-offset : i64 (struct-get decls offset)]
       [decl-slots : (Array AstDecl) (struct-get decls slots)]
       [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
       [prev-arena : i64 (arena.tl_arena_current)]
+      [old-arena : i64 tc-module-decl-index-arena]
       [_make-arena : unit
-        (if (= tc-module-decl-index-arena 0)
-          (set! tc-module-decl-index-arena (arena.tl_arena_make))
-          unit)]
+        (set! tc-module-decl-index-arena (arena.tl_arena_make))]
       [_switch : unit
         (unsafe
           (arena.tl_arena_set tc-module-decl-index-arena))]
@@ -12621,6 +12668,21 @@
                           [_ unit])))
                     unit))])
             (set! i (+ i 1))))
+        ;; Record the per-decl shape sequence so a maybe-stale index can be
+        ;; revalidated without rebuilding.
+        (let
+          [seq : (Array i64) (array.make-array i64 count)]
+          (begin
+            (set! i 0)
+            (while (< i count)
+              (begin
+                (array-set!
+                  seq
+                  i
+                  (tc-module-decl-index-shape-code
+                    (array-ref decl-slots (+ decl-offset i))))
+                (set! i (+ i 1))))
+            (set! tc-module-decl-index-seq seq)))
         (set! tc-module-decl-index-modules modules)
         (set! tc-module-decl-index-starts starts)
         (set! tc-module-decl-index-ends ends)
@@ -12631,11 +12693,19 @@
         (set! tc-module-decl-index-decl-count count)
         (set! tc-module-decl-index-decl-offset decl-offset)
         (set! tc-module-decl-index-generation (intern-generation))
-        ;; The arena head advances as it grows; re-capture it so reset!
-        ;; destroys the whole chain, then restore the caller's arena.
+        (set! tc-module-decl-index-maybe-stale false)
+        ;; The arena head advances as it grows; re-capture it so the next
+        ;; rebuild destroys the whole chain, then restore the caller's arena.
+        ;; The previous rebuild's arena (kept alive across maybe-stale
+        ;; revalidation) is destroyed only now that every index global points
+        ;; into the fresh one.
         (set! tc-module-decl-index-arena (arena.tl_arena_current))
         (unsafe
           (arena.tl_arena_set prev-arena))
+        (if (= old-arena 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy old-arena)))
         (set! tc-module-decl-index-ready true)))))
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.

@@ -227,6 +227,72 @@
 ;; macro parameters. Bodies outside this subset return false with no side
 ;; effect, so the caller keeps them as interpreted-fallback shells. This is
 ;; the first eligible tranche of #5213; richer bodies are later slices.
+(define (embedded-stdlib-tlci-unquoted-param
+  [params : (& params AstMacroParamList)]
+  [node : i64]) : i64
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Unquote inner)
+      (match (embedded-stdlib-tlci-unwrap-expr inner)
+        [(AstExpr.Var pname) (embedded-stdlib-tlci-param-index params pname)]
+        [_ -1])]
+    [_ -1]))
+
+;; Compile a two-operand intrinsic body (array-ref / array-push): both
+;; operands must be unquoted parameters. Emits the two operand pushes, the
+;; intrinsic op, and the commit.
+(define (embedded-stdlib-tlci-compile-binary-intrinsic
+  [identity : String]
+  [params : AstMacroParamList]
+  [target-node : i64]
+  [operand-node : i64]
+  [intrinsic-op : i64]
+  [out : (&mut out (Array comptime_image.CompilerComptimeMacroProgram))]
+  [slot : i64]) : bool
+  (let
+    [ti : i64 (embedded-stdlib-tlci-unquoted-param (& params) target-node)]
+    [oi : i64 (embedded-stdlib-tlci-unquoted-param (& params) operand-node)]
+    (if (or (< ti 0) (< oi 0))
+      false
+      (let
+        [ops : (Array comptime_image.CompilerComptimeOperation)
+          (array.make-array comptime_image.CompilerComptimeOperation 4)]
+        (begin
+          (array-set!
+            ops
+            0
+            (comptime_image.CompilerComptimeOperation.HostCallArgs
+              tlci-host-callback-op-push-operand
+              ti
+              0
+              0))
+          (array-set!
+            ops
+            1
+            (comptime_image.CompilerComptimeOperation.HostCallArgs
+              tlci-host-callback-op-push-operand
+              oi
+              0
+              0))
+          (array-set!
+            ops
+            2
+            (comptime_image.CompilerComptimeOperation.HostCall intrinsic-op))
+          (array-set!
+            ops
+            3
+            (comptime_image.CompilerComptimeOperation.HostCall
+              tlci-host-callback-op-commit-result))
+          (array-set!
+            out
+            slot
+            (comptime_image.CompilerComptimeMacroProgram
+              identity
+              ops
+              (array.make-array String 0)
+              0
+              0))
+          true)))))
+
 (define (embedded-stdlib-tlci-compile-native-program
   [identity : String]
   [params : AstMacroParamList]
@@ -314,6 +380,24 @@
                         0)))
                   ok))]
             [_ false])]
+        [(AstExpr.ArrayRef target-node index-node)
+          (embedded-stdlib-tlci-compile-binary-intrinsic
+            identity
+            params
+            target-node
+            index-node
+            tlci-host-callback-op-expr-array-ref
+            (&mut out)
+            slot)]
+        [(AstExpr.ArrayPush target-node value-node)
+          (embedded-stdlib-tlci-compile-binary-intrinsic
+            identity
+            params
+            target-node
+            value-node
+            tlci-host-callback-op-expr-array-push
+            (&mut out)
+            slot)]
         [_ false])]
     [_ false]))
 

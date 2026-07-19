@@ -183,6 +183,23 @@ run_gate \
     scripts/measure-instruction-counts.sh \
     --self-test \
     --output target/instruction-count-c-region-self-test
+if [ "$HOST_OS" = windows ]; then
+    BOOTSTRAP_BENCH_POWERSHELL=powershell.exe
+else
+    BOOTSTRAP_BENCH_POWERSHELL=pwsh
+fi
+if ! command -v "$BOOTSTRAP_BENCH_POWERSHELL" >/dev/null 2>&1; then
+    required_gate_unavailable \
+        "bootstrap benchmark command-construction self-test" \
+        "missing PowerShell executable: $BOOTSTRAP_BENCH_POWERSHELL"
+fi
+run_gate \
+    "bootstrap benchmark command-construction self-test" \
+    "$BOOTSTRAP_BENCH_POWERSHELL" \
+    -NoProfile \
+    -ExecutionPolicy Bypass \
+    -File scripts/benchmark-bootstrap.ps1 \
+    -SelfTestCommandConstruction
 
 stage2_safety_corpus_supported() {
     compiler=$1

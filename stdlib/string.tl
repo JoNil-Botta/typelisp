@@ -228,6 +228,40 @@
           (set! b (+ b 1))))
       unit)))
 
+;: Copy `n` bytes from borrowed `chunk` into `dst` at byte offset `start`.
+(define (str-copy-borrowed-bytes-into
+  [chunk : (& chunk str)]
+  [dst : (MutPtr u8)]
+  [start : i64]
+  [n : i64]) : unit
+  (let
+    [src : (Ptr u8)
+      (unsafe
+        (string-data chunk))]
+    [words : i64 (/ n 8)]
+    [src64 : (Ptr i64)
+      (unsafe
+        (ptr-cast src : (Ptr i64)))]
+    [dst64 : (MutPtr i64)
+      (unsafe
+        (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
+    [w : i64 0]
+    [b : i64 (* words 8)]
+    (begin
+      (while (< w words)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
+          (set! w (+ w 1))))
+      (while (< b n)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst (+ start b))
+              (ptr-read (ptr-offset src b))))
+          (set! b (+ b 1))))
+      unit)))
+
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
 (define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String
   (let
@@ -314,6 +348,79 @@
   (begin
     (array-set! parts index value)
     parts))
+
+;: Return a fresh active-arena String by concatenating three borrowed strings.
+(define (concat3-borrowed [a : (& a str)] [b : (& b str)] [c : (& c str)]) : String
+  (let
+    [a-len : i64 (__tl_string_length a)]
+    [b-len : i64 (__tl_string_length b)]
+    [c-len : i64 (__tl_string_length c)]
+    [total-len : i64 (+ a-len (+ b-len c-len))]
+    (if (= total-len 0)
+      ""
+      (let
+        [dst : (MutPtr u8) (string-runtime-alloc total-len)]
+        (begin
+          (str-copy-borrowed-bytes-into a dst 0 a-len)
+          (str-copy-borrowed-bytes-into b dst a-len b-len)
+          (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+
+;: Return a fresh active-arena String by concatenating four borrowed strings.
+(define (concat4-borrowed
+  [a : (& a str)]
+  [b : (& b str)]
+  [c : (& c str)]
+  [d : (& d str)]) : String
+  (let
+    [a-len : i64 (__tl_string_length a)]
+    [b-len : i64 (__tl_string_length b)]
+    [c-len : i64 (__tl_string_length c)]
+    [d-len : i64 (__tl_string_length d)]
+    [total-len : i64 (+ a-len (+ b-len (+ c-len d-len)))]
+    (if (= total-len 0)
+      ""
+      (let
+        [dst : (MutPtr u8) (string-runtime-alloc total-len)]
+        (begin
+          (str-copy-borrowed-bytes-into a dst 0 a-len)
+          (str-copy-borrowed-bytes-into b dst a-len b-len)
+          (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
+          (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+
+;: Return a fresh active-arena String by concatenating five borrowed strings.
+(define (concat5-borrowed
+  [a : (& a str)]
+  [b : (& b str)]
+  [c : (& c str)]
+  [d : (& d str)]
+  [e : (& e str)]) : String
+  (let
+    [a-len : i64 (__tl_string_length a)]
+    [b-len : i64 (__tl_string_length b)]
+    [c-len : i64 (__tl_string_length c)]
+    [d-len : i64 (__tl_string_length d)]
+    [e-len : i64 (__tl_string_length e)]
+    [total-len : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
+    (if (= total-len 0)
+      ""
+      (let
+        [dst : (MutPtr u8) (string-runtime-alloc total-len)]
+        (begin
+          (str-copy-borrowed-bytes-into a dst 0 a-len)
+          (str-copy-borrowed-bytes-into b dst a-len b-len)
+          (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
+          (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+          (str-copy-borrowed-bytes-into
+            e
+            dst
+            (+ a-len (+ b-len (+ c-len d-len)))
+            e-len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
 
 ;: Return a fresh active-arena String by concatenating three owned strings.
 (define (concat3 [a : String] [b : String] [c : String]) : String

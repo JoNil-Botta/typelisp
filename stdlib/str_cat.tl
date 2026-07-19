@@ -7,8 +7,8 @@
 ;#
 ;# Dotted usage: import this module as `stdlib.str_cat`, then call
 ;# `(str_cat.str-cat a b c)`. Legacy path imports can call `(str-cat a b c)`.
-;# Expansions reference fully qualified `stdlib.string` helpers, so callers do
-;# not need string helper imports.
+;# Expansions delegate to the bootstrap-safe implementation module, whose
+;# fully-qualified helpers require no imports at the call site.
 ;#
 ;# ```lisp
 ;# (import stdlib.str_cat)
@@ -16,92 +16,56 @@
 ;# (define (greet [name : String]) : String
 ;#   (str_cat.str-cat "hello, " name "!"))
 ;# ```
-(import stdlib.comptime)
-(import stdlib.array)
-(import stdlib.string)
+(import stdlib.str_cat_runtime)
+(cfg test (import stdlib.string))
 (cfg test (import stdlib.test))
-(cfg test (import stdlib.str_cat_runtime as str_cat_runtime))
-
-;: Internal pack step used by `str-cat` expansion for six or more operands.
-;:
-;: `carrier` wraps all operands in a marker call so each step reads the next
-;: operand by index (`expr-list-nth`) instead of copying a shrinking tail;
-;: `parts` threads the filled dynamic array and `idx` is the next literal slot.
-;: When every slot is filled it returns `parts`.
-(defmacro (str-cat-pack
-  [carrier : comptime.Expr]
-  [parts : (Array String)]
-  [idx : comptime.Expr]) : (Array String)
-  (match idx
-    [(comptime.ExprInt i)
-      (match carrier
-        [(comptime.ExprCall _ elems)
-          (if (>= i (comptime.expr-list-length elems))
-            parts
-            `(str-cat-pack
-              ,carrier
-              (stdlib.string.concat-all-pack-part
-                ,parts
-                ,(comptime.expr-int i)
-                ,(comptime.expr-list-nth elems i))
-              ,(comptime.expr-int (+ i 1))))]
-        [_ parts])]
-    [_ parts]))
 
 ;: Concatenate any number of `String` operands into a fresh active-arena String.
 ;:
-;: Dispatches on the operand count and indexes operands directly with
-;: `expr-list-nth`. With no operands it expands to `""`; with one operand it
-;: expands to that operand unchanged. Two to five operands use direct
-;: one-allocation helpers. Longer arities are packed into one dynamic parts
-;: array and copied by `stdlib.string.concat-all`, so they no longer allocate chunk
-;: intermediates.
+;: The implementation lives in `stdlib.str_cat_runtime` so bootstrap compiler
+;: sources and public callers execute one checked-in macro body.
 (defmacro (str-cat [args : String ...]) : String
-  (match (comptime.expr-list-length args)
-    [0 `""]
-    [1 (comptime.expr-list-nth args 0)]
-    [2
-      `(stdlib.string.concat3
-        ,(comptime.expr-list-nth args 0)
-        ,(comptime.expr-list-nth args 1)
-        "")]
-    [3
-      `(stdlib.string.concat3
-        ,(comptime.expr-list-nth args 0)
-        ,(comptime.expr-list-nth args 1)
-        ,(comptime.expr-list-nth args 2))]
-    [4
-      `(stdlib.string.concat4
-        ,(comptime.expr-list-nth args 0)
-        ,(comptime.expr-list-nth args 1)
-        ,(comptime.expr-list-nth args 2)
-        ,(comptime.expr-list-nth args 3))]
-    [5
-      `(stdlib.string.concat5
-        ,(comptime.expr-list-nth args 0)
-        ,(comptime.expr-list-nth args 1)
-        ,(comptime.expr-list-nth args 2)
-        ,(comptime.expr-list-nth args 3)
-        ,(comptime.expr-list-nth args 4))]
-    [n
-      `(stdlib.string.concat-all
-        (str-cat-pack
-          (__str-cat-args ,@args)
-          (stdlib.array.make-array
-            ,(comptime.expr-var "String")
-            ,(comptime.expr-int n))
-          0))]))
+  `(stdlib.str_cat_runtime.str-cat-scoped ,@args))
 
-;; Inline test coverage.
-;; Published stage0 compilers have a hardcoded `stdlib.str_cat` test fast path
-;; that emits legacy helper names, so the cfg-test fixture exercises the same
-;; checked-in macro body through the bootstrap-safe runtime module name.
 (cfg
   test
   (define (str-cat-api-eq [got : String] [want : String]) : i64
     (if (string.eq got want)
       1
       0)))
+
+(cfg
+  test
+  (define str-cat-evaluation-count : i64
+    0))
+
+(cfg
+  test
+  (define (str-cat-counted-operand [text : String]) : String
+    (begin
+      (set! str-cat-evaluation-count (+ str-cat-evaluation-count 1))
+      text)))
+
+(cfg
+  test
+  (define (str-cat-scoped-region-ok?) : bool
+    (with-arena
+      frame
+      (let
+        [one : String (string.int->string 1)]
+        [two : String (string.int->string 2)]
+        [three : String (string.int->string 3)]
+        [four : String (string.int->string 4)]
+        [five : String (string.int->string 5)]
+        [got2 : String (str_cat_runtime.str-cat-scoped "visible:" one)]
+        [got3 : String (str_cat_runtime.str-cat-scoped one ":" two)]
+        [got4 : String (str_cat_runtime.str-cat-scoped one ":" two three)]
+        [got5 : String (str_cat_runtime.str-cat-scoped one ":" two three four)]
+        (and
+          (string.eq got2 "visible:1")
+          (string.eq got3 "1:2")
+          (string.eq got4 "1:23")
+          (string.eq got5 "1:234"))))))
 
 (cfg
   test
@@ -161,12 +125,38 @@
                   "!"
                   "r")
                 "baz!baz!q!r"))))
+        (set! str-cat-evaluation-count 0)
+        (let
+          [once : String
+            (str_cat_runtime.str-cat-scoped
+              (str-cat-counted-operand "a")
+              (str-cat-counted-operand "b")
+              (str-cat-counted-operand "c")
+              (str-cat-counted-operand "d")
+              (str-cat-counted-operand "e"))]
+          (if (and (string.eq once "abcde") (= str-cat-evaluation-count 5))
+            (set! score (+ score 1))
+            unit))
+        (if (string.eq
+          (str_cat_runtime.str-cat-scoped
+            (if true
+              "left"
+              "wrong")
+            (if false
+              "wrong"
+              "right"))
+          "leftright")
+          (set! score (+ score 1))
+          unit)
+        (if (str-cat-scoped-region-ok?)
+          (set! score (+ score 1))
+          unit)
         score))))
 
 (cfg
   test
   (define (str-cat-test-main) : i64
-    (if (= (str-cat-api-checks) 8)
+    (if (= (str-cat-api-checks) 11)
       42
       1)))
 

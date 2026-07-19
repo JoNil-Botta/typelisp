@@ -8031,6 +8031,16 @@
 (define compiler-backend-emergency-restore-suppressed : bool
   false)
 
+;; The clang-shaped signed-divmod SRC keeps %r10 as its normal free fallback,
+;; but a saturated site must not emergency-borrow it.  %r10 is also the generic
+;; staging fallback immediately after divmod; restoring an emergency-owned %r10
+;; there gives the reload-elision owner map a target-dependent frame owner
+;; (Win64 and SysV have different occupied pools) and leaves a redundant reload
+;; on Win64.  This flag affects only the emergency tier -- a genuinely free
+;; %r10 remains the preferred, byte-identical choice.
+(define compiler-backend-divmod-src-emergency-avoid-r10 : bool
+  false)
+
 (define (compiler-backend-emergency-capacity) : i64
   16)
 
@@ -13489,6 +13499,48 @@
     (compiler-backend-scavenge-reg-here exclude exclude-n fallback)
     planned))
 
+(define (compiler-backend-scavenge-divmod-src-reg
+  [dst : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]) : String
+  (begin
+    (set! compiler-backend-divmod-src-emergency-avoid-r10 true)
+    (let
+      [reg : String
+        (compiler-backend-scavenge-reg dst exclude exclude-n "%r10")]
+      (begin
+        (set! compiler-backend-divmod-src-emergency-avoid-r10 false)
+        reg))))
+
+(define (compiler-backend-scavenge-divmod-src-reg-here
+  [exclude : (Array String)]
+  [exclude-n : i64]) : String
+  (begin
+    (set! compiler-backend-divmod-src-emergency-avoid-r10 true)
+    (let
+      [reg : String
+        (compiler-backend-scavenge-reg-here exclude exclude-n "%r10")]
+      (begin
+        (set! compiler-backend-divmod-src-emergency-avoid-r10 false)
+        reg))))
+
+(define (compiler-backend-planned-or-scavenge-divmod-src-reg
+  [planned : String]
+  [dst : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]) : String
+  (if (string.eq planned "")
+    (compiler-backend-scavenge-divmod-src-reg dst exclude exclude-n)
+    planned))
+
+(define (compiler-backend-planned-or-scavenge-divmod-src-reg-here
+  [planned : String]
+  [exclude : (Array String)]
+  [exclude-n : i64]) : String
+  (if (string.eq planned "")
+    (compiler-backend-scavenge-divmod-src-reg-here exclude exclude-n)
+    planned))
+
 (define (compiler-backend-divmod-shift-rax [mnemonic : String] [shift : i64]) : String
   (if (= shift 0)
     ""
@@ -14371,7 +14423,7 @@
         [src-excl : (Array String)
           (compiler-backend-divmod-dividend-exclude magic)]
         [src : String
-          (compiler-backend-planned-or-scavenge-reg
+          (compiler-backend-planned-or-scavenge-divmod-src-reg
             planned-dividend
             dst
             (if (string.eq hoist-reg "")
@@ -14379,8 +14431,7 @@
               (compiler-backend-scavenge-exclude-append src-excl 5 hoist-reg))
             (if (string.eq hoist-reg "")
               5
-              6)
-            "%r10")]
+              6))]
         (match (compiler-backend-signed-literal-divmod-src-asm
           op
           rhs
@@ -14488,11 +14539,10 @@
               "%r8")
             "")]
         [src : String
-          (compiler-backend-planned-or-scavenge-reg-here
+          (compiler-backend-planned-or-scavenge-divmod-src-reg-here
             planned-dividend
             (compiler-backend-divmod-dividend-exclude magic)
-            5
-            "%r10")]
+            5)]
         (match (compiler-backend-signed-literal-divmod-src-asm
           op
           rhs
@@ -16124,7 +16174,7 @@
         lhs-home
         (if dst-src?
           dst-home
-          (compiler-backend-planned-or-scavenge-reg
+          (compiler-backend-planned-or-scavenge-divmod-src-reg
             planned-src
             dst
             (if (string.eq hoist-reg "")
@@ -16132,8 +16182,7 @@
               (compiler-backend-scavenge-exclude-append src-excl 5 hoist-reg))
             (if (string.eq hoist-reg "")
               5
-              6)
-            "%r10")))]
+              6))))]
     [result-reg : String
       (if (string.eq dst-home "")
         (if (compiler-backend-binop-wants-remainder? op)
@@ -16202,11 +16251,10 @@
     [src : String
       (if own-src?
         lhs-home
-        (compiler-backend-planned-or-scavenge-reg-here
+        (compiler-backend-planned-or-scavenge-divmod-src-reg-here
           planned-src
           (compiler-backend-divmod-dividend-exclude magic)
-          5
-          "%r10"))]
+          5))]
     (match (compiler-backend-emit-load-value-with-plan assignments lhs src)
       [(ResultCompilerBackend.Ok load-asm)
         (match (compiler-backend-signed-literal-divmod-src-asm
@@ -38969,13 +39017,17 @@
       (begin
         (while (and (< i n) (< found 0))
           (begin
-            (if (=
-              (bit-and
-                (bit-or
-                  exclude-mask
-                  compiler-backend-current-instr-reserved-mask)
-                (compiler-backend-scavenge-reg-bit (array-ref cands i)))
-              0)
+            (if (and
+              (or
+                (not compiler-backend-divmod-src-emergency-avoid-r10)
+                (not (string.eq (array-ref cands i) "%r10")))
+              (=
+                (bit-and
+                  (bit-or
+                    exclude-mask
+                    compiler-backend-current-instr-reserved-mask)
+                  (compiler-backend-scavenge-reg-bit (array-ref cands i)))
+                0))
               (set! found i)
               unit)
             (set! i (+ i 1))))

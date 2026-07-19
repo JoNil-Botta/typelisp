@@ -488,49 +488,6 @@
               (while (< rounded capacity)
                 (set! rounded (* rounded 2)))
               rounded)))
-        (define (bucket-index [hash : i64] [capacity : i64]) : i64
-          (bit-and hash (- capacity 1)))
-        (define (insert-slot [first-tombstone : i64] [empty-index : i64]) : i64
-          (if (>= first-tombstone 0)
-            first-tombstone
-            empty-index))
-        (define (probe-from
-          [slots : (& slots (Array GeneratedHashmapSlot))]
-          [capacity : i64]
-          [key : ,query-key-type]
-          [hash : i64]
-          [index : i64]
-          [seen : i64]
-          [first-tombstone : i64]) : GeneratedHashmapProbe
-          (let
-            [cursor : i64 index]
-            [walked : i64 seen]
-            [first : i64 first-tombstone]
-            [mask : i64 (- capacity 1)]
-            (begin
-              (while (< walked capacity)
-                (match (array-ref slots cursor)
-                  [GeneratedHashmapSlot.Empty
-                    (return
-                      (GeneratedHashmapProbe.Absent (insert-slot first cursor)))]
-                  [GeneratedHashmapSlot.Tombstone
-                    (begin
-                      (if (< first 0)
-                        (set! first cursor)
-                        unit)
-                      (set! cursor (bit-and (+ cursor 1) mask))
-                      (set! walked (+ walked 1)))]
-                  [(GeneratedHashmapSlot.Occupied existing _ existing-hash)
-                    (if (if (= existing-hash hash)
-                      (key-eq? existing key)
-                      false)
-                      (return (GeneratedHashmapProbe.Found cursor))
-                      (begin
-                        (set! cursor (bit-and (+ cursor 1) mask))
-                        (set! walked (+ walked 1))))]))
-              (if (>= first 0)
-                (GeneratedHashmapProbe.Absent first)
-                (GeneratedHashmapProbe.Full)))))
         (define (probe
           [slots : (& slots (Array GeneratedHashmapSlot))]
           [capacity : i64]
@@ -538,14 +495,38 @@
           [hash : i64]) : GeneratedHashmapProbe
           (if (<= capacity 0)
             (GeneratedHashmapProbe.Full)
-            (probe-from
-              slots
-              capacity
-              key
-              hash
-              (bucket-index hash capacity)
-              0
-              -1)))
+            (let
+              [cursor : i64 (bit-and hash (- capacity 1))]
+              [walked : i64 0]
+              [first : i64 -1]
+              [mask : i64 (- capacity 1)]
+              (begin
+                (while (< walked capacity)
+                  (match (array-ref slots cursor)
+                    [GeneratedHashmapSlot.Empty
+                      (return
+                        (GeneratedHashmapProbe.Absent
+                          (if (>= first 0)
+                            first
+                            cursor)))]
+                    [GeneratedHashmapSlot.Tombstone
+                      (begin
+                        (if (< first 0)
+                          (set! first cursor)
+                          unit)
+                        (set! cursor (bit-and (+ cursor 1) mask))
+                        (set! walked (+ walked 1)))]
+                    [(GeneratedHashmapSlot.Occupied existing _ existing-hash)
+                      (if (if (= existing-hash hash)
+                        (key-eq? existing key)
+                        false)
+                        (return (GeneratedHashmapProbe.Found cursor))
+                        (begin
+                          (set! cursor (bit-and (+ cursor 1) mask))
+                          (set! walked (+ walked 1))))]))
+                (if (>= first 0)
+                  (GeneratedHashmapProbe.Absent first)
+                  (GeneratedHashmapProbe.Full))))))
         (define (with-capacity [capacity : i64]) : Map
           (let
             [cap : i64

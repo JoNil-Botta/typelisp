@@ -15112,29 +15112,29 @@
     ResultTcUnit.Ok
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
       [(AstMacroParam.Param _ ty variadic _)
-        (if (and
-          variadic
-          (< (+ index 1) (ast-macro-param-list-len params))
-          (not (tc-macro-expr-binding-clause-type? (tc-resolve-type ctx ty))))
-          (ResultTcUnit.Err
-            "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")
-          (if (tc-macro-type-param-kind? ty)
+        (cond
+          [(and
+              variadic
+              (< (+ index 1) (ast-macro-param-list-len params))
+              (not
+                (tc-macro-expr-binding-clause-type? (tc-resolve-type ctx ty))))
+            (ResultTcUnit.Err
+              "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")]
+          [(tc-macro-type-param-kind? ty)
             (if variadic
               (ResultTcUnit.Err
                 "typecheck: type macro operand cannot be variadic")
-              (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))
-            (if (tc-macro-module-param-kind? ty)
-              (if variadic
-                (ResultTcUnit.Err
-                  "typecheck: Module macro operand cannot be variadic")
-                (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))
-              (match (tc-source-type-policy-ok ctx ty)
-                [(ResultTcUnit.Ok)
-                  (tc-source-macro-param-list-policy-ok-at
-                    ctx
-                    params
-                    (+ index 1))]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))))])))
+              (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))]
+          [(tc-macro-module-param-kind? ty)
+            (if variadic
+              (ResultTcUnit.Err
+                "typecheck: Module macro operand cannot be variadic")
+              (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1)))]
+          [else
+            (match (tc-source-type-policy-ok ctx ty)
+              [(ResultTcUnit.Ok)
+                (tc-source-macro-param-list-policy-ok-at ctx params (+ index 1))]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])])))
 
 (define (tc-macro-result-name-id?
   [ty : AstType]

@@ -22455,7 +22455,7 @@
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-scratch-phi-dst-registers-block-seq-from assignments seq 0)]))
 
-(define (compiler-reg-scratch-requirement
+(define (compiler-reg-scratch-requirement-local
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
@@ -22913,6 +22913,48 @@
         (+ point 1)
         var)]))
 
+;; Fused backend emission can consume scratch slots from several consecutive IR
+;; instructions as one atomic group.  Give every slot in that group the same
+;; reservation interval and the union of every consumed instruction's homes.
+;; This keeps a later sibling result home from aliasing an earlier planned
+;; scratch register even when ordinary IR liveness ends at the sibling point.
+(define (compiler-reg-scratch-requirement
+  [abi : CompilerRegTargetAbi]
+  [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentList]
+  [instr : CompilerIrInstr]
+  [point : i64]
+  [ordinal : i64]
+  [var : i64]
+  [group-lo : i64]
+  [group-hi : i64]
+  [group-excluded : CompilerRegStringList]) : CompilerRegScratchRequirement
+  (let
+    [local : CompilerRegScratchRequirement
+      (compiler-reg-scratch-requirement-local
+        abi
+        policy
+        assignments
+        instr
+        point
+        ordinal
+        var)]
+    [constraint : CompilerRegScratchConstraint (struct-get local constraint)]
+    (CompilerRegScratchRequirement
+      (struct-get local point)
+      (struct-get local ordinal)
+      (struct-get local role)
+      (CompilerRegScratchConstraint
+        (struct-get constraint register-class)
+        (struct-get constraint allowed)
+        (compiler-reg-string-list-append
+          group-excluded
+          (struct-get constraint excluded))
+        (struct-get constraint fixed))
+      group-lo
+      group-hi
+      (struct-get local var))))
+
 (define (compiler-reg-scratch-mark-requirement!
   [starts : (Array i64)]
   [ends : (Array i64)]
@@ -22943,12 +22985,387 @@
             [(CompilerRegScratchClass.Gp) (AstType.I64)]
             [(CompilerRegScratchClass.Xmm) (AstType.F64)]))))))
 
+(define (compiler-reg-scratch-instr-gep? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Gep _ _ _ _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-instr-load? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Load _ _ _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-instr-store-ptr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-instr-copy-bytes? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.CopyBytes _ _ _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-instr-binop? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-instr-branch? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Branch _ _ _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-instr-return? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Return _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-instr-not? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.UnOp _ (CompilerIrUnOp.Not) _ _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-instr-mov? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ _ _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-instr-jump? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Jump _) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-group-init!
+  [firsts : (Array i64)]
+  [lasts : (Array i64)]
+  [len : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i len)
+      (begin
+        (array-set! firsts i i)
+        (array-set! lasts i i)
+        (set! i (+ i 1))))))
+
+;; Candidate fusion regions are discovered left-to-right.  Existing regions
+;; may overlap the new candidate, so merge their complete bounds and publish
+;; the resulting common span to every member.
+(define (compiler-reg-scratch-group-merge!
+  [firsts : (Array i64)]
+  [lasts : (Array i64)]
+  [start : i64]
+  [end : i64]) : unit
+  (let
+    [lo : i64
+      (if (< start (array-ref firsts start))
+        start
+        (array-ref firsts start))]
+    [hi : i64
+      (if (> end (array-ref lasts end))
+        end
+        (array-ref lasts end))]
+    [i : i64 0]
+    (begin
+      (set! i lo)
+      (while (<= i hi)
+        (begin
+          (if (< (array-ref firsts i) lo)
+            (set! lo (array-ref firsts i))
+            unit)
+          (if (> (array-ref lasts i) hi)
+            (set! hi (array-ref lasts i))
+            unit)
+          (set! i (+ i 1))))
+      (set! i lo)
+      (while (<= i hi)
+        (begin
+          (array-set! firsts i lo)
+          (array-set! lasts i hi)
+          (set! i (+ i 1)))))))
+
+(defenum CompilerRegScratchFusionKind
+  (Gep)
+  (Load)
+  (StorePtr)
+  (CopyBytes)
+  (BinOp)
+  (Branch)
+  (Return)
+  (Not)
+  (Mov)
+  (Jump))
+
+(define (compiler-reg-scratch-seq-instr?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [kind : CompilerRegScratchFusionKind]) : bool
+  (if (or (< index 0) (>= index (compiler-ir-instr-seq-count instrs)))
+    false
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match kind
+        [(CompilerRegScratchFusionKind.Gep)
+          (compiler-reg-scratch-instr-gep? instr)]
+        [(CompilerRegScratchFusionKind.Load)
+          (compiler-reg-scratch-instr-load? instr)]
+        [(CompilerRegScratchFusionKind.StorePtr)
+          (compiler-reg-scratch-instr-store-ptr? instr)]
+        [(CompilerRegScratchFusionKind.CopyBytes)
+          (compiler-reg-scratch-instr-copy-bytes? instr)]
+        [(CompilerRegScratchFusionKind.BinOp)
+          (compiler-reg-scratch-instr-binop? instr)]
+        [(CompilerRegScratchFusionKind.Branch)
+          (compiler-reg-scratch-instr-branch? instr)]
+        [(CompilerRegScratchFusionKind.Return)
+          (compiler-reg-scratch-instr-return? instr)]
+        [(CompilerRegScratchFusionKind.Not)
+          (compiler-reg-scratch-instr-not? instr)]
+        [(CompilerRegScratchFusionKind.Mov)
+          (compiler-reg-scratch-instr-mov? instr)]
+        [(CompilerRegScratchFusionKind.Jump)
+          (compiler-reg-scratch-instr-jump? instr)]))))
+
+;; Mirror every backend path that obtains another instruction's planned slot
+;; with scratch-plan-register-ahead.  These syntactic candidates are slightly
+;; conservative: the backend also checks uses/types before fusing, while the
+;; planner safely reserves the group whenever the instruction shape could fuse.
+(define (compiler-reg-scratch-fusion-groups!
+  [instrs : CompilerIrInstrSeq]
+  [firsts : (Array i64)]
+  [lasts : (Array i64)]) : unit
+  (let
+    [len : i64 (compiler-ir-instr-seq-count instrs)]
+    [i : i64 0]
+    (begin
+      (compiler-reg-scratch-group-init! firsts lasts len)
+      (while (< i len)
+        (begin
+          (cond
+            ;; Gep+Load can grow into the paired aggregate load or into a
+            ;; load/compare/branch bundle.
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.Gep))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.Load))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 2)
+                  (CompilerRegScratchFusionKind.Gep))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 3)
+                  (CompilerRegScratchFusionKind.Load)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 3))]
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.Gep))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.Load))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 2)
+                  (CompilerRegScratchFusionKind.BinOp))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 3)
+                  (CompilerRegScratchFusionKind.Branch)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 3))]
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.Gep))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.Load))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 2)
+                  (CompilerRegScratchFusionKind.BinOp)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 2))]
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.Gep))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.Mov))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 2)
+                  (CompilerRegScratchFusionKind.StorePtr)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 2))]
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.Gep))
+                (or
+                  (compiler-reg-scratch-seq-instr?
+                    instrs
+                    (+ i 1)
+                    (CompilerRegScratchFusionKind.Load))
+                  (compiler-reg-scratch-seq-instr?
+                    instrs
+                    (+ i 1)
+                    (CompilerRegScratchFusionKind.StorePtr))
+                  (compiler-reg-scratch-seq-instr?
+                    instrs
+                    (+ i 1)
+                    (CompilerRegScratchFusionKind.CopyBytes))))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 1))]
+            ;; Pointer chasing emits two Loads as one unit.
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.Load))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.Load)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 1))]
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.Load))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.BinOp))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 2)
+                  (CompilerRegScratchFusionKind.Branch)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 2))]
+            ;; StorePtr/Gep/StorePtr preserves the first store's sibling homes
+            ;; while the second address and value are staged.
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.StorePtr))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.Gep))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 2)
+                  (CompilerRegScratchFusionKind.StorePtr)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 2))]
+            ;; Compare/branch and not/branch share terminator scratch slots.
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.BinOp))
+                (or
+                  (compiler-reg-scratch-seq-instr?
+                    instrs
+                    (+ i 1)
+                    (CompilerRegScratchFusionKind.Branch))
+                  (compiler-reg-scratch-seq-instr?
+                    instrs
+                    (+ i 1)
+                    (CompilerRegScratchFusionKind.Return))))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 1))]
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.Not))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.Branch)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 1))]
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.Mov))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.Jump)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 1))]
+            ;; Div/mod polish can consume a producer and a following fused
+            ;; Gep+StorePtr in one emergency preservation region.
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.BinOp))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.BinOp))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 2)
+                  (CompilerRegScratchFusionKind.Gep))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 3)
+                  (CompilerRegScratchFusionKind.StorePtr)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 3))]
+            [(and
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  i
+                  (CompilerRegScratchFusionKind.BinOp))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 1)
+                  (CompilerRegScratchFusionKind.Gep))
+                (compiler-reg-scratch-seq-instr?
+                  instrs
+                  (+ i 2)
+                  (CompilerRegScratchFusionKind.StorePtr)))
+              (compiler-reg-scratch-group-merge! firsts lasts i (+ i 2))]
+            [else unit])
+          (set! i (+ i 1)))))))
+
+(define (compiler-reg-scratch-group-registers-from
+  [assignments : CompilerRegAssignmentList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : CompilerRegStringList
+  (if (> index last)
+    CompilerRegStringList.Nil
+    (compiler-reg-string-list-append
+      (compiler-reg-scratch-instr-registers
+        assignments
+        (compiler-ir-instr-seq-ref instrs index))
+      (compiler-reg-scratch-group-registers-from
+        assignments
+        instrs
+        (+ index 1)
+        last))))
+
 (define (compiler-reg-scratch-fill-slots!
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
   [instr : CompilerIrInstr]
   [point : i64]
+  [group-lo : i64]
+  [group-hi : i64]
+  [group-excluded : CompilerRegStringList]
   [scratch-base : i64]
   [item-start : i64]
   [slot : i64]
@@ -22971,7 +23388,10 @@
           instr
           point
           slot
-          (+ scratch-base item-index))]
+          (+ scratch-base item-index)
+          group-lo
+          group-hi
+          group-excluded)]
       (begin
         (array-set!
           items
@@ -22990,6 +23410,9 @@
           assignments
           instr
           point
+          group-lo
+          group-hi
+          group-excluded
           scratch-base
           item-start
           (+ slot 1)
@@ -23021,13 +23444,24 @@
   (let
     [instr-slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [len : i64 (struct-get instrs len)]
+    [group-firsts : (Array i64) (array.make-array i64 len)]
+    [group-lasts : (Array i64) (array.make-array i64 len)]
     [i : i64 0]
     [instruction : i64 instruction-start]
     [item : i64 item-start]
     (begin
+      (compiler-reg-scratch-fusion-groups! instrs group-firsts group-lasts)
       (while (< i len)
         (let
           [instr : CompilerIrInstr (array-ref instr-slots i)]
+          [group-first : i64 (array-ref group-firsts i)]
+          [group-last : i64 (array-ref group-lasts i)]
+          [group-excluded : CompilerRegStringList
+            (compiler-reg-scratch-group-registers-from
+              assignments
+              instrs
+              group-first
+              group-last)]
           [n : i64
             (compiler-reg-scratch-vreg-slots
               abi
@@ -23044,6 +23478,9 @@
               assignments
               instr
               (* 2 instruction)
+              (* 2 (+ instruction-start group-first))
+              (+ (* 2 (+ instruction-start group-last)) 1)
+              group-excluded
               scratch-base
               item
               0
@@ -23306,6 +23743,50 @@
           ref-counts
           vars)))))
 
+(define (compiler-reg-scratch-clear-group-from!
+  [items : (Array CompilerRegScratchAssignment)]
+  [index : i64]
+  [lo : i64]
+  [hi : i64]) : unit
+  (if (>= index (array-length items))
+    unit
+    (let
+      [item : CompilerRegScratchAssignment (array-ref items index)]
+      [requirement : CompilerRegScratchRequirement
+        (struct-get item requirement)]
+      (begin
+        (if (and
+          (= (struct-get requirement lo) lo)
+          (= (struct-get requirement hi) hi))
+          (array-set! items index (CompilerRegScratchAssignment requirement ""))
+          unit)
+        (compiler-reg-scratch-clear-group-from! items (+ index 1) lo hi)))))
+
+;; A fused emitter must never mix a partially allocated planned group with
+;; independent scavenger choices.  If any slot in a common reservation span
+;; failed, clear every sibling slot so planned-or-scavenge handles the complete
+;; group through the legacy sound fallback.
+(define (compiler-reg-scratch-clear-incomplete-groups!
+  [items : (Array CompilerRegScratchAssignment)]
+  [index : i64]) : unit
+  (if (>= index (array-length items))
+    unit
+    (let
+      [item : CompilerRegScratchAssignment (array-ref items index)]
+      [requirement : CompilerRegScratchRequirement
+        (struct-get item requirement)]
+      (begin
+        (if (and
+          (> (- (struct-get requirement hi) (struct-get requirement lo)) 1)
+          (string.eq (struct-get item register) ""))
+          (compiler-reg-scratch-clear-group-from!
+            items
+            0
+            (struct-get requirement lo)
+            (struct-get requirement hi))
+          unit)
+        (compiler-reg-scratch-clear-incomplete-groups! items (+ index 1))))))
+
 (define (compiler-reg-scratch-compact-assignments-from
   [items : (Array CompilerRegScratchAssignment)]
   [index : i64]
@@ -23482,6 +23963,9 @@
                             interval-index
                             scratch-ref-counts
                             out-vars)
+                          (compiler-reg-scratch-clear-incomplete-groups!
+                            items
+                            0)
                           (CompilerRegScratchPlanResult.Result
                             (match plan
                               [(CompilerRegPlan.Plan

@@ -43363,18 +43363,24 @@
       (+ (tc-moved-path-facts-len paths) (tc_i64_i64_map.capacity (& hidden))))))
 
 (define (tc-moved-clone-id-map [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
+  ;; Counting down the entry count skips the scan-to-capacity tail entirely;
+  ;; branch moved-sets are usually empty or tiny, so the old full-capacity
+  ;; walk was almost all empty slots.
   (let
+    [remaining : i64 (tc_i64_i64_map.len src)]
     [out : tc_i64_i64_map.Map
       (tc_i64_i64_map.with-capacity (tc_i64_i64_map.capacity src))]
-    [index : i64 (tc_i64_i64_map.next-occupied src 0)]
+    [index : i64 0]
     (begin
-      (while (< index (tc_i64_i64_map.capacity src))
+      (while (> remaining 0)
         (begin
+          (set! index (tc_i64_i64_map.next-occupied src index))
           (match (tc_i64_i64_map.entry-at src index)
             [(tc_i64_i64_map.EntrySome key value)
               (tc_i64_i64_map.insert-ref! (&mut out) key value)]
             [(tc_i64_i64_map.EntryNone) unit])
-          (set! index (tc_i64_i64_map.next-occupied src (+ index 1)))))
+          (set! index (+ index 1))
+          (set! remaining (- remaining 1))))
       out)))
 
 (define (tc-moved-clone [set : TcMovedSet]) : TcMovedSet
@@ -44232,23 +44238,23 @@
   [a : (& a tc_i64_i64_map.Map)]
   [index : i64]
   [out : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
-  (if (>= index (tc_i64_i64_map.capacity a))
-    out
-    (match (tc_i64_i64_map.entry-at a index)
-      [(tc_i64_i64_map.EntrySome key value)
-        (let
-          [out2 : tc_i64_i64_map.Map out]
-          (begin
-            (tc_i64_i64_map.insert-ref! (&mut out2) key value)
-            (tc-moved-union-id-loop
-              a
-              (tc_i64_i64_map.next-occupied a (+ index 1))
-              out2)))]
-      [(tc_i64_i64_map.EntryNone)
-        (tc-moved-union-id-loop
-          a
-          (tc_i64_i64_map.next-occupied a (+ index 1))
-          out)])))
+  ;; Counting down the entry count skips the scan-to-capacity tail entirely;
+  ;; branch moved-sets are usually empty or tiny.
+  (let
+    [remaining : i64 (tc_i64_i64_map.len a)]
+    [cursor : i64 index]
+    [result : tc_i64_i64_map.Map out]
+    (begin
+      (while (> remaining 0)
+        (begin
+          (set! cursor (tc_i64_i64_map.next-occupied a cursor))
+          (match (tc_i64_i64_map.entry-at a cursor)
+            [(tc_i64_i64_map.EntrySome key value)
+              (tc_i64_i64_map.insert-ref! (&mut result) key value)]
+            [(tc_i64_i64_map.EntryNone) unit])
+          (set! cursor (+ cursor 1))
+          (set! remaining (- remaining 1))))
+      result)))
 
 ;; Union keeps the left input's value for duplicate facts. Branch merging
 ;; therefore reports the origin from the first/left arm deterministically.
@@ -44271,20 +44277,11 @@
         b-hidden)]
     [with-paths : TcMovedSet (tc-moved-union-path-loop b-paths with-a-paths)]
     (TcMovedSet
-      (tc-moved-union-id-loop
-        (& a-roots)
-        (tc_i64_i64_map.next-occupied (& a-roots) 0)
-        b-roots)
-      (tc-moved-union-id-loop
-        (& a-partials)
-        (tc_i64_i64_map.next-occupied (& a-partials) 0)
-        b-partials)
+      (tc-moved-union-id-loop (& a-roots) 0 b-roots)
+      (tc-moved-union-id-loop (& a-partials) 0 b-partials)
       (tc-moved-paths with-paths)
       (tc-moved-exact-path-index with-paths)
-      (tc-moved-union-id-loop
-        (& a-hidden)
-        (tc_i64_i64_map.next-occupied (& a-hidden) 0)
-        b-hidden))))
+      (tc-moved-union-id-loop (& a-hidden) 0 b-hidden))))
 
 (define (tc-move-var-move-only-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match (tc-lookup-id env name-id)

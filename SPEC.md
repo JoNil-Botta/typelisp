@@ -670,6 +670,14 @@ body receives an `ExprClauseList`. For `ExprBindingClause ...`, every
 remaining operand must be a binding clause and the macro body receives an
 `ExprBindingClauseList`.
 
+As the one user-defined mixed-shape exception, a non-final
+`ExprBindingClause ...` slot consumes the maximal consecutive prefix of
+binding-clause operands and may be followed by one or more ordinary operand
+slots. A non-bracket operand ends the prefix; a bracket operand in the prefix
+must be a valid binding clause and otherwise produces the focused
+`ExprBindingClause` diagnostic. Other non-final variadic kinds are rejected
+at the macro declaration because their split point would be ambiguous.
+
 The implicit-prelude `for` macro is the one mixed-shape core exception. Its
 bootstrap-compatible signature is `Expr ...`, while the compiler validates a
 non-empty prefix of let-like binding clauses followed by one or more ordinary
@@ -7016,7 +7024,7 @@ dispatch-isa  ::= "scalar" | "avx2" | "avx512"
 defmacro      ::= "(" "defmacro" "(" ident macro-operand* ")" ":" macro-result-type expr+ ")"
 macro-operand ::= "[" ident ":" type "]"
                 | "[" ident ":" "type" macro-type-constraint "]"
-                | "[" ident ":" type "..." "]"      ; variadic final operand only
+                | "[" ident ":" type "..." "]"      ; final, or non-final ExprBindingClause
 macro-type-constraint ::= "(" ":kind" macro-type-kind+ ")"
 macro-type-kind ::= "i64" | "i32" | "i16" | "i8"
                   | "u64" | "u32" | "u16" | "u8"
@@ -7191,7 +7199,7 @@ ref-type      ::= "(" "&" ident type ")"
 
 macro-type    ::= "(" "macro" "(" macro-type-slot* ")" type ")"
 macro-type-slot ::= type
-                  | type "..."                         ; variadic final slot only
+                  | type "..."                         ; final, or non-final ExprBindingClause
 
 module-ident  ::= ident ("." ident)*
 qualified-name ::= ident | module-ident "." ident

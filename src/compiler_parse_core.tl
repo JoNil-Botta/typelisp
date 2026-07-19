@@ -3521,6 +3521,18 @@
   (match param
     [(AstMacroParam.Param _ _ variadic _) variadic]))
 
+(define (ast-macro-param-shape-delimited-variadic? [param : AstMacroParam]) : bool
+  (match param
+    [(AstMacroParam.Param _ ty variadic _)
+      (and
+        variadic
+        (match ty
+          [(AstType.Var name)
+            (=
+              (ci.intern-qualified-base-id name)
+              cbi.compiler-builtin-id-fix-ExprBindingClause)]
+          [_ false]))]))
+
 (define (parse-ast-macro-type-kind-known? [name : i64]) : bool
   (let
     [text : String (ci.intern-str name)]
@@ -3766,8 +3778,16 @@
                   (ast-macro-param-list-push out parsed-head)
                   ResultAstMacroParamListBuild.Ok)]
               [_
-                (ResultAstMacroParamListBuild.Err
-                  "parse: variadic macro operand must be final")])
+                (if (ast-macro-param-shape-delimited-variadic? parsed-head)
+                  (begin
+                    (ast-macro-param-list-push out parsed-head)
+                    (parse-ast-macro-param-list-into
+                      dispatch
+                      pools
+                      (box-get tail)
+                      out))
+                  (ResultAstMacroParamListBuild.Err
+                    "parse: only ExprBindingClause macro operands may be variadic before a later operand"))])
             (begin
               (ast-macro-param-list-push out parsed-head)
               (parse-ast-macro-param-list-into
@@ -13458,9 +13478,11 @@
     (compiler-parse-defmacro-type-kind-constraint-shape-ok?)
     (compiler-parse-ok?
       "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool (expr-if lhs rhs (expr-bool false)))")
+    (compiler-parse-ok?
+      "(defmacro (binding-body [bindings : ExprBindingClause ...] [body : Expr ...]) : Expr (expr-list-nth body 0))")
     (compiler-parse-error-ok?
       "(defmacro (bad [rest : bool ...] [x : bool]) : bool rest)"
-      "parse: variadic macro operand must be final")
+      "parse: only ExprBindingClause macro operands may be variadic before a later operand")
     (compiler-parse-error-ok?
       "(defmacro (bad [T : type (:kind)]) : Module unit)"
       "parse: macro type operand T constraint :kind requires at least one kind")

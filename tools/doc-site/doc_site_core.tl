@@ -1117,12 +1117,13 @@ pre {
     [i : i64 0]
     [n : i64 (doc-site-module-list-count remaining)]
     (while (< i n)
-      (begin
-        (doc-site-write-module-page
-          output-dir
-          sections
-          (doc-site-module-list-ref remaining i))
-        (set! i (+ i 1))))))
+      (let
+        [module : DocSiteModule (doc-site-module-list-ref remaining i)]
+        (begin
+          (with-arena
+            page
+            (doc-site-write-module-page output-dir sections module))
+          (set! i (+ i 1)))))))
 
 (define (doc-site-write-guide-page
   [output-dir : String]
@@ -1143,12 +1144,13 @@ pre {
     [i : i64 0]
     [n : i64 (doc-site-guide-page-list-count guides)]
     (while (< i n)
-      (begin
-        (doc-site-write-guide-page
-          output-dir
-          sections
-          (doc-site-guide-page-list-ref guides i))
-        (set! i (+ i 1))))))
+      (let
+        [guide : DocSiteGuidePage (doc-site-guide-page-list-ref guides i)]
+        (begin
+          (with-arena
+            page
+            (doc-site-write-guide-page output-dir sections guide))
+          (set! i (+ i 1)))))))
 
 (define (doc-site-write-api-tree
   [output-dir : String]

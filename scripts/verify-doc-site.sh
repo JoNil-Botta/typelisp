@@ -26,6 +26,59 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 
+fail() {
+    echo "FAIL: $*" >&2
+    exit 1
+}
+
+parse_doc_site_max_rss_kb() {
+    _time_log=$1
+    awk -F: '
+        /Maximum resident set size/ {
+            value = $2
+            gsub(/^[ \t]+|[ \t]+$/, "", value)
+            print value
+        }
+    ' "$_time_log" | tail -n 1
+}
+
+check_doc_site_max_rss_kb() {
+    _rss_kb=$1
+    _limit_kb=$2
+    case "$_rss_kb" in
+        "" | *[!0-9]*)
+            echo "invalid docs-site max RSS measurement: $_rss_kb" >&2
+            return 2
+            ;;
+    esac
+    case "$_limit_kb" in
+        "" | *[!0-9]* | 0)
+            echo "invalid docs-site max RSS limit: $_limit_kb" >&2
+            return 2
+            ;;
+    esac
+    if [ "$_rss_kb" -gt "$_limit_kb" ]; then
+        echo "docs-site native builder peak RSS $_rss_kb KiB exceeds limit $_limit_kb KiB" >&2
+        return 1
+    fi
+}
+
+doc_site_rss_guard_self_test() {
+    _fixture=${TMPDIR:-/tmp}/typelisp-doc-site-rss-guard.$$
+    printf '%s\n' \
+        'Maximum resident set size (kbytes): 3999999' \
+        >"$_fixture"
+    _parsed=$(parse_doc_site_max_rss_kb "$_fixture")
+    rm -f "$_fixture"
+    [ "$_parsed" = 3999999 ] \
+        || fail "docs-site RSS guard self-test parsed '$_parsed' instead of 3999999"
+    check_doc_site_max_rss_kb "$_parsed" 4000000 \
+        || fail "docs-site RSS guard self-test rejected a below-limit measurement"
+    if check_doc_site_max_rss_kb 4000001 4000000 >/dev/null 2>&1; then
+        fail "docs-site RSS guard self-test accepted an above-limit measurement"
+    fi
+}
+
 EXE=
 HOST_OS=linux
 case "$(uname -s)" in
@@ -40,6 +93,19 @@ case "$(uname -s)" in
         ;;
 esac
 
+case "${1:-}" in
+    "")
+        ;;
+    --self-test-rss-guard)
+        doc_site_rss_guard_self_test
+        echo "docs-site RSS guard self-tests passed"
+        exit 0
+        ;;
+    *)
+        fail "unknown docs-site verification option: $1"
+        ;;
+esac
+
 if [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
 else
@@ -50,11 +116,6 @@ else
 fi
 [ -x "$COMPILER" ] || {
     echo "typelisp compiler is not executable: $COMPILER" >&2
-    exit 1
-}
-
-fail() {
-    echo "FAIL: $*" >&2
     exit 1
 }
 
@@ -76,6 +137,12 @@ esac
 
 rm -rf "$SITE" "$WORK"
 mkdir -p "$SITE" "$WORK"
+
+if [ "$HOST_OS" = linux ]; then
+    # Exercise both threshold outcomes on every Linux docs-site gate. This is
+    # intentionally allocation-free so the failure path stays cheap to test.
+    doc_site_rss_guard_self_test
+fi
 
 compile_linux_binary() {
     _label=$1
@@ -110,11 +177,31 @@ if [ "$HOST_OS" = linux ]; then
     command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
     SITE_BUILDER="$WORK/.doc_site"
     compile_linux_binary doc-site tools/doc-site/doc_site.tl "$SITE_BUILDER"
-    if ! "$SITE_BUILDER" "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
+    DOC_SITE_TIME_BIN=${DOC_SITE_TIME_BIN:-/usr/bin/time}
+    DOC_SITE_MAX_RSS_KB=${DOC_SITE_MAX_RSS_KB:-4000000}
+    [ -x "$DOC_SITE_TIME_BIN" ] \
+        || fail "GNU time is required for the docs-site RSS guard: $DOC_SITE_TIME_BIN"
+    if ! "$DOC_SITE_TIME_BIN" -v -o /dev/null true >/dev/null 2>&1; then
+        fail "GNU time with -v support is required for the docs-site RSS guard: $DOC_SITE_TIME_BIN"
+    fi
+    case "$DOC_SITE_MAX_RSS_KB" in
+        "" | *[!0-9]* | 0)
+            fail "DOC_SITE_MAX_RSS_KB must be a positive integer"
+            ;;
+    esac
+    SITE_BUILDER_TIME="$WORK/.build.time"
+    if ! LC_ALL=C "$DOC_SITE_TIME_BIN" -v -o "$SITE_BUILDER_TIME" \
+        "$SITE_BUILDER" "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
         echo "site builder failed:" >&2
         sed 's/^/  /' "$WORK/.build.err" >&2 || true
         fail "tools/doc-site/doc_site.tl did not build the site"
     fi
+    site_builder_max_rss_kb=$(parse_doc_site_max_rss_kb "$SITE_BUILDER_TIME")
+    [ -n "$site_builder_max_rss_kb" ] \
+        || fail "could not parse docs-site max RSS from $SITE_BUILDER_TIME"
+    echo "[doc-site] native site builder peak RSS: $site_builder_max_rss_kb KiB (limit: $DOC_SITE_MAX_RSS_KB KiB)"
+    check_doc_site_max_rss_kb "$site_builder_max_rss_kb" "$DOC_SITE_MAX_RSS_KB" \
+        || fail "docs-site native builder exceeded its resident-memory budget"
 else
     if ! "$COMPILER" run tools/doc-site/doc_site.tl --stdlib-root stdlib --stdlib-root src -- "$SITE" >"$WORK/.build.out" 2>"$WORK/.build.err"; then
         echo "site builder failed:" >&2

@@ -1,6 +1,4 @@
 ;; tlci_loader_smoke.tl - Executable smoke for tlci loader helpers.
-;; Keep the loader/core pair on one flat identity until canonical load-once
-;; aliasing can replace this compatibility edge (#5130).
 (import "../tlci_loader.tl")
 (import "../tlci_core.tl")
 (import compiler_comptime_image_core as comptime_image)

@@ -68145,12 +68145,20 @@
                 (let
                   [after-import-expected : AstMaybeModuleName
                     (compiler-load-after-import-expected-module
+                      compiler-load-active-session-state
+                      (compiler-load-resolved-path-id-for-generated-import
+                        resolved
+                        expected)
                       kind
                       expected
                       alias
                       imported-decls)]
                   [after-import-alias : AstMaybeImportAlias
                     (compiler-load-after-import-alias
+                      compiler-load-active-session-state
+                      (compiler-load-resolved-path-id-for-generated-import
+                        resolved
+                        expected)
                       kind
                       expected
                       alias

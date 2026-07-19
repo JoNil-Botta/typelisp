@@ -2464,7 +2464,8 @@
           path-id
           (compiler-load-dirname path)
           program
-          fallback-id)
+          fallback-id
+          false)
           [(ResultCompilerLoadSurfaceSummary.Ok summary)
             (begin
               (compiler-load-record-surface-summary! summary)

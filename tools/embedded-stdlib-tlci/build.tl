@@ -5,6 +5,7 @@
 (import "../../src/compiler_parse_core.tl")
 (import "../../src/tlci_core.tl")
 (import compiler_comptime_image_core as comptime_image)
+(import compiler_builtin_ids as cbi)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -293,6 +294,80 @@
               0))
           true)))))
 
+(define (embedded-stdlib-tlci-type-unquote-param
+  [params : (& params AstMacroParamList)]
+  [ty : AstType]) : i64
+  (match ty
+    [(AstType.VarArgs name lifetimes)
+      (if (and
+        (= name cbi.compiler-builtin-id-fix-unquote)
+        (= (ast-lifetime-list-len (& (box-get lifetimes))) 1))
+        (embedded-stdlib-tlci-param-index
+          params
+          (ast-lifetime-list-get
+            (& (box-get lifetimes))
+            0
+            (ast-lifetime-fallback)))
+        -1)]
+    [_ -1]))
+
+;; Compile a make-array body `(__tl_make-array ,T ,count)`: the element type
+;; is a type-unquote of a type parameter and the size is an unquoted
+;; expression parameter. Emits the type push, the size push, expr-make-array,
+;; and the commit.
+(define (embedded-stdlib-tlci-compile-make-array
+  [identity : String]
+  [params : AstMacroParamList]
+  [elem-type : AstType]
+  [size-node : i64]
+  [out : (&mut out (Array comptime_image.CompilerComptimeMacroProgram))]
+  [slot : i64]) : bool
+  (let
+    [ti : i64 (embedded-stdlib-tlci-type-unquote-param (& params) elem-type)]
+    [si : i64 (embedded-stdlib-tlci-unquoted-param (& params) size-node)]
+    (if (or (< ti 0) (< si 0))
+      false
+      (let
+        [ops : (Array comptime_image.CompilerComptimeOperation)
+          (array.make-array comptime_image.CompilerComptimeOperation 4)]
+        (begin
+          (array-set!
+            ops
+            0
+            (comptime_image.CompilerComptimeOperation.HostCallArgs
+              tlci-host-callback-op-push-operand
+              ti
+              0
+              0))
+          (array-set!
+            ops
+            1
+            (comptime_image.CompilerComptimeOperation.HostCallArgs
+              tlci-host-callback-op-push-operand
+              si
+              0
+              0))
+          (array-set!
+            ops
+            2
+            (comptime_image.CompilerComptimeOperation.HostCall
+              tlci-host-callback-op-expr-make-array))
+          (array-set!
+            ops
+            3
+            (comptime_image.CompilerComptimeOperation.HostCall
+              tlci-host-callback-op-commit-result))
+          (array-set!
+            out
+            slot
+            (comptime_image.CompilerComptimeMacroProgram
+              identity
+              ops
+              (array.make-array String 0)
+              0
+              0))
+          true)))))
+
 (define (embedded-stdlib-tlci-compile-native-program
   [identity : String]
   [params : AstMacroParamList]
@@ -396,6 +471,14 @@
             target-node
             value-node
             tlci-host-callback-op-expr-array-push
+            (&mut out)
+            slot)]
+        [(AstExpr.MakeArray elem-type size-node)
+          (embedded-stdlib-tlci-compile-make-array
+            identity
+            params
+            elem-type
+            size-node
             (&mut out)
             slot)]
         [_ false])]

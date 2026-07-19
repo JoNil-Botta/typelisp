@@ -435,6 +435,39 @@
       (compiler-comptime-host-build-binary-intrinsic! 0)]
     [(= operation tlci-host-callback-op-expr-array-push)
       (compiler-comptime-host-build-binary-intrinsic! 1)]
+    ;; make-array: pop the size expression and the element type value and push
+    ;; the make-array node, matching the interpreted quote (the type passes
+    ;; through by identity).
+    [(= operation tlci-host-callback-op-expr-make-array)
+      (if (< compiler-comptime-host-stack-len 2)
+        tlci-host-callback-status-bad-request
+        (let
+          [size-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [type-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          [size-node : i64 (compiler-comptime-host-value-node size-value)]
+          (if (< size-node 0)
+            tlci-host-callback-status-bad-request
+            (match type-value
+              [(CompilerCtfeValue.Type ty)
+                (let
+                  [node : i64
+                    (ast-expr-make-array-with-pools
+                      (array-ref compiler-comptime-host-pools 0)
+                      ty
+                      size-node)]
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 2))
+                    (compiler-comptime-host-push!
+                      (CompilerCtfeValue.Expr node (AstType.Expr)))))]
+              [_ tlci-host-callback-status-bad-request]))))]
     [(= operation tlci-host-callback-op-commit-result)
       (if (< compiler-comptime-host-stack-len 1)
         tlci-host-callback-status-bad-request

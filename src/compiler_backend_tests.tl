@@ -23295,7 +23295,7 @@
         (match listed
           [(CompilerRegScratchPlanResult.Result out-plan scratch)
             (and
-              (= (compiler-reg-plan-var-count out-plan 3) 5)
+              (= (compiler-reg-plan-var-count out-plan 3) 4)
               (match (array-ref (struct-get scratch items) 0)
                 [(CompilerRegScratchAssignment requirement assigned)
                   (and

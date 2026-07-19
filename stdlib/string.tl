@@ -111,16 +111,31 @@
     (ptr-write! (ptr-offset dst offset) (cast byte : u8))))
 
 ;: Count decimal digits for a non-positive value without negating i64-min.
+;: A comparison ladder instead of a division loop: emitted assembly text
+;: formats integers constantly, and comparisons resolve the common short
+;: values in one or two steps where each division-loop round cost a full
+;: constant divide.
 (define (int->string-negative-digit-count [value : i64]) : i64
-  (let
-    [count : i64 1]
-    [cursor : i64 value]
-    (begin
-      (while (<= cursor -10)
-        (begin
-          (set! cursor (/ cursor 10))
-          (set! count (+ count 1))))
-      count)))
+  (cond
+    [(> value -10) 1]
+    [(> value -100) 2]
+    [(> value -1000) 3]
+    [(> value -10000) 4]
+    [(> value -100000) 5]
+    [(> value -1000000) 6]
+    [(> value -10000000) 7]
+    [(> value -100000000) 8]
+    [(> value -1000000000) 9]
+    [(> value -10000000000) 10]
+    [(> value -100000000000) 11]
+    [(> value -1000000000000) 12]
+    [(> value -10000000000000) 13]
+    [(> value -100000000000000) 14]
+    [(> value -1000000000000000) 15]
+    [(> value -10000000000000000) 16]
+    [(> value -100000000000000000) 17]
+    [(> value -1000000000000000000) 18]
+    [else 19]))
 
 ;: Write decimal digits for a non-positive value at `base` in `dst`.
 (define (int->string-write-negative-digits!

@@ -16315,6 +16315,7 @@
       [result-ty : AstType (compiler-ir-binop-result-type op ty)]
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       [mnem : String (compiler-backend-binop-direct-mnemonic op)]
+      ;; lint-allow: nested-if-ladder
       (if (and
         (compiler-reg-clobber-binop-shift? op rhs operand-ty)
         (not (compiler-backend-binop-rcx-shift? assignments op rhs dst-home)))
@@ -31342,6 +31343,7 @@
     (match index-load
       [(ResultCompilerBackend.Ok load-index)
         (ResultCompilerBackend.Ok
+          ;; lint-allow: nested-if-ladder
           (if compiler-backend-absolute-switch-ok
             ;; Absolute indexed form (non-PIC Linux): no table register at
             ;; all, so the dispatch never borrows one. Pending emergency

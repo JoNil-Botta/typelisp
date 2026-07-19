@@ -82,15 +82,32 @@ WINDOWS_ASM="$WORKDIR/trig-windows.s"
 verify_assembly linux-x86_64 "$LINUX_ASM"
 verify_assembly windows-x86_64 "$WINDOWS_ASM"
 
-if command -v as >/dev/null 2>&1; then
-    as "$LINUX_ASM" -o "$WORKDIR/trig-linux.o" ||
-        fail "GNU as rejected Linux assembly"
-fi
-if command -v clang >/dev/null 2>&1; then
-    clang --target=x86_64-pc-windows-msvc \
-        -c "$WINDOWS_ASM" \
-        -o "$WORKDIR/trig-windows.obj" ||
-        fail "clang rejected Windows assembly"
-fi
+case "$(uname -s)" in
+    Linux*)
+        if command -v as >/dev/null 2>&1; then
+            as "$LINUX_ASM" -o "$WORKDIR/trig-linux.o" ||
+                fail "GNU as rejected Linux assembly"
+        fi
+        if command -v clang >/dev/null 2>&1; then
+            clang --target=x86_64-pc-windows-msvc \
+                -c "$WINDOWS_ASM" \
+                -o "$WORKDIR/trig-windows.obj" ||
+                fail "clang rejected Windows assembly"
+        fi
+        ;;
+    MINGW* | MSYS* | CYGWIN*)
+        command -v clang >/dev/null 2>&1 ||
+            fail "clang is required to assemble both targets on Windows"
+        clang --target=x86_64-unknown-linux-gnu \
+            -c "$LINUX_ASM" \
+            -o "$WORKDIR/trig-linux.o" ||
+            fail "clang rejected Linux assembly"
+        clang --target=x86_64-pc-windows-msvc \
+            -c "$WINDOWS_ASM" \
+            -o "$WORKDIR/trig-windows.obj" ||
+            fail "clang rejected Windows assembly"
+        ;;
+    *) fail "unsupported host for assembly verification" ;;
+esac
 
 echo "math trig codegen verification passed for Linux and Windows x86-64"

@@ -36112,9 +36112,21 @@
         (let
           [step-result : ResultCompilerBackend
             (begin
+              ;; The remaining-instruction count exists only to derive the
+              ;; scavenge/const-hoist/scratch point 2*(post-base - count).
+              ;; When the plan homes nothing in registers (zero plan mask -
+              ;; every stack-only opt0/opt1 plan) the occupancy masks carry
+              ;; no set bits, so every mask query answers 0 at any point,
+              ;; and with no const-hoist sites the point comparisons are
+              ;; unreachable: 0 decides identically everywhere, skipping an
+              ;; O(n^2) remaining-list walk per emitted function.
               (set!
                 compiler-backend-emit-current-count
-                (compiler-ir-instr-list-count current-instrs))
+                (if (and
+                  (= compiler-backend-scavenge-ctx-plan-reg-mask 0)
+                  (= compiler-backend-const-hoist-site-count 0))
+                  0
+                  (compiler-ir-instr-list-count current-instrs)))
               (cfg
                 scavenge-self-check
                 (match current-instrs

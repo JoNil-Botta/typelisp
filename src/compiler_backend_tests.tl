@@ -18457,6 +18457,40 @@
               (compiler-backend-todo-marker)))))]
     [(ResultCompilerBackend.Err _) false]))
 
+;; Signed i64 magic div/mod must keep the pre-shift quotient sign in %rax and
+;; retain the dividend in one non-fixed SRC register. This exact remainder
+;; expansion is the nine-instruction Clang shape used by the VM hot arm.
+(define (compiler-backend-signed-constant-divisor-clang-shape-ok?) : bool
+  (let
+    [magic : i64 -8543223828751151131]
+    [reg-asm : String
+      (compiler-backend-signed-magic-divmod-src-asm
+        1000000007
+        false
+        true
+        "%r8"
+        "%r10"
+        "%r10"
+        (CompilerBackendConstHoistHomeReg "%r8" magic false))]
+    [frame-asm : String
+      (compiler-backend-signed-magic-divmod-src-asm
+        1000000007
+        false
+        true
+        "%r8"
+        "%r10"
+        "%r10"
+        (CompilerBackendConstHoistHomeFrame "-40(%rbp)" magic))]
+    (and
+      (string.eq
+        reg-asm
+        "    movq %r10, %rax\n    imulq %r8\n    addq %r10, %rdx\n    movq %rdx, %rax\n    shrq $63, %rax\n    sarq $29, %rdx\n    addq %rax, %rdx\n    imulq $1000000007, %rdx, %rax\n    subq %rax, %r10\n")
+      (string.eq
+        frame-asm
+        "    movq %r10, %rax\n    imulq -40(%rbp)\n    addq %r10, %rdx\n    movq %rdx, %rax\n    shrq $63, %rax\n    sarq $29, %rdx\n    addq %rax, %rdx\n    imulq $1000000007, %rdx, %rax\n    subq %rax, %r10\n")
+      (not (compiler-backend-string-contains? reg-asm "sarq $63"))
+      (not (compiler-backend-string-contains? reg-asm "subq %r9, %rdx")))))
+
 (define (compiler-backend-divrem-binop-types [ty : AstType]) : CompilerRegVarTypeList
   (compiler-reg-var-type-cons
     (CompilerRegVarType.Type 0 ty)
@@ -24408,7 +24442,9 @@
             (and
               (compiler-backend-string-contains? asm "%r12")
               (compiler-backend-string-contains? asm "%r13")
-              (compiler-backend-string-contains? asm "%r14"))]
+              ;; Signed literal divmod consumes magic + one SRC copy; the old
+              ;; quotient-sign mask/tertiary scratch is deliberately unused.
+              (not (compiler-backend-string-contains? asm "%r14")))]
           [(CompilerBackendMaybeAsm.No) false])]
       (and
         (not
@@ -24840,6 +24876,7 @@
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)
+        (compiler-backend-signed-constant-divisor-clang-shape-ok?)
         (compiler-backend-divrem-rax-rhs-preserved-ok?)
         (compiler-backend-safe-divrem-guard-elision-ok?))
       (and

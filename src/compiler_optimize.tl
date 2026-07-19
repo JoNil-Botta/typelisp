@@ -32424,11 +32424,16 @@
       (opt-gep-split-seed-params! (compiler-ir-param-seq-to-list seq) counts)]))
 
 ;; Memory-address uses only (Load src / StorePtr dst): counted per var so the
-;; all-uses-are-addresses test can compare against the total use count.
+;; all-uses-are-addresses test can compare against the total use count. A
+;; zero-offset Gep base is also an address-only use: the wrapper is pointer
+;; identity, so rewriting it with the wrapped Gep's operands exposes the
+;; existing single-Gep memory fusion. chainuses distinguishes that useful
+;; single-use case from the multi-use splitting this pass originally owned.
 (define (opt-gep-split-memuses-instrs!
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [memuses : (Array i64)]) : unit
+  [memuses : (Array i64)]
+  [chainuses : (Array i64)]) : unit
   (if (>= index (compiler-ir-instr-seq-count instrs))
     unit
     (begin
@@ -32443,6 +32448,18 @@
             [(CompilerIrValue.Var v)
               (array-set! memuses v (+ (array-ref memuses v) 1))]
             [_ unit])]
+        [(CompilerIrInstr.Gep _ base offset _)
+          (match offset
+            [(CompilerIrValue.I64 n)
+              (if (= n 0)
+                (match base
+                  [(CompilerIrValue.Var v)
+                    (begin
+                      (array-set! memuses v (+ (array-ref memuses v) 1))
+                      (array-set! chainuses v (+ (array-ref chainuses v) 1)))]
+                  [_ unit])
+                unit)]
+            [_ unit])]
         ;; A Mov of the Gep result is replaced by a fresh Gep, so it counts as
         ;; an address use too (its dst's role does not matter: the fresh Gep
         ;; yields the same address value).
@@ -32452,23 +32469,25 @@
               (array-set! memuses v (+ (array-ref memuses v) 1))]
             [_ unit])]
         [_ unit])
-      (opt-gep-split-memuses-instrs! instrs (+ index 1) memuses))))
+      (opt-gep-split-memuses-instrs! instrs (+ index 1) memuses chainuses))))
 
 (define (opt-gep-split-memuses-blocks!
   [blocks : CompilerIrBlockList]
-  [memuses : (Array i64)]) : unit
+  [memuses : (Array i64)]
+  [chainuses : (Array i64)]) : unit
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (begin
-            (opt-gep-split-memuses-instrs! instrs 0 memuses)
-            (opt-gep-split-memuses-blocks! (box-get rest) memuses))])]
+            (opt-gep-split-memuses-instrs! instrs 0 memuses chainuses)
+            (opt-gep-split-memuses-blocks! (box-get rest) memuses chainuses))])]
     [(CompilerIrBlockList.Array seq)
       (opt-gep-split-memuses-blocks!
         (compiler-ir-block-seq-to-list seq)
-        memuses)]))
+        memuses
+        chainuses)]))
 
 ;; Record each SIB-scale Gep def's operands for cloning. marks[dst] = 1 means
 ;; the parallel arrays hold a splittable Gep for dst.
@@ -32532,26 +32551,29 @@
   [v : i64]
   [uses : (Array i64)]
   [memuses : (Array i64)]
+  [chainuses : (Array i64)]
   [defs : (Array i64)]
   [marks : (Array i64)]
   [bases : (Array CompilerIrValue)]
   [offsets : (Array CompilerIrValue)]) : bool
   (and
     (= (array-ref marks v) 1)
-    (>= (array-ref uses v) 2)
+    (or (>= (array-ref uses v) 2) (>= (array-ref chainuses v) 1))
     ;; every use is a memory address (Load src / StorePtr dst): the total use
     ;; count equals the address-use count.
     (= (array-ref uses v) (array-ref memuses v))
     (opt-gep-split-source-ok? (array-ref bases v) v defs)
     (opt-gep-split-source-ok? (array-ref offsets v) v defs)))
 
-;; Compute the final candidate set: splittable Geps with >= 2 uses, all of
-;; them memory addresses, with single-source base/index. Fills every entry
-;; (no early exit) and returns whether any candidate exists.
+;; Compute the final candidate set: splittable Geps with >= 2 uses, or one
+;; zero-Gep chain use, all of them memory addresses, with single-source
+;; base/index. Fills every entry (no early exit) and returns whether any
+;; candidate exists.
 (define (opt-gep-split-candidates!
   [cands : (Array i64)]
   [uses : (Array i64)]
   [memuses : (Array i64)]
+  [chainuses : (Array i64)]
   [defs : (Array i64)]
   [marks : (Array i64)]
   [bases : (Array CompilerIrValue)]
@@ -32564,12 +32586,21 @@
       cands
       uses
       memuses
+      chainuses
       defs
       marks
       bases
       offsets
       (- v 1)
-      (if (opt-gep-split-candidate? v uses memuses defs marks bases offsets)
+      (if (opt-gep-split-candidate?
+        v
+        uses
+        memuses
+        chainuses
+        defs
+        marks
+        bases
+        offsets)
         (begin
           (array-set! cands v 1)
           true)
@@ -32589,6 +32620,58 @@
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (match instr
+        [(CompilerIrInstr.Gep dst base offset ty)
+          (match base
+            [(CompilerIrValue.Var v)
+              (match offset
+                [(CompilerIrValue.I64 n)
+                  (if (and (= n 0) (= (array-ref cands v) 1))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Gep
+                        dst
+                        (array-ref bases v)
+                        (array-ref offsets v)
+                        (array-ref tys v))
+                      (opt-gep-split-rewrite-instrs
+                        instrs
+                        (+ index 1)
+                        cands
+                        bases
+                        offsets
+                        tys
+                        cell))
+                    (compiler-ir-instr-cons
+                      instr
+                      (opt-gep-split-rewrite-instrs
+                        instrs
+                        (+ index 1)
+                        cands
+                        bases
+                        offsets
+                        tys
+                        cell)))]
+                [_
+                  (compiler-ir-instr-cons
+                    instr
+                    (opt-gep-split-rewrite-instrs
+                      instrs
+                      (+ index 1)
+                      cands
+                      bases
+                      offsets
+                      tys
+                      cell))])]
+            [_
+              (compiler-ir-instr-cons
+                instr
+                (opt-gep-split-rewrite-instrs
+                  instrs
+                  (+ index 1)
+                  cands
+                  bases
+                  offsets
+                  tys
+                  cell))])]
         [(CompilerIrInstr.Load dst src ty)
           (match src
             [(CompilerIrValue.Var v)
@@ -32788,6 +32871,7 @@
       (let
         [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
         [memuses : (Array i64) (array.make-array i64 frame)]
+        [chainuses : (Array i64) (array.make-array i64 frame)]
         [defs : (Array i64) (array.make-array i64 frame)]
         [bases : (Array CompilerIrValue)
           (array.make-array CompilerIrValue frame)]
@@ -32796,7 +32880,7 @@
         [tys : (Array AstType) (array.make-array AstType frame)]
         [marks : (Array i64) (array.make-array i64 frame)]
         [cands : (Array i64) (array.make-array i64 frame)]
-        [_uses : unit (opt-gep-split-memuses-blocks! blocks memuses)]
+        [_uses : unit (opt-gep-split-memuses-blocks! blocks memuses chainuses)]
         [_defs : unit
           (begin
             (opt-gep-split-seed-params! params defs)
@@ -32808,6 +32892,7 @@
             cands
             uses
             memuses
+            chainuses
             defs
             marks
             bases
@@ -60844,6 +60929,77 @@
                 (CompilerIrInstrList.Nil)))))))
     (CompilerIrBlockList.Nil)))
 
+;; Lowering can wrap a field/index address in `Gep address, 0 : u8` before a
+;; memory operation. The wrapper must inherit the inner Gep recipe so the dead
+;; inner definition can be removed and the backend sees one fusible Gep.
+(define (opt-gep-split-test-chain-blocks
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [other-use : bool]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 2) offset elem-ty)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            4
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 0)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 4)
+              (CompilerIrValue.Var 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (if other-use
+                (CompilerIrInstr.BinOp
+                  5
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 3)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
+                (CompilerIrInstr.Mov 5 (CompilerIrValue.I64 0) (AstType.I64)))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                (CompilerIrInstrList.Nil)))))))
+    (CompilerIrBlockList.Nil)))
+
+(define (opt-gep-split-test-chain-function
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [other-use : bool]) : CompilerIrFunction
+  (opt-gep-split-function
+    (CompilerIrFunction.Function
+      (opt-test-symbol "gep_split_chain")
+      (opt-bce-version-test-params)
+      (AstType.I64)
+      6
+      (opt-gep-split-test-chain-blocks offset elem-ty other-use))))
+
+(define (opt-gep-split-test-chain-shape?
+  [func : CompilerIrFunction]
+  [expected-base : CompilerIrValue]
+  [expected-offset : CompilerIrValue]
+  [expected-ty : AstType]) : bool
+  (match (opt-function-blocks func)
+    [(CompilerIrBlockList.Cons block _)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (> (compiler-ir-instr-seq-count instrs) 1)
+            (match (compiler-ir-instr-seq-ref instrs 1)
+              [(CompilerIrInstr.Gep dst base offset elem-ty)
+                (and
+                  (= dst 4)
+                  (opt-value-eq base expected-base)
+                  (opt-value-eq offset expected-offset)
+                  (opt-type-eq elem-ty expected-ty))]
+              [_ false])
+            false)])]
+    [_ false]))
+
 (define (compiler-optimize-gep-split-self-test) : i64
   (let
     [split : CompilerIrFunction
@@ -60863,6 +61019,26 @@
           (AstType.I64)
           8
           (opt-gep-split-test-shared-blocks true)))]
+    [chain-zero : CompilerIrFunction
+      (opt-gep-split-test-chain-function
+        (CompilerIrValue.I64 0)
+        (AstType.U8)
+        false)]
+    [chain-disp : CompilerIrFunction
+      (opt-gep-split-test-chain-function
+        (CompilerIrValue.I64 8)
+        (AstType.U8)
+        false)]
+    [chain-index : CompilerIrFunction
+      (opt-gep-split-test-chain-function
+        (CompilerIrValue.Var 0)
+        (AstType.I64)
+        false)]
+    [chain-other-use : CompilerIrFunction
+      (opt-gep-split-test-chain-function
+        (CompilerIrValue.I64 8)
+        (AstType.U8)
+        true)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function split))) 1]
       ;; the shared Gep is cloned per use (Load + StorePtr get one fresh
@@ -60874,6 +61050,40 @@
           (= (opt-gep-split-test-gep-count (opt-function-blocks untouched)) 1))
         3]
       [(not (opt-verify-ok? (opt-verify-function untouched))) 4]
+      [(not
+          (opt-gep-split-test-chain-shape?
+            chain-zero
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 0)
+            (AstType.U8)))
+        5]
+      [(not
+          (opt-gep-split-test-chain-shape?
+            chain-disp
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 8)
+            (AstType.U8)))
+        6]
+      [(not
+          (opt-gep-split-test-chain-shape?
+            chain-index
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.Var 0)
+            (AstType.I64)))
+        7]
+      ;; A non-memory use of the inner address rejects the collapse; the outer
+      ;; Gep still reads var 3 and therefore remains materialized by the backend.
+      [(not
+          (opt-gep-split-test-chain-shape?
+            chain-other-use
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 0)
+            (AstType.U8)))
+        8]
+      [(not (opt-verify-ok? (opt-verify-function chain-zero))) 9]
+      [(not (opt-verify-ok? (opt-verify-function chain-disp))) 10]
+      [(not (opt-verify-ok? (opt-verify-function chain-index))) 11]
+      [(not (opt-verify-ok? (opt-verify-function chain-other-use))) 12]
       [else 42])))
 
 ;; --- multi-block versioning pipeline self-test --------------------------------------

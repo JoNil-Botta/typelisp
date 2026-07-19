@@ -13885,6 +13885,91 @@
           (compiler-backend-string-contains? asm "    movq -24(%rbp), %r10\n")))]
     [(ResultCompilerBackend.Err _) false]))
 
+;; StorePtr consumes the same fused Gep address forms as Load: zero and
+;; nonzero displacements, plus a register-homed scaled index, emit directly in
+;; the store memory operand. A second non-memory use keeps the Gep materialized.
+(define (compiler-backend-gep-store-fold-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rsi"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rax"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%rdi"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%rcx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              4
+              (CompilerRegLocation.Register "%r8"))
+            CompilerRegAssignmentList.Nil))))))
+
+(define (compiler-backend-gep-store-fold-positive-ok?
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [expected : String]) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep 3 (CompilerIrValue.Var 0) offset elem-ty)
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.Var 1)
+          (AstType.I64))
+        CompilerIrInstrList.Nil))
+    (compiler-backend-gep-store-fold-test-assignments)
+    5)
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm expected)
+        (not (compiler-backend-string-contains? asm "    leaq ")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-gep-store-fold-shapes-ok?) : bool
+  (and
+    (compiler-backend-gep-store-fold-positive-ok?
+      (CompilerIrValue.I64 0)
+      (AstType.U8)
+      "    movq %rax, (%rsi)\n")
+    (compiler-backend-gep-store-fold-positive-ok?
+      (CompilerIrValue.I64 8)
+      (AstType.U8)
+      "    movq %rax, 8(%rsi)\n")
+    (compiler-backend-gep-store-fold-positive-ok?
+      (CompilerIrValue.Var 2)
+      (AstType.I64)
+      "    movq %rax, (%rsi,%rdi,8)\n")
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          3
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 8)
+          (AstType.U8))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              4
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            CompilerIrInstrList.Nil)))
+      (compiler-backend-gep-store-fold-test-assignments)
+      5)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm "    leaq 8(%rsi), %rcx\n")
+          (compiler-backend-string-contains? asm "    movq %rax, (%rcx)\n"))]
+      [(ResultCompilerBackend.Err _) false])))
+
 (define (compiler-backend-store-value-scratch-shape-ok?) : bool
   (and
     (match (compiler-backend-emit-test-instrs
@@ -14993,7 +15078,8 @@
       (compiler-backend-gep-fold-multi-use-keeps-add-ok?)
       (compiler-backend-gep-fold-builders-ok?))
     (compiler-backend-gep-fold-drift-detected-ok?)
-    (compiler-backend-chained-gep-same-home-ok?)))
+    (compiler-backend-chained-gep-same-home-ok?)
+    (compiler-backend-gep-store-fold-shapes-ok?)))
 
 ;; When a variable-index Gep and its constant-offset consumer share the same
 ;; register, the first Gep can still write that home directly. The second Gep's

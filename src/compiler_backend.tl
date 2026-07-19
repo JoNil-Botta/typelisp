@@ -50283,7 +50283,7 @@ tl_comptime_host_invoke_entry_ptr:
     .globl tl_comptime_host_invoke_set
 tl_comptime_host_invoke_set:
     movq %rcx, tl_comptime_host_invoke_fn(%rip)
-    xorl %eax, %eax
+    leaq .L_tl_comptime_host_invoke_entry(%rip), %rax
     ret
 
 .L_tl_comptime_host_invoke_entry:
@@ -50319,7 +50319,7 @@ tl_comptime_host_invoke_entry_ptr:
     .globl tl_comptime_host_invoke_set
 tl_comptime_host_invoke_set:
     movq %rdi, tl_comptime_host_invoke_fn(%rip)
-    xorl %eax, %eax
+    leaq .L_tl_comptime_host_invoke_entry(%rip), %rax
     ret
 
 .L_tl_comptime_host_invoke_entry:

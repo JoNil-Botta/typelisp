@@ -995,6 +995,17 @@
                     macro-table-offset
                     layouts))))))))))
 
+;; A registration shell: the entry exists and validates through the catalog,
+;; but its helper performs only the scratch-reset host call, so dispatch
+;; keeps the counted interpreted fallback.
+(define (compiler-comptime-registration-shell-program [macro-name : String]) : CompilerComptimeMacroProgram
+  (CompilerComptimeMacroProgram
+    macro-name
+    (make-array (CompilerComptimeOperation.HostCall 4))
+    (array.make-array String 0)
+    0
+    0))
+
 (define (compiler-comptime-lower-package-names
   [macro-names : (Array String)]
   [windows-target : bool]) : ResultCompilerComptimePackageImagePayload
@@ -1009,12 +1020,8 @@
           (array-set!
             programs
             index
-            (CompilerComptimeMacroProgram
-              (array-ref macro-names index)
-              (make-array (CompilerComptimeOperation.HostCall 4))
-              (array.make-array String 0)
-              0
-              0))
+            (compiler-comptime-registration-shell-program
+              (array-ref macro-names index)))
           (set! index (+ index 1))))
       (compiler-comptime-lower-package programs windows-target))))
 

@@ -85,7 +85,7 @@
             false)
           (match (tlci-loader-load-from-bytes-with-host
             (compiler-embedded-stdlib-tlci-copy)
-            (compiler-embedded-stdlib-tlci-host-table))
+            (compiler-comptime-host-table))
             [(ResultTlciLoadedImage.Err message)
               (begin
                 (array-set! compiler-embedded-stdlib-tlci-session-state 0 -1)
@@ -113,6 +113,23 @@
         [(ResultTlciMacroEntry.Err _) CompilerEmbeddedStdlibTlciLookup.Missing]))
     (CompilerEmbeddedStdlibTlciLookup.Unavailable
       (array-ref compiler-embedded-stdlib-tlci-session-error 0))))
+
+;; Dispatch a cataloged entry on the mapped pass session. The caller owns the
+;; comptime host session (operands, fuel, cookie) around this call.
+(define (compiler-embedded-stdlib-tlci-session-dispatch
+  [name : String]
+  [session-cookie : i64]) : ResultTlciMacroDispatch
+  (if (= (array-ref compiler-embedded-stdlib-tlci-session-state 0) 1)
+    (let
+      [loaded : TlciLoadedImage
+        (array-ref compiler-embedded-stdlib-tlci-session-image 0)]
+      (tlci-loader-dispatch-macro
+        (& loaded)
+        name
+        session-cookie
+        (array.make-array i64 0)
+        0))
+    (ResultTlciMacroDispatch.Err "embedded stdlib tlci session is not loaded")))
 
 (define (compiler-embedded-stdlib-tlci-session-close!) : unit
   (let
@@ -194,7 +211,6 @@
 ;; parameters). The setter stores the dispatcher's function value; the
 ;; entry-ptr cell supplies the raw invoke address for the host table.
 (extern (tl-comptime-host-invoke-set [fn-value : i64]) : i64 (:symbol "tl_comptime_host_invoke_set"))
-(extern tl-comptime-host-invoke-entry-ptr (:symbol "tl_comptime_host_invoke_entry_ptr") : i64)
 
 (define (compiler-comptime-host-session-open!
   [pools : AstNodePoolContext]
@@ -218,11 +234,6 @@
     (set! compiler-comptime-host-stack-len 0)
     (set! compiler-comptime-host-result-ready false)
     (array-set! compiler-comptime-host-diagnostic 0 "")
-    (tl-comptime-host-invoke-set
-      (cast
-        (unsafe
-          (cast compiler-comptime-host-invoke : u64))
-        : i64))
     (set! compiler-comptime-host-session-cookie cookie)))
 
 (define (compiler-comptime-host-session-close!) : unit
@@ -405,5 +416,9 @@
     0
     0
     0
-    tl-comptime-host-invoke-entry-ptr
+    (tl-comptime-host-invoke-set
+      (cast
+        (unsafe
+          (cast compiler-comptime-host-invoke : u64))
+        : i64))
     8192))

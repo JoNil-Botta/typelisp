@@ -724,6 +724,29 @@
       (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
       unit)))
 
+(define (tlci-emit-code-bearing-package-image-from-programs
+  [metadata : TlciMetadata]
+  [compiler-build-hash : String]
+  [programs : (Array comptime_image.CompilerComptimeMacroProgram)]
+  [windows-target : bool]) : ResultTlciBytes
+  (match (comptime_image.compiler-comptime-lower-package
+    programs
+    windows-target)
+    [(comptime_image.ResultCompilerComptimePackageImagePayload.Err message)
+      (ResultTlciBytes.Err message)]
+    [(comptime_image.ResultCompilerComptimePackageImagePayload.Ok payload)
+      (match (tlci-emit-image
+        (tlci-code-bearing-package-container
+          metadata
+          compiler-build-hash
+          (struct-get payload code)
+          (array-length programs)))
+        [(ResultTlciBytes.Err message) (ResultTlciBytes.Err message)]
+        [(ResultTlciBytes.Ok bytes)
+          (begin
+            (tlci-code-bearing-package-patch! bytes payload)
+            (ResultTlciBytes.Ok bytes))])]))
+
 (define (tlci-emit-code-bearing-package-image
   [metadata : TlciMetadata]
   [compiler-build-hash : String]

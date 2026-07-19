@@ -16631,6 +16631,8 @@
     [own-src? : bool
       (and
         (compiler-backend-divmod-src-register? lhs-home)
+        (not (string.eq lhs-home magic))
+        (not (string.eq lhs-home hoist-reg))
         (not lhs-live-after))]
     [dst-src? : bool
       (and
@@ -36331,6 +36333,61 @@
                   offset-home)
                 ""))))])))
 
+;; An emergency SRC is preserved around the complete Div/Mod+Gep+StorePtr
+;; bundle.  That preservation cannot restore a register before the fused store,
+;; so SRC must not also be one of the store address inputs.
+(define (compiler-backend-divmod-direct-gep-store-src-safe?
+  [assignments : CompilerRegAssignmentList]
+  [src : String]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]) : bool
+  (and
+    (not
+      (string.eq src (compiler-backend-value-scalar-register assignments base)))
+    (match (compiler-backend-value-as-i64 offset)
+      [(option_i64.Some _) true]
+      [(option_i64.None)
+        (not
+          (string.eq
+            src
+            (compiler-backend-value-scalar-register assignments offset)))])))
+
+;; The divmod emitter can discover an emergency scratch after the polish SRC
+;; has been selected.  Restore any borrowed address input before the fused
+;; store reads it; other borrowed registers (including SRC) remain protected
+;; until the bundle's ordinary trailing restore.
+(define (compiler-backend-divmod-address-emergency-restore-asm
+  [assignments : CompilerRegAssignmentList]
+  [src : String]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [index : i64]) : String
+  (if (>= index compiler-backend-emergency-pending-count)
+    ""
+    (let
+      [reg : String (array-ref compiler-backend-emergency-regs index)]
+      [base-home : String
+        (compiler-backend-value-scalar-register assignments base)]
+      [offset-home : String
+        (match (compiler-backend-value-as-i64 offset)
+          [(option_i64.Some _) ""]
+          [(option_i64.None)
+            (compiler-backend-value-scalar-register assignments offset)])]
+      (str_cat.str-cat
+        (if (and
+          (not (string.eq reg src))
+          (or (string.eq reg base-home) (string.eq reg offset-home)))
+          (compiler-backend-emergency-reg-restore-asm
+            reg
+            (compiler-backend-emergency-reg-offset index))
+          "")
+        (compiler-backend-divmod-address-emergency-restore-asm
+          assignments
+          src
+          base
+          offset
+          (+ index 1))))))
+
 ;; Select the same SRC class as the ordinary divmod emitter.  At a divmod site
 ;; a dead non-fixed dividend home wins; otherwise a suitable result home wins,
 ;; then the planned SRC.  The producer fold calls with allow-own=false because
@@ -36468,18 +36525,29 @@
           [(ResultCompilerBackend.Ok div-asm)
             (begin
               (set! compiler-backend-emit-current-count (- saved-count 1))
-              (match (compiler-backend-emit-divmod-direct-gep-store
-                ctx
-                gep-dst
-                base
-                offset
-                elem-ty
-                store-value
-                store-ty)
-                [(ResultCompilerBackend.Ok store-asm)
-                  (ResultCompilerBackend.Ok (string.append div-asm store-asm))]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))]
+              (let
+                [address-restore : String
+                  (compiler-backend-divmod-address-emergency-restore-asm
+                    ctx.assignments
+                    src
+                    base
+                    offset
+                    0)]
+                (match (compiler-backend-emit-divmod-direct-gep-store
+                  ctx
+                  gep-dst
+                  base
+                  offset
+                  elem-ty
+                  store-value
+                  store-ty)
+                  [(ResultCompilerBackend.Ok store-asm)
+                    (ResultCompilerBackend.Ok
+                      (string.append
+                        div-asm
+                        (string.append address-restore store-asm)))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]
     [_restore : unit
@@ -36615,21 +36683,31 @@
                 [(ResultCompilerBackend.Ok div-asm)
                   (begin
                     (set! compiler-backend-emit-current-count (- saved-count 2))
-                    (match (compiler-backend-emit-divmod-direct-gep-store
-                      ctx
-                      gep-dst
-                      base
-                      offset
-                      elem-ty
-                      store-value
-                      store-ty)
-                      [(ResultCompilerBackend.Ok store-asm)
-                        (ResultCompilerBackend.Ok
-                          (string.append
-                            producer-asm
-                            (string.append div-asm store-asm)))]
-                      [(ResultCompilerBackend.Err message)
-                        (ResultCompilerBackend.Err message)]))]
+                    (let
+                      [address-restore : String
+                        (compiler-backend-divmod-address-emergency-restore-asm
+                          ctx.assignments
+                          src
+                          base
+                          offset
+                          0)]
+                      (match (compiler-backend-emit-divmod-direct-gep-store
+                        ctx
+                        gep-dst
+                        base
+                        offset
+                        elem-ty
+                        store-value
+                        store-ty)
+                        [(ResultCompilerBackend.Ok store-asm)
+                          (ResultCompilerBackend.Ok
+                            (string.append
+                              producer-asm
+                              (string.append
+                                div-asm
+                                (string.append address-restore store-asm))))]
+                        [(ResultCompilerBackend.Err message)
+                          (ResultCompilerBackend.Err message)])))]
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)]))]
           [(ResultCompilerBackend.Err message)
@@ -36670,15 +36748,21 @@
                 [(CompilerIrInstrList.Cons maybe-store after-store)
                   (match maybe-store
                     [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
-                      (if (compiler-backend-divmod-direct-gep-store?
-                        ctx.assignments
-                        div-dst
-                        gep-dst
-                        base
-                        offset
-                        elem-ty
-                        store-ptr
-                        store-value)
+                      (if (and
+                        (compiler-backend-divmod-direct-gep-store?
+                          ctx.assignments
+                          div-dst
+                          gep-dst
+                          base
+                          offset
+                          elem-ty
+                          store-ptr
+                          store-value)
+                        (compiler-backend-divmod-direct-gep-store-src-safe?
+                          ctx.assignments
+                          src
+                          base
+                          offset))
                         (compiler-backend-emit-steered-producer-divmod-gep-store-rest
                           ctx
                           fallthrough
@@ -36816,21 +36900,27 @@
                                 3)
                               true
                               div-dst)]
-                          (CompilerBackendMaybeDivmodPolish.Some
-                            (compiler-backend-emit-divmod-result-gep-store-rest
-                              ctx
-                              fallthrough
-                              div-instr
-                              div-dst
-                              src
-                              gep-dst
-                              base
-                              offset
-                              elem-ty
-                              store-value
-                              store-ty
-                              (box-get after-store)
-                              buf)))
+                          (if (compiler-backend-divmod-direct-gep-store-src-safe?
+                            ctx.assignments
+                            src
+                            base
+                            offset)
+                            (CompilerBackendMaybeDivmodPolish.Some
+                              (compiler-backend-emit-divmod-result-gep-store-rest
+                                ctx
+                                fallthrough
+                                div-instr
+                                div-dst
+                                src
+                                gep-dst
+                                base
+                                offset
+                                elem-ty
+                                store-value
+                                store-ty
+                                (box-get after-store)
+                                buf))
+                            (CompilerBackendMaybeDivmodPolish.No)))
                         (CompilerBackendMaybeDivmodPolish.No))]
                     [_ (CompilerBackendMaybeDivmodPolish.No)])]
                 [_ (CompilerBackendMaybeDivmodPolish.No)])

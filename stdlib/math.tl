@@ -5,6 +5,8 @@
 ;# intrinsics when `feature-compiler-float-bitcast-intrinsics` is available.
 ;# The inactive compatibility branches keep published stage0 compilers able to
 ;# build a compiler that introduces those intrinsics.
+;# Square root lowers through the private compiler float-sqrt intrinsic to
+;# scalar SSE2 on both supported targets.
 ;#
 ;# Transcendental functions are added as freestanding implementations in
 ;# separate slices so Linux and Windows behavior cannot accidentally diverge.
@@ -16,8 +18,12 @@
 ;# ```typelisp
 ;# (import stdlib.math)
 ;# (define (main) : i64
-;#   (math.i64-clamp (math.i64-abs -50) 0 42))
+;#   (if (= (math.sqrt 81.0) 9.0)
+;#     (math.i64-clamp (math.i64-abs -50) 0 42)
+;#     1))
 ;# ```
+(import stdlib.comptime)
+
 ;: Reinterpret an `f64` as its exact IEEE-754 binary64 bits.
 (define (f64-to-bits [value : f64]) : u64
   (cfg
@@ -360,6 +366,38 @@
   (stdlib.math.f32-from-bits
     (bit-and (stdlib.math.f32-to-bits value) (cast 0x7fffffff : u32))))
 
+;: Return the scalar SSE2 square root of an `f64`.
+;:
+;: Under the default MXCSR round-to-nearest, ties-to-even mode, positive finite
+;: normal and subnormal inputs are correctly rounded. Positive and negative
+;: zero retain their sign, positive infinity is unchanged, negative finite
+;: values and negative infinity produce NaN, and NaN inputs produce NaN.
+;: Signaling-NaN payload, quieting, and floating-point exception details follow
+;: the hardware and are not part of this public contract.
+(define (f64-sqrt [value : f64]) : f64
+  (__tl_float_sqrt value))
+
+;: Return the scalar SSE2 square root of an `f32`.
+;:
+;: Behavior matches `f64-sqrt` at binary32 precision and follows the active
+;: MXCSR rounding mode.
+(define (f32-sqrt [value : f32]) : f32
+  (__tl_float_sqrt value))
+
+;: Return the square root of an `f64` or `f32` expression, preserving its type.
+;:
+;: The expression is evaluated exactly once. Other operand types are rejected
+;: with a compile-time diagnostic.
+(defmacro (sqrt [value : comptime.Expr]) : comptime.Expr
+  (match (type-kind (comptime.expr-type value))
+    ["f64" `(stdlib.math.f64-sqrt ,value)]
+    ["f32" `(stdlib.math.f32-sqrt ,value)]
+    [_
+      (comptime.comptime-error
+        (comptime.string-append
+          "math.sqrt: expected f64 or f32, found "
+          (type-kind (comptime.expr-type value))))]))
+
 ;: Return the smaller `f64` value according to TypeLisp scalar comparison.
 (define (f64-min [a : f64] [b : f64]) : f64
   (if (< a b)
@@ -535,6 +573,169 @@
         unit
         (fail))
       (if (= (stdlib.math.abs neg) want)
+        unit
+        (fail)))))
+
+(test
+  math-float-sqrt
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [one32 : f32 1.0]
+    [four32 : f32 4.0]
+    [calls : i64 0]
+    [once : f64
+      (stdlib.math.sqrt
+        (begin
+          (set! calls (+ calls 1))
+          16.0))]
+    [sqrt32 : f32 (stdlib.math.sqrt four32)]
+    [negative-zero64 : f64
+      (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))]
+    [negative-zero32 : f32 (stdlib.math.f32-from-bits (cast 0x80000000 : u32))]
+    [nan64 : f64 (stdlib.math.f64-from-bits (cast 0x7ff8000000001234 : u64))]
+    [nan32 : f32 (stdlib.math.f32-from-bits (cast 0x7fc01234 : u32))]
+    (begin
+      (if (and
+        (= calls 1)
+        (= once 4.0)
+        (= sqrt32 (stdlib.math.f32-sqrt four32))
+        (= (stdlib.math.f64-sqrt 81.0) 9.0)
+        (= (stdlib.math.f32-sqrt one32) one32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt 2.0))
+        (cast 0x3ff6a09e667f3bcd : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt 3.0))
+        (cast 0x3ffbb67ae8584caa : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt 10.0))
+        (cast 0x40094c583ada5b53 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-sqrt
+            (stdlib.math.f64-from-bits (cast 0x3fb999999999999a : u64))))
+        (cast 0x3fd43d136248490f : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-sqrt (stdlib.math.f64-from-bits (cast 1 : u64))))
+        (cast 0x1e60000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-sqrt
+            (stdlib.math.f64-from-bits (cast 0x000fffffffffffff : u64))))
+        (cast 0x1fffffffffffffff : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-sqrt
+            (stdlib.math.f64-from-bits (cast 0x0010000000000000 : u64))))
+        (cast 0x2000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits
+          (stdlib.math.f64-sqrt
+            (stdlib.math.f64-from-bits (cast 0x7fefffffffffffff : u64))))
+        (cast 0x5fefffffffffffff : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-sqrt
+            (stdlib.math.f32-from-bits (cast 0x40000000 : u32))))
+        (cast 0x3fb504f3 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-sqrt
+            (stdlib.math.f32-from-bits (cast 0x40400000 : u32))))
+        (cast 0x3fddb3d7 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-sqrt
+            (stdlib.math.f32-from-bits (cast 0x41200000 : u32))))
+        (cast 0x404a62c2 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-sqrt
+            (stdlib.math.f32-from-bits (cast 0x3dcccccd : u32))))
+        (cast 0x3ea1e89b : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-sqrt (stdlib.math.f32-from-bits (cast 1 : u32))))
+        (cast 0x1a3504f3 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-sqrt
+            (stdlib.math.f32-from-bits (cast 0x007fffff : u32))))
+        (cast 0x1fffffff : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-sqrt
+            (stdlib.math.f32-from-bits (cast 0x00800000 : u32))))
+        (cast 0x20000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits
+          (stdlib.math.f32-sqrt
+            (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))))
+        (cast 0x5f7fffff : u32))
+        unit
+        (fail))
+      (if (and
+        (=
+          (stdlib.math.f64-to-bits
+            (stdlib.math.f64-sqrt (stdlib.math.f64-from-bits (cast 0 : u64))))
+          (cast 0 : u64))
+        (=
+          (stdlib.math.f64-to-bits (stdlib.math.f64-sqrt negative-zero64))
+          (cast 0x8000000000000000 : u64))
+        (=
+          (stdlib.math.f32-to-bits (stdlib.math.f32-sqrt negative-zero32))
+          (cast 0x80000000 : u32))
+        (stdlib.math.f64-infinite?
+          (stdlib.math.f64-sqrt (stdlib.math.f64-positive-infinity)))
+        (stdlib.math.f32-infinite?
+          (stdlib.math.f32-sqrt (stdlib.math.f32-positive-infinity))))
+        unit
+        (fail))
+      (if (and
+        (stdlib.math.f64-nan? (stdlib.math.f64-sqrt -1.0))
+        (stdlib.math.f64-nan?
+          (stdlib.math.f64-sqrt (stdlib.math.f64-negative-infinity)))
+        (stdlib.math.f64-nan? (stdlib.math.f64-sqrt nan64))
+        (stdlib.math.f32-nan?
+          (stdlib.math.f32-sqrt (stdlib.math.f32-negative-infinity)))
+        (stdlib.math.f32-nan? (stdlib.math.f32-sqrt nan32)))
         unit
         (fail)))))
 

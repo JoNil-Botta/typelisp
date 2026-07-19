@@ -291,6 +291,7 @@ stdlib/tests/core_macros_cond_branch_mismatch.tl|fail|typecheck: if branches mus
 stdlib/tests/arena_policy_escape_text_buf_borrowed.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/io_stdio_pipe_short_read.tl|pass|-
 stdlib/tests/io_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
+stdlib/tests/math_sqrt_non_float_reject.tl|fail|math.sqrt: expected f64 or f32, found i64
 stdlib/tests/msvc_api.tl|pass|-
 stdlib/tests/hashmap_value_borrow_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`

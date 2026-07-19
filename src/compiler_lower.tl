@@ -370,6 +370,10 @@
   (Array i64 CompilerIrVectorReduceOp AstType i64)
   (Value LowerVectorMapValue CompilerIrVectorReduceOp AstType i64))
 
+(defenum LowerMaybeVectorScan
+  (No)
+  (Scan i64 i64 CompilerIrVectorPrefixOp AstType i64))
+
 ;; Reduction addend split plan for scalar `sum` lowering: `Split x-id u-id`
 ;; accumulates only the varying addend `x-id` (an expr-pool id) per iteration
 ;; and adds `(* trip-count u)` once after the loop, where `u-id` is the
@@ -34194,25 +34198,78 @@
   [init : AstExpr]
   [value : AstExpr]
   [body : AstExpr]) : ResultLowerExpr
-  (lower-spmd-scan-scaffold
-    ctx
-    state
-    env
-    type-env
-    index-id
-    index
-    index-ty
-    start
-    end
-    prefix-id
-    prefix
-    prefix-ty
-    init
-    (spmd-scan-prefix-expr
-      (tc-context-pools ctx)
-      op
-      (lower-context-expr-push ctx value))
-    body))
+  (let
+    [scalar-prefix : i64
+      (spmd-scan-prefix-expr
+        (tc-context-pools ctx)
+        op
+        (lower-context-expr-push ctx value))]
+    [vector-plan : LowerMaybeVectorScan
+      (lower-simple-vector-scan
+        ctx
+        (lower-state-mode state)
+        env
+        type-env
+        op
+        index
+        prefix
+        prefix-ty
+        value
+        body)]
+    (if (and
+      (lower-mode-avx2? (lower-state-mode state))
+      (lower-type-i64? index-ty))
+      (match vector-plan
+        [(LowerMaybeVectorScan.Scan _ _ _ _ _)
+          (lower-avx2-spmd-scan-lowered
+            ctx
+            state
+            env
+            type-env
+            op
+            index-id
+            index-ty
+            start
+            end
+            prefix-id
+            prefix-ty
+            init
+            value
+            body
+            vector-plan)]
+        [(LowerMaybeVectorScan.No)
+          (lower-spmd-scan-scaffold
+            ctx
+            state
+            env
+            type-env
+            index-id
+            index
+            index-ty
+            start
+            end
+            prefix-id
+            prefix
+            prefix-ty
+            init
+            scalar-prefix
+            body)])
+      (lower-spmd-scan-scaffold
+        ctx
+        state
+        env
+        type-env
+        index-id
+        index
+        index-ty
+        start
+        end
+        prefix-id
+        prefix
+        prefix-ty
+        init
+        scalar-prefix
+        body))))
 
 (define (lower-spmd-broadcast
   [ctx : TcContext]
@@ -39208,6 +39265,122 @@
         [_ false])]
     [_ false]))
 
+(define (lower-simple-vector-scan-op-supported?
+  [op : AstReduceOp]
+  [elem : AstType]) : bool
+  (match op
+    [(AstReduceOp.Sum)
+      (match elem
+        [(AstType.I32) true]
+        [(AstType.I64) true]
+        [_ false])]
+    [(AstReduceOp.Min)
+      (match elem
+        [(AstType.I32) true]
+        [(AstType.I64) true]
+        [_ false])]
+    [(AstReduceOp.Max)
+      (match elem
+        [(AstType.I32) true]
+        [(AstType.I64) true]
+        [_ false])]
+    [(AstReduceOp.All)
+      (match elem
+        [(AstType.Bool) true]
+        [_ false])]
+    [(AstReduceOp.Any)
+      (match elem
+        [(AstType.Bool) true]
+        [_ false])]))
+
+(define (lower-simple-vector-scan-op [op : AstReduceOp]) : CompilerIrVectorPrefixOp
+  (match op
+    [(AstReduceOp.Sum) (CompilerIrVectorPrefixOp.Sum)]
+    [(AstReduceOp.Min) (CompilerIrVectorPrefixOp.Min)]
+    [(AstReduceOp.Max) (CompilerIrVectorPrefixOp.Max)]
+    [(AstReduceOp.All) (CompilerIrVectorPrefixOp.All)]
+    [(AstReduceOp.Any) (CompilerIrVectorPrefixOp.Any)]))
+
+(define (lower-simple-vector-scan-output
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [prefix : String]
+  [body : AstExpr]) : LowerMaybeArrayVar
+  (match body
+    [(AstExpr.Spanned inner-box _)
+      (lower-simple-vector-scan-output
+        ctx
+        env
+        type-env
+        index
+        prefix
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Ann inner-box _)
+      (lower-simple-vector-scan-output
+        ctx
+        env
+        type-env
+        index
+        prefix
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.ArraySet array-box index-box value-box)
+      (if (and
+        (lower-expr-is-var? ctx (lower-context-expr-get ctx index-box) index)
+        (lower-expr-is-var? ctx (lower-context-expr-get ctx value-box) prefix))
+        (lower-dynamic-array-var
+          ctx
+          env
+          type-env
+          (lower-context-expr-get ctx array-box))
+        (LowerMaybeArrayVar.No))]
+    [_ (LowerMaybeArrayVar.No)]))
+
+(define (lower-simple-vector-scan
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index : String]
+  [prefix : String]
+  [prefix-ty : AstType]
+  [value : AstExpr]
+  [body : AstExpr]) : LowerMaybeVectorScan
+  (if (not (lower-mode-avx2? mode))
+    (LowerMaybeVectorScan.No)
+    (match (lower-array-ref-var-for-index ctx env type-env value index)
+      [(LowerMaybeArrayVar.Some input-var input-ty)
+        (match (lower-simple-vector-scan-output
+          ctx
+          env
+          type-env
+          index
+          prefix
+          body)
+          [(LowerMaybeArrayVar.Some output-var output-ty)
+            (let
+              [elem-ty : AstType (tc-type-without-regions input-ty)]
+              [lanes : i64
+                (if (lower-type-bool? elem-ty)
+                  (lower-avx512-bool-lanes mode)
+                  (lower-simd-lanes-for-elem mode elem-ty))]
+              (if (and
+                (> lanes 0)
+                (tc-type-eq elem-ty (tc-type-without-regions output-ty))
+                (tc-type-eq elem-ty (tc-type-without-regions prefix-ty))
+                (lower-simple-vector-scan-op-supported? op elem-ty))
+                (LowerMaybeVectorScan.Scan
+                  input-var
+                  output-var
+                  (lower-simple-vector-scan-op op)
+                  elem-ty
+                  lanes)
+                (LowerMaybeVectorScan.No)))]
+          [(LowerMaybeArrayVar.No) (LowerMaybeVectorScan.No)])]
+      [(LowerMaybeArrayVar.No) (LowerMaybeVectorScan.No)])))
+
 (define (lower-simple-vector-reduce-op [op : AstReduceOp]) : CompilerIrVectorReduceOp
   (match op
     [(AstReduceOp.Min) (CompilerIrVectorReduceOp.Min)]
@@ -40265,6 +40438,463 @@
                           CompilerIrValue.Unit
                           (AstType.Unit)))])])]
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))]))
+
+(define (lower-spmd-scan-vector-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [index-var : i64]
+  [next-index : CompilerIrValue]
+  [acc-var : i64]
+  [input-var : i64]
+  [output-var : i64]
+  [prefix-op : CompilerIrVectorPrefixOp]
+  [elem-ty : AstType]
+  [lanes : i64]) : LowerExpr
+  (let
+    [s : LowerState state]
+    [chunk : CompilerIrValue CompilerIrValue.Unit]
+    [full-mask : CompilerIrValue CompilerIrValue.Unit]
+    [prefix-value : CompilerIrValue CompilerIrValue.Unit]
+    [last-index : CompilerIrValue CompilerIrValue.Unit]
+    (begin
+      (if (lower-type-bool? elem-ty)
+        (begin
+          (match (lower-emit-tail-mask
+            s
+            (CompilerIrValue.Var index-var)
+            next-index
+            lanes)
+            [(LowerExpr.Expr next-s value _)
+              (begin
+                (set! s next-s)
+                (set! full-mask value))])
+          (match (lower-emit-predicated-load
+            s
+            (CompilerIrValue.Var input-var)
+            (CompilerIrValue.Var index-var)
+            full-mask
+            lanes
+            elem-ty)
+            [(LowerExpr.Expr next-s value _)
+              (begin
+                (set! s next-s)
+                (set! chunk value))]))
+        (match (lower-emit-vector-load
+          s
+          (CompilerIrValue.Var input-var)
+          (CompilerIrValue.Var index-var)
+          lanes
+          elem-ty)
+          [(LowerExpr.Expr next-s value _)
+            (begin
+              (set! s next-s)
+              (set! chunk value))]))
+      (match (lower-state-alloc-var s)
+        [(LowerAlloc.Alloc next-s prefix-var)
+          (begin
+            (set!
+              s
+              (lower-state-emit
+                next-s
+                (ir-instr-vector-prefix
+                  prefix-var
+                  prefix-op
+                  chunk
+                  (CompilerIrValue.Var acc-var)
+                  lanes
+                  elem-ty)))
+            (set! prefix-value (CompilerIrValue.Var prefix-var)))])
+      (if (lower-type-bool? elem-ty)
+        (set!
+          s
+          (lower-emit-predicated-store
+            s
+            (CompilerIrValue.Var output-var)
+            (CompilerIrValue.Var index-var)
+            prefix-value
+            full-mask
+            lanes
+            elem-ty))
+        (set!
+          s
+          (lower-emit-vector-store
+            s
+            (CompilerIrValue.Var output-var)
+            (CompilerIrValue.Var index-var)
+            prefix-value
+            lanes
+            elem-ty)))
+      (match (lower-emit-binop
+        s
+        CompilerIrBinOp.Sub
+        next-index
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! last-index value))])
+      ;; `vector-limit` already proves the whole output gang is in bounds.
+      ;; Reload the stored final lane through its raw data pointer so carry
+      ;; handoff does not add a redundant scalar bounds-check block.
+      (match (lower-array-data-pointer-value s (CompilerIrValue.Var output-var))
+        [(LowerExpr.Expr data-state data-ptr _)
+          (match (lower-emit-elem-addr-gep
+            ctx
+            data-state
+            data-ptr
+            last-index
+            elem-ty)
+            [(LowerExpr.Expr addr-state last-addr _)
+              (match (lower-emit-load addr-state last-addr elem-ty)
+                [(LowerExpr.Expr load-state last-value _)
+                  (set!
+                    s
+                    (lower-state-emit
+                      load-state
+                      (CompilerIrInstr.Mov acc-var last-value elem-ty)))])])])
+      (LowerExpr.Expr
+        (lower-state-emit
+          s
+          (CompilerIrInstr.Mov index-var next-index (AstType.I64)))
+        CompilerIrValue.Unit
+        (AstType.Unit)))))
+
+(define (lower-spmd-scan-scalar-tail-body
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index-id : i64]
+  [index-var : i64]
+  [index-ty : AstType]
+  [prefix-id : i64]
+  [acc-var : i64]
+  [elem-ty : AstType]
+  [value : AstExpr]
+  [body : AstExpr]) : ResultLowerExpr
+  (let
+    [index-env : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id env index-id index-var)]
+    [index-type-env : TcTypeEnv (tc-bind-id type-env index-id index-ty)]
+    [body-env : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id index-env prefix-id acc-var)]
+    [body-type-env : TcTypeEnv (tc-bind-id index-type-env prefix-id elem-ty)]
+    (match (lower-expr-expected
+      ctx
+      state
+      index-env
+      index-type-env
+      value
+      elem-ty
+      value)
+      [(ResultLowerExpr.Ok value-lowered)
+        (match value-lowered
+          [(LowerExpr.Expr value-state value-ir _)
+            (let
+              [s : LowerState value-state]
+              [value-var : i64 0]
+              (begin
+                (match value-ir
+                  [(CompilerIrValue.Var var) (set! value-var var)]
+                  [_
+                    (match (lower-state-alloc-var s)
+                      [(LowerAlloc.Alloc alloc-state var)
+                        (begin
+                          (set! value-var var)
+                          (set!
+                            s
+                            (lower-state-emit
+                              alloc-state
+                              (CompilerIrInstr.Mov var value-ir elem-ty))))])])
+                (match (lower-spmd-reduce-apply-update
+                  ctx
+                  s
+                  index-env
+                  index-type-env
+                  op
+                  acc-var
+                  elem-ty
+                  value-var)
+                  [(ResultLowerExpr.Ok update-lowered)
+                    (match update-lowered
+                      [(LowerExpr.Expr update-state _ _)
+                        (match (lower-expr
+                          ctx
+                          update-state
+                          body-env
+                          body-type-env
+                          body)
+                          [(ResultLowerExpr.Ok body-lowered)
+                            (match body-lowered
+                              [(LowerExpr.Expr body-state _ _)
+                                (match (lower-state-alloc-var body-state)
+                                  [(LowerAlloc.Alloc inc-state inc-var)
+                                    (ResultLowerExpr.Ok
+                                      (LowerExpr.Expr
+                                        (lower-state-emit
+                                          (lower-state-emit
+                                            inc-state
+                                            (CompilerIrInstr.BinOp
+                                              inc-var
+                                              CompilerIrBinOp.Add
+                                              (CompilerIrValue.Var index-var)
+                                              (CompilerIrValue.I64 1)
+                                              index-ty))
+                                          (CompilerIrInstr.Mov
+                                            index-var
+                                            (CompilerIrValue.Var inc-var)
+                                            index-ty))
+                                        CompilerIrValue.Unit
+                                        (AstType.Unit)))])])]
+                          [(ResultLowerExpr.Err message)
+                            (ResultLowerExpr.Err message)])])]
+                  [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))])]
+      [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
+
+(define (lower-avx2-spmd-scan-build
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index-id : i64]
+  [index-ty : AstType]
+  [init-value : CompilerIrValue]
+  [end-value : CompilerIrValue]
+  [start-value : CompilerIrValue]
+  [prefix-id : i64]
+  [value : AstExpr]
+  [body : AstExpr]
+  [input-var : i64]
+  [output-var : i64]
+  [prefix-op : CompilerIrVectorPrefixOp]
+  [elem-ty : AstType]
+  [lanes : i64]) : ResultLowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc acc-state acc-var)
+      (match (lower-state-alloc-var
+        (lower-state-emit
+          acc-state
+          (CompilerIrInstr.Mov acc-var init-value elem-ty)))
+        [(LowerAlloc.Alloc index-state index-var)
+          (let
+            [s : LowerState
+              (lower-state-emit
+                index-state
+                (CompilerIrInstr.Mov index-var start-value index-ty))]
+            [header-label : String ""]
+            [body-label : String ""]
+            [tail-header-label : String ""]
+            [tail-body-label : String ""]
+            [exit-label : String ""]
+            [arrays : LowerArrayVarSet
+              (lower-array-var-set-add
+                (lower-array-var-set-add
+                  (lower-array-var-set-empty)
+                  input-var
+                  0)
+                output-var
+                0)]
+            [vector-limit : CompilerIrValue CompilerIrValue.Unit]
+            [vector-start-ok : CompilerIrValue CompilerIrValue.Unit]
+            [next-index : CompilerIrValue CompilerIrValue.Unit]
+            [vector-ok : CompilerIrValue CompilerIrValue.Unit]
+            [tail-cond : CompilerIrValue CompilerIrValue.Unit]
+            (begin
+              (match (lower-state-fresh-label s "spmd_scan_avx2_header")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! header-label label))])
+              (match (lower-state-fresh-label s "spmd_scan_avx2_body")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! body-label label))])
+              (match (lower-state-fresh-label s "spmd_scan_tail_header")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! tail-header-label label))])
+              (match (lower-state-fresh-label s "spmd_scan_tail_body")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! tail-body-label label))])
+              (match (lower-state-fresh-label s "spmd_scan_exit")
+                [(LowerLabel.Label next-s label)
+                  (begin
+                    (set! s next-s)
+                    (set! exit-label label))])
+              (match (lower-vector-loop-limit s end-value arrays lanes)
+                [(LowerExpr.Expr next-s limit _)
+                  (begin
+                    (set! s next-s)
+                    (set! vector-limit limit))])
+              (match (lower-vector-loop-start-ok s index-var lanes)
+                [(LowerExpr.Expr next-s ok _)
+                  (begin
+                    (set! s next-s)
+                    (set! vector-start-ok ok))])
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (CompilerIrInstr.Branch
+                      vector-start-ok
+                      header-label
+                      tail-header-label))
+                  header-label))
+              (match (lower-emit-binop
+                s
+                CompilerIrBinOp.Add
+                (CompilerIrValue.Var index-var)
+                (CompilerIrValue.I64 lanes)
+                index-ty)
+                [(LowerExpr.Expr next-s value-ir _)
+                  (begin
+                    (set! s next-s)
+                    (set! next-index value-ir))])
+              (match (lower-vector-loop-next-ok s next-index vector-limit)
+                [(LowerExpr.Expr next-s ok _)
+                  (begin
+                    (set! s next-s)
+                    (set! vector-ok ok))])
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (CompilerIrInstr.Branch
+                      vector-ok
+                      body-label
+                      tail-header-label))
+                  body-label))
+              (match (lower-spmd-scan-vector-body
+                ctx
+                s
+                index-var
+                next-index
+                acc-var
+                input-var
+                output-var
+                prefix-op
+                elem-ty
+                lanes)
+                [(LowerExpr.Expr body-state _ _)
+                  (set!
+                    s
+                    (lower-state-finish-block
+                      (lower-state-emit
+                        body-state
+                        (CompilerIrInstr.Jump header-label))
+                      tail-header-label))])
+              (match (lower-vector-loop-i64-compare
+                s
+                CompilerIrBinOp.Lt
+                (CompilerIrValue.Var index-var)
+                end-value)
+                [(LowerExpr.Expr next-s condition _)
+                  (begin
+                    (set! s next-s)
+                    (set! tail-cond condition))])
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
+                    s
+                    (CompilerIrInstr.Branch
+                      tail-cond
+                      tail-body-label
+                      exit-label))
+                  tail-body-label))
+              (match (lower-spmd-scan-scalar-tail-body
+                ctx
+                s
+                env
+                type-env
+                op
+                index-id
+                index-var
+                index-ty
+                prefix-id
+                acc-var
+                elem-ty
+                value
+                body)
+                [(ResultLowerExpr.Ok tail-lowered)
+                  (match tail-lowered
+                    [(LowerExpr.Expr tail-state _ _)
+                      (ResultLowerExpr.Ok
+                        (LowerExpr.Expr
+                          (lower-state-finish-block
+                            (lower-state-emit
+                              tail-state
+                              (CompilerIrInstr.Jump tail-header-label))
+                            exit-label)
+                          CompilerIrValue.Unit
+                          (AstType.Unit)))])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))])]))
+
+(define (lower-avx2-spmd-scan-lowered
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [op : AstReduceOp]
+  [index-id : i64]
+  [index-ty : AstType]
+  [start : AstExpr]
+  [end : AstExpr]
+  [prefix-id : i64]
+  [prefix-ty : AstType]
+  [init : AstExpr]
+  [value : AstExpr]
+  [body : AstExpr]
+  [plan : LowerMaybeVectorScan]) : ResultLowerExpr
+  (match plan
+    [(LowerMaybeVectorScan.Scan input-var output-var prefix-op elem-ty lanes)
+      (match (lower-expr-expected ctx state env type-env init prefix-ty init)
+        [(ResultLowerExpr.Ok init-lowered)
+          (match init-lowered
+            [(LowerExpr.Expr init-state init-value _)
+              (match (lower-expr ctx init-state env type-env end)
+                [(ResultLowerExpr.Ok end-lowered)
+                  (match end-lowered
+                    [(LowerExpr.Expr end-state end-value _)
+                      (match (lower-expr ctx end-state env type-env start)
+                        [(ResultLowerExpr.Ok start-lowered)
+                          (match start-lowered
+                            [(LowerExpr.Expr start-state start-value _)
+                              (lower-avx2-spmd-scan-build
+                                ctx
+                                start-state
+                                env
+                                type-env
+                                op
+                                index-id
+                                index-ty
+                                init-value
+                                end-value
+                                start-value
+                                prefix-id
+                                value
+                                body
+                                input-var
+                                output-var
+                                prefix-op
+                                elem-ty
+                                lanes)])]
+                        [(ResultLowerExpr.Err message)
+                          (ResultLowerExpr.Err message)])])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+    [(LowerMaybeVectorScan.No)
+      (ResultLowerExpr.Err
+        (box (lower-diagnostic "lower: missing vector scan plan")))]))
 
 (define (lower-avx2-spmd-reduce-build
   [ctx : TcContext]

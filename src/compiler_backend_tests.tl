@@ -9988,6 +9988,140 @@
         "    vmovdqu -64(%rbp), %ymm14\n    vpaddq %ymm6, %ymm14, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-vector-prefix-spill-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -64))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-vector-prefix-source-carry-spill-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -64))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -8))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%vec7"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-avx2-vector-prefix-i64-spill-ok?) : bool
+  (match (compiler-backend-emit-avx2-vector-prefix
+    (compiler-backend-vector-prefix-spill-assignments)
+    2
+    (CompilerIrVectorPrefixOp.Min)
+    (CompilerIrValue.Var 0)
+    (CompilerIrValue.Var 1)
+    4
+    (AstType.I64)
+    "%r14"
+    "%xmm14"
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    vmovdqu %ymm6, %ymm14\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vpslldq $8, %ymm14, %ymm0\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vperm2i128 $0, %ymm14, %ymm14, %ymm0\n")
+        (compiler-backend-string-contains? asm "    vpcmpgtq ")
+        (compiler-backend-string-contains? asm "    vpandn ")
+        (compiler-backend-string-contains? asm "    vmovq %r14, %xmm0\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vmovdqu %ymm14, -64(%rbp)\n"))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-vector-prefix-source-carry-spill-assignments)]
+    (and
+      (match (compiler-backend-emit-avx2-vector-prefix
+        assignments
+        2
+        (CompilerIrVectorPrefixOp.Sum)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        4
+        (AstType.I64)
+        "%r14"
+        "%xmm14"
+        (compiler-diagnostic-at-start "" ""))
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    vmovdqu -64(%rbp), %ymm7\n")
+            (compiler-backend-string-contains?
+              asm
+              "    vpbroadcastq -8(%rbp), %ymm0\n")
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    vmovdqu %ymm7, -64(%rbp)\n")))]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-avx2-vector-prefix
+        assignments
+        2
+        (CompilerIrVectorPrefixOp.Any)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        32
+        (AstType.Bool)
+        "%r14"
+        "%xmm14"
+        (compiler-diagnostic-at-start "" ""))
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    vmovdqu -64(%rbp), %ymm7\n")
+            (compiler-backend-string-contains? asm "    movq -8(%rbp), %r14\n")
+            (compiler-backend-string-contains? asm "    setne %r14b\n")
+            (compiler-backend-string-contains?
+              asm
+              "    vpbroadcastb %xmm0, %ymm0\n"))]
+        [(ResultCompilerBackend.Err _) false]))))
+
+(define (compiler-backend-avx2-vector-prefix-bool-spill-ok?) : bool
+  (match (compiler-backend-emit-avx2-vector-prefix
+    (compiler-backend-vector-prefix-spill-assignments)
+    2
+    (CompilerIrVectorPrefixOp.All)
+    (CompilerIrValue.Var 0)
+    (CompilerIrValue.Var 1)
+    32
+    (AstType.Bool)
+    "%r14"
+    "%xmm14"
+    (compiler-diagnostic-at-start "" ""))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    vpslldq $1, %ymm14, %ymm0\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vpslldq $8, %ymm14, %ymm0\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vpbroadcastb %xmm0, %ymm0\n")
+        (compiler-backend-string-contains? asm "    setne %r14b\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vpand %ymm0, %ymm14, %ymm14\n")
+        (not (compiler-backend-string-contains? asm "%al"))
+        (compiler-backend-string-contains?
+          asm
+          "    vmovdqu %ymm14, -64(%rbp)\n"))]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-avx512-predicated-load-spill-dst-ok?) : bool
   (match (compiler-backend-emit-avx512-predicated-load
     (compiler-backend-vector-spill-assignments)
@@ -10064,6 +10198,9 @@
   (and
     (compiler-backend-avx2-vector-load-spill-dst-ok?)
     (compiler-backend-avx2-vector-binop-spill-ok?)
+    (compiler-backend-avx2-vector-prefix-i64-spill-ok?)
+    (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?)
+    (compiler-backend-avx2-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-predicated-load-spill-dst-ok?)
     (compiler-backend-avx512-select-spill-ok?)
     (compiler-backend-avx2-vector-reduce-spill-source-ok?)
@@ -22596,6 +22733,21 @@
         CompilerIrInstrList.Nil))
     CompilerIrBlockList.Nil))
 
+(define (compiler-backend-scratch-vreg-prefix-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (ir-instr-vector-prefix
+          2
+          (CompilerIrVectorPrefixOp.Sum)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          4
+          (AstType.I64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
 (define (compiler-backend-scratch-vreg-splat-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r8"))
@@ -22613,6 +22765,15 @@
         1
         (CompilerRegLocation.Register "%xmm2"))
       CompilerRegAssignmentList.Nil)))
+
+(define (compiler-backend-scratch-vreg-prefix-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -16))
+        CompilerRegAssignmentList.Nil))))
 
 (define (compiler-backend-scratch-vreg-cast-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -24022,10 +24183,26 @@
           (compiler-ir-block-list-compact reduce-blocks)
           2
           (compiler-backend-scratch-vreg-reduce-test-assignments))]
+      [prefix-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-prefix-test-blocks)]
+      [prefix : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_prefix"
+          prefix-blocks
+          3
+          (compiler-backend-scratch-vreg-prefix-test-assignments))]
+      [prefix-dense : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_prefix_dense"
+          (compiler-ir-block-list-compact prefix-blocks)
+          3
+          (compiler-backend-scratch-vreg-prefix-test-assignments))]
       [splat-gp : String (compiler-backend-scratch-test-register splat 0)]
       [splat-xmm : String (compiler-backend-scratch-test-register splat 1)]
       [reduce-acc : String (compiler-backend-scratch-test-register reduce 0)]
       [reduce-temp : String (compiler-backend-scratch-test-register reduce 1)]
+      [prefix-gp : String (compiler-backend-scratch-test-register prefix 0)]
+      [prefix-xmm : String (compiler-backend-scratch-test-register prefix 1)]
       (and
         (= (compiler-backend-scratch-test-plan-count splat) 2)
         (= (compiler-backend-scratch-test-success-count splat) 2)
@@ -24054,6 +24231,18 @@
         (string.eq
           reduce-temp
           (compiler-backend-scratch-test-register reduce-dense 1))
+        (= (compiler-backend-scratch-test-plan-count prefix) 2)
+        (= (compiler-backend-scratch-test-success-count prefix) 2)
+        (not (string.eq prefix-gp ""))
+        (not (string.eq prefix-xmm ""))
+        (not (string.eq prefix-gp "%r8"))
+        (not (= (compiler-reg-xmm-family-index prefix-xmm) 6))
+        (string.eq
+          prefix-gp
+          (compiler-backend-scratch-test-register prefix-dense 0))
+        (string.eq
+          prefix-xmm
+          (compiler-backend-scratch-test-register prefix-dense 1))
         (match splat
           [(CompilerRegScratchPlanResult.Result _ plan)
             (and
@@ -24079,6 +24268,19 @@
                 (struct-get (array-ref (struct-get plan items) 1) requirement)
                 role)
                 [(CompilerRegScratchRole.VectorReduceScratch) true]
+                [_ false]))])
+        (match prefix
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 0) requirement)
+                role)
+                [(CompilerRegScratchRole.VectorPrefixCarry) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 1) requirement)
+                role)
+                [(CompilerRegScratchRole.VectorPrefixValue) true]
                 [_ false]))])))
     true))
 

@@ -5017,6 +5017,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
           (compiler-live-set-insert set dst)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
+          (compiler-live-set-insert set dst)])]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
@@ -5887,6 +5891,9 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _) dst])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
@@ -7733,6 +7740,7 @@
     [(CompilerIrInstr.LaneId _ _ _) true]
     [(CompilerIrInstr.Splat _ _ _ _) true]
     [(CompilerIrInstr.VectorBinOp _) true]
+    [(CompilerIrInstr.VectorPrefix _) true]
     [(CompilerIrInstr.VectorReduce _ _ _ _ _) true]
     [(CompilerIrInstr.VectorCompare _) true]
     [(CompilerIrInstr.MaskBinOp _ _ _ _ _) true]
@@ -18785,6 +18793,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ lanes elem-ty)
           (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ lanes elem-ty)
+          (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload dst _ _ _ lanes elem-ty)
@@ -19651,6 +19663,12 @@
           (begin
             (compiler-reg-color-invalidate-value! roots invalid lhs)
             (compiler-reg-color-invalidate-value! roots invalid rhs))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid src)
+            (compiler-reg-color-invalidate-value! roots invalid carry))])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-reg-color-invalidate-value! roots invalid src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -20853,6 +20871,16 @@
             (compiler-reg-remap-value remap rhs)
             lanes
             ty)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst op src carry lanes ty)
+          (ir-instr-vector-prefix
+            (compiler-reg-remap-id remap dst)
+            op
+            (compiler-reg-remap-value remap src)
+            (compiler-reg-remap-value remap carry)
+            lanes
+            ty)])]
     [(CompilerIrInstr.VectorReduce dst op src lanes ty)
       (CompilerIrInstr.VectorReduce
         (compiler-reg-remap-id remap dst)
@@ -21323,6 +21351,8 @@
   (CopyValueXmm)
   (SplatValueGp)
   (SplatValueXmm)
+  (VectorPrefixCarry)
+  (VectorPrefixValue)
   (VectorReduceAccumulator)
   (VectorReduceScratch)
   (FloatCastValueXmm)
@@ -21850,6 +21880,7 @@
       [(CompilerIrInstr.Splat _ _ _ _) 2]
       ;; Horizontal AVX2/AVX-512 reductions need an accumulator plus a sibling
       ;; XMM temporary at the same instruction point.
+      [(CompilerIrInstr.VectorPrefix _) 2]
       [(CompilerIrInstr.VectorReduce _ _ _ _ _) 2]
       [_ 0])
     0))
@@ -22256,6 +22287,14 @@
       (compiler-reg-string-list-append
         (compiler-reg-scratch-location-registers assignments dst)
         (compiler-reg-scratch-value-registers assignments value))]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ src carry _ _)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-location-registers assignments dst)
+            (compiler-reg-string-list-append
+              (compiler-reg-scratch-value-registers assignments src)
+              (compiler-reg-scratch-value-registers assignments carry)))])]
     [(CompilerIrInstr.VectorReduce dst _ src _ _)
       (compiler-reg-string-list-append
         (compiler-reg-scratch-location-registers assignments dst)
@@ -22880,6 +22919,19 @@
         (if (= ordinal 0)
           (CompilerRegScratchRole.SplatValueGp)
           (CompilerRegScratchRole.SplatValueXmm))
+        (if (= ordinal 0)
+          (compiler-reg-scratch-memory-constraint assignments instr)
+          (compiler-reg-scratch-xmm-constraint assignments instr))
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.VectorPrefix _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.VectorPrefixCarry)
+          (CompilerRegScratchRole.VectorPrefixValue))
         (if (= ordinal 0)
           (compiler-reg-scratch-memory-constraint assignments instr)
           (compiler-reg-scratch-xmm-constraint assignments instr))

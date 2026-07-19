@@ -1,7 +1,9 @@
 (define (one) : i64
-  (let
-    [x : i64 1]
+  (let ([x : i64 1])
     x))
+
+(define (empty) : i64
+  (let () 42))
 
 (define (multi) : i64
   (let

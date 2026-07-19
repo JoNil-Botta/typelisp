@@ -1100,7 +1100,7 @@ cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
 (import stdlib.text_buf)
 
 (define (main) : i64
-  (let ([buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")])
+  (let [buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")]
     (with-arena inner
       (string-length (text_buf.render buf)))))
 EOF
@@ -1114,7 +1114,7 @@ cat > "$CLI_MATRIX/text-buf-region-escape.tl" <<'EOF'
 (import stdlib.text_buf)
 
 (define (main) : String
-  (let ([buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")])
+  (let [buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")]
     (with-arena outer
       (with-arena inner
         (text_buf.render buf)))))

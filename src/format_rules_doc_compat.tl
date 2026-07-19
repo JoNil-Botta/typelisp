@@ -525,6 +525,7 @@
   (and
     (format-rules-streaming-matches-doc? (format-rules-decls-source) 80)
     (format-rules-streaming-matches-doc? (format-rules-flow-source) 80)
+    (format-rules-streaming-matches-doc? (format-rules-empty-let-source) 80)
     (format-rules-streaming-matches-doc? (format-rules-comments-source) 80)
     (format-rules-streaming-matches-doc? (format-rules-quote-source) 80)
     (format-rules-streaming-matches-doc? (format-rules-unsafe-source) 80)

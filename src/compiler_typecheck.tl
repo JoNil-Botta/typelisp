@@ -1162,7 +1162,7 @@
   (+
     (d.get)
     (+
-      (let ([p : d.Point (d.Point 7)])
+      (let [p : d.Point (d.Point 7)]
         (struct-get p x))
       (match (d.Maybe.Some 3)
         [(d.Maybe.Some v) v]
@@ -1179,7 +1179,7 @@
   (+
     (data.get)
     (+
-      (let ([p : data.Point (data.Point 7)])
+      (let [p : data.Point (data.Point 7)]
         (struct-get p x))
       (match (data.Maybe.Some 3)
         [(data.Maybe.Some v) v]
@@ -2796,8 +2796,8 @@
 (define (step [flag : bool]) : result_i64_string.Result
   (result_i64_string.ok (try (read flag))))
 (define (main [a : bool] [b : bool]) : result_i64_string.Result
-  (let ([x : i64 (try (step a))]
-        [y : i64 0])
+  (let [x : i64 (try (step a))]
+    [y : i64 0]
     (begin
       (set! y (try (read b)))
       (result_i64_string.ok (+ x y)))))")
@@ -2808,7 +2808,7 @@
 (define (read [flag : bool]) : TryCount
   (if flag (SomeCount 41) NoneCount))
 (define (main [flag : bool]) : MaybeBool
-  (let ([x : i64 (try (read flag))])
+  (let [x : i64 (try (read flag))]
     (SomeBool (> x 0))))")
 
 (define (compiler-typecheck-result-try-non-result-source) : String
@@ -2895,7 +2895,7 @@
   "(define (close [h : i64]) : unit unit)
 (define (main) : i64
   (with ([h 1 close])
-    (let ([copy h])
+    (let [copy h]
       copy)))")
 
 (define (compiler-typecheck-resource-fresh-let-source) : String
@@ -2904,7 +2904,7 @@
   (:cleanup cleanup-file-handle)
   (fd i64 (:cleanup close-fd)))
 (define (main) : i64
-  (let ([h : FileHandle (FileHandle 1)])
+  (let [h : FileHandle (FileHandle 1)]
     0))")
 
 (define (compiler-typecheck-resource-with-escape-source) : String
@@ -2917,14 +2917,14 @@
   "(define (close [h : i64]) : unit unit)
 (define (main) : i64
   (with ([h 1 close])
-    (let ([t : (Tuple i64 i64) (tuple h 2)])
+    (let [t : (Tuple i64 i64) (tuple h 2)]
       0)))")
 
 (define (compiler-typecheck-resource-with-array-store-source) : String
   "(define (close [h : i64]) : unit unit)
 (define (main) : i64
   (with ([h 1 close])
-    (let ([items : (Array i64 2) (array h 2)])
+    (let [items : (Array i64 2) (array h 2)]
       0)))")
 
 (define (compiler-typecheck-resource-with-struct-store-source) : String
@@ -2932,7 +2932,7 @@
 (define (close [h : i64]) : unit unit)
 (define (main) : i64
   (with ([h 1 close])
-    (let ([box : Box (Box h)])
+    (let [box : Box (Box h)]
       0)))")
 
 (define (compiler-typecheck-resource-with-enum-store-source) : String
@@ -2940,7 +2940,7 @@
 (define (close [h : i64]) : unit unit)
 (define (main) : i64
   (with ([h 1 close])
-    (let ([m : Maybe (Some h)])
+    (let [m : Maybe (Some h)]
       0)))")
 
 (define (compiler-typecheck-resource-with-lambda-capture-source) : String
@@ -2959,7 +2959,7 @@
 (define (compiler-typecheck-resource-with-assignment-source) : String
   "(define (close [h : i64]) : unit unit)
 (define (main) : i64
-  (let ([slot : i64 0])
+  (let [slot : i64 0]
     (with ([h 1 close])
       (set! slot h))))")
 
@@ -2967,7 +2967,7 @@
   "(define (close [h : i64]) : unit unit)
 (define (main) : i64
   (with ([h 1 close])
-    (let ([h : i64 2])
+    (let [h : i64 2]
       ((lambda () : i64 h)))))")
 
 (define (compiler-typecheck-resource-with-tests-ok?) : bool
@@ -4752,7 +4752,7 @@
       (let [copy : i64 i] unit)
       (set! i (+ i 1)))
     ((lambda ([x : i64]) : i64
-      (let () unit)
+      (let [] unit)
       (+ x i)) 39)))")
 
 (define (compiler-typecheck-statement-tests-ok?) : bool
@@ -7492,7 +7492,7 @@
   "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
 (define (main) : i64
-  (let ([flag : bool true])
+  (let [flag : bool true]
     (if (and2 flag true) 1 0)))")
 
 (define (compiler-typecheck-macro-expand-arity-source) : String
@@ -8035,18 +8035,18 @@
 
 (define (compiler-typecheck-macro-hygiene-capture-source) : String
   "(defmacro (with-temp-bool [body : bool]) : bool
-  `(let ([tmp : i64 1])
+  `(let [tmp : i64 1]
      ,body))
 (define (main) : bool
-  (let ([tmp : bool true])
+  (let [tmp : bool true]
     (with-temp-bool tmp)))")
 
 (define (compiler-typecheck-macro-forward-hygiene-source) : String
   "(define (main) : bool
-  (let ([tmp : bool true])
+  (let [tmp : bool true]
     (with-late-temp tmp)))
 (defmacro (with-late-temp [body : bool]) : bool
-  `(let ([tmp : i64 1])
+  `(let [tmp : i64 1]
      ,body))")
 
 (define (compiler-typecheck-macro-hygiene-definition-source) : String
@@ -8056,7 +8056,7 @@
      ,body
      unit))
 (define (main) : unit
-  (let ([macro-helper : bool true])
+  (let [macro-helper : bool true]
     (unless2 false unit)))")
 
 (define (compiler-typecheck-macro-hygiene-imported-definition-source) : String
@@ -8139,19 +8139,19 @@
 
 (define (compiler-typecheck-macro-hygiene-nested-source) : String
   "(defmacro (with-temp-bool [body : bool]) : bool
-  `(let ([tmp : i64 1])
+  `(let [tmp : i64 1]
      ,body))
 (defmacro (wrap-temp [body : bool]) : bool
   `(with-temp-bool ,body))
 (define (main) : bool
-  (let ([tmp : bool true])
+  (let [tmp : bool true]
     (wrap-temp tmp)))")
 
 (define (compiler-typecheck-macro-hygiene-exported-helper-local-source) : String
   "(module m)
 (defmacro (id-expr [body : Expr]) : i64 body)
 (defmacro (with-temp [value : i64]) : i64
-  `(let ([tmp : i64 ,value])
+  `(let [tmp : i64 ,value]
      (id-expr tmp)))
 (module main)
 (import m)
@@ -8159,10 +8159,10 @@
 
 (define (compiler-typecheck-macro-hygiene-splice-source) : String
   "(defmacro (with-temp-do [steps : unit ...]) : unit
-  `(let ([tmp : i64 1])
+  `(let [tmp : i64 1]
      (begin ,@steps)))
 (define (main) : unit
-  (let ([tmp : unit unit])
+  (let [tmp : unit unit]
     (with-temp-do tmp)))")
 
 (define (compiler-typecheck-macro-hygiene-unsafe-global-source) : String

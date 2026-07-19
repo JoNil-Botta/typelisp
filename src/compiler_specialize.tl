@@ -5938,11 +5938,11 @@
 (define (compiler-specialize-template-shadow-sibling-source) : String
   "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
 (define (main) : i64
-  (+ (let ([scale : i64 3]) scale) (scale 2 7)))")
+  (+ (let [scale : i64 3] scale) (scale 2 7)))")
 
 (define (compiler-specialize-type-shadow-source) : String
   "(define (pick [comptime T : type] [x : i64]) : i64
-  (let ([T : i64 x]) T))
+  (let [T : i64 x] T))
 (define (main) : i64 (pick (type i64) 7))")
 
 (define (compiler-specialize-type-param-ok?) : bool

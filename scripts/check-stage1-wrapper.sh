@@ -1184,7 +1184,8 @@ assert_empty "$WORKDIR/fmt-golden-check.stderr"
 
 cat > "$WORKDIR/fmt-changed.tl" <<'EOF'
 (define (main) : i64
-(+ 1 2))
+  (let ([x : i64 42])
+    x))
 EOF
 cp "$WORKDIR/fmt-changed.tl" "$WORKDIR/fmt-changed.expected"
 # cli-gate-case stage1-wrapper-fmt-check-changed wrapper run_expect_failure

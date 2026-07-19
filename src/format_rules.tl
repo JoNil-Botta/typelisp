@@ -131,9 +131,15 @@
     [(FormatCstListStep.Item first tail)
       (match first
         [(FormatCst.List bindings)
-          (if (format-rules-bracket-binding-list? (box-get bindings))
-            (format-rules-list-append (box-get bindings) tail)
-            rest)]
+          (match (fmt-cst-list-step (box-get bindings))
+            [(FormatCstListStep.Empty)
+              (FormatCstList.Cons
+                (FormatCst.BracketList (box FormatCstList.Nil))
+                (box tail))]
+            [_
+              (if (format-rules-bracket-binding-list? (box-get bindings))
+                (format-rules-list-append (box-get bindings) tail)
+                rest)])]
         [_ rest])]
     [_ rest]))
 
@@ -2935,6 +2941,16 @@
 (define (format-rules-flow-expected) : String
   "(define (main [x : i64]) : i64\n  (begin\n    (let\n      [y : i64 1]\n      (if (< x y)\n        (while (< x 10)\n          (set! x (+ x 1)))\n        x))\n    (match (Some x)\n      [(Some v) v]\n      [None 0])))")
 
+(define (format-rules-empty-let-source) : String
+  "(define (main) : i64 (let () 1 2))")
+
+(define (format-rules-empty-let-expected) : String
+  "(define (main) : i64
+  (let
+    []
+    1
+    2))")
+
 (define (format-rules-comments-source) : String
   ";; module header
 ;; keeps adjacent lines
@@ -3060,6 +3076,11 @@
       (format-rules-render-source-width (format-rules-decls-source) 80)]
     [flow : String
       (format-rules-render-source-width (format-rules-flow-source) 80)]
+    [flow-fixpoint : String (format-rules-render-source-width flow 80)]
+    [empty-let : String
+      (format-rules-render-source-width (format-rules-empty-let-source) 80)]
+    [empty-let-fixpoint : String
+      (format-rules-render-source-width empty-let 80)]
     [comments : String
       (format-rules-render-source-width (format-rules-comments-source) 80)]
     [quote : String
@@ -3081,6 +3102,11 @@
     (begin
       (unless (string.eq decls (format-rules-decls-expected)) (return 1))
       (unless (string.eq flow (format-rules-flow-expected)) (return 2))
+      (unless (string.eq flow-fixpoint flow) (return 11))
+      (unless
+        (string.eq empty-let (format-rules-empty-let-expected))
+        (return 12))
+      (unless (string.eq empty-let-fixpoint empty-let) (return 13))
       (unless (string.eq comments (format-rules-comments-expected)) (return 3))
       (unless (string.eq quote (format-rules-quote-expected)) (return 4))
       (unless (string.eq unsafe (format-rules-unsafe-expected)) (return 5))

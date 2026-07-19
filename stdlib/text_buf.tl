@@ -17,10 +17,10 @@
 ;# (import stdlib.text_buf)
 ;# (import stdlib.string)
 ;# (define (main) : i64
-;#   (let ([buf : text_buf.TextBuf
+;#   (let [buf : text_buf.TextBuf
 ;#     (text_buf.append-int
 ;#       (text_buf.append (text_buf.empty) "n=")
-;#       7)])
+;#       7)]
 ;#     (if (string.eq (text_buf.render buf) "n=7") 42 1)))
 ;# ```
 ;#

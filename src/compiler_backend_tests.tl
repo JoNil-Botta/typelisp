@@ -3654,15 +3654,15 @@
 (define (compiler-backend-closure-literal-source) : String
   "(define (__tl_lambda_main_0 [x : i64]) : i64 (+ x 1))
 (define (main) : i64
-  (let ([f : (-> i64 i64) __tl_lambda_main_0])
+  (let [f : (-> i64 i64) __tl_lambda_main_0]
     (f 41)))")
 
 (define (compiler-backend-closure-inferred-source) : String
   "(define (__tl_lambda_main_0 [x : i64]) : i64
-  (let ([y : i64 (+ x 1)])
+  (let [y : i64 (+ x 1)]
     y))
 (define (main) : i64
-  (let ([f : (-> i64 i64) __tl_lambda_main_0])
+  (let [f : (-> i64 i64) __tl_lambda_main_0]
     (f 41)))")
 
 (define (compiler-backend-closure-aggregate-return-source) : String
@@ -3675,10 +3675,10 @@
 (define (__tl_lambda_main_3) : Pair (Pair 1 13))
 
 (define (main) : i64
-  (let ([mk-string : (-> String) __tl_lambda_main_0]
+  (let [mk-string : (-> String) __tl_lambda_main_0]
         [mk-enum : (-> Box) __tl_lambda_main_1]
         [mk-array : (-> (Array i64)) __tl_lambda_main_2]
-        [mk-struct : (-> Pair) __tl_lambda_main_3])
+        [mk-struct : (-> Pair) __tl_lambda_main_3]
     (+ (__tl_string_length (mk-string))
        (+ (match (mk-enum) [(BoxI n) n])
           (+ (array-length (mk-array))

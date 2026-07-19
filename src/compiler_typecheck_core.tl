@@ -8620,6 +8620,27 @@
         out
         (tc-bind-comptime-helper-aliases
           out
+          (cbi.compiler-builtin-ctfe-ref 216)
+          (tc-fn2 (AstType.String) (AstType.String) (AstType.Bool))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          (cbi.compiler-builtin-ctfe-ref 217)
+          (tc-fn2 (AstType.String) (AstType.String) expr)))
+      (set!
+        out
+        (tc-bind-id out (cbi.compiler-builtin-ctfe-ref 218) (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          (cbi.compiler-builtin-ctfe-ref 218)
+          (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
           (cbi.compiler-builtin-ctfe-ref 17)
           (tc-fn1 (AstType.String) (AstType.Never))))
       (set!
@@ -20002,17 +20023,19 @@
               scoped-enum-id
               lifetimes
               fields)]
-          (tc-bind-enum-variants-in-module-id-at
-            ctx
-            (tc-bind-alias-id-if-free
-              env
-              (tc-module-name-id-by-id module-id name)
-              constructor-ty)
-            module-id
-            enum-name-id
-            lifetimes
-            variants
-            (+ index 1)))])))
+          (begin
+            (ctfe-module-value-add-id! module-id name constructor-ty)
+            (tc-bind-enum-variants-in-module-id-at
+              ctx
+              (tc-bind-alias-id-if-free
+                env
+                (tc-module-name-id-by-id module-id name)
+                constructor-ty)
+              module-id
+              enum-name-id
+              lifetimes
+              variants
+              (+ index 1))))])))
 
 (define (tc-build-top-env-list
   [ctx : TcContext]
@@ -20071,11 +20094,13 @@
               (tc-context-with-module-id ctx module module-id)
               inner)
               [(ResultTcType.Ok ty)
-                (ResultTcEnv.Ok
-                  (tc-bind-unsafe-id
-                    env
-                    (tc-module-name-id-by-id module-id name)
-                    ty))]
+                (begin
+                  (ctfe-module-value-add-id! module-id name ty)
+                  (ResultTcEnv.Ok
+                    (tc-bind-unsafe-id
+                      env
+                      (tc-module-name-id-by-id module-id name)
+                      ty)))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [(AstDecl.Extern decl-meta name kind _ _)
             (let
@@ -20083,16 +20108,18 @@
                 (tc-context-with-module-id ctx module module-id)]
               (match (tc-top-decl-type extern-ctx inner)
                 [(ResultTcType.Ok ty)
-                  (ResultTcEnv.Ok
-                    (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
-                      (tc-bind-unsafe-c-abi-fnptr-id
-                        env
-                        (tc-module-name-id-by-id module-id name)
-                        ty)
-                      (tc-bind-unsafe-id
-                        env
-                        (tc-module-name-id-by-id module-id name)
-                        ty)))]
+                  (begin
+                    (ctfe-module-value-add-id! module-id name ty)
+                    (ResultTcEnv.Ok
+                      (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
+                        (tc-bind-unsafe-c-abi-fnptr-id
+                          env
+                          (tc-module-name-id-by-id module-id name)
+                          ty)
+                        (tc-bind-unsafe-id
+                          env
+                          (tc-module-name-id-by-id module-id name)
+                          ty))))]
                 [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
           [_ (ResultTcEnv.Ok env)]))]
     [(AstDecl.Def decl-meta name _ _)
@@ -20101,24 +20128,30 @@
         env
         decl)
         [(ResultTcType.Ok ty)
-          (ResultTcEnv.Ok
-            (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))]
+          (begin
+            (ctfe-module-value-add-id! module-id name ty)
+            (ResultTcEnv.Ok
+              (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
     [(AstDecl.DefFn decl-meta name _ _ _ _)
       (match (tc-top-decl-type
         (tc-context-with-module-id ctx module module-id)
         decl)
         [(ResultTcType.Ok ty)
-          (ResultTcEnv.Ok
-            (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))]
+          (begin
+            (ctfe-module-value-add-id! module-id name ty)
+            (ResultTcEnv.Ok
+              (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
     [(AstDecl.DefDispatch decl-meta name _)
       (match (tc-top-decl-type
         (tc-context-with-module-id ctx module module-id)
         decl)
         [(ResultTcType.Ok ty)
-          (ResultTcEnv.Ok
-            (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))]
+          (begin
+            (ctfe-module-value-add-id! module-id name ty)
+            (ResultTcEnv.Ok
+              (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
     [(AstDecl.DefMacro decl-meta _ _ _ _) (ResultTcEnv.Ok env)]
     [(AstDecl.Extern decl-meta name kind _ _)
@@ -20127,13 +20160,15 @@
           (tc-context-with-module-id ctx module module-id)]
         (match (tc-top-decl-type extern-ctx decl)
           [(ResultTcType.Ok ty)
-            (ResultTcEnv.Ok
-              (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
-                (tc-bind-c-abi-fnptr-id
-                  env
-                  (tc-module-name-id-by-id module-id name)
-                  ty)
-                (tc-bind-id env (tc-module-name-id-by-id module-id name) ty)))]
+            (begin
+              (ctfe-module-value-add-id! module-id name ty)
+              (ResultTcEnv.Ok
+                (if (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)
+                  (tc-bind-c-abi-fnptr-id
+                    env
+                    (tc-module-name-id-by-id module-id name)
+                    ty)
+                  (tc-bind-id env (tc-module-name-id-by-id module-id name) ty))))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
     [(AstDecl.DefEnum decl-meta name cleanup variants)
       (let
@@ -20183,15 +20218,17 @@
               (tc-context-with-module-id ctx module module-id)
               fields)
             struct-ty)]
-        (ResultTcEnv.Ok
-          (tc-bind-struct-cleanup-module-id
-            (tc-bind-id
-              env
-              (tc-module-name-id-by-id module-id name)
-              constructor-ty)
-            module-id
-            cleanup
-            struct-ty)))]
+        (begin
+          (ctfe-module-value-add-id! module-id name constructor-ty)
+          (ResultTcEnv.Ok
+            (tc-bind-struct-cleanup-module-id
+              (tc-bind-id
+                env
+                (tc-module-name-id-by-id module-id name)
+                constructor-ty)
+              module-id
+              cleanup
+              struct-ty))))]
     [(AstDecl.DefStructLifetimes decl-meta name lifetimes _ cleanup fields)
       (let
         [struct-ty : AstType
@@ -20204,15 +20241,17 @@
               (tc-context-with-module-id ctx module module-id)
               fields)
             struct-ty)]
-        (ResultTcEnv.Ok
-          (tc-bind-struct-cleanup-module-id
-            (tc-bind-id
-              env
-              (tc-module-name-id-by-id module-id name)
-              constructor-ty)
-            module-id
-            cleanup
-            struct-ty)))]
+        (begin
+          (ctfe-module-value-add-id! module-id name constructor-ty)
+          (ResultTcEnv.Ok
+            (tc-bind-struct-cleanup-module-id
+              (tc-bind-id
+                env
+                (tc-module-name-id-by-id module-id name)
+                constructor-ty)
+              module-id
+              cleanup
+              struct-ty))))]
     [(AstDecl.Import decl-meta _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeStr _ _) (ResultTcEnv.Ok env)]
     [(AstDecl.IncludeStrComptime _ _) (ResultTcEnv.Ok env)]
@@ -20850,6 +20889,12 @@
   (begin
     (tc-nominal-owner-cache-reset!)
     (tc-unqualified-import-ambiguity-reset!)
+    ;; A whole-program rebuild replaces the active declaration view. Rebuild
+    ;; the compact value-signature index from that same view so declarations
+    ;; removed by a non-inert splice cannot survive as stale reflection hits.
+    ;; Incremental Extend/Refresh plans bypass this entry and update the index
+    ;; as they bind only their additive/refreshed declarations.
+    (ctfe-module-value-reset!)
     ;; Expanded declarations retain their source aliases after lazy imports are
     ;; removed. Keep the expansion-time alias -> generated-module identities;
     ;; compile-start reset already prevents them leaking between programs.
@@ -25982,6 +26027,10 @@
                     (not (tc-name-bound-id? env name-id)))
                   (tc-reflection-query-runtime-call name)]
                 [(and
+                    (ctfe-builtin-module-value-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-reflection-query-runtime-call name)]
+                [(and
                     (cbi.compiler-builtin-typecheck-float-sqrt-id? name-id)
                     (not (tc-name-bound-id? env name-id)))
                   (tc-float-sqrt-call ctx env args)]
@@ -26928,6 +26977,10 @@
                   (not (tc-name-bound-id? env name-id)))
                 (tc-reflection-query-runtime-call name)]
               [(and
+                  (ctfe-builtin-module-value-id? name-id)
+                  (not (tc-name-bound-id? env name-id)))
+                (tc-reflection-query-runtime-call name)]
+              [(and
                   (cbi.compiler-builtin-typecheck-float-sqrt-id? name-id)
                   (not (tc-name-bound-id? env name-id)))
                 (tc-float-sqrt-call ctx env args)]
@@ -27032,6 +27085,10 @@
                     args)]
                 [(and
                     (ctfe-builtin-reflection-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-reflection-query-runtime-call name)]
+                [(and
+                    (ctfe-builtin-module-value-id? name-id)
                     (not (tc-name-bound-id? env name-id)))
                   (tc-reflection-query-runtime-call name)]
                 [(and
@@ -41177,6 +41234,7 @@
       [(ctfe-builtin-size-align-id? lookup-id) true]
       [(ctfe-builtin-offset-of-id? lookup-id) true]
       [(ctfe-builtin-reflection-id? call-id) true]
+      [(ctfe-builtin-module-value-id? call-id) true]
       [(ctfe-string-eq-helper-name-id? lookup-name lookup-id) true]
       [(ctfe-builtin-string-build-id? call-id) true]
       [(ctfe-string-length-helper-name-id? lookup-name lookup-id) true]
@@ -42632,6 +42690,8 @@
       (tc-macro-abstract-mask-allows? (bit-or (shl 1 15) (shl 1 16)))]
     [(= call-id (cbi.compiler-builtin-ctfe-ref 214))
       (tc-macro-abstract-mask-allows? (shl 1 28))]
+    [(= call-id (cbi.compiler-builtin-ctfe-ref 218))
+      (tc-macro-abstract-mask-allows? (bit-or (shl 1 24) (shl 1 25)))]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 85))
         (= call-id (cbi.compiler-builtin-ctfe-ref 86)))
@@ -42673,6 +42733,7 @@
       "array"]
     [(= call-id (cbi.compiler-builtin-ctfe-ref 83)) "fixed array shape"]
     [(= call-id (cbi.compiler-builtin-ctfe-ref 214)) "box"]
+    [(= call-id (cbi.compiler-builtin-ctfe-ref 218)) "reference"]
     [(or
         (= call-id (cbi.compiler-builtin-ctfe-ref 85))
         (= call-id (cbi.compiler-builtin-ctfe-ref 86)))
@@ -66222,6 +66283,21 @@
 (define (ctfe-node-has-type-literal? [id : i64]) : bool
   (ctfe-expr-has-type-literal? (ast-node-get id)))
 
+(define (ctfe-node-is-module-value-query? [id : i64]) : bool
+  (match (ast-expr-unspan (ast-node-get id))
+    [(AstExpr.Var raw-id)
+      (let
+        [source-id : i64 (macro-hygiene-global-source-name-id-or raw-id raw-id)]
+        (ctfe-builtin-module-value-id?
+          (ctfe-comptime-helper-call-name-id source-id)))]
+    [_ false]))
+
+;; Function arguments are eager. Use this at the declaration-list boundary so
+;; an earlier type literal cannot stop the combined metadata/query prescan
+;; before it reaches a later macro body.
+(define (ctfe-reflection-prescan-or [left : bool] [right : bool]) : bool
+  (or left right))
+
 (define (ctfe-exprs-have-type-literal? [exprs : AstExprList]) : bool
   (ctfe-exprs-have-type-literal-at? (& exprs) 0))
 
@@ -66230,7 +66306,7 @@
   [index : i64]) : bool
   (if (>= index (struct-get exprs len))
     false
-    (or
+    (ctfe-reflection-prescan-or
       (ctfe-node-has-type-literal? (ast-expr-list-get exprs index 0))
       (ctfe-exprs-have-type-literal-at? exprs (+ index 1)))))
 
@@ -66242,7 +66318,7 @@
   [index : i64]) : bool
   (if (>= index (struct-get arms len))
     false
-    (or
+    (ctfe-reflection-prescan-or
       (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
         [(AstMatchArm.Arm _ body-box) (ctfe-node-has-type-literal? body-box)])
       (ctfe-arms-have-type-literal-at? arms (+ index 1)))))
@@ -66255,7 +66331,7 @@
   [index : i64]) : bool
   (if (>= index (ast-let-binding-list-len bindings))
     false
-    (or
+    (ctfe-reflection-prescan-or
       (match (ast-let-binding-list-get
         bindings
         index
@@ -66277,22 +66353,29 @@
     [(AstExpr.ProgramEnvp) false]
     [(AstExpr.Spanned inner-box _) (ctfe-node-has-type-literal? inner-box)]
     [(AstExpr.Call func-box args)
-      (or
-        (ctfe-node-has-type-literal? func-box)
-        (ctfe-exprs-have-type-literal? args))]
+      (begin
+        (if (ctfe-node-is-module-value-query? func-box)
+          (ctfe-module-value-reflection-enable! true)
+          unit)
+        (ctfe-reflection-prescan-or
+          (ctfe-node-has-type-literal? func-box)
+          (ctfe-exprs-have-type-literal? args)))]
     [(AstExpr.BracketClause items) (ctfe-exprs-have-type-literal? items)]
     [(AstExpr.Binary _ l r)
-      (or (ctfe-node-has-type-literal? l) (ctfe-node-has-type-literal? r))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? l)
+        (ctfe-node-has-type-literal? r))]
     [(AstExpr.Unary _ i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.If c t e)
-      (or
+      (ctfe-reflection-prescan-or
         (ctfe-node-has-type-literal? c)
-        (ctfe-node-has-type-literal? t)
-        (ctfe-node-has-type-literal? e))]
+        (ctfe-reflection-prescan-or
+          (ctfe-node-has-type-literal? t)
+          (ctfe-node-has-type-literal? e)))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body)
-          (or
+          (ctfe-reflection-prescan-or
             (ctfe-bindings-have-type-literal? bindings)
             (ctfe-node-has-type-literal? body))])]
     [(AstExpr.Lambda lambda-box)
@@ -66300,28 +66383,40 @@
         [(AstLambda.Lambda _ _ body) (ctfe-node-has-type-literal? body)])]
     [(AstExpr.Tuple exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExpr.TupleRef a b)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.Array exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExpr.DynArray exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExpr.MakeArray _ len) (ctfe-node-has-type-literal? len)]
     [(AstExpr.ArrayRef a i)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? i))]
-    [(AstExpr.ArraySet a i v)
-      (or
+      (ctfe-reflection-prescan-or
         (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? i)
-        (ctfe-node-has-type-literal? v))]
-    [(AstExpr.ArrayTake a l i)
-      (or
-        (ctfe-node-has-type-literal? a)
-        (ctfe-node-has-type-literal? l)
         (ctfe-node-has-type-literal? i))]
+    [(AstExpr.ArraySet a i v)
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-reflection-prescan-or
+          (ctfe-node-has-type-literal? i)
+          (ctfe-node-has-type-literal? v)))]
+    [(AstExpr.ArrayTake a l i)
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-reflection-prescan-or
+          (ctfe-node-has-type-literal? l)
+          (ctfe-node-has-type-literal? i)))]
     [(AstExpr.ArrayPush a v)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? v))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? v))]
     [(AstExpr.StringRef a b)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.While c b)
-      (or (ctfe-node-has-type-literal? c) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? c)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.Begin exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExpr.Unsafe exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExpr.Set _ rhs) (ctfe-node-has-type-literal? rhs)]
@@ -66331,30 +66426,39 @@
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrut arms)
-          (or
+          (ctfe-reflection-prescan-or
             (ctfe-node-has-type-literal? scrut)
             (ctfe-arms-have-type-literal? arms))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach _ _ s e b)
-          (or
+          (ctfe-reflection-prescan-or
             (ctfe-node-has-type-literal? s)
-            (ctfe-node-has-type-literal? e)
-            (ctfe-node-has-type-literal? b))])]
+            (ctfe-reflection-prescan-or
+              (ctfe-node-has-type-literal? e)
+              (ctfe-node-has-type-literal? b)))])]
     [(AstExpr.StructGet i _) (ctfe-node-has-type-literal? i)]
     [(AstExpr.StructSet i _ v)
-      (or (ctfe-node-has-type-literal? i) (ctfe-node-has-type-literal? v))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? i)
+        (ctfe-node-has-type-literal? v))]
     [(AstExpr.WithRegion _ exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExpr.WithEscape i exprs)
-      (or (ctfe-node-has-type-literal? i) (ctfe-exprs-have-type-literal? exprs))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? i)
+        (ctfe-exprs-have-type-literal? exprs))]
     [(AstExpr.WithScratch exprs) (ctfe-exprs-have-type-literal? exprs)]
     [(AstExpr.InArena i exprs)
-      (or (ctfe-node-has-type-literal? i) (ctfe-exprs-have-type-literal? exprs))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? i)
+        (ctfe-exprs-have-type-literal? exprs))]
     [(AstExpr.Box i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.BoxGet i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.BoxTake i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.BoxSet i v)
-      (or (ctfe-node-has-type-literal? i) (ctfe-node-has-type-literal? v))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? i)
+        (ctfe-node-has-type-literal? v))]
     [(AstExpr.Comptime i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.Quote i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.Quasiquote i) (ctfe-node-has-type-literal? i)]
@@ -66365,27 +66469,41 @@
     [(AstExpr.PtrNullCheck i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.PtrRead i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.PtrWrite a b)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.PtrOffset a b)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.PtrCast i _) (ctfe-node-has-type-literal? i)]
     [(AstExpr.PtrToInt i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.IntToPtr i _) (ctfe-node-has-type-literal? i)]
     [(AstExpr.StringData i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.StringFromBytes a b)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.ArrayData i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.BinaryData _) false]
     [(AstExpr.SpmdProgramIndex) false]
     [(AstExpr.SpmdProgramCount) false]
     [(AstExpr.CpuIdEax a b)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.CpuIdEbx a b)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.CpuIdEcx a b)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.CpuIdEdx a b)
-      (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? b))]
+      (ctfe-reflection-prescan-or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? b))]
     [(AstExpr.Xgetbv i) (ctfe-node-has-type-literal? i)]
     [(AstExpr.Syscall exprs) (ctfe-exprs-have-type-literal? exprs)]
     [_ true]))
@@ -66409,7 +66527,7 @@
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
-      (or
+      (ctfe-reflection-prescan-or
         (ctfe-decl-has-type-literal? decl)
         (ctfe-program-has-type-literal? rest))]))
 
@@ -67412,16 +67530,30 @@
             ;; splice fallback. Clearing it here left every pass after the first
             ;; with an empty export set, breaking module-hook.
             (set! macro-expand-expr-type-macro-names expr-type-macro-names)
-            ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
-            ;; the program actually contains a `(type T)` literal -- the sole entry
-            ;; point for every CTFE reflection/layout query.
-            (set!
-              ctfe-needs-metadata
-              (or
-                has-defmacro
-                has-visible-macro-call
-                (ctfe-program-has-type-literal? decls)
-                has-expr-type-macros))
+            ;; Scan once for type literals and module-value queries. The latter
+            ;; enables only the compact signature index; it must not force the
+            ;; much larger layout/nominal-reflection metadata build.
+            (ctfe-module-value-reflection-enable! false)
+            (let
+              [has-type-literal : bool (ctfe-program-has-type-literal? decls)]
+              (begin
+                ;; Source macro bodies and ordinary comptime expressions are
+                ;; visited by the combined scan above. Surface-summary macro
+                ;; bodies are outside this AST, so conservatively enable the
+                ;; compact index only for that imported-summary case.
+                (if has-summary-macro-import
+                  (ctfe-module-value-reflection-enable! true)
+                  unit)
+                ;; Only build the (tens-of-MB, O(types^2))
+                ;; reflection/layout metadata if the program actually contains
+                ;; a `(type T)` literal or macros need reflection.
+                (set!
+                  ctfe-needs-metadata
+                  (or
+                    has-defmacro
+                    has-visible-macro-call
+                    has-type-literal
+                    has-expr-type-macros))))
             (if (or has-defmacro has-visible-macro-call program-needs-expansion)
               (let
                 [prefix-reserve : i64 1024]
@@ -69777,6 +69909,8 @@
         (set! tc-hygiene-module-env-cache-arena 0)))
     (set! tc-lazy-import-summary-macro-force-record-count 0)
     (ctfe-module-macro-export-reset!)
+    (ctfe-module-value-reflection-enable! false)
+    (ctfe-module-value-reset!)
     (set! ctfe-needs-metadata true)
     (macro-generated-module-memo-reset!)
     (macro-generated-decls-memo-reset!)))
@@ -69818,6 +69952,8 @@
     (macro-live-prescan-reset!)
     (set! tc-lazy-import-summary-macro-force-record-count 0)
     (ctfe-module-macro-export-reset!)
+    (ctfe-module-value-reflection-enable! false)
+    (ctfe-module-value-reset!)
     (set! ctfe-needs-metadata true)))
 
 (define (compiler-typecheck-reset-intern-owned-state!) : unit

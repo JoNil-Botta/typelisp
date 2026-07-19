@@ -4625,6 +4625,7 @@ Primitive names and signatures are fixed as follows:
 | `(enum-variant-payload-type type-expr variant-index-expr payload-index-expr)` | `type` | Zero-based payload type. |
 | `(array-element-type type-expr)` | `type` | Requires fixed or compatibility dynamic array. |
 | `(box-element-type type-expr)` | `type` | Requires `Box`; returns its element type. |
+| `(reference-element-type type-expr)` | `type` | Requires `(& region T)` or `(&mut region T)`; returns `T` with the operand's resolved lifetime substitutions. |
 | `(array-length type-expr)` | `i64` | Requires fixed array. Compatibility dynamic arrays reject this. |
 | `(array-dynamic? type-expr)` | `bool` | True for `(Array T)`, false for `(Array T n)`. |
 | `(tuple-element-count type-expr)` | `i64` | Requires tuple type. |
@@ -4632,6 +4633,8 @@ Primitive names and signatures are fixed as follows:
 | `(function-param-count type-expr)` | `i64` | Requires function type. |
 | `(function-param-type type-expr index-expr)` | `type` | Zero-based parameter type. |
 | `(function-return-type type-expr)` | `type` | Function return type. |
+| `(module-value? module-expr name-expr)` | `bool` | True when the canonically identified module defines the named public value. |
+| `(module-value-type module-expr name-expr)` | `type` | Signature type of the named public value; a missing value is a compile-time diagnostic. |
 
 `index-expr`, `variant-index-expr`, and `payload-index-expr` must evaluate to
 `i64` in the same comptime context. Out-of-range indices, wrong arity,
@@ -4647,10 +4650,22 @@ diagnostic names the primitive and the expected kind, for example
 - Reserved/partial shapes: `str`, `ptr`, `mut-ptr`, `ref`, `mut-ref`,
   `region`, `type-var`.
 
-Reserved/partial shapes are classified by `type-kind` and `type-key` only;
-reflection exposes no further pointer, reference, or region detail. Tuple types
-can be keyed, classified, and inspected by arity and zero-based element type;
-tuple reflection exposes no runtime tuple descriptor.
+Reserved/partial shapes are classified by `type-kind` and `type-key`.
+`reference-element-type` additionally exposes the referent of shared and mutable
+references; it does not expose a runtime reference handle or a separately
+inspectable region object. Raw pointer and region detail remains unavailable.
+Tuple types can be keyed, classified, and inspected by arity and zero-based
+element type; tuple reflection exposes no runtime tuple descriptor.
+
+Module reflection takes compiler-owned comptime `String` values. `module-expr`
+is a canonical module identity, such as the result of `module-name` for a
+`Module` macro parameter; source import aliases are not module identities.
+Lookup observes public value declarations in the current macro environment,
+including reachable imported and stdlib modules and declarations emitted by
+earlier module/decl macros. Values include functions, globals, externs, and
+dispatch declarations. The result is a comptime type value, never a runtime
+module or symbol handle. A failed `module-value-type` diagnostic names the
+query, module identity, and requested value.
 
 Nominal identity is two-part:
 
@@ -4695,8 +4710,10 @@ Exclusions:
 
 - Layout size, alignment, and field offset queries belong to the layout-query
   surface in section 5.18 and are not aliases for reflection primitives.
-- Raw pointer, reference, and region details beyond kind and key are not
-  exposed.
+- Raw pointer and region details beyond kind and key are not exposed. Reference
+  reflection exposes only the referent type described above.
+- Module reflection does not expose runtime module handles, enumerate module
+  contents, or provide feature-specific hook queries.
 - Runtime type IDs, runtime reflection, trait/interface lookup, method tables,
   and type-erased dispatch are not part of this surface.
 - Reflection metadata strings are not runtime `String` allocation hooks.
@@ -4935,6 +4952,9 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 172 | `expr-binary-data` |
 | 173 | `box-element-type` |
 | 174 | `expr-list-type-nth` |
+| 175 | `module-value?` |
+| 176 | `module-value-type` |
+| 177 | `reference-element-type` |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned

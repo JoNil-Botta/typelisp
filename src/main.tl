@@ -142,12 +142,14 @@ Options:
 (define (cli-clean-help-text) : String
   "Usage:
     typelisp clean [<file.tl>] [--manifest-path <typelisp.pkg>] [--dry-run]
+    typelisp clean --experiments [--manifest-path <typelisp.pkg>] [--dry-run]
 
 Summary:
-    Remove build artifacts for a source file or package.
+    Remove source, package, or dedicated ad-hoc experiment artifacts.
 
 Options:
     --dry-run                      List artifacts without deleting them
+    --experiments                  Remove only target/exp at the package root
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
 ")
 

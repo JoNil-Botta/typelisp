@@ -2087,13 +2087,13 @@
         (compiler-source-spans-insert-instr
           (compiler-source-spans-insert-instr
             (opt-spans-base)
-            "main"
+            (opt-test-symbol "main")
             call
             (opt-test-span 161 31))
-          "main"
+          (opt-test-symbol "main")
           header-phi
           (opt-test-span 162 33))
-        "main"
+        (opt-test-symbol "main")
         exit-phi
         (opt-test-span 163 35))]
     [result-mov : CompilerIrInstr
@@ -2114,16 +2114,21 @@
                 (= (opt-count-direct-call-name-blocks blocks "inline_branch") 0)
                 (smoke-inline-phi-loop-repaired? blocks)
                 (opt-inline-structure-ok? blocks)
-                (opt-span-lookup-ok? optimized-spans "main" result-mov 161 31)
                 (opt-span-lookup-ok?
                   optimized-spans
-                  "main"
+                  (opt-test-symbol "main")
+                  result-mov
+                  161
+                  31)
+                (opt-span-lookup-ok?
+                  optimized-spans
+                  (opt-test-symbol "main")
                   repaired-header
                   162
                   33)
                 (opt-span-lookup-ok?
                   optimized-spans
-                  "main"
+                  (opt-test-symbol "main")
                   repaired-exit
                   163
                   35)))]

@@ -22,7 +22,7 @@ usage: scripts/measure-vector-instantiation-cost.sh [options] [typelisp-compiler
 
 Options:
   --runs N       Cachegrind runs per fixture (default: 1)
-  --output DIR   Output directory (default: target/vector-instantiation-cost)
+  --output DIR   Output under target/ (default: target/vector-instantiation-cost)
   --opt-level N  Fixture compile opt level: 0, 1, or 2 (default: 1)
   -h, --help     Show this help
 
@@ -84,6 +84,15 @@ esac
 case "$(uname -s)" in
     Linux*) ;;
     *) echo "vector instantiation Cachegrind measurement is Linux-only" >&2; exit 1 ;;
+esac
+TARGET_ROOT=$(realpath -m -- "$ROOT/target")
+WORKDIR=$(realpath -m -- "$WORKDIR")
+case "$WORKDIR" in
+    "$TARGET_ROOT"/?*) ;;
+    *)
+        echo "--output must resolve inside $TARGET_ROOT: $WORKDIR" >&2
+        exit 2
+        ;;
 esac
 command -v valgrind >/dev/null 2>&1 || {
     echo "valgrind is required for vector instantiation measurement" >&2

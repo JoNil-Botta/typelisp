@@ -119,6 +119,10 @@
   (type-info CompilerRegVarTypes)
   (assignments CompilerRegAssignmentTable)
   (scratch-weights (Array i64))
+  ;; Per-synthetic-var physical homes barred by the real lowering constraint.
+  ;; C15b feeds these into the scratch greedy so a pseudo cannot satisfy demand
+  ;; with an operand/result home that the late scratch planner must reject.
+  (scratch-excluded (Array CompilerRegStringList))
   (scratch-base i64)
   (scratch-count i64))
 
@@ -15147,6 +15151,7 @@
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]
   [unspillable-from : i64]
+  [scratch-excluded : (Array CompilerRegStringList)]
   [pending : (Array i64)]
   [evict-count : (Array i64)]
   [heap : CompilerRegGreedyHeap]) : i64
@@ -15183,17 +15188,26 @@
         (if csr-only
           callee-regs
           regs)]
+      [scratch-forbidden : CompilerRegStringList
+        (if (and
+          (>= unspillable-from 0)
+          (>= var unspillable-from)
+          (< var (array-length scratch-excluded)))
+          (array-ref scratch-excluded var)
+          CompilerRegStringList.Nil)]
       [forbidden : CompilerRegStringList
         (let
           [base : CompilerRegStringList
             (if csr-only
               CompilerRegStringList.Nil
               (compiler-reg-greedy-forbidden-regs spans-div spans-shift))]
-          (if (and (>= unspillable-from 0) (>= var unspillable-from))
-            (compiler-reg-string-list-append
-              (compiler-reg-scratch-div-fixed-registers)
-              base)
-            base))]
+          (compiler-reg-string-list-append
+            scratch-forbidden
+            (if (and (>= unspillable-from 0) (>= var unspillable-from))
+              (compiler-reg-string-list-append
+                (compiler-reg-scratch-div-fixed-registers)
+                base)
+              base)))]
       ;; Highest-priority bias: if this var is an outgoing call argument, try its
       ;; ABI arg register first (free-only, never evicting). Falls through to the
       ;; copy-hint / first-free / evict pick when the arg register is unavailable.
@@ -15629,7 +15643,8 @@
   [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]
-  [unspillable-from : i64]) : unit
+  [unspillable-from : i64]
+  [scratch-excluded : (Array CompilerRegStringList)]) : unit
   (let
     [v : i64 (compiler-reg-greedy-heap-pop! heap ref-counts pending)]
     (if (< v 0)
@@ -15659,6 +15674,7 @@
               callee-regs
               caller-saved-count
               unspillable-from
+              scratch-excluded
               pending
               evict-count
               heap)]
@@ -15687,7 +15703,8 @@
           shift-points
           callee-regs
           caller-saved-count
-          unspillable-from)))))
+          unspillable-from
+          scratch-excluded)))))
 
 ;; Staged worklist driver (RAGreedy Component 1): re-entrant evict-and-requeue
 ;; priority worklist over the unassigned root set, processing highest-current-
@@ -15720,7 +15737,8 @@
   [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]
-  [unspillable-from : i64]) : unit
+  [unspillable-from : i64]
+  [scratch-excluded : (Array CompilerRegStringList)]) : unit
   (let
     [cap : i64
       (if (< n 1)
@@ -15790,7 +15808,8 @@
         shift-points
         callee-regs
         caller-saved-count
-        unspillable-from)
+        unspillable-from
+        scratch-excluded)
       (if (>= unspillable-from 0)
         (begin
           (compiler-reg-greedy-worklist-seed!
@@ -15824,7 +15843,8 @@
             shift-points
             callee-regs
             caller-saved-count
-            unspillable-from))
+            unspillable-from
+            scratch-excluded))
         unit))))
 
 ;; Unified Greedy integer register pool: caller-saved zero-call scratch
@@ -16798,7 +16818,7 @@
         (struct-get coalesce parents)
         assignments)]))
 
-(define (compiler-reg-greedy-state
+(define (compiler-reg-greedy-state-with-scratch-exclusions
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
   [assignments : CompilerRegAssignmentTable]
@@ -16813,7 +16833,8 @@
   [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]
-  [unspillable-from : i64]) : CompilerRegAssignState
+  [unspillable-from : i64]
+  [scratch-excluded : (Array CompilerRegStringList)]) : CompilerRegAssignState
   (let
     [n : i64 (array-length (struct-get assignments present))]
     [rcount : i64 (compiler-reg-string-list-count regs)]
@@ -16864,8 +16885,43 @@
             shift-points
             callee-regs
             caller-saved-count
-            unspillable-from)
+            unspillable-from
+            scratch-excluded)
           (CompilerRegAssignState.State CompilerRegActiveList.Nil assignments))))))
+
+(define (compiler-reg-greedy-state
+  [candidates : CompilerRegIntervalList]
+  [regs : CompilerRegStringList]
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [param-roots : CompilerLiveI64Set]
+  [ref-counts : (Array i64)]
+  [copy-hints : (Array i64)]
+  [arg-prefs : (Array i64)]
+  [call-points : CompilerLiveI64Set]
+  [div-points : CompilerLiveI64Set]
+  [shift-points : CompilerLiveI64Set]
+  [callee-regs : CompilerRegStringList]
+  [caller-saved-count : i64]
+  [unspillable-from : i64]) : CompilerRegAssignState
+  (compiler-reg-greedy-state-with-scratch-exclusions
+    candidates
+    regs
+    assignments
+    interval-index
+    group-vars
+    param-roots
+    ref-counts
+    copy-hints
+    arg-prefs
+    call-points
+    div-points
+    shift-points
+    callee-regs
+    caller-saved-count
+    unspillable-from
+    (array.make-array CompilerRegStringList 0)))
 
 ;; ============================================================================
 ;; GAP2b: register-PAIR homing for 16-byte group values. The greedy
@@ -18148,8 +18204,6 @@
         allow-caller-saved-zero-call)]
     [allocation-index : CompilerRegIntervalIndex
       (struct-get early-scratch-model interval-index)]
-    [allocation-table : CompilerRegAssignmentTable
-      (struct-get early-scratch-model assignments)]
     [early-scratch-base : i64 (struct-get early-scratch-model scratch-base)]
     [early-scratch-count : i64 (struct-get early-scratch-model scratch-count)]
     [early-scratch-weights : (Array i64)
@@ -18357,6 +18411,25 @@
     [base-integer-assignments : CompilerRegAssignmentTable
       (match integer-state
         [(CompilerRegAssignState.State _ assignments) assignments])]
+    ;; The early interval shape is allocation-independent, but each lowering
+    ;; constraint excludes the instruction operands' PHYSICAL homes. Refresh the
+    ;; targeted model after base coloring so C15b's scratch phase cannot claim a
+    ;; home that the retained late planner must reject. Non-target functions keep
+    ;; the original empty model by identity and pay no second walk.
+    [colored-early-scratch-model : CompilerRegEarlyScratchModel
+      (if (= early-scratch-count 0)
+        early-scratch-model
+        (compiler-reg-early-scratch-model
+          abi
+          func
+          eff-index
+          type-info
+          base-integer-assignments
+          true))]
+    [allocation-table : CompilerRegAssignmentTable
+      (struct-get colored-early-scratch-model assignments)]
+    [early-scratch-excluded : (Array CompilerRegStringList)
+      (struct-get colored-early-scratch-model scratch-excluded)]
     [scratch-input-assignments : CompilerRegAssignmentTable
       (compiler-reg-assignment-table-with-scratch
         base-integer-assignments
@@ -18368,7 +18441,7 @@
         (CompilerRegAssignState.State
           CompilerRegActiveList.Nil
           scratch-input-assignments)
-        (compiler-reg-greedy-state
+        (compiler-reg-greedy-state-with-scratch-exclusions
           scratch-candidates
           (compiler-reg-greedy-integer-pool-for-abi abi)
           scratch-input-assignments
@@ -18383,7 +18456,8 @@
           shift-points
           integer-registers
           (compiler-reg-greedy-caller-saved-count-for-abi abi)
-          early-scratch-base))]
+          early-scratch-base
+          early-scratch-excluded))]
     [integer-scratch-assignments : CompilerRegAssignmentTable
       (match scratch-state
         [(CompilerRegAssignState.State _ assignments) assignments])]
@@ -24121,20 +24195,17 @@
     [(CompilerIrValue.Char _) true]
     [_ false]))
 
-(define (compiler-reg-early-scratch-target? [_instr : CompilerIrInstr]) : bool
-  (cfg
-    scratch-vreg
-    (match _instr
-      [(CompilerIrInstr.BinOp _ op _ rhs ty)
-        (and
-          (not (compiler-reg-float-type? ty))
-          (match op
-            [(CompilerIrBinOp.SafeDiv) true]
-            [(CompilerIrBinOp.SafeMod) true]
-            [_ false])
-          (compiler-reg-early-scratch-literal? rhs))]
-      [_ false])
-    false))
+(define (compiler-reg-early-scratch-target? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp _ op _ rhs ty)
+      (and
+        (not (compiler-reg-float-type? ty))
+        (match op
+          [(CompilerIrBinOp.SafeDiv) true]
+          [(CompilerIrBinOp.SafeMod) true]
+          [_ false])
+        (compiler-reg-early-scratch-literal? rhs))]
+    [_ false]))
 
 (define (compiler-reg-early-scratch-count-seq [instrs : CompilerIrInstrSeq]) : i64
   (let
@@ -24208,7 +24279,8 @@
   [ends : (Array i64)]
   [segments : (Array CompilerRegIntervalList)]
   [present : (Array i64)]
-  [types : (Array AstType)]) : unit
+  [types : (Array AstType)]
+  [scratch-excluded : (Array CompilerRegStringList)]) : unit
   (let
     [requirement : CompilerRegScratchRequirement
       (compiler-reg-early-scratch-expansion-requirement
@@ -24229,6 +24301,10 @@
         present
         types
         requirement)
+      (array-set!
+        scratch-excluded
+        var
+        (struct-get (struct-get requirement constraint) excluded))
       (if (string.eq fixed "")
         unit
         (begin
@@ -24253,7 +24329,8 @@
   [segments : (Array CompilerRegIntervalList)]
   [present : (Array i64)]
   [types : (Array AstType)]
-  [scratch-weights : (Array i64)]) : CompilerRegScratchFillState
+  [scratch-weights : (Array i64)]
+  [scratch-excluded : (Array CompilerRegStringList)]) : CompilerRegScratchFillState
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [len : i64 (struct-get instrs len)]
@@ -24284,7 +24361,8 @@
                         ends
                         segments
                         present
-                        types)
+                        types
+                        scratch-excluded)
                       ;; Each non-fixed requirement contributes one demand
                       ;; occurrence at the expansion's loop depth.
                       (array-set!
@@ -24316,7 +24394,8 @@
   [segments : (Array CompilerRegIntervalList)]
   [present : (Array i64)]
   [types : (Array AstType)]
-  [scratch-weights : (Array i64)]) : CompilerRegScratchFillState
+  [scratch-weights : (Array i64)]
+  [scratch-excluded : (Array CompilerRegStringList)]) : CompilerRegScratchFillState
   (match blocks
     [(CompilerIrBlockList.Nil)
       (CompilerRegScratchFillState.State instruction-start scratch-start)]
@@ -24338,7 +24417,8 @@
             segments
             present
             types
-            scratch-weights)
+            scratch-weights
+            scratch-excluded)
             [(CompilerRegScratchFillState.State next-instruction next-scratch)
               (compiler-reg-early-scratch-fill-blocks!
                 abi
@@ -24356,7 +24436,8 @@
                 segments
                 present
                 types
-                scratch-weights)])])]
+                scratch-weights
+                scratch-excluded)])])]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -24384,7 +24465,8 @@
                     segments
                     present
                     types
-                    scratch-weights)
+                    scratch-weights
+                    scratch-excluded)
                     [(CompilerRegScratchFillState.State
                         next-instruction
                         next-scratch)
@@ -24415,6 +24497,7 @@
             base-types
             base-assignments
             (array.make-array i64 0)
+            (array.make-array CompilerRegStringList 0)
             scratch-base
             0)
           (let
@@ -24426,6 +24509,8 @@
             [present : (Array i64) (array.make-array i64 out-vars)]
             [types : (Array AstType) (array.make-array AstType out-vars)]
             [scratch-weights : (Array i64) (array.make-array i64 scratch-count)]
+            [scratch-excluded : (Array CompilerRegStringList)
+              (array.make-array CompilerRegStringList out-vars)]
             [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
             [assignment-list : CompilerRegAssignmentList
               (compiler-reg-assignment-table-to-list base-assignments)]
@@ -24475,7 +24560,8 @@
                 segments
                 present
                 types
-                scratch-weights)
+                scratch-weights
+                scratch-excluded)
               (CompilerRegEarlyScratchModel
                 (CompilerRegIntervalIndex starts ends segments)
                 (CompilerRegVarTypes
@@ -24488,6 +24574,7 @@
                   types)
                 assignments
                 scratch-weights
+                scratch-excluded
                 scratch-base
                 scratch-count)))))]))
 
@@ -24516,8 +24603,12 @@
             (set! r (+ r 1))))
         ;; Use the same (discounted * radix + raw) scale as real values. Scratch
         ;; is not rematerialisable, so its discounted and raw costs are equal.
-        ;; An unprofitable requirement remains unassigned (never stack-spilled)
-        ;; and the retained late planner/scavenger supplies the sound fallback.
+        ;; A non-zero demand wins an exact real-value tie by one unit: failing to
+        ;; place it costs a save+restore pair, while evicting the equally cold
+        ;; occupant pays one honest spill/reload home. The ordinary greedy keeps
+        ;; its strict-lower eviction rule; only these targeted pseudos receive the
+        ;; preservation-cost tie-break. An unprofitable requirement remains
+        ;; unassigned and the retained late planner/scavenger supplies fallback.
         (while (< v vars)
           (let
             [scratch-index : i64 (- v scratch-base)]
@@ -24526,13 +24617,17 @@
                 (array-ref scratch-weights scratch-index)
                 0)]
             [combined : i64 (+ (* weight (+ max-raw 1)) weight)]
+            [priced : i64
+              (if (= weight 0)
+                combined
+                (+ combined 1))]
             (begin
               (array-set!
                 out
                 v
-                (if (>= combined (compiler-reg-greedy-evict-inf))
+                (if (>= priced (compiler-reg-greedy-evict-inf))
                   (- (compiler-reg-greedy-evict-inf) 1)
-                  combined))
+                  priced))
               (set! v (+ v 1)))))
         out))))
 
@@ -24651,7 +24746,11 @@
   [register-class : CompilerRegScratchClass]) : CompilerRegStringList
   (match register-class
     [(CompilerRegScratchClass.Gp)
-      (compiler-reg-greedy-integer-pool-for-abi abi)]
+      ;; A scratch interval is confined to one lowering expansion and never
+      ;; crosses a call. Give both targets the canonical GP candidate order so
+      ;; Win64's shorter volatile prefix cannot advance the same demand to a
+      ;; different save class (notably %rbx) solely because of ABI pool order.
+      (compiler-reg-greedy-integer-pool-for-abi (CompilerRegTargetAbi.Linux))]
     [(CompilerRegScratchClass.Xmm) (compiler-reg-xmm-registers-for-abi abi)]))
 
 (define (compiler-reg-scratch-constraint-pool
@@ -26580,7 +26679,10 @@
           func
           index
           types
-          (compiler-reg-assignment-table-make 2)
+          (compiler-reg-assignment-table-insert
+            (compiler-reg-assignment-table-make 2)
+            0
+            (CompilerRegLocation.Register "%r10"))
           true)])))
 
 (define (compiler-reg-early-scratch-model-one-abi-ok?
@@ -26591,6 +26693,8 @@
     [assignments : CompilerRegAssignmentTable (struct-get model assignments)]
     [base : i64 (struct-get model scratch-base)]
     [weights : (Array i64) (struct-get model scratch-weights)]
+    [excluded : (Array CompilerRegStringList)
+      (struct-get model scratch-excluded)]
     (and
       (= base 2)
       (= (struct-get model scratch-count) 5)
@@ -26600,6 +26704,15 @@
       (= (array-ref weights 2) 1)
       (= (array-ref weights 3) 1)
       (= (array-ref weights 4) 1)
+      (compiler-reg-string-list-contains?
+        (array-ref excluded (+ base 2))
+        "%r10")
+      (compiler-reg-string-list-contains?
+        (array-ref excluded (+ base 3))
+        "%r10")
+      (compiler-reg-string-list-contains?
+        (array-ref excluded (+ base 4))
+        "%r10")
       (compiler-reg-early-scratch-slot-range-ok? model 0 2 3)
       (compiler-reg-early-scratch-slot-range-ok? model 1 2 3)
       (compiler-reg-early-scratch-slot-range-ok? model 2 2 3)
@@ -26622,18 +26735,65 @@
         [_ false]))))
 
 (define (compiler-reg-early-scratch-model-ok?) : bool
-  (cfg
-    scratch-vreg
+  (and
+    (=
+      (compiler-reg-early-scratch-count-blocks
+        (compiler-reg-early-scratch-nontarget-blocks))
+      0)
+    (compiler-reg-early-scratch-model-one-abi-ok? (CompilerRegTargetAbi.Linux))
+    (compiler-reg-early-scratch-model-one-abi-ok?
+      (CompilerRegTargetAbi.Windows))))
+
+(define (compiler-reg-scratch-default-pool-target-invariant-ok?) : bool
+  (let
+    [intervals : CompilerRegIntervalList
+      (compiler-reg-interval-cons
+        (CompilerRegInterval.Interval 0 0 1)
+        CompilerRegIntervalList.Nil)]
+    [index : CompilerRegIntervalIndex
+      (compiler-reg-interval-index-build intervals 1)]
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-make 1)]
+    [excluded : CompilerRegStringList
+      (compiler-reg-string-cons "%rax" CompilerRegStringList.Nil)]
     (and
-      (=
-        (compiler-reg-early-scratch-count-blocks
-          (compiler-reg-early-scratch-nontarget-blocks))
-        0)
-      (compiler-reg-early-scratch-model-one-abi-ok?
-        (CompilerRegTargetAbi.Linux))
-      (compiler-reg-early-scratch-model-one-abi-ok?
-        (CompilerRegTargetAbi.Windows)))
-    true))
+      (string.eq
+        (compiler-reg-scratch-pick-register
+          assignments
+          index
+          (array.make-array i64 0)
+          0
+          1
+          (compiler-reg-scratch-default-pool
+            (CompilerRegTargetAbi.Linux)
+            (CompilerRegScratchClass.Gp))
+          excluded)
+        "%rsi")
+      (string.eq
+        (compiler-reg-scratch-pick-register
+          assignments
+          index
+          (array.make-array i64 0)
+          0
+          1
+          (compiler-reg-scratch-default-pool
+            (CompilerRegTargetAbi.Windows)
+            (CompilerRegScratchClass.Gp))
+          excluded)
+        "%rsi")
+      ;; XMM volatility differs materially across ABIs and remains ABI-aware.
+      (string.eq
+        (compiler-reg-scratch-pick-register
+          assignments
+          index
+          (array.make-array i64 0)
+          0
+          1
+          (compiler-reg-scratch-default-pool
+            (CompilerRegTargetAbi.Windows)
+            (CompilerRegScratchClass.Xmm))
+          CompilerRegStringList.Nil)
+        "%xmm2"))))
 
 (define (compiler-reg-early-scratch-never-spills-ok?) : bool
   (let
@@ -26650,11 +26810,24 @@
         (compiler-reg-assignment-table-make 2)
         0
         (CompilerRegLocation.Register "%r12"))]
+    [base-weights : (Array i64) (array.make-array i64 1)]
+    [raw-weights : (Array i64) (array.make-array i64 1)]
+    [scratch-weights : (Array i64) (array.make-array i64 1)]
     [weights : (Array i64) (array.make-array i64 2)]
     [hints : (Array i64) (array.make-array i64 2)]
     (begin
-      (array-set! weights 0 1)
-      (array-set! weights 1 2)
+      (array-set! base-weights 0 3)
+      (array-set! raw-weights 0 1)
+      (array-set! scratch-weights 0 1)
+      (set!
+        weights
+        (compiler-reg-early-scratch-extend-weights
+          base-weights
+          raw-weights
+          2
+          1
+          1
+          scratch-weights))
       (compiler-reg-fill-i64-array hints -1)
       (match (compiler-reg-greedy-state
         intervals
@@ -26672,6 +26845,66 @@
         (compiler-reg-string-cons "%r12" CompilerRegStringList.Nil)
         0
         1)
+        [(CompilerRegAssignState.State _ out)
+          (and
+            (= (array-ref weights 0) 3)
+            (= (array-ref weights 1) 4)
+            (compiler-reg-location-spill-offset?
+              (compiler-reg-assignment-table-lookup out 0)
+              (compiler-reg-stack-slot-offset 0))
+            (compiler-reg-location-register?
+              (compiler-reg-assignment-table-lookup out 1)
+              "%r12"))]))))
+
+(define (compiler-reg-early-scratch-exclusion-rehomes-ok?) : bool
+  (let
+    [intervals : CompilerRegIntervalList
+      (compiler-reg-interval-cons
+        (CompilerRegInterval.Interval 0 0 4)
+        (compiler-reg-interval-cons
+          (CompilerRegInterval.Interval 1 1 3)
+          CompilerRegIntervalList.Nil))]
+    [index : CompilerRegIntervalIndex
+      (compiler-reg-interval-index-build intervals 2)]
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-insert
+        (compiler-reg-assignment-table-make 2)
+        0
+        (CompilerRegLocation.Register "%r12"))]
+    [weights : (Array i64) (array.make-array i64 2)]
+    [hints : (Array i64) (array.make-array i64 2)]
+    [excluded : (Array CompilerRegStringList)
+      (array.make-array CompilerRegStringList 2)]
+    (begin
+      (array-set! weights 0 1)
+      (array-set! weights 1 2)
+      (compiler-reg-fill-i64-array hints -1)
+      ;; %r10 is free but is the instruction operand home. The scratch pseudo
+      ;; must instead evict the colder, CSR-only real value from %r12; when that
+      ;; value is requeued it has no legal register and receives a real spill.
+      (array-set!
+        excluded
+        1
+        (compiler-reg-string-cons "%r10" CompilerRegStringList.Nil))
+      (match (compiler-reg-greedy-state-with-scratch-exclusions
+        intervals
+        (compiler-reg-string-cons
+          "%r10"
+          (compiler-reg-string-cons "%r12" CompilerRegStringList.Nil))
+        assignments
+        index
+        (compiler-live-set-empty)
+        (compiler-live-set-insert (compiler-live-set-empty) 0)
+        weights
+        hints
+        hints
+        (compiler-live-set-empty)
+        (compiler-live-set-empty)
+        (compiler-live-set-empty)
+        (compiler-reg-string-cons "%r12" CompilerRegStringList.Nil)
+        1
+        1
+        excluded)
         [(CompilerRegAssignState.State _ out)
           (and
             (compiler-reg-location-spill-offset?
@@ -34723,8 +34956,14 @@
       "compiler-reg-early-scratch-model-ok?"
       (compiler-reg-early-scratch-model-ok?))
     (compiler-regalloc-self-test-require!
+      "compiler-reg-scratch-default-pool-target-invariant-ok?"
+      (compiler-reg-scratch-default-pool-target-invariant-ok?))
+    (compiler-regalloc-self-test-require!
       "compiler-reg-early-scratch-never-spills-ok?"
       (compiler-reg-early-scratch-never-spills-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-early-scratch-exclusion-rehomes-ok?"
+      (compiler-reg-early-scratch-exclusion-rehomes-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-indexed-lookups-ok?"
       (compiler-reg-indexed-lookups-ok?))

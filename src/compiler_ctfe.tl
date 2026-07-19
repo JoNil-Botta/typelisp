@@ -5277,11 +5277,13 @@
                           "expr-string-value expects a string literal Expr")))
                     (ResultCtfe.Ok (CompilerCtfeValue.Bool false) arg-fuel))])]
             [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    "expr-string inspector expects Expr")))])]
+              (if extract?
+                (ResultCtfe.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "expr-string-value expects a string literal Expr")))
+                (ResultCtfe.Ok (CompilerCtfeValue.Bool false) arg-fuel))])]
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box
@@ -14549,6 +14551,8 @@
       (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 24) if-expr)]
     [fallback-cond-expr : i64
       (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 22) true-expr)]
+    [non-expr-string-predicate : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 91) true-lit)]
     [clause : AstExprClause (AstExprClause true-lit false-lit)]
     [clause-env : CtfeEnv
       (ctfe-env-extend-id
@@ -14568,6 +14572,7 @@
       (compiler-ctfe-eval-bool-ok? not-bool-predicate env false)
       (compiler-ctfe-eval-bool-ok? bool-value env false)
       (compiler-ctfe-eval-bool-ok? bool-value-fallback env false)
+      (compiler-ctfe-eval-bool-ok? non-expr-string-predicate env false)
       (match (compiler-ctfe-eval
         (ctfe-ast-get env cond-expr)
         env

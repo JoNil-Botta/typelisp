@@ -23896,6 +23896,30 @@
         point)]
     (= cached scanned)))
 
+(define (compiler-backend-emit-current-count-gate-ok?) : bool
+  (and
+    (not
+      (compiler-backend-emit-needs-current-count?
+        0
+        0
+        (CompilerBackendMode.Scalar)))
+    (not
+      (compiler-backend-emit-needs-current-count?
+        0
+        0
+        (CompilerBackendMode.Avx512)))
+    (compiler-backend-emit-needs-current-count?
+      1
+      0
+      (CompilerBackendMode.Scalar))
+    (compiler-backend-emit-needs-current-count?
+      0
+      1
+      (CompilerBackendMode.Scalar))
+    ;; AVX2 predicated-store labels are position-keyed even without register
+    ;; homes or const-hoist sites.
+    (compiler-backend-emit-needs-current-count? 0 0 (CompilerBackendMode.Avx2))))
+
 (define (compiler-backend-scavenge-occupancy-cache-ok?) : bool
   (let
     [starts : (Array i64) (make-array i64 5)]
@@ -24661,6 +24685,7 @@
         (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
+        (compiler-backend-emit-current-count-gate-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)

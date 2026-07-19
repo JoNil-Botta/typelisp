@@ -89,11 +89,6 @@
   (displacement i64)
   (rip-after i64))
 
-(defstruct CompilerComptimeHelperEmission
-  (name-patch-offsets (Array i64))
-  (name-patch-indices (Array i64))
-  (name-patch-count i64))
-
 (define (compiler-comptime-context-params) : CompilerComptimeContextParams
   (CompilerComptimeContextParams 0 1 2))
 
@@ -569,14 +564,15 @@
 (define (compiler-comptime-emit-instrumented-helper!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [mode : CompilerComptimeLowerMode]
-  [helper : CompilerComptimeHelperIr]) : CompilerComptimeHelperEmission
+  [helper : CompilerComptimeHelperIr]
+  [patch-displacements : (Array i64)]
+  [patch-name-indices : (Array i64)]
+  [cursor : i64]) : i64
   (let
     [result : i64 (struct-get helper success-result-handle)]
     [probes : (Array CompilerComptimeStatusProbe) (struct-get helper probes)]
     [names : (Array String) (struct-get helper names)]
-    [patch-offsets : (Array i64) (make-array i64 (array-length probes))]
-    [patch-indices : (Array i64) (make-array i64 (array-length probes))]
-    [patch-count : i64 0]
+    [patch-cursor : i64 cursor]
     [index : i64 0]
     (begin
       (compiler-comptime-emit-bytes!
@@ -633,16 +629,16 @@
               (match probe
                 [(CompilerComptimeStatusProbe _ _ _ _ name-index)
                   (begin
-                    (array-set! patch-offsets patch-count patch)
-                    (array-set! patch-indices patch-count name-index)
-                    (set! patch-count (+ patch-count 1)))])
+                    (array-set! patch-displacements patch-cursor patch)
+                    (array-set! patch-name-indices patch-cursor name-index)
+                    (set! patch-cursor (+ patch-cursor 1)))])
               unit)
             (set! index (+ index 1)))))
       (compiler-comptime-emit-bytes! out (make-array 0x49 0xc7 0x04 0x24))
       (compiler-comptime-emit-u32! out result)
       (compiler-comptime-emit-bytes! out (make-array 0x31 0xc0))
       (compiler-comptime-emit-helper-unwind! out mode)
-      (CompilerComptimeHelperEmission patch-offsets patch-indices patch-count))))
+      patch-cursor)))
 
 (define (compiler-comptime-emit-name-pool!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -658,24 +654,22 @@
           (set! index (+ index 1))))
       offsets)))
 
-(define (compiler-comptime-resolve-name-patches!
-  [code : (Array u8)]
-  [emission : CompilerComptimeHelperEmission]
-  [pool-offsets : (Array i64)]) : unit
+(define (compiler-comptime-program-name-call-count
+  [program : CompilerComptimeMacroProgram]) : i64
   (let
+    [operations : (Array CompilerComptimeOperation)
+      (struct-get program operations)]
     [index : i64 0]
-    (while (< index (struct-get emission name-patch-count))
-      (let
-        [displacement : i64
-          (array-ref (struct-get emission name-patch-offsets) index)]
-        [name-index : i64
-          (array-ref (struct-get emission name-patch-indices) index)]
+    [count : i64 0]
+    (begin
+      (while (< index (array-length operations))
         (begin
-          (compiler-comptime-set-u32!
-            code
-            displacement
-            (- (array-ref pool-offsets name-index) (+ displacement 4)))
-          (set! index (+ index 1)))))))
+          (match (array-ref operations index)
+            [(CompilerComptimeOperation.HostCallName _ _)
+              (set! count (+ count 1))]
+            [_ unit])
+          (set! index (+ index 1))))
+      count)))
 
 (define (compiler-comptime-u32-value? [value : i64]) : bool
   (and (>= value 0) (<= value 0xffffffff)))
@@ -749,15 +743,21 @@
           (struct-get ir mode)
           (struct-get ir session-cookie))]
       [helper-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
-      [helper-emission : CompilerComptimeHelperEmission
+      [helper-names : (Array String) (struct-get (struct-get ir helper) names)]
+      [patch-displacements : (Array i64)
+        (make-array i64 (array-length helper-names))]
+      [patch-name-indices : (Array i64)
+        (make-array i64 (array-length helper-names))]
+      [patch-count : i64
         (compiler-comptime-emit-instrumented-helper!
           (&mut out)
           (struct-get ir mode)
-          (struct-get ir helper))]
+          (struct-get ir helper)
+          patch-displacements
+          patch-name-indices
+          0)]
       [name-pool-offsets : (Array i64)
-        (compiler-comptime-emit-name-pool!
-          (&mut out)
-          (struct-get (struct-get ir helper) names))]
+        (compiler-comptime-emit-name-pool! (&mut out) helper-names)]
       [_table-align : unit (compiler-comptime-align-code! (&mut out) 8)]
       [macro-table-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
       [_table : unit
@@ -781,10 +781,20 @@
           code
           (struct-get helper-patch displacement)
           (- helper-offset (struct-get helper-patch rip-after)))
-        (compiler-comptime-resolve-name-patches!
-          code
-          helper-emission
-          name-pool-offsets)
+        (let
+          [pindex : i64 0]
+          (while (< pindex patch-count)
+            (let
+              [displacement : i64 (array-ref patch-displacements pindex)]
+              [name-index : i64 (array-ref patch-name-indices pindex)]
+              (begin
+                (compiler-comptime-set-u32!
+                  code
+                  displacement
+                  (-
+                    (array-ref name-pool-offsets name-index)
+                    (+ displacement 4)))
+                (set! pindex (+ pindex 1))))))
         (ResultCompilerComptimeImagePayload.Ok
           (CompilerComptimeImagePayload
             code
@@ -841,9 +851,25 @@
       [helper-displacements : (Array i64) (make-array i64 count)]
       [helper-rip-afters : (Array i64) (make-array i64 count)]
       [helper-offsets : (Array i64) (make-array i64 count)]
-      [helper-emissions : (Array CompilerComptimeHelperEmission)
-        (array.make-array CompilerComptimeHelperEmission count)]
-      [helper-pools : (Array (Array i64)) (array.make-array (Array i64) count)]
+      [total-name-patches : i64
+        (let
+          [scan : i64 0]
+          [total : i64 0]
+          (begin
+            (while (< scan count)
+              (begin
+                (set!
+                  total
+                  (+
+                    total
+                    (compiler-comptime-program-name-call-count
+                      (array-ref programs scan))))
+                (set! scan (+ scan 1))))
+            total))]
+      [patch-displacements : (Array i64) (make-array i64 total-name-patches)]
+      [patch-name-indices : (Array i64) (make-array i64 total-name-patches)]
+      [patch-values : (Array i64) (make-array i64 total-name-patches)]
+      [patch-cursor : i64 0]
       [index : i64 0]
       (begin
         (while (< index count)
@@ -859,18 +885,35 @@
                 mode
                 (struct-get ir session-cookie))]
             [helper-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
-            [helper-emission : CompilerComptimeHelperEmission
+            [start-cursor : i64 patch-cursor]
+            [next-cursor : i64
               (compiler-comptime-emit-instrumented-helper!
                 (&mut out)
                 mode
-                (struct-get ir helper))]
+                (struct-get ir helper)
+                patch-displacements
+                patch-name-indices
+                patch-cursor)]
             [pool-offsets : (Array i64)
               (compiler-comptime-emit-name-pool!
                 (&mut out)
                 (struct-get (struct-get ir helper) names))]
             (begin
-              (array-set! helper-emissions index helper-emission)
-              (array-set! helper-pools index pool-offsets)
+              (let
+                [resolve : i64 start-cursor]
+                (while (< resolve next-cursor)
+                  (let
+                    [displacement : i64 (array-ref patch-displacements resolve)]
+                    [name-index : i64 (array-ref patch-name-indices resolve)]
+                    (begin
+                      (array-set!
+                        patch-values
+                        resolve
+                        (-
+                          (array-ref pool-offsets name-index)
+                          (+ displacement 4)))
+                      (set! resolve (+ resolve 1))))))
+              (set! patch-cursor next-cursor)
               (array-set!
                 layouts
                 index
@@ -937,10 +980,14 @@
                       (-
                         (array-ref helper-offsets index)
                         (array-ref helper-rip-afters index)))
-                    (compiler-comptime-resolve-name-patches!
+                    (set! index (+ index 1))))
+                (set! index 0)
+                (while (< index total-name-patches)
+                  (begin
+                    (compiler-comptime-set-u32!
                       code
-                      (array-ref helper-emissions index)
-                      (array-ref helper-pools index))
+                      (array-ref patch-displacements index)
+                      (array-ref patch-values index))
                     (set! index (+ index 1))))
                 (ResultCompilerComptimePackageImagePayload.Ok
                   (CompilerComptimePackageImagePayload

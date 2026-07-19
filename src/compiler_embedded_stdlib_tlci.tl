@@ -309,6 +309,14 @@
               (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b)))
           unit)
         tlci-host-callback-status-diagnostic)]
+    ;; Scratch lifecycle ops: the compiler-owned session builds results on its
+    ;; value stack, not through host scratch, so these are no-ops. Registration
+    ;; shells issue only scratch-reset, so accepting it lets a shell dispatch
+    ;; run cleanly and commit no result -- the route then interprets it.
+    [(= operation tlci-host-callback-op-scratch-alloc)
+      tlci-host-callback-status-ok]
+    [(= operation tlci-host-callback-op-scratch-reset)
+      tlci-host-callback-status-ok]
     [(= operation tlci-host-callback-op-expr-var)
       (if (or (<= arg-a 0) (< arg-b 0))
         tlci-host-callback-status-bad-request

@@ -62099,11 +62099,10 @@
   (Value CompilerCtfeValue)
   (Err CompilerDiagnostic))
 
-;; The one identity whose embedded entry carries a source-compiled native
-;; body in this slice; the per-entry inventory that replaces this constant is
-;; the generalization issue's deliverable. Refs #5212.
-(define macro-stdlib-tlci-native-identity : String
-  "stdlib.array/length")
+;; A cataloged entry is attempted natively; the image is self-describing, so
+;; an entry that commits a result was a compiled native body and an entry
+;; that commits nothing (a registration shell) falls back to interpretation.
+;; No per-identity list is needed. Refs #5212, #5213.
 (define macro-stdlib-tlci-native-cookie : i64
   0x1cf1)
 
@@ -62129,7 +62128,10 @@
           (str_cat.str-cat definition-module "/" macro-name))]
       (if (or
         (not macro-expand-stdlib-tlci-route-active)
-        (not (string.eq identity macro-stdlib-tlci-native-identity)))
+        (not
+          (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
+            [(CompilerEmbeddedStdlibTlciLookup.Cataloged) true]
+            [_ false])))
         MacroNativeStdlibTlciResult.No
         (if (not (compiler-embedded-stdlib-tlci-session-open!))
           MacroNativeStdlibTlciResult.No
@@ -62167,38 +62169,46 @@
                         (MacroNativeStdlibTlciResult.Err
                           (ctfe-diagnostic-at-expr call-expr message)))]
                     [(ResultTlciMacroDispatch.Ok dispatch)
-                      (if (and
-                        (= (struct-get dispatch status) 0)
-                        (compiler-comptime-host-result-ready?))
-                        (let
-                          [value : CompilerCtfeValue
-                            (compiler-comptime-host-result-value)]
-                          (begin
-                            (compiler-comptime-host-session-close!)
-                            (cfg
-                              compile-profile
+                      (let
+                        [status : i64 (struct-get dispatch status)]
+                        (cond
+                          [(and
+                              (= status 0)
+                              (compiler-comptime-host-result-ready?))
+                            (let
+                              [value : CompilerCtfeValue
+                                (compiler-comptime-host-result-value)]
                               (begin
-                                (set!
-                                  compiler-tc-macro-stdlib-tlci-catalog-hits
-                                  (+
-                                    compiler-tc-macro-stdlib-tlci-catalog-hits
-                                    1))
-                                (set!
-                                  compiler-tc-macro-stdlib-tlci-native-dispatches
-                                  (+
-                                    compiler-tc-macro-stdlib-tlci-native-dispatches
-                                    1))))
-                            (MacroNativeStdlibTlciResult.Value value)))
-                        (let
-                          [status : i64 (struct-get dispatch status)]
-                          (begin
-                            (compiler-comptime-host-session-close!)
-                            (MacroNativeStdlibTlciResult.Err
-                              (ctfe-diagnostic-at-expr
-                                call-expr
-                                (tlci-loader-macro-status-diagnostic
-                                  identity
-                                  status))))))]))))))))))
+                                (compiler-comptime-host-session-close!)
+                                (cfg
+                                  compile-profile
+                                  (begin
+                                    (set!
+                                      compiler-tc-macro-stdlib-tlci-catalog-hits
+                                      (+
+                                        compiler-tc-macro-stdlib-tlci-catalog-hits
+                                        1))
+                                    (set!
+                                      compiler-tc-macro-stdlib-tlci-native-dispatches
+                                      (+
+                                        compiler-tc-macro-stdlib-tlci-native-dispatches
+                                        1))))
+                                (MacroNativeStdlibTlciResult.Value value)))]
+                          ;; status 0 with no committed result: a registration
+                          ;; shell -- keep the counted interpreted fallback.
+                          [(= status 0)
+                            (begin
+                              (compiler-comptime-host-session-close!)
+                              MacroNativeStdlibTlciResult.No)]
+                          [else
+                            (begin
+                              (compiler-comptime-host-session-close!)
+                              (MacroNativeStdlibTlciResult.Err
+                                (ctfe-diagnostic-at-expr
+                                  call-expr
+                                  (tlci-loader-macro-status-diagnostic
+                                    identity
+                                    status))))]))]))))))))))
 
 (cfg
   (not embedded-stdlib-tlci)

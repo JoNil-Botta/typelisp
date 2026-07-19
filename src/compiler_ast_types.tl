@@ -1660,12 +1660,23 @@
 (define (ty-node-get [id : i64]) : AstType
   (array-ref ty-node-pool-slots id))
 
+;; Identity of the current type-node id space: bumped whenever ids may change
+;; meaning (truncation discards ids; a pool-state install swaps the whole
+;; space), so id-keyed side caches can guard on it. Immutable hash-consed
+;; nodes make a stable generation sufficient for cache validity.
+(define ty-node-pool-generation : i64
+  0)
+
+(define (ty-node-pool-generation-value) : i64
+  ty-node-pool-generation)
+
 ;: Truncate the pool back to `mark` nodes (discard from a failed parse).
 ;; Dedup entries above `mark` would dangle, so the table is cleared; truncation
 ;; happens at most a few times per compile (parse rollback, per-compile reset).
 (define (ty-node-pool-truncate! [mark : i64]) : unit
   (begin
     (set! ty-node-pool-count mark)
+    (set! ty-node-pool-generation (+ ty-node-pool-generation 1))
     (ty-node-dedup-clear!)
     (ast-node-pool-active-context-capture-type!)))
 
@@ -1696,6 +1707,7 @@
     (set! ast-node-pool-count (struct-get expr-pool count))
     (set! ty-node-pool-slots (struct-get type-pool slots))
     (set! ty-node-pool-count (struct-get type-pool count))
+    (set! ty-node-pool-generation (+ ty-node-pool-generation 1))
     (set! ty-node-pool-exhausted (struct-get type-pool exhausted))
     (set!
       ty-node-dedup-capacity

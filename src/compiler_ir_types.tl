@@ -4272,8 +4272,30 @@
   (Cons CompilerSourceSpansEntry (Box CompilerSourceSpansEntryList))
   (Array CompilerSourceSpansEntrySeq))
 
+;; Instruction spans are keyed by typed ids instead of rendered strings: a
+;; value entry is (function symbol id, destination var id) and a store entry
+;; is (function symbol id, stored-name symbol id). Building and comparing
+;; these keys costs a couple of integer moves where the string keys cost an
+;; int->string, three appends, an allocation, and byte-wise equality per
+;; probed entry. Refs #5142.
+(defenum CompilerSourceSpansInstrKey
+  (Value i64 i64)
+  (Store i64 i64))
+
+(defenum CompilerSourceSpansInstrEntry
+  (Entry CompilerSourceSpansInstrKey AstSourceSpan))
+
+(defstruct CompilerSourceSpansInstrEntrySeq
+  (slots (Array CompilerSourceSpansInstrEntry))
+  (len i64))
+
+(defenum CompilerSourceSpansInstrEntryList
+  (Nil)
+  (Cons CompilerSourceSpansInstrEntry (Box CompilerSourceSpansInstrEntryList))
+  (Array CompilerSourceSpansInstrEntrySeq))
+
 (defenum CompilerSourceSpans
-  (Spans CompilerSourceSpansEntryList CompilerSourceSpansEntryList i64))
+  (Spans CompilerSourceSpansEntryList CompilerSourceSpansInstrEntryList i64))
 
 (defenum CompilerMaybeSourceSpan
   (No)
@@ -4282,13 +4304,16 @@
 (define (compiler-source-spans-empty) : CompilerSourceSpans
   (CompilerSourceSpans.Spans
     (CompilerSourceSpansEntryList.Nil)
-    (CompilerSourceSpansEntryList.Nil)
+    (CompilerSourceSpansInstrEntryList.Nil)
     0))
 
 (define (compiler-source-spans-clear-instrs [spans : CompilerSourceSpans]) : CompilerSourceSpans
   (match spans
     [(CompilerSourceSpans.Spans entries _ _)
-      (CompilerSourceSpans.Spans entries (CompilerSourceSpansEntryList.Nil) 0)]))
+      (CompilerSourceSpans.Spans
+        entries
+        (CompilerSourceSpansInstrEntryList.Nil)
+        0)]))
 
 (define (compiler-source-spans-entry-list-count
   [entries : CompilerSourceSpansEntryList]) : i64
@@ -4405,6 +4430,146 @@
           (CompilerSourceSpansEntryList.Array
             (CompilerSourceSpansEntrySeq slots (+ count 1)))))]))
 
+(define (compiler-source-spans-instr-key-eq?
+  [left : CompilerSourceSpansInstrKey]
+  [right : CompilerSourceSpansInstrKey]) : bool
+  (match left
+    [(CompilerSourceSpansInstrKey.Value left-function left-var)
+      (match right
+        [(CompilerSourceSpansInstrKey.Value right-function right-var)
+          (and (= left-var right-var) (= left-function right-function))]
+        [_ false])]
+    [(CompilerSourceSpansInstrKey.Store left-function left-name)
+      (match right
+        [(CompilerSourceSpansInstrKey.Store right-function right-name)
+          (and (= left-name right-name) (= left-function right-function))]
+        [_ false])]))
+
+(define (compiler-source-spans-instr-entry-list-count
+  [entries : CompilerSourceSpansInstrEntryList]) : i64
+  (match entries
+    [(CompilerSourceSpansInstrEntryList.Nil) 0]
+    [(CompilerSourceSpansInstrEntryList.Cons _ rest)
+      (let
+        [rest : CompilerSourceSpansInstrEntryList (box-get rest)]
+        (+ 1 (compiler-source-spans-instr-entry-list-count rest)))]
+    [(CompilerSourceSpansInstrEntryList.Array seq) (struct-get seq len)]))
+
+(define (compiler-source-spans-instr-entry-list-copy-array-range!
+  [dst : (&mut dst (Array CompilerSourceSpansInstrEntry))]
+  [src : (& src (Array CompilerSourceSpansInstrEntry))]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 index]
+    (while (< i count)
+      (begin
+        (array-set! dst i (array-ref src i))
+        (set! i (+ i 1))))))
+
+(define (compiler-source-spans-instr-entry-list-copy-cons!
+  [entries : CompilerSourceSpansInstrEntryList]
+  [dst : (&mut dst (Array CompilerSourceSpansInstrEntry))]
+  [index : i64]) : i64
+  (match entries
+    [(CompilerSourceSpansInstrEntryList.Nil) index]
+    [(CompilerSourceSpansInstrEntryList.Cons entry rest)
+      (begin
+        (array-set! dst index entry)
+        (compiler-source-spans-instr-entry-list-copy-cons!
+          (box-get rest)
+          dst
+          (+ index 1)))]
+    [(CompilerSourceSpansInstrEntryList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        (begin
+          (while (< i count)
+            (begin
+              (array-set! dst (+ index i) (array-ref (struct-get seq slots) i))
+              (set! i (+ i 1))))
+          (+ index count)))]))
+
+(define (compiler-source-spans-instr-entry-list-push-array
+  [seq : CompilerSourceSpansInstrEntrySeq]
+  [entry : CompilerSourceSpansInstrEntry]) : CompilerSourceSpansInstrEntryList
+  (let
+    [slots : (Array CompilerSourceSpansInstrEntry) (struct-get seq slots)]
+    [len : i64 (struct-get seq len)]
+    [cap : i64 (array-length slots)]
+    (if (< len cap)
+      (begin
+        (array-set! slots len entry)
+        (CompilerSourceSpansInstrEntryList.Array
+          (CompilerSourceSpansInstrEntrySeq slots (+ len 1))))
+      (let
+        [new-cap : i64
+          (compiler-source-spans-entry-list-capacity-for (+ len 1))]
+        [bigger : (Array CompilerSourceSpansInstrEntry)
+          (make-array CompilerSourceSpansInstrEntry new-cap)]
+        (begin
+          (compiler-source-spans-instr-entry-list-copy-array-range!
+            (&mut bigger)
+            (& slots)
+            0
+            len)
+          (array-set! bigger len entry)
+          (CompilerSourceSpansInstrEntryList.Array
+            (CompilerSourceSpansInstrEntrySeq bigger (+ len 1))))))))
+
+(define (compiler-source-spans-instr-entry-list-append
+  [entries : CompilerSourceSpansInstrEntryList]
+  [entry : CompilerSourceSpansInstrEntry]) : CompilerSourceSpansInstrEntryList
+  (match entries
+    [(CompilerSourceSpansInstrEntryList.Array seq)
+      (compiler-source-spans-instr-entry-list-push-array seq entry)]
+    [_
+      (let
+        [count : i64 (compiler-source-spans-instr-entry-list-count entries)]
+        [cap : i64 (compiler-source-spans-entry-list-capacity-for (+ count 1))]
+        [slots : (Array CompilerSourceSpansInstrEntry)
+          (make-array CompilerSourceSpansInstrEntry cap)]
+        (begin
+          (compiler-source-spans-instr-entry-list-copy-cons!
+            entries
+            (&mut slots)
+            0)
+          (array-set! slots count entry)
+          (CompilerSourceSpansInstrEntryList.Array
+            (CompilerSourceSpansInstrEntrySeq slots (+ count 1)))))]))
+
+(define (compiler-source-spans-instr-entry-array-lookup
+  [slots : (Array CompilerSourceSpansInstrEntry)]
+  [index : i64]
+  [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceSpan
+  (if (< index 0)
+    (CompilerMaybeSourceSpan.No)
+    (match (array-ref slots index)
+      [(CompilerSourceSpansInstrEntry.Entry entry-key span)
+        (if (compiler-source-spans-instr-key-eq? entry-key key)
+          (CompilerMaybeSourceSpan.Some span)
+          (compiler-source-spans-instr-entry-array-lookup slots (- index 1) key))])))
+
+(define (compiler-source-spans-instr-entry-list-lookup
+  [entries : CompilerSourceSpansInstrEntryList]
+  [key : CompilerSourceSpansInstrKey]) : CompilerMaybeSourceSpan
+  (match entries
+    [(CompilerSourceSpansInstrEntryList.Nil) (CompilerMaybeSourceSpan.No)]
+    [(CompilerSourceSpansInstrEntryList.Cons entry rest)
+      (let
+        [rest : CompilerSourceSpansInstrEntryList (box-get rest)]
+        (match entry
+          [(CompilerSourceSpansInstrEntry.Entry entry-key span)
+            (if (compiler-source-spans-instr-key-eq? entry-key key)
+              (CompilerMaybeSourceSpan.Some span)
+              (compiler-source-spans-instr-entry-list-lookup rest key))]))]
+    [(CompilerSourceSpansInstrEntryList.Array seq)
+      (compiler-source-spans-instr-entry-array-lookup
+        (struct-get seq slots)
+        (- (struct-get seq len) 1)
+        key)]))
+
 ;; Record `name -> span`. Function names are unique in lowered programs. The
 ;; dense list stores new entries at the end, and lookup scans newest-to-oldest to
 ;; preserve the old cons-list first-binding behavior without O(n^2) appends.
@@ -4459,202 +4624,196 @@
     [(CompilerSourceSpans.Spans entries _ _)
       (compiler-source-spans-entry-list-lookup entries name)]))
 
-(define (compiler-source-spans-value-key [function : String] [var-id : i64]) : String
-  (str_cat.str-cat "value:" function ":" (string.int->string var-id)))
-
-(define (compiler-source-spans-store-key [function : String] [name : String]) : String
-  (str_cat.str-cat "store:" function ":" name))
-
 (define (compiler-source-spans-insert-instr-entry
   [spans : CompilerSourceSpans]
-  [key : String]
+  [key : CompilerSourceSpansInstrKey]
   [span : AstSourceSpan]) : CompilerSourceSpans
   (match spans
     [(CompilerSourceSpans.Spans entries instr-entries instr-count)
       (CompilerSourceSpans.Spans
         entries
-        (compiler-source-spans-entry-list-append
+        (compiler-source-spans-instr-entry-list-append
           instr-entries
-          (CompilerSourceSpansEntry.Entry key span))
+          (CompilerSourceSpansInstrEntry.Entry key span))
         (+ instr-count 1))]))
 
 (define (compiler-source-spans-insert-instr
   [spans : CompilerSourceSpans]
-  [function : String]
+  [function : i64]
   [instr : CompilerIrInstr]
   [span : AstSourceSpan]) : CompilerSourceSpans
   (match instr
     [(CompilerIrInstr.Mov dst _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Alloc dst _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.AddrOf dst _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Gep dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Load dst _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Cast dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Bitcast dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.BinOp dst _ _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.UnOp dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.LaneId dst _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Splat dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
           (compiler-source-spans-insert-instr-entry
             spans
-            (compiler-source-spans-value-key function dst)
+            (CompilerSourceSpansInstrKey.Value function dst)
             span)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
           (compiler-source-spans-insert-instr-entry
             spans
-            (compiler-source-spans-value-key function dst)
+            (CompilerSourceSpansInstrKey.Value function dst)
             span)])]
     [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.MaskNot dst _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.MaskReduce dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
           (compiler-source-spans-insert-instr-entry
             spans
-            (compiler-source-spans-value-key function dst)
+            (CompilerSourceSpansInstrKey.Value function dst)
             span)])]
     [(CompilerIrInstr.VectorLoad dst _ _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
           (compiler-source-spans-insert-instr-entry
             spans
-            (compiler-source-spans-value-key function dst)
+            (CompilerSourceSpansInstrKey.Value function dst)
             span)])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
           (compiler-source-spans-insert-instr-entry
             spans
-            (compiler-source-spans-value-key function dst)
+            (CompilerSourceSpansInstrKey.Value function dst)
             span)])]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
           (compiler-source-spans-insert-instr-entry
             spans
-            (compiler-source-spans-value-key function dst)
+            (CompilerSourceSpansInstrKey.Value function dst)
             span)])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.EntryArgc dst)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.EntryArgv dst)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.EntryEnvp dst)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.CpuId dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Xgetbv dst _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Syscall dst _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Call dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.CallIndirect dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.CallIndirectC dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
@@ -4671,181 +4830,179 @@
             [(CompilerIrSpmdCallResult.Value dst _ _)
               (compiler-source-spans-insert-instr-entry
                 spans
-                (compiler-source-spans-value-key function dst)
+                (CompilerSourceSpansInstrKey.Value function dst)
                 span)])])]
     [(CompilerIrInstr.Pack dst _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [(CompilerIrInstr.Word dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     ;; Tail-indirect is control flow and does not define a destination value.
     [(CompilerIrInstr.TailCallIndirect _ _ _) spans]
     [(CompilerIrInstr.Store name _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-store-key
-          function
-          (compiler-ir-symbol-text name))
+        (CompilerSourceSpansInstrKey.Store function name)
         span)]
     [(CompilerIrInstr.Phi dst _ _)
       (compiler-source-spans-insert-instr-entry
         spans
-        (compiler-source-spans-value-key function dst)
+        (CompilerSourceSpansInstrKey.Value function dst)
         span)]
     [_ spans]))
 
 (define (compiler-source-spans-lookup-instr
   [spans : CompilerSourceSpans]
-  [function : String]
+  [function : i64]
   [instr : CompilerIrInstr]) : CompilerMaybeSourceSpan
   (match spans
     [(CompilerSourceSpans.Spans _ instr-entries _)
       (match instr
         [(CompilerIrInstr.Mov dst _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Alloc dst _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.AddrOf dst _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Gep dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Load dst _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Cast dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Bitcast dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.BinOp dst _ _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.UnOp dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.LaneId dst _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Splat dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.VectorBinOp payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
-              (compiler-source-spans-entry-list-lookup
+              (compiler-source-spans-instr-entry-list-lookup
                 instr-entries
-                (compiler-source-spans-value-key function dst))])]
+                (CompilerSourceSpansInstrKey.Value function dst))])]
         [(CompilerIrInstr.VectorReduce dst _ _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.VectorCompare payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
-              (compiler-source-spans-entry-list-lookup
+              (compiler-source-spans-instr-entry-list-lookup
                 instr-entries
-                (compiler-source-spans-value-key function dst))])]
+                (CompilerSourceSpansInstrKey.Value function dst))])]
         [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.MaskNot dst _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.MaskReduce dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Select payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
-              (compiler-source-spans-entry-list-lookup
+              (compiler-source-spans-instr-entry-list-lookup
                 instr-entries
-                (compiler-source-spans-value-key function dst))])]
+                (CompilerSourceSpansInstrKey.Value function dst))])]
         [(CompilerIrInstr.VectorLoad dst _ _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.PredicatedLoad payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
-              (compiler-source-spans-entry-list-lookup
+              (compiler-source-spans-instr-entry-list-lookup
                 instr-entries
-                (compiler-source-spans-value-key function dst))])]
+                (CompilerSourceSpansInstrKey.Value function dst))])]
         [(CompilerIrInstr.GatherLoad payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
-              (compiler-source-spans-entry-list-lookup
+              (compiler-source-spans-instr-entry-list-lookup
                 instr-entries
-                (compiler-source-spans-value-key function dst))])]
+                (CompilerSourceSpansInstrKey.Value function dst))])]
         [(CompilerIrInstr.VectorShuffle payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
-              (compiler-source-spans-entry-list-lookup
+              (compiler-source-spans-instr-entry-list-lookup
                 instr-entries
-                (compiler-source-spans-value-key function dst))])]
+                (CompilerSourceSpansInstrKey.Value function dst))])]
         [(CompilerIrInstr.TailMask dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.EntryArgc dst)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.EntryArgv dst)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.EntryEnvp dst)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.CpuId dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Xgetbv dst _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Syscall dst _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Call dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.CallIndirect dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.CallIndirectC dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.CallCAbiStoreResult payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _)
@@ -4860,29 +5017,27 @@
               (match result
                 [(CompilerIrSpmdCallResult.Unit) (CompilerMaybeSourceSpan.No)]
                 [(CompilerIrSpmdCallResult.Value dst _ _)
-                  (compiler-source-spans-entry-list-lookup
+                  (compiler-source-spans-instr-entry-list-lookup
                     instr-entries
-                    (compiler-source-spans-value-key function dst))])])]
+                    (CompilerSourceSpansInstrKey.Value function dst))])])]
         [(CompilerIrInstr.Pack dst _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [(CompilerIrInstr.Word dst _ _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         ;; Tail-indirect is control flow and does not define a destination value.
         [(CompilerIrInstr.TailCallIndirect _ _ _) (CompilerMaybeSourceSpan.No)]
         [(CompilerIrInstr.Store name _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-store-key
-              function
-              (compiler-ir-symbol-text name)))]
+            (CompilerSourceSpansInstrKey.Store function name))]
         [(CompilerIrInstr.Phi dst _ _)
-          (compiler-source-spans-entry-list-lookup
+          (compiler-source-spans-instr-entry-list-lookup
             instr-entries
-            (compiler-source-spans-value-key function dst))]
+            (CompilerSourceSpansInstrKey.Value function dst))]
         [_ (CompilerMaybeSourceSpan.No)])]))
 
 (define (compiler-source-spans-count [spans : CompilerSourceSpans]) : i64
@@ -6494,10 +6649,10 @@
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
           (compiler-source-spans-empty)
-          "f"
+          7
           instr
           span1)
-        "f"
+        7
         instr
         span3)]
     (and
@@ -6515,7 +6670,7 @@
             (= (ast-source-span-start-line found) 7)
             (= (ast-source-span-end-col found) 12))]
         [(CompilerMaybeSourceSpan.No) false])
-      (match (compiler-source-spans-lookup-instr instr-spans "f" instr)
+      (match (compiler-source-spans-lookup-instr instr-spans 7 instr)
         [(CompilerMaybeSourceSpan.Some found)
           (and
             (= (ast-source-span-start-line found) 7)

@@ -397,7 +397,7 @@
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-empty)
-        "func"
+        7
         instr
         span)]
     (and
@@ -421,7 +421,7 @@
       (string.eq
         (compiler-ir-instr-render (compiler-ir-clone-instr instr))
         (compiler-ir-instr-render instr))
-      (match (compiler-source-spans-lookup-instr spans "func" instr)
+      (match (compiler-source-spans-lookup-instr spans 7 instr)
         [(CompilerMaybeSourceSpan.Some found)
           (and
             (= (ast-source-span-start-line found) 3)

@@ -37872,9 +37872,9 @@
 (define (opt-inline-record-clone-span
   [source-spans : CompilerSourceSpans]
   [out : CompilerSourceSpans]
-  [caller : String]
+  [caller : i64]
   [call-instr : CompilerIrInstr]
-  [callee : String]
+  [callee : i64]
   [callee-instr : CompilerIrInstr]
   [cloned : CompilerIrInstr]) : CompilerSourceSpans
   (match (compiler-source-spans-lookup-instr source-spans callee callee-instr)
@@ -37896,9 +37896,9 @@
   [label-prefix : String]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]
-  [caller : String]
+  [caller : i64]
   [call-instr : CompilerIrInstr]
-  [callee : String]) : OptInlineSpanState
+  [callee : i64]) : OptInlineSpanState
   (match instrs
     [(CompilerIrInstrList.Nil)
       (OptInlineSpanState.State CompilerIrInstrList.Nil base 0 out-spans)]
@@ -38254,15 +38254,10 @@
   [func-name : i64]
   [call-instr : CompilerIrInstr]
   [new-instr : CompilerIrInstr]) : CompilerSourceSpans
-  (let
-    [func-text : String (compiler-ir-symbol-text func-name)]
-    (match (compiler-source-spans-lookup-instr
-      source-spans
-      func-text
-      call-instr)
-      [(CompilerMaybeSourceSpan.Some span)
-        (compiler-source-spans-insert-instr out-spans func-text new-instr span)]
-      [(CompilerMaybeSourceSpan.No) out-spans])))
+  (match (compiler-source-spans-lookup-instr source-spans func-name call-instr)
+    [(CompilerMaybeSourceSpan.Some span)
+      (compiler-source-spans-insert-instr out-spans func-name new-instr span)]
+    [(CompilerMaybeSourceSpan.No) out-spans]))
 
 (define (opt-inline-lookup-inlinable
   [index : OptFunctionIndex]
@@ -38545,9 +38540,9 @@
                             callee-name)
                           source-spans
                           out-spans
-                          (compiler-ir-symbol-text func-name)
+                          func-name
                           instr
-                          (compiler-ir-symbol-text cname))
+                          cname)
                           [(OptInlineSpanState.State expanded _ _ next-spans)
                             (OptInlineSpanState.State
                               expanded
@@ -39125,9 +39120,9 @@
   [base : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]
-  [caller : String]
+  [caller : i64]
   [call-instr : CompilerIrInstr]
-  [callee : String]) : OptInlineMultiSpanInstrClone
+  [callee : i64]) : OptInlineMultiSpanInstrClone
   (if (>= pos count)
     (OptInlineMultiSpanInstrClone.Clone
       CompilerIrInstrList.Nil
@@ -39193,9 +39188,9 @@
   [base : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]
-  [caller : String]
+  [caller : i64]
   [call-instr : CompilerIrInstr]
-  [callee : String]) : OptInlineMultiSpanInstrClone
+  [callee : i64]) : OptInlineMultiSpanInstrClone
   (opt-inline-clone-multiblock-instr-seq-with-spans-from
     instrs
     0
@@ -39221,9 +39216,9 @@
   [base : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]
-  [caller : String]
+  [caller : i64]
   [call-instr : CompilerIrInstr]
-  [callee : String]) : OptInlineMultiSpanClone
+  [callee : i64]) : OptInlineMultiSpanClone
   (match block
     [(CompilerIrBlock.Block label instrs)
       (let
@@ -39258,9 +39253,9 @@
   [base : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]
-  [caller : String]
+  [caller : i64]
   [call-instr : CompilerIrInstr]
-  [callee : String]) : OptInlineMultiSpanClone
+  [callee : i64]) : OptInlineMultiSpanClone
   (match blocks
     [(CompilerIrBlockList.Nil)
       (OptInlineMultiSpanClone.Clone
@@ -39522,9 +39517,9 @@
                           clone-base
                           source-spans
                           spans2
-                          (compiler-ir-symbol-text func-name)
+                          func-name
                           call-instr
-                          (compiler-ir-symbol-text callee-name))
+                          callee-name)
                           [(OptInlineMultiSpanClone.Clone
                               cloned-blocks
                               return-inputs
@@ -40573,9 +40568,9 @@
                         callee-name)
                       source-spans
                       out-spans
-                      (compiler-ir-symbol-text func-name)
+                      func-name
                       instr
-                      (compiler-ir-symbol-text cname))
+                      cname)
                       [(OptInlineSpanState.State expanded _ _ next-spans)
                         (OptInlineSpanState.State
                           expanded
@@ -42955,106 +42950,102 @@
 
 (define (opt-remap-spans-prepend-entry
   [spans : CompilerSourceSpans]
-  [key : String]
+  [key : CompilerSourceSpansInstrKey]
   [span : AstSourceSpan]) : CompilerSourceSpans
   (compiler-source-spans-insert-instr-entry spans key span))
 
-;; The remap previously rebuilt the "value:<function>:<var>" key string --
-;; three appends -- for EVERY instruction in the program, then rebuilt the
-;; same key again on every hit. Now the per-function "value:<function>:"
-;; prefix is built once, each key is one append, the key is shared between
-;; lookup and prepend, and only instructions whose kind can carry a span
-;; build a key at all. The key arms mirror the kinds the replaced
-;; per-instruction prepend matcher accepted: indirect-call destinations were
-;; looked up and then dropped by its fall-through, so skipping their lookups
-;; cannot change the produced spans. The entry-list probe stays the linear
-;; first-match scan: entries are bounded by the 2049 fast-path cutoff, and a
-;; hash-indexed variant measured MORE executed instructions once hash.string-key
-;; moved into TypeLisp (long keys hash per instruction).
+;; Span keys are typed (function id, var/name id) pairs, so building one is a
+;; couple of integer moves and probing an entry is two integer compares; only
+;; instructions whose kind can carry a span build a key at all. The key arms
+;; mirror the kinds the replaced per-instruction prepend matcher accepted:
+;; indirect-call destinations were looked up and then dropped by its
+;; fall-through, so skipping their lookups cannot change the produced spans.
+;; The entry-list probe stays the linear first-match scan: entries are
+;; bounded by the 2049 fast-path cutoff.
 (defenum OptRemapSpanKey
   (NoKey)
-  (SomeKey String))
+  (SomeKey CompilerSourceSpansInstrKey))
 
-(define (opt-remap-spans-value-key [value-prefix : String] [dst : i64]) : String
-  (string.append value-prefix (string.int->string dst)))
-
-(define (opt-remap-spans-instr-key
-  [value-prefix : String]
-  [function : String]
-  [instr : CompilerIrInstr]) : OptRemapSpanKey
+(define (opt-remap-spans-instr-key [function : i64] [instr : CompilerIrInstr]) : OptRemapSpanKey
   (match instr
     [(CompilerIrInstr.Mov dst _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Alloc dst _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.AddrOf dst _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Gep dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Load dst _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Cast dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Bitcast dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.BinOp dst _ _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.UnOp dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.LaneId dst _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Splat dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
+          (OptRemapSpanKey.SomeKey
+            (CompilerSourceSpansInstrKey.Value function dst))])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
+          (OptRemapSpanKey.SomeKey
+            (CompilerSourceSpansInstrKey.Value function dst))])]
     [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.MaskNot dst _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.MaskReduce dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
+          (OptRemapSpanKey.SomeKey
+            (CompilerSourceSpansInstrKey.Value function dst))])]
     [(CompilerIrInstr.VectorLoad dst _ _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
+          (OptRemapSpanKey.SomeKey
+            (CompilerSourceSpansInstrKey.Value function dst))])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
+          (OptRemapSpanKey.SomeKey
+            (CompilerSourceSpansInstrKey.Value function dst))])]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorShufflePayload.Payload dst _ _ _ _ _ _)
-          (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
+          (OptRemapSpanKey.SomeKey
+            (CompilerSourceSpansInstrKey.Value function dst))])]
     [(CompilerIrInstr.TailMask dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.EntryArgc dst)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.EntryArgv dst)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.EntryEnvp dst)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.CpuId dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Xgetbv dst _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Syscall dst _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Call dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
@@ -43062,41 +43053,37 @@
             [(CompilerIrSpmdCallResult.Unit) (OptRemapSpanKey.NoKey)]
             [(CompilerIrSpmdCallResult.Value dst _ _)
               (OptRemapSpanKey.SomeKey
-                (opt-remap-spans-value-key value-prefix dst))])])]
+                (CompilerSourceSpansInstrKey.Value function dst))])])]
     [(CompilerIrInstr.Pack dst _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [(CompilerIrInstr.Word dst _ _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     ;; Tail-indirect is control flow and does not define a destination value.
     [(CompilerIrInstr.TailCallIndirect _ _ _) (OptRemapSpanKey.NoKey)]
     [(CompilerIrInstr.Store name _ _)
       (OptRemapSpanKey.SomeKey
-        (compiler-source-spans-store-key
-          function
-          (compiler-ir-symbol-text name)))]
+        (CompilerSourceSpansInstrKey.Store function name))]
     [(CompilerIrInstr.Phi dst _ _)
-      (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
+      (OptRemapSpanKey.SomeKey (CompilerSourceSpansInstrKey.Value function dst))]
     [_ (OptRemapSpanKey.NoKey)]))
 
 (define (opt-remap-spans-instr
-  [instr-entries : CompilerSourceSpansEntryList]
+  [instr-entries : CompilerSourceSpansInstrEntryList]
   [out : CompilerSourceSpans]
-  [value-prefix : String]
-  [function : String]
+  [function : i64]
   [instr : CompilerIrInstr]) : CompilerSourceSpans
-  (match (opt-remap-spans-instr-key value-prefix function instr)
+  (match (opt-remap-spans-instr-key function instr)
     [(OptRemapSpanKey.NoKey) out]
     [(OptRemapSpanKey.SomeKey key)
-      (match (compiler-source-spans-entry-list-lookup instr-entries key)
+      (match (compiler-source-spans-instr-entry-list-lookup instr-entries key)
         [(CompilerMaybeSourceSpan.Some span)
           (opt-remap-spans-prepend-entry out key span)]
         [(CompilerMaybeSourceSpan.No) out])]))
 
 (define (opt-remap-spans-instr-seq-from
-  [instr-entries : CompilerSourceSpansEntryList]
+  [instr-entries : CompilerSourceSpansInstrEntryList]
   [out : CompilerSourceSpans]
-  [value-prefix : String]
-  [function : String]
+  [function : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : CompilerSourceSpans
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -43106,33 +43093,23 @@
       (opt-remap-spans-instr
         instr-entries
         out
-        value-prefix
         function
         (compiler-ir-instr-seq-ref instrs index))
-      value-prefix
       function
       instrs
       (+ index 1))))
 
 (define (opt-remap-spans-instr-seq
-  [instr-entries : CompilerSourceSpansEntryList]
+  [instr-entries : CompilerSourceSpansInstrEntryList]
   [out : CompilerSourceSpans]
-  [value-prefix : String]
-  [function : String]
+  [function : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerSourceSpans
-  (opt-remap-spans-instr-seq-from
-    instr-entries
-    out
-    value-prefix
-    function
-    instrs
-    0))
+  (opt-remap-spans-instr-seq-from instr-entries out function instrs 0))
 
 (define (opt-remap-spans-blocks
-  [instr-entries : CompilerSourceSpansEntryList]
+  [instr-entries : CompilerSourceSpansInstrEntryList]
   [out : CompilerSourceSpans]
-  [value-prefix : String]
-  [function : String]
+  [function : i64]
   [blocks : CompilerIrBlockList]) : CompilerSourceSpans
   (match blocks
     [(CompilerIrBlockList.Nil) out]
@@ -43141,40 +43118,26 @@
         [(CompilerIrBlock.Block _ instrs)
           (opt-remap-spans-blocks
             instr-entries
-            (opt-remap-spans-instr-seq
-              instr-entries
-              out
-              value-prefix
-              function
-              instrs)
-            value-prefix
+            (opt-remap-spans-instr-seq instr-entries out function instrs)
             function
             (box-get rest))])]
     [(CompilerIrBlockList.Array seq)
       (opt-remap-spans-blocks
         instr-entries
         out
-        value-prefix
         function
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-remap-spans-function
-  [instr-entries : CompilerSourceSpansEntryList]
+  [instr-entries : CompilerSourceSpansInstrEntryList]
   [out : CompilerSourceSpans]
   [func : CompilerIrFunction]) : CompilerSourceSpans
   (match func
     [(CompilerIrFunction.Function name _ _ _ blocks)
-      (let
-        [name-text : String (compiler-ir-symbol-text name)]
-        (opt-remap-spans-blocks
-          instr-entries
-          out
-          (string.append (string.append "value:" name-text) ":")
-          name-text
-          blocks))]))
+      (opt-remap-spans-blocks instr-entries out name blocks)]))
 
 (define (opt-remap-spans-functions
-  [instr-entries : CompilerSourceSpansEntryList]
+  [instr-entries : CompilerSourceSpansInstrEntryList]
   [out : CompilerSourceSpans]
   [funcs : CompilerIrFunctionList]) : CompilerSourceSpans
   (match funcs
@@ -43696,7 +43659,7 @@
 
 (define (opt-span-lookup-ok?
   [spans : CompilerSourceSpans]
-  [function : String]
+  [function : i64]
   [instr : CompilerIrInstr]
   [line : i64]
   [col : i64]) : bool
@@ -43707,7 +43670,7 @@
 
 (define (opt-span-lookup-missing?
   [spans : CompilerSourceSpans]
-  [function : String]
+  [function : i64]
   [instr : CompilerIrInstr]) : bool
   (match (compiler-source-spans-lookup-instr spans function instr)
     [(CompilerMaybeSourceSpan.Some _) false]
@@ -43773,10 +43736,10 @@
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
           (opt-spans-base)
-          "main"
+          (opt-test-symbol "main")
           dead
           (opt-test-span 21 3))
-        "main"
+        (opt-test-symbol "main")
         live
         (opt-test-span 31 5))]
     (match (optimize-program-with-spans-and-level
@@ -43786,8 +43749,16 @@
       [(CompilerOptimizedProgram.Program _ optimized-spans)
         (and
           (= (compiler-source-spans-instr-count optimized-spans) 1)
-          (opt-span-lookup-missing? optimized-spans "main" dead)
-          (opt-span-lookup-ok? optimized-spans "main" live 31 5))])))
+          (opt-span-lookup-missing?
+            optimized-spans
+            (opt-test-symbol "main")
+            dead)
+          (opt-span-lookup-ok?
+            optimized-spans
+            (opt-test-symbol "main")
+            live
+            31
+            5))])))
 
 (define (compiler-optimize-spans-fold-ok?) : bool
   (let
@@ -43812,7 +43783,7 @@
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (opt-spans-base)
-        "main"
+        (opt-test-symbol "main")
         folded
         (opt-test-span 41 7))]
     (match (optimize-program-with-spans-and-level
@@ -43820,7 +43791,12 @@
       spans
       2)
       [(CompilerOptimizedProgram.Program _ optimized-spans)
-        (opt-span-lookup-ok? optimized-spans "main" rewritten 41 7)])))
+        (opt-span-lookup-ok?
+          optimized-spans
+          (opt-test-symbol "main")
+          rewritten
+          41
+          7)])))
 
 (define (compiler-optimize-spans-cse-ok?) : bool
   (let
@@ -43855,10 +43831,10 @@
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
           (opt-spans-base)
-          "main"
+          (opt-test-symbol "main")
           first
           (opt-test-span 51 9))
-        "main"
+        (opt-test-symbol "main")
         second
         (opt-test-span 61 11))]
     (match (optimize-program-with-spans-and-level
@@ -43867,8 +43843,18 @@
       2)
       [(CompilerOptimizedProgram.Program optimized optimized-spans)
         (and
-          (opt-span-lookup-ok? optimized-spans "main" first 51 9)
-          (opt-span-lookup-ok? optimized-spans "main" rewritten 61 11)
+          (opt-span-lookup-ok?
+            optimized-spans
+            (opt-test-symbol "main")
+            first
+            51
+            9)
+          (opt-span-lookup-ok?
+            optimized-spans
+            (opt-test-symbol "main")
+            rewritten
+            61
+            11)
           (= (opt-count-exact-instr-program optimized rewritten) 1)
           (=
             (opt-count-exact-instr-program
@@ -43987,10 +43973,10 @@
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
           (opt-spans-base)
-          "inline_span"
+          (opt-test-symbol "inline_span")
           (opt-inline-span-callee-call symbols)
           (opt-test-span 71 13))
-        "main"
+        (opt-test-symbol "main")
         (opt-inline-span-caller-call symbols)
         (opt-test-span 81 15))]
     [cloned-call : CompilerIrInstr
@@ -44004,7 +43990,12 @@
       spans
       2)
       [(CompilerOptimizedProgram.Program _ optimized-spans)
-        (opt-span-lookup-ok? optimized-spans "main" cloned-call 71 13)])))
+        (opt-span-lookup-ok?
+          optimized-spans
+          (opt-test-symbol "main")
+          cloned-call
+          71
+          13)])))
 
 (define (compiler-optimize-spans-inline-fallback-ok?) : bool
   (let
@@ -44012,7 +44003,7 @@
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (opt-spans-base)
-        "main"
+        (opt-test-symbol "main")
         (opt-inline-span-caller-call symbols)
         (opt-test-span 91 17))]
     [cloned-call : CompilerIrInstr
@@ -44026,7 +44017,12 @@
       spans
       2)
       [(CompilerOptimizedProgram.Program _ optimized-spans)
-        (opt-span-lookup-ok? optimized-spans "main" cloned-call 91 17)])))
+        (opt-span-lookup-ok?
+          optimized-spans
+          (opt-test-symbol "main")
+          cloned-call
+          91
+          17)])))
 
 (define (opt-inline-span-branch-phi-inputs) : CompilerIrPhiInputList
   (compiler-ir-phi-input-cons
@@ -44044,10 +44040,10 @@
       (compiler-source-spans-insert-instr
         (compiler-source-spans-insert-instr
           (opt-spans-base)
-          "inline_branch"
+          (opt-test-symbol "inline_branch")
           (opt-inline-branch-callee-mov)
           (opt-test-span 141 27))
-        "main"
+        (opt-test-symbol "main")
         (opt-inline-branch-caller-call symbols)
         (opt-test-span 151 29))]
     [phi : CompilerIrInstr
@@ -44063,11 +44059,16 @@
               (= (compiler-ir-block-list-count (opt-function-blocks main)) 5)
               (opt-span-lookup-ok?
                 optimized-spans
-                "main"
+                (opt-test-symbol "main")
                 (opt-inline-branch-callee-mov)
                 141
                 27)
-              (opt-span-lookup-ok? optimized-spans "main" phi 151 29))]
+              (opt-span-lookup-ok?
+                optimized-spans
+                (opt-test-symbol "main")
+                phi
+                151
+                29))]
           [(OptMaybeFunction.No) false])])))
 
 (define (compiler-optimize-spans-non-inline-call-ok?) : bool
@@ -44088,7 +44089,7 @@
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (opt-spans-base)
-        "main"
+        (opt-test-symbol "main")
         call
         (opt-test-span 101 19))]
     (match (optimize-program-with-spans-and-level
@@ -44096,7 +44097,12 @@
       spans
       2)
       [(CompilerOptimizedProgram.Program _ optimized-spans)
-        (opt-span-lookup-ok? optimized-spans "main" call 101 19)])))
+        (opt-span-lookup-ok?
+          optimized-spans
+          (opt-test-symbol "main")
+          call
+          101
+          19)])))
 
 (define (compiler-optimize-spans-pack-word-ok?) : bool
   (let
@@ -44132,13 +44138,13 @@
         (compiler-source-spans-insert-instr
           (compiler-source-spans-insert-instr
             (opt-spans-base)
-            "main"
+            (opt-test-symbol "main")
             pack
             (opt-test-span 111 21))
-          "main"
+          (opt-test-symbol "main")
           word
           (opt-test-span 121 23))
-        "main"
+        (opt-test-symbol "main")
         tail
         (opt-test-span 131 25))]
     (match (optimize-program-with-spans-and-level
@@ -44148,13 +44154,26 @@
       [(CompilerOptimizedProgram.Program _ optimized-spans)
         (and
           (= (compiler-source-spans-instr-count spans) 2)
-          (opt-span-lookup-ok? spans "main" pack 111 21)
-          (opt-span-lookup-ok? spans "main" word 121 23)
-          (opt-span-lookup-missing? spans "main" tail)
+          (opt-span-lookup-ok? spans (opt-test-symbol "main") pack 111 21)
+          (opt-span-lookup-ok? spans (opt-test-symbol "main") word 121 23)
+          (opt-span-lookup-missing? spans (opt-test-symbol "main") tail)
           (= (compiler-source-spans-instr-count optimized-spans) 2)
-          (opt-span-lookup-ok? optimized-spans "main" pack 111 21)
-          (opt-span-lookup-ok? optimized-spans "main" word 121 23)
-          (opt-span-lookup-missing? optimized-spans "main" tail))])))
+          (opt-span-lookup-ok?
+            optimized-spans
+            (opt-test-symbol "main")
+            pack
+            111
+            21)
+          (opt-span-lookup-ok?
+            optimized-spans
+            (opt-test-symbol "main")
+            word
+            121
+            23)
+          (opt-span-lookup-missing?
+            optimized-spans
+            (opt-test-symbol "main")
+            tail))])))
 
 (define (compiler-optimize-spans-self-test) : i64
   (if (and

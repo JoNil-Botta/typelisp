@@ -8870,7 +8870,7 @@
           (compiler-source-spans-empty)
           "main"
           (compiler-backend-test-span 10 2))
-        "main"
+        (ci.intern "main")
         instr
         (compiler-backend-test-span want-line want-col))]
     [program : CompilerIrProgram
@@ -12137,7 +12137,7 @@
           (compiler-source-spans-empty)
           "main"
           (compiler-backend-test-span 10 2))
-        "main"
+        (ci.intern "main")
         phi
         (compiler-backend-test-span 55 13))]
     (match (optimize-program-with-spans program spans)

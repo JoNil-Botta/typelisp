@@ -11584,27 +11584,73 @@
   [index : i64]) : bool
   (if (>= index (ast-type-list-len types))
     false
-    (if (tc-type-needs-resolution?
-      (ty-node-get (ast-type-list-get types index (ast-type-id-fallback))))
+    (if (tc-type-needs-resolution-id?
+      (ast-type-list-get types index (ast-type-id-fallback)))
       true
       (tc-type-list-needs-resolution-at? types (+ index 1)))))
+
+;; Per-type-node memo for the resolution predicate: type nodes are immutable
+;; and hash-consed, so the answer is a pure function of the node id within
+;; one pool generation. One slot packs the fill epoch with the answer bit;
+;; the epoch bumps when the pool generation changes (truncation or a pool
+;; swap), and growth drops warm entries, which the epoch guard treats as
+;; unfilled.
+;; Fixed persistent capacity: the slots are allocated once at global init
+;; (growing under a caller's transient arena would leave the global
+;; dangling), and ids beyond it fall back to the uncached walk.
+(define tc-type-needs-resolution-slots : (Array i64)
+  (array.make-array i64 131072))
+(define tc-type-needs-resolution-epoch : i64
+  1)
+(define tc-type-needs-resolution-generation : i64
+  -1)
+
+(define (tc-type-needs-resolution-ensure-current!) : unit
+  (if (= tc-type-needs-resolution-generation (ty-node-pool-generation-value))
+    unit
+    (begin
+      (set! tc-type-needs-resolution-epoch (+ tc-type-needs-resolution-epoch 1))
+      (set! tc-type-needs-resolution-generation (ty-node-pool-generation-value)))))
+
+(define (tc-type-needs-resolution-id? [ty-id : i64]) : bool
+  (begin
+    (tc-type-needs-resolution-ensure-current!)
+    (when
+      (>= ty-id (array-length tc-type-needs-resolution-slots))
+      (return (tc-type-needs-resolution? (ty-node-get ty-id))))
+    (let
+      [slot : i64 (array-ref tc-type-needs-resolution-slots ty-id)]
+      (if (= (shr slot 1) tc-type-needs-resolution-epoch)
+        (= (bit-and slot 1) 1)
+        (let
+          [answer : bool (tc-type-needs-resolution? (ty-node-get ty-id))]
+          (begin
+            (array-set!
+              tc-type-needs-resolution-slots
+              ty-id
+              (bit-or
+                (shl tc-type-needs-resolution-epoch 1)
+                (if answer
+                  1
+                  0)))
+            answer))))))
 
 (define (tc-type-needs-resolution? [ty : AstType]) : bool
   (match ty
     [(AstType.Func args ret)
       (if (tc-type-list-needs-resolution? (box-get args))
         true
-        (tc-type-needs-resolution? (ty-node-get ret)))]
+        (tc-type-needs-resolution-id? ret))]
     [(AstType.Tuple elems) (tc-type-list-needs-resolution? (box-get elems))]
-    [(AstType.Array elem _) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.DynArray elem) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.Box elem) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.Ptr elem) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.MutPtr elem) (tc-type-needs-resolution? (ty-node-get elem))]
-    [(AstType.Ref _ inner) (tc-type-needs-resolution? (ty-node-get inner))]
-    [(AstType.MutRef _ inner) (tc-type-needs-resolution? (ty-node-get inner))]
-    [(AstType.Region _ inner) (tc-type-needs-resolution? (ty-node-get inner))]
-    [(AstType.Consume inner) (tc-type-needs-resolution? (ty-node-get inner))]
+    [(AstType.Array elem _) (tc-type-needs-resolution-id? elem)]
+    [(AstType.DynArray elem) (tc-type-needs-resolution-id? elem)]
+    [(AstType.Box elem) (tc-type-needs-resolution-id? elem)]
+    [(AstType.Ptr elem) (tc-type-needs-resolution-id? elem)]
+    [(AstType.MutPtr elem) (tc-type-needs-resolution-id? elem)]
+    [(AstType.Ref _ inner) (tc-type-needs-resolution-id? inner)]
+    [(AstType.MutRef _ inner) (tc-type-needs-resolution-id? inner)]
+    [(AstType.Region _ inner) (tc-type-needs-resolution-id? inner)]
+    [(AstType.Consume inner) (tc-type-needs-resolution-id? inner)]
     [(AstType.VarArgs _ _) true]
     [(AstType.Var _) true]
     [_ false]))
@@ -11615,34 +11661,37 @@
 ;; `tc-name-qualified-id? (intern name)`, so threading the already-interned id
 ;; from callers is semantics-preserving and skips the hash. Refs #4427.
 (define (tc-name-first-dot-id [name-id : i64]) : i64
-  (cond
-    [(or
-        (macro-hygiene-global-id? name-id)
-        (tc-structural-local-name-id? name-id))
+  ;; Ids inside the intern pool range are the common case and can never be
+  ;; structural/hygiene ids (every structural family's base is >= stride^2),
+  ;; so dispatch on the pool range first and keep the layered predicate
+  ;; checks for the out-of-pool families only.
+  (if (and (>= name-id 0) (< name-id (intern-capacity)))
+    (intern-first-dot name-id)
+    (if (or
+      (macro-hygiene-global-id? name-id)
+      (tc-structural-local-name-id? name-id))
       (intern-first-dot
-        (macro-hygiene-global-source-name-id-or name-id name-id))]
-    [(and (>= name-id 0) (< name-id (intern-capacity)))
-      (intern-first-dot name-id)]
-    [else -1]))
+        (macro-hygiene-global-source-name-id-or name-id name-id))
+      -1)))
 
 (define (tc-name-qualified-id? [name-id : i64]) : bool
-  (cond
-    [(< name-id 0) false]
-    [(tc-structural-local-name-id? name-id) false]
-    [(macro-hygiene-global-id? name-id)
-      (not
-        (compiler-symbol-root-module-id?
-          (macro-hygiene-global-module-id name-id)))]
-    [else
-      (if (< name-id (intern-capacity))
-        (and
-          (or
-            (< name-id (intern-pool-len))
-            (not (tc-hygiene-local-name? (intern-str name-id))))
-          (intern-qualified? name-id))
+  (if (and (>= name-id 0) (< name-id (intern-capacity)))
+    (and
+      (or
+        (< name-id (intern-pool-len))
+        (not (tc-hygiene-local-name? (intern-str name-id))))
+      (intern-qualified? name-id))
+    (cond
+      [(< name-id 0) false]
+      [(tc-structural-local-name-id? name-id) false]
+      [(macro-hygiene-global-id? name-id)
+        (not
+          (compiler-symbol-root-module-id?
+            (macro-hygiene-global-module-id name-id)))]
+      [else
         (or
           (compiler-composite-pair-key-id? name-id)
-          (compiler-composite-triple-key-id? name-id)))]))
+          (compiler-composite-triple-key-id? name-id))])))
 
 (define (tc-qualified-name-module-id [name-id : i64]) : i64
   (cond
@@ -12492,37 +12541,84 @@
 (define tc-module-import-index-positions : (Array i64)
   (array.make-array i64 0))
 
+;; Reset marks the index maybe-stale instead of destroying it. The macro
+;; expander resets these caches every round, but most rounds leave the
+;; module/import shape of the declaration list unchanged; ensure! revalidates
+;; the kept index against the recorded per-decl shape sequence and only
+;; rebuilds when the shape actually changed. The kept arena is destroyed by
+;; the next real rebuild, so no stale data survives a content change.
+(define tc-module-decl-index-maybe-stale : bool
+  false)
+(define tc-module-decl-index-seq : (Array i64)
+  (array.make-array i64 0))
+
 (define (tc-module-decl-index-reset!) : unit
-  (begin
-    (set! tc-module-decl-index-ready false)
-    (set! tc-module-decl-index-decl-count -1)
-    (set! tc-module-decl-index-decl-offset -1)
-    ;; The stale array/map globals are never read while ready is false (every
-    ;; consumer goes through ensure!), so destroying their arena here is safe.
-    (if (= tc-module-decl-index-arena 0)
-      unit
-      (begin
-        (unsafe
-          (arena.tl_arena_destroy tc-module-decl-index-arena))
-        (set! tc-module-decl-index-arena 0)))))
+  (set! tc-module-decl-index-maybe-stale true))
+
+;; Shape code of one declaration as the index build reads it: a module marker
+;; carries its module id (never negative), imports are -1, everything else -2.
+(define (tc-module-decl-index-shape-code [decl : AstDecl]) : i64
+  (match decl
+    [(AstDecl.Module next-module) next-module]
+    [_
+      (match (ast-decl-unwrapped decl)
+        [(AstDecl.Import decl-meta _) -1]
+        [_ -2])]))
+
+(define (tc-module-decl-index-seq-matches? [decls : AstDeclList]) : bool
+  (let
+    [count : i64 (struct-get decls len)]
+    [decl-offset : i64 (struct-get decls offset)]
+    [decl-slots : (Array AstDecl) (struct-get decls slots)]
+    (if (not (= (array-length tc-module-decl-index-seq) count))
+      false
+      (let
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (let
+              [code : i64
+                (tc-module-decl-index-shape-code
+                  (array-ref decl-slots (+ decl-offset i)))]
+              (if (or
+                (< code -2)
+                (not (= code (array-ref tc-module-decl-index-seq i))))
+                (return false)
+                (set! i (+ i 1)))))
+          true)))))
 
 (define (tc-module-decl-index-ensure! [decls : AstDeclList]) : unit
-  (if (and
-    tc-module-decl-index-ready
-    (= tc-module-decl-index-decl-count (struct-get decls len))
-    (= tc-module-decl-index-decl-offset (struct-get decls offset))
-    (= tc-module-decl-index-generation (intern-generation)))
-    unit
+  (begin
+    (when
+      (and
+        tc-module-decl-index-ready
+        (= tc-module-decl-index-decl-count (struct-get decls len))
+        (= tc-module-decl-index-decl-offset (struct-get decls offset)))
+      (begin
+        (when
+          (and
+            (not tc-module-decl-index-maybe-stale)
+            (= tc-module-decl-index-generation (intern-generation)))
+          (return unit))
+        ;; The kept index is valid whenever the module/import shape of the
+        ;; declaration list is unchanged: the index stores only per-module
+        ;; declaration and import positions, so in-place declaration rewrites
+        ;; that preserve the shape cannot change it.
+        (when
+          (tc-module-decl-index-seq-matches? decls)
+          (begin
+            (set! tc-module-decl-index-maybe-stale false)
+            (set! tc-module-decl-index-generation (intern-generation))
+            (return unit)))))
     (let
       [count : i64 (struct-get decls len)]
       [decl-offset : i64 (struct-get decls offset)]
       [decl-slots : (Array AstDecl) (struct-get decls slots)]
       [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
       [prev-arena : i64 (arena.tl_arena_current)]
+      [old-arena : i64 tc-module-decl-index-arena]
       [_make-arena : unit
-        (if (= tc-module-decl-index-arena 0)
-          (set! tc-module-decl-index-arena (arena.tl_arena_make))
-          unit)]
+        (set! tc-module-decl-index-arena (arena.tl_arena_make))]
       [_switch : unit
         (unsafe
           (arena.tl_arena_set tc-module-decl-index-arena))]
@@ -12618,6 +12714,21 @@
                           [_ unit])))
                     unit))])
             (set! i (+ i 1))))
+        ;; Record the per-decl shape sequence so a maybe-stale index can be
+        ;; revalidated without rebuilding.
+        (let
+          [seq : (Array i64) (array.make-array i64 count)]
+          (begin
+            (set! i 0)
+            (while (< i count)
+              (begin
+                (array-set!
+                  seq
+                  i
+                  (tc-module-decl-index-shape-code
+                    (array-ref decl-slots (+ decl-offset i))))
+                (set! i (+ i 1))))
+            (set! tc-module-decl-index-seq seq)))
         (set! tc-module-decl-index-modules modules)
         (set! tc-module-decl-index-starts starts)
         (set! tc-module-decl-index-ends ends)
@@ -12628,11 +12739,19 @@
         (set! tc-module-decl-index-decl-count count)
         (set! tc-module-decl-index-decl-offset decl-offset)
         (set! tc-module-decl-index-generation (intern-generation))
-        ;; The arena head advances as it grows; re-capture it so reset!
-        ;; destroys the whole chain, then restore the caller's arena.
+        (set! tc-module-decl-index-maybe-stale false)
+        ;; The arena head advances as it grows; re-capture it so the next
+        ;; rebuild destroys the whole chain, then restore the caller's arena.
+        ;; The previous rebuild's arena (kept alive across maybe-stale
+        ;; revalidation) is destroyed only now that every index global points
+        ;; into the fresh one.
         (set! tc-module-decl-index-arena (arena.tl_arena_current))
         (unsafe
           (arena.tl_arena_set prev-arena))
+        (if (= old-arena 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy old-arena)))
         (set! tc-module-decl-index-ready true)))))
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
@@ -43395,18 +43514,24 @@
       (+ (tc-moved-path-facts-len paths) (tc_i64_i64_map.capacity (& hidden))))))
 
 (define (tc-moved-clone-id-map [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
+  ;; Counting down the entry count skips the scan-to-capacity tail entirely;
+  ;; branch moved-sets are usually empty or tiny, so the old full-capacity
+  ;; walk was almost all empty slots.
   (let
+    [remaining : i64 (tc_i64_i64_map.len src)]
     [out : tc_i64_i64_map.Map
       (tc_i64_i64_map.with-capacity (tc_i64_i64_map.capacity src))]
-    [index : i64 (tc_i64_i64_map.next-occupied src 0)]
+    [index : i64 0]
     (begin
-      (while (< index (tc_i64_i64_map.capacity src))
+      (while (> remaining 0)
         (begin
+          (set! index (tc_i64_i64_map.next-occupied src index))
           (match (tc_i64_i64_map.entry-at src index)
             [(tc_i64_i64_map.EntrySome key value)
               (tc_i64_i64_map.insert-ref! (&mut out) key value)]
             [(tc_i64_i64_map.EntryNone) unit])
-          (set! index (tc_i64_i64_map.next-occupied src (+ index 1)))))
+          (set! index (+ index 1))
+          (set! remaining (- remaining 1))))
       out)))
 
 (define (tc-moved-clone [set : TcMovedSet]) : TcMovedSet
@@ -44264,23 +44389,23 @@
   [a : (& a tc_i64_i64_map.Map)]
   [index : i64]
   [out : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
-  (if (>= index (tc_i64_i64_map.capacity a))
-    out
-    (match (tc_i64_i64_map.entry-at a index)
-      [(tc_i64_i64_map.EntrySome key value)
-        (let
-          [out2 : tc_i64_i64_map.Map out]
-          (begin
-            (tc_i64_i64_map.insert-ref! (&mut out2) key value)
-            (tc-moved-union-id-loop
-              a
-              (tc_i64_i64_map.next-occupied a (+ index 1))
-              out2)))]
-      [(tc_i64_i64_map.EntryNone)
-        (tc-moved-union-id-loop
-          a
-          (tc_i64_i64_map.next-occupied a (+ index 1))
-          out)])))
+  ;; Counting down the entry count skips the scan-to-capacity tail entirely;
+  ;; branch moved-sets are usually empty or tiny.
+  (let
+    [remaining : i64 (tc_i64_i64_map.len a)]
+    [cursor : i64 index]
+    [result : tc_i64_i64_map.Map out]
+    (begin
+      (while (> remaining 0)
+        (begin
+          (set! cursor (tc_i64_i64_map.next-occupied a cursor))
+          (match (tc_i64_i64_map.entry-at a cursor)
+            [(tc_i64_i64_map.EntrySome key value)
+              (tc_i64_i64_map.insert-ref! (&mut result) key value)]
+            [(tc_i64_i64_map.EntryNone) unit])
+          (set! cursor (+ cursor 1))
+          (set! remaining (- remaining 1))))
+      result)))
 
 ;; Union keeps the left input's value for duplicate facts. Branch merging
 ;; therefore reports the origin from the first/left arm deterministically.
@@ -44303,20 +44428,11 @@
         b-hidden)]
     [with-paths : TcMovedSet (tc-moved-union-path-loop b-paths with-a-paths)]
     (TcMovedSet
-      (tc-moved-union-id-loop
-        (& a-roots)
-        (tc_i64_i64_map.next-occupied (& a-roots) 0)
-        b-roots)
-      (tc-moved-union-id-loop
-        (& a-partials)
-        (tc_i64_i64_map.next-occupied (& a-partials) 0)
-        b-partials)
+      (tc-moved-union-id-loop (& a-roots) 0 b-roots)
+      (tc-moved-union-id-loop (& a-partials) 0 b-partials)
       (tc-moved-paths with-paths)
       (tc-moved-exact-path-index with-paths)
-      (tc-moved-union-id-loop
-        (& a-hidden)
-        (tc_i64_i64_map.next-occupied (& a-hidden) 0)
-        b-hidden))))
+      (tc-moved-union-id-loop (& a-hidden) 0 b-hidden))))
 
 (define (tc-move-var-move-only-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match (tc-lookup-id env name-id)
@@ -57603,18 +57719,22 @@
 (define (macro-hygiene-global-source-name-id-or
   [name-id : i64]
   [fallback : i64]) : i64
-  (cond
-    [(ci.intern-structural-local-id? name-id)
-      (ci.intern-structural-local-source-name-id name-id)]
-    [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
-      (macro-hygiene-structural-source-name-id name-id)]
-    [(and
-        (>= name-id 0)
-        (< name-id (intern-capacity))
-        (ci.intern-qualified? name-id)
-        (tc-hygiene-global-name? (intern-str name-id)))
-      (ci.intern-qualified-base-id name-id)]
-    [else fallback]))
+  ;; Ids inside the intern pool range are the common case and can never be
+  ;; structural/hygiene ids (every structural family's base is >= stride^2),
+  ;; so dispatch on the pool range first and keep the layered predicate
+  ;; checks for the out-of-pool families only.
+  (if (and (>= name-id 0) (< name-id (intern-capacity)))
+    (if (and
+      (ci.intern-qualified? name-id)
+      (tc-hygiene-global-name? (intern-str name-id)))
+      (ci.intern-qualified-base-id name-id)
+      fallback)
+    (cond
+      [(ci.intern-structural-local-id? name-id)
+        (ci.intern-structural-local-source-name-id name-id)]
+      [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
+        (macro-hygiene-structural-source-name-id name-id)]
+      [else fallback])))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
   (match env

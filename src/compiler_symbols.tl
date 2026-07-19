@@ -234,12 +234,20 @@
   [map : (& map CompilerSymbolMap)]
   [key : i64]) : i64
   (let
-    [keys : (& map (Array i64)) (& (struct-get map keys))]
-    [values : (& map (Array i64)) (& (struct-get map values))]
+    [keys : (Array i64) (struct-get map keys)]
+    [values : (Array i64) (struct-get map values)]
     [capacity : i64 (array-length keys)]
     (if (<= capacity 0)
       (compiler-symbol-map-missing-handle)
       (let
+        ;; The masked slot is always in bounds, so the probe reads raw slot
+        ;; data like the put path instead of paying a bounds check per probe.
+        [key-data : (Ptr i64)
+          (unsafe
+            (ptr-cast (array-data keys) : (Ptr i64)))]
+        [value-data : (Ptr i64)
+          (unsafe
+            (ptr-cast (array-data values) : (Ptr i64)))]
         [encoded : i64 (+ key 1)]
         [slot : i64 (compiler-symbol-map-first-slot key capacity)]
         [mask : i64 (- capacity 1)]
@@ -249,10 +257,15 @@
           ;; on zero without a redundant full-capacity counter in this hot loop.
           (while true
             (let
-              [present : i64 (array-ref keys slot)]
+              [present : i64
+                (unsafe
+                  (ptr-read (ptr-offset key-data slot)))]
               (cond
                 [(= present 0) (return (compiler-symbol-map-missing-handle))]
-                [(= present encoded) (return (array-ref values slot))]
+                [(= present encoded)
+                  (return
+                    (unsafe
+                      (ptr-read (ptr-offset value-data slot))))]
                 [else (set! slot (bit-and (+ slot 1) mask))])))
           (compiler-symbol-map-missing-handle))))))
 

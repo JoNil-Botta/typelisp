@@ -1836,6 +1836,10 @@
     [num-entries : i64 0]
     [real-index : i64 0]
     [cur-module : i64 (compiler-symbol-root-module-id)]
+    ;; Decls arrive grouped by module, so the linear find-slot probe only
+    ;; needs to run when a Module decl switches cur-module; -1 marks the
+    ;; memo stale. Slot assignment order (first appearance) is unchanged.
+    [cur-slot : i64 -1]
     [position : i64 0]
     (begin
       (while (< position decl-count)
@@ -1846,15 +1850,20 @@
             [(AstDecl.IncludeStrComptime _ _) unit]
             [(AstDecl.IncludeStrLzss _ _) unit]
             [(AstDecl.IncludeBin _ _) unit]
-            [(AstDecl.Module next-module) (set! cur-module next-module)]
+            [(AstDecl.Module next-module)
+              (begin
+                (set! cur-module next-module)
+                (set! cur-slot -1))]
             [(AstDecl.Test _ _ _) unit]
             [_
               (let
                 [slot : i64
-                  (compiler-module-index-find-slot
-                    mod-ids
-                    num-modules
-                    cur-module)]
+                  (if (>= cur-slot 0)
+                    cur-slot
+                    (compiler-module-index-find-slot
+                      mod-ids
+                      num-modules
+                      cur-module))]
                 (begin
                   (if (< slot 0)
                     (begin
@@ -1864,6 +1873,7 @@
                       (array-set! mod-tail num-modules -1)
                       (set! num-modules (+ num-modules 1)))
                     unit)
+                  (set! cur-slot slot)
                   (array-set! ent-pos num-entries position)
                   (array-set! ent-ridx num-entries real-index)
                   (array-set! ent-next num-entries -1)

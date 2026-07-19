@@ -6882,6 +6882,52 @@
           [(ResultCompilerBackend.Err _) false])]
       [(ResultCompilerBackend.Err _) false])))
 
+(define (compiler-backend-bounds-direct-pressure-tail
+  [index : i64]
+  [count : i64]) : CompilerIrInstrList
+  (if (>= index count)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+      CompilerIrInstrList.Nil)
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.StorePtr
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var index)
+        (AstType.I64))
+      (compiler-backend-bounds-direct-pressure-tail (+ index 1) count))))
+
+;; A direct register/memory length operand needs no scratch. Under full register
+;; pressure an eager, unused scavenge would otherwise add an emergency stack
+;; save at the bounds check even though the compare already has both operands.
+(define (compiler-backend-bounds-direct-pressure-asm) : ResultCompilerBackend
+  (let
+    [previous-slot : i64 compiler-backend-emergency-slot-offset]
+    [_slot : unit (set! compiler-backend-emergency-slot-offset -512)]
+    [regs : (Array String) (compiler-backend-scavenge-candidates)]
+    [count : i64 (array-length regs)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-test-reg-assignment-list-from regs 0)]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BoundsCheck
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          "bounds_ok")
+        (compiler-backend-bounds-direct-pressure-tail 1 count))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-test-instrs instrs assignments count)]
+    [_restore : unit
+      (set! compiler-backend-emergency-slot-offset previous-slot)]
+    result))
+
+(define (compiler-backend-bounds-direct-pressure-ok?) : bool
+  (match (compiler-backend-bounds-direct-pressure-asm)
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    cmpq %rcx, %r9\n")
+        (not (compiler-backend-string-contains? asm "-512(%rbp)")))]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-win64-bounds-index-scratch-ok?) : bool
   (let
     [_win : unit (compiler-backend-set-current-fn-win64!)]
@@ -7145,6 +7191,7 @@
     (compiler-backend-peephole-asm-ok?)
     (compiler-backend-binop-operand-folding-ok?)
     (compiler-backend-bounds-operand-folding-ok?)
+    (compiler-backend-bounds-direct-pressure-ok?)
     (compiler-backend-win64-bounds-index-scratch-ok?)
     (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
@@ -14698,7 +14745,61 @@
       (compiler-backend-gep-fold-disp-shape-ok?)
       (compiler-backend-gep-fold-multi-use-keeps-add-ok?)
       (compiler-backend-gep-fold-builders-ok?))
-    (compiler-backend-gep-fold-drift-detected-ok?)))
+    (compiler-backend-gep-fold-drift-detected-ok?)
+    (compiler-backend-chained-gep-same-home-ok?)))
+
+;; When a variable-index Gep and its constant-offset consumer share the same
+;; register, the first Gep can still write that home directly. The second Gep's
+;; load then folds to a displacement from the just-computed address.
+(define (compiler-backend-chained-gep-same-home-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r13"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rax"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%rax"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                3
+                (CompilerRegLocation.Register "%rax"))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment.Assignment
+                  4
+                  (CompilerRegLocation.Register "%rax"))
+                CompilerRegAssignmentList.Nil)))))]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (AstType.U8))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 8)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+            CompilerIrInstrList.Nil)))]
+    (match (compiler-backend-emit-test-instrs instrs assignments 5)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    leaq (%r13,%rax,1), %rax\n")
+          (compiler-backend-string-contains? asm "    movq 8(%rax), %rax\n")
+          (not (compiler-backend-string-contains? asm "(%rbp)")))]
+      [(ResultCompilerBackend.Err _) false])))
 
 ;; GAP8: `Gep; Load(single-use, 8-byte); BinOp Add x v` folds the load into
 ;; the ALU memory operand: `addq (base,idx,8), dst` with no separate movq.

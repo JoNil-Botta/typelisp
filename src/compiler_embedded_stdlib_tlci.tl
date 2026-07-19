@@ -11,6 +11,7 @@
 ;; needs stdlib.hashmap in this program graph even though full compiler
 ;; builds get it from other modules (small graphs like the embedded verifier
 ;; would otherwise fail the instantiation).
+;; lint-allow: unused-import -- the generated-map instantiation needs it.
 (import stdlib.hashmap)
 (import "tlci_core.tl")
 (import "compiler_ast_types.tl")

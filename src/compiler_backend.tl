@@ -39062,25 +39062,63 @@
               [else compiler-backend-control-mnemonic-none]))]
         [else compiler-backend-control-mnemonic-none]))))
 
-;; Index of the first "(%rbp" occurrence in [start,end), or -1.
-(define (compiler-backend-rsp-rebase-find-rbp
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : i64
-  (let
-    [i : i64 start]
-    [found : i64 -1]
-    (begin
-      (while (and (< found 0) (<= (+ i 5) end))
-        (if (and
-          (= (compiler-backend-peephole-byte-at data i) 40)
-          (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
-          (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
-          (= (compiler-backend-peephole-byte-at data (+ i 3)) 98)
-          (= (compiler-backend-peephole-byte-at data (+ i 4)) 112))
-          (set! found i)
-          (set! i (+ i 1))))
-      found)))
+;; Index of the first "(%rbp" occurrence in [start,end), or -1. The memchr
+;; variant jumps between '(' bytes instead of stepping every byte; both
+;; variants return the same index.
+(cfg
+  feature-tl-memchr
+  (define (compiler-backend-rsp-rebase-find-rbp
+    [data : (Ptr u8)]
+    [start : i64]
+    [end : i64]) : i64
+    (let
+      [i : i64 start]
+      [found : i64 -1]
+      [done : bool false]
+      (begin
+        (while (and (not done) (<= (+ i 5) end))
+          (let
+            [offset : i64
+              (unsafe
+                (compiler-backend-runtime-index-of-byte
+                  (ptr-offset data i)
+                  (- (- end 4) i)
+                  (cast 40 : u8)))]
+            (if (< offset 0)
+              (set! done true)
+              (let
+                [pos : i64 (+ i offset)]
+                (if (and
+                  (= (compiler-backend-peephole-byte-at data (+ pos 1)) 37)
+                  (= (compiler-backend-peephole-byte-at data (+ pos 2)) 114)
+                  (= (compiler-backend-peephole-byte-at data (+ pos 3)) 98)
+                  (= (compiler-backend-peephole-byte-at data (+ pos 4)) 112))
+                  (begin
+                    (set! found pos)
+                    (set! done true))
+                  (set! i (+ pos 1)))))))
+        found))))
+
+(cfg
+  (not feature-tl-memchr)
+  (define (compiler-backend-rsp-rebase-find-rbp
+    [data : (Ptr u8)]
+    [start : i64]
+    [end : i64]) : i64
+    (let
+      [i : i64 start]
+      [found : i64 -1]
+      (begin
+        (while (and (< found 0) (<= (+ i 5) end))
+          (if (and
+            (= (compiler-backend-peephole-byte-at data i) 40)
+            (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
+            (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
+            (= (compiler-backend-peephole-byte-at data (+ i 3)) 98)
+            (= (compiler-backend-peephole-byte-at data (+ i 4)) 112))
+            (set! found i)
+            (set! i (+ i 1))))
+        found))))
 
 ;; Start index of the signed decimal immediately preceding `pos`, or -1 when
 ;; there is none (a bare/indexed form the audit must reject).
@@ -40218,40 +40256,125 @@
 ;; Conservative byte width of the memory access on line [m,end): 16/32/64 when
 ;; a %xmm/%ymm/%zmm operand appears, 64 for unmatched vector/mask mnemonics
 ;; (v*/k*), else 8 (GP memory operands never exceed 8 bytes).
-(define (compiler-backend-sweep-line-width
-  [data : (Ptr u8)]
-  [m : i64]
-  [end : i64]) : i64
-  (let
-    [w : i64 0]
-    [j : i64 m]
-    [b0 : i64 (compiler-backend-peephole-byte-at data m)]
-    (begin
-      (while (< (+ j 1) end)
-        (begin
-          (if (= (compiler-backend-peephole-byte-at data j) 37)
-            (let
-              [nb : i64 (compiler-backend-peephole-byte-at data (+ j 1))]
-              ;; lint-allow: nested-if-ladder
-              (if (= nb 122)
-                (set! w 64)
-                (if (= nb 121)
-                  (if (< w 32)
-                    (set! w 32)
-                    unit)
-                  (if (= nb 120)
-                    (if (< w 16)
-                      (set! w 16)
+;; The memchr variant jumps between '%' bytes instead of stepping every
+;; byte; both variants classify the same positions in the same order.
+(cfg
+  feature-tl-memchr
+  (define (compiler-backend-sweep-line-width
+    [data : (Ptr u8)]
+    [m : i64]
+    [end : i64]) : i64
+    (let
+      [w : i64 0]
+      [j : i64 m]
+      [b0 : i64 (compiler-backend-peephole-byte-at data m)]
+      [done : bool false]
+      (begin
+        (while (and (not done) (< (+ j 1) end))
+          (let
+            [offset : i64
+              (unsafe
+                (compiler-backend-runtime-index-of-byte
+                  (ptr-offset data j)
+                  (- (- end 1) j)
+                  (cast 37 : u8)))]
+            (if (< offset 0)
+              (set! done true)
+              (begin
+                (set! j (+ j offset))
+                (let
+                  [nb : i64 (compiler-backend-peephole-byte-at data (+ j 1))]
+                  ;; lint-allow: nested-if-ladder
+                  (if (= nb 122)
+                    (set! w 64)
+                    (if (= nb 121)
+                      (if (< w 32)
+                        (set! w 32)
+                        unit)
+                      (if (= nb 120)
+                        (if (< w 16)
+                          (set! w 16)
+                          unit)
+                        unit))))
+                (set! j (+ j 1))))))
+        ;; lint-allow: nested-if-ladder
+        (if (> w 0)
+          w
+          (if (or (= b0 118) (= b0 107))
+            64
+            8))))))
+
+(cfg
+  (not feature-tl-memchr)
+  (define (compiler-backend-sweep-line-width
+    [data : (Ptr u8)]
+    [m : i64]
+    [end : i64]) : i64
+    (let
+      [w : i64 0]
+      [j : i64 m]
+      [b0 : i64 (compiler-backend-peephole-byte-at data m)]
+      (begin
+        (while (< (+ j 1) end)
+          (begin
+            (if (= (compiler-backend-peephole-byte-at data j) 37)
+              (let
+                [nb : i64 (compiler-backend-peephole-byte-at data (+ j 1))]
+                ;; lint-allow: nested-if-ladder
+                (if (= nb 122)
+                  (set! w 64)
+                  (if (= nb 121)
+                    (if (< w 32)
+                      (set! w 32)
                       unit)
-                    unit))))
-            unit)
-          (set! j (+ j 1))))
-      ;; lint-allow: nested-if-ladder
-      (if (> w 0)
-        w
-        (if (or (= b0 118) (= b0 107))
-          64
-          8)))))
+                    (if (= nb 120)
+                      (if (< w 16)
+                        (set! w 16)
+                        unit)
+                      unit))))
+              unit)
+            (set! j (+ j 1))))
+        ;; lint-allow: nested-if-ladder
+        (if (> w 0)
+          w
+          (if (or (= b0 118) (= b0 107))
+            64
+            8))))))
+
+;; First '%' index in [start, end-4], or -1: every position that can start a
+;; four-byte "%rsp" reference. The memchr variant jumps straight to it.
+(cfg
+  feature-tl-memchr
+  (define (compiler-backend-sweep-next-percent
+    [data : (Ptr u8)]
+    [start : i64]
+    [end : i64]) : i64
+    (let
+      [offset : i64
+        (unsafe
+          (compiler-backend-runtime-index-of-byte
+            (ptr-offset data start)
+            (- (- end 3) start)
+            (cast 37 : u8)))]
+      (if (< offset 0)
+        -1
+        (+ start offset)))))
+
+(cfg
+  (not feature-tl-memchr)
+  (define (compiler-backend-sweep-next-percent
+    [data : (Ptr u8)]
+    [start : i64]
+    [end : i64]) : i64
+    (let
+      [i : i64 start]
+      [found : i64 -1]
+      (begin
+        (while (and (< found 0) (<= (+ i 4) end))
+          (if (= (compiler-backend-peephole-byte-at data i) 37)
+            (set! found i)
+            (set! i (+ i 1))))
+        found))))
 
 ;; If line [m,end) (mnemonic token ending at te) is exactly
 ;; `movq SRC, N(%rsp)` with SRC a single %reg (not %rsp) or $imm token and a
@@ -40535,98 +40658,112 @@
                               (compiler-backend-sweep-line-width data m end)]
                             [q : i64 m]
                             (begin
+                              ;; Jump between '%' bytes; positions without one
+                              ;; cannot start a "%rsp" reference, so the
+                              ;; classified occurrences and their order match
+                              ;; the byte-stepping walk this replaces.
                               (while (<= (+ q 4) end)
-                                (if (and
-                                  (=
-                                    (compiler-backend-peephole-byte-at data q)
-                                    37)
-                                  (=
-                                    (compiler-backend-peephole-byte-at
+                                (let
+                                  [pct : i64
+                                    (compiler-backend-sweep-next-percent
                                       data
-                                      (+ q 1))
-                                    114)
-                                  (=
-                                    (compiler-backend-peephole-byte-at
-                                      data
-                                      (+ q 2))
-                                    115)
-                                  (=
-                                    (compiler-backend-peephole-byte-at
-                                      data
-                                      (+ q 3))
-                                    112))
+                                      q
+                                      end)]
                                   (begin
+                                    (if (< pct 0)
+                                      (set! q end)
+                                      (set! q pct))
                                     (if (and
-                                      (> q m)
+                                      (>= pct 0)
                                       (=
                                         (compiler-backend-peephole-byte-at
                                           data
-                                          (- q 1))
-                                        40))
-                                      ;; memory base "(%rsp"
-                                      (if (or
-                                        (>= (+ q 4) end)
-                                        (not
+                                          (+ q 1))
+                                        114)
+                                      (=
+                                        (compiler-backend-peephole-byte-at
+                                          data
+                                          (+ q 2))
+                                        115)
+                                      (=
+                                        (compiler-backend-peephole-byte-at
+                                          data
+                                          (+ q 3))
+                                        112))
+                                      (begin
+                                        (if (and
+                                          (> q m)
                                           (=
                                             (compiler-backend-peephole-byte-at
                                               data
-                                              (+ q 4))
-                                            41)))
-                                        ;; "(%rsp," indexed / truncated
-                                        (set! sweepable false)
-                                        (if pop?
-                                          ;; popq MEM addresses AFTER the bump
-                                          (set! sweepable false)
-                                          (let
-                                            [ks : i64
-                                              (compiler-backend-rsp-rebase-int-start
-                                                data
-                                                m
-                                                (- q 1))]
-                                            [noff : i64
-                                              (if (< ks 0)
-                                                0
-                                                (compiler-backend-rsp-rebase-parse-int
+                                              (- q 1))
+                                            40))
+                                          ;; memory base "(%rsp"
+                                          (if (or
+                                            (>= (+ q 4) end)
+                                            (not
+                                              (=
+                                                (compiler-backend-peephole-byte-at
                                                   data
-                                                  ks
-                                                  (- q 1)))]
-                                            [c : i64 (- noff delta)]
-                                            (if leaq?
-                                              ;; address taken: poison upward
-                                              (if win64-epilogue-leaq?
-                                                unit
-                                                (if (< c watermark)
-                                                  (set! watermark c)
-                                                  unit))
-                                              (begin
-                                                (set!
-                                                  reads-lo
-                                                  (compiler-backend-sweep-i64-push
-                                                    reads-lo
-                                                    read-count
-                                                    c))
-                                                (set!
-                                                  reads-hi
-                                                  (compiler-backend-sweep-i64-push
-                                                    reads-hi
-                                                    read-count
-                                                    (+ c w)))
-                                                (set!
-                                                  read-count
-                                                  (+ read-count 1)))))))
-                                      ;; bare %rsp: only the tracked
-                                      ;; subq/addq $imm dst and proven Win64
-                                      ;; prologue/epilogue shapes are allowed.
-                                      (if (or
-                                        win64-rbp-set?
-                                        (and
-                                          win64-epilogue-leaq?
-                                          (= q (- end 4)))
-                                        (and tracked-rsp-write? (= q (- end 4))))
-                                        unit
-                                        (set! sweepable false)))
-                                    (set! q (+ q 4)))
-                                  (set! q (+ q 1))))
+                                                  (+ q 4))
+                                                41)))
+                                            ;; "(%rsp," indexed / truncated
+                                            (set! sweepable false)
+                                            (if pop?
+                                              ;; popq MEM addresses AFTER the bump
+                                              (set! sweepable false)
+                                              (let
+                                                [ks : i64
+                                                  (compiler-backend-rsp-rebase-int-start
+                                                    data
+                                                    m
+                                                    (- q 1))]
+                                                [noff : i64
+                                                  (if (< ks 0)
+                                                    0
+                                                    (compiler-backend-rsp-rebase-parse-int
+                                                      data
+                                                      ks
+                                                      (- q 1)))]
+                                                [c : i64 (- noff delta)]
+                                                (if leaq?
+                                                  ;; address taken: poison upward
+                                                  (if win64-epilogue-leaq?
+                                                    unit
+                                                    (if (< c watermark)
+                                                      (set! watermark c)
+                                                      unit))
+                                                  (begin
+                                                    (set!
+                                                      reads-lo
+                                                      (compiler-backend-sweep-i64-push
+                                                        reads-lo
+                                                        read-count
+                                                        c))
+                                                    (set!
+                                                      reads-hi
+                                                      (compiler-backend-sweep-i64-push
+                                                        reads-hi
+                                                        read-count
+                                                        (+ c w)))
+                                                    (set!
+                                                      read-count
+                                                      (+ read-count 1)))))))
+                                          ;; bare %rsp: only the tracked
+                                          ;; subq/addq $imm dst and proven Win64
+                                          ;; prologue/epilogue shapes are allowed.
+                                          (if (or
+                                            win64-rbp-set?
+                                            (and
+                                              win64-epilogue-leaq?
+                                              (= q (- end 4)))
+                                            (and
+                                              tracked-rsp-write?
+                                              (= q (- end 4))))
+                                            unit
+                                            (set! sweepable false)))
+                                        (set! q (+ q 4)))
+                                      (set! q (+ q 1))))))
                               unit)))
                         ;; rsp motion
                         (if (and rsp-dst? (not pop?))

@@ -1,4 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env sh
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$ROOT"
+
+exec python3 - "$@" <<'PY'
 """Generate or verify stdlib trig golden vectors with MPFR.
 
 The checked-in hard cases also include inputs selected from the CORE-MATH
@@ -8,8 +14,8 @@ libm is never consulted.
 The script uses the MPFR shared library directly, so it needs libmpfr at
 runtime but no Python package:
 
-    python3 scripts/generate-math-trig-vectors.py
-    python3 scripts/generate-math-trig-vectors.py --emit
+    scripts/generate-math-trig-vectors.sh
+    scripts/generate-math-trig-vectors.sh --emit
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ import struct
 import sys
 
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path.cwd()
 VECTORS = ROOT / "tests" / "integration" / "stdlib_math_trig.tl"
 PRECISION = 256
 MPFR_RNDN = 0
@@ -293,3 +299,4 @@ if __name__ == "__main__":
     except RuntimeError as error:
         print(f"math trig vector generator: {error}", file=sys.stderr)
         raise SystemExit(2)
+PY

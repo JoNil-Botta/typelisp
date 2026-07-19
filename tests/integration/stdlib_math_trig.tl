@@ -4,7 +4,7 @@
 ;; precision in round-to-nearest mode. The implementation contract is at most
 ;; 1.5 ULP, so every finite result must be either the correctly rounded value
 ;; or its immediate representable neighbor. Regenerate or independently verify
-;; the stored results with scripts/generate-math-trig-vectors.py.
+;; the stored results with scripts/generate-math-trig-vectors.sh.
 (define trig-f64-inputs : (Array u64 59)
   (array
     0x0000000000000000

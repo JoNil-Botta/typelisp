@@ -1,7 +1,7 @@
 ;# Public compile-time syntax and reflection surface.
 ;#
 ;# This module owns the stdlib-side declarations for the well-known comptime
-;# types described by SPEC 3.7.2.2. The compiler stores macro
+;# types described by SPEC 3.7.1.2. The compiler stores macro
 ;# syntax internally as `AstType.Expr` / `CompilerCtfeValue.Expr`; it verifies these declarations
 ;# and treats the syntax types as aliases for that internal representation.
 ;#

@@ -1726,9 +1726,9 @@ Lifetime metadata has these declaration-site rules:
 - `(:lifetimes ...)` is compatible with ordinary default-layout structs and
   enums. It is rejected with `(:repr c)` because safe references are not C ABI
   fields.
-- Lifetime metadata is independent of cleanup ownership metadata. A
-  cleanup-owning struct may also have lifetime parameters; cleanup-owning enum
-  metadata is reserved as described in section 4.7.1.
+- Lifetime metadata is independent of cleanup ownership metadata.
+  Cleanup-owning structs and enums may also have lifetime parameters; the
+  lifetime and cleanup contracts are validated independently.
 
 Type-use sites supply lifetime arguments with a lifetime-only nominal type form:
 
@@ -3018,10 +3018,10 @@ See §3.5.
 
 Cleanup-required values must be passed to a cleanup function exactly once
 before their owner scope exits. Ordinary aggregates do not own such values: a
-`defstruct` without cleanup metadata and every v1 `defenum` payload must
-reject cleanup-required fields, cleanup-owning aggregate fields, and
-cleanup-owning payloads. Ordinary aggregate construction therefore cannot
-silently hide cleanup responsibility in a value with no cleanup plan.
+`defstruct` or `defenum` without cleanup metadata must reject
+cleanup-required fields or payloads and cleanup-owning aggregate fields or
+payloads. Ordinary aggregate construction therefore cannot silently hide
+cleanup responsibility in a value with no cleanup plan.
 
 A cleanup-owning struct opts in with type-level `(:cleanup cleanup-fn)`
 metadata immediately after the struct name and before all fields. The metadata
@@ -6413,15 +6413,17 @@ in documentation passes.
 - Arenas: scoped `(with-arena ...)` with static escape checking,
   `with-escape`, `with-scratch`, `in-arena`, typed first-class `Arena`
   handles, and checker-proven phase-token rewind/destroy. `(with ...)`
-  scoped resource cleanup, including cleanup-owning structs.
+  scoped resource cleanup, including cleanup-owning structs and enums.
 - Closures with heap-snapshot captures of scalars, function values,
   `String`, aggregates, and fixed arrays (recursively deep-copied); local
   non-escaping immutable reference captures; direct, mutual, and supported
   indirect function-value tail calls emitted as jumps.
 - FFI: `extern` with exact-symbol binding, C varargs, unsafe declarations,
-  raw pointers with unsafe dereference/write/offset/cast, local scalar
-  address-of scratch pointers for out-params, sequentially consistent
-  32/64-bit raw-pointer atomics, and 32/64-bit volatile raw pointer access.
+  raw pointers with unsafe dereference/write/offset/cast, `ptr-addr-of` for
+  whole local/parameter storage, struct-field paths, and fixed-array element
+  paths (including coherent register-resident aggregate aliases),
+  sequentially consistent 32/64-bit raw-pointer atomics, and 32/64-bit
+  volatile raw pointer access.
 - Safe task threading with structural transfer/share checking, generated
   thread/mutex/channel modules, and atomic arenas.
 - SPMD: scalar reference lowering for `foreach`, `spmd-reduce`,
@@ -6438,7 +6440,8 @@ in documentation passes.
   standalone bool dynamic-array lanes, including bool copies and numeric
   comparison results stored to bool arrays; AVX2/AVX-512 varying `while` with
   loop-carried active masks and nested masked flow; runtime dispatch via
-  `defdispatch` with cached CPUID/XGETBV selection.
+  `defdispatch` with cached CPUID/XGETBV selection; and native private
+  scalar/AVX-512 out-of-line varying helper-call ABIs with active masks.
 - Comptime: declaration-emitting typed macros, type reflection, CTFE with
   deterministic fuel, and per-package `tlci` comptime interface images.
 - Tooling: package builds with lockfiles and dependency DAGs, inline tests,
@@ -6446,8 +6449,8 @@ in documentation passes.
   stdio LSP server with diagnostics, definition, completion, inlay hints,
   formatting, hover, document links, flat top-level document-symbol outlines,
   lexical document highlights, and TypeLisp structural-edit/query extensions,
-  plus a REPL that evaluates
-  through the real compile/link/run pipeline.
+  structured source locations for source-authored semantic diagnostics, plus
+  a REPL that evaluates through the real compile/link/run pipeline.
 
 ### 8.2 Not yet implemented, in migration, or deferred
 
@@ -6455,14 +6458,11 @@ in documentation passes.
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
-| Vectorized `spmd-scan`, vectorized shuffles, vectorized enum-payload gather/match | Deferred. |
+| Vectorized `spmd-scan` and shuffles | Deferred under #5349, #5350, and #5351. |
 | Public vector/mask/varying source value types | Deferred by design. |
-| Out-of-line ABI for non-inlined varying helper calls | Frontend analysis and private scalar/AVX-512 call IR lowering are implemented; native backend emission is deferred under #3767. |
+| Out-of-line ABI for non-inlined varying helper calls | Frontend analysis plus private scalar/AVX-512 IR lowering and native emission are implemented; AVX2 native emission is deferred under #5151. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |
-| Aggregate `ptr-addr-of` implementation | Designed in section 5.20: whole locals/parameters, struct-field paths, and fixed-array element paths are the v1 addressable places. Implementation is split across #4463 and #4464. |
-| Cleanup-owning enums | Reserved. |
-| Complete source locations for all semantic errors | Partial: wrapper/unary expression-derived typecheck/lower diagnostics and common compound expression-derived lower diagnostics reuse nested source spans through first source-carrying child fallback; source-facing symbol failures preserve available expression spans and paths; duplicate struct-field and enum-variant registry diagnostics preserve their member-definition locations and source paths. Source-authored declaration-shape failures retain exact declaration bounds and aligned paths through parse/load/normalization, including nested, wrapped, and imported declarations. Origin-free internal/synthetic macro or load rebuild errors may still use the documented 1:1 fallback as tracked by #4417. |
-| Dotted module imports everywhere | Migration in progress: source/docs use dotted imports as the canonical form; legacy path imports remain accepted only for compatibility fixtures and remaining #4035 source/smoke migration work before #2454 removes the syntax. |
+| Dotted module imports everywhere | Migration in progress: source/docs use dotted imports as the canonical form; legacy path imports remain accepted only for compatibility fixtures before #2454 removes the syntax. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
 | Compiled comptime execution from embedded/package `tlci` images | In progress: embedded-stdlib compilation without an explicit stdlib root maps the production image and resolves macro identities through its native registration catalog, with observable hit/miss/failure/fallback counters. CTFE still executes transformer bodies, explicit stdlib roots stay on the source path, and the differential gate requires byte-identical assembly between routes. |
@@ -7050,7 +7050,7 @@ struct-meta   ::= "(" ":repr" "c" ")"
                 | aggregate-lifetime-meta
                 | aggregate-cleanup-meta
 enum-meta     ::= aggregate-lifetime-meta
-                | aggregate-cleanup-meta       ; reserved, rejected in v1
+                | aggregate-cleanup-meta
 aggregate-lifetime-meta ::= "(" ":lifetimes" ident+ ")"
 aggregate-cleanup-meta ::= "(" ":cleanup" ident ")"
 test-decl     ::= "(" "test" ident expr+ ")"
@@ -7061,7 +7061,7 @@ field         ::= "(" ident type field-meta* ")"
 field-meta    ::= "(" ":cleanup" ident ")"
                 | "(" ":owned" ")"
 variant       ::= "(" ident variant-payload* ")"
-variant-payload ::= type field-meta*           ; payload cleanup metadata reserved, rejected in v1
+variant-payload ::= type field-meta*
 
 expr          ::= literal
                 | ident

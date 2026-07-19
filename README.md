@@ -420,10 +420,14 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   checks exposed by `stdlib/cpu.tl` (AVX-512 dispatch requires F+BW+DQ and OS
   ZMM/opmask state).
 
-Public vector/mask value types and vectorized scans/shuffles are deferred.
-Non-inlined varying helper calls now typecheck and lower to specialized private
-scalar/AVX-512 call IR with active masks; native emission remains staged. See
-SPEC.md sections 5.15 and 8.
+Public vector/mask value types are deferred by design. Vectorized scans and
+shuffles remain tracked under [#5349](https://github.com/JoNil-Botta/typelisp/issues/5349),
+[#5350](https://github.com/JoNil-Botta/typelisp/issues/5350), and
+[#5351](https://github.com/JoNil-Botta/typelisp/issues/5351). Non-inlined
+varying helper calls compile and run through the private scalar/AVX-512 ABI;
+AVX2 native emission remains tracked under
+[#5151](https://github.com/JoNil-Botta/typelisp/issues/5151). See SPEC.md
+sections 5.15 and 8.
 
 ## Packages
 
@@ -651,10 +655,9 @@ reflection, packages with lockfiles, inline tests, doctests, fmt, lint, doc
 generation, a docs site, and an LSP diagnostics server.
 
 Not yet (see [SPEC.md §8](SPEC.md) for the authoritative matrix): general
-GC/`free` (deferred by design in favor of arenas), vectorized varying `match`
-control flow, vectorized SPMD scans/shuffles and public vector/mask values,
-native emission for out-of-line varying helper calls, reference captures in
-escaping closures
+GC/`free` (deferred by design in favor of arenas), vectorized SPMD
+scans/shuffles and public vector/mask values, AVX2 native emission for
+out-of-line varying helper calls, reference captures in escaping closures
 (rejected by design), package registry and workspaces, and richer IDE
 features. Codegen quality versus `clang -O2` is an active work stream
 tracked by the committed benchmark baselines.

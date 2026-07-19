@@ -61638,6 +61638,7 @@
       [(ResultMacroEnv.Ok env)
         (begin
           (macro-note-stdlib-tlci-route fallback-module macro-name)
+          (ctfe-result-hygiene-free-reset!)
           (cfg compile-profile (compiler-tc-macro-profile-start))
           (match (ctfe-eval-node
             body
@@ -62932,15 +62933,17 @@
                       decls
                       (+ depth 1)
                       (ast-node-get
-                        (macro-hygiene-expr
-                          (ast-node-get expanded)
-                          MacroHygieneEnv.Nil
-                          (MacroHygieneContext
-                            macro-name-id
-                            definition-module-id
-                            declaration-id
-                            (tc-context-symbols ctx))
-                          (+ depth 1))))
+                        (if (= expanded (ctfe-result-hygiene-free-node-id))
+                          expanded
+                          (macro-hygiene-expr
+                            (ast-node-get expanded)
+                            MacroHygieneEnv.Nil
+                            (MacroHygieneContext
+                              macro-name-id
+                              definition-module-id
+                              declaration-id
+                              (tc-context-symbols ctx))
+                            (+ depth 1)))))
                     (ResultMacroExpr.Err
                       (box
                         (ctfe-diagnostic-at-expr
@@ -62959,15 +62962,17 @@
                         decls
                         (+ depth 1)
                         (ast-node-get
-                          (macro-hygiene-expr
-                            (ast-node-get expanded)
-                            MacroHygieneEnv.Nil
-                            (MacroHygieneContext
-                              macro-name-id
-                              definition-module-id
-                              declaration-id
-                              (tc-context-symbols ctx))
-                            (+ depth 1)))))
+                          (if (= expanded (ctfe-result-hygiene-free-node-id))
+                            expanded
+                            (macro-hygiene-expr
+                              (ast-node-get expanded)
+                              MacroHygieneEnv.Nil
+                              (MacroHygieneContext
+                                macro-name-id
+                                definition-module-id
+                                declaration-id
+                                (tc-context-symbols ctx))
+                              (+ depth 1))))))
                     (ResultMacroExpr.Err
                       (box
                         (ctfe-diagnostic-at-expr

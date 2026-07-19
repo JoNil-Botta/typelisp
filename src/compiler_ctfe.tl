@@ -24,6 +24,32 @@
 (define (ctfe-builtin-reset!) : unit
   unit)
 
+;; A generic syntax intrinsic can prove that its result contains only captured
+;; caller expressions plus hygiene-inert syntax. Publish that exact root to the
+;; expression-macro handoff so it can reuse the tree instead of cloning it
+;; through an identity-only hygiene walk. The marker is reset for every
+;; transformer evaluation and is consumed only when the returned node matches.
+(define ctfe-result-hygiene-free-node : i64
+  -1)
+
+(define (ctfe-result-hygiene-free-reset!) : unit
+  (set! ctfe-result-hygiene-free-node -1))
+
+(define (ctfe-result-hygiene-free-note! [node : i64]) : unit
+  (set! ctfe-result-hygiene-free-node node))
+
+(define (ctfe-result-hygiene-free-node-id) : i64
+  ctfe-result-hygiene-free-node)
+
+(define (ctfe-hygiene-inert-literal-node?
+  [pools : AstNodePoolContext]
+  [node : i64]) : bool
+  (match (ast-expr-unspan-with-pools
+    pools
+    (ast-node-pool-context-expr-get pools node))
+    [(AstExpr.Literal _) true]
+    [_ false]))
+
 ;; Stable opaque key for String-only private metadata. It cannot change if a
 ;; genuinely generated identifier is materialized later in the compilation.
 (define (ctfe-string-structural-key-id [name : String]) : i64
@@ -123,6 +149,9 @@
 (defmacro (ctfe-builtin-ref [index : i64]) : i64
   `(cbi.compiler-builtin-ctfe-ref ,index))
 
+;; Call dispatch and comptime-helper classification refresh the builtin table
+;; once before consulting their ID predicates below. Those predicates stay
+;; warm; predicates used from other contexts retain an explicit refresh.
 (define (ctfe-builtin-id-any2? [name-id : i64] [a : i64] [b : i64]) : bool
   (or (= name-id a) (= name-id b)))
 
@@ -138,61 +167,43 @@
   (or (= name-id a) (ctfe-builtin-id-any3? name-id b c d)))
 
 (define (ctfe-builtin-size-align-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (ctfe-builtin-id-any2? name-id (ctfe-builtin-ref 0) (ctfe-builtin-ref 1))))
+  (ctfe-builtin-id-any2? name-id (ctfe-builtin-ref 0) (ctfe-builtin-ref 1)))
 
 (define (ctfe-builtin-offset-of-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (= name-id (ctfe-builtin-ref 2))))
+  (= name-id (ctfe-builtin-ref 2)))
 
 (define (ctfe-builtin-string-eq-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (ctfe-builtin-id-any3?
-      name-id
-      (ctfe-builtin-ref 3)
-      (ctfe-builtin-ref 4)
-      (ctfe-builtin-ref 5))))
+  (ctfe-builtin-id-any3?
+    name-id
+    (ctfe-builtin-ref 3)
+    (ctfe-builtin-ref 4)
+    (ctfe-builtin-ref 5)))
 
 (define (ctfe-builtin-string-length-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (ctfe-builtin-id-any3?
-      name-id
-      (ctfe-builtin-ref 6)
-      (ctfe-builtin-ref 7)
-      (ctfe-builtin-ref 8))))
+  (ctfe-builtin-id-any3?
+    name-id
+    (ctfe-builtin-ref 6)
+    (ctfe-builtin-ref 7)
+    (ctfe-builtin-ref 8)))
 
 (define (ctfe-builtin-string-ref-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (ctfe-builtin-id-any3?
-      name-id
-      (ctfe-builtin-ref 9)
-      (ctfe-builtin-ref 10)
-      (ctfe-builtin-ref 11))))
+  (ctfe-builtin-id-any3?
+    name-id
+    (ctfe-builtin-ref 9)
+    (ctfe-builtin-ref 10)
+    (ctfe-builtin-ref 11)))
 
 (define (ctfe-builtin-string-to-int-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (ctfe-builtin-id-any2? name-id (ctfe-builtin-ref 12) (ctfe-builtin-ref 13))))
+  (ctfe-builtin-id-any2? name-id (ctfe-builtin-ref 12) (ctfe-builtin-ref 13)))
 
 (define (ctfe-builtin-string-build-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (ctfe-builtin-id-any2? name-id (ctfe-builtin-ref 14) (ctfe-builtin-ref 15))))
+  (ctfe-builtin-id-any2? name-id (ctfe-builtin-ref 14) (ctfe-builtin-ref 15)))
 
 (define (ctfe-builtin-int-to-string-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (= name-id (ctfe-builtin-ref 16))))
+  (= name-id (ctfe-builtin-ref 16)))
 
 (define (ctfe-builtin-comptime-error-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (= name-id (ctfe-builtin-ref 17))))
+  (= name-id (ctfe-builtin-ref 17)))
 
 (define (ctfe-builtin-error-id? [name-id : i64]) : bool
   (begin
@@ -200,50 +211,46 @@
     (= name-id (ctfe-builtin-ref 18))))
 
 (define (ctfe-builtin-reflection-primary-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (or
-      (ctfe-builtin-id-any4?
-        name-id
-        (ctfe-builtin-ref 46)
-        (ctfe-builtin-ref 71)
-        (ctfe-builtin-ref 72)
-        (ctfe-builtin-ref 73))
-      (ctfe-builtin-id-any4?
-        name-id
-        (ctfe-builtin-ref 74)
-        (ctfe-builtin-ref 75)
-        (ctfe-builtin-ref 78)
-        (ctfe-builtin-ref 82))
-      (ctfe-builtin-id-any4?
-        name-id
-        (ctfe-builtin-ref 83)
-        (ctfe-builtin-ref 84)
-        (ctfe-builtin-ref 85)
-        (ctfe-builtin-ref 87))
-      (= name-id (ctfe-builtin-ref 89))
-      (= name-id (ctfe-builtin-ref 214))
-      (= name-id (ctfe-builtin-ref 218))
-      (ctfe-builtin-id-any2?
-        name-id
-        (ctfe-builtin-ref 210)
-        (ctfe-builtin-ref 211)))))
+  (or
+    (ctfe-builtin-id-any4?
+      name-id
+      (ctfe-builtin-ref 46)
+      (ctfe-builtin-ref 71)
+      (ctfe-builtin-ref 72)
+      (ctfe-builtin-ref 73))
+    (ctfe-builtin-id-any4?
+      name-id
+      (ctfe-builtin-ref 74)
+      (ctfe-builtin-ref 75)
+      (ctfe-builtin-ref 78)
+      (ctfe-builtin-ref 82))
+    (ctfe-builtin-id-any4?
+      name-id
+      (ctfe-builtin-ref 83)
+      (ctfe-builtin-ref 84)
+      (ctfe-builtin-ref 85)
+      (ctfe-builtin-ref 87))
+    (= name-id (ctfe-builtin-ref 89))
+    (= name-id (ctfe-builtin-ref 214))
+    (= name-id (ctfe-builtin-ref 218))
+    (ctfe-builtin-id-any2?
+      name-id
+      (ctfe-builtin-ref 210)
+      (ctfe-builtin-ref 211))))
 
 (define (ctfe-builtin-reflection-secondary-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (or
-      (ctfe-builtin-id-any4?
-        name-id
-        (ctfe-builtin-ref 76)
-        (ctfe-builtin-ref 77)
-        (ctfe-builtin-ref 79)
-        (ctfe-builtin-ref 80))
-      (ctfe-builtin-id-any3?
-        name-id
-        (ctfe-builtin-ref 81)
-        (ctfe-builtin-ref 86)
-        (ctfe-builtin-ref 88)))))
+  (or
+    (ctfe-builtin-id-any4?
+      name-id
+      (ctfe-builtin-ref 76)
+      (ctfe-builtin-ref 77)
+      (ctfe-builtin-ref 79)
+      (ctfe-builtin-ref 80))
+    (ctfe-builtin-id-any3?
+      name-id
+      (ctfe-builtin-ref 81)
+      (ctfe-builtin-ref 86)
+      (ctfe-builtin-ref 88))))
 
 (define (ctfe-builtin-reflection-id? [name-id : i64]) : bool
   (or
@@ -259,65 +266,52 @@
       (ctfe-builtin-ref 217))))
 
 (define (ctfe-builtin-source-helper-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (or
-      (ctfe-builtin-id-any4?
-        name-id
-        (ctfe-builtin-ref 19)
-        (ctfe-builtin-ref 20)
-        (ctfe-builtin-ref 21)
-        (ctfe-builtin-ref 22))
-      (ctfe-builtin-id-any4?
-        name-id
-        (ctfe-builtin-ref 23)
-        (ctfe-builtin-ref 24)
-        (ctfe-builtin-ref 25)
-        (ctfe-builtin-ref 26))
-      (ctfe-builtin-id-any4?
-        name-id
-        (ctfe-builtin-ref 51)
-        (ctfe-builtin-ref 54)
-        (ctfe-builtin-ref 56)
-        (ctfe-builtin-ref 59))
-      (ctfe-builtin-id-any4?
-        name-id
-        (ctfe-builtin-ref 61)
-        (ctfe-builtin-ref 62)
-        (ctfe-builtin-ref 63)
-        (ctfe-builtin-ref 64))
-      (ctfe-builtin-id-any2?
-        name-id
-        (ctfe-builtin-ref 66)
-        (ctfe-builtin-ref 69)))))
-
-(define (ctfe-builtin-sequence-length-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (ctfe-builtin-id-any3?
+  (or
+    (ctfe-builtin-id-any4?
+      name-id
+      (ctfe-builtin-ref 19)
+      (ctfe-builtin-ref 20)
+      (ctfe-builtin-ref 21)
+      (ctfe-builtin-ref 22))
+    (ctfe-builtin-id-any4?
+      name-id
+      (ctfe-builtin-ref 23)
+      (ctfe-builtin-ref 24)
+      (ctfe-builtin-ref 25)
+      (ctfe-builtin-ref 26))
+    (ctfe-builtin-id-any4?
       name-id
       (ctfe-builtin-ref 51)
+      (ctfe-builtin-ref 54)
       (ctfe-builtin-ref 56)
-      (ctfe-builtin-ref 66))))
+      (ctfe-builtin-ref 59))
+    (ctfe-builtin-id-any4?
+      name-id
+      (ctfe-builtin-ref 61)
+      (ctfe-builtin-ref 62)
+      (ctfe-builtin-ref 63)
+      (ctfe-builtin-ref 64))
+    (ctfe-builtin-id-any2? name-id (ctfe-builtin-ref 66) (ctfe-builtin-ref 69))))
+
+(define (ctfe-builtin-sequence-length-id? [name-id : i64]) : bool
+  (ctfe-builtin-id-any3?
+    name-id
+    (ctfe-builtin-ref 51)
+    (ctfe-builtin-ref 56)
+    (ctfe-builtin-ref 66)))
 
 (define (ctfe-builtin-sequence-nth-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (ctfe-builtin-id-any3?
-      name-id
-      (ctfe-builtin-ref 54)
-      (ctfe-builtin-ref 59)
-      (ctfe-builtin-ref 69))))
+  (ctfe-builtin-id-any3?
+    name-id
+    (ctfe-builtin-ref 54)
+    (ctfe-builtin-ref 59)
+    (ctfe-builtin-ref 69)))
 
 (define (ctfe-builtin-expr-clause-list-inspector-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (= name-id (ctfe-builtin-ref 60))))
+  (= name-id (ctfe-builtin-ref 60)))
 
 (define (ctfe-builtin-expr-binding-clause-list-inspector-id? [name-id : i64]) : bool
-  (begin
-    (ctfe-builtin-refresh!)
-    (= name-id (ctfe-builtin-ref 70))))
+  (= name-id (ctfe-builtin-ref 70)))
 
 (define (ctfe-comptime-syntax-helper-id? [name-id : i64]) : bool
   (begin
@@ -6414,11 +6408,16 @@
   [result-ty : AstType]
   [expr : AstExpr]
   [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
+  [fuel : i64]
+  [hygiene-free? : bool]) : ResultCtfe
   (if (< index 0)
-    (ResultCtfe.Ok
-      (CompilerCtfeValue.CapturedExpr out-node result-ty pools)
-      fuel)
+    (begin
+      (if hygiene-free?
+        (ctfe-result-hygiene-free-note! out-node)
+        unit)
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.CapturedExpr out-node result-ty pools)
+        fuel))
     (if (<= fuel 0)
       (ResultCtfe.Err
         (box
@@ -6446,7 +6445,8 @@
           result-ty
           expr
           env
-          (- fuel 1))))))
+          (- fuel 1)
+          hygiene-free?)))))
 
 (define (ctfe-expr-list-fold-if-terminal-type-error [expr : AstExpr]) : ResultCtfe
   (ResultCtfe.Err
@@ -6521,7 +6521,10 @@
                   (ctfe-expr-if-result-type env when-true-ty when-false-ty)
                   expr
                   env
-                  fuel)
+                  fuel
+                  (and
+                    (ctfe-hygiene-inert-literal-node? pools when-true-node)
+                    (ctfe-hygiene-inert-literal-node? pools when-false-node)))
                 (ctfe-expr-list-fold-if-terminal-type-error expr))]
             [_
               (ResultCtfe.Err
@@ -7569,49 +7572,19 @@
         (ctfe-eval-call inner args expr env fuel))]
     [(AstExpr.Var name)
       (let
-        [_ctfe-builtin-refresh : unit (ctfe-builtin-refresh!)]
         [raw-id : i64 (ci.intern-macro-global-source-name-id-or name name)]
-        [raw-name : String (intern-str raw-id)]
-        [lookup-name : String (ctfe-hygiene-global-call-name raw-name)]
-        [lookup-id : i64 raw-id]
-        [call-id : i64 (ctfe-comptime-helper-call-name-id lookup-id)]
-        [call-name : String
-          (if (= call-id lookup-id)
-            lookup-name
-            (intern-str call-id))]
-        [string-helper-candidate : bool
-          (ctfe-string-helper-candidate-name-id? lookup-name lookup-id)]
+        [call-id : i64 (ctfe-comptime-helper-call-name-id raw-id)]
         (cond
-          [(ctfe-builtin-size-align-id? lookup-id)
-            (ctfe-eval-size-align-query lookup-name args expr env fuel)]
-          [(ctfe-builtin-offset-of-id? lookup-id)
-            (ctfe-eval-offset-query args expr env fuel)]
-          [(ctfe-builtin-reflection-id? call-id)
-            (ctfe-eval-reflection-query call-name call-id args expr env fuel)]
-          [(and
-              string-helper-candidate
-              (ctfe-string-eq-helper-name-id? lookup-name lookup-id))
-            (ctfe-eval-string-eq-call lookup-name args expr env fuel)]
-          [(ctfe-builtin-string-build-id? call-id)
-            (ctfe-eval-string-append-call call-name args expr env fuel)]
-          [(= call-id (ctfe-builtin-ref 93))
-            (ctfe-eval-comptime-string-slice-call args expr env fuel)]
-          [(and
-              string-helper-candidate
-              (ctfe-string-length-helper-name-id? lookup-name lookup-id))
-            (ctfe-eval-string-length-call lookup-name args expr env fuel)]
-          [(and
-              string-helper-candidate
-              (ctfe-string-ref-helper-name-id? lookup-name lookup-id))
-            (ctfe-eval-string-ref-call lookup-name args expr env fuel)]
-          [(and
-              string-helper-candidate
-              (ctfe-string-to-int-helper-name-id? lookup-name lookup-id))
-            (ctfe-eval-string-to-int-call lookup-name args expr env fuel)]
-          [(ctfe-builtin-int-to-string-id? call-id)
-            (ctfe-eval-int-to-string-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 27))
             (ctfe-eval-expr-bool-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 30))
+            (ctfe-eval-expr-var-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 101))
+            (ctfe-eval-expr-list-fold-if-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 102))
+            (ctfe-eval-expr-clause-list-fold-if-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 93))
+            (ctfe-eval-comptime-string-slice-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 28))
             (ctfe-eval-expr-int-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 29))
@@ -7622,8 +7595,6 @@
             (ctfe-eval-expr-string-inspector-call false args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 92))
             (ctfe-eval-expr-string-inspector-call true args expr env fuel)]
-          [(= call-id (ctfe-builtin-ref 30))
-            (ctfe-eval-expr-var-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 31))
             (ctfe-eval-expr-struct-get-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 32))
@@ -7666,10 +7637,6 @@
             (ctfe-eval-expr-splice-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 35))
             (ctfe-eval-expr-if-call args expr env fuel)]
-          [(= call-id (ctfe-builtin-ref 101))
-            (ctfe-eval-expr-list-fold-if-call args expr env fuel)]
-          [(= call-id (ctfe-builtin-ref 102))
-            (ctfe-eval-expr-clause-list-fold-if-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 36))
             (ctfe-eval-pattern-wildcard-call args expr fuel)]
           [(= call-id (ctfe-builtin-ref 37))
@@ -7714,38 +7681,93 @@
               expr
               env
               fuel)]
-          [(ctfe-builtin-sequence-length-id? call-id)
-            (ctfe-eval-comptime-sequence-length-call
-              call-name
-              args
-              expr
-              env
-              fuel)]
-          [(ctfe-builtin-sequence-nth-id? call-id)
-            (ctfe-eval-comptime-sequence-nth-call call-name args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 215))
             (ctfe-eval-expr-list-type-nth-call args expr env fuel)]
-          [(ctfe-builtin-source-helper-id? call-id)
-            (ctfe-eval-comptime-source-helper-call call-name args expr env fuel)]
-          [(ctfe-builtin-expr-clause-list-inspector-id? call-id)
-            (ctfe-eval-expr-clause-list-inspector-call
-              call-name
-              args
-              expr
-              env
-              fuel)]
-          [(ctfe-builtin-expr-binding-clause-list-inspector-id? call-id)
-            (ctfe-eval-expr-binding-clause-list-inspector-call
-              call-name
-              args
-              expr
-              env
-              fuel)]
-          [(ctfe-builtin-comptime-error-id? call-id)
-            (ctfe-eval-comptime-error-call args expr env fuel)]
-          [(cbi.compiler-builtin-typecheck-float-sqrt-id? lookup-id)
-            (ctfe-float-sqrt-unsupported expr)]
-          [else (ctfe-unsupported-call expr raw-name raw-id call-name call-id)]))]
+          [else
+            (let
+              [raw-name : String (intern-str raw-id)]
+              [lookup-name : String (ctfe-hygiene-global-call-name raw-name)]
+              [lookup-id : i64 raw-id]
+              [call-name : String
+                (if (= call-id lookup-id)
+                  lookup-name
+                  (intern-str call-id))]
+              [string-helper-candidate : bool
+                (ctfe-string-helper-candidate-name-id? lookup-name lookup-id)]
+              (cond
+                [(ctfe-builtin-size-align-id? lookup-id)
+                  (ctfe-eval-size-align-query lookup-name args expr env fuel)]
+                [(ctfe-builtin-offset-of-id? lookup-id)
+                  (ctfe-eval-offset-query args expr env fuel)]
+                [(ctfe-builtin-reflection-id? call-id)
+                  (ctfe-eval-reflection-query
+                    call-name
+                    call-id
+                    args
+                    expr
+                    env
+                    fuel)]
+                [(and
+                    string-helper-candidate
+                    (ctfe-string-eq-helper-name-id? lookup-name lookup-id))
+                  (ctfe-eval-string-eq-call lookup-name args expr env fuel)]
+                [(ctfe-builtin-string-build-id? call-id)
+                  (ctfe-eval-string-append-call call-name args expr env fuel)]
+                [(and
+                    string-helper-candidate
+                    (ctfe-string-length-helper-name-id? lookup-name lookup-id))
+                  (ctfe-eval-string-length-call lookup-name args expr env fuel)]
+                [(and
+                    string-helper-candidate
+                    (ctfe-string-ref-helper-name-id? lookup-name lookup-id))
+                  (ctfe-eval-string-ref-call lookup-name args expr env fuel)]
+                [(and
+                    string-helper-candidate
+                    (ctfe-string-to-int-helper-name-id? lookup-name lookup-id))
+                  (ctfe-eval-string-to-int-call lookup-name args expr env fuel)]
+                [(ctfe-builtin-int-to-string-id? call-id)
+                  (ctfe-eval-int-to-string-call args expr env fuel)]
+                [(ctfe-builtin-sequence-length-id? call-id)
+                  (ctfe-eval-comptime-sequence-length-call
+                    call-name
+                    args
+                    expr
+                    env
+                    fuel)]
+                [(ctfe-builtin-sequence-nth-id? call-id)
+                  (ctfe-eval-comptime-sequence-nth-call
+                    call-name
+                    args
+                    expr
+                    env
+                    fuel)]
+                [(ctfe-builtin-source-helper-id? call-id)
+                  (ctfe-eval-comptime-source-helper-call
+                    call-name
+                    args
+                    expr
+                    env
+                    fuel)]
+                [(ctfe-builtin-expr-clause-list-inspector-id? call-id)
+                  (ctfe-eval-expr-clause-list-inspector-call
+                    call-name
+                    args
+                    expr
+                    env
+                    fuel)]
+                [(ctfe-builtin-expr-binding-clause-list-inspector-id? call-id)
+                  (ctfe-eval-expr-binding-clause-list-inspector-call
+                    call-name
+                    args
+                    expr
+                    env
+                    fuel)]
+                [(ctfe-builtin-comptime-error-id? call-id)
+                  (ctfe-eval-comptime-error-call args expr env fuel)]
+                [(cbi.compiler-builtin-typecheck-float-sqrt-id? lookup-id)
+                  (ctfe-float-sqrt-unsupported expr)]
+                [else
+                  (ctfe-unsupported-call expr raw-name raw-id call-name call-id)]))]))]
     [_ (ctfe-unsupported-form expr)]))
 
 ;; Shared "unsupported compile-time form" diagnostic for ordinary calls.

@@ -53220,24 +53220,36 @@ tl_tlci_call_macro_entry:
   [end : i64]) : bool
   (and (< start end) (= (compiler-backend-peephole-byte-at data start) 37)))
 
-(define (compiler-backend-peephole-stack-slot-range?
+;; One pass over the operand finds "(%rbp)" and "(%rsp)" occurrences (indexed
+;; forms place them mid-operand where the end-anchored memory-base probe
+;; cannot see them): bit 1 = has "(%rbp)", bit 2 = has "(%rsp)". Replaces up
+;; to three separate substring searches per operand with the same existence
+;; answers.
+(define (compiler-backend-peephole-stack-parens-range
   [data : (Ptr u8)]
   [start : i64]
-  [end : i64]) : bool
-  (or
-    (compiler-backend-peephole-range-contains? data start end "(%rbp)")
-    (compiler-backend-peephole-range-contains? data start end "(%rsp)")))
-
-(define (compiler-backend-peephole-local-frame-slot-range?
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : bool
-  (or
-    (compiler-backend-peephole-range-contains? data start end "(%rsp)")
-    (and
-      (< start end)
-      (= (compiler-backend-peephole-byte-at data start) 45)
-      (compiler-backend-peephole-range-contains? data start end "(%rbp)"))))
+  [end : i64]) : i64
+  (let
+    [i : i64 start]
+    [bits : i64 0]
+    (begin
+      (while (and (< bits 3) (<= (+ i 6) end))
+        (begin
+          (if (and
+            (= (compiler-backend-peephole-byte-at data i) 40)
+            (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
+            (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
+            (= (compiler-backend-peephole-byte-at data (+ i 4)) 112)
+            (= (compiler-backend-peephole-byte-at data (+ i 5)) 41))
+            (let
+              [b3 : i64 (compiler-backend-peephole-byte-at data (+ i 3))]
+              (cond
+                [(= b3 98) (set! bits (bit-or bits 1))]
+                [(= b3 115) (set! bits (bit-or bits 2))]
+                [else unit]))
+            unit)
+          (set! i (+ i 1))))
+      bits)))
 
 (define compiler-backend-peephole-op-register-flag : i64
   1)
@@ -53258,37 +53270,33 @@ tl_tlci_call_macro_entry:
     [register? : bool
       (compiler-backend-peephole-register-range? data start end)]
     [packed-stack? : bool (compiler-backend-peephole-owner-key-stack? key)]
-    [stack? : bool
-      (or
-        packed-stack?
-        (= memory-base compiler-backend-peephole-memory-base-rbp)
-        (= memory-base compiler-backend-peephole-memory-base-rsp)
-        (and
-          (>= (- end start) 6)
-          (compiler-backend-peephole-stack-slot-range? data start end)))]
+    [base-rbp? : bool (= memory-base compiler-backend-peephole-memory-base-rbp)]
+    [base-rsp? : bool (= memory-base compiler-backend-peephole-memory-base-rsp)]
+    [leading-minus? : bool
+      (and (< start end) (= (compiler-backend-peephole-byte-at data start) 45))]
+    ;; The single parenthetical scan is needed exactly where the replaced
+    ;; substring searches ran: the general stack probe (no packed key, no
+    ;; end-anchored rbp/rsp base) and the rbp-base local-frame arm's
+    ;; "(%rsp)" search.
+    [parens : i64
+      (if (and
+        (not packed-stack?)
+        (or base-rbp? (and (not base-rsp?) (>= (- end start) 6))))
+        (compiler-backend-peephole-stack-parens-range data start end)
+        0)]
+    [stack? : bool (or packed-stack? base-rbp? base-rsp? (not (= parens 0)))]
     [local-frame? : bool
       (if packed-stack?
-        (or
-          (not (= (bit-and (- key 1) 2) 0))
-          (and
-            (< start end)
-            (= (compiler-backend-peephole-byte-at data start) 45)))
+        (or (not (= (bit-and (- key 1) 2) 0)) leading-minus?)
         (cond
-          [(= memory-base compiler-backend-peephole-memory-base-rsp) true]
-          [(= memory-base compiler-backend-peephole-memory-base-rbp)
-            (or
-              (and
-                (< start end)
-                (= (compiler-backend-peephole-byte-at data start) 45))
-              (compiler-backend-peephole-range-contains?
-                data
-                start
-                end
-                "(%rsp)"))]
+          [base-rsp? true]
+          [base-rbp? (or leading-minus? (not (= (bit-and parens 2) 0)))]
           [else
             (and
               stack?
-              (compiler-backend-peephole-local-frame-slot-range? data start end))]))]
+              (or
+                (not (= (bit-and parens 2) 0))
+                (and leading-minus? (not (= (bit-and parens 1) 0)))))]))]
     [r10-base? : bool (= memory-base compiler-backend-peephole-memory-base-r10)]
     (+
       (if register?

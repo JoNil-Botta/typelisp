@@ -22801,25 +22801,23 @@
               fallback?
               (not (compiler-reg-scratch-float-rhs-direct? assignments rhs "")))]
           [role : CompilerRegScratchRole
-            (if binop-return
-              (if compare?
-                (cond
-                  [(= ordinal 0) (CompilerRegScratchRole.FloatReturnResultGp)]
-                  [(= ordinal 1) (CompilerRegScratchRole.FloatCompareLhsXmm)]
-                  [else (CompilerRegScratchRole.FloatCompareRhsXmm)])
-                (if (= ordinal 0)
-                  (CompilerRegScratchRole.FloatReturnResultXmm)
-                  (CompilerRegScratchRole.FloatArithmeticRhsXmm)))
-              (if compare?
-                (cond
-                  [(and fallback? (= ordinal 0))
-                    (CompilerRegScratchRole.FloatCompareLhsXmm)]
-                  [(and rhs-temp? (= ordinal 1))
-                    (CompilerRegScratchRole.FloatCompareRhsXmm)]
-                  [else (CompilerRegScratchRole.FloatCompareResultGp)])
-                (if (= ordinal 0)
-                  (CompilerRegScratchRole.FloatArithmeticResultXmm)
-                  (CompilerRegScratchRole.FloatArithmeticRhsXmm))))]
+            (cond
+              [(and binop-return compare? (= ordinal 0))
+                (CompilerRegScratchRole.FloatReturnResultGp)]
+              [(and binop-return compare? (= ordinal 1))
+                (CompilerRegScratchRole.FloatCompareLhsXmm)]
+              [(and binop-return compare?)
+                (CompilerRegScratchRole.FloatCompareRhsXmm)]
+              [(and binop-return (= ordinal 0))
+                (CompilerRegScratchRole.FloatReturnResultXmm)]
+              [binop-return (CompilerRegScratchRole.FloatArithmeticRhsXmm)]
+              [(and compare? fallback? (= ordinal 0))
+                (CompilerRegScratchRole.FloatCompareLhsXmm)]
+              [(and compare? rhs-temp? (= ordinal 1))
+                (CompilerRegScratchRole.FloatCompareRhsXmm)]
+              [compare? (CompilerRegScratchRole.FloatCompareResultGp)]
+              [(= ordinal 0) (CompilerRegScratchRole.FloatArithmeticResultXmm)]
+              [else (CompilerRegScratchRole.FloatArithmeticRhsXmm)])]
           [constraint : CompilerRegScratchConstraint
             (match role
               [(CompilerRegScratchRole.FloatReturnResultGp)

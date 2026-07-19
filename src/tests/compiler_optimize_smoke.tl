@@ -1878,6 +1878,10 @@
       "compiler-optimize-cmp-sink-self-test"
       (compiler-optimize-cmp-sink-self-test)
       42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-successor-sink-self-test"
+      (compiler-optimize-successor-sink-self-test)
+      42)
     42))
 
 (define (main) : i64
@@ -1990,3 +1994,10 @@
     (compiler-optimize-cmp-sink-self-test)
     42
     "Sinking a loop-closing compare next to its branch"))
+
+(test
+  single-predecessor-successor-sink
+  (test.assert-i64-eq
+    (compiler-optimize-successor-sink-self-test)
+    42
+    "Successor sinking moves pure chains and rejects unsafe CFG/memory/trap cases"))

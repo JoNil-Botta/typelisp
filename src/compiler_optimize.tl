@@ -11461,6 +11461,20 @@
 (defstruct OptGlobalCopyFactTable
   (buckets (Array OptGlobalCopyFacts)))
 
+;; SSA-only Pack/Word facts. Unlike the block-local pre-SSA copy fold, these
+;; facts may safely carry a Var word across blocks: a verified Pack is dominated
+;; by every Var in its word list, and the Pack in turn dominates any Word fact
+;; accepted by the lookup below.
+(defenum OptGlobalPackWordFact
+  (Fact i64 i64 CompilerIrValue i64 i64))
+
+(defenum OptGlobalPackWordFacts
+  (Nil)
+  (Cons OptGlobalPackWordFact (Box OptGlobalPackWordFacts)))
+
+(defstruct OptGlobalPackWordFactTable
+  (buckets (Array OptGlobalPackWordFacts)))
+
 (define (opt-global-expr-key-eq [a : OptGlobalExprKey] [b : OptGlobalExprKey]) : bool
   (match a
     [(OptGlobalExprKey.MovKey av aty)
@@ -11700,6 +11714,203 @@
       (opt-global-copy-buckets-fill-empty! buckets 0)
       (opt-global-copy-table-insert-reversed! table facts)
       table)))
+
+(define (opt-global-pack-word-facts-from-words
+  [group : i64]
+  [block-id : i64]
+  [def-pos : i64]
+  [index : i64]
+  [words : CompilerIrValueList]
+  [tail : OptGlobalPackWordFacts]) : OptGlobalPackWordFacts
+  (match words
+    [(CompilerIrValueList.Nil) tail]
+    [(CompilerIrValueList.Array seq)
+      (opt-global-pack-word-facts-from-words
+        group
+        block-id
+        def-pos
+        index
+        (compiler-ir-value-seq-to-list seq)
+        tail)]
+    [(CompilerIrValueList.Cons value rest)
+      (opt-global-pack-word-facts-from-words
+        group
+        block-id
+        def-pos
+        (+ index 1)
+        (box-get rest)
+        (if (and
+          (opt-copy-safe-source? value)
+          (not (opt-value-is-var? value group)))
+          (OptGlobalPackWordFacts.Cons
+            (OptGlobalPackWordFact.Fact group index value block-id def-pos)
+            (box tail))
+          tail))]))
+
+(define (opt-global-pack-word-facts-from-instr-seq-from
+  [block-id : i64]
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [tail : OptGlobalPackWordFacts]) : OptGlobalPackWordFacts
+  (if (< index 0)
+    tail
+    (let
+      [instr : CompilerIrInstr (array-ref slots index)]
+      [next-tail : OptGlobalPackWordFacts
+        (match instr
+          [(CompilerIrInstr.Pack group words _)
+            (opt-global-pack-word-facts-from-words
+              group
+              block-id
+              (+ index 1)
+              0
+              words
+              tail)]
+          [_ tail])]
+      (opt-global-pack-word-facts-from-instr-seq-from
+        block-id
+        slots
+        (- index 1)
+        next-tail))))
+
+(define (opt-global-pack-word-facts-from-blocks
+  [doms : OptDomInfo]
+  [blocks : CompilerIrBlockList]
+  [tail : OptGlobalPackWordFacts]) : OptGlobalPackWordFacts
+  (match blocks
+    [(CompilerIrBlockList.Nil) tail]
+    [(CompilerIrBlockList.Cons block rest)
+      (let
+        [rest-facts : OptGlobalPackWordFacts
+          (opt-global-pack-word-facts-from-blocks doms (box-get rest) tail)]
+        (match block
+          [(CompilerIrBlock.Block label instrs)
+            (opt-global-pack-word-facts-from-instr-seq-from
+              (opt-global-block-id doms label)
+              (struct-get instrs slots)
+              (- (struct-get instrs len) 1)
+              rest-facts)]))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-global-pack-word-facts-from-blocks
+        doms
+        (compiler-ir-block-seq-to-list seq)
+        tail)]))
+
+(define (opt-global-pack-word-facts-max-group
+  [facts : OptGlobalPackWordFacts]
+  [max-group : i64]) : i64
+  (match facts
+    [(OptGlobalPackWordFacts.Nil) max-group]
+    [(OptGlobalPackWordFacts.Cons fact rest)
+      (match fact
+        [(OptGlobalPackWordFact.Fact group _ _ _ _)
+          (opt-global-pack-word-facts-max-group
+            (box-get rest)
+            (if (> group max-group)
+              group
+              max-group))])]))
+
+(define (opt-global-pack-word-buckets-fill-empty!
+  [buckets : (Array OptGlobalPackWordFacts)]
+  [index : i64]) : unit
+  (if (>= index (array-length buckets))
+    unit
+    (begin
+      (array-set! buckets index (OptGlobalPackWordFacts.Nil))
+      (opt-global-pack-word-buckets-fill-empty! buckets (+ index 1)))))
+
+(define (opt-global-pack-word-table-insert!
+  [table : OptGlobalPackWordFactTable]
+  [fact : OptGlobalPackWordFact]) : unit
+  (match fact
+    [(OptGlobalPackWordFact.Fact group _ _ _ _)
+      (let
+        [buckets : (Array OptGlobalPackWordFacts) (struct-get table buckets)]
+        (if (and (>= group 0) (< group (array-length buckets)))
+          (array-set!
+            buckets
+            group
+            (OptGlobalPackWordFacts.Cons fact (box (array-ref buckets group))))
+          unit))]))
+
+(define (opt-global-pack-word-table-insert-reversed!
+  [table : OptGlobalPackWordFactTable]
+  [facts : OptGlobalPackWordFacts]) : unit
+  (match facts
+    [(OptGlobalPackWordFacts.Nil) unit]
+    [(OptGlobalPackWordFacts.Cons fact rest)
+      (begin
+        (opt-global-pack-word-table-insert-reversed! table (box-get rest))
+        (opt-global-pack-word-table-insert! table fact))]))
+
+(define (opt-global-pack-word-table-from-facts [facts : OptGlobalPackWordFacts]) : OptGlobalPackWordFactTable
+  (let
+    [max-group : i64 (opt-global-pack-word-facts-max-group facts (- 0 1))]
+    [capacity : i64
+      (if (< max-group 0)
+        1
+        (+ max-group 1))]
+    [buckets : (Array OptGlobalPackWordFacts)
+      (array.make-array OptGlobalPackWordFacts capacity)]
+    [table : OptGlobalPackWordFactTable (OptGlobalPackWordFactTable buckets)]
+    (begin
+      (opt-global-pack-word-buckets-fill-empty! buckets 0)
+      (opt-global-pack-word-table-insert-reversed! table facts)
+      table)))
+
+(define (opt-global-pack-word-lookup-list
+  [facts : OptGlobalPackWordFacts]
+  [group : i64]
+  [index : i64]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]) : CompilerIrMaybeValue
+  (match facts
+    [(OptGlobalPackWordFacts.Nil) (CompilerIrMaybeValue.No)]
+    [(OptGlobalPackWordFacts.Cons fact rest)
+      (match fact
+        [(OptGlobalPackWordFact.Fact
+            found-group
+            found-index
+            value
+            def-block-id
+            def-pos)
+          (if (and
+            (= found-group group)
+            (= found-index index)
+            (opt-global-fact-available?
+              def-block-id
+              def-pos
+              use-block-id
+              use-pos
+              doms))
+            (CompilerIrMaybeValue.Some value)
+            (opt-global-pack-word-lookup-list
+              (box-get rest)
+              group
+              index
+              doms
+              use-block-id
+              use-pos))])]))
+
+(define (opt-global-pack-word-lookup
+  [table : OptGlobalPackWordFactTable]
+  [group : i64]
+  [index : i64]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]) : CompilerIrMaybeValue
+  (let
+    [buckets : (Array OptGlobalPackWordFacts) (struct-get table buckets)]
+    (if (and (>= group 0) (< group (array-length buckets)))
+      (opt-global-pack-word-lookup-list
+        (array-ref buckets group)
+        group
+        index
+        doms
+        use-block-id
+        use-pos)
+      (CompilerIrMaybeValue.No))))
 
 (define (opt-global-copy-lookup-list
   [facts : OptGlobalCopyFacts]
@@ -11953,6 +12164,7 @@
 
 (define (opt-global-copy-subst-instr
   [facts : OptGlobalCopyFactTable]
+  [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
   [block-id : i64]
   [pos : i64]
@@ -12162,10 +12374,24 @@
     [(CompilerIrInstr.LaneId _ _ _) instr]
     [(CompilerIrInstr.Jump _) instr]
     [(CompilerIrInstr.Phi _ _ _) instr]
-    ;; Leave register-group ops un-substituted here; not propagating a
-    ;; global copy into their operands is always sound (original vars stay valid).
+    ;; Pack operands remain unchanged. A dominated Word of a known Pack becomes
+    ;; an ordinary copy; the pass's second copy sweep forwards that copy into
+    ;; all non-phi uses, and late DCE retires the dead Word/Pack chain.
     [(CompilerIrInstr.Pack _ _ _) instr]
-    [(CompilerIrInstr.Word _ _ _ _) instr]
+    [(CompilerIrInstr.Word dst src index ty)
+      (match src
+        [(CompilerIrValue.Var group)
+          (match (opt-global-pack-word-lookup
+            pack-facts
+            group
+            index
+            doms
+            block-id
+            pos)
+            [(CompilerIrMaybeValue.Some value)
+              (CompilerIrInstr.Mov dst value ty)]
+            [(CompilerIrMaybeValue.No) instr])]
+        [_ instr])]
     [(CompilerIrInstr.TailCallIndirect func args ty)
       (CompilerIrInstr.TailCallIndirect
         (opt-global-copy-resolve facts doms block-id pos func)
@@ -12180,6 +12406,7 @@
 
 (define (opt-global-copy-instr-seq
   [facts : OptGlobalCopyFactTable]
+  [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
   [block-label : String]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
@@ -12196,6 +12423,7 @@
             (compiler-ir-instr-cons
               (opt-global-copy-subst-instr
                 facts
+                pack-facts
                 doms
                 block-id
                 (+ index 1)
@@ -12206,6 +12434,7 @@
 
 (define (opt-global-copy-blocks
   [facts : OptGlobalCopyFactTable]
+  [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -12216,10 +12445,14 @@
           (compiler-ir-block-cons
             (compiler-ir-block
               label
-              (opt-global-copy-instr-seq facts doms label instrs))
-            (opt-global-copy-blocks facts doms (box-get rest)))])]
+              (opt-global-copy-instr-seq facts pack-facts doms label instrs))
+            (opt-global-copy-blocks facts pack-facts doms (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-global-copy-blocks facts doms (compiler-ir-block-seq-to-list seq))]))
+      (opt-global-copy-blocks
+        facts
+        pack-facts
+        doms
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-global-expr-facts-from-instr-seq-from
   [block-id : i64]
@@ -12453,6 +12686,7 @@
 (define (opt-global-cse-blocks
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
+  [all-blocks : CompilerIrBlockList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -12460,12 +12694,22 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (compiler-ir-block
+            (if (opt-induction-switch-arm?
+              (struct-get doms index)
+              all-blocks
               label
-              (opt-global-cse-instr-seq facts doms label instrs))
-            (opt-global-cse-blocks facts doms (box-get rest)))])]
+              instrs)
+              block
+              (compiler-ir-block
+                label
+                (opt-global-cse-instr-seq facts doms label instrs)))
+            (opt-global-cse-blocks facts doms all-blocks (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-global-cse-blocks facts doms (compiler-ir-block-seq-to-list seq))]))
+      (opt-global-cse-blocks
+        facts
+        doms
+        all-blocks
+        (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-global-value-number-blocks-with-context
   [context : OptCfgContext]
@@ -12476,18 +12720,26 @@
       (opt-global-copy-facts-from-blocks doms blocks (OptGlobalCopyFacts.Nil))]
     [copy-facts : OptGlobalCopyFactTable
       (opt-global-copy-table-from-facts copy-fact-list)]
+    [pack-word-fact-list : OptGlobalPackWordFacts
+      (opt-global-pack-word-facts-from-blocks
+        doms
+        blocks
+        (OptGlobalPackWordFacts.Nil))]
+    [pack-word-facts : OptGlobalPackWordFactTable
+      (opt-global-pack-word-table-from-facts pack-word-fact-list)]
     [copied : CompilerIrBlockList
-      (opt-global-copy-blocks copy-facts doms blocks)]
+      (opt-global-copy-blocks copy-facts pack-word-facts doms blocks)]
     [expr-fact-list : OptGlobalExprFacts
       (opt-global-expr-facts-from-blocks doms copied (OptGlobalExprFacts.Nil))]
     [expr-facts : OptGlobalExprFactTable
       (opt-global-expr-table-from-facts expr-fact-list)]
-    [cse : CompilerIrBlockList (opt-global-cse-blocks expr-facts doms copied)]
+    [cse : CompilerIrBlockList
+      (opt-global-cse-blocks expr-facts doms copied copied)]
     [cse-copy-fact-list : OptGlobalCopyFacts
       (opt-global-copy-facts-from-blocks doms cse (OptGlobalCopyFacts.Nil))]
     [cse-copy-facts : OptGlobalCopyFactTable
       (opt-global-copy-table-from-facts cse-copy-fact-list)]
-    (opt-global-copy-blocks cse-copy-facts doms cse)))
+    (opt-global-copy-blocks cse-copy-facts pack-word-facts doms cse)))
 
 (define (opt-global-value-number-function-with-context
   [context : OptCfgContext]
@@ -17869,37 +18121,118 @@
     0
     deriveds))
 
+(define (opt-induction-remat-address-dst
+  [instr : CompilerIrInstr]
+  [mul-dst : i64]) : option_i64.Option
+  (match instr
+    [(CompilerIrInstr.BinOp dst (CompilerIrBinOp.Add) lhs rhs _)
+      (if (or (opt-value-is-var? lhs mul-dst) (opt-value-is-var? rhs mul-dst))
+        (option_i64.Some dst)
+        (option_i64.None))]
+    [(CompilerIrInstr.Gep dst _ offset _)
+      (if (opt-value-is-var? offset mul-dst)
+        (option_i64.Some dst)
+        (option_i64.None))]
+    [_ (option_i64.None)]))
+
+(define (opt-induction-remat-arm-seq?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= (+ index 3) (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp mul-dst (CompilerIrBinOp.Mul) _ _ _)
+        (match (opt-induction-remat-address-dst
+          (compiler-ir-instr-seq-ref instrs (+ index 1))
+          mul-dst)
+          [(option_i64.Some address-dst)
+            (match (compiler-ir-instr-seq-ref instrs (+ index 2))
+              [(CompilerIrInstr.Gep gep-dst base _ _)
+                (and
+                  (opt-value-is-var? base address-dst)
+                  (match (compiler-ir-instr-seq-ref instrs (+ index 3))
+                    [(CompilerIrInstr.Load _ src _)
+                      (opt-value-is-var? src gep-dst)]
+                    [_ false]))]
+              [_ false])]
+          [(option_i64.None) false])]
+      [_ (opt-induction-remat-arm-seq? instrs (+ index 1))])))
+
+(define (opt-induction-switch-predecessor?
+  [blocks : CompilerIrBlockList]
+  [target : String]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (if (and
+              (> count 0)
+              (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                [(CompilerIrInstr.Switch _ _ _ _) true]
+                [_ false])
+              (opt-label-contains
+                (opt-cfg-instr-successors
+                  (OptLabelSet.Nil)
+                  (compiler-ir-instr-seq-ref instrs (- count 1)))
+                target))
+              true
+              (opt-induction-switch-predecessor? (box-get rest) target)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-induction-switch-predecessor?
+        (compiler-ir-block-seq-to-list seq)
+        target)]))
+
+(define (opt-induction-switch-arm?
+  [_index : OptCfgIndex]
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [arm-instrs : CompilerIrInstrSeq]) : bool
+  (and
+    (opt-induction-remat-arm-seq? arm-instrs 0)
+    (opt-induction-switch-predecessor? blocks label)))
+
 (define (opt-induction-collect-derived-blocks
+  [index : OptCfgIndex]
   [fact : OptInductionFact]
   [offsets : opt_i64_i64_map.Map]
   [scaled : opt_i64_i64_map.Map]
   [loop-defs : opt_i64_i64_map.Map]
+  [all-body-blocks : CompilerIrBlockList]
   [body-blocks : CompilerIrBlockList]
   [deriveds : OptInductionDerivedList]) : OptInductionDerivedList
   (match body-blocks
     [(CompilerIrBlockList.Nil) deriveds]
     [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(CompilerIrBlock.Block _ instrs)
+        [(CompilerIrBlock.Block label instrs)
           (opt-induction-collect-derived-blocks
+            index
             fact
             offsets
             scaled
             loop-defs
+            all-body-blocks
             (box-get rest)
-            (opt-induction-collect-derived-instr-seq
-              fact
-              offsets
-              scaled
-              loop-defs
-              instrs
-              deriveds))])]
+            (if (opt-induction-switch-arm? index all-body-blocks label instrs)
+              deriveds
+              (opt-induction-collect-derived-instr-seq
+                fact
+                offsets
+                scaled
+                loop-defs
+                instrs
+                deriveds)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-induction-collect-derived-blocks
+        index
         fact
         offsets
         scaled
         loop-defs
+        all-body-blocks
         (compiler-ir-block-seq-to-list seq)
         deriveds)]))
 
@@ -18029,6 +18362,7 @@
   [scaled : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
+  [all-blocks : CompilerIrBlockList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -18036,7 +18370,9 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (if (opt-loop-body-label-member? body index label)
+            (if (and
+              (opt-loop-body-label-member? body index label)
+              (not (opt-induction-switch-arm? index all-blocks label instrs)))
               (compiler-ir-block
                 label
                 (opt-induction-rewrite-instr-seq
@@ -18055,6 +18391,7 @@
               scaled
               derived
               derived-phi
+              all-blocks
               (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-induction-rewrite-blocks
@@ -18065,6 +18402,7 @@
         scaled
         derived
         derived-phi
+        all-blocks
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-induction-rewrite-derived-list-blocks
@@ -18095,6 +18433,7 @@
           scaled
           derived
           (opt-induction-derived-phi-var derived frame)
+          blocks
           blocks))]))
 
 ;; GepScaled has no affine offset; it reports a nonzero value so it takes the
@@ -18386,10 +18725,12 @@
                   (opt-induction-scaled-env-blocks fact loop-defs body-blocks)]
                 [deriveds : OptInductionDerivedList
                   (opt-induction-collect-derived-blocks
+                    index
                     fact
                     offsets
                     scaled
                     loop-defs
+                    blocks
                     body-blocks
                     (OptInductionDerivedList.Nil))]
                 [derived-count : i64
@@ -21539,8 +21880,10 @@
           [(OptMaybeBlock.No) 0]
           [(OptMaybeBlock.Some block)
             (match block
-              [(CompilerIrBlock.Block _ instrs)
-                (match (opt-gvn-rewrite-block table sources block)
+              [(CompilerIrBlock.Block label instrs)
+                (match (if (opt-induction-switch-arm? index blocks label instrs)
+                  (OptGvnRewriteResult.Result block false)
+                  (opt-gvn-rewrite-block table sources block))
                   [(OptGvnRewriteResult.Result rewritten block-changed)
                     (begin
                       (if block-changed
@@ -31610,6 +31953,1804 @@
     [(CompilerIrBlockList.Array seq)
       (opt-cmp-sink-blocks (compiler-ir-block-seq-to-list seq))]))
 
+;; --- single-predecessor successor sinking ----------------------------------
+;;
+;; Move a pure definition out of a Branch/Switch block when all of its uses
+;; occur in one successor and that successor has no other predecessor. The
+;; single-predecessor rule guarantees that the move cannot increase execution
+;; count and makes dominance straightforward on verified SSA. Scanning the
+;; source block backward lets a moved consumer make its own producers eligible
+;; in the same pass (the Load -> Pack chain in enum dispatch is the motivating
+;; shape).
+(defenum OptSuccessorSinkMove
+  ;; `removed` marks original source instructions that move with this bundle.
+  ;; `origins[i]` is that source index for a moved instruction and -1 for a
+  ;; rematerialized clone. Keeping the distinction makes use accounting ignore
+  ;; new clone uses when deciding whether another original producer can move.
+  (Move String (Array i64) String CompilerIrInstrSeq (Array i64)))
+
+(defenum OptSuccessorSinkMoves
+  (Nil)
+  (Cons OptSuccessorSinkMove (Box OptSuccessorSinkMoves)))
+
+(defenum OptSuccessorSinkMaybeLabel
+  (No)
+  (Some String))
+
+(defenum OptSuccessorSinkPrepared
+  (No)
+  (Some CompilerIrInstrSeq (Array i64) (Array i64)))
+
+(defenum OptSuccessorSinkMaybeInstr
+  (No)
+  (Some CompilerIrInstr))
+
+(defenum OptSuccessorSinkMaybeRecipe
+  (No)
+  (Some CompilerIrInstr CompilerIrValue AstType))
+
+(defenum OptSuccessorSinkMaybeInductionShape
+  (No)
+  (Some String String))
+
+(defstruct OptSuccessorSinkPrepareContext
+  (frame i64)
+  (target String)
+  (blocks CompilerIrBlockList)
+  (instrs CompilerIrInstrSeq)
+  (terminator-index i64)
+  (defs (Array i64))
+  (all-defs (Array i64))
+  (source-loop-target bool)
+  (total-uses (Array i64))
+  (base-allowed (Array i64))
+  (leaf-uses (Array i64))
+  (terminator-live (Array i64))
+  (loop-phi-leaves (Array i64))
+  (covered-uses (Array i64))
+  (planned (Array i64))
+  (visiting (Array i64))
+  (remap (Array i64))
+  (removed (Array i64))
+  (frame-cell (Array i64))
+  (clone-count (Array i64)))
+
+(define (opt-successor-sink-binop? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Div) false]
+    [(CompilerIrBinOp.Mod) false]
+    [(CompilerIrBinOp.SafeDiv) false]
+    [(CompilerIrBinOp.SafeMod) false]
+    ;; Scalar shifts have language-level abort checks for invalid counts.
+    [(CompilerIrBinOp.Shl) false]
+    [(CompilerIrBinOp.Shr) false]
+    [_ true]))
+
+;; `Global`/`RuntimeGlobal` operands are implicit mutable reads, not stable
+;; scalar values. The listed instruction forms are pure only when their value
+;; operands do not introduce one of those hidden reads.
+(define (opt-successor-sink-stable-value? [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Global _) false]
+    [(CompilerIrValue.RuntimeGlobal _) false]
+    [_ true]))
+
+(define (opt-successor-sink-stable-values? [values : CompilerIrValueList]) : bool
+  (match values
+    [(CompilerIrValueList.Nil) true]
+    [(CompilerIrValueList.Array seq)
+      (opt-successor-sink-stable-values? (compiler-ir-value-seq-to-list seq))]
+    [(CompilerIrValueList.Cons value rest)
+      (and
+        (opt-successor-sink-stable-value? value)
+        (opt-successor-sink-stable-values? (box-get rest)))]))
+
+(define (opt-successor-sink-load-barrier? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Store _ _ _) true]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.CopyBytes _ _ _) true]
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(CompilerIrInstr.Call _ _ _ _) true]
+    [(CompilerIrInstr.CallIndirect _ _ _ _) true]
+    [(CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(CompilerIrInstr.CallCAbiStoreResult _) true]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
+    [(CompilerIrInstr.SpmdCall _) true]
+    [(CompilerIrInstr.TailCall _ _ _) true]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [(CompilerIrInstr.Syscall _ _) true]
+    ;; These are stores as well, even though the first-cut scalar rule does not
+    ;; otherwise schedule vector instructions.
+    [(CompilerIrInstr.VectorStore _) true]
+    [(CompilerIrInstr.PredicatedStore _) true]
+    [_ false]))
+
+(define (opt-successor-sink-load-clear-to-terminator?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [terminator-index : i64]) : bool
+  (if (>= index terminator-index)
+    true
+    (if (opt-successor-sink-load-barrier?
+      (compiler-ir-instr-seq-ref instrs index))
+      false
+      (opt-successor-sink-load-clear-to-terminator?
+        instrs
+        (+ index 1)
+        terminator-index))))
+
+(define (opt-successor-sink-candidate?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [terminator-index : i64]
+  [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ src _) (opt-successor-sink-stable-value? src)]
+    [(CompilerIrInstr.Gep _ base offset _)
+      (and
+        (opt-successor-sink-stable-value? base)
+        (opt-successor-sink-stable-value? offset))]
+    [(CompilerIrInstr.Load _ src _)
+      (and
+        (opt-successor-sink-stable-value? src)
+        (opt-successor-sink-load-clear-to-terminator?
+          instrs
+          (+ index 1)
+          terminator-index))]
+    [(CompilerIrInstr.Cast _ src _ _) (opt-successor-sink-stable-value? src)]
+    [(CompilerIrInstr.Bitcast _ src _ _) (opt-successor-sink-stable-value? src)]
+    [(CompilerIrInstr.BinOp _ op lhs rhs _)
+      (and
+        (opt-successor-sink-binop? op)
+        (opt-successor-sink-stable-value? lhs)
+        (opt-successor-sink-stable-value? rhs))]
+    [(CompilerIrInstr.UnOp _ _ src _) (opt-successor-sink-stable-value? src)]
+    [(CompilerIrInstr.Pack _ words _) (opt-successor-sink-stable-values? words)]
+    [(CompilerIrInstr.Word _ src _ _) (opt-successor-sink-stable-value? src)]
+    [_ false]))
+
+;; Rematerialization is intentionally narrower than ordinary sinking. Loads
+;; and even otherwise-pure Mov/Cast forms may hide mutable or non-local facts;
+;; address arithmetic is limited to non-trapping Gep/BinOp producers.
+(define (opt-successor-sink-remat-candidate? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Gep _ base offset _)
+      (and
+        (opt-successor-sink-stable-value? base)
+        (opt-successor-sink-stable-value? offset))]
+    [(CompilerIrInstr.BinOp _ op lhs rhs _)
+      (and
+        (opt-successor-sink-binop? op)
+        (opt-successor-sink-stable-value? lhs)
+        (opt-successor-sink-stable-value? rhs))]
+    [_ false]))
+
+(define (opt-successor-sink-subst-value
+  [frame : i64]
+  [remap : (Array i64)]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (match value
+    [(CompilerIrValue.Var var)
+      (if (and (>= var 0) (< var frame) (> (array-ref remap var) 0))
+        (CompilerIrValue.Var (- (array-ref remap var) 1))
+        value)]
+    [_ value]))
+
+(define (opt-successor-sink-subst-values
+  [frame : i64]
+  [remap : (Array i64)]
+  [values : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(CompilerIrValueList.Nil) CompilerIrValueList.Nil]
+    [(CompilerIrValueList.Array seq)
+      (opt-successor-sink-subst-values
+        frame
+        remap
+        (compiler-ir-value-seq-to-list seq))]
+    [(CompilerIrValueList.Cons value rest)
+      (compiler-ir-value-cons
+        (opt-successor-sink-subst-value frame remap value)
+        (opt-successor-sink-subst-values frame remap (box-get rest)))]))
+
+(define (opt-successor-sink-subst-instr
+  [frame : i64]
+  [remap : (Array i64)]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Mov dst src ty)
+      (CompilerIrInstr.Mov
+        dst
+        (opt-successor-sink-subst-value frame remap src)
+        ty)]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (CompilerIrInstr.Gep
+        dst
+        (opt-successor-sink-subst-value frame remap base)
+        (opt-successor-sink-subst-value frame remap offset)
+        ty)]
+    [(CompilerIrInstr.Load dst src ty)
+      (CompilerIrInstr.Load
+        dst
+        (opt-successor-sink-subst-value frame remap src)
+        ty)]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (CompilerIrInstr.Cast
+        dst
+        (opt-successor-sink-subst-value frame remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (CompilerIrInstr.Bitcast
+        dst
+        (opt-successor-sink-subst-value frame remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (CompilerIrInstr.BinOp
+        dst
+        op
+        (opt-successor-sink-subst-value frame remap lhs)
+        (opt-successor-sink-subst-value frame remap rhs)
+        ty)]
+    [(CompilerIrInstr.UnOp dst op src ty)
+      (CompilerIrInstr.UnOp
+        dst
+        op
+        (opt-successor-sink-subst-value frame remap src)
+        ty)]
+    [(CompilerIrInstr.Pack dst words ty)
+      (CompilerIrInstr.Pack
+        dst
+        (opt-successor-sink-subst-values frame remap words)
+        ty)]
+    [(CompilerIrInstr.Word dst src index ty)
+      (CompilerIrInstr.Word
+        dst
+        (opt-successor-sink-subst-value frame remap src)
+        index
+        ty)]
+    [_ instr]))
+
+(define (opt-successor-sink-remat-clone [fresh : i64] [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Gep _ base offset ty)
+      (CompilerIrInstr.Gep fresh base offset ty)]
+    [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+      (CompilerIrInstr.BinOp fresh op lhs rhs ty)]
+    [_ instr]))
+
+(define (opt-successor-sink-find-def-in-seq
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [var : i64]) : OptSuccessorSinkMaybeInstr
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptSuccessorSinkMaybeInstr.No)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match (opt-instr-def-var instr)
+        [(option_i64.Some dst)
+          (if (= dst var)
+            (OptSuccessorSinkMaybeInstr.Some instr)
+            (opt-successor-sink-find-def-in-seq instrs (+ index 1) var))]
+        [(option_i64.None)
+          (opt-successor-sink-find-def-in-seq instrs (+ index 1) var)]))))
+
+(define (opt-successor-sink-find-def [blocks : CompilerIrBlockList] [var : i64]) : OptSuccessorSinkMaybeInstr
+  (match blocks
+    [(CompilerIrBlockList.Nil) (OptSuccessorSinkMaybeInstr.No)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (match (opt-successor-sink-find-def-in-seq instrs 0 var)
+            [(OptSuccessorSinkMaybeInstr.Some instr)
+              (OptSuccessorSinkMaybeInstr.Some instr)]
+            [(OptSuccessorSinkMaybeInstr.No)
+              (opt-successor-sink-find-def (box-get rest) var)])])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-successor-sink-find-def (compiler-ir-block-seq-to-list seq) var)]))
+
+(define (opt-successor-sink-value-i64
+  [blocks : CompilerIrBlockList]
+  [value : CompilerIrValue]) : option_i64.Option
+  (match value
+    [(CompilerIrValue.I64 n) (option_i64.Some n)]
+    [(CompilerIrValue.Var var)
+      (match (opt-successor-sink-find-def blocks var)
+        [(OptSuccessorSinkMaybeInstr.Some instr)
+          (match instr
+            [(CompilerIrInstr.Mov _ (CompilerIrValue.I64 n) _)
+              (option_i64.Some n)]
+            [_ (option_i64.None)])]
+        [(OptSuccessorSinkMaybeInstr.No) (option_i64.None)])]
+    [_ (option_i64.None)]))
+
+(define (opt-successor-sink-value-zero?
+  [blocks : CompilerIrBlockList]
+  [value : CompilerIrValue]) : bool
+  (match (opt-successor-sink-value-i64 blocks value)
+    [(option_i64.Some n) (= n 0)]
+    [(option_i64.None)
+      (match value
+        [(CompilerIrValue.Var var)
+          (match (opt-successor-sink-find-def blocks var)
+            [(OptSuccessorSinkMaybeInstr.Some instr)
+              (match instr
+                [(CompilerIrInstr.BinOp _ (CompilerIrBinOp.Mul) lhs rhs _)
+                  (or
+                    (opt-successor-sink-value-zero? blocks lhs)
+                    (opt-successor-sink-value-zero? blocks rhs))]
+                [_ false])]
+            [(OptSuccessorSinkMaybeInstr.No) false])]
+        [_ false])]))
+
+(define (opt-successor-sink-phi-zero-start?
+  [blocks : CompilerIrBlockList]
+  [inputs : CompilerIrPhiInputList]) : bool
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) false]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-successor-sink-phi-zero-start?
+        blocks
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value _ rest)
+      (or
+        (opt-successor-sink-value-zero? blocks value)
+        (opt-successor-sink-phi-zero-start? blocks (box-get rest)))]))
+
+(define (opt-successor-sink-phi-zero-label
+  [blocks : CompilerIrBlockList]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeLabel
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (OptSuccessorSinkMaybeLabel.No)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-successor-sink-phi-zero-label
+        blocks
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (opt-successor-sink-value-zero? blocks value)
+        (OptSuccessorSinkMaybeLabel.Some label)
+        (opt-successor-sink-phi-zero-label blocks (box-get rest)))]))
+
+(define (opt-successor-sink-phi-unit-step-value?
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var input-var)
+      (match (opt-successor-sink-find-def blocks input-var)
+        [(OptSuccessorSinkMaybeInstr.Some instr)
+          (match instr
+            [(CompilerIrInstr.BinOp _ (CompilerIrBinOp.Add) lhs rhs _)
+              (or
+                (and
+                  (opt-value-is-var? lhs phi-var)
+                  (match (opt-successor-sink-value-i64 blocks rhs)
+                    [(option_i64.Some step) (= step 1)]
+                    [(option_i64.None) false]))
+                (and
+                  (opt-value-is-var? rhs phi-var)
+                  (match (opt-successor-sink-value-i64 blocks lhs)
+                    [(option_i64.Some step) (= step 1)]
+                    [(option_i64.None) false])))]
+            [_ false])]
+        [(OptSuccessorSinkMaybeInstr.No) false])]
+    [_ false]))
+
+(define (opt-successor-sink-phi-unit-step-label
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeLabel
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (OptSuccessorSinkMaybeLabel.No)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-successor-sink-phi-unit-step-label
+        blocks
+        phi-var
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (opt-successor-sink-phi-unit-step-value? blocks phi-var value)
+        (OptSuccessorSinkMaybeLabel.Some label)
+        (opt-successor-sink-phi-unit-step-label blocks phi-var (box-get rest)))]))
+
+(define (opt-successor-sink-iv-phi-shape
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeInductionShape
+  (if (not (= (compiler-ir-phi-input-list-count inputs) 2))
+    (OptSuccessorSinkMaybeInductionShape.No)
+    (match (opt-successor-sink-phi-zero-label blocks inputs)
+      [(OptSuccessorSinkMaybeLabel.No) (OptSuccessorSinkMaybeInductionShape.No)]
+      [(OptSuccessorSinkMaybeLabel.Some seed-label)
+        (match (opt-successor-sink-phi-unit-step-label blocks phi-var inputs)
+          [(OptSuccessorSinkMaybeLabel.No)
+            (OptSuccessorSinkMaybeInductionShape.No)]
+          [(OptSuccessorSinkMaybeLabel.Some step-label)
+            (if (string.eq seed-label step-label)
+              (OptSuccessorSinkMaybeInductionShape.No)
+              (OptSuccessorSinkMaybeInductionShape.Some seed-label step-label))])])))
+
+(define (opt-successor-sink-pointer-seed-value?
+  [blocks : CompilerIrBlockList]
+  [expected-base : CompilerIrValue]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var input-var)
+      (match (opt-successor-sink-find-def blocks input-var)
+        [(OptSuccessorSinkMaybeInstr.Some instr)
+          (match instr
+            [(CompilerIrInstr.Gep _ base offset _)
+              (and
+                (opt-value-eq base expected-base)
+                (opt-successor-sink-value-zero? blocks offset))]
+            [_ false])]
+        [(OptSuccessorSinkMaybeInstr.No) false])]
+    [_ false]))
+
+(define (opt-successor-sink-pointer-step-value?
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [scale : i64]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var input-var)
+      (match (opt-successor-sink-find-def blocks input-var)
+        [(OptSuccessorSinkMaybeInstr.Some instr)
+          (match instr
+            [(CompilerIrInstr.Gep _ base offset _)
+              (and
+                (opt-value-is-var? base phi-var)
+                (match (opt-successor-sink-value-i64 blocks offset)
+                  [(option_i64.Some found) (= found scale)]
+                  [(option_i64.None) false]))]
+            [_ false])]
+        [(OptSuccessorSinkMaybeInstr.No) false])]
+    [_ false]))
+
+(define (opt-successor-sink-pointer-edge-label
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [base : CompilerIrValue]
+  [scale : i64]
+  [want-step : bool]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeLabel
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (OptSuccessorSinkMaybeLabel.No)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-successor-sink-pointer-edge-label
+        blocks
+        phi-var
+        base
+        scale
+        want-step
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (if (if want-step
+        (opt-successor-sink-pointer-step-value? blocks phi-var scale value)
+        (opt-successor-sink-pointer-seed-value? blocks base value))
+        (OptSuccessorSinkMaybeLabel.Some label)
+        (opt-successor-sink-pointer-edge-label
+          blocks
+          phi-var
+          base
+          scale
+          want-step
+          (box-get rest)))]))
+
+(define (opt-successor-sink-pointer-phi-shape
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [base : CompilerIrValue]
+  [scale : i64]
+  [inputs : CompilerIrPhiInputList]) : OptSuccessorSinkMaybeInductionShape
+  (if (not (= (compiler-ir-phi-input-list-count inputs) 2))
+    (OptSuccessorSinkMaybeInductionShape.No)
+    (match (opt-successor-sink-pointer-edge-label
+      blocks
+      phi-var
+      base
+      scale
+      false
+      inputs)
+      [(OptSuccessorSinkMaybeLabel.No) (OptSuccessorSinkMaybeInductionShape.No)]
+      [(OptSuccessorSinkMaybeLabel.Some seed-label)
+        (match (opt-successor-sink-pointer-edge-label
+          blocks
+          phi-var
+          base
+          scale
+          true
+          inputs)
+          [(OptSuccessorSinkMaybeLabel.No)
+            (OptSuccessorSinkMaybeInductionShape.No)]
+          [(OptSuccessorSinkMaybeLabel.Some step-label)
+            (if (string.eq seed-label step-label)
+              (OptSuccessorSinkMaybeInductionShape.No)
+              (OptSuccessorSinkMaybeInductionShape.Some seed-label step-label))])])))
+
+(define (opt-successor-sink-phi-update-scale
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [inputs : CompilerIrPhiInputList]) : option_i64.Option
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (option_i64.None)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-successor-sink-phi-update-scale
+        blocks
+        phi-var
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value _ rest)
+      (let
+        [found : option_i64.Option
+          (match value
+            [(CompilerIrValue.Var input-var)
+              (match (opt-successor-sink-find-def blocks input-var)
+                [(OptSuccessorSinkMaybeInstr.Some instr)
+                  (match instr
+                    [(CompilerIrInstr.Gep _ base offset _)
+                      (if (opt-value-is-var? base phi-var)
+                        (opt-successor-sink-value-i64 blocks offset)
+                        (option_i64.None))]
+                    [_ (option_i64.None)])]
+                [(OptSuccessorSinkMaybeInstr.No) (option_i64.None)])]
+            [_ (option_i64.None)])]
+        (match found
+          [(option_i64.Some scale) (option_i64.Some scale)]
+          [(option_i64.None)
+            (opt-successor-sink-phi-update-scale blocks phi-var (box-get rest))]))]))
+
+(define (opt-successor-sink-mul-scale-source
+  [blocks : CompilerIrBlockList]
+  [defs : (Array i64)]
+  [frame : i64]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [scale : i64]) : bool
+  (match lhs
+    [(CompilerIrValue.Var iv)
+      (and
+        (>= iv 0)
+        (< iv frame)
+        (> (array-ref defs iv) 0)
+        (match (opt-successor-sink-value-i64 blocks rhs)
+          [(option_i64.Some n) (= n scale)]
+          [(option_i64.None) false])
+        (match (opt-successor-sink-find-def blocks iv)
+          [(OptSuccessorSinkMaybeInstr.Some instr)
+            (match instr
+              [(CompilerIrInstr.Phi _ inputs _)
+                (match (opt-successor-sink-iv-phi-shape blocks iv inputs)
+                  [(OptSuccessorSinkMaybeInductionShape.Some _ _) true]
+                  [(OptSuccessorSinkMaybeInductionShape.No) false])]
+              [_ false])]
+          [(OptSuccessorSinkMaybeInstr.No) false]))]
+    [_ false]))
+
+(define (opt-successor-sink-mul-scale-var
+  [blocks : CompilerIrBlockList]
+  [defs : (Array i64)]
+  [frame : i64]
+  [scale : i64]
+  [instr : CompilerIrInstr]) : option_i64.Option
+  (match instr
+    [(CompilerIrInstr.BinOp _ (CompilerIrBinOp.Mul) lhs rhs _)
+      (match lhs
+        [(CompilerIrValue.Var iv)
+          (if (opt-successor-sink-mul-scale-source
+            blocks
+            defs
+            frame
+            lhs
+            rhs
+            scale)
+            (option_i64.Some iv)
+            (match rhs
+              [(CompilerIrValue.Var other-iv)
+                (if (opt-successor-sink-mul-scale-source
+                  blocks
+                  defs
+                  frame
+                  rhs
+                  lhs
+                  scale)
+                  (option_i64.Some other-iv)
+                  (option_i64.None))]
+              [_ (option_i64.None)]))]
+        [_
+          (match rhs
+            [(CompilerIrValue.Var iv)
+              (if (opt-successor-sink-mul-scale-source
+                blocks
+                defs
+                frame
+                rhs
+                lhs
+                scale)
+                (option_i64.Some iv)
+                (option_i64.None))]
+            [_ (option_i64.None)])])]
+    [_ (option_i64.None)]))
+
+(define (opt-successor-sink-find-scale-mul
+  [blocks : CompilerIrBlockList]
+  [instrs : CompilerIrInstrSeq]
+  [defs : (Array i64)]
+  [frame : i64]
+  [scale : i64]
+  [index : i64]) : OptSuccessorSinkMaybeInstr
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (OptSuccessorSinkMaybeInstr.No)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (match instr
+        [(CompilerIrInstr.BinOp _ (CompilerIrBinOp.Mul) lhs rhs _)
+          (if (or
+            (opt-successor-sink-mul-scale-source
+              blocks
+              defs
+              frame
+              lhs
+              rhs
+              scale)
+            (opt-successor-sink-mul-scale-source
+              blocks
+              defs
+              frame
+              rhs
+              lhs
+              scale))
+            (OptSuccessorSinkMaybeInstr.Some instr)
+            (opt-successor-sink-find-scale-mul
+              blocks
+              instrs
+              defs
+              frame
+              scale
+              (+ index 1)))]
+        [_
+          (opt-successor-sink-find-scale-mul
+            blocks
+            instrs
+            defs
+            frame
+            scale
+            (+ index 1))]))))
+
+(define (opt-successor-sink-phi-init-recipe
+  [blocks : CompilerIrBlockList]
+  [phi-var : i64]
+  [inputs : CompilerIrPhiInputList]
+  [mul : CompilerIrInstr]) : OptSuccessorSinkMaybeRecipe
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) (OptSuccessorSinkMaybeRecipe.No)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-successor-sink-phi-init-recipe
+        blocks
+        phi-var
+        (compiler-ir-phi-input-seq-to-list seq)
+        mul)]
+    [(CompilerIrPhiInputList.Cons value _ rest)
+      (match value
+        [(CompilerIrValue.Var input-var)
+          (match (opt-successor-sink-find-def blocks input-var)
+            [(OptSuccessorSinkMaybeInstr.Some instr)
+              (match instr
+                [(CompilerIrInstr.Gep _ base offset ty)
+                  (if (and
+                    (not (opt-value-is-var? base phi-var))
+                    (opt-successor-sink-value-zero? blocks offset))
+                    (OptSuccessorSinkMaybeRecipe.Some mul base ty)
+                    (opt-successor-sink-phi-init-recipe
+                      blocks
+                      phi-var
+                      (box-get rest)
+                      mul))]
+                [_
+                  (opt-successor-sink-phi-init-recipe
+                    blocks
+                    phi-var
+                    (box-get rest)
+                    mul)])]
+            [(OptSuccessorSinkMaybeInstr.No)
+              (opt-successor-sink-phi-init-recipe
+                blocks
+                phi-var
+                (box-get rest)
+                mul)])]
+        [_
+          (opt-successor-sink-phi-init-recipe blocks phi-var (box-get rest) mul)])]))
+
+;; Induction strength reduction has already rewritten the original
+;; `gep base, (iv * scale)` to a pointer phi by the time this late pass runs.
+;; Recover that exact bounded recipe from the phi recurrence plus the retained
+;; block-local Mul, so sinking a payload address never keeps the pointer phi
+;; live across a dispatch.
+(define (opt-successor-sink-induction-recipe
+  [context : OptSuccessorSinkPrepareContext]
+  [phi-var : i64]
+  [producer : CompilerIrInstr]) : OptSuccessorSinkMaybeRecipe
+  (match producer
+    [(CompilerIrInstr.Phi _ inputs _)
+      (match (opt-successor-sink-phi-update-scale
+        (struct-get context blocks)
+        phi-var
+        inputs)
+        [(option_i64.Some scale)
+          (match (opt-successor-sink-find-scale-mul
+            (struct-get context blocks)
+            (struct-get context instrs)
+            (struct-get context defs)
+            (struct-get context frame)
+            scale
+            0)
+            [(OptSuccessorSinkMaybeInstr.Some mul)
+              (match (opt-successor-sink-phi-init-recipe
+                (struct-get context blocks)
+                phi-var
+                inputs
+                mul)
+                [(OptSuccessorSinkMaybeRecipe.Some _ base ptr-ty)
+                  (match (opt-successor-sink-mul-scale-var
+                    (struct-get context blocks)
+                    (struct-get context defs)
+                    (struct-get context frame)
+                    scale
+                    mul)
+                    [(option_i64.Some iv)
+                      (match (opt-successor-sink-find-def
+                        (struct-get context blocks)
+                        iv)
+                        [(OptSuccessorSinkMaybeInstr.Some iv-instr)
+                          (match iv-instr
+                            [(CompilerIrInstr.Phi _ iv-inputs _)
+                              (match (opt-successor-sink-iv-phi-shape
+                                (struct-get context blocks)
+                                iv
+                                iv-inputs)
+                                [(OptSuccessorSinkMaybeInductionShape.Some
+                                    iv-seed
+                                    iv-step)
+                                  (match (opt-successor-sink-pointer-phi-shape
+                                    (struct-get context blocks)
+                                    phi-var
+                                    base
+                                    scale
+                                    inputs)
+                                    [(OptSuccessorSinkMaybeInductionShape.Some
+                                        ptr-seed
+                                        ptr-step)
+                                      (if (and
+                                        (string.eq iv-seed ptr-seed)
+                                        (string.eq iv-step ptr-step))
+                                        (OptSuccessorSinkMaybeRecipe.Some
+                                          mul
+                                          base
+                                          ptr-ty)
+                                        (OptSuccessorSinkMaybeRecipe.No))]
+                                    [(OptSuccessorSinkMaybeInductionShape.No)
+                                      (OptSuccessorSinkMaybeRecipe.No)])]
+                                [(OptSuccessorSinkMaybeInductionShape.No)
+                                  (OptSuccessorSinkMaybeRecipe.No)])]
+                            [_ (OptSuccessorSinkMaybeRecipe.No)])]
+                        [(OptSuccessorSinkMaybeInstr.No)
+                          (OptSuccessorSinkMaybeRecipe.No)])]
+                    [(option_i64.None) (OptSuccessorSinkMaybeRecipe.No)])]
+                [(OptSuccessorSinkMaybeRecipe.No)
+                  (OptSuccessorSinkMaybeRecipe.No)])]
+            [(OptSuccessorSinkMaybeInstr.No) (OptSuccessorSinkMaybeRecipe.No)])]
+        [(option_i64.None) (OptSuccessorSinkMaybeRecipe.No)])]
+    [_ (OptSuccessorSinkMaybeRecipe.No)]))
+
+(define (opt-successor-sink-leading-phi-end
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    index
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ _ _)
+        (opt-successor-sink-leading-phi-end instrs (+ index 1))]
+      [_ index])))
+
+;; Phi operands are edge uses, so they deliberately are not counted as uses in
+;; the successor. The insertion point is immediately after this leading prefix.
+(define (opt-successor-sink-collect-successor-uses!
+  [blocks : CompilerIrBlockList]
+  [target : String]
+  [uses : (Array i64)]) : unit
+  (match (opt-cfg-find-block blocks target)
+    [(OptMaybeBlock.No) unit]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [index : i64 (opt-successor-sink-leading-phi-end instrs 0)]
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (while (< index count)
+              (begin
+                (opt-collect-instr-uses-array
+                  uses
+                  (compiler-ir-instr-seq-ref instrs index))
+                (set! index (+ index 1)))))])]))
+
+(define (opt-successor-sink-collect-moved-uses!
+  [moves : OptSuccessorSinkMoves]
+  [target : String]
+  [uses : (Array i64)]) : unit
+  (match moves
+    [(OptSuccessorSinkMoves.Nil) unit]
+    [(OptSuccessorSinkMoves.Cons move rest)
+      (begin
+        (match move
+          [(OptSuccessorSinkMove.Move _ _ move-target instrs origins)
+            (if (string.eq move-target target)
+              (let
+                [index : i64 0]
+                [count : i64 (compiler-ir-instr-seq-count instrs)]
+                (while (< index count)
+                  (begin
+                    ;; Clone uses are new and cannot stand in for an original
+                    ;; source use in the all-uses-moving test.
+                    (if (>= (array-ref origins index) 0)
+                      (opt-collect-instr-uses-array
+                        uses
+                        (compiler-ir-instr-seq-ref instrs index))
+                      unit)
+                    (set! index (+ index 1)))))
+              unit)])
+        (opt-successor-sink-collect-moved-uses! (box-get rest) target uses))]))
+
+(define (opt-successor-sink-single-pred?
+  [cfg : OptCfgIndex]
+  [source : String]
+  [target : String]) : bool
+  (if (string.eq source target)
+    false
+    (let
+      [preds : OptLabelSet (opt-cfg-index-predecessors cfg target)]
+      (and (= (opt-label-count preds) 1) (opt-label-contains preds source)))))
+
+(define (opt-successor-sink-target-all-uses?
+  [frame : i64]
+  [blocks : CompilerIrBlockList]
+  [cfg : OptCfgIndex]
+  [total-uses : (Array i64)]
+  [allowed-uses : (Array i64)]
+  [moves : OptSuccessorSinkMoves]
+  [source : String]
+  [target : String]
+  [dst : i64]) : bool
+  (if (or (< dst 0) (>= dst frame))
+    false
+    (let
+      [total : i64 (array-ref total-uses dst)]
+      (if (or
+        (<= total 0)
+        (not (opt-successor-sink-single-pred? cfg source target)))
+        false
+        (begin
+          (array-set! allowed-uses dst 0)
+          (opt-successor-sink-collect-successor-uses!
+            blocks
+            target
+            allowed-uses)
+          (opt-successor-sink-collect-moved-uses! moves target allowed-uses)
+          (= (array-ref allowed-uses dst) total))))))
+
+(define (opt-successor-sink-find-target
+  [frame : i64]
+  [blocks : CompilerIrBlockList]
+  [cfg : OptCfgIndex]
+  [total-uses : (Array i64)]
+  [allowed-uses : (Array i64)]
+  [moves : OptSuccessorSinkMoves]
+  [source : String]
+  [successors : OptLabelSet]
+  [dst : i64]) : OptSuccessorSinkMaybeLabel
+  (match successors
+    [(OptLabelSet.Nil) (OptSuccessorSinkMaybeLabel.No)]
+    [(OptLabelSet.Cons target rest)
+      (if (opt-successor-sink-target-all-uses?
+        frame
+        blocks
+        cfg
+        total-uses
+        allowed-uses
+        moves
+        source
+        target
+        dst)
+        (OptSuccessorSinkMaybeLabel.Some target)
+        (opt-successor-sink-find-target
+          frame
+          blocks
+          cfg
+          total-uses
+          allowed-uses
+          moves
+          source
+          (box-get rest)
+          dst))]))
+
+(define (opt-successor-sink-collect-instr-list-uses!
+  [instrs : CompilerIrInstrList]
+  [uses : (Array i64)]) : unit
+  (match instrs
+    [(CompilerIrInstrList.Nil) unit]
+    [(CompilerIrInstrList.Cons instr rest)
+      (begin
+        (opt-collect-instr-uses-array uses instr)
+        (opt-successor-sink-collect-instr-list-uses! (box-get rest) uses))]))
+
+(define (opt-successor-sink-fill-defs!
+  [frame : i64]
+  [instrs : CompilerIrInstrSeq]
+  [defs : (Array i64)]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
+      (begin
+        (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
+          [(option_i64.Some dst)
+            (if (and (>= dst 0) (< dst frame))
+              (array-set! defs dst (+ index 1))
+              unit)]
+          [(option_i64.None) unit])
+        (set! index (+ index 1))))))
+
+(define (opt-successor-sink-mark-terminator-live!
+  [frame : i64]
+  [instrs : CompilerIrInstrSeq]
+  [terminator-index : i64]
+  [live : (Array i64)]) : unit
+  (let
+    [index : i64 (- terminator-index 1)]
+    (begin
+      (opt-collect-instr-uses-array
+        live
+        (compiler-ir-instr-seq-ref instrs terminator-index))
+      (while (>= index 0)
+        (begin
+          (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
+            [(option_i64.Some dst)
+              (if (and (>= dst 0) (< dst frame) (> (array-ref live dst) 0))
+                (opt-collect-instr-uses-array
+                  live
+                  (compiler-ir-instr-seq-ref instrs index))
+                unit)]
+            [(option_i64.None) unit])
+          (set! index (- index 1)))))))
+
+(define (opt-successor-sink-fill-all-defs!
+  [frame : i64]
+  [blocks : CompilerIrBlockList]
+  [defs : (Array i64)]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-successor-sink-fill-defs! frame instrs defs)])
+        (opt-successor-sink-fill-all-defs! frame (box-get rest) defs))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-successor-sink-fill-all-defs!
+        frame
+        (compiler-ir-block-seq-to-list seq)
+        defs)]))
+
+(define (opt-successor-sink-loop-target?
+  [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
+  [source : String]
+  [target : String]) : bool
+  (match loops
+    [(OptNaturalLoopList.Nil) false]
+    [(OptNaturalLoopList.Cons loop rest)
+      (if (and
+        (string.eq (opt-natural-loop-header loop) source)
+        (opt-loop-body-label-member?
+          (opt-natural-loop-body-info loop)
+          index
+          target))
+        true
+        (opt-successor-sink-loop-target? index (box-get rest) source target))]))
+
+(define (opt-successor-sink-append-prepared!
+  [context : OptSuccessorSinkPrepareContext]
+  [builder : (&mut builder CompilerIrInstrBuilder)]
+  [origins : (Array i64)]
+  [instr : CompilerIrInstr]
+  [origin : i64]) : unit
+  (let
+    [slot : i64 (struct-get builder len)]
+    (begin
+      (array-set! origins slot origin)
+      (compiler-ir-instr-builder-push! (&mut builder) instr)
+      (if (>= origin 0)
+        (opt-collect-instr-uses-array (struct-get context covered-uses) instr)
+        unit))))
+
+(define (opt-successor-sink-covered-use-count
+  [context : OptSuccessorSinkPrepareContext]
+  [pending-moves : CompilerIrInstrList]
+  [var : i64]) : i64
+  (let
+    [pending-uses : (Array i64) (opt-used-array-new (struct-get context frame))]
+    (begin
+      (opt-successor-sink-collect-instr-list-uses! pending-moves pending-uses)
+      (+
+        (+
+          (array-ref (struct-get context base-allowed) var)
+          (array-ref (struct-get context covered-uses) var))
+        (array-ref pending-uses var)))))
+
+(define (opt-successor-sink-prepare-operands-from!
+  [context : OptSuccessorSinkPrepareContext]
+  [instr : CompilerIrInstr]
+  [uses : (Array i64)]
+  [var : i64]
+  [pending-moves : CompilerIrInstrList]
+  [builder : (&mut builder CompilerIrInstrBuilder)]
+  [origins : (Array i64)]) : bool
+  (if (>= var (struct-get context frame))
+    true
+    (if (<= (array-ref uses var) 0)
+      (opt-successor-sink-prepare-operands-from!
+        context
+        instr
+        uses
+        (+ var 1)
+        pending-moves
+        (&mut builder)
+        origins)
+      (and
+        (opt-successor-sink-ensure-operand!
+          context
+          var
+          pending-moves
+          (&mut builder)
+          origins)
+        (opt-successor-sink-prepare-operands-from!
+          context
+          instr
+          uses
+          (+ var 1)
+          pending-moves
+          (&mut builder)
+          origins)))))
+
+(define (opt-successor-sink-prepare-operands!
+  [context : OptSuccessorSinkPrepareContext]
+  [instr : CompilerIrInstr]
+  [pending-moves : CompilerIrInstrList]
+  [builder : (&mut builder CompilerIrInstrBuilder)]
+  [origins : (Array i64)]) : bool
+  (let
+    [uses : (Array i64) (opt-used-array-new (struct-get context frame))]
+    (begin
+      (opt-collect-instr-uses-array uses instr)
+      (opt-successor-sink-prepare-operands-from!
+        context
+        instr
+        uses
+        0
+        pending-moves
+        (&mut builder)
+        origins))))
+
+(define (opt-successor-sink-recipe-base-safe?
+  [context : OptSuccessorSinkPrepareContext]
+  [base : CompilerIrValue]) : bool
+  (match base
+    [(CompilerIrValue.Var var)
+      (or
+        (< var 0)
+        (>= var (struct-get context frame))
+        (<= (array-ref (struct-get context defs) var) 0)
+        (> (array-ref (struct-get context planned) var) 0)
+        (> (array-ref (struct-get context base-allowed) var) 0))]
+    [_ (opt-successor-sink-stable-value? base)]))
+
+(define (opt-successor-sink-try-induction-remat!
+  [context : OptSuccessorSinkPrepareContext]
+  [var : i64]
+  [producer : CompilerIrInstr]
+  [builder : (&mut builder CompilerIrInstrBuilder)]
+  [origins : (Array i64)]) : bool
+  (match (opt-successor-sink-induction-recipe context var producer)
+    [(OptSuccessorSinkMaybeRecipe.No) false]
+    [(OptSuccessorSinkMaybeRecipe.Some mul base ptr-ty)
+      (if (and
+        (<= (+ (array-ref (struct-get context clone-count) 0) 2) 4)
+        (opt-successor-sink-recipe-base-safe? context base)
+        ;; Integer Add is byte-identical to Gep only for byte elements. This
+        ;; form lets the backend select one LEA for base+scaled-index while the
+        ;; following constant Gep remains a load displacement.
+        (= (opt-load-loc-type-size ptr-ty) 1))
+        (let
+          [fresh-mul : i64
+            (opt-bce-version-alloc-var (struct-get context frame-cell))]
+          [rewritten-mul : CompilerIrInstr
+            (opt-successor-sink-subst-instr
+              (struct-get context frame)
+              (struct-get context remap)
+              mul)]
+          [fresh-gep : i64
+            (opt-bce-version-alloc-var (struct-get context frame-cell))]
+          (begin
+            (array-set!
+              (struct-get context clone-count)
+              0
+              (+ (array-ref (struct-get context clone-count) 0) 2))
+            (opt-successor-sink-append-prepared!
+              context
+              (&mut builder)
+              origins
+              (opt-successor-sink-remat-clone fresh-mul rewritten-mul)
+              (- 0 1))
+            (opt-successor-sink-append-prepared!
+              context
+              (&mut builder)
+              origins
+              (CompilerIrInstr.BinOp
+                fresh-gep
+                (CompilerIrBinOp.Add)
+                (opt-successor-sink-subst-value
+                  (struct-get context frame)
+                  (struct-get context remap)
+                  base)
+                (CompilerIrValue.Var fresh-mul)
+                (AstType.I64))
+              (- 0 1))
+            (array-set! (struct-get context remap) var (+ fresh-gep 1))
+            (array-set! (struct-get context planned) var 1)
+            true))
+        false)]))
+
+;; Make one source-block operand available in the target without lengthening
+;; its live range. A producer whose original uses all move may move as usual.
+;; Otherwise only Gep/BinOp can be cloned, recursively, with a four-clone cap.
+(define (opt-successor-sink-ensure-operand!
+  [context : OptSuccessorSinkPrepareContext]
+  [var : i64]
+  [pending-moves : CompilerIrInstrList]
+  [builder : (&mut builder CompilerIrInstrBuilder)]
+  [origins : (Array i64)]) : bool
+  (if (or
+    (> (array-ref (struct-get context planned) var) 0)
+    (> (array-ref (struct-get context base-allowed) var) 0)
+    (> (array-ref (struct-get context leaf-uses) var) 0))
+    true
+    (let
+      [def-tag : i64 (array-ref (struct-get context defs) var)]
+      (cond
+        [(> (array-ref (struct-get context loop-phi-leaves) var) 0)
+          (let
+            [_rematerialized : bool
+              (if (> def-tag 0)
+                (opt-successor-sink-try-induction-remat!
+                  context
+                  var
+                  (compiler-ir-instr-seq-ref
+                    (struct-get context instrs)
+                    (- def-tag 1))
+                  (&mut builder)
+                  origins)
+                false)]
+            ;; A loop phi is already live around the natural loop. If the
+            ;; specialized pointer recipe cannot prove a synchronized unit-step
+            ;; IV, retaining the phi as the moved instruction's leaf is safe.
+            true)]
+        [(<= def-tag 0)
+          ;; A value with no function definition is a parameter. An external value
+          ;; used by a loop header is already live around the natural loop, so it
+          ;; remains a safe leaf in a header successor. Target/terminator uses and
+          ;; Phi leaves returned above cover the other permitted live cases.
+          (or
+            (<= (array-ref (struct-get context all-defs) var) 0)
+            (struct-get context source-loop-target)
+            (> (array-ref (struct-get context terminator-live) var) 0))]
+        [(> (array-ref (struct-get context visiting) var) 0) false]
+        [else
+          (let
+            [index : i64 (- def-tag 1)]
+            [producer : CompilerIrInstr
+              (compiler-ir-instr-seq-ref (struct-get context instrs) index)]
+            [all-move? : bool
+              (=
+                (array-ref (struct-get context total-uses) var)
+                (opt-successor-sink-covered-use-count context pending-moves var))]
+            [can-move? : bool
+              (and
+                all-move?
+                (opt-successor-sink-candidate?
+                  (struct-get context instrs)
+                  index
+                  (struct-get context terminator-index)
+                  producer))]
+            (begin
+              (array-set! (struct-get context visiting) var 1)
+              (cond
+                [can-move?
+                  (let
+                    [next-pending : CompilerIrInstrList
+                      (compiler-ir-instr-cons producer pending-moves)]
+                    [ok : bool
+                      (opt-successor-sink-prepare-operands!
+                        context
+                        producer
+                        next-pending
+                        (&mut builder)
+                        origins)]
+                    (begin
+                      (if ok
+                        (begin
+                          (opt-successor-sink-append-prepared!
+                            context
+                            (&mut builder)
+                            origins
+                            (opt-successor-sink-subst-instr
+                              (struct-get context frame)
+                              (struct-get context remap)
+                              producer)
+                            index)
+                          (array-set! (struct-get context removed) index 1)
+                          (array-set! (struct-get context planned) var 1))
+                        unit)
+                      (array-set! (struct-get context visiting) var 0)
+                      ok))]
+                [(and
+                    (opt-successor-sink-remat-candidate? producer)
+                    (< (array-ref (struct-get context clone-count) 0) 4))
+                  (begin
+                    ;; Reserve the chain slot before descending so a fifth
+                    ;; in-progress clone cannot pass a count that has not yet
+                    ;; been committed while recursion unwinds.
+                    (array-set!
+                      (struct-get context clone-count)
+                      0
+                      (+ (array-ref (struct-get context clone-count) 0) 1))
+                    (let
+                      ;; The original producer remains in the source. Do not
+                      ;; put it in `pending-moves`: its operand uses remain
+                      ;; there and force transitive rematerialization as needed.
+                      [ok : bool
+                        (opt-successor-sink-prepare-operands!
+                          context
+                          producer
+                          pending-moves
+                          (&mut builder)
+                          origins)]
+                      (if ok
+                        (let
+                          [fresh : i64
+                            (opt-bce-version-alloc-var
+                              (struct-get context frame-cell))]
+                          [rewritten : CompilerIrInstr
+                            (opt-successor-sink-subst-instr
+                              (struct-get context frame)
+                              (struct-get context remap)
+                              producer)]
+                          (begin
+                            (array-set!
+                              (struct-get context remap)
+                              var
+                              (+ fresh 1))
+                            (opt-successor-sink-append-prepared!
+                              context
+                              (&mut builder)
+                              origins
+                              (opt-successor-sink-remat-clone fresh rewritten)
+                              (- 0 1))
+                            (array-set! (struct-get context planned) var 1)
+                            (array-set! (struct-get context visiting) var 0)
+                            true))
+                        (begin
+                          (array-set!
+                            (struct-get context clone-count)
+                            0
+                            (- (array-ref (struct-get context clone-count) 0) 1))
+                          (array-set! (struct-get context visiting) var 0)
+                          false))))]
+                [else
+                  (begin
+                    (array-set! (struct-get context visiting) var 0)
+                    false)])))]))))
+
+(define (opt-successor-sink-prepare-root
+  [frame : i64]
+  [blocks : CompilerIrBlockList]
+  [all-defs : (Array i64)]
+  [source-loop-target : bool]
+  [total-uses : (Array i64)]
+  [loop-phi-leaves : (Array i64)]
+  [moves : OptSuccessorSinkMoves]
+  [target : String]
+  [instrs : CompilerIrInstrSeq]
+  [terminator-index : i64]
+  [index : i64]
+  [instr : CompilerIrInstr]
+  [frame-cell : (Array i64)]) : OptSuccessorSinkPrepared
+  (let
+    [frame-before : i64 (array-ref frame-cell 0)]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [defs : (Array i64) (opt-used-array-new frame)]
+    [base-allowed : (Array i64) (opt-used-array-new frame)]
+    [leaf-uses : (Array i64) (opt-used-array-new frame)]
+    [terminator-live : (Array i64) (opt-used-array-new frame)]
+    [covered-uses : (Array i64) (opt-used-array-new frame)]
+    [planned : (Array i64) (opt-used-array-new frame)]
+    [visiting : (Array i64) (opt-used-array-new frame)]
+    [remap : (Array i64) (opt-used-array-new frame)]
+    [removed : (Array i64) (opt-used-array-new count)]
+    [clone-count : (Array i64) (opt-used-array-new 1)]
+    [builder : CompilerIrInstrBuilder
+      (compiler-ir-instr-builder-with-capacity (+ count 4))]
+    [origins : (Array i64) (array.make-array i64 (+ count 4))]
+    (begin
+      (opt-successor-sink-fill-defs! frame instrs defs)
+      (opt-successor-sink-collect-successor-uses! blocks target base-allowed)
+      (opt-successor-sink-collect-moved-uses! moves target base-allowed)
+      (opt-collect-instr-uses-array
+        leaf-uses
+        (compiler-ir-instr-seq-ref instrs terminator-index))
+      (opt-successor-sink-mark-terminator-live!
+        frame
+        instrs
+        terminator-index
+        terminator-live)
+      (let
+        [context : OptSuccessorSinkPrepareContext
+          (OptSuccessorSinkPrepareContext
+            frame
+            target
+            blocks
+            instrs
+            terminator-index
+            defs
+            all-defs
+            source-loop-target
+            total-uses
+            base-allowed
+            leaf-uses
+            terminator-live
+            loop-phi-leaves
+            covered-uses
+            planned
+            visiting
+            remap
+            removed
+            frame-cell
+            clone-count)]
+        [pending : CompilerIrInstrList
+          (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)]
+        [ok : bool
+          (opt-successor-sink-prepare-operands!
+            context
+            instr
+            pending
+            (&mut builder)
+            origins)]
+        (if ok
+          (begin
+            (opt-successor-sink-append-prepared!
+              context
+              (&mut builder)
+              origins
+              (opt-successor-sink-subst-instr frame remap instr)
+              index)
+            (array-set! removed index 1)
+            (OptSuccessorSinkPrepared.Some
+              (compiler-ir-instr-builder-to-seq builder)
+              removed
+              origins))
+          (begin
+            (array-set! frame-cell 0 frame-before)
+            (OptSuccessorSinkPrepared.No)))))))
+
+(define (opt-successor-sink-plan-block
+  [frame : i64]
+  [frame-cell : (Array i64)]
+  [blocks : CompilerIrBlockList]
+  [cfg : OptCfgIndex]
+  [loops : OptNaturalLoopList]
+  [all-defs : (Array i64)]
+  [total-uses : (Array i64)]
+  [loop-phi-leaves : (Array i64)]
+  [allowed-uses : (Array i64)]
+  [block : CompilerIrBlock]
+  [tail : OptSuccessorSinkMoves]) : OptSuccessorSinkMoves
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (< count 2)
+          tail
+          (let
+            [terminator-index : i64 (- count 1)]
+            [terminator : CompilerIrInstr
+              (compiler-ir-instr-seq-ref instrs terminator-index)]
+            [successors : OptLabelSet
+              (match terminator
+                [(CompilerIrInstr.Branch _ _ _)
+                  (opt-cfg-index-successors cfg label)]
+                [(CompilerIrInstr.Switch _ _ _ _)
+                  (opt-cfg-index-successors cfg label)]
+                [_ (OptLabelSet.Nil)])]
+            [moves : OptSuccessorSinkMoves tail]
+            [index : i64 (- terminator-index 1)]
+            (begin
+              (while (>= index 0)
+                (let
+                  [instr : CompilerIrInstr
+                    (compiler-ir-instr-seq-ref instrs index)]
+                  (begin
+                    (if (and
+                      (not (opt-successor-sink-source-index? moves label index))
+                      (opt-successor-sink-candidate?
+                        instrs
+                        index
+                        terminator-index
+                        instr))
+                      (match (opt-instr-def-var instr)
+                        [(option_i64.Some dst)
+                          (match (opt-successor-sink-find-target
+                            frame
+                            blocks
+                            cfg
+                            total-uses
+                            allowed-uses
+                            moves
+                            label
+                            successors
+                            dst)
+                            [(OptSuccessorSinkMaybeLabel.Some target)
+                              (match (opt-successor-sink-prepare-root
+                                frame
+                                blocks
+                                all-defs
+                                (opt-successor-sink-loop-target?
+                                  cfg
+                                  loops
+                                  label
+                                  target)
+                                total-uses
+                                loop-phi-leaves
+                                moves
+                                target
+                                instrs
+                                terminator-index
+                                index
+                                instr
+                                frame-cell)
+                                [(OptSuccessorSinkPrepared.Some
+                                    prepared
+                                    removed
+                                    origins)
+                                  (set!
+                                    moves
+                                    (OptSuccessorSinkMoves.Cons
+                                      (OptSuccessorSinkMove.Move
+                                        label
+                                        removed
+                                        target
+                                        prepared
+                                        origins)
+                                      (box moves)))]
+                                [(OptSuccessorSinkPrepared.No) unit])]
+                            [(OptSuccessorSinkMaybeLabel.No) unit])]
+                        [(option_i64.None) unit])
+                      unit)
+                    (set! index (- index 1)))))
+              moves))))]))
+
+(define (opt-successor-sink-plan-blocks
+  [frame : i64]
+  [frame-cell : (Array i64)]
+  [blocks : CompilerIrBlockList]
+  [cfg : OptCfgIndex]
+  [loops : OptNaturalLoopList]
+  [all-defs : (Array i64)]
+  [total-uses : (Array i64)]
+  [loop-phi-leaves : (Array i64)]
+  [allowed-uses : (Array i64)]
+  [remaining : CompilerIrBlockList]
+  [tail : OptSuccessorSinkMoves]) : OptSuccessorSinkMoves
+  (match remaining
+    [(CompilerIrBlockList.Nil) tail]
+    [(CompilerIrBlockList.Cons block rest)
+      (opt-successor-sink-plan-blocks
+        frame
+        frame-cell
+        blocks
+        cfg
+        loops
+        all-defs
+        total-uses
+        loop-phi-leaves
+        allowed-uses
+        (box-get rest)
+        (opt-successor-sink-plan-block
+          frame
+          frame-cell
+          blocks
+          cfg
+          loops
+          all-defs
+          total-uses
+          loop-phi-leaves
+          allowed-uses
+          block
+          tail))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-successor-sink-plan-blocks
+        frame
+        frame-cell
+        blocks
+        cfg
+        loops
+        all-defs
+        total-uses
+        loop-phi-leaves
+        allowed-uses
+        (compiler-ir-block-seq-to-list seq)
+        tail)]))
+
+(define (opt-successor-sink-source-index?
+  [moves : OptSuccessorSinkMoves]
+  [source : String]
+  [index : i64]) : bool
+  (match moves
+    [(OptSuccessorSinkMoves.Nil) false]
+    [(OptSuccessorSinkMoves.Cons move rest)
+      (match move
+        [(OptSuccessorSinkMove.Move move-source removed _ _ _)
+          (if (and
+            (string.eq move-source source)
+            (>= index 0)
+            (< index (array-length removed))
+            (> (array-ref removed index) 0))
+            true
+            (opt-successor-sink-source-index? (box-get rest) source index))])]))
+
+(define (opt-successor-sink-push-target-moves!
+  [moves : OptSuccessorSinkMoves]
+  [target : String]
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
+  (match moves
+    [(OptSuccessorSinkMoves.Nil) unit]
+    [(OptSuccessorSinkMoves.Cons move rest)
+      (begin
+        (match move
+          [(OptSuccessorSinkMove.Move _ _ move-target instrs _)
+            (if (string.eq move-target target)
+              (let
+                [index : i64 0]
+                [count : i64 (compiler-ir-instr-seq-count instrs)]
+                (while (< index count)
+                  (begin
+                    (compiler-ir-instr-builder-push!
+                      (&mut builder)
+                      (compiler-ir-instr-seq-ref instrs index))
+                    (set! index (+ index 1)))))
+              unit)])
+        (opt-successor-sink-push-target-moves!
+          (box-get rest)
+          target
+          (&mut builder)))]))
+
+(define (opt-successor-sink-rewrite-block
+  [moves : OptSuccessorSinkMoves]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        [phi-end : i64 (opt-successor-sink-leading-phi-end instrs 0)]
+        [builder : CompilerIrInstrBuilder
+          (compiler-ir-instr-builder-with-capacity count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (if (= index phi-end)
+                (opt-successor-sink-push-target-moves!
+                  moves
+                  label
+                  (&mut builder))
+                unit)
+              (if (not (opt-successor-sink-source-index? moves label index))
+                (compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (compiler-ir-instr-seq-ref instrs index))
+                unit)
+              (set! index (+ index 1))))
+          (if (= phi-end count)
+            (opt-successor-sink-push-target-moves! moves label (&mut builder))
+            unit)
+          (CompilerIrBlock.Block
+            label
+            (compiler-ir-instr-builder-to-seq builder))))]))
+
+(define (opt-successor-sink-rewrite-blocks
+  [moves : OptSuccessorSinkMoves]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-successor-sink-rewrite-block moves block)
+        (opt-successor-sink-rewrite-blocks moves (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-successor-sink-rewrite-blocks
+        moves
+        (compiler-ir-block-seq-to-list seq))]))
+
+;; Global Word-of-Pack forwarding can make a Pack dead immediately before this
+;; pass. Remove only those dead Packs here: leaving one in place makes its stale
+;; operand use block the payload sink, while running general DCE here would also
+;; erase the dead BinOp address recipes needed for rematerialization.
+(define (opt-successor-sink-strip-dead-packs-block
+  [frame : i64]
+  [uses : (Array i64)]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        [builder : CompilerIrInstrBuilder
+          (compiler-ir-instr-builder-with-capacity count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (let
+              [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+              (begin
+                (match instr
+                  [(CompilerIrInstr.Pack dst _ _)
+                    (if (and
+                      (>= dst 0)
+                      (< dst frame)
+                      (<= (array-ref uses dst) 0))
+                      unit
+                      (compiler-ir-instr-builder-push! (&mut builder) instr))]
+                  [_ (compiler-ir-instr-builder-push! (&mut builder) instr)])
+                (set! index (+ index 1)))))
+          (CompilerIrBlock.Block
+            label
+            (compiler-ir-instr-builder-to-seq builder))))]))
+
+(define (opt-successor-sink-strip-dead-packs
+  [frame : i64]
+  [uses : (Array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-successor-sink-strip-dead-packs-block frame uses block)
+        (opt-successor-sink-strip-dead-packs frame uses (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-successor-sink-strip-dead-packs
+        frame
+        uses
+        (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-successor-sink-mark-leading-phis!
+  [frame : i64]
+  [instrs : CompilerIrInstrSeq]
+  [leaves : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    unit
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi dst _ _)
+        (begin
+          (if (and (>= dst 0) (< dst frame))
+            (array-set! leaves dst 1)
+            unit)
+          (opt-successor-sink-mark-leading-phis!
+            frame
+            instrs
+            leaves
+            (+ index 1)))]
+      [_ unit])))
+
+(define (opt-successor-sink-mark-loop-phis!
+  [frame : i64]
+  [blocks : CompilerIrBlockList]
+  [loops : OptNaturalLoopList]
+  [leaves : (Array i64)]) : unit
+  (match loops
+    [(OptNaturalLoopList.Nil) unit]
+    [(OptNaturalLoopList.Cons loop rest)
+      (begin
+        (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
+          [(OptMaybeBlock.Some block)
+            (match block
+              [(CompilerIrBlock.Block _ instrs)
+                (opt-successor-sink-mark-leading-phis! frame instrs leaves 0)])]
+          [(OptMaybeBlock.No) unit])
+        (opt-successor-sink-mark-loop-phis! frame blocks (box-get rest) leaves))]))
+
+(define (opt-successor-sink-mark-phis!
+  [frame : i64]
+  [blocks : CompilerIrBlockList]
+  [leaves : (Array i64)]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-successor-sink-mark-leading-phis! frame instrs leaves 0)])
+        (opt-successor-sink-mark-phis! frame (box-get rest) leaves))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-successor-sink-mark-phis!
+        frame
+        (compiler-ir-block-seq-to-list seq)
+        leaves)]))
+
+(define (opt-successor-sink-blocks
+  [frame : i64]
+  [frame-cell : (Array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [initial-uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
+    [ready : CompilerIrBlockList
+      (opt-successor-sink-strip-dead-packs frame initial-uses blocks)]
+    [cfg : OptCfgIndex (opt-cfg-index-build ready)]
+    [loops : OptNaturalLoopList (opt-cfg-natural-loops ready)]
+    [all-defs : (Array i64) (opt-used-array-new frame)]
+    [_all-defs : unit (opt-successor-sink-fill-all-defs! frame ready all-defs)]
+    [total-uses : (Array i64) (opt-collect-blocks-uses-array frame ready)]
+    [loop-phi-leaves : (Array i64) (opt-used-array-new frame)]
+    [_loop-phi-leaves : unit
+      (opt-successor-sink-mark-phis! frame ready loop-phi-leaves)]
+    [allowed-uses : (Array i64) (opt-used-array-new frame)]
+    [moves : OptSuccessorSinkMoves
+      (opt-successor-sink-plan-blocks
+        frame
+        frame-cell
+        ready
+        cfg
+        loops
+        all-defs
+        total-uses
+        loop-phi-leaves
+        allowed-uses
+        ready
+        (OptSuccessorSinkMoves.Nil))]
+    (match moves
+      [(OptSuccessorSinkMoves.Nil) ready]
+      [_ (opt-successor-sink-rewrite-blocks moves ready)])))
+
+;; Public pass boundary used by self-tests and by the opt2 pipeline. Both the
+;; entry and rewritten functions are verified so this scheduling rule never
+;; runs on mutable-var IR and rejects any unexpected dominance regression.
+(define (opt-successor-sink-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-verify-function func)
+    [(ResultCompilerOptimizeVerify.Err _) func]
+    [(ResultCompilerOptimizeVerify.Ok)
+      (match func
+        [(CompilerIrFunction.Function name params ret-ty frame blocks)
+          (let
+            [frame-cell : (Array i64) (opt-used-array-new 1)]
+            [_frame-init : unit (array-set! frame-cell 0 frame)]
+            [next-blocks : CompilerIrBlockList
+              (opt-successor-sink-blocks frame frame-cell blocks)]
+            [next : CompilerIrFunction
+              (CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                (array-ref frame-cell 0)
+                next-blocks)]
+            (match (opt-verify-function next)
+              [(ResultCompilerOptimizeVerify.Ok) next]
+              [(ResultCompilerOptimizeVerify.Err _) func]))])]))
+
 (define (optimize-function-once-with-summaries
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
@@ -32091,14 +34232,30 @@
                           compile-profile
                           (compiler-opt-profile-pass-finish "licm" name _t-licm)
                           unit)]
+                      ;; Run successor sinking while block-local address recipes
+                      ;; are still explicit. Induction strength reduction below
+                      ;; may replace the retained header address with a pointer
+                      ;; phi, but the fresh arm clone remains an ordinary bounded
+                      ;; rematerialization chain.
+                      [pre-induction-sink : CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          "pre_induction_sink"
+                          (if run-heavy?
+                            (opt-successor-sink-function licm)
+                            licm))]
+                      [pre-induction-sink-context : OptCfgContext
+                        (if run-heavy?
+                          (opt-cfg-context-build
+                            (opt-function-blocks pre-induction-sink))
+                          licm-context)]
                       [_t-induction : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [induction-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-induction-function-with-context-result
-                            licm-context
+                            pre-induction-sink-context
                             loop-cluster-verified?
-                            licm)
+                            pre-induction-sink)
                           licm-result)]
                       [induction : CompilerIrFunction
                         (compiler-opt-debug-observe-function
@@ -32309,17 +34466,54 @@
                             name
                             _t-cmp-sink)
                           unit)]
+                      [_t-successor-sink : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [successor-sink-function : CompilerIrFunction
+                        (if run-heavy?
+                          (opt-successor-sink-function
+                            (CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              gep-split-frame
+                              cmp-sink))
+                          (CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            gep-split-frame
+                            cmp-sink))]
+                      [successor-sink : CompilerIrBlockList
+                        (compiler-opt-debug-observe-blocks
+                          "successor_sink"
+                          name
+                          params
+                          ret-ty
+                          (opt-function-frame successor-sink-function)
+                          (opt-function-blocks successor-sink-function))]
+                      [successor-sink-frame : i64
+                        (opt-function-frame successor-sink-function)]
+                      [_p-successor-sink : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-pass-finish
+                            "successor_sink"
+                            name
+                            _t-successor-sink)
+                          unit)]
                       [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [used : (Array i64)
-                        (opt-collect-blocks-uses-array gep-split-frame cmp-sink)]
+                        (opt-collect-blocks-uses-array
+                          successor-sink-frame
+                          successor-sink)]
                       [dced : CompilerIrBlockList
                         (compiler-opt-debug-observe-blocks
                           "dce"
                           name
                           params
                           ret-ty
-                          gep-split-frame
-                          (opt-dce-block-list-array used cmp-sink))]
+                          successor-sink-frame
+                          (opt-dce-block-list-array used successor-sink))]
                       [_p-dce : unit
                         (cfg
                           compile-profile
@@ -32329,7 +34523,7 @@
                         name
                         params
                         ret-ty
-                        gep-split-frame
+                        successor-sink-frame
                         dced))]))]))])))
 
 (define (optimize-function-once [func : CompilerIrFunction]) : CompilerIrFunction
@@ -34155,6 +36349,7 @@
   (match instr
     [(CompilerIrInstr.Jump _) true]
     [(CompilerIrInstr.Branch _ _ _) true]
+    [(CompilerIrInstr.Switch _ _ _ _) true]
     [(CompilerIrInstr.Return _) true]
     [(CompilerIrInstr.Phi dst _ _) (>= dst 0)]
     ;; Bounds checks are inlinable: the instruction remapper freshens the
@@ -35198,6 +37393,37 @@
         (opt-inline-prefix-label prefix label)
         (opt-inline-remap-phi-inputs (box-get rest) prefix sa np base))]))
 
+(define (opt-inline-prefix-switch-cases-acc
+  [cases : CompilerIrSwitchCaseList]
+  [prefix : String]
+  [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (match (compiler-ir-switch-case-list-force-cons cases)
+    [(CompilerIrSwitchCaseList.Nil) acc]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case tag label)
+          (opt-inline-prefix-switch-cases-acc
+            (box-get rest)
+            prefix
+            (compiler-ir-switch-case-cons-linked
+              tag
+              (opt-inline-prefix-label prefix label)
+              acc))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-inline-prefix-switch-cases-acc
+        (compiler-ir-switch-case-seq-to-list seq)
+        prefix
+        acc)]))
+
+(define (opt-inline-prefix-switch-cases
+  [cases : CompilerIrSwitchCaseList]
+  [prefix : String]) : CompilerIrSwitchCaseList
+  (compiler-ir-switch-case-list-compact-reversed
+    (opt-inline-prefix-switch-cases-acc
+      cases
+      prefix
+      CompilerIrSwitchCaseList.Nil)))
+
 (define (opt-inline-clone-multiblock-instr
   [instr : CompilerIrInstr]
   [prefix : String]
@@ -35212,6 +37438,12 @@
         (opt-inline-remap-value cond sa np base)
         (opt-inline-prefix-label prefix true-label)
         (opt-inline-prefix-label prefix false-label))]
+    [(CompilerIrInstr.Switch value tag-base cases default-label)
+      (CompilerIrInstr.Switch
+        (opt-inline-remap-value value sa np base)
+        tag-base
+        (opt-inline-prefix-switch-cases cases prefix)
+        (opt-inline-prefix-label prefix default-label))]
     [(CompilerIrInstr.Phi dst inputs ty)
       (CompilerIrInstr.Phi
         (opt-inline-rebase-var dst np base)
@@ -35460,6 +37692,11 @@
   (if has-bounds?
     (or absorbable? (= const-args param-count))
     true))
+
+(define (opt-inline-multiblock-bounds-loop-ok?
+  [has-bounds? : bool]
+  [blocks : CompilerIrBlockList]) : bool
+  (or (not has-bounds?) (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
 
 (define (opt-inline-bounds-leaf-cost-inline?
   [callee-instrs : i64]
@@ -35909,26 +38146,24 @@
                     (not stage-args?)
                     (opt-inline-tiny-predicate-callee? index callee census))]
                 ;; Bounds-carrying multiblock callees stay ACYCLIC-only.
-                ;; Lifting this with rotate_ssa in place was measured and
-                ;; still regressed (array_sum +50%, crc32 +67%, vm +15%):
-                ;; rotation restores the bottom-tested shape inside the
-                ;; caller, but loop-BCE runs before it in the pipeline and
-                ;; never re-derives the merged loops' range facts, so the
-                ;; per-iteration bounds checks come back and the merged
-                ;; function's pressure grows. A standalone loop function is
-                ;; still systematically better optimized than the same loop
-                ;; inlined; lift this only after BCE learns the rotated
-                ;; merged shapes (or runs after rotation).
+                ;; A 2026-07-18 remeasurement showed that loop-BCE now composes:
+                ;; vm-run's stack length const-folds to 64 after inlining. The
+                ;; merged hot loop instead spills pc, regressing opt_bytecode_vm
+                ;; by 8.4%; the broad non-Switch dispatch exception also
+                ;; regressed hashmap_grow by 1.7%. Regalloc already weights ref
+                ;; counts by loop depth, so the spill has a subtler cause; retry
+                ;; lifting this gate only once merged hot-loop counters provably
+                ;; stay register-resident.
+                [has-bounds? : bool
+                  (opt-inline-blocks-have-bounds-check? cblocks)]
                 [bounds-ok? : bool
                   (opt-inline-bounds-inline-ok?
-                    (opt-inline-blocks-have-bounds-check? cblocks)
+                    has-bounds?
                     absorbable
                     const-args
                     np)]
                 [bounds-loop-ok? : bool
-                  (if (opt-inline-blocks-have-bounds-check? cblocks)
-                    (opt-inline-tiny-predicate-acyclic-reclaiming? cblocks)
-                    true)]
+                  (opt-inline-multiblock-bounds-loop-ok? has-bounds? cblocks)]
                 [inline? : bool
                   (and
                     bounds-ok?
@@ -36531,18 +38766,23 @@
                   (and
                     (not stage-args?)
                     (opt-inline-tiny-predicate-callee? index callee census))]
-                ;; Bounds-carrying multiblock callees stay ACYCLIC-only. See
-                ;; the non-span sequence builder above for the measured reason.
+                ;; Bounds-carrying multiblock callees stay ACYCLIC-only. The
+                ;; 2026-07-18 remeasurement found loop-BCE composes, but regalloc
+                ;; spills vm-run's hot-loop pc (+8.4% opt_bytecode_vm); the broad
+                ;; non-Switch exception also regressed hashmap_grow by 1.7%.
+                ;; Regalloc already weights ref counts by loop depth, so the
+                ;; spill has a subtler cause; retry only once merged hot-loop
+                ;; counters provably stay register-resident.
+                [has-bounds? : bool
+                  (opt-inline-blocks-have-bounds-check? cblocks)]
                 [bounds-ok? : bool
                   (opt-inline-bounds-inline-ok?
-                    (opt-inline-blocks-have-bounds-check? cblocks)
+                    has-bounds?
                     absorbable
                     const-args
                     np)]
                 [bounds-loop-ok? : bool
-                  (if (opt-inline-blocks-have-bounds-check? cblocks)
-                    (opt-inline-tiny-predicate-acyclic-reclaiming? cblocks)
-                    true)]
+                  (opt-inline-multiblock-bounds-loop-ok? has-bounds? cblocks)]
                 [inline? : bool
                   (and
                     bounds-ok?
@@ -44581,6 +46821,763 @@
         [_ 3])]
     [_ 4]))
 
+(define (opt-successor-sink-test-function
+  [name : String]
+  [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol name)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "cond" (AstType.Bool) 0)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "value" (AstType.I64) 1)
+        CompilerIrParamList.Nil))
+    (AstType.I64)
+    16
+    blocks))
+
+;; Both producers start in `entry`. Backward planning first moves the Pack whose
+;; Word use is in `use`, then recognizes that the Load's only remaining use is
+;; in that already-moved Pack and moves the Load ahead of it.
+(define (opt-successor-sink-positive-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Pack
+            3
+            (compiler-ir-value-cons
+              (CompilerIrValue.Var 2)
+              CompilerIrValueList.Nil)
+            (AstType.Struct (intern "OneWord")))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+            CompilerIrInstrList.Nil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Word 4 (CompilerIrValue.Var 3) 0 (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+            CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "other"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+;; The payload address uses a two-instruction address chain that is also needed
+;; by the tag load in the dispatch block. Sinking the payload Load therefore
+;; moves v4 but clones v3 and, transitively, v2 with fresh ids 16 and 17.
+(define (opt-successor-sink-remat-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.Mul)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 16)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Gep
+              4
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.I64 8)
+              (AstType.U8))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 6 (CompilerIrValue.Var 3) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Switch
+                    (CompilerIrValue.Var 6)
+                    0
+                    (compiler-ir-switch-case-cons
+                      0
+                      "other"
+                      CompilerIrSwitchCaseList.Nil)
+                    "use")
+                  CompilerIrInstrList.Nil)))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "other"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+;; v2 is a source-block Mov with uses in both paths. It cannot move and is not
+;; in the Gep/BinOp rematerialization whitelist, so neither consumer may sink.
+(define (opt-successor-sink-live-range-blocked-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              4
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+              CompilerIrInstrList.Nil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "other"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+;; v2 is external to `entry`, but the key address/load/compare makes it part of
+;; the terminator dependency slice. The sibling payload Gep/Load may therefore
+;; move to the matching arm without rematerializing that already-live leaf.
+(define (opt-successor-sink-terminator-live-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "preheader"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "entry")
+          CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 0)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                5
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.I64 8)
+                (AstType.U8))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 6 (CompilerIrValue.Var 5) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    7
+                    (CompilerIrBinOp.Eq)
+                    (CompilerIrValue.Var 4)
+                    (CompilerIrValue.I64 1)
+                    (AstType.Bool))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Branch
+                      (CompilerIrValue.Var 7)
+                      "use"
+                      "other")
+                    CompilerIrInstrList.Nil)))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "use"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
+            CompilerIrInstrList.Nil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "other"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil)))))
+
+;; v2 is defined in a predecessor and is not otherwise live in either
+;; successor. Moving the source-block address producer would extend v2's live
+;; range, while cloning it would do the same, so the payload Load must stay.
+(define (opt-successor-sink-external-leaf-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "preheader"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "entry")
+          CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            3
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 8)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 4 (CompilerIrValue.Var 3) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+              CompilerIrInstrList.Nil))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "use"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+            CompilerIrInstrList.Nil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "other"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil)))))
+
+;; Sinking v8 would require cloning v6..v2. The fifth clone exceeds the cap;
+;; the whole transaction, including its tentative fresh frame ids, rolls back.
+(define (opt-successor-sink-remat-cap-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.Add)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            3
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              4
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                5
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.I64 1)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  6
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 5)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    7
+                    (CompilerIrValue.Var 6)
+                    (CompilerIrValue.I64 0)
+                    (AstType.U8))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Load
+                      8
+                      (CompilerIrValue.Var 7)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        9
+                        (CompilerIrBinOp.Add)
+                        (CompilerIrValue.Var 6)
+                        (CompilerIrValue.I64 1)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Switch
+                          (CompilerIrValue.Var 9)
+                          0
+                          (compiler-ir-switch-case-cons
+                            0
+                            "other"
+                            CompilerIrSwitchCaseList.Nil)
+                          "use")
+                        CompilerIrInstrList.Nil))))))))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "other"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 9)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+;; Strength-reduced loop-pointer form used by vm_run. The dead block-local Mul
+;; is the retained rematerialization recipe; v12 itself must not reach `use`.
+(define (opt-successor-sink-induction-remat-blocks-with-step [step : i64]) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "preheader"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          10
+          (CompilerIrBinOp.Mul)
+          (CompilerIrValue.I64 0)
+          (CompilerIrValue.I64 16)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            11
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 10)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "header")
+            CompilerIrInstrList.Nil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "header"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            12
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 11)
+              "preheader"
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 13)
+                "merge"
+                CompilerIrPhiInputList.Nil))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              2
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.I64 0)
+                "preheader"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 3)
+                  "merge"
+                  CompilerIrPhiInputList.Nil))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                4
+                (CompilerIrBinOp.Mul)
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.I64 16)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Gep
+                  5
+                  (CompilerIrValue.Var 12)
+                  (CompilerIrValue.I64 8)
+                  (AstType.U8))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Load 6 (CompilerIrValue.Var 5) (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Gep
+                      7
+                      (CompilerIrValue.Var 12)
+                      (CompilerIrValue.I64 0)
+                      (AstType.U8))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Load
+                        8
+                        (CompilerIrValue.Var 7)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Switch
+                          (CompilerIrValue.Var 8)
+                          0
+                          (compiler-ir-switch-case-cons
+                            0
+                            "other"
+                            CompilerIrSwitchCaseList.Nil)
+                          "use")
+                        CompilerIrInstrList.Nil)))))))))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "use"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 6)))
+            CompilerIrInstrList.Nil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "other"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "merge")
+              CompilerIrInstrList.Nil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "merge"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  3
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 2)
+                  (CompilerIrValue.I64 step)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Gep
+                    13
+                    (CompilerIrValue.Var 12)
+                    (CompilerIrValue.I64 16)
+                    (AstType.U8))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump "header")
+                    CompilerIrInstrList.Nil))))
+            CompilerIrBlockList.Nil))))))
+
+(define (opt-successor-sink-induction-remat-blocks) : CompilerIrBlockList
+  (opt-successor-sink-induction-remat-blocks-with-step 1))
+
+;; v2 is read in both successors, so neither successor owns every use.
+(define (opt-successor-sink-multi-use-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+          CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "left"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "right"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+;; `left` is a direct successor of entry but also reachable through `right`.
+;; Entry still dominates it, keeping the fixture valid SSA, while its two
+;; predecessors make it ineligible for sinking.
+(define (opt-successor-sink-multi-pred-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "left" "right")
+          CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "right"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "left")
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "left"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+;; The StorePtr between the Load and terminator is an explicit first-cut load
+;; barrier even though the loaded result is used in only one successor.
+(define (opt-successor-sink-store-barrier-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.I64 9)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+            CompilerIrInstrList.Nil))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "other"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+;; SafeDiv still has language-level abort semantics and must not be scheduled
+;; conditionally, despite otherwise looking like a pure binary definition.
+(define (opt-successor-sink-trapping-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          2
+          (CompilerIrBinOp.SafeDiv)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.I64 2)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Branch (CompilerIrValue.Var 0) "use" "other")
+          CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "other"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
+
+(define (opt-successor-sink-instr-seq-defines?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
+      [(option_i64.Some found)
+        (if (= found dst)
+          true
+          (opt-successor-sink-instr-seq-defines? instrs (+ index 1) dst))]
+      [(option_i64.None)
+        (opt-successor-sink-instr-seq-defines? instrs (+ index 1) dst)])))
+
+(define (opt-successor-sink-def-label
+  [blocks : CompilerIrBlockList]
+  [dst : i64]
+  [fallback : String]) : String
+  (match blocks
+    [(CompilerIrBlockList.Nil) fallback]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (if (opt-successor-sink-instr-seq-defines? instrs 0 dst)
+            label
+            (opt-successor-sink-def-label (box-get rest) dst fallback))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-successor-sink-def-label
+        (compiler-ir-block-seq-to-list seq)
+        dst
+        fallback)]))
+
+(define (opt-successor-sink-run-function
+  [name : String]
+  [blocks : CompilerIrBlockList]) : CompilerIrFunction
+  (opt-successor-sink-function (opt-successor-sink-test-function name blocks)))
+
+(define (opt-successor-sink-run [name : String] [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-function-blocks (opt-successor-sink-run-function name blocks)))
+
+(define (compiler-optimize-successor-sink-self-test) : i64
+  (let
+    [positive : CompilerIrBlockList
+      (opt-successor-sink-run
+        "successor_sink_positive"
+        (opt-successor-sink-positive-blocks))]
+    [remat-function : CompilerIrFunction
+      (opt-successor-sink-run-function
+        "successor_sink_remat"
+        (opt-successor-sink-remat-blocks))]
+    [remat : CompilerIrBlockList (opt-function-blocks remat-function)]
+    [live-range-blocked : CompilerIrBlockList
+      (opt-successor-sink-run
+        "successor_sink_live_range_blocked"
+        (opt-successor-sink-live-range-blocked-blocks))]
+    [terminator-live : CompilerIrBlockList
+      (opt-successor-sink-run
+        "successor_sink_terminator_live"
+        (opt-successor-sink-terminator-live-blocks))]
+    [external-leaf-function : CompilerIrFunction
+      (opt-successor-sink-run-function
+        "successor_sink_external_leaf"
+        (opt-successor-sink-external-leaf-blocks))]
+    [external-leaf : CompilerIrBlockList
+      (opt-function-blocks external-leaf-function)]
+    [remat-cap-function : CompilerIrFunction
+      (opt-successor-sink-run-function
+        "successor_sink_remat_cap"
+        (opt-successor-sink-remat-cap-blocks))]
+    [remat-cap : CompilerIrBlockList (opt-function-blocks remat-cap-function)]
+    [induction-input : CompilerIrBlockList
+      (opt-successor-sink-induction-remat-blocks)]
+    [induction-cell : (Array i64) (opt-used-array-new 1)]
+    [_induction-cell-init : unit (array-set! induction-cell 0 16)]
+    [induction-direct : CompilerIrBlockList
+      (opt-successor-sink-blocks 16 induction-cell induction-input)]
+    [induction-function : CompilerIrFunction
+      (opt-successor-sink-run-function
+        "successor_sink_induction_remat"
+        (opt-successor-sink-induction-remat-blocks))]
+    [induction : CompilerIrBlockList (opt-function-blocks induction-function)]
+    [induction-step-two-function : CompilerIrFunction
+      (opt-successor-sink-run-function
+        "successor_sink_induction_step_two"
+        (opt-successor-sink-induction-remat-blocks-with-step 2))]
+    [induction-step-two : CompilerIrBlockList
+      (opt-function-blocks induction-step-two-function)]
+    [multi-use : CompilerIrBlockList
+      (opt-successor-sink-run
+        "successor_sink_multi_use"
+        (opt-successor-sink-multi-use-blocks))]
+    [multi-pred : CompilerIrBlockList
+      (opt-successor-sink-run
+        "successor_sink_multi_pred"
+        (opt-successor-sink-multi-pred-blocks))]
+    [store-barrier : CompilerIrBlockList
+      (opt-successor-sink-run
+        "successor_sink_store_barrier"
+        (opt-successor-sink-store-barrier-blocks))]
+    [trapping : CompilerIrBlockList
+      (opt-successor-sink-run
+        "successor_sink_trapping"
+        (opt-successor-sink-trapping-blocks))]
+    (begin
+      (unless
+        (string.eq (opt-successor-sink-def-label positive 2 "") "use")
+        (return 1))
+      (unless
+        (string.eq (opt-successor-sink-def-label positive 3 "") "use")
+        (return 2))
+      (unless
+        (string.eq (opt-successor-sink-def-label multi-use 2 "") "entry")
+        (return 3))
+      (unless
+        (string.eq (opt-successor-sink-def-label multi-pred 2 "") "entry")
+        (return 4))
+      (unless
+        (string.eq (opt-successor-sink-def-label store-barrier 2 "") "entry")
+        (return 5))
+      (unless
+        (string.eq (opt-successor-sink-def-label trapping 2 "") "entry")
+        (return 6))
+      (unless (= (opt-function-frame remat-function) 18) (return 7))
+      (unless
+        (and
+          (string.eq (opt-successor-sink-def-label remat 2 "") "entry")
+          (string.eq (opt-successor-sink-def-label remat 3 "") "entry")
+          (string.eq (opt-successor-sink-def-label remat 4 "") "use")
+          (string.eq (opt-successor-sink-def-label remat 5 "") "use")
+          (string.eq (opt-successor-sink-def-label remat 16 "") "use")
+          (string.eq (opt-successor-sink-def-label remat 17 "") "use"))
+        (return 8))
+      (unless
+        (and
+          (string.eq
+            (opt-successor-sink-def-label live-range-blocked 3 "")
+            "entry")
+          (string.eq
+            (opt-successor-sink-def-label live-range-blocked 4 "")
+            "entry"))
+        (return 9))
+      (unless
+        (and
+          (string.eq (opt-successor-sink-def-label terminator-live 5 "") "use")
+          (string.eq (opt-successor-sink-def-label terminator-live 6 "") "use"))
+        (return 10))
+      (unless
+        (and
+          (= (opt-function-frame external-leaf-function) 16)
+          (string.eq (opt-successor-sink-def-label external-leaf 4 "") "entry"))
+        (return 11))
+      (unless (= (opt-function-frame remat-cap-function) 16) (return 12))
+      (unless
+        (string.eq (opt-successor-sink-def-label remat-cap 8 "") "entry")
+        (return 13))
+      (unless
+        (and
+          (= (array-ref induction-cell 0) 18)
+          (string.eq (opt-successor-sink-def-label induction-direct 6 "") "use")
+          (string.eq (opt-successor-sink-def-label induction-direct 5 "") "use")
+          (string.eq
+            (opt-successor-sink-def-label induction-direct 16 "")
+            "use")
+          (string.eq
+            (opt-successor-sink-def-label induction-direct 17 "")
+            "use"))
+        (return 14))
+      (unless
+        (and
+          (= (opt-function-frame induction-function) 18)
+          (string.eq (opt-successor-sink-def-label induction 6 "") "use")
+          (string.eq (opt-successor-sink-def-label induction 5 "") "use")
+          (string.eq (opt-successor-sink-def-label induction 16 "") "use")
+          (string.eq (opt-successor-sink-def-label induction 17 "") "use"))
+        (return 15))
+      (unless
+        (and
+          (= (opt-function-frame induction-step-two-function) 16)
+          (string.eq
+            (opt-successor-sink-def-label induction-step-two 6 "")
+            "use")
+          (string.eq
+            (opt-successor-sink-def-label induction-step-two 5 "")
+            "use")
+          (string.eq (opt-successor-sink-def-label induction-step-two 16 "") "")
+          (string.eq (opt-successor-sink-def-label induction-step-two 17 "") ""))
+        (return 16))
+      42)))
+
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
 ;; is absent or its lhs is not a var. Used to inspect copy-propagation rewrites.
 (define (opt-copy-binop-lhs-var [instrs : CompilerIrInstrList] [dst : i64]) : i64
@@ -48281,6 +51278,8 @@
   (inline-tiny-predicate i64)
   (inline-loop i64)
   (mb-bounds i64)
+  (inline-switch i64)
+  (inline-switch-costly i64)
   (inline-mut-param-loop i64)
   (inline-nonleaf i64)
   (external-helper i64)
@@ -48294,6 +51293,8 @@
     (opt-test-symbol "inline_tiny_predicate")
     (opt-test-symbol "inline_loop")
     (opt-test-symbol "mb_bounds")
+    (opt-test-symbol "inline_switch")
+    (opt-test-symbol "inline_switch_costly")
     (opt-test-symbol "inline_mut_param_loop")
     (opt-test-symbol "inline_nonleaf")
     (opt-test-symbol "external_helper")
@@ -48719,6 +51720,386 @@
           (and
             (= (opt-count-direct-call-name-blocks blocks "mb_bounds") 0)
             (= (opt-count-bounds-blocks blocks) 1)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptMaybeFunction.No) false])))
+
+(define (opt-inline-switch-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "tag" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "idx" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "len" (AstType.I64) 2)
+        CompilerIrParamList.Nil))))
+
+(define (opt-inline-switch-cases [zero-label : String] [one-label : String]) : CompilerIrSwitchCaseList
+  (compiler-ir-switch-case-cons
+    0
+    zero-label
+    (compiler-ir-switch-case-cons 1 one-label CompilerIrSwitchCaseList.Nil)))
+
+;; A cyclic bounds-carrying Switch callee remains behind the acyclic gate even
+;; when absorbable.
+(define (opt-inline-switch-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols inline-switch)
+    (opt-inline-switch-params)
+    (AstType.I64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "loop")
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "loop"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 2)
+              "switch_bounds_ok")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Switch
+                (CompilerIrValue.Var 0)
+                0
+                (opt-inline-switch-cases "zero" "one")
+                "loop")
+              CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "zero"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "join")
+              CompilerIrInstrList.Nil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "one"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "join")
+                CompilerIrInstrList.Nil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "join"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    3
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.I64 10)
+                      "zero"
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.I64 20)
+                        "one"
+                        CompilerIrPhiInputList.Nil))
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                    CompilerIrInstrList.Nil)))
+              CompilerIrBlockList.Nil)))))))
+
+;; The acyclic counterpart exercises Switch admission and label remapping. Its
+;; join phi makes stale, unprefixed case/default predecessor labels observable.
+(define (opt-inline-acyclic-switch-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols inline-switch)
+    (opt-inline-switch-params)
+    (AstType.I64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            "switch_bounds_ok")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Switch
+              (CompilerIrValue.Var 0)
+              0
+              (opt-inline-switch-cases "zero" "one")
+              "other")
+            CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "zero"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "join")
+            CompilerIrInstrList.Nil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "one"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "join")
+              CompilerIrInstrList.Nil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "other"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "join")
+                CompilerIrInstrList.Nil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "join"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    3
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.I64 10)
+                      "zero"
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.I64 20)
+                        "one"
+                        (compiler-ir-phi-input-cons
+                          (CompilerIrValue.I64 30)
+                          "other"
+                          CompilerIrPhiInputList.Nil)))
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                    CompilerIrInstrList.Nil)))
+              CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-switch-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (let
+    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 3)]
+    (begin
+      ;; Swap the first two arguments so the Switch scrutinee and BoundsCheck
+      ;; index must both be remapped rather than retaining their callee ids.
+      (array-set! args 0 (CompilerIrValue.Var 1))
+      (array-set! args 1 (CompilerIrValue.Var 0))
+      (array-set! args 2 (CompilerIrValue.Var 2))
+      (CompilerIrFunction.Function
+        (struct-get symbols main)
+        (opt-inline-switch-params)
+        (AstType.I64)
+        4
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Call
+                3
+                (struct-get symbols inline-switch)
+                (CompilerIrCallArgs.Array args)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                CompilerIrInstrList.Nil)))
+          CompilerIrBlockList.Nil)))))
+
+(define (opt-inline-cloned-switch-terminator-ok? [blocks : CompilerIrBlockList]) : bool
+  (match (opt-cfg-find-block blocks "inl.entry.0.entry")
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 2)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(CompilerIrInstr.BoundsCheck _ _ ok-label)
+                (and
+                  (string.eq ok-label "inl.entry.0.switch_bounds_ok")
+                  (match (compiler-ir-instr-seq-ref instrs 1)
+                    [(CompilerIrInstr.Switch value tag-base cases default-label)
+                      (let
+                        [case-labels : OptLabelSet
+                          (opt-cfg-switch-case-successors OptLabelSet.Nil cases)]
+                        (and
+                          (match value
+                            [(CompilerIrValue.Var id) (= id 1)]
+                            [_ false])
+                          (= tag-base 0)
+                          (= (opt-label-count case-labels) 2)
+                          (opt-label-contains case-labels "inl.entry.0.zero")
+                          (opt-label-contains case-labels "inl.entry.0.one")
+                          (string.eq default-label "inl.entry.0.other")))]
+                    [_ false]))]
+              [_ false])
+            false)])]))
+
+(define (opt-inline-cloned-switch-phi-ok? [blocks : CompilerIrBlockList]) : bool
+  (match (opt-cfg-find-block blocks "inl.entry.0.join")
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (> (compiler-ir-instr-seq-count instrs) 0)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(CompilerIrInstr.Phi _ inputs _)
+                (and
+                  (= (compiler-ir-phi-input-list-count inputs) 3)
+                  (opt-inline-phi-input-label? inputs "inl.entry.0.zero")
+                  (opt-inline-phi-input-label? inputs "inl.entry.0.one")
+                  (opt-inline-phi-input-label? inputs "inl.entry.0.other"))]
+              [_ false])
+            false)])]))
+
+(define (compiler-optimize-inline-multiblock-switch-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (compiler-ir-function-cons
+          (opt-inline-switch-caller symbols)
+          (compiler-ir-function-cons
+            (opt-inline-acyclic-switch-callee symbols)
+            CompilerIrFunctionList.Nil))
+        2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptMaybeFunction.Some main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 0)
+            (= (opt-count-bounds-blocks blocks) 1)
+            (opt-inline-cloned-switch-terminator-ok? blocks)
+            (opt-inline-cloned-switch-phi-ok? blocks)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptMaybeFunction.No) false])))
+
+(define (compiler-optimize-inline-multiblock-cyclic-bounds-switch-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (compiler-ir-function-cons
+          (opt-inline-switch-caller symbols)
+          (compiler-ir-function-cons
+            (opt-inline-switch-callee symbols)
+            CompilerIrFunctionList.Nil))
+        2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptMaybeFunction.Some main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (= (opt-count-direct-call-name-blocks blocks "inline_switch") 1)
+            (= (opt-count-bounds-blocks blocks) 0)
+            (opt-inline-structure-ok? blocks)))]
+      [(OptMaybeFunction.No) false])))
+
+(define (opt-inline-costly-switch-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "tag" (AstType.I64) 0)
+    CompilerIrParamList.Nil))
+
+;; Five body instructions plus six added blocks leave this non-absorbable i64
+;; callee above the weighted threshold even with a constant argument at each
+;; of its two sites. Switch admission must not bypass that cost decision.
+(define (opt-inline-costly-switch-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols inline-switch-costly)
+    (opt-inline-costly-switch-params)
+    (AstType.I64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Switch
+            (CompilerIrValue.Var 0)
+            0
+            (opt-inline-switch-cases "zero" "one")
+            "other")
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "zero"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "join")
+            CompilerIrInstrList.Nil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "one"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "join")
+              CompilerIrInstrList.Nil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "other"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "join")
+                CompilerIrInstrList.Nil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "join"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    1
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.I64 10)
+                      "zero"
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.I64 20)
+                        "one"
+                        (compiler-ir-phi-input-cons
+                          (CompilerIrValue.I64 30)
+                          "other"
+                          CompilerIrPhiInputList.Nil)))
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                    CompilerIrInstrList.Nil)))
+              CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-costly-switch-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols main)
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Call
+            0
+            (struct-get symbols inline-switch-costly)
+            (CompilerIrCallArgs.One (CompilerIrValue.I64 0))
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Call
+              1
+              (struct-get symbols inline-switch-costly)
+              (CompilerIrCallArgs.One (CompilerIrValue.I64 1))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                2
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.Var 1)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                CompilerIrInstrList.Nil)))))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-optimize-inline-multiblock-switch-cost-refusal-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [optimized : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (compiler-ir-function-cons
+          (opt-inline-costly-switch-caller symbols)
+          (compiler-ir-function-cons
+            (opt-inline-costly-switch-callee symbols)
+            CompilerIrFunctionList.Nil))
+        2)]
+    (match (opt-function-list-find optimized "main")
+      [(OptMaybeFunction.Some main)
+        (let
+          [blocks : CompilerIrBlockList (opt-function-blocks main)]
+          (and
+            (=
+              (opt-count-direct-call-name-blocks blocks "inline_switch_costly")
+              2)
             (opt-inline-structure-ok? blocks)))]
       [(OptMaybeFunction.No) false])))
 
@@ -49339,6 +52720,12 @@
                     (unless
                       (compiler-optimize-inline-multiblock-bounds-ok?)
                       (return 46))
+                    (unless
+                      (compiler-optimize-inline-multiblock-switch-ok?)
+                      (return 50))
+                    (unless
+                      (compiler-optimize-inline-multiblock-switch-cost-refusal-ok?)
+                      (return 51))
                     (unless
                       (compiler-optimize-inline-mut-param-loop-ok?)
                       (return 44))
@@ -50596,6 +53983,57 @@
       (= (opt-blocks-mov-src-var out 4 (- 0 1)) 3)
       (= (opt-blocks-mov-src-var out 5 (- 0 1)) 4))))
 
+;; The Pack is in `entry`, while its Var-backed Word extraction is in the
+;; dominated `use` block. Global forwarding must rewrite the binop operand to
+;; parameter v1; the array DCE then removes both the Word copy and the now-dead
+;; Pack.
+(define (opt-global-pack-word-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Pack
+          2
+          (compiler-ir-value-cons
+            (CompilerIrValue.Var 0)
+            (compiler-ir-value-cons
+              (CompilerIrValue.Var 1)
+              CompilerIrValueList.Nil))
+          (AstType.Struct (intern "Pair")))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "use")
+          CompilerIrInstrList.Nil)))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "use"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Word 3 (CompilerIrValue.Var 2) 1 (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              4
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+              CompilerIrInstrList.Nil))))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-global-pack-word-forwarded-blocks) : CompilerIrBlockList
+  (let
+    [forwarded : CompilerIrFunction
+      (opt-global-value-number-function
+        (opt-gvn-function
+          "global_pack_word"
+          (opt-gvn-test-params)
+          (AstType.I64)
+          (opt-global-pack-word-blocks)))]
+    [blocks : CompilerIrBlockList (opt-function-blocks forwarded)]
+    [uses : (Array i64) (opt-collect-blocks-uses-array 16 blocks)]
+    (opt-dce-block-list-array uses blocks)))
+
 (define (compiler-optimize-global-value-number-self-test) : i64
   (let
     [dominated : CompilerIrBlockList
@@ -50688,6 +54126,7 @@
             (opt-gvn-scalar-params)
             (AstType.I64)
             (opt-gvn-global-gep-call-blocks))))]
+    [pack-word : CompilerIrBlockList (opt-global-pack-word-forwarded-blocks)]
     (cond
       [(not (= (opt-count-arith-blocks dominated) 1)) 1]
       [(not (= (opt-blocks-mov-src-var dominated 4 (- 0 1)) 3)) 2]
@@ -50738,6 +54177,9 @@
             (opt-blocks-mov-dst-i64-value single-load-store-forward 3 (- 0 1))
             9))
         34]
+      [(not (= (opt-blocks-binop-lhs-var pack-word 4 (- 0 1)) 1)) 35]
+      [(not (= (opt-count-words-blocks pack-word) 0)) 36]
+      [(not (= (opt-count-packs-blocks pack-word) 0)) 37]
       [else 42])))
 
 ;; Regression fixture for the global-GVN stale-global-read miscompile: the

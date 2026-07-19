@@ -2244,6 +2244,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-generated-decl-checks : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-generated-module-memo-hits : i64
     0))
 (cfg
@@ -2415,6 +2419,7 @@
   (define (compiler-tc-macro-profile-reset-program-counters) : unit
     (begin
       (set! compiler-tc-macro-generated-module-materializations 0)
+      (set! compiler-tc-macro-generated-decl-checks 0)
       (set! compiler-tc-macro-generated-module-memo-hits 0)
       (set! compiler-tc-macro-generated-module-catalog-builds 0)
       (set! compiler-tc-macro-generated-module-catalog-hits 0)
@@ -2821,28 +2826,35 @@
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-record [decl : AstDecl]) : unit
-    (match decl
-      [(AstDecl.Def decl-meta _ _ _)
-        (begin
-          (compiler-tc-decl-profile-count-def)
-          (compiler-tc-decl-profile-add-def-expr))]
-      [(AstDecl.DefFn decl-meta name _ _ _ _)
-        (begin
-          (compiler-tc-decl-profile-count-fn)
-          (compiler-tc-decl-profile-add-fn-expr-named
-            (tc-env-key-name-text name)))]
-      [(AstDecl.DefMacro decl-meta _ _ _ _)
-        (begin
-          (compiler-tc-decl-profile-count-macro)
-          (compiler-tc-decl-profile-add-macro))]
-      [(AstDecl.Extern decl-meta _ _ _ _)
-        (begin
-          (compiler-tc-decl-profile-count-extern)
-          (compiler-tc-decl-profile-add-extern))]
-      [_
-        (begin
-          (compiler-tc-decl-profile-count-other)
-          (compiler-tc-decl-profile-add-arena))])))
+    (begin
+      (match (ast-decl-generated-meta decl)
+        [(AstGeneratedDeclMeta.Some _ _ _ _)
+          (set!
+            compiler-tc-macro-generated-decl-checks
+            (+ compiler-tc-macro-generated-decl-checks 1))]
+        [(AstGeneratedDeclMeta.No) unit])
+      (match decl
+        [(AstDecl.Def decl-meta _ _ _)
+          (begin
+            (compiler-tc-decl-profile-count-def)
+            (compiler-tc-decl-profile-add-def-expr))]
+        [(AstDecl.DefFn decl-meta name _ _ _ _)
+          (begin
+            (compiler-tc-decl-profile-count-fn)
+            (compiler-tc-decl-profile-add-fn-expr-named
+              (tc-env-key-name-text name)))]
+        [(AstDecl.DefMacro decl-meta _ _ _ _)
+          (begin
+            (compiler-tc-decl-profile-count-macro)
+            (compiler-tc-decl-profile-add-macro))]
+        [(AstDecl.Extern decl-meta _ _ _ _)
+          (begin
+            (compiler-tc-decl-profile-count-extern)
+            (compiler-tc-decl-profile-add-extern))]
+        [_
+          (begin
+            (compiler-tc-decl-profile-count-other)
+            (compiler-tc-decl-profile-add-arena))]))))
 
 (cfg
   compile-profile
@@ -3045,6 +3057,9 @@
       (compiler-tc-macro-counter-profile-line
         "generated_module_materializations"
         compiler-tc-macro-generated-module-materializations)
+      (compiler-tc-macro-counter-profile-line
+        "generated_decl_checks"
+        compiler-tc-macro-generated-decl-checks)
       (compiler-tc-macro-counter-profile-line
         "generated_module_memo_hits"
         compiler-tc-macro-generated-module-memo-hits)

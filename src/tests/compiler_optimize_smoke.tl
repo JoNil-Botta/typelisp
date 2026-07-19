@@ -1878,6 +1878,10 @@
       "compiler-optimize-cmp-sink-self-test"
       (compiler-optimize-cmp-sink-self-test)
       42)
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-successor-sink-self-test"
+      (compiler-optimize-successor-sink-self-test)
+      42)
     42))
 
 (define (main) : i64
@@ -1900,6 +1904,24 @@
     (compiler-optimize-alias-self-test)
     42
     "optimizer alias fact model"))
+
+(test
+  inline-multiblock-switch-absorbable
+  (test.assert-true
+    (compiler-optimize-inline-multiblock-switch-ok?)
+    "absorbable acyclic bounds+switch callee inlines with fresh CFG/phi labels"))
+
+(test
+  inline-multiblock-cyclic-bounds-switch-refusal
+  (test.assert-true
+    (compiler-optimize-inline-multiblock-cyclic-bounds-switch-refusal-ok?)
+    "cyclic bounds+switch callee remains behind the acyclic admission gate"))
+
+(test
+  inline-multiblock-switch-cost-refusal
+  (test.assert-true
+    (compiler-optimize-inline-multiblock-switch-cost-refusal-ok?)
+    "multi-site switch callee above the weighted cost threshold stays uninlined"))
 
 (cfg
   test
@@ -1972,3 +1994,10 @@
     (compiler-optimize-cmp-sink-self-test)
     42
     "Sinking a loop-closing compare next to its branch"))
+
+(test
+  single-predecessor-successor-sink
+  (test.assert-i64-eq
+    (compiler-optimize-successor-sink-self-test)
+    42
+    "Successor sinking moves pure chains and rejects unsafe CFG/memory/trap cases"))

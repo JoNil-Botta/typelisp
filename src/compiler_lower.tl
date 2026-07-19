@@ -53862,6 +53862,11 @@
                     (cfg
                       compile-profile
                       (compiler-lower-profile-finish "prune_apply"))
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-program-counts
+                        "reachable"
+                        pruned-program))
                     (cfg compile-profile (compiler-lower-profile-start))
                     (cfg
                       compile-profile

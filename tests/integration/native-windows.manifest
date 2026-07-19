@@ -30,7 +30,9 @@ compile_profile_generated_import|tests/integration/compile_profile_generated_imp
 compile_profile_generated_import_inert|tests/integration/compile_profile_generated_import_inert.tl|42|-|-|compile_profile_generated_import_inert_dep.tl
 compile_profile_cross_file_single_compilation|tests/integration/compile_profile_cross_file_single_compilation.tl|42|-|-|compile_profile_cross_file_single_compilation_a.tl compile_profile_cross_file_single_compilation_b.tl compile_profile_cross_file_single_compilation_c.tl
 compile_profile_vector_core|tests/integration/compile_profile_vector_core.tl|42|-|-|stdlib/vector.tl
+compile_profile_vector_five_core|tests/integration/compile_profile_vector_five_core.tl|42|-|-|stdlib/vector.tl
 compile_profile_vector_full|tests/integration/compile_profile_vector_full.tl|42|-|-|stdlib/vector.tl
+compile_profile_vector_one_core|tests/integration/compile_profile_vector_one_core.tl|42|-|-|stdlib/vector.tl
 compile_profile_layout_spec|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl
 compile_profile_nested_peak_reset|tests/integration/compile_profile_nested_peak_reset.tl|42|-|-|stdlib/array.tl stdlib/profile.tl
 compile_profile_optimizer_escape|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-
@@ -243,6 +245,7 @@ string_concat_deep|tests/integration/string_concat_deep.tl|42|-|-|stdlib/string.
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl
 core_string_length|tests/integration/core_string_length.tl|42|-|-|stdlib/string.tl
 stdlib_math_ieee|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl
+stdlib_math_trig|tests/integration/stdlib_math_trig.tl|0|-|-|stdlib/math.tl
 string_length|tests/integration/string_length.tl|5|-|-|stdlib/string.tl
 string_match|tests/integration/string_match.tl|42|-|-|-
 struct_field_set|tests/integration/struct_field_set.tl|42|-|-|-

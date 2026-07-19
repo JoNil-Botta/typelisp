@@ -123,10 +123,11 @@ Inline stdlib coverage:
   end-to-end parse/stringify behavior for invalid input, escapes, nesting,
   arrays, objects, duplicate-key lookup, and number forms.
 - `env_api.tl` owns standalone tests for missing, empty, and present environment
-  variables, host-separator PATH splitting/joining, vector-backed PATH
-  split/list/join helpers, and explicit Windows `;` path-list behavior. The
-  inline-test verifier sets the `TYPELISP_STDLIB_TEST_*` environment variables
-  used by this coverage.
+  variables; process-local set/replace/empty/unset round trips and invalid-name
+  rejection; host-separator PATH splitting/joining; vector-backed PATH
+  split/list/join helpers; and explicit Windows `;` path-list behavior. The
+  inline-test verifier sets the read-only `TYPELISP_STDLIB_TEST_*` fixtures used
+  by this coverage.
 - `random.tl` owns inline tests for deterministic seed normalization and
   MINSTD sequences, bounded draws, invalid bounds, list/array/vector
   weighted-index edge cases, zero-weight skipping, storage parity, stable picks
@@ -138,11 +139,17 @@ Inline stdlib coverage:
   bit round trips (including NaN payloads and both zeros), classification,
   copy-sign, `scalbn` normal/subnormal/tie-to-even/overflow behavior, typed and
   generic square root, single evaluation, exact correctly-rounded f64/f32
-  vectors, subnormal boundaries, signed zero, infinities, and NaN behavior.
+  vectors, subnormal boundaries, shared trigonometric argument reduction,
+  sin/cos/tan special values, signed zero, infinities, and NaN behavior.
   `math_sqrt_non_float_reject.tl` keeps the generic macro restricted to f64/f32.
   `tests/integration/stdlib_math_ieee.tl` runs the foundation and square-root
   surface natively on both Linux and Windows; the assembly-shape gate proves
   public f64/f32 probes contain `sqrtsd`/`sqrtss` with no call.
+  `tests/integration/stdlib_math_trig.tl` checks all six
+  f64/f32 trigonometric entry points against MPFR-rounded vectors, including
+  CORE-MATH hard-to-round inputs, quadrant neighbors, reducer boundaries,
+  randomized exponent coverage, max finite values, signed zero, infinities,
+  and NaNs.
 - `hash.tl` owns inline tests for stable deterministic hashes,
   equal-values-same-hash checks, primitive key equality predicates, known
   collision behavior, hash range normalization, and string edge cases.

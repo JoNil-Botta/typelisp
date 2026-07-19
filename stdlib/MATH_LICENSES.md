@@ -4,6 +4,28 @@ Parts of `stdlib/math.tl` are derived from musl libc revision
 `b306b16af15c89a04d8e0c55cac2dadbeb39c083`, including the operation order of
 `src/math/scalbn.c` and `src/math/scalbnf.c`.
 
+The `f64-sin`/`f64-cos`/`f64-tan` and binary32 counterparts also derive from
+musl's `sin.c`, `cos.c`, `tan.c`, float variants, `__sin.c`, `__cos.c`,
+`__tan.c`, float kernels, `__rem_pio2.c`, `__rem_pio2f.c`, and
+`__rem_pio2_large.c` at that revision. Those files originate in the
+FreeBSD/Sun fdlibm family. Their required notices are preserved below.
+
+> Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+>
+> Developed at SunPro and SunSoft, Sun Microsystems, Inc. businesses.
+> Permission to use, copy, modify, and distribute this software is freely
+> granted, provided that this notice is preserved.
+
+The tangent kernels carry the corresponding 2004 notice:
+
+> Copyright 2004 Sun Microsystems, Inc. All Rights Reserved.
+>
+> Permission to use, copy, modify, and distribute this software is freely
+> granted, provided that this notice is preserved.
+
+The binary32 conversions are credited in the upstream files to Ian Lance
+Taylor (Cygnus Support) and were optimized/debugged by Bruce D. Evans.
+
 musl as a whole is licensed under the following standard MIT license:
 
 > Copyright © 2005-2020 Rich Felker, et al.

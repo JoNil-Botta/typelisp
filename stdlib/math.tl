@@ -291,6 +291,1041 @@
           unit))
       (* y (stdlib.math.f32-from-bits (shl (cast (+ 127 n) : u32) 23))))))
 
+;; The trigonometric implementation below is derived from the musl/fdlibm
+;; sources pinned in MATH_LICENSES.md. Keep the constants as exact IEEE-754
+;; bit patterns and preserve the written operation order: the polynomial error
+;; bounds and compensated argument reduction depend on both.
+;: Internal quadrant and compensated remainder from pi/2 argument reduction.
+(defstruct MathTrigReduction
+  (quadrant i64)
+  (hi f64)
+  (lo f64))
+
+;; 1,584 binary digits (396 hexadecimal digits) of 2/pi, split into 24-bit
+;; limbs. Binary64 needs at most limb 46 for its largest finite exponent; the
+;; complete 66-limb fdlibm double table is retained so reducer recomputation
+;; always has headroom. A lookup function keeps the constants in code instead
+;; of creating a heap-allocated module-global array during startup.
+;: Return one exact 24-bit limb of the internal 2/pi reduction table.
+(define (math-trig-two-over-pi-limb [index : i64]) : u32
+  (cond
+    [(= index 0) 0xA2F983]
+    [(= index 1) 0x6E4E44]
+    [(= index 2) 0x1529FC]
+    [(= index 3) 0x2757D1]
+    [(= index 4) 0xF534DD]
+    [(= index 5) 0xC0DB62]
+    [(= index 6) 0x95993C]
+    [(= index 7) 0x439041]
+    [(= index 8) 0xFE5163]
+    [(= index 9) 0xABDEBB]
+    [(= index 10) 0xC561B7]
+    [(= index 11) 0x246E3A]
+    [(= index 12) 0x424DD2]
+    [(= index 13) 0xE00649]
+    [(= index 14) 0x2EEA09]
+    [(= index 15) 0xD1921C]
+    [(= index 16) 0xFE1DEB]
+    [(= index 17) 0x1CB129]
+    [(= index 18) 0xA73EE8]
+    [(= index 19) 0x8235F5]
+    [(= index 20) 0x2EBB44]
+    [(= index 21) 0x84E99C]
+    [(= index 22) 0x7026B4]
+    [(= index 23) 0x5F7E41]
+    [(= index 24) 0x3991D6]
+    [(= index 25) 0x398353]
+    [(= index 26) 0x39F49C]
+    [(= index 27) 0x845F8B]
+    [(= index 28) 0xBDF928]
+    [(= index 29) 0x3B1FF8]
+    [(= index 30) 0x97FFDE]
+    [(= index 31) 0x05980F]
+    [(= index 32) 0xEF2F11]
+    [(= index 33) 0x8B5A0A]
+    [(= index 34) 0x6D1F6D]
+    [(= index 35) 0x367ECF]
+    [(= index 36) 0x27CB09]
+    [(= index 37) 0xB74F46]
+    [(= index 38) 0x3F669E]
+    [(= index 39) 0x5FEA2D]
+    [(= index 40) 0x7527BA]
+    [(= index 41) 0xC7EBE5]
+    [(= index 42) 0xF17B3D]
+    [(= index 43) 0x0739F7]
+    [(= index 44) 0x8A5292]
+    [(= index 45) 0xEA6BFB]
+    [(= index 46) 0x5FB11F]
+    [(= index 47) 0x8D5D08]
+    [(= index 48) 0x560330]
+    [(= index 49) 0x46FC7B]
+    [(= index 50) 0x6BABF0]
+    [(= index 51) 0xCFBC20]
+    [(= index 52) 0x9AF436]
+    [(= index 53) 0x1DA9E3]
+    [(= index 54) 0x91615E]
+    [(= index 55) 0xE61B08]
+    [(= index 56) 0x659985]
+    [(= index 57) 0x5F14A0]
+    [(= index 58) 0x68408D]
+    [(= index 59) 0xFFD880]
+    [(= index 60) 0x4D7327]
+    [(= index 61) 0x310606]
+    [(= index 62) 0x1556CA]
+    [(= index 63) 0x73A8C9]
+    [(= index 64) 0x60E27B]
+    [(= index 65) 0xC08C6B]
+    [else 0]))
+
+;; pi/2 split into non-overlapping 24-bit pieces. As above, the lookup avoids
+;; startup allocation for a global fixed array.
+;: Return one exact non-overlapping piece of the internal pi/2 table.
+(define (math-trig-pi-over-two-piece [index : i64]) : f64
+  (cond
+    [(= index 0) (stdlib.math.f64-from-bits 0x3FF921FB40000000)]
+    [(= index 1) (stdlib.math.f64-from-bits 0x3E74442D00000000)]
+    [(= index 2) (stdlib.math.f64-from-bits 0x3CF8469880000000)]
+    [(= index 3) (stdlib.math.f64-from-bits 0x3B78CC5160000000)]
+    [(= index 4) (stdlib.math.f64-from-bits 0x39F01B8380000000)]
+    [(= index 5) (stdlib.math.f64-from-bits 0x387A252040000000)]
+    [(= index 6) (stdlib.math.f64-from-bits 0x36E3822280000000)]
+    [else (stdlib.math.f64-from-bits 0x3569F31D00000000)]))
+
+;: Return one limb from the decomposed reducer input.
+(define (math-trig-input-limb [index : i64] [x0 : f64] [x1 : f64] [x2 : f64]) : f64
+  (if (= index 0)
+    x0
+    (if (= index 1)
+      x1
+      x2)))
+
+;; Payne-Hanek-style reduction from musl __rem_pio2_large.c. The input is a
+;; positive significand split into one (binary32) or three (binary64) 24-bit
+;; limbs. Only precisions 0 (one-term float remainder) and 1 (two-term double
+;; remainder) are needed here.
+;: Reduce a positive, limb-decomposed input by pi/2 across the full exponent range.
+(define (math-trig-rem-pio2-large
+  [x0 : f64]
+  [x1 : f64]
+  [x2 : f64]
+  [e0 : i64]
+  [nx : i64]
+  [precision : i64]) : MathTrigReduction
+  (let
+    [iq : (Array i64 20) (init)]
+    [f : (Array f64 20) (init)]
+    [fq : (Array f64 20) (init)]
+    [q : (Array f64 20) (init)]
+    [jk : i64
+      (if (= precision 0)
+        3
+        4)]
+    [jp : i64 jk]
+    [jx : i64 (- nx 1)]
+    [jv : i64 (/ (- e0 3) 24)]
+    [q0 : i64 0]
+    [jz : i64 0]
+    [carry : i64 0]
+    [n : i64 0]
+    [ih : i64 0]
+    [i : i64 0]
+    [j : i64 0]
+    [k : i64 0]
+    [m : i64 0]
+    [z : f64 0.0]
+    [fw : f64 0.0]
+    [need-recompute : bool true]
+    (begin
+      (if (< jv 0)
+        (set! jv 0)
+        unit)
+      (set! q0 (- e0 (* 24 (+ jv 1))))
+      ;; f[0..jx+jk] selects the exponent-local window of the 2/pi table.
+      (set! j (- jv jx))
+      (set! m (+ jx jk))
+      (set! i 0)
+      (while (<= i m)
+        (begin
+          (array-set!
+            f
+            i
+            (if (< j 0)
+              0.0
+              (cast (math-trig-two-over-pi-limb j) : f64)))
+          (set! i (+ i 1))
+          (set! j (+ j 1))))
+      ;; q is the local convolution of the significand and 2/pi limbs.
+      (set! i 0)
+      (while (<= i jk)
+        (begin
+          (set! fw 0.0)
+          (set! j 0)
+          (while (<= j jx)
+            (begin
+              (set!
+                fw
+                (+
+                  fw
+                  (*
+                    (math-trig-input-limb j x0 x1 x2)
+                    (array-ref f (- (+ jx i) j)))))
+              (set! j (+ j 1))))
+          (array-set! q i fw)
+          (set! i (+ i 1))))
+      (set! jz jk)
+      (while need-recompute
+        (begin
+          ;; Distill q into base-2^24 integer limbs in reverse order.
+          (set! i 0)
+          (set! j jz)
+          (set! z (array-ref q jz))
+          (while (> j 0)
+            (begin
+              (set!
+                fw
+                (cast (cast (* 0.000000059604644775390625 z) : i64) : f64))
+              (array-set! iq i (cast (- z (* 16777216.0 fw)) : i64))
+              (set! z (+ (array-ref q (- j 1)) fw))
+              (set! i (+ i 1))
+              (set! j (- j 1))))
+          ;; Extract N mod 8 and the fractional product.
+          (set! z (stdlib.math.f64-scalbn z q0))
+          (set! z (- z (* 8.0 (cast (cast (* z 0.125) : i64) : f64))))
+          (set! n (cast z : i64))
+          (set! z (- z (cast n : f64)))
+          (set! ih 0)
+          (cond
+            [(> q0 0)
+              (begin
+                (set! i (shr (array-ref iq (- jz 1)) (- 24 q0)))
+                (set! n (+ n i))
+                (array-set!
+                  iq
+                  (- jz 1)
+                  (- (array-ref iq (- jz 1)) (shl i (- 24 q0))))
+                (set! ih (shr (array-ref iq (- jz 1)) (- 23 q0))))]
+            [(= q0 0) (set! ih (shr (array-ref iq (- jz 1)) 23))]
+            [(>= z 0.5) (set! ih 2)]
+            [else unit])
+          ;; Fold q > 1/2 to 1-q and remember the remainder sign.
+          (if (> ih 0)
+            (begin
+              (set! n (+ n 1))
+              (set! carry 0)
+              (set! i 0)
+              (while (< i jz)
+                (begin
+                  (set! j (array-ref iq i))
+                  (if (= carry 0)
+                    (if (!= j 0)
+                      (begin
+                        (set! carry 1)
+                        (array-set! iq i (- 0x1000000 j)))
+                      unit)
+                    (array-set! iq i (- 0xffffff j)))
+                  (set! i (+ i 1))))
+              (if (= q0 1)
+                (array-set!
+                  iq
+                  (- jz 1)
+                  (bit-and (array-ref iq (- jz 1)) 0x7fffff))
+                (if (= q0 2)
+                  (array-set!
+                    iq
+                    (- jz 1)
+                    (bit-and (array-ref iq (- jz 1)) 0x3fffff))
+                  unit))
+              (if (= ih 2)
+                (begin
+                  (set! z (- 1.0 z))
+                  (if (!= carry 0)
+                    (set! z (- z (stdlib.math.f64-scalbn 1.0 q0)))
+                    unit))
+                unit))
+            unit)
+          ;; Exact cancellation can consume the current table window. Extend
+          ;; the convolution just far enough and distill it again.
+          (set! need-recompute false)
+          (if (= z 0.0)
+            (begin
+              (set! j 0)
+              (set! i (- jz 1))
+              (while (>= i jk)
+                (begin
+                  (set! j (bit-or j (array-ref iq i)))
+                  (set! i (- i 1))))
+              (if (= j 0)
+                (begin
+                  (set! k 1)
+                  (while (= (array-ref iq (- jk k)) 0)
+                    (set! k (+ k 1)))
+                  (set! i (+ jz 1))
+                  (while (<= i (+ jz k))
+                    (begin
+                      (array-set!
+                        f
+                        (+ jx i)
+                        (cast (math-trig-two-over-pi-limb (+ jv i)) : f64))
+                      (set! fw 0.0)
+                      (set! j 0)
+                      (while (<= j jx)
+                        (begin
+                          (set!
+                            fw
+                            (+
+                              fw
+                              (*
+                                (math-trig-input-limb j x0 x1 x2)
+                                (array-ref f (- (+ jx i) j)))))
+                          (set! j (+ j 1))))
+                      (array-set! q i fw)
+                      (set! i (+ i 1))))
+                  (set! jz (+ jz k))
+                  (set! need-recompute true))
+                unit))
+            unit)))
+      ;; Normalize the final fractional limbs.
+      (if (= z 0.0)
+        (begin
+          (set! jz (- jz 1))
+          (set! q0 (- q0 24))
+          (while (= (array-ref iq jz) 0)
+            (begin
+              (set! jz (- jz 1))
+              (set! q0 (- q0 24)))))
+        (begin
+          (set! z (stdlib.math.f64-scalbn z (- 0 q0)))
+          (if (>= z 16777216.0)
+            (begin
+              (set!
+                fw
+                (cast (cast (* 0.000000059604644775390625 z) : i64) : f64))
+              (array-set! iq jz (cast (- z (* 16777216.0 fw)) : i64))
+              (set! jz (+ jz 1))
+              (set! q0 (+ q0 24))
+              (array-set! iq jz (cast fw : i64)))
+            (array-set! iq jz (cast z : i64)))))
+      ;; Convert integer limbs back to scaled floating values.
+      (set! fw (stdlib.math.f64-scalbn 1.0 q0))
+      (set! i jz)
+      (while (>= i 0)
+        (begin
+          (array-set! q i (* fw (cast (array-ref iq i) : f64)))
+          (set! fw (* fw 0.000000059604644775390625))
+          (set! i (- i 1))))
+      ;; Multiply by the split pi/2 table.
+      (set! i jz)
+      (while (>= i 0)
+        (begin
+          (set! fw 0.0)
+          (set! k 0)
+          (while (and (<= k jp) (<= k (- jz i)))
+            (begin
+              (set!
+                fw
+                (+ fw (* (math-trig-pi-over-two-piece k) (array-ref q (+ i k)))))
+              (set! k (+ k 1))))
+          (array-set! fq (- jz i) fw)
+          (set! i (- i 1))))
+      ;; Compress to one term for binary32 or a compensated two-term result
+      ;; for binary64.
+      (set! fw 0.0)
+      (set! i jz)
+      (while (>= i 0)
+        (begin
+          (set! fw (+ fw (array-ref fq i)))
+          (set! i (- i 1))))
+      (if (= precision 0)
+        (MathTrigReduction
+          (bit-and n 7)
+          (if (= ih 0)
+            fw
+            (- 0.0 fw))
+          0.0)
+        (let
+          [head : f64 fw]
+          [tail : f64 (- (array-ref fq 0) fw)]
+          (begin
+            (set! i 1)
+            (while (<= i jz)
+              (begin
+                (set! tail (+ tail (array-ref fq i)))
+                (set! i (+ i 1))))
+            (MathTrigReduction
+              (bit-and n 7)
+              (if (= ih 0)
+                head
+                (- 0.0 head))
+              (if (= ih 0)
+                tail
+                (- 0.0 tail)))))))))
+
+;: Construct an internal binary64 constant from its exact IEEE-754 bits.
+(define (math-trig-f64-constant [bits : u64]) : f64
+  (stdlib.math.f64-from-bits bits))
+
+;: Clear the low binary64 word for compensated tangent arithmetic.
+(define (math-trig-truncate-low-word [value : f64]) : f64
+  (stdlib.math.f64-from-bits
+    (bit-and (stdlib.math.f64-to-bits value) (cast 0xffffffff00000000 : u64))))
+
+;; Binary64 pi/2 reduction. The medium path uses three compensated 33-bit
+;; pieces; the large path decomposes the significand into 24-bit limbs for the
+;; shared Payne-Hanek reducer above.
+;: Reduce any binary64 input to a compensated remainder modulo pi/2.
+(define (math-trig-rem-pio2-f64 [value : f64]) : MathTrigReduction
+  (let
+    [bits : u64 (stdlib.math.f64-to-bits value)]
+    [ix : u64 (bit-and (shr bits 32) (cast 0x7fffffff : u64))]
+    [fn : f64 0.0]
+    [n : i64 0]
+    [r : f64 0.0]
+    [w : f64 0.0]
+    [t : f64 0.0]
+    [hi : f64 0.0]
+    [ex : i64 0]
+    [ey : i64 0]
+    (if (< ix (cast 0x413921fb : u64))
+      (begin
+        ;; rint(value * 2/pi) for round-to-nearest without an extern.
+        (set!
+          fn
+          (+
+            (* value (math-trig-f64-constant (cast 0x3FE45F306DC9C883 : u64)))
+            (math-trig-f64-constant (cast 0x4338000000000000 : u64))))
+        (set!
+          fn
+          (- fn (math-trig-f64-constant (cast 0x4338000000000000 : u64))))
+        (set! n (cast fn : i64))
+        (set!
+          r
+          (-
+            value
+            (* fn (math-trig-f64-constant (cast 0x3FF921FB54400000 : u64)))))
+        (set! w (* fn (math-trig-f64-constant (cast 0x3DD0B4611A626331 : u64))))
+        (if (<
+          (- r w)
+          (- 0.0 (math-trig-f64-constant (cast 0x3FE921FB54442D18 : u64))))
+          (begin
+            (set! n (- n 1))
+            (set! fn (- fn 1.0))
+            (set!
+              r
+              (-
+                value
+                (* fn (math-trig-f64-constant (cast 0x3FF921FB54400000 : u64)))))
+            (set!
+              w
+              (* fn (math-trig-f64-constant (cast 0x3DD0B4611A626331 : u64)))))
+          (if (>
+            (- r w)
+            (math-trig-f64-constant (cast 0x3FE921FB54442D18 : u64)))
+            (begin
+              (set! n (+ n 1))
+              (set! fn (+ fn 1.0))
+              (set!
+                r
+                (-
+                  value
+                  (*
+                    fn
+                    (math-trig-f64-constant (cast 0x3FF921FB54400000 : u64)))))
+              (set!
+                w
+                (* fn (math-trig-f64-constant (cast 0x3DD0B4611A626331 : u64)))))
+            unit))
+        (set! hi (- r w))
+        (set! ex (cast (shr ix 20) : i64))
+        (set!
+          ey
+          (cast
+            (bit-and (shr (stdlib.math.f64-to-bits hi) 52) (cast 0x7ff : u64))
+            : i64))
+        (if (> (- ex ey) 16)
+          (begin
+            (set! t r)
+            (set!
+              w
+              (* fn (math-trig-f64-constant (cast 0x3DD0B4611A600000 : u64))))
+            (set! r (- t w))
+            (set!
+              w
+              (-
+                (* fn (math-trig-f64-constant (cast 0x3BA3198A2E037073 : u64)))
+                (- (- t r) w)))
+            (set! hi (- r w))
+            (set!
+              ey
+              (cast
+                (bit-and
+                  (shr (stdlib.math.f64-to-bits hi) 52)
+                  (cast 0x7ff : u64))
+                : i64))
+            (if (> (- ex ey) 49)
+              (begin
+                (set! t r)
+                (set!
+                  w
+                  (*
+                    fn
+                    (math-trig-f64-constant (cast 0x3BA3198A2E000000 : u64))))
+                (set! r (- t w))
+                (set!
+                  w
+                  (-
+                    (*
+                      fn
+                      (math-trig-f64-constant (cast 0x397B839A252049C1 : u64)))
+                    (- (- t r) w)))
+                (set! hi (- r w)))
+              unit))
+          unit)
+        (MathTrigReduction n hi (- (- r hi) w)))
+      (if (>= ix (cast 0x7ff00000 : u64))
+        (let
+          [nan : f64 (- value value)]
+          (MathTrigReduction 0 nan nan))
+        (let
+          [magnitude : u64 (bit-and bits (cast 0x000fffffffffffff : u64))]
+          [normalized : u64 (bit-or magnitude (cast 0x4160000000000000 : u64))]
+          [z : f64 (stdlib.math.f64-from-bits normalized)]
+          [x0 : f64 0.0]
+          [x1 : f64 0.0]
+          [x2 : f64 0.0]
+          [nx : i64 3]
+          [large : MathTrigReduction (MathTrigReduction 0 0.0 0.0)]
+          (begin
+            (set! x0 (cast (cast z : i64) : f64))
+            (set! z (* (- z x0) 16777216.0))
+            (set! x1 (cast (cast z : i64) : f64))
+            (set! z (* (- z x1) 16777216.0))
+            (set! x2 z)
+            (if (= x2 0.0)
+              (begin
+                (set! nx 2)
+                (if (= x1 0.0)
+                  (set! nx 1)
+                  unit))
+              unit)
+            (set!
+              large
+              (math-trig-rem-pio2-large
+                x0
+                x1
+                x2
+                (- (cast (shr ix 20) : i64) (+ 0x3ff 23))
+                nx
+                1))
+            (if (!=
+              (bit-and bits (cast 0x8000000000000000 : u64))
+              (cast 0 : u64))
+              (MathTrigReduction
+                (- 0 (struct-get large quadrant))
+                (- 0.0 (struct-get large hi))
+                (- 0.0 (struct-get large lo)))
+              large)))))))
+
+;; Binary32 reduction keeps all arithmetic in binary64, then returns the
+;; one-term remainder expected by the float kernels.
+;: Reduce any binary32 input to a binary64 remainder modulo pi/2.
+(define (math-trig-rem-pio2-f32 [value : f32]) : MathTrigReduction
+  (let
+    [bits : u32 (stdlib.math.f32-to-bits value)]
+    [ix : u32 (bit-and bits (cast 0x7fffffff : u32))]
+    [wide : f64 (cast value : f64)]
+    [fn : f64 0.0]
+    [n : i64 0]
+    [remainder : f64 0.0]
+    (if (< ix (cast 0x4dc90fdb : u32))
+      (begin
+        (set!
+          fn
+          (+
+            (* wide (math-trig-f64-constant (cast 0x3FE45F306DC9C883 : u64)))
+            (math-trig-f64-constant (cast 0x4338000000000000 : u64))))
+        (set!
+          fn
+          (- fn (math-trig-f64-constant (cast 0x4338000000000000 : u64))))
+        (set! n (cast fn : i64))
+        (set!
+          remainder
+          (-
+            (-
+              wide
+              (* fn (math-trig-f64-constant (cast 0x3FF921FB50000000 : u64))))
+            (* fn (math-trig-f64-constant (cast 0x3E5110B4611A6263 : u64)))))
+        (if (<
+          remainder
+          (- 0.0 (math-trig-f64-constant (cast 0x3FE921FB60000000 : u64))))
+          (begin
+            (set! n (- n 1))
+            (set! fn (- fn 1.0))
+            (set!
+              remainder
+              (-
+                (-
+                  wide
+                  (*
+                    fn
+                    (math-trig-f64-constant (cast 0x3FF921FB50000000 : u64))))
+                (* fn (math-trig-f64-constant (cast 0x3E5110B4611A6263 : u64))))))
+          (if (>
+            remainder
+            (math-trig-f64-constant (cast 0x3FE921FB60000000 : u64)))
+            (begin
+              (set! n (+ n 1))
+              (set! fn (+ fn 1.0))
+              (set!
+                remainder
+                (-
+                  (-
+                    wide
+                    (*
+                      fn
+                      (math-trig-f64-constant (cast 0x3FF921FB50000000 : u64))))
+                  (*
+                    fn
+                    (math-trig-f64-constant (cast 0x3E5110B4611A6263 : u64))))))
+            unit))
+        (MathTrigReduction n remainder 0.0))
+      (if (>= ix (cast 0x7f800000 : u32))
+        (let
+          [nan : f64 (- wide wide)]
+          (MathTrigReduction 0 nan 0.0))
+        (let
+          [sign : bool
+            (!= (bit-and bits (cast 0x80000000 : u32)) (cast 0 : u32))]
+          [e0 : i64 (- (cast (shr ix 23) : i64) (+ 0x7f 23))]
+          [scaled-bits : u32 (- ix (shl (cast e0 : u32) 23))]
+          [large : MathTrigReduction
+            (math-trig-rem-pio2-large
+              (cast (stdlib.math.f32-from-bits scaled-bits) : f64)
+              0.0
+              0.0
+              e0
+              1
+              0)]
+          (if sign
+            (MathTrigReduction
+              (- 0 (struct-get large quadrant))
+              (- 0.0 (struct-get large hi))
+              0.0)
+            large))))))
+
+;; Polynomial kernels on the reduced interval [-pi/4, pi/4].
+;: Evaluate the internal binary64 sine kernel on the reduced interval.
+(define (math-trig-kernel-sin-f64 [x : f64] [tail : f64] [tail-present : bool]) : f64
+  (let
+    [z : f64 (* x x)]
+    [w : f64 (* z z)]
+    [r : f64
+      (+
+        (math-trig-f64-constant (cast 0x3F8111111110F8A6 : u64))
+        (*
+          z
+          (+
+            (math-trig-f64-constant (cast 0xBF2A01A019C161D5 : u64))
+            (* z (math-trig-f64-constant (cast 0x3EC71DE357B1FE7D : u64)))))
+        (*
+          z
+          w
+          (+
+            (math-trig-f64-constant (cast 0xBE5AE5E68A2B9CEB : u64))
+            (* z (math-trig-f64-constant (cast 0x3DE5D93A5ACFD57C : u64))))))]
+    [v : f64 (* z x)]
+    (if tail-present
+      (-
+        x
+        (-
+          (- (* z (- (* 0.5 tail) (* v r))) tail)
+          (* v (math-trig-f64-constant (cast 0xBFC5555555555549 : u64)))))
+      (+
+        x
+        (*
+          v
+          (+ (math-trig-f64-constant (cast 0xBFC5555555555549 : u64)) (* z r)))))))
+
+;: Evaluate the internal binary64 cosine kernel on the reduced interval.
+(define (math-trig-kernel-cos-f64 [x : f64] [tail : f64]) : f64
+  (let
+    [z : f64 (* x x)]
+    [w : f64 (* z z)]
+    [r : f64
+      (+
+        (*
+          z
+          (+
+            (math-trig-f64-constant (cast 0x3FA555555555554C : u64))
+            (*
+              z
+              (+
+                (math-trig-f64-constant (cast 0xBF56C16C16C15177 : u64))
+                (* z (math-trig-f64-constant (cast 0x3EFA01A019CB1590 : u64)))))))
+        (*
+          w
+          w
+          (+
+            (math-trig-f64-constant (cast 0xBE927E4F809C52AD : u64))
+            (*
+              z
+              (+
+                (math-trig-f64-constant (cast 0x3E21EE9EBDB4B1C4 : u64))
+                (* z (math-trig-f64-constant (cast 0xBDA8FAE9BE8838D4 : u64))))))))]
+    [half-z : f64 (* 0.5 z)]
+    [base : f64 (- 1.0 half-z)]
+    (+ base (+ (- (- 1.0 base) half-z) (- (* z r) (* x tail))))))
+
+;: Evaluate tangent or negative cotangent on the reduced binary64 interval.
+(define (math-trig-kernel-tan-f64
+  [input-x : f64]
+  [input-tail : f64]
+  [odd : bool]) : f64
+  (let
+    [x : f64 input-x]
+    [tail : f64 input-tail]
+    [high : u64
+      (bit-and (shr (stdlib.math.f64-to-bits x) 32) (cast 0x7fffffff : u64))]
+    [big : bool (>= high (cast 0x3FE59428 : u64))]
+    [negative : bool (stdlib.math.f64-sign-bit? x)]
+    [z : f64 0.0]
+    [w : f64 0.0]
+    [r : f64 0.0]
+    [v : f64 0.0]
+    [s : f64 0.0]
+    (begin
+      (if big
+        (begin
+          (if negative
+            (begin
+              (set! x (- 0.0 x))
+              (set! tail (- 0.0 tail)))
+            unit)
+          (set!
+            x
+            (+
+              (- (math-trig-f64-constant (cast 0x3FE921FB54442D18 : u64)) x)
+              (- (math-trig-f64-constant (cast 0x3C81A62633145C07 : u64)) tail)))
+          (set! tail 0.0))
+        unit)
+      (set! z (* x x))
+      (set! w (* z z))
+      (set!
+        r
+        (+
+          (math-trig-f64-constant (cast 0x3FC111111110FE7A : u64))
+          (*
+            w
+            (+
+              (math-trig-f64-constant (cast 0x3F9664F48406D637 : u64))
+              (*
+                w
+                (+
+                  (math-trig-f64-constant (cast 0x3F6D6D22C9560328 : u64))
+                  (*
+                    w
+                    (+
+                      (math-trig-f64-constant (cast 0x3F4344D8F2F26501 : u64))
+                      (*
+                        w
+                        (+
+                          (math-trig-f64-constant
+                            (cast 0x3F147E88A03792A6 : u64))
+                          (*
+                            w
+                            (math-trig-f64-constant
+                              (cast 0xBEF375CBDB605373 : u64)))))))))))))
+      (set!
+        v
+        (*
+          z
+          (+
+            (math-trig-f64-constant (cast 0x3FABA1BA1BB341FE : u64))
+            (*
+              w
+              (+
+                (math-trig-f64-constant (cast 0x3F8226E3E96E8493 : u64))
+                (*
+                  w
+                  (+
+                    (math-trig-f64-constant (cast 0x3F57DBC8FEE08315 : u64))
+                    (*
+                      w
+                      (+
+                        (math-trig-f64-constant (cast 0x3F3026F71A8D1068 : u64))
+                        (*
+                          w
+                          (+
+                            (math-trig-f64-constant
+                              (cast 0x3F12B80F32F0A7E9 : u64))
+                            (*
+                              w
+                              (math-trig-f64-constant
+                                (cast 0x3EFB2A7074BF7AD4 : u64))))))))))))))
+      (set! s (* z x))
+      (set!
+        r
+        (+
+          tail
+          (* z (+ (* s (+ r v)) tail))
+          (* s (math-trig-f64-constant (cast 0x3FD5555555555563 : u64)))))
+      (set! w (+ x r))
+      (if big
+        (let
+          [sign : f64
+            (if odd
+              -1.0
+              1.0)]
+          [result : f64 (- sign (* 2.0 (+ x (- r (/ (* w w) (+ w sign))))))]
+          (if negative
+            (- 0.0 result)
+            result))
+        (if (not odd)
+          w
+          (let
+            [w0 : f64 (math-trig-truncate-low-word w)]
+            [correction : f64 (- r (- w0 x))]
+            [reciprocal : f64 (/ -1.0 w)]
+            [a0 : f64 (math-trig-truncate-low-word reciprocal)]
+            (+ a0 (* reciprocal (+ 1.0 (+ (* a0 w0) (* a0 correction)))))))))))
+
+;: Evaluate the internal binary32 sine kernel on the reduced interval.
+(define (math-trig-kernel-sin-f32 [x : f64]) : f32
+  (let
+    [z : f64 (* x x)]
+    [w : f64 (* z z)]
+    [r : f64
+      (+
+        (math-trig-f64-constant (cast 0xBF2A00F9E2CAE774 : u64))
+        (* z (math-trig-f64-constant (cast 0x3EC6CD878C3B46A7 : u64))))]
+    [s : f64 (* z x)]
+    (cast
+      (+
+        (+
+          x
+          (*
+            s
+            (+
+              (math-trig-f64-constant (cast 0xBFC5555554CBAC77 : u64))
+              (* z (math-trig-f64-constant (cast 0x3F811110896EFBB2 : u64))))))
+        (* s w r))
+      : f32)))
+
+;: Evaluate the internal binary32 cosine kernel on the reduced interval.
+(define (math-trig-kernel-cos-f32 [x : f64]) : f32
+  (let
+    [z : f64 (* x x)]
+    [w : f64 (* z z)]
+    [r : f64
+      (+
+        (math-trig-f64-constant (cast 0xBF56C087E80F1E27 : u64))
+        (* z (math-trig-f64-constant (cast 0x3EF99342E0EE5069 : u64))))]
+    (cast
+      (+
+        (+
+          (+ 1.0 (* z (math-trig-f64-constant (cast 0xBFDFFFFFFD0C5E81 : u64))))
+          (* w (math-trig-f64-constant (cast 0x3FA55553E1053A42 : u64))))
+        (* (* w z) r))
+      : f32)))
+
+;: Evaluate tangent or negative cotangent on the reduced binary32 interval.
+(define (math-trig-kernel-tan-f32 [x : f64] [odd : bool]) : f32
+  (let
+    [z : f64 (* x x)]
+    [r : f64
+      (+
+        (math-trig-f64-constant (cast 0x3F685DADFCECF44E : u64))
+        (* z (math-trig-f64-constant (cast 0x3F8362B9BF971BCD : u64))))]
+    [t : f64
+      (+
+        (math-trig-f64-constant (cast 0x3FAB54C91D865AFE : u64))
+        (* z (math-trig-f64-constant (cast 0x3F991DF3908C33CE : u64))))]
+    [w : f64 (* z z)]
+    [s : f64 (* z x)]
+    [u : f64
+      (+
+        (math-trig-f64-constant (cast 0x3FD5554D3418C99F : u64))
+        (* z (math-trig-f64-constant (cast 0x3FC112FD38999F72 : u64))))]
+    [result : f64 (+ (+ x (* s u)) (* (* s w) (+ t (* w r))))]
+    (cast
+      (if odd
+        (/ -1.0 result)
+        result)
+      : f32)))
+
+;: Return sin(value) for every finite binary64 input.
+;:
+;: This allocation-free, extern-free implementation follows musl/fdlibm and
+;: has a maximum error below 1.5 ULP in round-to-nearest mode.
+(define (f64-sin [value : f64]) : f64
+  (let
+    [ix : u64
+      (bit-and (shr (stdlib.math.f64-to-bits value) 32) (cast 0x7fffffff : u64))]
+    (if (<= ix (cast 0x3fe921fb : u64))
+      (if (< ix (cast 0x3e500000 : u64))
+        value
+        (math-trig-kernel-sin-f64 value 0.0 false))
+      (if (>= ix (cast 0x7ff00000 : u64))
+        (- value value)
+        (let
+          [reduced : MathTrigReduction (math-trig-rem-pio2-f64 value)]
+          [quadrant : i64 (bit-and (struct-get reduced quadrant) 3)]
+          (cond
+            [(= quadrant 0)
+              (math-trig-kernel-sin-f64
+                (struct-get reduced hi)
+                (struct-get reduced lo)
+                true)]
+            [(= quadrant 1)
+              (math-trig-kernel-cos-f64
+                (struct-get reduced hi)
+                (struct-get reduced lo))]
+            [(= quadrant 2)
+              (-
+                0.0
+                (math-trig-kernel-sin-f64
+                  (struct-get reduced hi)
+                  (struct-get reduced lo)
+                  true))]
+            [else
+              (-
+                0.0
+                (math-trig-kernel-cos-f64
+                  (struct-get reduced hi)
+                  (struct-get reduced lo)))]))))))
+
+;: Return cos(value) for every finite binary64 input.
+;:
+;: The result is nearly rounded with a maximum error below 1.5 ULP in the
+;: default round-to-nearest mode.
+(define (f64-cos [value : f64]) : f64
+  (let
+    [ix : u64
+      (bit-and (shr (stdlib.math.f64-to-bits value) 32) (cast 0x7fffffff : u64))]
+    (if (<= ix (cast 0x3fe921fb : u64))
+      (if (< ix (cast 0x3e46a09e : u64))
+        1.0
+        (math-trig-kernel-cos-f64 value 0.0))
+      (if (>= ix (cast 0x7ff00000 : u64))
+        (- value value)
+        (let
+          [reduced : MathTrigReduction (math-trig-rem-pio2-f64 value)]
+          [quadrant : i64 (bit-and (struct-get reduced quadrant) 3)]
+          (cond
+            [(= quadrant 0)
+              (math-trig-kernel-cos-f64
+                (struct-get reduced hi)
+                (struct-get reduced lo))]
+            [(= quadrant 1)
+              (-
+                0.0
+                (math-trig-kernel-sin-f64
+                  (struct-get reduced hi)
+                  (struct-get reduced lo)
+                  true))]
+            [(= quadrant 2)
+              (-
+                0.0
+                (math-trig-kernel-cos-f64
+                  (struct-get reduced hi)
+                  (struct-get reduced lo)))]
+            [else
+              (math-trig-kernel-sin-f64
+                (struct-get reduced hi)
+                (struct-get reduced lo)
+                true)]))))))
+
+;: Return tan(value) for every finite binary64 input.
+;:
+;: The result is nearly rounded with a maximum error below 1.5 ULP in the
+;: default round-to-nearest mode.
+(define (f64-tan [value : f64]) : f64
+  (let
+    [ix : u64
+      (bit-and (shr (stdlib.math.f64-to-bits value) 32) (cast 0x7fffffff : u64))]
+    (if (<= ix (cast 0x3fe921fb : u64))
+      (if (< ix (cast 0x3e400000 : u64))
+        value
+        (math-trig-kernel-tan-f64 value 0.0 false))
+      (if (>= ix (cast 0x7ff00000 : u64))
+        (- value value)
+        (let
+          [reduced : MathTrigReduction (math-trig-rem-pio2-f64 value)]
+          (math-trig-kernel-tan-f64
+            (struct-get reduced hi)
+            (struct-get reduced lo)
+            (!= (bit-and (struct-get reduced quadrant) 1) 0)))))))
+
+;: Return sin(value) for every finite binary32 input.
+;:
+;: Reduction and kernels follow musl/fdlibm and stay below 1.5 ULP in the
+;: default round-to-nearest mode.
+(define (f32-sin [value : f32]) : f32
+  (let
+    [ix : u32 (bit-and (stdlib.math.f32-to-bits value) (cast 0x7fffffff : u32))]
+    (if (<= ix (cast 0x3f490fda : u32))
+      (if (< ix (cast 0x39800000 : u32))
+        value
+        (math-trig-kernel-sin-f32 (cast value : f64)))
+      (if (>= ix (cast 0x7f800000 : u32))
+        (- value value)
+        (let
+          [reduced : MathTrigReduction (math-trig-rem-pio2-f32 value)]
+          [quadrant : i64 (bit-and (struct-get reduced quadrant) 3)]
+          (cond
+            [(= quadrant 0) (math-trig-kernel-sin-f32 (struct-get reduced hi))]
+            [(= quadrant 1) (math-trig-kernel-cos-f32 (struct-get reduced hi))]
+            [(= quadrant 2)
+              (math-trig-kernel-sin-f32 (- 0.0 (struct-get reduced hi)))]
+            [else
+              (-
+                (cast 0.0 : f32)
+                (math-trig-kernel-cos-f32 (struct-get reduced hi)))]))))))
+
+;: Return cos(value) for every finite binary32 input.
+;:
+;: The result is nearly rounded with a maximum error below 1.5 ULP in the
+;: default round-to-nearest mode.
+(define (f32-cos [value : f32]) : f32
+  (let
+    [ix : u32 (bit-and (stdlib.math.f32-to-bits value) (cast 0x7fffffff : u32))]
+    (if (<= ix (cast 0x3f490fda : u32))
+      (if (< ix (cast 0x39800000 : u32))
+        (cast 1.0 : f32)
+        (math-trig-kernel-cos-f32 (cast value : f64)))
+      (if (>= ix (cast 0x7f800000 : u32))
+        (- value value)
+        (let
+          [reduced : MathTrigReduction (math-trig-rem-pio2-f32 value)]
+          [quadrant : i64 (bit-and (struct-get reduced quadrant) 3)]
+          (cond
+            [(= quadrant 0) (math-trig-kernel-cos-f32 (struct-get reduced hi))]
+            [(= quadrant 1)
+              (math-trig-kernel-sin-f32 (- 0.0 (struct-get reduced hi)))]
+            [(= quadrant 2)
+              (-
+                (cast 0.0 : f32)
+                (math-trig-kernel-cos-f32 (struct-get reduced hi)))]
+            [else (math-trig-kernel-sin-f32 (struct-get reduced hi))]))))))
+
+;: Return tan(value) for every finite binary32 input.
+;:
+;: The result is nearly rounded with a maximum error below 1.5 ULP in the
+;: default round-to-nearest mode.
+(define (f32-tan [value : f32]) : f32
+  (let
+    [ix : u32 (bit-and (stdlib.math.f32-to-bits value) (cast 0x7fffffff : u32))]
+    (if (<= ix (cast 0x3f490fda : u32))
+      (if (< ix (cast 0x39800000 : u32))
+        value
+        (math-trig-kernel-tan-f32 (cast value : f64) false))
+      (if (>= ix (cast 0x7f800000 : u32))
+        (- value value)
+        (let
+          [reduced : MathTrigReduction (math-trig-rem-pio2-f32 value)]
+          (math-trig-kernel-tan-f32
+            (struct-get reduced hi)
+            (!= (bit-and (struct-get reduced quadrant) 1) 0)))))))
+
 ;: Return the absolute value of an `i64`.
 ;:
 ;: The positive magnitude of the most-negative `i64` is not representable, so
@@ -435,6 +1470,77 @@
 ;: True when `value` is greater than zero.
 (define (f64-positive? [value : f64]) : bool
   (> value 0.0))
+
+(test
+  math-trig-reduction-and-special-values
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [pi : f64 (stdlib.math.f64-from-bits 0x400921fb54442d18)]
+    [max64 : f64 (stdlib.math.f64-from-bits 0x7fefffffffffffff)]
+    [max32 : f32 (stdlib.math.f32-from-bits (cast 0x7f7fffff : u32))]
+    [medium : MathTrigReduction (stdlib.math.math-trig-rem-pio2-f64 pi)]
+    [large64 : MathTrigReduction (stdlib.math.math-trig-rem-pio2-f64 max64)]
+    [large32 : MathTrigReduction (stdlib.math.math-trig-rem-pio2-f32 max32)]
+    [negative-zero64 : f64
+      (stdlib.math.f64-from-bits (cast 0x8000000000000000 : u64))]
+    [negative-zero32 : f32 (stdlib.math.f32-from-bits (cast 0x80000000 : u32))]
+    (begin
+      (if (and
+        (= (bit-and (struct-get medium quadrant) 3) 2)
+        (<= (stdlib.math.f64-abs (struct-get medium hi)) 0.785398164)
+        (<= (stdlib.math.f64-abs (struct-get medium lo)) 0.000000000000001)
+        (<= (stdlib.math.f64-abs (struct-get large64 hi)) 0.785398164)
+        (stdlib.math.f64-finite? (struct-get large64 hi))
+        (stdlib.math.f64-finite? (struct-get large64 lo))
+        (<= (stdlib.math.f64-abs (struct-get large32 hi)) 0.785398164)
+        (stdlib.math.f64-finite? (struct-get large32 hi)))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits (stdlib.math.f64-sin pi))
+        (cast 0x3ca1a62633145c07 : u64))
+        unit
+        (fail))
+      (if (= (stdlib.math.f64-cos pi) -1.0)
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits (stdlib.math.f64-sin negative-zero64))
+        (cast 0x8000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f64-to-bits (stdlib.math.f64-tan negative-zero64))
+        (cast 0x8000000000000000 : u64))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits (stdlib.math.f32-sin negative-zero32))
+        (cast 0x80000000 : u32))
+        unit
+        (fail))
+      (if (=
+        (stdlib.math.f32-to-bits (stdlib.math.f32-tan negative-zero32))
+        (cast 0x80000000 : u32))
+        unit
+        (fail))
+      (if (and
+        (stdlib.math.f64-nan?
+          (stdlib.math.f64-sin (stdlib.math.f64-positive-infinity)))
+        (stdlib.math.f64-nan?
+          (stdlib.math.f64-cos (stdlib.math.f64-negative-infinity)))
+        (stdlib.math.f64-nan? (stdlib.math.f64-tan (stdlib.math.f64-quiet-nan)))
+        (stdlib.math.f32-nan?
+          (stdlib.math.f32-sin (stdlib.math.f32-positive-infinity)))
+        (stdlib.math.f32-nan?
+          (stdlib.math.f32-cos (stdlib.math.f32-negative-infinity)))
+        (stdlib.math.f32-nan? (stdlib.math.f32-tan (stdlib.math.f32-quiet-nan))))
+        unit
+        (fail)))))
 
 (test
   math-i64-api

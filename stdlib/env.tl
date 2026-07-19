@@ -1,9 +1,9 @@
 ;# stdlib/env.tl - Environment variable helpers for TypeLisp.
 ;#
-;# Provides recoverable environment lookup and PATH-style list helpers on top of
-;# direct platform C library bindings:
+;# Provides recoverable environment lookup and mutation plus PATH-style list
+;# helpers on top of direct platform bindings:
 ;#
-;# `var-exists?`, `var-value`, and `path-separator`. Public
+;# `var-exists?`, `var-value`, `set!`, `unset!`, and `path-separator`. Public
 ;# list-returning PATH helpers remain for compatibility; vector-returning
 ;# variants avoid cons/reverse work for new internal callers.
 ;#
@@ -29,6 +29,36 @@
 (cfg
   windows
   (extern (env-win-get-environment-strings) : (Ptr u8) (:symbol "GetEnvironmentStringsA")))
+
+;: Windows kernel32 environment mutation binding. A null `value` removes the
+;: variable; a non-null pointer (including an empty C string) sets it.
+(cfg
+  windows
+  (extern (env-win-set-environment-variable
+    [name : (Ptr u8)]
+    [value : (Ptr u8)]) : i32 (:symbol "SetEnvironmentVariableA")))
+
+;: Arena hooks used to keep Linux replacement environment entries alive for the
+;: rest of the process. Linux has no kernel-owned mutable environment: `envp` is
+;: userspace storage supplied at process entry and later passed to `execve`.
+(extern (env-arena-make) : i64 (:symbol "tl_arena_make"))
+
+;: Return the current active arena handle for restoration after mutation.
+(extern (env-arena-current) : i64 (:symbol "tl_arena_current"))
+
+;: Switch the active arena while persistent Linux environment storage is built.
+(unsafe
+  (extern (env-arena-set [arena : i64]) : unit (:symbol "tl_arena_set")))
+
+;: Address of the current Linux `char**` replacement, or zero while the initial
+;: stack-captured environment remains current.
+(define env-linux-current-environ-addr : i64
+  0)
+
+;: Process-lifetime storage for Linux replacement arrays and entries. Windows
+;: keeps its environment in kernel32 and does not allocate this arena.
+(define env-linux-persistent-arena : i64
+  (cfg windows 0 (env-arena-make)))
 
 ;: Length of the NUL-terminated C string at `ptr` (a freestanding `strlen`).
 (unsafe
@@ -76,7 +106,7 @@
 ;: `NAME=VALUE` string). When matched, returns a pointer to the value (just past
 ;: the `=`); otherwise null. `fold` enables case-insensitive comparison (Windows).
 (unsafe
-  (define (match-entry [name : String] [entry : (Ptr u8)] [fold : bool]) : (Ptr
+  (define (match-entry [name : (& name str)] [entry : (Ptr u8)] [fold : bool]) : (Ptr
       u8)
     (let
       [n : i64 (string-length name)]
@@ -105,17 +135,27 @@
                 (ptr-offset entry (+ n 1)))
               (ptr-null : (Ptr u8)))))))))
 
-;: Linux `getenv`: walk the SysV stack-captured environment. The kernel lays out
-;: argc, argv[0..], a NULL, then envp[0..] on the initial stack, so envp is
-;: `&argv[argc + 1]` (computed from the `program-argv`/`program-argc` builtins,
-;: matching `stdlib/process_runtime.tl`; no new backend symbol). Returns a
-;: pointer to the value of `name`, or null when missing.
+;: Return the current Linux environment array. Before the first mutation this is
+;: the SysV stack-captured `envp`; afterwards it is the most recently published
+;: process-lifetime replacement. This raw boundary is also consumed by
+;: `stdlib/process_runtime.tl` when it constructs an `execve` environment.
+(unsafe
+  (define (linux-environ) : (Ptr (Ptr u8))
+    (if (= env-linux-current-environ-addr 0)
+      (unsafe
+        (ptr-offset (program-argv) (+ (program-argc) 1)))
+      (unsafe
+        (int->ptr (cast env-linux-current-environ-addr : u64) : (Ptr (Ptr u8)))))))
+
+;: Linux `getenv`: walk the current environment. The initial SysV stack lays out
+;: argc, argv[0..], a NULL, then envp[0..]; later mutations publish a replacement
+;: array. Returns a pointer to the value of `name`, or null when missing.
 (unsafe
   (define (getenv-ptr-linux [name : String]) : (Ptr u8)
     (let
       [envp : (Ptr (Ptr u8))
         (unsafe
-          (ptr-offset (program-argv) (+ (program-argc) 1)))]
+          (linux-environ))]
       [idx : i64 0]
       [result : (Ptr u8) (ptr-null : (Ptr u8))]
       [stop : bool false]
@@ -207,6 +247,235 @@
       ""
       (unsafe
         (copy-c-string value)))))
+
+;: Return true when `text` contains `needle`.
+(define (contains-char? [text : (& text str)] [needle : char]) : bool
+  (let
+    [n : i64 (string-length text)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (begin
+          (if (= (string-ref text i) needle)
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
+;: Return true when an environment name can be represented by both target
+;: APIs. Empty names, `=`, and interior NUL bytes are rejected.
+(define (valid-name? [name : (& name str)]) : bool
+  (and
+    (> (string-length name) 0)
+    (not (contains-char? name '='))
+    (not (contains-char? name '\0'))))
+
+;: Return true when an environment value can be represented as a C string.
+(define (valid-value? [value : (& value str)]) : bool
+  (not (contains-char? value '\0')))
+
+;: Copy borrowed text into a NUL-terminated active-arena byte array.
+(define (c-string-bytes [text : (& text str)]) : (Array u8)
+  (let
+    [n : i64 (string-length text)]
+    [bytes : (Array u8) (array.make-array u8 (+ n 1))]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! bytes i (cast (string-ref text i) : u8))
+          (set! i (+ i 1))))
+      (array-set! bytes n (cast 0 : u8))
+      bytes)))
+
+;: Return a read-only byte pointer to an array's backing storage.
+(unsafe
+  (define (array-u8-ptr [bytes : (Array u8)]) : (Ptr u8)
+    (unsafe
+      (ptr-cast (array-data bytes) : (Ptr u8)))))
+
+;: Return the integer address of an array's backing storage.
+(unsafe
+  (define (array-u64-addr [slots : (Array u64)]) : i64
+    (unsafe
+      (cast (ptr->int (ptr-cast (array-data slots) : (Ptr u8))) : i64))))
+
+;: Count current Linux environment entries whose names do not match `name`.
+(define (linux-nonmatching-count
+  [environ : (Ptr (Ptr u8))]
+  [name : (& name str)]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [entry : (Ptr u8)
+            (unsafe
+              (ptr-read (ptr-offset environ index)))]
+          (if (ptr-null? entry)
+            (set! done true)
+            (begin
+              (if (ptr-null?
+                (unsafe
+                  (match-entry name entry false)))
+                (set! count (+ count 1))
+                unit)
+              (set! index (+ index 1))))))
+      count)))
+
+;: Allocate one persistent Linux `NAME=VALUE\0` entry and return its address.
+(define (linux-entry-addr [name : (& name str)] [value : (& value str)]) : i64
+  (let
+    [name-len : i64 (string-length name)]
+    [value-len : i64 (string-length value)]
+    [bytes : (Array u8) (array.make-array u8 (+ (+ name-len value-len) 2))]
+    [i : i64 0]
+    (begin
+      (while (< i name-len)
+        (begin
+          (array-set! bytes i (cast (string-ref name i) : u8))
+          (set! i (+ i 1))))
+      (array-set! bytes name-len (cast '=' : u8))
+      (set! i 0)
+      (while (< i value-len)
+        (begin
+          (array-set!
+            bytes
+            (+ (+ name-len 1) i)
+            (cast (string-ref value i) : u8))
+          (set! i (+ i 1))))
+      (array-set! bytes (+ (+ name-len 1) value-len) (cast 0 : u8))
+      (unsafe
+        (cast (ptr->int (array-u8-ptr bytes)) : i64)))))
+
+;: Publish a Linux replacement environment containing all nonmatching current
+;: entries and, when `present` is true, one new value for `name`.
+(define (linux-rebuild!
+  [name : (& name str)]
+  [value : (& value str)]
+  [present : bool]) : unit
+  (let
+    [environ : (Ptr (Ptr u8))
+      (unsafe
+        (linux-environ))]
+    [kept : i64 (linux-nonmatching-count environ name)]
+    [slots : (Array u64)
+      (array.make-array
+        u64
+        (+
+          (+
+            kept
+            (if present
+              1
+              0))
+          1))]
+    [read-index : i64 0]
+    [write-index : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [entry : (Ptr u8)
+            (unsafe
+              (ptr-read (ptr-offset environ read-index)))]
+          (if (ptr-null? entry)
+            (set! done true)
+            (begin
+              (if (ptr-null?
+                (unsafe
+                  (match-entry name entry false)))
+                (begin
+                  (array-set!
+                    slots
+                    write-index
+                    (unsafe
+                      (ptr->int entry)))
+                  (set! write-index (+ write-index 1)))
+                unit)
+              (set! read-index (+ read-index 1))))))
+      (if present
+        (begin
+          (array-set!
+            slots
+            write-index
+            (cast (linux-entry-addr name value) : u64))
+          (set! write-index (+ write-index 1)))
+        unit)
+      (array-set! slots write-index (cast 0 : u64))
+      (set!
+        env-linux-current-environ-addr
+        (unsafe
+          (array-u64-addr slots))))))
+
+;: Set or remove one Linux environment entry while retaining replacement
+;: storage for the process lifetime.
+(define (linux-mutate!
+  [name : (& name str)]
+  [value : (& value str)]
+  [present : bool]) : bool
+  (let
+    [home : i64 (env-arena-current)]
+    (begin
+      (unsafe
+        (env-arena-set env-linux-persistent-arena))
+      (linux-rebuild! name value present)
+      (unsafe
+        (env-arena-set home))
+      true)))
+
+;: Set one Windows environment entry. Kernel32 copies both C strings before the
+;: active-arena buffers expire.
+(cfg
+  windows
+  (define (windows-set! [name : (& name str)] [value : (& value str)]) : bool
+    (let
+      [name-bytes : (Array u8) (c-string-bytes name)]
+      [value-bytes : (Array u8) (c-string-bytes value)]
+      (not
+        (=
+          (env-win-set-environment-variable
+            (unsafe
+              (array-u8-ptr name-bytes))
+            (unsafe
+              (array-u8-ptr value-bytes)))
+          (cast 0 : i32))))))
+
+;: Remove one Windows environment entry. Missing entries are normalized to
+;: success to match POSIX `unsetenv` semantics.
+(cfg
+  windows
+  (define (windows-unset! [name : (& name str)]) : bool
+    (if (not (var-exists? (string.copy name)))
+      true
+      (let
+        [name-bytes : (Array u8) (c-string-bytes name)]
+        (not
+          (=
+            (env-win-set-environment-variable
+              (unsafe
+                (array-u8-ptr name-bytes))
+              (ptr-null : (Ptr u8)))
+            (cast 0 : i32)))))))
+
+;: Set `name` to `value` in the current process environment. Empty values remain
+;: present. Returns false for an empty name, `=` or NUL in the name, NUL in the
+;: value, or a Windows host failure. Mutation must not race environment reads,
+;: mutation, or process spawning from another thread.
+(define (set! [name : (& name str)] [value : (& value str)]) : bool
+  (if (and (valid-name? name) (valid-value? value))
+    (cfg windows (windows-set! name value) (linux-mutate! name value true))
+    false))
+
+;: Remove `name` from the current process environment. Removing a missing name
+;: succeeds. Returns false for an invalid name or a Windows host failure.
+;: Mutation must not race environment reads, mutation, or process spawning.
+(define (unset! [name : (& name str)]) : bool
+  (if (valid-name? name)
+    (cfg windows (windows-unset! name) (linux-mutate! name "" false))
+    false))
 
 ;: Return the target platform PATH-list separator as a one-byte String.
 (define (path-separator) : String

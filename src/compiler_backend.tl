@@ -17959,16 +17959,20 @@
     [ok-symbol : String (compiler-backend-asm-label function ok-label)]
     [index-reg : String
       (compiler-backend-value-scalar-register-home assignments index)]
+    [direct-length-operand : String
+      (compiler-backend-bounds-length-operand assignments length)]
     ;; Length-load scratch: exclude the index home because the cmp reads index
     ;; vs length. The cfg-gated path supplies a short-lived allocator-owned
     ;; pseudo-var when length staging is required; otherwise retain the proven
     ;; emission-time scavenger fallback.
     [scav-len : String
       (if (string.eq planned-len "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-scavenge-exclude-with index-reg)
-          6
-          "%r9")
+        (if (string.eq direct-length-operand "")
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-scavenge-exclude-with index-reg)
+            6
+            "%r9")
+          "")
         planned-len)]
     ;; A constant index materializes into a reserved-set-aware scavenged register
     ;; distinct from the length scratch -- NOT a hardcoded %rax, which (now that
@@ -35320,27 +35324,45 @@
                         (compiler-backend-emit-fused-result-rest
                           ctx
                           fallthrough
-                          (compiler-backend-emit-gep-staged-avoid
-                            ctx.assignments
-                            gep-dst
-                            base
-                            offset
-                            elem-ty
-                            (compiler-backend-gep-fold-next! offset elem-ty)
-                            (compiler-backend-value-scalar-register
+                          (if (compiler-backend-branch-uses-var?
+                            load-base
+                            gep-dst)
+                            (compiler-backend-emit-gep
                               ctx.assignments
-                              load-base)
-                            (compiler-backend-value-scalar-register
+                              gep-dst
+                              base
+                              offset
+                              elem-ty
+                              (compiler-backend-gep-fold-next! offset elem-ty)
+                              (compiler-backend-scratch-plan-register-ahead
+                                (compiler-backend-runtime-plan-scratch ctx.plan)
+                                0
+                                0)
+                              (compiler-backend-scratch-plan-register-ahead
+                                (compiler-backend-runtime-plan-scratch ctx.plan)
+                                0
+                                1))
+                            (compiler-backend-emit-gep-staged-avoid
                               ctx.assignments
-                              load-offset)
-                            (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch ctx.plan)
-                              0
-                              0)
-                            (compiler-backend-scratch-plan-register-ahead
-                              (compiler-backend-runtime-plan-scratch ctx.plan)
-                              0
-                              1))
+                              gep-dst
+                              base
+                              offset
+                              elem-ty
+                              (compiler-backend-gep-fold-next! offset elem-ty)
+                              (compiler-backend-value-scalar-register
+                                ctx.assignments
+                                load-base)
+                              (compiler-backend-value-scalar-register
+                                ctx.assignments
+                                load-offset)
+                              (compiler-backend-scratch-plan-register-ahead
+                                (compiler-backend-runtime-plan-scratch ctx.plan)
+                                0
+                                0)
+                              (compiler-backend-scratch-plan-register-ahead
+                                (compiler-backend-runtime-plan-scratch ctx.plan)
+                                0
+                                1)))
                           (box-get rest)
                           buf)]
                       [(CompilerIrInstr.Mov ptr-var src _)

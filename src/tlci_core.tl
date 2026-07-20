@@ -872,14 +872,21 @@
     [index : i64 0]
     (begin
       (while (< index layout-count)
-        (begin
-          (tlci-set-u64!
-            bytes
-            (+ fixups-offset (* index tlci-section-fixup-record-size))
+        (let
+          [slot : i64
             (+
               code-offset
-              (array-ref (struct-get input layout-fixup-offsets) index)))
-          (set! index (+ index 1))))
+              (array-ref (struct-get input layout-fixup-offsets) index))]
+          (begin
+            (tlci-set-u64!
+              bytes
+              (+ fixups-offset (* index tlci-section-fixup-record-size))
+              slot)
+            (tlci-set-u64!
+              bytes
+              slot
+              (+ code-offset (tlci-read-u64 bytes slot)))
+            (set! index (+ index 1)))))
       (set! index 0)
       (while (< index count)
         (let

@@ -1125,6 +1125,64 @@
       (unsafe
         (arena.tl_arena_set previous-arena)))))
 
+(define compiler-load-embedded-equivalence-cache : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+(define compiler-load-embedded-provenance-noted : bool
+  false)
+
+(define (compiler-load-embedded-provenance-noted?) : bool
+  compiler-load-embedded-provenance-noted)
+
+;: A stdlib module resolved from a root (or the working directory) whose
+;: source is byte-identical to the embedded payload's copy carries embedded
+;: provenance for the macro route: the source-bound catalog is exact for it
+;: by construction, and any user modification breaks the equality and keeps
+;: that module on source interpretation. Cached per suffix; the compare runs
+;: once per module per session.
+(define (compiler-load-note-embedded-equivalent-if-matching!
+  [suffix : String]
+  [disk-path : String]) : unit
+  (let
+    [key : i64 (ci.intern suffix)]
+    (if (sym_i64_env.sym-i64-contains-id
+      compiler-load-embedded-equivalence-cache
+      key)
+      unit
+      (let
+        [outcome : i64
+          (match (compiler-load-embedded-stdlib-source suffix)
+            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+                embedded-text)
+              (let
+                [disk-text : String (io.read-file disk-path)]
+                (if (and
+                  (=
+                    (string.string-length disk-text)
+                    (string.string-length embedded-text))
+                  (string.eq disk-text embedded-text))
+                  1
+                  -1))]
+            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+              -1])]
+        [previous-arena : i64 (arena.tl_arena_current)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set (ci.intern-persistent-arena-handle)))
+          (set!
+            compiler-load-embedded-equivalence-cache
+            (sym_i64_env.sym-i64-bind-id
+              compiler-load-embedded-equivalence-cache
+              key
+              outcome))
+          (unsafe
+            (arena.tl_arena_set previous-arena))
+          (if (= outcome 1)
+            (begin
+              (compiler-load-note-embedded-module!
+                (string.append "stdlib/" suffix))
+              (set! compiler-load-embedded-provenance-noted true))
+            unit))))))
+
 (define (compiler-load-embedded-stdlib-module-id? [module : String]) : bool
   (sym_i64_env.sym-i64-contains-id
     compiler-load-embedded-module-ids
@@ -1180,6 +1238,8 @@
 (define (compiler-load-session-reset-interns!) : unit
   (begin
     (compiler-load-embedded-module-ids-reset!)
+    (set! compiler-load-embedded-equivalence-cache (sym_i64_env.sym-i64-empty))
+    (set! compiler-load-embedded-provenance-noted false)
     (compiler-load-surface-summaries-reset!)
     (compiler-load-lazy-qualified-observer-reset!)
     (array-set!
@@ -2098,10 +2158,17 @@
   (let
     [suffix : String (compiler-load-stdlib-suffix module-path)]
     (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
-      [(CompilerLoadSomePath root-path) root-path]
+      [(CompilerLoadSomePath root-path)
+        (begin
+          (compiler-load-note-embedded-equivalent-if-matching! suffix root-path)
+          root-path)]
       [(CompilerLoadNoPath)
         (if (io.file-exists? module-path)
-          module-path
+          (begin
+            (compiler-load-note-embedded-equivalent-if-matching!
+              suffix
+              module-path)
+            module-path)
           (match (compiler-load-embedded-stdlib-path suffix)
             [(CompilerLoadSomePath embedded-path) embedded-path]
             [(CompilerLoadNoPath) module-path]))])))

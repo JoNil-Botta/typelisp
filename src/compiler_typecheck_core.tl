@@ -68836,7 +68836,9 @@
     ;; still gates every dispatch to embedded-stdlib-defined macros.
     (set!
       macro-expand-stdlib-tlci-route-active
-      (compiler-load-session-state-embedded-stdlib-source-used? load-state))
+      (or
+        (compiler-load-session-state-embedded-stdlib-source-used? load-state)
+        (compiler-load-embedded-provenance-noted?)))
     (cfg
       embedded-stdlib-tlci
       (if macro-expand-stdlib-tlci-route-active

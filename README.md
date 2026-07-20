@@ -405,7 +405,10 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   `i64`). Contiguous maps can borrow vector backing or slice storage, so
   public APIs can take vector/slice views.
 - Scalar lowering supports `spmd-reduce` `sum`/`min`/`max`/`all`/`any` and
-  inclusive `spmd-scan` over the SPEC-supported types.
+  inclusive `spmd-scan` over the SPEC-supported types. AVX2 additionally
+  vectorizes canonical contiguous range-wide scans for i32/i64
+  `sum`/`min`/`max` and bool `all`/`any`, carrying the final prefix between
+  full gangs and resuming with an in-order scalar tail.
 - Masked varying `if` (including nested masks and value-producing selects),
   varying `while` with loop-carried active masks, and varying `match`
   (including AVX2 enum tags and scalar-lane payload bindings) run in the

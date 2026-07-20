@@ -4,6 +4,14 @@ Parts of `stdlib/math.tl` are derived from musl libc revision
 `b306b16af15c89a04d8e0c55cac2dadbeb39c083`, including the operation order of
 `src/math/scalbn.c` and `src/math/scalbnf.c`.
 
+The `f64-exp` and `f32-exp` implementations, coefficient bit patterns, and
+table data derive from musl's `exp.c`, `expf.c`, `exp_data.c`, and
+`exp2f_data.c` at that revision:
+
+> Copyright (c) 2017-2018, Arm Limited.
+>
+> SPDX-License-Identifier: MIT
+
 The `f64-sin`/`f64-cos`/`f64-tan` and binary32 counterparts also derive from
 musl's `sin.c`, `cos.c`, `tan.c`, float variants, `__sin.c`, `__cos.c`,
 `__tan.c`, float kernels, `__rem_pio2.c`, `__rem_pio2f.c`, and

@@ -315,6 +315,48 @@ verify_reduce_accumulator_shape() {
     fi
 }
 
+verify_avx2_scan_prefix_shape() {
+    compile_spmd_mode tests/integration/spmd_scan_scalar.tl avx2 2
+    _tag=tests_integration_spmd_scan_scalar_tl
+    _asm="$WORKDIR/$_tag.avx2.compile.s"
+    _func="$WORKDIR/$_tag.avx2.scan-sum.s"
+    _gang="$WORKDIR/$_tag.avx2.scan-sum-gang.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] scan-prefix AVX2 shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/integration/spmd_scan_scalar.tl avx2 (prefix compile)" >> "$FAILURES"
+        return
+    fi
+    sed -n '/^_tl_spmd_scan_scalar_scan_sum_i64:/,/^$/p' "$_asm" > "$_func"
+    sed -n '/spmd_scan_avx2_body/,/spmd_scan_tail_header/p' "$_func" > "$_gang"
+    for shape in \
+        spmd_scan_avx2_body \
+        vpslldq \
+        vperm2i128 \
+        vpaddq \
+        vpaddd \
+        vpminsd \
+        vpmaxsd \
+        vpcmpgtq \
+        vpbroadcastb
+    do
+        if ! grep -F -- "$shape" "$_asm" > /dev/null; then
+            echo "[spmd-simd] scan-prefix AVX2 assembly missing $shape" >&2
+            echo "tests/integration/spmd_scan_scalar.tl avx2 (missing $shape)" >> "$FAILURES"
+        fi
+    done
+    for shape in vpslldq vperm2i128 vpaddq; do
+        if ! grep -F -- "$shape" "$_gang" > /dev/null; then
+            echo "[spmd-simd] scan-prefix AVX2 i64 sum gang missing $shape" >&2
+            echo "tests/integration/spmd_scan_scalar.tl avx2 (sum gang missing $shape)" >> "$FAILURES"
+        fi
+    done
+    if grep -E -- '%zmm[0-9]+|%k[0-7]' "$_asm" > /dev/null; then
+        echo "[spmd-simd] scan-prefix AVX2 assembly uses AVX-512 registers" >&2
+        echo "tests/integration/spmd_scan_scalar.tl avx2 (AVX-512 register)" >> "$FAILURES"
+    fi
+}
+
 verify_avx2_varying_while_shape() {
     compile_spmd_mode tests/spmd/varying_while_i64.tl avx2
     _tag=tests_spmd_varying_while_i64_tl
@@ -482,6 +524,7 @@ verify_avx2_varying_while_shape
 verify_avx2_varying_enum_match_shape
 verify_masked_bitwise_shape avx2
 verify_masked_bitwise_shape avx512
+verify_avx2_scan_prefix_shape
 
 # Gather safety is a runtime property, not a same-exit result. Exercise a full
 # gang with multiple invalid active lanes in every runnable mode. The lowering
@@ -502,6 +545,32 @@ for gather_oob in tests/integration/spmd_gather_oob.tl tests/integration/spmd_ga
             echo "$gather_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
         else
             echo "[spmd-simd] gather-oob $gather_oob $mode -> bounds abort OK"
+        fi
+    done
+done
+
+# Scan range and destination checks remain scalar-observable even when full
+# gangs use vector prefixes. The short-output fixture completes one i64 gang
+# before the scalar tail reaches the first invalid destination index.
+for scan_oob in \
+    tests/integration/spmd_scan_negative_start_trap.tl \
+    tests/integration/spmd_scan_short_output_trap.tl
+do
+    for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
+        mode=${pair%% *}
+        isa=${pair##* }
+        if [ "$mode" != scalar ] && ! isa_available "$isa"; then
+            echo "[spmd-simd]   skip scan-oob $scan_oob $mode ($isa not runnable)"
+            continue
+        fi
+        run_spmd_mode "$scan_oob" "$mode"
+        if [ "$mode_code" != 134 ] ||
+            ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
+            echo "[spmd-simd] scan-oob $scan_oob $mode did not preserve the bounds abort:" >&2
+            sed 's/^/    /' "$mode_err" >&2
+            echo "$scan_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
+        else
+            echo "[spmd-simd] scan-oob $scan_oob $mode -> bounds abort OK"
         fi
     done
 done

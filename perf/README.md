@@ -233,7 +233,7 @@ introduces them; accept intentional changes by committing an explicit
 ## SPMD scalar/AVX2 mode matrix
 
 `scripts/measure-spmd-mode-instruction-counts.sh` is the opt-in deterministic
-mode comparison for the six SPMD benchmarks. It builds TypeLisp explicitly at
+mode comparison for the seven SPMD benchmarks. It builds TypeLisp explicitly at
 `--opt-level 2 --backend-mode scalar|avx2`; scalar rows are paired with
 `clang -O2 -fno-vectorize -fno-slp-vectorize`, while AVX2 rows are paired with
 auto-vectorized `clang -O2 -mavx2 -mno-avx512f`. Thus each

@@ -66,6 +66,13 @@
   (Min)
   (Max))
 
+(defenum CompilerIrVectorPrefixOp
+  (Sum)
+  (Min)
+  (Max)
+  (All)
+  (Any))
+
 (defenum CompilerIrMaskReduceOp
   (All)
   (Any))
@@ -190,6 +197,15 @@
 (defenum CompilerIrInstrVectorBinOpPayload
   (Payload i64 CompilerIrBinOp CompilerIrValue CompilerIrValue i64 AstType))
 
+(defenum CompilerIrInstrVectorPrefixPayload
+  (Payload
+    i64
+    CompilerIrVectorPrefixOp
+    CompilerIrValue
+    CompilerIrValue
+    i64
+    AstType))
+
 (defenum CompilerIrInstrVectorComparePayload
   (Payload i64 CompilerIrBinOp CompilerIrValue CompilerIrValue i64 AstType))
 
@@ -286,6 +302,10 @@
   (LaneId i64 i64 AstType)
   (Splat i64 CompilerIrValue i64 AstType)
   (VectorBinOp (Box CompilerIrInstrVectorBinOpPayload))
+  ;; Inclusive, carry-seeded lane prefix. For associative `op`, the result
+  ;; lanes are `out[0] = op(carry, src[0])` and
+  ;; `out[i] = op(out[i - 1], src[i])`.
+  (VectorPrefix (Box CompilerIrInstrVectorPrefixPayload))
   (VectorReduce i64 CompilerIrVectorReduceOp CompilerIrValue i64 AstType)
   (VectorCompare (Box CompilerIrInstrVectorComparePayload))
   (MaskBinOp i64 CompilerIrMaskBinOp CompilerIrValue CompilerIrValue i64)
@@ -379,6 +399,16 @@
   [ty : AstType]) : CompilerIrInstr
   (CompilerIrInstr.VectorBinOp
     (box (CompilerIrInstrVectorBinOpPayload.Payload dst op lhs rhs lanes ty))))
+
+(define (ir-instr-vector-prefix
+  [dst : i64]
+  [op : CompilerIrVectorPrefixOp]
+  [src : CompilerIrValue]
+  [carry : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : CompilerIrInstr
+  (CompilerIrInstr.VectorPrefix
+    (box (CompilerIrInstrVectorPrefixPayload.Payload dst op src carry lanes ty))))
 
 (define (ir-instr-vector-compare
   [dst : i64]
@@ -2318,6 +2348,16 @@
             (compiler-ir-clone-value rhs)
             lanes
             (compiler-ir-clone-type ty))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst op src carry lanes ty)
+          (ir-instr-vector-prefix
+            dst
+            op
+            (compiler-ir-clone-value src)
+            (compiler-ir-clone-value carry)
+            lanes
+            (compiler-ir-clone-type ty))])]
     [(CompilerIrInstr.VectorReduce dst op src lanes ty)
       (CompilerIrInstr.VectorReduce
         dst
@@ -3386,6 +3426,14 @@
     [(CompilerIrVectorReduceOp.Min) "min"]
     [(CompilerIrVectorReduceOp.Max) "max"]))
 
+(define (compiler-ir-vector-prefix-op-render [op : CompilerIrVectorPrefixOp]) : String
+  (match op
+    [(CompilerIrVectorPrefixOp.Sum) "sum"]
+    [(CompilerIrVectorPrefixOp.Min) "min"]
+    [(CompilerIrVectorPrefixOp.Max) "max"]
+    [(CompilerIrVectorPrefixOp.All) "all"]
+    [(CompilerIrVectorPrefixOp.Any) "any"]))
+
 (define (compiler-ir-mask-reduce-op-render [op : CompilerIrMaskReduceOp]) : String
   (match op
     [(CompilerIrMaskReduceOp.All) "all"]
@@ -3559,6 +3607,21 @@
             (compiler-ir-value-render lhs)
             ", "
             (compiler-ir-value-render rhs)
+            " lanes "
+            (string.int->string lanes)
+            " : "
+            (compiler-ir-type-render ty))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst op src carry lanes ty)
+          (str_cat.str-cat
+            (compiler-ir-dst-render dst)
+            "vector_prefix_"
+            (compiler-ir-vector-prefix-op-render op)
+            " "
+            (compiler-ir-value-render src)
+            ", carry "
+            (compiler-ir-value-render carry)
             " lanes "
             (string.int->string lanes)
             " : "
@@ -4175,6 +4238,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload _ _ _ _ _ _)
           CompilerIrEffect.Pure])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ _ _ _ _)
+          CompilerIrEffect.Pure])]
     [(CompilerIrInstr.VectorReduce _ _ _ _ _) CompilerIrEffect.Pure]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
@@ -4705,6 +4772,13 @@
             spans
             (CompilerSourceSpansInstrKey.Value function dst)
             span)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
+          (compiler-source-spans-insert-instr-entry
+            spans
+            (CompilerSourceSpansInstrKey.Value function dst)
+            span)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -4910,6 +4984,12 @@
         [(CompilerIrInstr.VectorBinOp payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+              (compiler-source-spans-instr-entry-list-lookup
+                instr-entries
+                (CompilerSourceSpansInstrKey.Value function dst))])]
+        [(CompilerIrInstr.VectorPrefix payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
               (compiler-source-spans-instr-entry-list-lookup
                 instr-entries
                 (CompilerSourceSpansInstrKey.Value function dst))])]
@@ -5844,6 +5924,14 @@
     [(CompilerIrVectorReduceOp.Min) "min"]
     [(CompilerIrVectorReduceOp.Max) "max"]))
 
+(define (compiler-ir-vector-prefix-op-name [op : CompilerIrVectorPrefixOp]) : String
+  (match op
+    [(CompilerIrVectorPrefixOp.Sum) "sum"]
+    [(CompilerIrVectorPrefixOp.Min) "min"]
+    [(CompilerIrVectorPrefixOp.Max) "max"]
+    [(CompilerIrVectorPrefixOp.All) "all"]
+    [(CompilerIrVectorPrefixOp.Any) "any"]))
+
 (define (compiler-ir-mask-reduce-op-name [op : CompilerIrMaskReduceOp]) : String
   (match op
     [(CompilerIrMaskReduceOp.All) "all"]
@@ -5893,6 +5981,25 @@
             (compiler-ir-value-describe lhs)
             ", "
             (compiler-ir-value-describe rhs)
+            (compiler-ir-vector-suffix lanes elem-ty))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload
+            dst
+            op
+            src
+            carry
+            lanes
+            elem-ty)
+          (str_cat.str-cat
+            "  "
+            (compiler-ir-value-describe (CompilerIrValue.Var dst))
+            " = vector_prefix_"
+            (compiler-ir-vector-prefix-op-name op)
+            " "
+            (compiler-ir-value-describe src)
+            ", carry "
+            (compiler-ir-value-describe carry)
             (compiler-ir-vector-suffix lanes elem-ty))])]
     [(CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
       (str_cat.str-cat
@@ -6269,6 +6376,15 @@
         (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
+      (ir-instr-vector-prefix
+        32
+        (CompilerIrVectorPrefixOp.Sum)
+        (CompilerIrValue.Var 22)
+        (CompilerIrValue.I64 0)
+        4
+        (AstType.I64))
+      CompilerIrEffect.Pure)
+    (compiler-ir-effect-is?
       (CompilerIrInstr.VectorReduce
         23
         (CompilerIrVectorReduceOp.Sum)
@@ -6419,6 +6535,21 @@
       (compiler-ir-vector-reduce-op-name CompilerIrVectorReduceOp.Max)
       "max")
     (string.eq
+      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.Sum)
+      "sum")
+    (string.eq
+      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.Min)
+      "min")
+    (string.eq
+      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.Max)
+      "max")
+    (string.eq
+      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.All)
+      "all")
+    (string.eq
+      (compiler-ir-vector-prefix-op-name CompilerIrVectorPrefixOp.Any)
+      "any")
+    (string.eq
       (compiler-ir-mask-reduce-op-name CompilerIrMaskReduceOp.All)
       "all")
     (string.eq
@@ -6564,6 +6695,50 @@
         (set! ok false))
       ok)))
 
+(define (compiler-ir-vector-prefix-display-clone-ok?) : bool
+  (let
+    [instr : CompilerIrInstr
+      (ir-instr-vector-prefix
+        42
+        (CompilerIrVectorPrefixOp.Min)
+        (CompilerIrValue.Var 7)
+        (CompilerIrValue.I64 -3)
+        4
+        (AstType.I64))]
+    [cloned : CompilerIrInstr (compiler-ir-clone-instr instr)]
+    (and
+      (string.eq
+        (compiler-ir-instr-render instr)
+        "  %42 = vector_prefix_min %7, carry -3 lanes 4 : i64")
+      (string.eq
+        (compiler-ir-instr-describe instr)
+        "  %42 = vector_prefix_min %7, carry -3 : 4 x i64")
+      (compiler-ir-effect-is? instr CompilerIrEffect.Pure)
+      (match cloned
+        [(CompilerIrInstr.VectorPrefix payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrVectorPrefixPayload.Payload
+                dst
+                op
+                src
+                carry
+                lanes
+                ty)
+              (and
+                (= dst 42)
+                (match op
+                  [(CompilerIrVectorPrefixOp.Min) true]
+                  [_ false])
+                (compiler-ir-value-var-eq? src 7)
+                (match carry
+                  [(CompilerIrValue.I64 value) (= value -3)]
+                  [_ false])
+                (= lanes 4)
+                (match ty
+                  [(AstType.I64) true]
+                  [_ false]))])]
+        [_ false]))))
+
 (define (compiler-ir-display-tail-mask-ok?) : bool
   (let
     [instr : CompilerIrInstr
@@ -6591,6 +6766,7 @@
     (compiler-ir-display-type-names-ok?)
     (compiler-ir-display-op-names-ok?)
     (compiler-ir-display-instrs-ok?)
+    (compiler-ir-vector-prefix-display-clone-ok?)
     (compiler-ir-display-tail-mask-ok?)))
 
 (define (compiler-ir-tail-call-render-ok?) : bool

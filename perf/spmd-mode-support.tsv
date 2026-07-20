@@ -5,6 +5,8 @@ spmd_zip	scalar	supported	-
 spmd_zip	avx2	supported	-
 spmd_reduce	scalar	supported	-
 spmd_reduce	avx2	supported	-
+spmd_scan	scalar	supported	-
+spmd_scan	avx2	supported	-
 spmd_shuffle	scalar	supported	-
 spmd_shuffle	avx2	supported	-
 spmd_short_tail	scalar	supported	-

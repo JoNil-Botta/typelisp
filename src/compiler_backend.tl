@@ -5351,6 +5351,457 @@
       [(CompilerBackendVectorMemFold.Some _) true]
       [(CompilerBackendVectorMemFold.No) false])))
 
+(define (compiler-backend-vector-prefix-bool-op?
+  [op : CompilerIrVectorPrefixOp]) : bool
+  (match op
+    [(CompilerIrVectorPrefixOp.All) true]
+    [(CompilerIrVectorPrefixOp.Any) true]
+    [_ false]))
+
+(define (compiler-backend-avx2-vector-prefix-shape-ok?
+  [op : CompilerIrVectorPrefixOp]
+  [lanes : i64]
+  [elem-ty : AstType]) : bool
+  (match elem-ty
+    [(AstType.I32)
+      (and (= lanes 8) (not (compiler-backend-vector-prefix-bool-op? op)))]
+    [(AstType.I64)
+      (and (= lanes 4) (not (compiler-backend-vector-prefix-bool-op? op)))]
+    [(AstType.Bool)
+      (and (= lanes 32) (compiler-backend-vector-prefix-bool-op? op))]
+    [_ false]))
+
+(define (compiler-backend-avx2-vector-prefix-numeric-combine
+  [op : CompilerIrVectorPrefixOp]
+  [elem-ty : AstType]
+  [dst-reg : String]
+  [blend-mask : i64]) : String
+  (let
+    [blend? : bool (>= blend-mask 0)]
+    [out-reg : String
+      (if blend?
+        "%ymm0"
+        dst-reg)]
+    [combine : String
+      (match op
+        [(CompilerIrVectorPrefixOp.Sum)
+          (str_cat.str-cat
+            "    "
+            (match elem-ty
+              [(AstType.I32) "vpaddd"]
+              [_ "vpaddq"])
+            " %ymm0, "
+            dst-reg
+            ", "
+            out-reg
+            "\n")]
+        [(CompilerIrVectorPrefixOp.Min)
+          (match elem-ty
+            [(AstType.I32)
+              (str_cat.str-cat "    vpminsd %ymm0, " dst-reg ", " out-reg "\n")]
+            [_
+              (str_cat.str-cat
+                "    vpcmpgtq %ymm0, "
+                dst-reg
+                ", %ymm1\n    vpand %ymm1, %ymm0, %ymm0\n    vpandn "
+                dst-reg
+                ", %ymm1, %ymm1\n    vpor %ymm1, %ymm0, %ymm0\n"
+                (if blend?
+                  ""
+                  (str_cat.str-cat "    vmovdqu %ymm0, " dst-reg "\n")))])]
+        [(CompilerIrVectorPrefixOp.Max)
+          (match elem-ty
+            [(AstType.I32)
+              (str_cat.str-cat "    vpmaxsd %ymm0, " dst-reg ", " out-reg "\n")]
+            [_
+              (str_cat.str-cat
+                "    vpcmpgtq "
+                dst-reg
+                ", %ymm0, %ymm1\n    vpand %ymm1, %ymm0, %ymm0\n    vpandn "
+                dst-reg
+                ", %ymm1, %ymm1\n    vpor %ymm1, %ymm0, %ymm0\n"
+                (if blend?
+                  ""
+                  (str_cat.str-cat "    vmovdqu %ymm0, " dst-reg "\n")))])]
+        [_ ""])]
+    (str_cat.str-cat
+      combine
+      (if blend?
+        (str_cat.str-cat
+          "    vpblendd $"
+          (string.int->string blend-mask)
+          ", %ymm0, "
+          dst-reg
+          ", "
+          dst-reg
+          "\n")
+        ""))))
+
+(define (compiler-backend-avx2-vector-prefix-numeric-body
+  [op : CompilerIrVectorPrefixOp]
+  [elem-ty : AstType]
+  [dst-reg : String]) : String
+  (match elem-ty
+    [(AstType.I32)
+      (str_cat.str-cat
+        "    vpslldq $4, "
+        dst-reg
+        ", %ymm0\n"
+        (compiler-backend-avx2-vector-prefix-numeric-combine
+          op
+          elem-ty
+          dst-reg
+          (match op
+            [(CompilerIrVectorPrefixOp.Sum) -1]
+            [_ 238]))
+        "    vpslldq $8, "
+        dst-reg
+        ", %ymm0\n"
+        (compiler-backend-avx2-vector-prefix-numeric-combine
+          op
+          elem-ty
+          dst-reg
+          (match op
+            [(CompilerIrVectorPrefixOp.Sum) -1]
+            [_ 204]))
+        "    vperm2i128 $0, "
+        dst-reg
+        ", "
+        dst-reg
+        ", %ymm0\n    vpshufd $255, %ymm0, %ymm0\n"
+        (compiler-backend-avx2-vector-prefix-numeric-combine
+          op
+          elem-ty
+          dst-reg
+          240))]
+    [_
+      (str_cat.str-cat
+        "    vpslldq $8, "
+        dst-reg
+        ", %ymm0\n"
+        (compiler-backend-avx2-vector-prefix-numeric-combine
+          op
+          elem-ty
+          dst-reg
+          (match op
+            [(CompilerIrVectorPrefixOp.Sum) -1]
+            [_ 204]))
+        "    vperm2i128 $0, "
+        dst-reg
+        ", "
+        dst-reg
+        ", %ymm0\n    vpermq $85, %ymm0, %ymm0\n"
+        (compiler-backend-avx2-vector-prefix-numeric-combine
+          op
+          elem-ty
+          dst-reg
+          240))]))
+
+(define (compiler-backend-avx2-vector-prefix-bool-stage
+  [op : CompilerIrVectorPrefixOp]
+  [dst-reg : String]
+  [shift : i64]) : String
+  (str_cat.str-cat
+    "    vpslldq $"
+    (string.int->string shift)
+    ", "
+    dst-reg
+    ", %ymm0\n"
+    (match op
+      [(CompilerIrVectorPrefixOp.Any)
+        (str_cat.str-cat "    vpor %ymm0, " dst-reg ", " dst-reg "\n")]
+      [_
+        (str_cat.str-cat
+          "    vpand "
+          dst-reg
+          ", %ymm0, %ymm0\n    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpslldq $"
+          (string.int->string shift)
+          ", %ymm1, %ymm1\n    vpand %ymm1, %ymm0, %ymm0\n    vpandn "
+          dst-reg
+          ", %ymm1, %ymm1\n    vpor %ymm1, %ymm0, "
+          dst-reg
+          "\n")])))
+
+(define (compiler-backend-avx2-vector-prefix-bool-body
+  [op : CompilerIrVectorPrefixOp]
+  [dst-reg : String]) : String
+  (str_cat.str-cat
+    (compiler-backend-avx2-vector-prefix-bool-stage op dst-reg 1)
+    (compiler-backend-avx2-vector-prefix-bool-stage op dst-reg 2)
+    (compiler-backend-avx2-vector-prefix-bool-stage op dst-reg 4)
+    (compiler-backend-avx2-vector-prefix-bool-stage op dst-reg 8)
+    "    vperm2i128 $0, "
+    dst-reg
+    ", "
+    dst-reg
+    ", %ymm0\n    vpsrldq $15, %ymm0, %ymm0\n    vpbroadcastb %xmm0, %ymm0\n    "
+    (match op
+      [(CompilerIrVectorPrefixOp.Any) "vpor"]
+      [_ "vpand"])
+    " %ymm0, "
+    dst-reg
+    ", %ymm0\n    vpblendd $240, %ymm0, "
+    dst-reg
+    ", "
+    dst-reg
+    "\n"))
+
+(define (compiler-backend-avx2-vector-prefix-bool-carry
+  [assignments : CompilerRegAssignmentList]
+  [carry : CompilerIrValue]
+  [dst-reg : String]
+  [op : CompilerIrVectorPrefixOp]
+  [planned-gp : String]) : ResultCompilerBackend
+  (let
+    [exclude : (Array String)
+      (compiler-backend-scavenge-exclude-ops2
+        assignments
+        carry
+        CompilerIrValue.Unit)]
+    [gp-reg : String
+      (compiler-backend-planned-or-scavenge-reg planned-gp -1 exclude 7 "%r10")]
+    [gp32 : String (compiler-backend-reg-part gp-reg 4)]
+    [gp8 : String (compiler-backend-reg-part gp-reg 1)]
+    (match (compiler-backend-emit-load-value-with-plan assignments carry gp-reg)
+      [(ResultCompilerBackend.Ok carry-asm)
+        (ResultCompilerBackend.Ok
+          (str_cat.str-cat
+            carry-asm
+            "    testq "
+            gp-reg
+            ", "
+            gp-reg
+            "\n    setne "
+            gp8
+            "\n    movzbl "
+            gp8
+            ", "
+            gp32
+            "\n    negl "
+            gp32
+            "\n    vmovd "
+            gp32
+            ", %xmm0\n    vpbroadcastb %xmm0, %ymm0\n    "
+            (match op
+              [(CompilerIrVectorPrefixOp.Any) "vpor"]
+              [_ "vpand"])
+            " %ymm0, "
+            dst-reg
+            ", "
+            dst-reg
+            "\n"))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
+(define (compiler-backend-avx2-vector-prefix-numeric-carry
+  [assignments : CompilerRegAssignmentList]
+  [carry : CompilerIrValue]
+  [elem-ty : AstType]
+  [planned-gp : String]) : ResultCompilerBackend
+  (match (compiler-backend-splat-memory-load assignments carry elem-ty)
+    [(CompilerBackendMaybeAsm.Some asm)
+      (ResultCompilerBackend.Ok (str_cat.str-cat asm "%ymm0\n"))]
+    [(CompilerBackendMaybeAsm.No)
+      (let
+        [exclude : (Array String)
+          (compiler-backend-scavenge-exclude-ops2
+            assignments
+            carry
+            CompilerIrValue.Unit)]
+        [gp-reg : String
+          (compiler-backend-planned-or-scavenge-reg
+            planned-gp
+            -1
+            exclude
+            7
+            "%r10")]
+        [gp-part : String
+          (compiler-backend-reg-part
+            gp-reg
+            (match elem-ty
+              [(AstType.I32) 4]
+              [_ 8]))]
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          carry
+          gp-reg)
+          [(ResultCompilerBackend.Ok carry-asm)
+            (ResultCompilerBackend.Ok
+              (str_cat.str-cat
+                carry-asm
+                "    "
+                (match elem-ty
+                  [(AstType.I32) "vmovd"]
+                  [_ "vmovq"])
+                " "
+                gp-part
+                ", %xmm0\n    "
+                (match elem-ty
+                  [(AstType.I32) "vpbroadcastd"]
+                  [_ "vpbroadcastq"])
+                " %xmm0, %ymm0\n"))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]))
+
+(define (compiler-backend-emit-avx2-vector-prefix
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrVectorPrefixOp]
+  [src : CompilerIrValue]
+  [carry : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [planned-gp : String]
+  [planned-xmm : String]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (not (compiler-backend-avx2-vector-prefix-shape-ok? op lanes elem-ty))
+    (ResultCompilerBackend.Err
+      (box
+        (compiler-diagnostic-with-message
+          instr-diag
+          "backend: unsupported AVX2 vector prefix shape")))
+    (let
+      [register-ty : AstType
+        (match elem-ty
+          [(AstType.Bool) (AstType.I8)]
+          [_ elem-ty])]
+      [no-exclude : (Array String) (array.make-array String 0)]
+      [dst-scratch-xmm : String
+        (if (string.eq planned-xmm "")
+          (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm15")
+          planned-xmm)]
+      [dst-scratch : String
+        (compiler-backend-xmm-family-register dst-scratch-xmm "ymm")]
+      (match (compiler-backend-vector-dst-reg
+        assignments
+        dst
+        "prefix dst"
+        "ymm"
+        dst-scratch)
+        [(ResultBackendReg.Ok dst-reg)
+          (match (compiler-backend-vector-register-use
+            assignments
+            src
+            "prefix source"
+            "ymm"
+            register-ty
+            dst-reg)
+            [(ResultBackendVectorUse.Ok src-use)
+              (match src-use
+                [(CompilerBackendVectorUse.Use src-asm src-reg)
+                  (let
+                    [copy-asm : String
+                      (if (string.eq src-reg dst-reg)
+                        ""
+                        (str_cat.str-cat
+                          "    vmovdqu "
+                          src-reg
+                          ", "
+                          dst-reg
+                          "\n"))]
+                    [prefix-asm : String
+                      (match elem-ty
+                        [(AstType.Bool)
+                          (compiler-backend-avx2-vector-prefix-bool-body
+                            op
+                            dst-reg)]
+                        [_
+                          (compiler-backend-avx2-vector-prefix-numeric-body
+                            op
+                            elem-ty
+                            dst-reg)])]
+                    (match elem-ty
+                      [(AstType.Bool)
+                        (match (compiler-backend-avx2-vector-prefix-bool-carry
+                          assignments
+                          carry
+                          dst-reg
+                          op
+                          planned-gp)
+                          [(ResultCompilerBackend.Ok carry-asm)
+                            (ResultCompilerBackend.Ok
+                              (str_cat.str-cat
+                                src-asm
+                                copy-asm
+                                prefix-asm
+                                carry-asm
+                                (compiler-backend-vector-store-dst
+                                  assignments
+                                  dst
+                                  "ymm"
+                                  register-ty
+                                  dst-reg)))]
+                          [(ResultCompilerBackend.Err message)
+                            (ResultCompilerBackend.Err
+                              (box
+                                (compiler-backend-apply-instr-diagnostic
+                                  (box-get message)
+                                  instr-diag)))])]
+                      [_
+                        (match (compiler-backend-avx2-vector-prefix-numeric-carry
+                          assignments
+                          carry
+                          elem-ty
+                          planned-gp)
+                          [(ResultCompilerBackend.Ok carry-asm)
+                            (ResultCompilerBackend.Ok
+                              (str_cat.str-cat
+                                src-asm
+                                copy-asm
+                                prefix-asm
+                                carry-asm
+                                (compiler-backend-avx2-vector-prefix-numeric-combine
+                                  op
+                                  elem-ty
+                                  dst-reg
+                                  -1)
+                                (compiler-backend-vector-store-dst
+                                  assignments
+                                  dst
+                                  "ymm"
+                                  elem-ty
+                                  dst-reg)))]
+                          [(ResultCompilerBackend.Err message)
+                            (ResultCompilerBackend.Err
+                              (box
+                                (compiler-backend-apply-instr-diagnostic
+                                  (box-get message)
+                                  instr-diag)))])]))])]
+            [(ResultBackendVectorUse.Err message)
+              (ResultCompilerBackend.Err
+                (box (compiler-diagnostic-with-message instr-diag message)))])]
+        [(ResultBackendReg.Err message)
+          (ResultCompilerBackend.Err
+            (box (compiler-diagnostic-with-message instr-diag message)))]))))
+
+(define (compiler-backend-emit-vector-prefix
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrVectorPrefixOp]
+  [src : CompilerIrValue]
+  [carry : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [planned-gp : String]
+  [planned-xmm : String]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-current-mode-avx2?)
+    (compiler-backend-emit-avx2-vector-prefix
+      assignments
+      dst
+      op
+      src
+      carry
+      lanes
+      elem-ty
+      planned-gp
+      planned-xmm
+      instr-diag)
+    (ResultCompilerBackend.Err
+      (box
+        (compiler-diagnostic-with-message
+          instr-diag
+          "backend: vector prefix requires AVX2 lowering")))))
+
 (define (compiler-backend-avx512-partial-mask [active-lanes : i64]) : i64
   (let
     [i : i64 0]
@@ -32571,6 +33022,26 @@
               lanes
               elem-ty
               instr-diag)])]
+      [(CompilerIrInstr.VectorPrefix payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrVectorPrefixPayload.Payload
+              dst
+              op
+              src
+              carry
+              lanes
+              elem-ty)
+            (compiler-backend-emit-vector-prefix
+              ctx.assignments
+              dst
+              op
+              src
+              carry
+              lanes
+              elem-ty
+              planned-scratch0
+              planned-scratch1
+              instr-diag)])]
       [(CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
         (compiler-backend-emit-vector-reduce
           ctx.assignments
@@ -33321,6 +33792,12 @@
           (begin
             (compiler-backend-count-value-use counts lhs)
             (compiler-backend-count-value-use counts rhs))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (begin
+            (compiler-backend-count-value-use counts src)
+            (compiler-backend-count-value-use counts carry))])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-backend-count-value-use counts src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -46236,6 +46713,12 @@
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections collections lhs)
             rhs)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections collections src)
+            carry)])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -52872,6 +53355,18 @@ tl_comptime_host_invoke_set:
               elem-ty)
             function
             rhs
+            elem-ty)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ elem-ty)
+          (compiler-backend-object-value-ref-with-type
+            (compiler-backend-object-value-ref-with-type
+              parts
+              function
+              src
+              elem-ty)
+            function
+            carry
             elem-ty)])]
     [(CompilerIrInstr.VectorReduce _ _ src _ elem-ty)
       (compiler-backend-object-value-ref-with-type parts function src elem-ty)]

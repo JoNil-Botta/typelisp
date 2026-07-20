@@ -219,6 +219,8 @@ spmd_atomic_scatter|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomi
 spmd_reduce_scalar|tests/integration/spmd_reduce_scalar.tl|42|-|-|-
 spmd_lane_identity_scalar|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|-
 spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|-
+spmd_scan_negative_start_trap|tests/integration/spmd_scan_negative_start_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+spmd_scan_short_output_trap|tests/integration/spmd_scan_short_output_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|-
 spmd_shuffle_simd|tests/integration/spmd_shuffle_simd.tl|42|-|-|-
 spmd_shuffle_types|tests/integration/spmd_shuffle_types.tl|42|-|-|-
@@ -251,6 +253,7 @@ string_concat_deep|tests/integration/string_concat_deep.tl|42|-|-|stdlib/string.
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl
 core_string_length|tests/integration/core_string_length.tl|42|-|-|stdlib/string.tl
 stdlib_math_ieee|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl
+stdlib_math_exp|tests/integration/stdlib_math_exp.tl|0|-|-|stdlib/math.tl
 stdlib_math_trig|tests/integration/stdlib_math_trig.tl|0|-|-|stdlib/math.tl
 string_length|tests/integration/string_length.tl|5|-|-|stdlib/string.tl
 string_match|tests/integration/string_match.tl|42|-|-|-

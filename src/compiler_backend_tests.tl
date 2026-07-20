@@ -22573,6 +22573,134 @@
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -8))
       CompilerRegAssignmentList.Nil)))
 
+(define (compiler-backend-scratch-vreg-float-arith-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          0
+          (CompilerIrBinOp.Sub)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.F64 0x4000000000000000)
+          (AstType.F64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-float-compare-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          0
+          (CompilerIrBinOp.Ge)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 2)
+          (AstType.Bool))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-float-unop-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.UnOp
+          0
+          (CompilerIrUnOp.Neg)
+          (CompilerIrValue.Var 1)
+          (AstType.F64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-float-arith-return-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          0
+          (CompilerIrBinOp.Sub)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 2)
+          (AstType.F64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+          CompilerIrInstrList.Nil)))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-float-compare-return-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BinOp
+          0
+          (CompilerIrBinOp.Lt)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 2)
+          (AstType.Bool))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+          CompilerIrInstrList.Nil)))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-float-arith-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm6"))
+      CompilerRegAssignmentList.Nil)))
+
+(define (compiler-backend-scratch-vreg-float-compare-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%xmm7"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-scratch-vreg-float-unop-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm6"))
+      CompilerRegAssignmentList.Nil)))
+
+(define (compiler-backend-scratch-vreg-float-arith-return-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm6"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%xmm0"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-scratch-vreg-float-compare-return-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%xmm7"))
+        CompilerRegAssignmentList.Nil))))
+
 (define (compiler-backend-scratch-vreg-splat-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -22883,6 +23011,35 @@
     (compiler-reg-call-split-empty)
     (compiler-reg-split-plan-empty)))
 
+(define (compiler-backend-scratch-test-base-plan-with-types
+  [types : CompilerRegVarTypeList]
+  [assignments : CompilerRegAssignmentList]) : CompilerRegPlan
+  (CompilerRegPlan.Plan
+    assignments
+    (compiler-live-set-empty)
+    CompilerRegIntervalList.Nil
+    types
+    (compiler-reg-call-split-empty)
+    (compiler-reg-split-plan-empty)))
+
+(define (compiler-backend-scratch-test-result-for-abi-with-types
+  [abi : CompilerRegTargetAbi]
+  [name : String]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [assignments : CompilerRegAssignmentList]) : CompilerRegScratchPlanResult
+  (compiler-reg-plan-with-scratch-vreg-result
+    abi
+    (CompilerIrFunction.Function
+      (ci.intern name)
+      CompilerIrParamList.Nil
+      (AstType.I64)
+      vars
+      blocks)
+    (compiler-backend-scratch-test-base-plan-with-types types assignments)
+    vars))
+
 (define (compiler-backend-scratch-test-result-for-abi
   [abi : CompilerRegTargetAbi]
   [name : String]
@@ -22911,6 +23068,22 @@
     blocks
     vars
     assignments))
+
+(define (compiler-backend-scratch-float-types
+  [result : AstType]
+  [operand : AstType]
+  [vars : i64]) : CompilerRegVarTypeList
+  (if (= vars 0)
+    CompilerRegVarTypeList.Nil
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType.Type 0 result)
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType.Type 1 operand)
+        (if (> vars 2)
+          (compiler-reg-var-type-cons
+            (CompilerRegVarType.Type 2 operand)
+            CompilerRegVarTypeList.Nil)
+          CompilerRegVarTypeList.Nil)))))
 
 (define (compiler-backend-scratch-test-register
   [result : CompilerRegScratchPlanResult]
@@ -23972,6 +24145,337 @@
         [(ResultCompilerBackend.Err _) false]))
     true))
 
+(define (compiler-backend-scratch-vreg-float-compute-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [f64-types : CompilerRegVarTypeList
+        (compiler-backend-scratch-float-types (AstType.F64) (AstType.F64) 3)]
+      [f32-compare-types : CompilerRegVarTypeList
+        (compiler-backend-scratch-float-types (AstType.Bool) (AstType.F32) 3)]
+      [f64-compare-types : CompilerRegVarTypeList
+        (compiler-backend-scratch-float-types (AstType.Bool) (AstType.F64) 3)]
+      [direct-arith-assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            0
+            (CompilerRegLocation.Register "%xmm8"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              1
+              (CompilerRegLocation.Register "%xmm6"))
+            CompilerRegAssignmentList.Nil))]
+      [direct-compare-assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            0
+            (CompilerRegLocation.Register "%r12"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              1
+              (CompilerRegLocation.Register "%xmm6"))
+            CompilerRegAssignmentList.Nil))]
+      [arith : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Linux)
+          "scratch_float_arith"
+          (compiler-backend-scratch-vreg-float-arith-test-blocks)
+          2
+          f64-types
+          (compiler-backend-scratch-vreg-float-arith-test-assignments))]
+      [arith-windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Windows)
+          "scratch_float_arith_windows"
+          (compiler-backend-scratch-vreg-float-arith-test-blocks)
+          2
+          f64-types
+          (compiler-backend-scratch-vreg-float-arith-test-assignments))]
+      [compare : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Linux)
+          "scratch_float_compare"
+          (compiler-backend-scratch-vreg-float-compare-test-blocks)
+          3
+          f32-compare-types
+          (compiler-backend-scratch-vreg-float-compare-test-assignments))]
+      [compare-windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Windows)
+          "scratch_float_compare_windows"
+          (compiler-backend-scratch-vreg-float-compare-test-blocks)
+          3
+          f32-compare-types
+          (compiler-backend-scratch-vreg-float-compare-test-assignments))]
+      [unop : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Linux)
+          "scratch_float_unop"
+          (compiler-backend-scratch-vreg-float-unop-test-blocks)
+          2
+          f64-types
+          (compiler-backend-scratch-vreg-float-unop-test-assignments))]
+      [arith-return : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Linux)
+          "scratch_float_arith_return"
+          (compiler-backend-scratch-vreg-float-arith-return-test-blocks)
+          3
+          f64-types
+          (compiler-backend-scratch-vreg-float-arith-return-test-assignments))]
+      [arith-return-windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Windows)
+          "scratch_float_arith_return_windows"
+          (compiler-backend-scratch-vreg-float-arith-return-test-blocks)
+          3
+          f64-types
+          (compiler-backend-scratch-vreg-float-arith-return-test-assignments))]
+      [compare-return : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Linux)
+          "scratch_float_compare_return"
+          (compiler-backend-scratch-vreg-float-compare-return-test-blocks)
+          3
+          f64-compare-types
+          (compiler-backend-scratch-vreg-float-compare-return-test-assignments))]
+      [compare-return-windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Windows)
+          "scratch_float_compare_return_windows"
+          (compiler-backend-scratch-vreg-float-compare-return-test-blocks)
+          3
+          f64-compare-types
+          (compiler-backend-scratch-vreg-float-compare-return-test-assignments))]
+      [arith-reg : String (compiler-backend-scratch-test-register arith 0)]
+      [compare-xmm : String (compiler-backend-scratch-test-register compare 0)]
+      [compare-gp : String (compiler-backend-scratch-test-register compare 1)]
+      [return-rhs : String
+        (compiler-backend-scratch-test-register arith-return 1)]
+      (and
+        (= (compiler-backend-scratch-test-plan-count arith) 1)
+        (= (compiler-backend-scratch-test-success-count arith) 1)
+        (= (compiler-backend-scratch-test-plan-count arith-windows) 1)
+        (= (compiler-backend-scratch-test-success-count arith-windows) 1)
+        (>= (compiler-reg-xmm-family-index arith-reg) 0)
+        (not (= (compiler-reg-xmm-family-index arith-reg) 6))
+        (= (compiler-backend-scratch-test-plan-count compare) 2)
+        (= (compiler-backend-scratch-test-success-count compare) 2)
+        (= (compiler-backend-scratch-test-plan-count compare-windows) 2)
+        (= (compiler-backend-scratch-test-success-count compare-windows) 2)
+        (>= (compiler-reg-xmm-family-index compare-xmm) 0)
+        (< (compiler-reg-xmm-family-index compare-gp) 0)
+        (not (= (compiler-reg-xmm-family-index compare-xmm) 7))
+        (= (compiler-backend-scratch-test-plan-count unop) 1)
+        (= (compiler-backend-scratch-test-success-count unop) 1)
+        (= (compiler-backend-scratch-test-plan-count arith-return) 2)
+        (= (compiler-backend-scratch-test-success-count arith-return) 2)
+        (= (compiler-backend-scratch-test-plan-count arith-return-windows) 2)
+        (= (compiler-backend-scratch-test-success-count arith-return-windows) 2)
+        (string.eq
+          (compiler-backend-scratch-test-register arith-return 0)
+          "%xmm0")
+        (not (string.eq return-rhs "%xmm0"))
+        (= (compiler-backend-scratch-test-plan-count compare-return) 2)
+        (= (compiler-backend-scratch-test-success-count compare-return) 2)
+        (= (compiler-backend-scratch-test-plan-count compare-return-windows) 2)
+        (=
+          (compiler-backend-scratch-test-success-count compare-return-windows)
+          2)
+        (string.eq
+          (compiler-backend-scratch-test-register compare-return 0)
+          "%rax")
+        (>=
+          (compiler-reg-xmm-family-index
+            (compiler-backend-scratch-test-register compare-return 1))
+          0)
+        (=
+          (compiler-reg-scratch-vreg-slots
+            (CompilerRegTargetAbi.Linux)
+            direct-arith-assignments
+            f64-types
+            (CompilerIrInstr.BinOp
+              0
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Global (ci.intern "scratch_float_global"))
+              (AstType.F64))
+            CompilerRegStringList.Nil
+            false)
+          0)
+        (=
+          (compiler-reg-scratch-vreg-slots
+            (CompilerRegTargetAbi.Windows)
+            direct-compare-assignments
+            f64-compare-types
+            (CompilerIrInstr.BinOp
+              0
+              (CompilerIrBinOp.Ne)
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Global (ci.intern "scratch_float_global"))
+              (AstType.Bool))
+            CompilerRegStringList.Nil
+            false)
+          0)
+        (compiler-reg-scratch-compare-op? (CompilerIrBinOp.Eq))
+        (compiler-reg-scratch-compare-op? (CompilerIrBinOp.Ne))
+        (compiler-reg-scratch-compare-op? (CompilerIrBinOp.Lt))
+        (compiler-reg-scratch-compare-op? (CompilerIrBinOp.Le))
+        (compiler-reg-scratch-compare-op? (CompilerIrBinOp.Gt))
+        (compiler-reg-scratch-compare-op? (CompilerIrBinOp.Ge))
+        (match arith-return
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (let
+              [requirement : CompilerRegScratchRequirement
+                (struct-get (array-ref (struct-get plan items) 0) requirement)]
+              (and
+                (match (struct-get requirement role)
+                  [(CompilerRegScratchRole.FloatReturnResultXmm) true]
+                  [_ false])
+                (string.eq
+                  (struct-get (struct-get requirement constraint) fixed)
+                  "%xmm0")
+                (match (struct-get
+                  (struct-get requirement constraint)
+                  register-class)
+                  [(CompilerRegScratchClass.Xmm) true]
+                  [_ false])))])
+        (match compare-return
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (let
+              [requirement : CompilerRegScratchRequirement
+                (struct-get (array-ref (struct-get plan items) 0) requirement)]
+              (and
+                (match (struct-get requirement role)
+                  [(CompilerRegScratchRole.FloatReturnResultGp) true]
+                  [_ false])
+                (string.eq
+                  (struct-get (struct-get requirement constraint) fixed)
+                  "%rax")
+                (match (struct-get
+                  (struct-get requirement constraint)
+                  register-class)
+                  [(CompilerRegScratchClass.Gp) true]
+                  [_ false])))])
+        (match arith
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (match (struct-get
+              (struct-get (array-ref (struct-get plan items) 0) requirement)
+              role)
+              [(CompilerRegScratchRole.FloatArithmeticResultXmm) true]
+              [_ false])])
+        (match compare
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 0) requirement)
+                role)
+                [(CompilerRegScratchRole.FloatCompareLhsXmm) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 1) requirement)
+                role)
+                [(CompilerRegScratchRole.FloatCompareResultGp) true]
+                [_ false]))])
+        (match unop
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (match (struct-get
+              (struct-get (array-ref (struct-get plan items) 0) requirement)
+              role)
+              [(CompilerRegScratchRole.FloatUnaryResultXmm) true]
+              [_ false])])))
+    true))
+
+(define (compiler-backend-scratch-vreg-float-compute-emission-uses-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [arith-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-float-arith-test-assignments)]
+      [compare-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-float-compare-test-assignments)]
+      [return-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-float-arith-return-test-assignments)]
+      (match (compiler-backend-emit-float-binop-spill-direct
+        arith-assignments
+        0
+        (CompilerIrBinOp.Sub)
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.F64 0x4000000000000000)
+        (AstType.F64)
+        "%xmm14")
+        [(ResultCompilerBackend.Ok arith)
+          (match (compiler-backend-emit-binop-with-plan
+            (compiler-backend-scratch-float-types
+              (AstType.Bool)
+              (AstType.F32)
+              3)
+            (CompilerBackendGlobalTypeList.Nil)
+            compare-assignments
+            0
+            (CompilerIrBinOp.Ge)
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 2)
+            (AstType.Bool)
+            "%xmm13"
+            "%r14"
+            ""
+            ""
+            "")
+            [(ResultCompilerBackend.Ok compare)
+              (match (compiler-backend-emit-unop-with-plan
+                (compiler-backend-scratch-vreg-float-unop-test-assignments)
+                0
+                (CompilerIrUnOp.Neg)
+                (CompilerIrValue.Var 1)
+                (AstType.F64)
+                "%xmm15")
+                [(ResultCompilerBackend.Ok unop)
+                  (match (compiler-backend-emit-float-arith-return
+                    return-assignments
+                    (CompilerIrBinOp.Sub)
+                    (CompilerIrValue.Var 1)
+                    (CompilerIrValue.Var 2)
+                    (AstType.F64)
+                    "%xmm0"
+                    "%xmm14"
+                    "    ret\n")
+                    [(ResultCompilerBackend.Ok arith-return)
+                      (match (compiler-backend-emit-float-compare-return
+                        (compiler-backend-scratch-vreg-float-compare-return-test-assignments)
+                        (CompilerIrBinOp.Lt)
+                        (CompilerIrValue.Var 1)
+                        (CompilerIrValue.Var 2)
+                        (AstType.F64)
+                        "%rax"
+                        "%xmm14"
+                        "%xmm15"
+                        "    ret\n")
+                        [(ResultCompilerBackend.Ok compare-return)
+                          (and
+                            (compiler-backend-string-contains? arith "%xmm14")
+                            (compiler-backend-string-contains? compare "%xmm13")
+                            (compiler-backend-string-contains? compare "%r14")
+                            (compiler-backend-string-contains? unop "%xmm15")
+                            (compiler-backend-string-contains?
+                              arith-return
+                              "%xmm14")
+                            (compiler-backend-string-contains?
+                              arith-return
+                              "%xmm0")
+                            (compiler-backend-string-contains?
+                              compare-return
+                              "%xmm14")
+                            (compiler-backend-string-contains?
+                              compare-return
+                              "%rax"))]
+                        [(ResultCompilerBackend.Err _) false])]
+                    [(ResultCompilerBackend.Err _) false])]
+                [(ResultCompilerBackend.Err _) false])]
+            [(ResultCompilerBackend.Err _) false])]
+        [(ResultCompilerBackend.Err _) false]))
+    true))
+
 (define (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?) : bool
   (cfg
     scratch-vreg
@@ -24276,6 +24780,7 @@
           (compiler-reg-scratch-vreg-slots
             (CompilerRegTargetAbi.Linux)
             same-home
+            CompilerRegVarTypeList.Nil
             (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.F64))
             CompilerRegStringList.Nil
             false)
@@ -25486,6 +25991,8 @@
         (compiler-backend-scratch-vreg-c-memory-plan-ok?)
         (compiler-backend-scratch-vreg-float-memory-plan-ok?)
         (compiler-backend-scratch-vreg-float-memory-emission-uses-plan-ok?)
+        (compiler-backend-scratch-vreg-float-compute-plan-ok?)
+        (compiler-backend-scratch-vreg-float-compute-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
         (compiler-backend-scratch-vreg-simd-plan-ok?)
         (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)

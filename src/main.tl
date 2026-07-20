@@ -17,6 +17,7 @@
 ;; (`compiler_check_core` ->
 ;; `compiler_typecheck`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
+(import "compiler_tlci_native_producer.tl")
 (import stdlib.io)
 
 ;; Keep legacy root aliases for reader enum variants while stage0 expands the

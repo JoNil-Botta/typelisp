@@ -184,107 +184,29 @@
   [build-hash : String]
   [windows-target : bool]
   [names : (Array String)]) : i64
-  (let
-    [source : String (embedded-native-source names)]
-    [target : CompilerBackendTarget
-      (if windows-target
-        (CompilerBackendTarget.Windows)
-        (CompilerBackendTarget.Linux))]
-    (begin
-      (io.write-file (str-cat output ".source.tl") source)
-      unit)
-    (match (compiler-backend-lower-source-for-target source target)
-      [(ResultCompilerLower.Err diag)
-        (begin
-          (io.print-error
-            (str-cat
-              "embedded stdlib tlci: generated source rejected: "
-              (compiler-diagnostic-render (box-get diag))
-              "\n"))
-          1)]
-      [(ResultCompilerLower.Ok program spans)
-        (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
-          program
-          target
-          (CompilerBackendMode.Scalar)
-          spans
-          false
-          false)
-          [(ResultCompilerBackendObject.Err diag)
-            (begin
-              (io.print-error
-                (str-cat
-                  "embedded stdlib tlci: object emission failed: "
-                  (compiler-diagnostic-render (box-get diag))
-                  "\n"))
-              1)]
-          [(ResultCompilerBackendObject.Ok image)
-            (match (compiler-tlci-native-layout-image image)
-              [(ResultCompilerTlciNativeLayout.Err message)
-                (begin
-                  (io.print-error
-                    (str-cat "embedded stdlib tlci: " message "\n"))
-                  1)]
-              [(ResultCompilerTlciNativeLayout.Ok layout)
-                (let
-                  [entry-offsets : (Array i64)
-                    (embedded-native-entry-offsets image (array-length names))]
-                  (if (not
-                    (= (array-length entry-offsets) (array-length names)))
-                    (begin
-                      (io.print-error
-                        (str-cat
-                          "embedded stdlib tlci: entry count "
-                          (string.int->string (array-length entry-offsets))
-                          " does not match catalog count "
-                          (string.int->string (array-length names))
-                          "
-"))
-                      1)
-                    (match (compiler-tlci-native-emit-imports (& layout))
-                      [(ResultCompilerTlciNativeImports.Err message)
-                        (begin
-                          (io.print-error
-                            (str-cat "embedded stdlib tlci: " message "\n"))
-                          1)]
-                      [(ResultCompilerTlciNativeImports.Ok imports)
-                        (match (tlci-emit-native-package-image
-                          (tlci-make-metadata "v1" "stdlib" "0.1.0")
-                          build-hash
-                          (TlciNativePackageInput
-                            (struct-get layout bytes)
-                            imports
-                            (struct-get layout fixup-offsets)
-                            (struct-get layout fixup-count)
-                            names
-                            entry-offsets
-                            (array-length names)))
-                          [(ResultTlciBytes.Err message)
-                            (begin
-                              (io.print-error
-                                (str-cat "embedded stdlib tlci: " message "\n"))
-                              1)]
-                          [(ResultTlciBytes.Ok bytes)
-                            (begin
-                              (io.write-file
-                                output
-                                (tlci-bytes->string
-                                  bytes
-                                  0
-                                  (array-length bytes)))
-                              (io.print-string
-                                (str-cat
-                                  "embedded stdlib tlci: wrote "
-                                  (string.int->string (array-length bytes))
-                                  " bytes for "
-                                  (string.int->string (array-length names))
-                                  " macro entries ("
-                                  (string.int->string
-                                    (array-ref
-                                      embedded-stdlib-tlci-native-report-count
-                                      0))
-                                  " native)\n"))
-                              0)])])))])])])))
+  (match (embedded-native-emit-package
+    (tlci-metadata-emit (tlci-make-metadata "v1" "stdlib" "0.1.0"))
+    build-hash
+    windows-target
+    names)
+    [(ResultProducerBytes.Err message)
+      (begin
+        (io.print-error (str-cat "embedded stdlib tlci: " message "\n"))
+        1)]
+    [(ResultProducerBytes.Ok bytes)
+      (begin
+        (io.write-file output (tlci-bytes->string bytes 0 (array-length bytes)))
+        (io.print-string
+          (str-cat
+            "embedded stdlib tlci: wrote "
+            (string.int->string (array-length bytes))
+            " bytes for "
+            (string.int->string (array-length names))
+            " macro entries ("
+            (string.int->string
+              (array-ref embedded-stdlib-tlci-native-report-count 0))
+            " native)\n"))
+        0)]))
 
 (define (main) : i64
   (if (not (= (io.arg-count) 6))

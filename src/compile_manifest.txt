@@ -684,7 +684,6 @@ decision|src/tlci_core.tl|tlci v1 container and v1/v2 metadata parse/emit helper
 
 decision|src/compiler_comptime_diagnostics_core.tl|shared interpreted/native comptime fuel diagnostic prefix (#2656): main-less helper module imported by compiler_ctfe and tlci_loader so status-2 native failures retain interpreted message parity before appending the registered macro name
 
-decision|src/compiler_comptime_image_core.tl|mode-gated native-comptime IR/lowering (#4905/#2656/#2754): explicit image/host/session contexts, automatic operation-1 fuel probes at semantic calls and loop backedges, callback status unwind, success-only result commit, dynamic single/multi-macro data layout, and Linux/Windows x86_64 emission; fixed templates remain oracle-only while general package/stdlib macro-source body lowering remains staged
 
 decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
 

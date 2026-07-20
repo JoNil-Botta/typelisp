@@ -11,11 +11,12 @@
 ;; interpreted fallback.
 (import "compiler_parse_core.tl")
 (import compiler_object as cobj)
+(import tlci_core as tlcic)
+(import "compiler_backend.tl")
 (import "compiler_tlci_native_image.tl")
 (import compiler_builtin_ids as cbi)
+(import stdlib.array)
 (import stdlib.string)
-(import stdlib.vector)
-(import (vector String) as svec)
 
 (define (embedded-stdlib-tlci-identity [module : String] [name-id : i64]) : String
   (if (= (string.string-length module) 0)
@@ -111,6 +112,26 @@
           (set! index (+ index 1))))
       found)))
 
+;; Instance-proof producer result: callers across import spellings match on
+;; this producer-owned enum and receive raw bytes.
+(defenum ResultProducerBytes
+  (Ok (Array u8))
+  (Err String))
+
+(define embedded-native-ops-cap : i64
+  256)
+
+(define (embedded-native-ops-push!
+  [ops : (Array String)]
+  [ops-count : (Array i64)]
+  [line : String]) : unit
+  (let
+    [slot : i64 (array-ref ops-count 0)]
+    (when
+      (< slot embedded-native-ops-cap)
+      (array-set! ops slot line)
+      (array-set! ops-count 0 (+ slot 1)))))
+
 (define (embedded-native-status-sum [opened : i64]) : String
   (let
     [out : String ""]
@@ -166,7 +187,8 @@
 (define (embedded-native-body-ops
   [params : AstMacroParamList]
   [body-node : i64]
-  [ops : (&mut ops svec.Vec)]) : i64
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
     [(AstExpr.Quasiquote quoted)
       (match (embedded-stdlib-tlci-unwrap-expr quoted)
@@ -180,8 +202,9 @@
                 [opened : i64 0]
                 [ok : bool true]
                 (begin
-                  (svec.push
+                  (embedded-native-ops-push!
                     ops
+                    ops-count
                     (embedded-native-op-open
                       opened
                       103
@@ -189,8 +212,9 @@
                       (string.int->string (string.string-length head))
                       "0"))
                   (set! opened (+ opened 1))
-                  (svec.push
+                  (embedded-native-ops-push!
                     ops
+                    ops-count
                     (embedded-native-op-open opened 178 "0" "0" "0"))
                   (set! opened (+ opened 1))
                   (while (and ok (< index argc))
@@ -202,8 +226,9 @@
                       (if (< param 0)
                         (set! ok false)
                         (begin
-                          (svec.push
+                          (embedded-native-ops-push!
                             ops
+                            ops-count
                             (embedded-native-op-open
                               opened
                               180
@@ -211,16 +236,18 @@
                               "0"
                               "0"))
                           (set! opened (+ opened 1))
-                          (svec.push
+                          (embedded-native-ops-push!
                             ops
+                            ops-count
                             (embedded-native-op-open opened 179 "0" "0" "0"))
                           (set! opened (+ opened 1))
                           (set! index (+ index 1))))))
                   (if (not ok)
                     -1
                     (begin
-                      (svec.push
+                      (embedded-native-ops-push!
                         ops
+                        ops-count
                         (embedded-native-op-open opened 181 "0" "0" "0"))
                       (+ opened 1)))))]
             [_ -1])]
@@ -228,8 +255,9 @@
           (match lit
             [(AstLiteral.Bool flag)
               (begin
-                (svec.push
+                (embedded-native-ops-push!
                   ops
+                  ops-count
                   (embedded-native-op-open
                     0
                     187
@@ -242,8 +270,9 @@
             [(AstLiteral.Int value text)
               (if (string.eq text (string.int->string value))
                 (begin
-                  (svec.push
+                  (embedded-native-ops-push!
                     ops
+                    ops-count
                     (embedded-native-op-open
                       0
                       188
@@ -254,9 +283,21 @@
                 -1)]
             [_ -1])]
         [(AstExpr.ArrayRef target-node index-node)
-          (embedded-native-binary-ops params target-node index-node 183 ops)]
+          (embedded-native-binary-ops
+            params
+            target-node
+            index-node
+            183
+            ops
+            ops-count)]
         [(AstExpr.ArrayPush target-node value-node)
-          (embedded-native-binary-ops params target-node value-node 184 ops)]
+          (embedded-native-binary-ops
+            params
+            target-node
+            value-node
+            184
+            ops
+            ops-count)]
         [(AstExpr.MakeArray elem-type size-node)
           (let
             [ti : i64
@@ -266,23 +307,28 @@
             (if (or (< ti 0) (< si 0))
               -1
               (begin
-                (svec.push
+                (embedded-native-ops-push!
                   ops
+                  ops-count
                   (embedded-native-op-open
                     0
                     180
                     (string.int->string ti)
                     "0"
                     "0"))
-                (svec.push
+                (embedded-native-ops-push!
                   ops
+                  ops-count
                   (embedded-native-op-open
                     1
                     180
                     (string.int->string si)
                     "0"
                     "0"))
-                (svec.push ops (embedded-native-op-open 2 185 "0" "0" "0"))
+                (embedded-native-ops-push!
+                  ops
+                  ops-count
+                  (embedded-native-op-open 2 185 "0" "0" "0"))
                 3)))]
         [_ -1])]
     [_ -1]))
@@ -292,34 +338,43 @@
   [target-node : i64]
   [operand-node : i64]
   [op : i64]
-  [ops : (&mut ops svec.Vec)]) : i64
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
   (let
     [ti : i64 (embedded-stdlib-tlci-unquoted-param (& params) target-node)]
     [oi : i64 (embedded-stdlib-tlci-unquoted-param (& params) operand-node)]
     (if (or (< ti 0) (< oi 0))
       -1
       (begin
-        (svec.push
+        (embedded-native-ops-push!
           ops
+          ops-count
           (embedded-native-op-open 0 180 (string.int->string ti) "0" "0"))
-        (svec.push
+        (embedded-native-ops-push!
           ops
+          ops-count
           (embedded-native-op-open 1 180 (string.int->string oi) "0" "0"))
-        (svec.push ops (embedded-native-op-open 2 op "0" "0" "0"))
+        (embedded-native-ops-push!
+          ops
+          ops-count
+          (embedded-native-op-open 2 op "0" "0" "0"))
         3))))
 
 ;; Full source for the native package: the host extern plus one entry function
 ;; per identity in catalog order.
 ;; A complete, balanced arm expression: the op lets, the status-sum return
 ;; (q99 is the enclosing fuel status), and one closing paren per op let.
-(define (embedded-native-arm-block [ops : (& ops svec.Vec)] [opened : i64]) : String
+(define (embedded-native-arm-block
+  [ops : (Array String)]
+  [ops-count : i64]
+  [opened : i64]) : String
   (let
     [out : String ""]
     [index : i64 0]
     (begin
-      (while (< index (svec.len ops))
+      (while (< index ops-count)
         (begin
-          (set! out (str-cat out (svec.get ops index "")))
+          (set! out (str-cat out (array-ref ops index)))
           (set! index (+ index 1))))
       (set!
         out
@@ -355,9 +410,11 @@
           [(AstPattern.Literal (AstLiteral.String sid))
             (let
               [kind : String (intern-str sid)]
-              [ops : svec.Vec (svec.new)]
+              [ops : (Array String)
+                (array.make-array String embedded-native-ops-cap)]
+              [ops-count : (Array i64) (make-array 0)]
               [opened : i64
-                (embedded-native-body-ops params body-node (&mut ops))]
+                (embedded-native-body-ops params body-node ops ops-count)]
               [rest : String
                 (embedded-native-match-arms params type-index arms (+ index 1))]
               (if (string.eq rest "")
@@ -377,7 +434,10 @@
                   " 1)\n"
                   (if (< opened 0)
                     "  0\n"
-                    (embedded-native-arm-block (& ops) opened))
+                    (embedded-native-arm-block
+                      ops
+                      (array-ref ops-count 0)
+                      opened))
                   "\n"
                   rest
                   "))\n")))]
@@ -429,7 +489,9 @@
         (let
           [slot : i64
             (embedded-stdlib-tlci-capture-slot (array-ref names index))]
-          [ops : svec.Vec (svec.new)]
+          [ops : (Array String)
+            (array.make-array String embedded-native-ops-cap)]
+          [ops-count : (Array i64) (make-array 0)]
           [match-text : String
             (if (>= slot 0)
               (embedded-native-match-body
@@ -441,7 +503,8 @@
               (embedded-native-body-ops
                 (array-ref embedded-stdlib-tlci-capture-params slot)
                 (array-ref embedded-stdlib-tlci-capture-bodies slot)
-                (&mut ops))
+                ops
+                ops-count)
               -1)]
           (begin
             (set!
@@ -468,7 +531,10 @@
                     out
                     (embedded-native-op-open 99 1 "0" "0" "0")
                     (if (string.eq match-text "")
-                      (embedded-native-arm-block (& ops) opened)
+                      (embedded-native-arm-block
+                        ops
+                        (array-ref ops-count 0)
+                        opened)
                       match-text)
                     ")))\n"))))
             (set! index (+ index 1)))))
@@ -497,3 +563,83 @@
       (if ok
         out
         (array.make-array i64 0)))))
+
+;; Compile the generated transformer program and assemble the native package
+;; image. Identities without captured sources become interpreted-fallback
+;; shells, so a caller with no captures gets a pure registration image.
+(define (embedded-native-emit-package
+  [metadata-text : String]
+  [build-hash : String]
+  [windows-target : bool]
+  [names : (Array String)]) : ResultProducerBytes
+  (match (tlcic.tlci-metadata-parse metadata-text)
+    [(tlcic.ResultTlciMetadata.Err message)
+      (ResultProducerBytes.Err (str-cat "package metadata rejected: " message))]
+    [(tlcic.ResultTlciMetadata.Ok metadata)
+      (embedded-native-emit-package-with-metadata
+        metadata
+        build-hash
+        windows-target
+        names)]))
+
+(define (embedded-native-emit-package-with-metadata
+  [metadata : tlcic.TlciMetadata]
+  [build-hash : String]
+  [windows-target : bool]
+  [names : (Array String)]) : ResultProducerBytes
+  (let
+    [source : String (embedded-native-source names)]
+    [target : CompilerBackendTarget
+      (if windows-target
+        (CompilerBackendTarget.Windows)
+        (CompilerBackendTarget.Linux))]
+    (match (compiler-backend-lower-source-for-target source target)
+      [(ResultCompilerLower.Err diag)
+        (ResultProducerBytes.Err
+          (str-cat
+            "generated source rejected: "
+            (compiler-diagnostic-render (box-get diag))))]
+      [(ResultCompilerLower.Ok program spans)
+        (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+          program
+          target
+          (CompilerBackendMode.Scalar)
+          spans
+          false
+          false)
+          [(ResultCompilerBackendObject.Err diag)
+            (ResultProducerBytes.Err
+              (str-cat
+                "object emission failed: "
+                (compiler-diagnostic-render (box-get diag))))]
+          [(ResultCompilerBackendObject.Ok image)
+            (match (compiler-tlci-native-layout-image image)
+              [(ResultCompilerTlciNativeLayout.Err message)
+                (ResultProducerBytes.Err message)]
+              [(ResultCompilerTlciNativeLayout.Ok layout)
+                (let
+                  [entry-offsets : (Array i64)
+                    (embedded-native-entry-offsets image (array-length names))]
+                  (if (not
+                    (= (array-length entry-offsets) (array-length names)))
+                    (ResultProducerBytes.Err
+                      "entry count does not match catalog")
+                    (match (compiler-tlci-native-emit-imports (& layout))
+                      [(ResultCompilerTlciNativeImports.Err message)
+                        (ResultProducerBytes.Err message)]
+                      [(ResultCompilerTlciNativeImports.Ok imports)
+                        (match (tlcic.tlci-emit-native-package-image
+                          metadata
+                          build-hash
+                          (tlcic.TlciNativePackageInput
+                            (struct-get layout bytes)
+                            imports
+                            (struct-get layout fixup-offsets)
+                            (struct-get layout fixup-count)
+                            names
+                            entry-offsets
+                            (array-length names)))
+                          [(tlcic.ResultTlciBytes.Err message)
+                            (ResultProducerBytes.Err message)]
+                          [(tlcic.ResultTlciBytes.Ok bytes)
+                            (ResultProducerBytes.Ok bytes)])])))])])])))

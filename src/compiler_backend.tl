@@ -48112,7 +48112,11 @@
     (struct-get index calls)
     (struct-get index needs-div-abort)
     (struct-get index needs-shift-abort)
-    (if (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
+    (if (or
+      (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
+      (string.eq
+        (compiler-ir-symbol-text link-id)
+        "tl_comptime_host_invoke_set"))
       call-id
       (struct-get index tlci-macro-entry-call-id))))
 

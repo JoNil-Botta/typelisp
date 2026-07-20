@@ -1140,7 +1140,8 @@
       0
       (tlci.tlci-string-length tlci.tlci-image-entry-symbol)
       0)
-    (tlci-loader-test-symbol-bytes)))
+    (tlci-loader-test-symbol-bytes)
+    (tlci.tlci-empty-bytes)))
 
 (define (tlci-loader-test-image [fixup-offset : i64]) : tlci.TlciImage
   (tlci-loader-test-image-with-code

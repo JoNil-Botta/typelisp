@@ -35700,6 +35700,538 @@
   (No)
   (Some String i64 CompilerIrValue (Box CompilerIrInstrList)))
 
+;; Two adjacent fused loads followed by a commutative ALU op can use the same
+;; two-instruction shape as clang: load one memory operand straight into the
+;; result home, then consume the other as the ALU memory operand. Keep this
+;; direct-only (all address components and the result already register-homed),
+;; so rejecting the fold has no scavenge or emergency-save side effects.
+(defenum CompilerBackendGepLoadPairAluFold
+  (No)
+  (Some String i64 String String (Box CompilerIrInstrList)))
+
+(define (compiler-backend-gep-load-pair-alu-mnemonic [op : CompilerIrBinOp]) : String
+  (match op
+    [(CompilerIrBinOp.Add) "add"]
+    [(CompilerIrBinOp.Mul) "imul"]
+    [(CompilerIrBinOp.BitAnd) "and"]
+    [(CompilerIrBinOp.BitOr) "or"]
+    [(CompilerIrBinOp.BitXor) "xor"]
+    [_ ""]))
+
+(define (compiler-backend-gep-load-pair-alu-probe
+  [assignments : CompilerRegAssignmentList]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [use-counts : (Array i64)]
+  [base : CompilerIrValue]
+  [offset0 : CompilerIrValue]
+  [elem-ty0 : AstType]
+  [gep-disp0 : i64]
+  [load-dst0 : i64]
+  [load-ty0 : AstType]
+  [offset1 : CompilerIrValue]
+  [elem-ty1 : AstType]
+  [gep-disp1 : i64]
+  [load-dst1 : i64]
+  [load-ty1 : AstType]
+  [rest : CompilerIrInstrList]) : CompilerBackendGepLoadPairAluFold
+  (match rest
+    [(CompilerIrInstrList.Cons maybe-binop after-binop)
+      (match maybe-binop
+        [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+          (let
+            [mnem : String (compiler-backend-gep-load-pair-alu-mnemonic op)]
+            [dst-home : String
+              (compiler-backend-var-register-home assignments dst)]
+            [base-home : String
+              (compiler-backend-address-base-filter
+                (compiler-backend-value-scalar-register assignments base))]
+            [index0-home : String
+              (compiler-backend-value-scalar-register assignments offset0)]
+            [index1-home : String
+              (compiler-backend-value-scalar-register assignments offset1)]
+            [scale0 : i64 (compiler-backend-type-size elem-ty0)]
+            [scale1 : i64 (compiler-backend-type-size elem-ty1)]
+            [addr0 : String
+              (if (and
+                (not (string.eq base-home ""))
+                (not (string.eq index0-home "")))
+                (compiler-backend-gep-index-address-disp
+                  gep-disp0
+                  base-home
+                  scale0
+                  index0-home)
+                "")]
+            [addr1 : String
+              (if (and
+                (not (string.eq base-home ""))
+                (not (string.eq index1-home "")))
+                (compiler-backend-gep-index-address-disp
+                  gep-disp1
+                  base-home
+                  scale1
+                  index1-home)
+                "")]
+            (if (and
+              (not (string.eq mnem ""))
+              (= (compiler-backend-type-size load-ty0) 8)
+              (= (compiler-backend-type-size load-ty1) 8)
+              (= (compiler-backend-type-size ty) 8)
+              (not (compiler-backend-float-type? load-ty0))
+              (not (compiler-backend-float-type? load-ty1))
+              (not (compiler-backend-binop-f64? types global-types lhs rhs ty))
+              (compiler-backend-var-single-use? use-counts load-dst0)
+              (compiler-backend-var-single-use? use-counts load-dst1)
+              (or
+                (and
+                  (compiler-backend-branch-uses-var? lhs load-dst0)
+                  (compiler-backend-branch-uses-var? rhs load-dst1))
+                (and
+                  (compiler-backend-branch-uses-var? lhs load-dst1)
+                  (compiler-backend-branch-uses-var? rhs load-dst0)))
+              (not (string.eq dst-home ""))
+              (not (string.eq addr0 ""))
+              (not (string.eq addr1 ""))
+              (not (string.eq dst-home base-home))
+              (not (string.eq dst-home index0-home))
+              (not (string.eq dst-home index1-home)))
+              (CompilerBackendGepLoadPairAluFold.Some
+                mnem
+                dst
+                addr0
+                addr1
+                (box after-binop))
+              (CompilerBackendGepLoadPairAluFold.No)))]
+        [_ (CompilerBackendGepLoadPairAluFold.No)])]
+    [_ (CompilerBackendGepLoadPairAluFold.No)]))
+
+(define (compiler-backend-emit-gep-load-pair-alu
+  [assignments : CompilerRegAssignmentList]
+  [mnem : String]
+  [dst : i64]
+  [addr0 : String]
+  [addr1 : String]) : ResultCompilerBackend
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    (ResultCompilerBackend.Ok
+      (str_cat.str-cat
+        "    movq "
+        addr0
+        ", "
+        dst-home
+        "\n    "
+        mnem
+        "q "
+        addr1
+        ", "
+        dst-home
+        "\n"))))
+
+(defenum CompilerBackendMaybeGepLoadPairAluDivmodEmission
+  (No)
+  (Some ResultCompilerBackend))
+
+(defenum CompilerBackendMaybeGepLoadPairAluDivmodStore
+  (No)
+  (Some
+    i64
+    CompilerIrValue
+    CompilerIrValue
+    AstType
+    CompilerIrValue
+    AstType
+    (Box CompilerIrInstrList)))
+
+(define (compiler-backend-gep-load-pair-alu-divmod-store-probe
+  [ctx : CompilerBackendEmissionContext]
+  [div-dst : i64]
+  [src : String]
+  [magic : String]
+  [after-div : CompilerIrInstrList]) : CompilerBackendMaybeGepLoadPairAluDivmodStore
+  (if (compiler-backend-var-single-use? ctx.use-counts div-dst)
+    (match after-div
+      [(CompilerIrInstrList.Cons maybe-gep after-gep)
+        (match maybe-gep
+          [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
+            (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
+              (match (box-get after-gep)
+                [(CompilerIrInstrList.Cons maybe-store after-store)
+                  (match maybe-store
+                    [(CompilerIrInstr.StorePtr store-ptr store-value store-ty)
+                      (if (and
+                        (compiler-backend-divmod-direct-gep-store?
+                          ctx.assignments
+                          div-dst
+                          gep-dst
+                          base
+                          offset
+                          elem-ty
+                          store-ptr
+                          store-value)
+                        (compiler-backend-divmod-direct-gep-store-clobber-safe?
+                          ctx.assignments
+                          src
+                          magic
+                          base
+                          offset))
+                        (CompilerBackendMaybeGepLoadPairAluDivmodStore.Some
+                          gep-dst
+                          base
+                          offset
+                          elem-ty
+                          store-value
+                          store-ty
+                          (box after-store))
+                        (CompilerBackendMaybeGepLoadPairAluDivmodStore.No))]
+                    [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)])]
+                [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)])
+              (CompilerBackendMaybeGepLoadPairAluDivmodStore.No))]
+          [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)])]
+      [_ (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)])
+    (CompilerBackendMaybeGepLoadPairAluDivmodStore.No)))
+
+(define (compiler-backend-emit-gep-load-pair-alu-divmod-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [mnem : String]
+  [alu-dst : i64]
+  [addr0 : String]
+  [addr1 : String]
+  [base : CompilerIrValue]
+  [offset0 : CompilerIrValue]
+  [offset1 : CompilerIrValue]
+  [after-binop : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : CompilerBackendMaybeGepLoadPairAluDivmodEmission
+  ;; Divmod polish normally retargets a one-use arithmetic producer into the
+  ;; preserved-dividend register. A load-pair fold consumes that producer
+  ;; first, so retain the same steering here instead of reintroducing a hot
+  ;; producer-home -> dividend-home copy before the magic-mod sequence.
+  (match after-binop
+    [(CompilerIrInstrList.Cons div-instr after-div)
+      (match div-instr
+        [(CompilerIrInstr.BinOp div-dst div-op div-lhs div-rhs div-ty)
+          (let
+            [planned-magic : String
+              (compiler-backend-scratch-plan-register-ahead
+                (compiler-backend-runtime-plan-scratch ctx.plan)
+                5
+                2)]
+            [planned-src : String
+              (compiler-backend-scratch-plan-register-ahead
+                (compiler-backend-runtime-plan-scratch ctx.plan)
+                5
+                3)]
+            [magic : String
+              (compiler-backend-divmod-polish-magic-ahead
+                ctx
+                div-instr
+                div-dst
+                div-op
+                div-rhs
+                div-ty
+                5
+                planned-magic)]
+            [hoist-reg : String
+              (compiler-backend-divmod-polish-hoist-reg-ahead div-instr 5)]
+            [src : String
+              (compiler-backend-divmod-polish-src
+                ctx
+                div-dst
+                div-lhs
+                magic
+                hoist-reg
+                planned-src
+                false
+                alu-dst)]
+            [div-dst-home : String
+              (compiler-backend-var-register-home ctx.assignments div-dst)]
+            [direct-store : CompilerBackendMaybeGepLoadPairAluDivmodStore
+              (compiler-backend-gep-load-pair-alu-divmod-store-probe
+                ctx
+                div-dst
+                src
+                magic
+                (box-get after-div))]
+            [base-home : String
+              (compiler-backend-value-scalar-register ctx.assignments base)]
+            [index0-home : String
+              (compiler-backend-value-scalar-register ctx.assignments offset0)]
+            [index1-home : String
+              (compiler-backend-value-scalar-register ctx.assignments offset1)]
+            (if (and
+              (compiler-backend-var-single-use? ctx.use-counts alu-dst)
+              (compiler-backend-branch-uses-var? div-lhs alu-dst)
+              (compiler-backend-signed-literal-divmod-src-shape?
+                div-op
+                div-rhs
+                div-ty)
+              (compiler-backend-divmod-src-register? src)
+              (or
+                (not (string.eq div-dst-home ""))
+                (match direct-store
+                  [(CompilerBackendMaybeGepLoadPairAluDivmodStore.Some
+                      _
+                      _
+                      _
+                      _
+                      _
+                      _
+                      _)
+                    true]
+                  [(CompilerBackendMaybeGepLoadPairAluDivmodStore.No) false]))
+              (not (string.eq src base-home))
+              (not (string.eq src index0-home))
+              (not (string.eq src index1-home)))
+              (let
+                [saved-count : i64 compiler-backend-emit-current-count]
+                [saved-reserved : i64
+                  compiler-backend-current-instr-reserved-mask]
+                [saved0-var : i64 compiler-backend-emit-home-override0-var]
+                [saved0-reg : String compiler-backend-emit-home-override0-reg]
+                [saved1-var : i64 compiler-backend-emit-home-override1-var]
+                [saved1-reg : String compiler-backend-emit-home-override1-reg]
+                [continuation : CompilerIrInstrList (box-get after-div)]
+                [emitted : ResultCompilerBackend
+                  (begin
+                    (compiler-backend-divmod-overrides-install!
+                      alu-dst
+                      src
+                      (match direct-store
+                        [(CompilerBackendMaybeGepLoadPairAluDivmodStore.Some
+                            _
+                            _
+                            _
+                            _
+                            _
+                            _
+                            _)
+                          div-dst]
+                        [(CompilerBackendMaybeGepLoadPairAluDivmodStore.No) -1])
+                      (match direct-store
+                        [(CompilerBackendMaybeGepLoadPairAluDivmodStore.Some
+                            _
+                            _
+                            _
+                            _
+                            _
+                            _
+                            _)
+                          src]
+                        [(CompilerBackendMaybeGepLoadPairAluDivmodStore.No) ""]))
+                    ;; The fused bundle starts at Gep0; div-instr is five IR
+                    ;; instructions later (Load0, Gep1, Load1, producer).
+                    (set! compiler-backend-emit-current-count (- saved-count 5))
+                    (set!
+                      compiler-backend-current-instr-reserved-mask
+                      (compiler-backend-instr-reserved-home-mask div-instr))
+                    (match (compiler-backend-emit-gep-load-pair-alu
+                      ctx.assignments
+                      mnem
+                      alu-dst
+                      addr0
+                      addr1)
+                      [(ResultCompilerBackend.Ok pair-asm)
+                        (match (compiler-backend-emit-instr
+                          ctx
+                          (CompilerBackendMaybeLabel.No)
+                          div-instr)
+                          [(ResultCompilerBackend.Ok div-asm)
+                            (match direct-store
+                              [(CompilerBackendMaybeGepLoadPairAluDivmodStore.Some
+                                  gep-dst
+                                  store-base
+                                  store-offset
+                                  store-elem-ty
+                                  store-value
+                                  store-ty
+                                  after-store)
+                                (begin
+                                  (set!
+                                    compiler-backend-emit-current-count
+                                    (- saved-count 6))
+                                  (match (compiler-backend-emit-divmod-direct-gep-store
+                                    ctx
+                                    gep-dst
+                                    store-base
+                                    store-offset
+                                    store-elem-ty
+                                    store-value
+                                    store-ty)
+                                    [(ResultCompilerBackend.Ok store-asm)
+                                      (begin
+                                        (set!
+                                          continuation
+                                          (box-get after-store))
+                                        (ResultCompilerBackend.Ok
+                                          (string.append
+                                            pair-asm
+                                            (string.append div-asm store-asm))))]
+                                    [(ResultCompilerBackend.Err message)
+                                      (ResultCompilerBackend.Err message)]))]
+                              [(CompilerBackendMaybeGepLoadPairAluDivmodStore.No)
+                                (ResultCompilerBackend.Ok
+                                  (string.append pair-asm div-asm))])]
+                          [(ResultCompilerBackend.Err message)
+                            (ResultCompilerBackend.Err message)])]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)]))]
+                [_restore : unit
+                  (begin
+                    (set! compiler-backend-emit-current-count saved-count)
+                    (set!
+                      compiler-backend-current-instr-reserved-mask
+                      saved-reserved)
+                    (compiler-backend-divmod-overrides-install!
+                      saved0-var
+                      saved0-reg
+                      saved1-var
+                      saved1-reg))]
+                (CompilerBackendMaybeGepLoadPairAluDivmodEmission.Some
+                  (compiler-backend-emit-fused-result-rest
+                    ctx
+                    fallthrough
+                    emitted
+                    continuation
+                    buf)))
+              (CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)))]
+        [_ (CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)])]
+    [_ (CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)]))
+
+(defenum CompilerBackendMaybeGepLoadPairAluEmission
+  (No)
+  (Some ResultCompilerBackend))
+
+(define (compiler-backend-emit-dynamic-gep-load-pair-alu-rest
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [gep-fold-disp : i64]
+  [base : CompilerIrValue]
+  [offset : CompilerIrValue]
+  [elem-ty : AstType]
+  [load-dst : i64]
+  [load-ty : AstType]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : CompilerBackendMaybeGepLoadPairAluEmission
+  ;; The existing general pair path owns constant field offsets. This narrow
+  ;; sibling admits only two dynamic indexed loads followed immediately by the
+  ;; commutative ALU consumer, the stack-binary-op shape in vm-run.
+  (match (compiler-backend-value-as-i64 offset)
+    [(option_i64.Some _) (CompilerBackendMaybeGepLoadPairAluEmission.No)]
+    [(option_i64.None)
+      (match rest
+        [(CompilerIrInstrList.Cons maybe-gep after-gep)
+          (match maybe-gep
+            [(CompilerIrInstr.Gep gep-dst2 base2 offset2 elem-ty2)
+              (if (and
+                (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
+                (opt-value-eq base2 base))
+                (match (compiler-backend-value-as-i64 offset2)
+                  [(option_i64.Some _)
+                    (CompilerBackendMaybeGepLoadPairAluEmission.No)]
+                  [(option_i64.None)
+                    (match (box-get after-gep)
+                      [(CompilerIrInstrList.Cons maybe-load after-load2)
+                        (match maybe-load
+                          [(CompilerIrInstr.Load load-dst2 src2 load-ty2)
+                            (if (compiler-backend-branch-uses-var?
+                              src2
+                              gep-dst2)
+                              ;; Probe with zero before mutating the GAP9 cursor.
+                              ;; A displacement changes only the spelling of an
+                              ;; already-valid SIB operand, never admission.
+                              (match (compiler-backend-gep-load-pair-alu-probe
+                                ctx.assignments
+                                ctx.types
+                                ctx.global-types
+                                ctx.use-counts
+                                base
+                                offset
+                                elem-ty
+                                gep-fold-disp
+                                load-dst
+                                load-ty
+                                offset2
+                                elem-ty2
+                                0
+                                load-dst2
+                                load-ty2
+                                (box-get after-load2))
+                                [(CompilerBackendGepLoadPairAluFold.Some
+                                    _
+                                    _
+                                    _
+                                    _
+                                    _)
+                                  (let
+                                    [gep-fold-disp2 : i64
+                                      (compiler-backend-gep-fold-next!
+                                        offset2
+                                        elem-ty2)]
+                                    (match (compiler-backend-gep-load-pair-alu-probe
+                                      ctx.assignments
+                                      ctx.types
+                                      ctx.global-types
+                                      ctx.use-counts
+                                      base
+                                      offset
+                                      elem-ty
+                                      gep-fold-disp
+                                      load-dst
+                                      load-ty
+                                      offset2
+                                      elem-ty2
+                                      gep-fold-disp2
+                                      load-dst2
+                                      load-ty2
+                                      (box-get after-load2))
+                                      [(CompilerBackendGepLoadPairAluFold.Some
+                                          mnem
+                                          alu-dst
+                                          addr0
+                                          addr1
+                                          after-binop)
+                                        (match (compiler-backend-emit-gep-load-pair-alu-divmod-rest
+                                          ctx
+                                          fallthrough
+                                          mnem
+                                          alu-dst
+                                          addr0
+                                          addr1
+                                          base
+                                          offset
+                                          offset2
+                                          (box-get after-binop)
+                                          buf)
+                                          [(CompilerBackendMaybeGepLoadPairAluDivmodEmission.Some
+                                              result)
+                                            (CompilerBackendMaybeGepLoadPairAluEmission.Some
+                                              result)]
+                                          [(CompilerBackendMaybeGepLoadPairAluDivmodEmission.No)
+                                            (CompilerBackendMaybeGepLoadPairAluEmission.Some
+                                              (compiler-backend-emit-fused-result-rest
+                                                ctx
+                                                fallthrough
+                                                (compiler-backend-emit-gep-load-pair-alu
+                                                  ctx.assignments
+                                                  mnem
+                                                  alu-dst
+                                                  addr0
+                                                  addr1)
+                                                (box-get after-binop)
+                                                buf))])]
+                                      [(CompilerBackendGepLoadPairAluFold.No)
+                                        ;; The zero-displacement probe above
+                                        ;; admitted this exact shape.
+                                        (CompilerBackendMaybeGepLoadPairAluEmission.No)]))]
+                                [(CompilerBackendGepLoadPairAluFold.No)
+                                  (CompilerBackendMaybeGepLoadPairAluEmission.No)])
+                              (CompilerBackendMaybeGepLoadPairAluEmission.No))]
+                          [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)])]
+                      [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)])])
+                (CompilerBackendMaybeGepLoadPairAluEmission.No))]
+            [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)])]
+        [_ (CompilerBackendMaybeGepLoadPairAluEmission.No)])]))
+
 ;; Two-operand memory-form mnemonics only; Mul is excluded (imul mem needs
 ;; the two-operand register form and folds worse than the fused load).
 (define (compiler-backend-gep-load-alu-mnemonic [op : CompilerIrBinOp]) : String
@@ -35974,10 +36506,9 @@
         (box-get after-binop)
         buf)]
     [(CompilerBackendGepLoadAluFold.No)
-      (compiler-backend-emit-fused-gep-load-plain-rest
+      (match (compiler-backend-emit-dynamic-gep-load-pair-alu-rest
         ctx
         fallthrough
-        _gep-dst
         gep-fold-disp
         base
         offset
@@ -35985,7 +36516,21 @@
         load-dst
         load-ty
         rest
-        buf)]))
+        buf)
+        [(CompilerBackendMaybeGepLoadPairAluEmission.Some result) result]
+        [(CompilerBackendMaybeGepLoadPairAluEmission.No)
+          (compiler-backend-emit-fused-gep-load-plain-rest
+            ctx
+            fallthrough
+            _gep-dst
+            gep-fold-disp
+            base
+            offset
+            elem-ty
+            load-dst
+            load-ty
+            rest
+            buf)])]))
 
 (define (compiler-backend-emit-fused-gep-load-plain-rest
   [ctx : CompilerBackendEmissionContext]
@@ -36037,60 +36582,94 @@
                                     ctx.types
                                     ctx.global-types
                                     ctx.use-counts))))
-                              (compiler-backend-emit-fused-result-rest
-                                ctx
-                                fallthrough
-                                (let
-                                  ;; GAP9: the pair consumes a SECOND gep;
-                                  ;; advance its ordinal too (const-offset
-                                  ;; geps never fold, so the value is unused).
-                                  [_gep-fold-disp2 : i64
-                                    (compiler-backend-gep-fold-next!
-                                      offset2
-                                      elem-ty2)]
-                                  (compiler-backend-emit-load-from-gep-pair-planned
-                                    ctx.assignments
-                                    base
-                                    offset
-                                    elem-ty
-                                    load-dst
-                                    load-ty
+                              (let
+                                ;; GAP9: the pair consumes a SECOND gep;
+                                ;; advance its ordinal before either pair path.
+                                [gep-fold-disp2 : i64
+                                  (compiler-backend-gep-fold-next!
                                     offset2
-                                    elem-ty2
-                                    load-dst2
-                                    load-ty2
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      0
-                                      0)
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      0
-                                      1)
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      1
-                                      1)
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      2
-                                      0)
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      2
-                                      1)
-                                    (compiler-backend-scratch-plan-register-ahead
-                                      (compiler-backend-runtime-plan-scratch
-                                        ctx.plan)
-                                      3
-                                      1)))
-                                (box-get after-load2)
-                                buf)
+                                    elem-ty2)]
+                                (match (compiler-backend-gep-load-pair-alu-probe
+                                  ctx.assignments
+                                  ctx.types
+                                  ctx.global-types
+                                  ctx.use-counts
+                                  base
+                                  offset
+                                  elem-ty
+                                  gep-fold-disp
+                                  load-dst
+                                  load-ty
+                                  offset2
+                                  elem-ty2
+                                  gep-fold-disp2
+                                  load-dst2
+                                  load-ty2
+                                  (box-get after-load2))
+                                  [(CompilerBackendGepLoadPairAluFold.Some
+                                      mnem
+                                      alu-dst
+                                      addr0
+                                      addr1
+                                      after-binop)
+                                    (compiler-backend-emit-fused-result-rest
+                                      ctx
+                                      fallthrough
+                                      (compiler-backend-emit-gep-load-pair-alu
+                                        ctx.assignments
+                                        mnem
+                                        alu-dst
+                                        addr0
+                                        addr1)
+                                      (box-get after-binop)
+                                      buf)]
+                                  [(CompilerBackendGepLoadPairAluFold.No)
+                                    (compiler-backend-emit-fused-result-rest
+                                      ctx
+                                      fallthrough
+                                      (compiler-backend-emit-load-from-gep-pair-planned
+                                        ctx.assignments
+                                        base
+                                        offset
+                                        elem-ty
+                                        load-dst
+                                        load-ty
+                                        offset2
+                                        elem-ty2
+                                        load-dst2
+                                        load-ty2
+                                        (compiler-backend-scratch-plan-register-ahead
+                                          (compiler-backend-runtime-plan-scratch
+                                            ctx.plan)
+                                          0
+                                          0)
+                                        (compiler-backend-scratch-plan-register-ahead
+                                          (compiler-backend-runtime-plan-scratch
+                                            ctx.plan)
+                                          0
+                                          1)
+                                        (compiler-backend-scratch-plan-register-ahead
+                                          (compiler-backend-runtime-plan-scratch
+                                            ctx.plan)
+                                          1
+                                          1)
+                                        (compiler-backend-scratch-plan-register-ahead
+                                          (compiler-backend-runtime-plan-scratch
+                                            ctx.plan)
+                                          2
+                                          0)
+                                        (compiler-backend-scratch-plan-register-ahead
+                                          (compiler-backend-runtime-plan-scratch
+                                            ctx.plan)
+                                          2
+                                          1)
+                                        (compiler-backend-scratch-plan-register-ahead
+                                          (compiler-backend-runtime-plan-scratch
+                                            ctx.plan)
+                                          3
+                                          1))
+                                      (box-get after-load2)
+                                      buf)]))
                               (compiler-backend-emit-fused-result-rest
                                 ctx
                                 fallthrough
@@ -37570,24 +38149,43 @@
                   offset-home)
                 ""))))])))
 
-;; An emergency SRC is preserved around the complete Div/Mod+Gep+StorePtr
-;; bundle.  That preservation cannot restore a register before the fused store,
-;; so SRC must not also be one of the store address inputs.
-(define (compiler-backend-divmod-direct-gep-store-src-safe?
+;; A direct Gep+StorePtr remains inside the divmod emergency-save region, so
+;; every address input must survive the complete expansion.  Compare physical
+;; register homes against the expansion's full write set: fixed %rax/%rdx, the
+;; selected dividend/result SRC, and the materialised magic/mask register (when
+;; one is needed).  A rejected store resumes at Gep after the emergency restores.
+(define (compiler-backend-divmod-direct-gep-store-clobber-safe?
   [assignments : CompilerRegAssignmentList]
   [src : String]
+  [magic : String]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]) : bool
-  (and
-    (not
-      (string.eq src (compiler-backend-value-scalar-register assignments base)))
-    (match (compiler-backend-value-as-i64 offset)
-      [(option_i64.Some _) true]
-      [(option_i64.None)
-        (not
-          (string.eq
-            src
-            (compiler-backend-value-scalar-register assignments offset)))])))
+  (let
+    [base-home : String
+      (match (compiler-backend-value-as-i64 offset)
+        [(option_i64.Some _)
+          (compiler-backend-value-register-home assignments base)]
+        [(option_i64.None)
+          (compiler-backend-address-base-filter
+            (compiler-backend-value-scalar-register assignments base))])]
+    [offset-home : String
+      (match (compiler-backend-value-as-i64 offset)
+        [(option_i64.Some _) ""]
+        [(option_i64.None)
+          (compiler-backend-value-scalar-register assignments offset)])]
+    [address-mask : i64
+      (bit-or
+        (compiler-backend-scavenge-reg-bit base-home)
+        (compiler-backend-scavenge-reg-bit offset-home))]
+    [clobber-mask : i64
+      (bit-or
+        (bit-or
+          (compiler-backend-scavenge-reg-bit "%rax")
+          (compiler-backend-scavenge-reg-bit "%rdx"))
+        (bit-or
+          (compiler-backend-scavenge-reg-bit src)
+          (compiler-backend-scavenge-reg-bit magic)))]
+    (= (bit-and address-mask clobber-mask) 0)))
 
 ;; The divmod emitter can discover an emergency scratch after the polish SRC
 ;; has been selected.  Restore any borrowed address input before the fused
@@ -37635,7 +38233,8 @@
   [ctx : CompilerBackendEmissionContext]
   [dst : i64]
   [lhs : CompilerIrValue]
-  [planned-magic : String]
+  [magic : String]
+  [hoist-reg : String]
   [planned-src : String]
   [allow-own : bool]
   [scavenge-dst : i64]) : String
@@ -37647,14 +38246,18 @@
       (and
         allow-own
         (compiler-backend-divmod-src-register? lhs-home)
-        (not (string.eq lhs-home planned-magic))
+        (not (string.eq lhs-home magic))
+        (not (string.eq lhs-home hoist-reg))
         (not (compiler-backend-value-live-after-here? lhs)))]
     [dst-src? : bool
       (and
         (not own-src?)
         (compiler-backend-divmod-src-register? dst-home)
-        (not (string.eq dst-home planned-magic))
+        (not (string.eq dst-home magic))
+        (not (string.eq dst-home hoist-reg))
         (not (string.eq dst-home lhs-home)))]
+    [src-exclude : (Array String)
+      (compiler-backend-divmod-dividend-exclude magic)]
     (cond
       [own-src? lhs-home]
       [dst-src? dst-home]
@@ -37662,8 +38265,106 @@
       [else
         (compiler-backend-scavenge-divmod-src-reg
           scavenge-dst
-          (compiler-backend-divmod-dividend-exclude planned-magic)
-          5)])))
+          (if (string.eq hoist-reg "")
+            src-exclude
+            (compiler-backend-scavenge-exclude-append src-exclude 5 hoist-reg))
+          (if (string.eq hoist-reg "")
+            5
+            6))])))
+
+;; Resolve the materialisation register with the same point, exclusions, and
+;; fallback as emit-signed-literal-divmod-dst-with-plan, but without reserving an
+;; emergency slot.  Admission needs the exact physical write set before deciding
+;; whether a following direct store can remain inside the divmod save region.
+(define (compiler-backend-divmod-polish-magic-here
+  [_ctx : CompilerBackendEmissionContext]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [planned-magic : String]) : String
+  (let
+    [hoist : CompilerBackendConstHoistHome (compiler-backend-const-hoist-here)]
+    [hoist-reg : String (compiler-backend-magic-home-reg-name hoist)]
+    (if (compiler-backend-signed-literal-divmod-needs-material-reg?
+      rhs
+      ty
+      (compiler-backend-binop-wants-remainder? op)
+      hoist)
+      (if (string.eq planned-magic "")
+        (compiler-backend-scavenge-reg-peek
+          dst
+          (if (string.eq hoist-reg "")
+            (compiler-backend-binop-scavenge-exclude-for-op op)
+            (compiler-backend-scavenge-exclude-append
+              (compiler-backend-binop-scavenge-exclude-for-op op)
+              5
+              hoist-reg))
+          (if (string.eq hoist-reg "")
+            5
+            6)
+          "%r8")
+        planned-magic)
+      "")))
+
+(define (compiler-backend-divmod-polish-magic-ahead
+  [ctx : CompilerBackendEmissionContext]
+  [div-instr : CompilerIrInstr]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [instruction-offset : i64]
+  [planned-magic : String]) : String
+  (let
+    [saved-count : i64 compiler-backend-emit-current-count]
+    [saved-reserved : i64 compiler-backend-current-instr-reserved-mask]
+    [_position : unit
+      (begin
+        (set!
+          compiler-backend-emit-current-count
+          (- saved-count instruction-offset))
+        (set!
+          compiler-backend-current-instr-reserved-mask
+          (compiler-backend-instr-reserved-home-mask div-instr)))]
+    [magic : String
+      (compiler-backend-divmod-polish-magic-here
+        ctx
+        dst
+        op
+        rhs
+        ty
+        planned-magic)]
+    [_restore : unit
+      (begin
+        (set! compiler-backend-emit-current-count saved-count)
+        (set! compiler-backend-current-instr-reserved-mask saved-reserved))]
+    magic))
+
+;; The resident loop-hoisted magic is a read-only input rather than a clobber,
+;; but SRC must still avoid it exactly as the ordinary divmod emitter does.
+;; Resolve it at the divmod instruction rather than the earlier fused producer.
+(define (compiler-backend-divmod-polish-hoist-reg-ahead
+  [div-instr : CompilerIrInstr]
+  [instruction-offset : i64]) : String
+  (let
+    [saved-count : i64 compiler-backend-emit-current-count]
+    [saved-reserved : i64 compiler-backend-current-instr-reserved-mask]
+    [_position : unit
+      (begin
+        (set!
+          compiler-backend-emit-current-count
+          (- saved-count instruction-offset))
+        (set!
+          compiler-backend-current-instr-reserved-mask
+          (compiler-backend-instr-reserved-home-mask div-instr)))]
+    [hoist-reg : String
+      (compiler-backend-magic-home-reg-name (compiler-backend-const-hoist-here))]
+    [_restore : unit
+      (begin
+        (set! compiler-backend-emit-current-count saved-count)
+        (set! compiler-backend-current-instr-reserved-mask saved-reserved))]
+    hoist-reg))
 
 (define (compiler-backend-divmod-overrides-install!
   [first-var : i64]
@@ -37973,6 +38674,7 @@
   [div-instr : CompilerIrInstr]
   [div-dst : i64]
   [src : String]
+  [magic : String]
   [after-div : CompilerIrInstrList]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (if (compiler-backend-var-single-use? ctx.use-counts div-dst)
@@ -37995,9 +38697,10 @@
                           elem-ty
                           store-ptr
                           store-value)
-                        (compiler-backend-divmod-direct-gep-store-src-safe?
+                        (compiler-backend-divmod-direct-gep-store-clobber-safe?
                           ctx.assignments
                           src
+                          magic
                           base
                           offset))
                         (compiler-backend-emit-steered-producer-divmod-gep-store-rest
@@ -38122,24 +38825,42 @@
                               compiler-backend-current-instr-reserved-mask
                               (compiler-backend-instr-reserved-home-mask
                                 div-instr))]
+                          [planned-magic : String
+                            (compiler-backend-scratch-plan-register-ahead
+                              (compiler-backend-runtime-plan-scratch ctx.plan)
+                              0
+                              2)]
+                          [magic : String
+                            (compiler-backend-divmod-polish-magic-ahead
+                              ctx
+                              div-instr
+                              div-dst
+                              div-op
+                              div-rhs
+                              div-ty
+                              0
+                              planned-magic)]
+                          [hoist-reg : String
+                            (compiler-backend-divmod-polish-hoist-reg-ahead
+                              div-instr
+                              0)]
                           [src : String
                             (compiler-backend-divmod-polish-src
                               ctx
                               div-dst
                               div-lhs
-                              (compiler-backend-scratch-plan-register-ahead
-                                (compiler-backend-runtime-plan-scratch ctx.plan)
-                                0
-                                2)
+                              magic
+                              hoist-reg
                               (compiler-backend-scratch-plan-register-ahead
                                 (compiler-backend-runtime-plan-scratch ctx.plan)
                                 0
                                 3)
                               true
                               div-dst)]
-                          (if (compiler-backend-divmod-direct-gep-store-src-safe?
+                          (if (compiler-backend-divmod-direct-gep-store-clobber-safe?
                             ctx.assignments
                             src
+                            magic
                             base
                             offset)
                             (CompilerBackendMaybeDivmodPolish.Some
@@ -38199,15 +38920,30 @@
                     (set!
                       compiler-backend-current-instr-reserved-mask
                       (compiler-backend-instr-reserved-home-mask instr))]
+                  [planned-magic : String
+                    (compiler-backend-scratch-plan-register-ahead
+                      (compiler-backend-runtime-plan-scratch ctx.plan)
+                      1
+                      2)]
+                  [magic : String
+                    (compiler-backend-divmod-polish-magic-ahead
+                      ctx
+                      next
+                      div-dst
+                      div-op
+                      div-rhs
+                      div-ty
+                      1
+                      planned-magic)]
+                  [hoist-reg : String
+                    (compiler-backend-divmod-polish-hoist-reg-ahead next 1)]
                   [src : String
                     (compiler-backend-divmod-polish-src
                       ctx
                       div-dst
                       div-lhs
-                      (compiler-backend-scratch-plan-register-ahead
-                        (compiler-backend-runtime-plan-scratch ctx.plan)
-                        1
-                        2)
+                      magic
+                      hoist-reg
                       (compiler-backend-scratch-plan-register-ahead
                         (compiler-backend-runtime-plan-scratch ctx.plan)
                         1
@@ -38223,6 +38959,7 @@
                       next
                       div-dst
                       src
+                      magic
                       (box-get after-div)
                       buf)))
                 (compiler-backend-try-divmod-result-gep-store
@@ -41287,6 +42024,27 @@
           (set! i (+ i 1))))
       acc)))
 
+;; Shrink-wrapping is assembled with three textual splices.  A missing needle
+;; must fail closed: the caller re-emits the original function with the
+;; early-exit rewrite disabled, restoring the ordinary always-framed path.
+;; Each admitted replacement changes the byte length (the incoming guard,
+;; saving prologue, and selected prologue all differ from their needles), so
+;; length equality is a cheap, allocation-free proof that a splice did not
+;; fire.
+(define (compiler-backend-shrinkwrap-splice-fallback-required?
+  [active? : bool]
+  [body : String]
+  [guarded-body : String]
+  [framed-body : String]
+  [final-body : String]
+  [emitted-body : String]) : bool
+  (and
+    active?
+    (or
+      (= (string.string-length body) (string.string-length guarded-body))
+      (= (string.string-length guarded-body) (string.string-length framed-body))
+      (= (string.string-length final-body) (string.string-length emitted-body)))))
+
 (define (compiler-backend-set-scavenge-ctx-ready!
   [starts : (Array i64)]
   [ends : (Array i64)]
@@ -41944,6 +42702,106 @@
           " point="
           (int->string point)
           " -- pick returned an occupied register (no free scratch)")))))
+
+;; Side-effect-free twin of the GP picker for fusion admission.  It predicts the
+;; exact register the ordinary scavenger will return, including its emergency
+;; tier, without adding a pending save that would leak when the fusion rejects.
+(define (compiler-backend-scavenge-pick-iter-peek
+  [occupied-mask : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [exclude-mask : i64]
+  [plan-mask : i64]
+  [fallback : String]
+  [cands : (Array String)]
+  [i : i64]
+  [n : i64]) : String
+  (if (>= i n)
+    (let
+      [emidx : i64
+        (compiler-backend-scavenge-emergency-cand-index
+          exclude
+          exclude-n
+          exclude-mask
+          occupied-mask
+          fallback
+          cands
+          n)]
+      (if (< emidx 0)
+        fallback
+        (array-ref cands emidx)))
+    (if (compiler-backend-scavenge-candidate-ok?
+      occupied-mask
+      exclude-mask
+      plan-mask
+      (array-ref cands i))
+      (array-ref cands i)
+      (compiler-backend-scavenge-pick-iter-peek
+        occupied-mask
+        exclude
+        exclude-n
+        exclude-mask
+        plan-mask
+        fallback
+        cands
+        (+ i 1)
+        n))))
+
+(define (compiler-backend-scavenge-pick-with-mask-peek
+  [occupied-mask : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]) : String
+  (let
+    [exclude-mask : i64
+      (compiler-backend-scavenge-exclude-mask exclude exclude-n)]
+    (if (and
+      (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
+      (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
+      fallback
+      (compiler-backend-scavenge-pick-iter-peek
+        occupied-mask
+        exclude
+        exclude-n
+        exclude-mask
+        compiler-backend-scavenge-ctx-plan-reg-mask
+        fallback
+        compiler-backend-scavenge-candidate-pool
+        0
+        (array-length compiler-backend-scavenge-candidate-pool)))))
+
+(define (compiler-backend-scavenge-reg-peek
+  [dst-var : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]) : String
+  (let
+    [point : i64
+      (*
+        2
+        (-
+          compiler-backend-emit-instr-post-base
+          compiler-backend-emit-current-count))]
+    [hi-point : i64 (+ point compiler-backend-scavenge-staging-window)]
+    [dst-home : String
+      (if (and (>= dst-var 0) (< dst-var compiler-backend-scavenge-ctx-vars))
+        (compiler-backend-var-register-home-index
+          compiler-backend-scavenge-ctx-assignment-index
+          dst-var)
+        "")]
+    [ex : (Array String)
+      (if (string.eq dst-home "")
+        exclude
+        (compiler-backend-scavenge-exclude-append exclude exclude-n dst-home))]
+    [ex-n : i64
+      (if (string.eq dst-home "")
+        exclude-n
+        (+ exclude-n 1))]
+    (compiler-backend-scavenge-pick-with-mask-peek
+      (compiler-backend-scavenge-occupied-mask-over-range point hi-point)
+      ex
+      ex-n
+      fallback)))
 
 ;; Return a register free at dst-var's def point (via the proven query),
 ;; excluding `exclude`, preferring `fallback`. If the preferred register is
@@ -45355,7 +46213,8 @@
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
   [crt-entry : bool]
-  [allow-rbp : bool]) : ResultCompilerBackend
+  [allow-rbp : bool]
+  [shrinkwrap-enabled : bool]) : ResultCompilerBackend
   (match func
     [(CompilerIrFunction.Function name params ret-ty vars raw-blocks)
       ;; The provenance fallback diagnostic for this function: backend
@@ -45381,6 +46240,7 @@
                 vars
                 folded-blocks)]
             (if (and
+              shrinkwrap-enabled
               (compiler-backend-mode-scalar? mode)
               compiler-backend-scalar-registers-enabled)
               (compiler-reg-early-exit-shrinkwrap-function folded-func)
@@ -45784,15 +46644,18 @@
         [shrinkwrap-incoming-guard : String
           (if (string.eq shrinkwrap-bare-label "")
             ""
-            (compiler-backend-shrinkwrap-guard-asm
-              fn-abi
-              params
-              scratch-vars
-              assignments
-              label-scope
-              emit-blocks-list
-              shrinkwrap-bare-label
-              true))]
+            (str_cat.str-cat
+              (compiler-backend-shrinkwrap-guard-asm
+                fn-abi
+                params
+                scratch-vars
+                assignments
+                label-scope
+                emit-blocks-list
+                shrinkwrap-bare-label
+                true)
+              "    # shrinkwrap incoming guard\n"
+              ""))]
         [shrinkwrap-candidate? : bool
           (and
             (not (string.eq shrinkwrap-saving-label ""))
@@ -46190,7 +47053,8 @@
                                 span-index
                                 emit-entry
                                 crt-entry
-                                false))
+                                false
+                                shrinkwrap-enabled))
                             (let
                               [_fpo-census : unit
                                 (if fpo-ok
@@ -46284,23 +47148,50 @@
                                     (str_cat.str-cat saving-asm-label ":\n" "")
                                     selected-prologue)
                                   final-body)]
-                              (ResultCompilerBackend.Ok
-                                (str_cat.str-cat
-                                  (compiler-backend-function-symbol-map-comment
-                                    program-index
-                                    name)
-                                  ".globl "
-                                  symbol
-                                  "\n"
-                                  (if shrinkwrap-active?
-                                    (str_cat.str-cat symbol ":\n" "")
-                                    selected-prologue)
-                                  ""
-                                  ""
-                                  emitted-body
-                                  (compiler-backend-emit-windows-seh-endproc
-                                    target)
-                                  "\n"))))))]
+                              (if (compiler-backend-shrinkwrap-splice-fallback-required?
+                                shrinkwrap-active?
+                                body
+                                guarded-body
+                                framed-body
+                                final-body
+                                emitted-body)
+                                ;; A textual invariant drifted. Re-run the full
+                                ;; pre-C21 pipeline so the IR split, bare return,
+                                ;; register plan, and prologue placement are all
+                                ;; consistently disabled together.
+                                (compiler-backend-emit-function
+                                  target
+                                  mode
+                                  func
+                                  functions
+                                  globals
+                                  global-types
+                                  externs
+                                  plan
+                                  program-index
+                                  spans
+                                  span-index
+                                  emit-entry
+                                  crt-entry
+                                  allow-rbp
+                                  false)
+                                (ResultCompilerBackend.Ok
+                                  (str_cat.str-cat
+                                    (compiler-backend-function-symbol-map-comment
+                                      program-index
+                                      name)
+                                    ".globl "
+                                    symbol
+                                    "\n"
+                                    (if shrinkwrap-active?
+                                      (str_cat.str-cat symbol ":\n" "")
+                                      selected-prologue)
+                                    ""
+                                    ""
+                                    emitted-body
+                                    (compiler-backend-emit-windows-seh-endproc
+                                      target)
+                                    "\n")))))))]
                     [(ResultCompilerBackend.Err message)
                       (let
                         [_addr-forward-done : unit
@@ -46404,6 +47295,7 @@
           span-index
           emit-entry
           crt-entry
+          true
           true))]
     (begin
       (compiler-backend-user-symbol-cache-reset!)
@@ -46445,6 +47337,7 @@
           span-index
           emit-entry
           crt-entry
+          true
           true)
         (compiler-backend-emit-function-scratch
           target
@@ -59486,10 +60379,63 @@ tl_comptime_host_invoke_set:
     (string.eq (compiler-backend-runtime-concat-functions) "")
     (string.eq (compiler-backend-runtime-windows-concat-functions) "")))
 
+;; Backend-smoke regression for the fail-closed splice predicate.  Exercise a
+;; missing needle at each of the three stages, plus the fully replaced and
+;; inactive cases used by ordinary function emission.
+(define (compiler-backend-shrinkwrap-splice-fallback-ok?) : bool
+  (let
+    [body : String "guard\nsave:\n"]
+    [guarded : String (string.replace body "guard\n" "incoming-guard\n")]
+    [framed : String (string.replace guarded "save:\n" "save:\nprologue\n")]
+    [final-body : String (string.append "mode\n" framed)]
+    [emitted : String
+      (string.replace final-body "save:\n" "selected-prologue\n")]
+    [missing-guard : String
+      (string.replace body "absent-guard\n" "incoming-guard\n")]
+    (and
+      (compiler-backend-shrinkwrap-splice-fallback-required?
+        true
+        body
+        missing-guard
+        framed
+        final-body
+        emitted)
+      (compiler-backend-shrinkwrap-splice-fallback-required?
+        true
+        body
+        guarded
+        guarded
+        final-body
+        emitted)
+      (compiler-backend-shrinkwrap-splice-fallback-required?
+        true
+        body
+        guarded
+        framed
+        final-body
+        final-body)
+      (not
+        (compiler-backend-shrinkwrap-splice-fallback-required?
+          true
+          body
+          guarded
+          framed
+          final-body
+          emitted))
+      (not
+        (compiler-backend-shrinkwrap-splice-fallback-required?
+          false
+          body
+          body
+          body
+          body
+          body)))))
+
 (define (compiler-backend-runtime-helper-asm-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-runtime-helper-source))
     [(ResultCompilerBackend.Ok asm)
       (and
+        (compiler-backend-shrinkwrap-splice-fallback-ok?)
         (compiler-backend-runtime-string-helper-generators-empty?)
         (backend-and8
           (compiler-backend-string-contains? asm ".globl tl_alloc\n")

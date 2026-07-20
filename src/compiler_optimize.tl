@@ -37077,7 +37077,15 @@
   (if (or
     (> (array-ref (struct-get context planned) var) 0)
     (> (array-ref (struct-get context base-allowed) var) 0)
-    (> (array-ref (struct-get context leaf-uses) var) 0))
+    (> (array-ref (struct-get context leaf-uses) var) 0)
+    ;; The backward slice of the source terminator is already live at the
+    ;; dispatch. Reusing one of its address producers in the selected arm
+    ;; cannot extend that producer's live range, and avoids pointlessly
+    ;; cloning `base + iv*scale` for a payload beside the tag load.
+    (and
+      (struct-get context source-loop-target)
+      (> (array-ref (struct-get context terminator-live) var) 0)
+      (<= (array-ref (struct-get context loop-phi-leaves) var) 0)))
     true
     (let
       [def-tag : i64 (array-ref (struct-get context defs) var)]

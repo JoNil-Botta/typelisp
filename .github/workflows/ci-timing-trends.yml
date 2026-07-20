@@ -1,0 +1,27 @@
+name: CI Timing Trends
+
+on:
+  schedule:
+    - cron: '27 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: ci-timing-trends
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    name: Analyze CI timing trends
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Analyze successful pull-request timing artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/analyze-ci-timing-trends.sh --collect "$GITHUB_REPOSITORY" target/ci-timing-trends

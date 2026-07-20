@@ -108,4 +108,6 @@ if [ -r /proc/uptime ]; then
     echo "CI timing wrapper overhead: ${overhead_elapsed}ms for 200 rows"
 fi
 
+scripts/analyze-ci-timing-trends.sh --self-test
+
 echo "CI timing helper self-tests passed"

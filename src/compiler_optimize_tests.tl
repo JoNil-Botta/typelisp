@@ -427,7 +427,99 @@
     [(CompilerMaybeSourceSpan.No) true]))
 
 (define (opt-test-symbol [name : String]) : i64
-  (compiler-ir-test-symbol name))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (compiler-ir-test-symbol name)))
+
+(define (compiler-optimize-runtime-call-identity-self-test) : i64
+  (let
+    [generated-alloc : i64 (opt-test-symbol "tl_alloc")]
+    [generated-abort : i64 (opt-test-symbol ".L_tl_abort")]
+    [generated-arena : i64 (opt-test-symbol "arena-current")]
+    [runtime-alloc : CompilerIrInstr
+      (CompilerIrInstr.Call
+        91
+        cbi.compiler-builtin-id-tl-alloc
+        (CompilerIrCallArgs.One (CompilerIrValue.I64 16))
+        (AstType.Struct (intern "RuntimePair")))]
+    [hygienic-alloc : CompilerIrInstr
+      (CompilerIrInstr.Call
+        92
+        generated-alloc
+        (CompilerIrCallArgs.One (CompilerIrValue.I64 16))
+        (AstType.Struct (intern "HygienicPair")))]
+    [runtime-abort : CompilerIrInstr
+      (CompilerIrInstr.Call
+        93
+        cbi.compiler-builtin-id-tl-abort-label
+        (CompilerIrCallArgs.Nil)
+        (AstType.Unit))]
+    [hygienic-abort : CompilerIrInstr
+      (CompilerIrInstr.Call
+        94
+        generated-abort
+        (CompilerIrCallArgs.Nil)
+        (AstType.Unit))]
+    [runtime-facts : OptAliasFacts
+      (opt-alias-update-value-facts (opt-alias-empty) runtime-alloc)]
+    [hygienic-facts : OptAliasFacts
+      (opt-alias-update-value-facts (opt-alias-empty) hygienic-alloc)]
+    (cond
+      [(= generated-alloc cbi.compiler-builtin-id-tl-alloc) 1]
+      [(not
+          (string.eq
+            (compiler-ir-symbol-text generated-alloc)
+            (compiler-ir-symbol-text cbi.compiler-builtin-id-tl-alloc)))
+        2]
+      [(not
+          (compiler-ir-symbol-eq?
+            cbi.compiler-builtin-id-tl-alloc
+            cbi.compiler-builtin-id-tl-alloc))
+        15]
+      [(compiler-ir-symbol-eq? generated-alloc cbi.compiler-builtin-id-tl-alloc)
+        16]
+      [(not
+          (compiler-ir-effect-eq?
+            (compiler-ir-instr-effect runtime-alloc)
+            CompilerIrEffect.MemoryWrite))
+        3]
+      [(not
+          (compiler-ir-effect-eq?
+            (compiler-ir-instr-effect hygienic-alloc)
+            CompilerIrEffect.Unknown))
+        4]
+      [(match (opt-aggregate-direct-alloc runtime-alloc)
+          [(OptMaybeAggregateAlloc.Some _ _ _) false]
+          [(OptMaybeAggregateAlloc.No) true])
+        5]
+      [(match (opt-aggregate-direct-alloc hygienic-alloc)
+          [(OptMaybeAggregateAlloc.No) false]
+          [(OptMaybeAggregateAlloc.Some _ _ _) true])
+        6]
+      [(match (opt-scratch-direct-alloc runtime-alloc)
+          [(OptScratchAlloc.Alloc _ _) false]
+          [(OptScratchAlloc.NoAlloc) true])
+        7]
+      [(match (opt-scratch-direct-alloc hygienic-alloc)
+          [(OptScratchAlloc.NoAlloc) false]
+          [(OptScratchAlloc.Alloc _ _) true])
+        8]
+      [(match (opt-alias-lookup runtime-facts 91)
+          [(OptMaybeAliasKind.Some kind)
+            (not (opt-alias-kind-eq kind (OptAliasKind.Unique)))]
+          [(OptMaybeAliasKind.No) true])
+        9]
+      [(match (opt-alias-lookup hygienic-facts 92)
+          [(OptMaybeAliasKind.No) false]
+          [(OptMaybeAliasKind.Some _) true])
+        10]
+      [(not (opt-licm-return-staging-instr? runtime-abort)) 11]
+      [(opt-licm-return-staging-instr? hygienic-abort) 12]
+      [(not
+          (opt-scratch-arena-helper-call? cbi.compiler-builtin-id-arena-current))
+        13]
+      [(opt-scratch-arena-helper-call? generated-arena) 14]
+      [else 42])))
 
 (define (opt-spans-function-with-frame
   [instrs : CompilerIrInstrList]
@@ -942,7 +1034,7 @@
 (define (opt-aggregate-test-alloc) : CompilerIrInstr
   (CompilerIrInstr.Call
     1
-    (opt-test-symbol "tl_alloc")
+    cbi.compiler-builtin-id-tl-alloc
     (CompilerIrCallArgs.One (CompilerIrValue.I64 16))
     (AstType.Struct (intern "Pair"))))
 
@@ -1335,7 +1427,7 @@
   (compiler-ir-instr-cons
     (CompilerIrInstr.Call
       1
-      (opt-test-symbol "tl_alloc")
+      cbi.compiler-builtin-id-tl-alloc
       (CompilerIrCallArgs.One (CompilerIrValue.I64 16))
       (ast-ty-array (AstType.I64) 2))
     (compiler-ir-instr-cons
@@ -1372,7 +1464,7 @@
       (+
         (match instr
           [(CompilerIrInstr.Call _ name _ _)
-            (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+            (if (= name cbi.compiler-builtin-id-tl-alloc)
               1
               0)]
           [_ 0])
@@ -14216,7 +14308,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               12
-              (opt-test-symbol "tl_alloc")
+              cbi.compiler-builtin-id-tl-alloc
               (CompilerIrCallArgs.Nil)
               (AstType.U64))
             (compiler-ir-instr-cons
@@ -14282,7 +14374,7 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               12
-              (opt-test-symbol "tl_alloc")
+              cbi.compiler-builtin-id-tl-alloc
               (CompilerIrCallArgs.One (CompilerIrValue.I64 16))
               (AstType.DynArray 0))
             (compiler-ir-instr-cons
@@ -19446,7 +19538,7 @@
 (define (opt-scratch-test-alloc) : CompilerIrInstr
   (CompilerIrInstr.Call
     1
-    (opt-test-symbol "tl_alloc")
+    cbi.compiler-builtin-id-tl-alloc
     (CompilerIrCallArgs.One (CompilerIrValue.I64 32))
     (AstType.U64)))
 
@@ -19548,7 +19640,7 @@
 (define (opt-scratch-reset-unknown-alloc) : CompilerIrInstr
   (CompilerIrInstr.Call
     1
-    (opt-test-symbol "tl_alloc")
+    cbi.compiler-builtin-id-tl-alloc
     (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
     (AstType.U64)))
 
@@ -19789,7 +19881,7 @@
           (opt-scratch-test-one-block
             (CompilerIrInstr.Call
               9
-              (opt-test-symbol "tl_region_mark")
+              cbi.compiler-builtin-id-tl-region-mark
               (CompilerIrCallArgs.Nil)
               (AstType.I64))))]
       [return-blocked : OptScratchScopeReport
@@ -20830,7 +20922,7 @@
   (compiler-ir-instr-cons
     (CompilerIrInstr.Call
       4
-      (opt-test-symbol "tl_alloc")
+      cbi.compiler-builtin-id-tl-alloc
       (CompilerIrCallArgs.Nil)
       (AstType.U64))
     (compiler-ir-instr-cons

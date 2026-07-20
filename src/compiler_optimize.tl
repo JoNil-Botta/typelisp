@@ -2811,7 +2811,7 @@
   (match instr
     [(CompilerIrInstr.Call dst name args ty)
       (if (and
-        (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+        (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (opt-aggregate-fixed-type? ty))
         (match (opt-aggregate-tl-alloc-size args)
           [(option_i64.Some size)
@@ -3171,7 +3171,9 @@
   [ptrs : opt_aggregate_pointer_vec.Vec]) : bool
   (match instr
     [(CompilerIrInstr.Call dst name _ _)
-      (and (= dst base) (string.eq (compiler-ir-symbol-text name) "tl_alloc"))]
+      (and
+        (= dst base)
+        (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc))]
     [(CompilerIrInstr.Gep _ src offset _)
       (match (opt-aggregate-value-offset base ptrs src)
         [(option_i64.Some _)
@@ -15925,7 +15927,7 @@
     (& direct-call-clean)
     (compiler-ir-symbol-id name))
     (opt-licm-store-summary-empty)
-    (match (compiler-ir-direct-call-effect (compiler-ir-symbol-text name))
+    (match (compiler-ir-direct-call-effect-id name)
       [(CompilerIrEffect.MemoryRead) (opt-licm-store-summary-empty)]
       [(CompilerIrEffect.MemoryWrite)
         (opt-licm-store-summary-header-or-unknown-store)]
@@ -16110,7 +16112,7 @@
     ;; opt-licm-provenance-state-instr immediately after this update.
     [(CompilerIrInstr.Load dst _ _) (opt-licm-root-env-remove! env dst)]
     [(CompilerIrInstr.Call dst name _ _)
-      (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+      (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
         unit)]
     [_ unit]))
@@ -17082,7 +17084,7 @@
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [(CompilerIrInstr.Store _ _ _) true]
     [(CompilerIrInstr.Call _ name _ _)
-      (compiler-ir-runtime-control-flow? (compiler-ir-symbol-text name))]
+      (compiler-ir-runtime-control-flow-id? name)]
     [(CompilerIrInstr.Jump _) true]
     ;; a Branch is only ever a terminator; the walk itself validates both
     ;; of its arms.
@@ -45589,7 +45591,7 @@
   (or
     (opt_i64_i64_map.contains? (& clean) (compiler-ir-symbol-id name))
     (opt-loop-bce-direct-call-clean-effect?
-      (compiler-ir-direct-call-effect (compiler-ir-symbol-text name)))))
+      (compiler-ir-direct-call-effect-id name))))
 
 (define (opt-loop-bce-direct-call-clean-instr?
   [clean : opt_i64_i64_map.Map]
@@ -45905,7 +45907,7 @@
               [(OptMaybeLicmRoot.Some root)
                 (opt-licm-root-env-bind! roots dst root)])]
           [(CompilerIrInstr.Call _ name _ _)
-            (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+            (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
               (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))
               (opt-licm-root-env-remove! roots dst))]
           [_ (opt-licm-root-env-remove! roots dst)]))]))
@@ -46047,8 +46049,7 @@
             (& function-set)
             (compiler-ir-symbol-id name))
             (OptCallMemoryCandidate.Unresolved)
-            (match (compiler-ir-direct-call-effect
-              (compiler-ir-symbol-text name))
+            (match (compiler-ir-direct-call-effect-id name)
               [(CompilerIrEffect.MemoryRead) candidate]
               [_
                 (OptCallMemoryCandidate.Known
@@ -47788,7 +47789,7 @@
       ;; its returned pointer is nevertheless a fresh root for subsequent
       ;; scalar-store filtering.
       [(CompilerIrInstr.Call dst name _ _)
-        (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+        (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
           (opt-alias-mark-unique base dst)
           base)]
       [(CompilerIrInstr.Load dst _ _) (opt-alias-mark-may-alias base dst)]
@@ -47911,7 +47912,7 @@
     [(CompilerIrInstr.Alloc dst ty)
       (OptScratchAlloc.Alloc dst (opt-scratch-alloc-type-size ty))]
     [(CompilerIrInstr.Call dst name args _)
-      (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+      (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (match (opt-aggregate-tl-alloc-size args)
           [(option_i64.Some size)
             (OptScratchAlloc.Alloc
@@ -47924,21 +47925,19 @@
     [_ (OptScratchAlloc.NoAlloc)]))
 
 (define (opt-scratch-arena-helper-call? [symbol : i64]) : bool
-  (let
-    [name : String (compiler-ir-symbol-text symbol)]
-    (or
-      (string.eq name "arena-current")
-      (string.eq name "arena-mark")
-      (string.eq name "arena-set!")
-      (string.eq name "arena-rewind")
-      (string.eq name "arena-destroy")
-      (string.eq name "tl_region_mark")
-      (string.eq name "tl_region_reset")
-      (string.eq name "tl_arena_make")
-      (string.eq name "tl_arena_current")
-      (string.eq name "tl_arena_set")
-      (string.eq name "tl_arena_destroy")
-      (string.eq name "tl_arena_poison_enable"))))
+  (or
+    (= symbol cbi.compiler-builtin-id-arena-current)
+    (= symbol cbi.compiler-builtin-id-arena-mark)
+    (= symbol cbi.compiler-builtin-id-arena-set-bang)
+    (= symbol cbi.compiler-builtin-id-arena-rewind)
+    (= symbol cbi.compiler-builtin-id-arena-destroy)
+    (= symbol cbi.compiler-builtin-id-tl-region-mark)
+    (= symbol cbi.compiler-builtin-id-tl-region-reset)
+    (= symbol cbi.compiler-builtin-id-tl-arena-make)
+    (= symbol cbi.compiler-builtin-id-tl-arena-current)
+    (= symbol cbi.compiler-builtin-id-tl-arena-set)
+    (= symbol cbi.compiler-builtin-id-tl-arena-destroy)
+    (= symbol cbi.compiler-builtin-id-tl-arena-poison-enable)))
 
 (define (opt-scratch-var-derived?
   [roots : OptScratchRootList]
@@ -50933,8 +50932,7 @@
                 (OptLoadTable.Nil)
                 (opt-load-table-filter-call-writes table facts args summary 0))]
             [(opt_i64_i64_map.LookupMissing)
-              (match (compiler-ir-direct-call-effect
-                (compiler-ir-symbol-text name))
+              (match (compiler-ir-direct-call-effect-id name)
                 [(CompilerIrEffect.MemoryRead) table]
                 [_ (OptLoadTable.Nil)])])]
         (OptLoadCseState.State

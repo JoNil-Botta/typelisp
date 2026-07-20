@@ -4980,6 +4980,7 @@
 (define (compiler-symbols-dotted-suffix-owner-module-id-ok?) : bool
   (let
     [source-full : i64 (intern "root.branch.leaf")]
+    [source-qualified-full : i64 (intern "module/root.branch.leaf")]
     [source-branch-leaf : i64 (intern "branch.leaf")]
     [source-leaf : i64 (intern "leaf")]
     [source-modules : sym_i64_env.SymI64Env
@@ -5012,6 +5013,7 @@
         generated-root
         generated-root-branch
         generated-branch-leaf)]
+    [generated-opaque-full : i64 (intern-generated-name "root.branch.leaf")]
     [generated-modules : sym_i64_env.SymI64Env
       (sym_i64_env.sym-i64-bind-id
         (sym_i64_env.sym-i64-bind-id
@@ -5038,9 +5040,19 @@
         12)
       (=
         (compiler-symbols-dotted-suffix-owner-module-id
+          source-modules
+          source-qualified-full)
+        11)
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id
           generated-modules
           generated-full)
         21)
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id
+          generated-modules
+          generated-opaque-full)
+        -1)
       (=
         (compiler-symbols-dotted-suffix-owner-module-id
           source-modules

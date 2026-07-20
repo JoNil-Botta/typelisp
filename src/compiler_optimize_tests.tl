@@ -16221,6 +16221,8 @@
 ;; 4 gives the header a total-switch terminator so cloning exercises every
 ;; switch edge, including the compiler trap default. Variant 5 uses the late
 ;; total-enum marker and must remain unversioned by the profitability gate.
+;; Variants 6-9 cover late pairing; 10 lets the smaller affine value escape
+;; through a phi so the paired rewrite must fail verification and roll back.
 (define (opt-bce-mb-test-header-block [variant : i64]) : CompilerIrBlock
   (compiler-ir-block
     "body"
@@ -16265,7 +16267,8 @@
                 (= variant 6)
                 (= variant 7)
                 (= variant 8)
-                (= variant 9))
+                (= variant 9)
+                (= variant 10))
                 (CompilerIrInstr.Switch
                   (CompilerIrValue.Var 5)
                   0
@@ -16281,14 +16284,20 @@
                     (= variant 6)
                     (= variant 7)
                     (= variant 8)
-                    (= variant 9))
+                    (= variant 9)
+                    (= variant 10))
                     "match_total_enum_default"
                     "match_total_trap"))
                 (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "then" "else"))
               (CompilerIrInstrList.Nil))))))))
 
 (define (opt-bce-mb-test-then-block [variant : i64]) : CompilerIrBlock
-  (if (or (= variant 6) (= variant 7) (= variant 8) (= variant 9))
+  (if (or
+    (= variant 6)
+    (= variant 7)
+    (= variant 8)
+    (= variant 9)
+    (= variant 10))
     ;; Adjacent affine checks on phi-1 / phi-2. Variant 6 is the positive
     ;; total-enum-dispatch case; 7 inserts a store between the checks and 8
     ;; gives the second check a different invariant length.
@@ -16393,7 +16402,10 @@
       (CompilerIrInstr.Phi
         7
         (compiler-ir-phi-input-cons
-          (CompilerIrValue.Var 6)
+          (CompilerIrValue.Var
+            (if (= variant 10)
+              13
+              6))
           "then"
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 4)
@@ -16439,8 +16451,16 @@
 
 (define (opt-bce-mb-test-total-trap-block [variant : i64]) : CompilerIrBlock
   (let
+    ;; Every marked Switch default must name a real final-arm block. The shared
+    ;; verifier now checks Switch successors before SSA dominance/use facts.
     [label : String
-      (if (= variant 5)
+      (if (or
+        (= variant 5)
+        (= variant 6)
+        (= variant 7)
+        (= variant 8)
+        (= variant 9)
+        (= variant 10))
         "match_total_enum_default"
         "match_total_trap")]
     (compiler-ir-block
@@ -16486,7 +16506,8 @@
                 (= variant 6)
                 (= variant 7)
                 (= variant 8)
-                (= variant 9))
+                (= variant 9)
+                (= variant 10))
                 (compiler-ir-block-cons
                   (opt-bce-mb-test-total-trap-block variant)
                   CompilerIrBlockList.Nil)
@@ -16764,6 +16785,8 @@
 ;; used by the single replacement check. No blocks or loop versions are made.
 ;; Negatives retain both checks when separated by a store, when their lengths
 ;; differ, or when the existing preheader cannot establish the required fact.
+;; The rollback case lets the removed affine definition escape through a phi;
+;; the verifier gate must reject that candidate and preserve both checks.
 (define (compiler-optimize-bce-version-mb-paired-self-test) : i64
   (let
     [positive : CompilerIrFunction
@@ -16782,6 +16805,10 @@
       (opt-late-bounds-pair-function
         (opt-bce-mb-test-function (opt-bce-mb-test-blocks 9)))]
     [no-fact-out : CompilerIrBlockList (opt-function-blocks no-fact)]
+    [rollback : CompilerIrFunction
+      (opt-late-bounds-pair-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 10)))]
+    [rollback-out : CompilerIrBlockList (opt-function-blocks rollback)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function positive))) 1]
       [(not (= (compiler-ir-block-list-count positive-out) 7)) 2]
@@ -16806,6 +16833,10 @@
       [(not (= (compiler-ir-block-list-count no-fact-out) 7)) 16]
       [(not (= (opt-bce-version-test-block-checks no-fact-out "then") 2)) 17]
       [(opt-bce-mb-pair-test-guard-has-len-fact? no-fact-out) 18]
+      [(not (opt-verify-ok? (opt-verify-function rollback))) 19]
+      [(not (= (compiler-ir-block-list-count rollback-out) 7)) 20]
+      [(not (= (opt-bce-version-test-block-checks rollback-out "then") 2)) 21]
+      [(opt-bce-mb-pair-test-guard-has-len-fact? rollback-out) 22]
       ;; Common-base offsets identify var6 (phi-1) / var13 (phi-2), with the
       ;; later operand as the smaller index.
       [(match (opt-bce-mb-affine-pair
@@ -16814,7 +16845,7 @@
           (CompilerIrValue.Var 13))
           [(OptBceMbAffinePair.Some first-smaller) first-smaller]
           [(OptBceMbAffinePair.No) true])
-        19]
+        23]
       [else 42])))
 
 (define (compiler-optimize-bce-version-mb-negative-self-test) : i64

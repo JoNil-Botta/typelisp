@@ -16221,6 +16221,8 @@
 ;; 4 gives the header a total-switch terminator so cloning exercises every
 ;; switch edge, including the compiler trap default. Variant 5 uses the late
 ;; total-enum marker and must remain unversioned by the profitability gate.
+;; Variants 6-9 cover late pairing; 10 lets the smaller affine value escape
+;; through a phi so the paired rewrite must fail verification and roll back.
 (define (opt-bce-mb-test-header-block [variant : i64]) : CompilerIrBlock
   (compiler-ir-block
     "body"
@@ -16259,7 +16261,14 @@
               (CompilerIrValue.I64 4)
               (AstType.Bool))
             (compiler-ir-instr-cons
-              (if (or (= variant 4) (= variant 5))
+              (if (or
+                (= variant 4)
+                (= variant 5)
+                (= variant 6)
+                (= variant 7)
+                (= variant 8)
+                (= variant 9)
+                (= variant 10))
                 (CompilerIrInstr.Switch
                   (CompilerIrValue.Var 5)
                   0
@@ -16270,23 +16279,34 @@
                       1
                       "then"
                       CompilerIrSwitchCaseList.Nil))
-                  (if (= variant 5)
+                  (if (or
+                    (= variant 5)
+                    (= variant 6)
+                    (= variant 7)
+                    (= variant 8)
+                    (= variant 9)
+                    (= variant 10))
                     "match_total_enum_default"
                     "match_total_trap"))
                 (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "then" "else"))
               (CompilerIrInstrList.Nil))))))))
 
 (define (opt-bce-mb-test-then-block [variant : i64]) : CompilerIrBlock
-  (if (= variant 1)
-    ;; The underivable-but-clean partial case: check store+1, defined before
-    ;; the check. The counter check in "body" still derives, so the loop
-    ;; partially versions and this check STAYS in the fast clone.
+  (if (or
+    (= variant 6)
+    (= variant 7)
+    (= variant 8)
+    (= variant 9)
+    (= variant 10))
+    ;; Adjacent affine checks on phi-1 / phi-2. Variant 6 is the positive
+    ;; total-enum-dispatch case; 7 inserts a store between the checks and 8
+    ;; gives the second check a different invariant length.
     (compiler-ir-block
       "then"
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           6
-          (CompilerIrBinOp.Add)
+          (CompilerIrBinOp.Sub)
           (CompilerIrValue.Var 4)
           (CompilerIrValue.I64 1)
           (AstType.I64))
@@ -16294,37 +16314,79 @@
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 6)
             (CompilerIrValue.Var 1)
+            "mb_pair_ok0")
+          (compiler-ir-instr-cons
+            (if (= variant 7)
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 2)
+                (CompilerIrValue.Var 6)
+                (AstType.I64))
+              (CompilerIrInstr.Mov 11 (CompilerIrValue.Var 6) (AstType.I64)))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                13
+                (CompilerIrBinOp.Sub)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.I64 2)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BoundsCheck
+                  (CompilerIrValue.Var 13)
+                  (if (= variant 8)
+                    (CompilerIrValue.Var 2)
+                    (CompilerIrValue.Var 1))
+                  "mb_pair_ok1")
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Jump "merge")
+                  (CompilerIrInstrList.Nil))))))))
+    (if (= variant 1)
+      ;; The underivable-but-clean partial case: check store+1, defined before
+      ;; the check. The counter check in "body" still derives, so the loop
+      ;; partially versions and this check STAYS in the fast clone.
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            6
+            (CompilerIrBinOp.Add)
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BoundsCheck
+              (CompilerIrValue.Var 6)
+              (CompilerIrValue.Var 1)
+              "mb_ok1")
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 11 (CompilerIrValue.I64 0) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstrList.Nil))))))
+      (compiler-ir-block
+        "then"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 4)
+            (CompilerIrValue.Var 1)
             "mb_ok1")
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Mov 11 (CompilerIrValue.I64 0) (AstType.I64))
+            (if (= variant 2)
+              (CompilerIrInstr.Call
+                11
+                (opt-test-symbol "mb_callee")
+                (CompilerIrCallArgs.Nil)
+                (AstType.I64))
+              (CompilerIrInstr.Mov 11 (CompilerIrValue.I64 0) (AstType.I64)))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "merge")
-              (CompilerIrInstrList.Nil))))))
-    (compiler-ir-block
-      "then"
-      (compiler-ir-instr-cons
-        (CompilerIrInstr.BoundsCheck
-          (CompilerIrValue.Var 4)
-          (CompilerIrValue.Var 1)
-          "mb_ok1")
-        (compiler-ir-instr-cons
-          (if (= variant 2)
-            (CompilerIrInstr.Call
-              11
-              (opt-test-symbol "mb_callee")
-              (CompilerIrCallArgs.Nil)
-              (AstType.I64))
-            (CompilerIrInstr.Mov 11 (CompilerIrValue.I64 0) (AstType.I64)))
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.BinOp
-              6
-              (CompilerIrBinOp.Add)
-              (CompilerIrValue.Var 4)
-              (CompilerIrValue.I64 1)
-              (AstType.I64))
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Jump "merge")
-              (CompilerIrInstrList.Nil))))))))
+              (CompilerIrInstr.BinOp
+                6
+                (CompilerIrBinOp.Add)
+                (CompilerIrValue.Var 4)
+                (CompilerIrValue.I64 1)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstrList.Nil)))))))))
 
 (define (opt-bce-mb-test-else-block) : CompilerIrBlock
   (compiler-ir-block
@@ -16340,7 +16402,10 @@
       (CompilerIrInstr.Phi
         7
         (compiler-ir-phi-input-cons
-          (CompilerIrValue.Var 6)
+          (CompilerIrValue.Var
+            (if (= variant 10)
+              13
+              6))
           "then"
           (compiler-ir-phi-input-cons
             (CompilerIrValue.Var 4)
@@ -16386,8 +16451,16 @@
 
 (define (opt-bce-mb-test-total-trap-block [variant : i64]) : CompilerIrBlock
   (let
+    ;; Every marked Switch default must name a real final-arm block. The shared
+    ;; verifier now checks Switch successors before SSA dominance/use facts.
     [label : String
-      (if (= variant 5)
+      (if (or
+        (= variant 5)
+        (= variant 6)
+        (= variant 7)
+        (= variant 8)
+        (= variant 9)
+        (= variant 10))
         "match_total_enum_default"
         "match_total_trap")]
     (compiler-ir-block
@@ -16407,7 +16480,15 @@
     (compiler-ir-block
       "entry"
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Jump "body")
+        (if (= variant 9)
+          ;; A valid single-predecessor loop preheader whose final terminator
+          ;; cannot be extended in place by the late pass: the no-fact case.
+          (CompilerIrInstr.Switch
+            (CompilerIrValue.I64 0)
+            0
+            CompilerIrSwitchCaseList.Nil
+            "body")
+          (CompilerIrInstr.Jump "body"))
         (CompilerIrInstrList.Nil)))
     (compiler-ir-block-cons
       (opt-bce-mb-test-header-block variant)
@@ -16419,7 +16500,14 @@
             (opt-bce-mb-test-merge-block variant)
             (compiler-ir-block-cons
               (opt-bce-mb-test-exit-block)
-              (if (or (= variant 4) (= variant 5))
+              (if (or
+                (= variant 4)
+                (= variant 5)
+                (= variant 6)
+                (= variant 7)
+                (= variant 8)
+                (= variant 9)
+                (= variant 10))
                 (compiler-ir-block-cons
                   (opt-bce-mb-test-total-trap-block variant)
                   CompilerIrBlockList.Nil)
@@ -16430,7 +16518,7 @@
     (opt-test-symbol "bce_version_mb_fixture")
     (opt-bce-version-test-params)
     (AstType.I64)
-    13
+    14
     blocks))
 
 (define (opt-bce-mb-test-jump-block [label : String] [target : String]) : CompilerIrBlock
@@ -16610,6 +16698,154 @@
       [(not (opt-verify-ok? (opt-verify-function marked))) 5]
       [(not (= (compiler-ir-block-list-count marked-out) 7)) 6]
       [(opt-block-list-has-label? marked-out "body__bce_fast") 7]
+      [else 42])))
+
+(define (opt-bce-mb-pair-test-guard-has-len-fact-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp _ op lhs rhs _)
+        (match op
+          [(CompilerIrBinOp.Ge)
+            (or
+              (and
+                (opt-value-eq lhs (CompilerIrValue.Var 1))
+                (opt-value-eq rhs (CompilerIrValue.I64 1)))
+              (opt-bce-mb-pair-test-guard-has-len-fact-from? instrs (+ index 1)))]
+          [_ (opt-bce-mb-pair-test-guard-has-len-fact-from? instrs (+ index 1))])]
+      [_ (opt-bce-mb-pair-test-guard-has-len-fact-from? instrs (+ index 1))])))
+
+(define (opt-bce-mb-pair-test-guard-short-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrMaybeValue
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrMaybeValue.No)
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BinOp dst op lhs rhs _)
+        (match op
+          [(CompilerIrBinOp.Sub)
+            (if (and
+              (opt-value-eq lhs (CompilerIrValue.Var 1))
+              (match rhs
+                [(CompilerIrValue.Var _) true]
+                [_ false]))
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var dst))
+              (opt-bce-mb-pair-test-guard-short-from instrs (+ index 1)))]
+          [_ (opt-bce-mb-pair-test-guard-short-from instrs (+ index 1))])]
+      [_ (opt-bce-mb-pair-test-guard-short-from instrs (+ index 1))])))
+
+(define (opt-bce-mb-pair-test-guard-has-len-fact?
+  [blocks : CompilerIrBlockList]) : bool
+  (match (opt-cfg-find-block blocks "entry")
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-pair-test-guard-has-len-fact-from? instrs 0)])]))
+
+(define (opt-bce-mb-pair-test-guard-short [blocks : CompilerIrBlockList]) : CompilerIrMaybeValue
+  (match (opt-cfg-find-block blocks "entry")
+    [(OptMaybeBlock.No) (CompilerIrMaybeValue.No)]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-pair-test-guard-short-from instrs 0)])]))
+
+(define (opt-bce-mb-pair-test-block-uses-length-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [length : CompilerIrValue]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.BoundsCheck _ check-length _)
+        (or
+          (opt-value-eq check-length length)
+          (opt-bce-mb-pair-test-block-uses-length-from?
+            instrs
+            (+ index 1)
+            length))]
+      [_
+        (opt-bce-mb-pair-test-block-uses-length-from? instrs (+ index 1) length)])))
+
+(define (opt-bce-mb-pair-test-body-uses-length?
+  [blocks : CompilerIrBlockList]
+  [length : CompilerIrValue]) : bool
+  (match (opt-cfg-find-block blocks "then")
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-bce-mb-pair-test-block-uses-length-from? instrs 0 length)])]))
+
+;; Positive: the sp-1/sp-2 pair combines after the optimizer fixpoint, in the
+;; existing total-enum loop. Its preheader owns len>=1 and the saturated len-1
+;; used by the single replacement check. No blocks or loop versions are made.
+;; Negatives retain both checks when separated by a store, when their lengths
+;; differ, or when the existing preheader cannot establish the required fact.
+;; The rollback case lets the removed affine definition escape through a phi;
+;; the verifier gate must reject that candidate and preserve both checks.
+(define (compiler-optimize-bce-version-mb-paired-self-test) : i64
+  (let
+    [positive : CompilerIrFunction
+      (opt-late-bounds-pair-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 6)))]
+    [positive-out : CompilerIrBlockList (opt-function-blocks positive)]
+    [stored : CompilerIrFunction
+      (opt-late-bounds-pair-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 7)))]
+    [stored-out : CompilerIrBlockList (opt-function-blocks stored)]
+    [different : CompilerIrFunction
+      (opt-late-bounds-pair-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 8)))]
+    [different-out : CompilerIrBlockList (opt-function-blocks different)]
+    [no-fact : CompilerIrFunction
+      (opt-late-bounds-pair-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 9)))]
+    [no-fact-out : CompilerIrBlockList (opt-function-blocks no-fact)]
+    [rollback : CompilerIrFunction
+      (opt-late-bounds-pair-function
+        (opt-bce-mb-test-function (opt-bce-mb-test-blocks 10)))]
+    [rollback-out : CompilerIrBlockList (opt-function-blocks rollback)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function positive))) 1]
+      [(not (= (compiler-ir-block-list-count positive-out) 7)) 2]
+      [(opt-block-list-has-label? positive-out "body__bce_fast") 3]
+      [(not (= (opt-bce-version-test-block-checks positive-out "then") 1)) 4]
+      [(not (opt-bce-mb-pair-test-guard-has-len-fact? positive-out)) 5]
+      [(match (opt-bce-mb-pair-test-guard-short positive-out)
+          [(CompilerIrMaybeValue.Some short-length)
+            (not
+              (opt-bce-mb-pair-test-body-uses-length? positive-out short-length))]
+          [(CompilerIrMaybeValue.No) true])
+        6]
+      [(not (opt-verify-ok? (opt-verify-function stored))) 7]
+      [(not (= (compiler-ir-block-list-count stored-out) 7)) 8]
+      [(not (= (opt-bce-version-test-block-checks stored-out "then") 2)) 9]
+      [(opt-bce-mb-pair-test-guard-has-len-fact? stored-out) 10]
+      [(not (opt-verify-ok? (opt-verify-function different))) 11]
+      [(not (= (compiler-ir-block-list-count different-out) 7)) 12]
+      [(not (= (opt-bce-version-test-block-checks different-out "then") 2)) 13]
+      [(opt-bce-mb-pair-test-guard-has-len-fact? different-out) 14]
+      [(not (opt-verify-ok? (opt-verify-function no-fact))) 15]
+      [(not (= (compiler-ir-block-list-count no-fact-out) 7)) 16]
+      [(not (= (opt-bce-version-test-block-checks no-fact-out "then") 2)) 17]
+      [(opt-bce-mb-pair-test-guard-has-len-fact? no-fact-out) 18]
+      [(not (opt-verify-ok? (opt-verify-function rollback))) 19]
+      [(not (= (compiler-ir-block-list-count rollback-out) 7)) 20]
+      [(not (= (opt-bce-version-test-block-checks rollback-out "then") 2)) 21]
+      [(opt-bce-mb-pair-test-guard-has-len-fact? rollback-out) 22]
+      ;; Common-base offsets identify var6 (phi-1) / var13 (phi-2), with the
+      ;; later operand as the smaller index.
+      [(match (opt-bce-mb-affine-pair
+          (opt-bce-mb-test-blocks 6)
+          (CompilerIrValue.Var 6)
+          (CompilerIrValue.Var 13))
+          [(OptBceMbAffinePair.Some first-smaller) first-smaller]
+          [(OptBceMbAffinePair.No) true])
+        23]
       [else 42])))
 
 (define (compiler-optimize-bce-version-mb-negative-self-test) : i64

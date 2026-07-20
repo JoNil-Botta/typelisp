@@ -136,6 +136,8 @@ box_pattern_direct|tests/integration/box_pattern_direct.tl|42|-|-|-
 box_pattern_enum_payload|tests/integration/box_pattern_enum_payload.tl|42|-|-|-
 make_array_negative_trap|tests/integration/make_array_negative_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 make_array_overflow_trap|tests/integration/make_array_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+bce_paired_underflow_sp0_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
+bce_paired_underflow_sp1_trap|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/array.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 make_array_init|tests/integration/make_array_init.tl|42|-|-|stdlib/string.tl
 make_array_zero|tests/integration/make_array_zero.tl|0|-|-|-
 mutable_reference_array|tests/integration/mutable_reference_array.tl|42|-|-|-

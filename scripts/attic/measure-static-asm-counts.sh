@@ -29,7 +29,7 @@ set -eu
 #                                  substring
 #   TYPELISP_STATIC_ASM_OPT_LEVEL  TypeLisp opt level (default 2)
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$ROOT"
 
 OUT=${TYPELISP_STATIC_ASM_OUT:-target/static-asm-counts}

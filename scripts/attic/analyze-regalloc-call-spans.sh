@@ -3,7 +3,7 @@ set -eu
 
 # analyze-regalloc-call-spans.sh - deterministic opt2 regalloc call-span census.
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-native-link.sh"
@@ -11,7 +11,7 @@ native_link_detect_host
 configure_toolchain
 
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-    echo "usage: scripts/analyze-regalloc-call-spans.sh [typelisp-binary]" >&2
+    echo "usage: scripts/attic/analyze-regalloc-call-spans.sh [typelisp-binary]" >&2
     echo "  TYPELISP_REGALLOC_CALL_SPAN_OUT   output directory (default target/regalloc-call-spans)" >&2
     exit 0
 fi

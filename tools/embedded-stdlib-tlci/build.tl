@@ -273,7 +273,7 @@
           (set! index (+ index 1))))
       found)))
 
-(define (embedded-native-status-fold [opened : i64]) : String
+(define (embedded-native-status-sum [opened : i64]) : String
   (let
     [out : String ""]
     [index : i64 0]
@@ -285,7 +285,7 @@
             (str-cat
               out
               (if (< index (- opened 1))
-                (str-cat "(bit-or q" (string.int->string index) " ")
+                (str-cat "(+ q" (string.int->string index) " ")
                 (str-cat "q" (string.int->string index)))))
           (set! index (+ index 1))))
       (set! index 0)
@@ -299,20 +299,26 @@
   [status-index : i64]
   [op : i64]
   [arg-a : String]
-  [arg-b : String]) : String
-  (str-cat
-    "  (let [q"
-    (string.int->string status-index)
-    " : i64 (comptime-host-invoke host session 1 0 0 0)]\n"
-    "  (let [q"
-    (string.int->string (+ status-index 1))
-    " : i64 (comptime-host-invoke host session "
-    (string.int->string op)
-    " "
-    arg-a
-    " "
-    arg-b
-    " 0)]\n"))
+  [arg-b : String]
+  [arg-c : String]) : String
+  (let
+    [sname : String (str-cat "q" (string.int->string status-index))]
+    (str-cat
+      "  (let ["
+      sname
+      " : i64 (comptime-host-invoke host session "
+      (string.int->string op)
+      " "
+      arg-a
+      " "
+      arg-b
+      " "
+      arg-c
+      ")] (if (not (= "
+      sname
+      " 0)) "
+      sname
+      "\n")))
 
 (define (embedded-native-name-arg [name : String]) : String
   (str-cat "(cast (unsafe (ptr->int (string-data \"" name "\"))) : i64)"))
@@ -342,10 +348,13 @@
                       opened
                       103
                       (embedded-native-name-arg head)
-                      (string.int->string (string.string-length head))))
-                  (set! opened (+ opened 2))
-                  (svec.push ops (embedded-native-op-open opened 178 "0" "0"))
-                  (set! opened (+ opened 2))
+                      (string.int->string (string.string-length head))
+                      "0"))
+                  (set! opened (+ opened 1))
+                  (svec.push
+                    ops
+                    (embedded-native-op-open opened 178 "0" "0" "0"))
+                  (set! opened (+ opened 1))
                   (while (and ok (< index argc))
                     (let
                       [param : i64
@@ -361,20 +370,50 @@
                               opened
                               180
                               (string.int->string param)
+                              "0"
                               "0"))
-                          (set! opened (+ opened 2))
+                          (set! opened (+ opened 1))
                           (svec.push
                             ops
-                            (embedded-native-op-open opened 179 "0" "0"))
-                          (set! opened (+ opened 2))
+                            (embedded-native-op-open opened 179 "0" "0" "0"))
+                          (set! opened (+ opened 1))
                           (set! index (+ index 1))))))
                   (if (not ok)
                     -1
                     (begin
                       (svec.push
                         ops
-                        (embedded-native-op-open opened 181 "0" "0"))
-                      (+ opened 2)))))]
+                        (embedded-native-op-open opened 181 "0" "0" "0"))
+                      (+ opened 1)))))]
+            [_ -1])]
+        [(AstExpr.Literal lit)
+          (match lit
+            [(AstLiteral.Bool flag)
+              (begin
+                (svec.push
+                  ops
+                  (embedded-native-op-open
+                    0
+                    187
+                    (if flag
+                      "1"
+                      "0")
+                    "0"
+                    "0"))
+                1)]
+            [(AstLiteral.Int value text)
+              (if (string.eq text (string.int->string value))
+                (begin
+                  (svec.push
+                    ops
+                    (embedded-native-op-open
+                      0
+                      188
+                      (string.int->string value)
+                      "0"
+                      "0"))
+                  1)
+                -1)]
             [_ -1])]
         [(AstExpr.ArrayRef target-node index-node)
           (embedded-native-binary-ops params target-node index-node 183 ops)]
@@ -391,12 +430,22 @@
               (begin
                 (svec.push
                   ops
-                  (embedded-native-op-open 0 180 (string.int->string ti) "0"))
+                  (embedded-native-op-open
+                    0
+                    180
+                    (string.int->string ti)
+                    "0"
+                    "0"))
                 (svec.push
                   ops
-                  (embedded-native-op-open 2 180 (string.int->string si) "0"))
-                (svec.push ops (embedded-native-op-open 4 185 "0" "0"))
-                6)))]
+                  (embedded-native-op-open
+                    1
+                    180
+                    (string.int->string si)
+                    "0"
+                    "0"))
+                (svec.push ops (embedded-native-op-open 2 185 "0" "0" "0"))
+                3)))]
         [_ -1])]
     [_ -1]))
 
@@ -414,15 +463,119 @@
       (begin
         (svec.push
           ops
-          (embedded-native-op-open 0 180 (string.int->string ti) "0"))
+          (embedded-native-op-open 0 180 (string.int->string ti) "0" "0"))
         (svec.push
           ops
-          (embedded-native-op-open 2 180 (string.int->string oi) "0"))
-        (svec.push ops (embedded-native-op-open 4 op "0" "0"))
-        6))))
+          (embedded-native-op-open 1 180 (string.int->string oi) "0" "0"))
+        (svec.push ops (embedded-native-op-open 2 op "0" "0" "0"))
+        3))))
 
 ;; Full source for the native package: the host extern plus one entry function
 ;; per identity in catalog order.
+;; A complete, balanced arm expression: the op lets, the status-sum return
+;; (q99 is the enclosing fuel status), and one closing paren per op let.
+(define (embedded-native-arm-block [ops : (& ops svec.Vec)] [opened : i64]) : String
+  (let
+    [out : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index (svec.len ops))
+        (begin
+          (set! out (str-cat out (svec.get ops index "")))
+          (set! index (+ index 1))))
+      (set!
+        out
+        (str-cat out "  (comptime-host-invoke host session 182 0 0 0)\n"))
+      (set! index 0)
+      (while (< index (* opened 2))
+        (begin
+          (set! out (str-cat out ")"))
+          (set! index (+ index 1))))
+      out)))
+
+(define (embedded-native-var-param-index
+  [params : (& params AstMacroParamList)]
+  [node : i64]) : i64
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Var pname) (embedded-stdlib-tlci-param-index params pname)]
+    [_ -1]))
+
+;; Desugar `(match (type-kind T) ["kind" template] ...)` into nested
+;; type-kind-eq queries with a complete arm block per match; an unmatched
+;; scrutinee falls back to the interpreter by returning ok with no result.
+;; Returns "" when the body is outside the supported shape.
+(define (embedded-native-match-arms
+  [params : AstMacroParamList]
+  [type-index : i64]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : String
+  (if (>= index (struct-get arms len))
+    "  0\n"
+    (match (array-ref (struct-get arms slots) index)
+      [(AstMatchArm.Arm pattern body-node)
+        (match pattern
+          [(AstPattern.Literal (AstLiteral.String sid))
+            (let
+              [kind : String (intern-str sid)]
+              [ops : svec.Vec (svec.new)]
+              [opened : i64
+                (embedded-native-body-ops params body-node (&mut ops))]
+              [rest : String
+                (embedded-native-match-arms params type-index arms (+ index 1))]
+              (if (string.eq rest "")
+                ""
+                (str-cat
+                  "  (let [t"
+                  (string.int->string index)
+                  " : i64 (comptime-host-invoke host session 186 "
+                  (string.int->string type-index)
+                  " "
+                  (embedded-native-name-arg kind)
+                  " "
+                  (string.int->string (string.string-length kind))
+                  ")]\n"
+                  "  (if (= t"
+                  (string.int->string index)
+                  " 1)\n"
+                  (if (< opened 0)
+                    "  0\n"
+                    (embedded-native-arm-block (& ops) opened))
+                  "\n"
+                  rest
+                  "))\n")))]
+          [_ "  0\n"])])))
+
+(define (embedded-native-match-body
+  [params : AstMacroParamList]
+  [body-node : i64]) : String
+  (match (embedded-stdlib-tlci-unwrap-expr body-node)
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee arms)
+          (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
+            [(AstExpr.Call head-id args)
+              (match (embedded-stdlib-tlci-unwrap-expr head-id)
+                [(AstExpr.Var head-name)
+                  (if (and
+                    (string.eq (intern-str head-name) "type-kind")
+                    (= (ast-expr-list-len (& args)) 1))
+                    (let
+                      [type-index : i64
+                        (embedded-native-var-param-index
+                          (& params)
+                          (ast-expr-list-get (& args) 0 0))]
+                      (if (< type-index 0)
+                        ""
+                        (embedded-native-match-arms
+                          params
+                          type-index
+                          (& arms)
+                          0)))
+                    "")]
+                [_ ""])]
+            [_ ""])])]
+    [_ ""]))
+
 (define (embedded-native-source [names : (Array String)]) : String
   (let
     [out : String
@@ -439,8 +592,14 @@
           [slot : i64
             (embedded-stdlib-tlci-capture-slot (array-ref names index))]
           [ops : svec.Vec (svec.new)]
-          [opened : i64
+          [match-text : String
             (if (>= slot 0)
+              (embedded-native-match-body
+                (array-ref embedded-stdlib-tlci-capture-params slot)
+                (array-ref embedded-stdlib-tlci-capture-bodies slot))
+              "")]
+          [opened : i64
+            (if (and (>= slot 0) (string.eq match-text ""))
               (embedded-native-body-ops
                 (array-ref embedded-stdlib-tlci-capture-params slot)
                 (array-ref embedded-stdlib-tlci-capture-bodies slot)
@@ -455,7 +614,7 @@
                 (string.int->string index)
                 " [image-ctx : i64] [host : i64] [session : i64]"
                 " [operands : i64] [count : i64] [result : i64]) : i64\n"))
-            (if (< opened 0)
+            (if (and (string.eq match-text "") (< opened 0))
               (set!
                 out
                 (str-cat
@@ -463,27 +622,17 @@
                   "  (if (= count -"
                   (string.int->string (+ index 2))
                   ") 1 0))\n"))
-              (let
-                [oi : i64 0]
-                (begin
-                  (set! native-count (+ native-count 1))
-                  (while (< oi (svec.len (& ops)))
-                    (begin
-                      (set! out (str-cat out (svec.get (& ops) oi "")))
-                      (set! oi (+ oi 1))))
-                  (set!
+              (begin
+                (set! native-count (+ native-count 1))
+                (set!
+                  out
+                  (str-cat
                     out
-                    (str-cat out (embedded-native-op-open opened 182 "0" "0")))
-                  (set! opened (+ opened 2))
-                  (set!
-                    out
-                    (str-cat out "  " (embedded-native-status-fold opened) "\n"))
-                  (set! oi 0)
-                  (while (< oi opened)
-                    (begin
-                      (set! out (str-cat out ")"))
-                      (set! oi (+ oi 1))))
-                  (set! out (str-cat out ")\n")))))
+                    (embedded-native-op-open 99 1 "0" "0" "0")
+                    (if (string.eq match-text "")
+                      (embedded-native-arm-block (& ops) opened)
+                      match-text)
+                    ")))\n"))))
             (set! index (+ index 1)))))
       (array-set! embedded-stdlib-tlci-native-report-count 0 native-count)
       out)))

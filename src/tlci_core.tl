@@ -471,8 +471,20 @@
 ;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.
 (define tlci-host-callback-op-expr-make-array : i64
   185)
+
+;; Comptime reflection and literal construction for computed transformer
+;; bodies (refs #5213 N2/N3). operand-type-kind-eq compares the type-kind
+;; string of a type operand against caller bytes and returns 1/0 as data (a
+;; negative value reports a bad request); the literal ops push literal
+;; expression nodes.
+(define tlci-host-callback-op-operand-type-kind-eq : i64
+  186)
+(define tlci-host-callback-op-expr-bool-literal : i64
+  187)
+(define tlci-host-callback-op-expr-int-literal : i64
+  188)
 (define tlci-host-callback-stdlib-op-count : i64
-  86)
+  89)
 (define tlci-header-size : i64
   176)
 (define tlci-page-align : i64
@@ -2878,7 +2890,10 @@
     (= tlci-host-callback-op-expr-array-ref 183)
     (= tlci-host-callback-op-expr-array-push 184)
     (= tlci-host-callback-op-expr-make-array 185)
-    (= tlci-host-callback-stdlib-op-count 86)))
+    (= tlci-host-callback-op-operand-type-kind-eq 186)
+    (= tlci-host-callback-op-expr-bool-literal 187)
+    (= tlci-host-callback-op-expr-int-literal 188)
+    (= tlci-host-callback-stdlib-op-count 89)))
 
 (define (tlci-test-host-abi-ok?) : bool
   (and

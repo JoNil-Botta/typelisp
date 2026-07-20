@@ -47,7 +47,8 @@
         operands
         1
         8
-        comptime-host-smoke-cookie)
+        comptime-host-smoke-cookie
+        (ctfe-reflect-info-list-empty))
       (and
         (= (comptime-host-smoke-invoke tlci-host-callback-op-fuel-check 0 0) 0)
         (=
@@ -105,7 +106,8 @@
         operands
         0
         1
-        comptime-host-smoke-cookie)
+        comptime-host-smoke-cookie
+        (ctfe-reflect-info-list-empty))
       (and
         (=
           (compiler-comptime-host-invoke
@@ -131,7 +133,8 @@
             operands
             0
             1
-            comptime-host-smoke-cookie)
+            comptime-host-smoke-cookie
+            (ctfe-reflect-info-list-empty))
           true)
         (= (comptime-host-smoke-invoke tlci-host-callback-op-fuel-check 0 0) 0)
         (=
@@ -217,7 +220,8 @@
                 operands
                 1
                 32
-                comptime-host-smoke-cookie)
+                comptime-host-smoke-cookie
+                (ctfe-reflect-info-list-empty))
               (let
                 [ok : bool
                   (match (tlci-loader-dispatch-macro

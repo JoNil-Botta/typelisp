@@ -195,6 +195,8 @@
   (array.make-array CompilerCtfeValue 8))
 (define compiler-comptime-host-operand-count : i64
   0)
+(define compiler-comptime-host-reflections : (Array CtfeReflectInfoList)
+  (array.make-array CtfeReflectInfoList 1))
 (define compiler-comptime-host-stack : (Array CompilerCtfeValue)
   (array.make-array CompilerCtfeValue 64))
 (define compiler-comptime-host-stack-len : i64
@@ -219,9 +221,11 @@
   [operands : (Array CompilerCtfeValue)]
   [operand-count : i64]
   [fuel : i64]
-  [cookie : i64]) : unit
+  [cookie : i64]
+  [reflections : CtfeReflectInfoList]) : unit
   (begin
     (array-set! compiler-comptime-host-pools 0 pools)
+    (array-set! compiler-comptime-host-reflections 0 reflections)
     (let
       [index : i64 0]
       (while (and (< index operand-count) (< index 8))
@@ -472,6 +476,42 @@
                     (compiler-comptime-host-push!
                       (CompilerCtfeValue.Expr node (AstType.Expr)))))]
               [_ tlci-host-callback-status-bad-request]))))]
+    ;; Reflection: 1/0 as data when the type operand's kind string matches
+    ;; the caller bytes (the same ctfe mapping interpretation uses); negative
+    ;; reports a bad request without touching session state.
+    [(= operation tlci-host-callback-op-operand-type-kind-eq)
+      (if (or
+        (< arg-a 0)
+        (>= arg-a compiler-comptime-host-operand-count)
+        (<= arg-b 0)
+        (< _arg-c 0))
+        -3
+        (match (array-ref compiler-comptime-host-operands arg-a)
+          [(CompilerCtfeValue.Type ty)
+            (if (string.eq
+              (ctfe-type-kind-with-reflections-and-pools
+                (array-ref compiler-comptime-host-pools 0)
+                (array-ref compiler-comptime-host-reflections 0)
+                ty)
+              (unsafe
+                (string-from-bytes (int->ptr arg-b : (Ptr u8)) _arg-c)))
+              1
+              0)]
+          [_ -3]))]
+    [(= operation tlci-host-callback-op-expr-bool-literal)
+      (compiler-comptime-host-push!
+        (CompilerCtfeValue.Expr
+          (ast-node-pool-context-expr-push
+            (array-ref compiler-comptime-host-pools 0)
+            (AstExpr.Literal (AstLiteral.Bool (not (= arg-a 0)))))
+          (AstType.Expr)))]
+    [(= operation tlci-host-callback-op-expr-int-literal)
+      (compiler-comptime-host-push!
+        (CompilerCtfeValue.Expr
+          (ast-node-pool-context-expr-push
+            (array-ref compiler-comptime-host-pools 0)
+            (AstExpr.Literal (ast-lit-int arg-a)))
+          (AstType.Expr)))]
     [(= operation tlci-host-callback-op-commit-result)
       (if (< compiler-comptime-host-stack-len 1)
         tlci-host-callback-status-bad-request

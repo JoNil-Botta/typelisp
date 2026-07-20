@@ -62159,7 +62159,8 @@
                     operands
                     count
                     (ctfe-fuel-limit)
-                    macro-stdlib-tlci-native-cookie)
+                    macro-stdlib-tlci-native-cookie
+                    (ctfe-env-reflections env))
                   (match (compiler-embedded-stdlib-tlci-session-dispatch
                     identity
                     macro-stdlib-tlci-native-cookie)

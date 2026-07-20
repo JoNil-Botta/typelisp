@@ -455,8 +455,21 @@
   181)
 (define tlci-host-callback-op-commit-result : i64
   182)
+
+;; Intrinsic array-node construction: pop two operand expressions and push the
+;; array-ref / array-push expression node the parser produces for these forms
+;; (they are recognized as dedicated AST nodes, not generic calls). Refs #5213.
+(define tlci-host-callback-op-expr-array-ref : i64
+  183)
+(define tlci-host-callback-op-expr-array-push : i64
+  184)
+
+;; Pop a size expression and a type value and push the make-array node the
+;; parser produces for `(__tl_make-array ,T ,count)`. Refs #5213.
+(define tlci-host-callback-op-expr-make-array : i64
+  185)
 (define tlci-host-callback-stdlib-op-count : i64
-  83)
+  86)
 (define tlci-header-size : i64
   160)
 (define tlci-page-align : i64
@@ -2588,7 +2601,10 @@
     (= tlci-host-callback-op-push-operand 180)
     (= tlci-host-callback-op-expr-call 181)
     (= tlci-host-callback-op-commit-result 182)
-    (= tlci-host-callback-stdlib-op-count 83)))
+    (= tlci-host-callback-op-expr-array-ref 183)
+    (= tlci-host-callback-op-expr-array-push 184)
+    (= tlci-host-callback-op-expr-make-array 185)
+    (= tlci-host-callback-stdlib-op-count 86)))
 
 (define (tlci-test-host-abi-ok?) : bool
   (and

@@ -276,6 +276,39 @@
     [(CompilerCtfeValue.CapturedExpr node _ _) node]
     [_ -1]))
 
+;; Pop two operand expressions (second then target) and push a two-operand
+;; intrinsic node: kind 0 is array-ref, kind 1 is array-push. Both take the
+;; target and operand node ids the interpreted quasiquote builders receive.
+(define (compiler-comptime-host-build-binary-intrinsic! [kind : i64]) : i64
+  (if (< compiler-comptime-host-stack-len 2)
+    tlci-host-callback-status-bad-request
+    (let
+      [operand : CompilerCtfeValue
+        (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))]
+      [target : CompilerCtfeValue
+        (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 2))]
+      [operand-node : i64 (compiler-comptime-host-value-node operand)]
+      [target-node : i64 (compiler-comptime-host-value-node target)]
+      (if (or (< operand-node 0) (< target-node 0))
+        tlci-host-callback-status-bad-request
+        (let
+          [pools : AstNodePoolContext
+            (array-ref compiler-comptime-host-pools 0)]
+          [node : i64
+            (if (= kind 0)
+              (ast-expr-array-ref-with-pools pools target-node operand-node)
+              (ast-expr-array-push-with-pools pools target-node operand-node))]
+          (begin
+            (set!
+              compiler-comptime-host-stack-len
+              (- compiler-comptime-host-stack-len 2))
+            (compiler-comptime-host-push!
+              (CompilerCtfeValue.Expr node (AstType.Expr)))))))))
+
 ;; The compiler-owned callback invoke installed into the tlci host callback
 ;; table. TypeLisp's native convention passes scalar arguments in the SysV
 ;; integer registers, so this function is directly callable from the mapped
@@ -309,6 +342,14 @@
               (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b)))
           unit)
         tlci-host-callback-status-diagnostic)]
+    ;; Scratch lifecycle ops: the compiler-owned session builds results on its
+    ;; value stack, not through host scratch, so these are no-ops. Registration
+    ;; shells issue only scratch-reset, so accepting it lets a shell dispatch
+    ;; run cleanly and commit no result -- the route then interprets it.
+    [(= operation tlci-host-callback-op-scratch-alloc)
+      tlci-host-callback-status-ok]
+    [(= operation tlci-host-callback-op-scratch-reset)
+      tlci-host-callback-status-ok]
     [(= operation tlci-host-callback-op-expr-var)
       (if (or (<= arg-a 0) (< arg-b 0))
         tlci-host-callback-status-bad-request
@@ -380,6 +421,46 @@
                       (array-ref compiler-comptime-host-pools 0)
                       callee-node
                       items)]
+                  (begin
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 2))
+                    (compiler-comptime-host-push!
+                      (CompilerCtfeValue.Expr node (AstType.Expr)))))]
+              [_ tlci-host-callback-status-bad-request]))))]
+    ;; Intrinsic two-operand array nodes: pop the second operand then the
+    ;; target and push the array-ref / array-push node the parser recognizes
+    ;; for these forms, matching the interpreted quasiquote builders.
+    [(= operation tlci-host-callback-op-expr-array-ref)
+      (compiler-comptime-host-build-binary-intrinsic! 0)]
+    [(= operation tlci-host-callback-op-expr-array-push)
+      (compiler-comptime-host-build-binary-intrinsic! 1)]
+    ;; make-array: pop the size expression and the element type value and push
+    ;; the make-array node, matching the interpreted quote (the type passes
+    ;; through by identity).
+    [(= operation tlci-host-callback-op-expr-make-array)
+      (if (< compiler-comptime-host-stack-len 2)
+        tlci-host-callback-status-bad-request
+        (let
+          [size-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [type-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          [size-node : i64 (compiler-comptime-host-value-node size-value)]
+          (if (< size-node 0)
+            tlci-host-callback-status-bad-request
+            (match type-value
+              [(CompilerCtfeValue.Type ty)
+                (let
+                  [node : i64
+                    (ast-expr-make-array-with-pools
+                      (array-ref compiler-comptime-host-pools 0)
+                      ty
+                      size-node)]
                   (begin
                     (set!
                       compiler-comptime-host-stack-len

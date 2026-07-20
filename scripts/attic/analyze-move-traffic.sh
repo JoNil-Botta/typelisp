@@ -9,7 +9,7 @@ set -eu
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/analyze-move-traffic.sh [options] [typelisp-binary]
+usage: scripts/attic/analyze-move-traffic.sh [options] [typelisp-binary]
 
 Options:
   --asm <file>       analyze an existing assembly file instead of compiling
@@ -82,7 +82,7 @@ case "$OPT_LEVEL" in
         ;;
 esac
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$ROOT"
 
 WORKDIR=${TYPELISP_MOVE_TRAFFIC_OUT:-target/move-traffic}

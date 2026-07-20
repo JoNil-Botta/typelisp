@@ -11,7 +11,7 @@ The diagnostic harness is:
 
 ```sh
 TYPELISP_BIN=tools/stage0-linux/typelisp \
-  scripts/measure-vector-instantiation-cost.sh --runs 1
+  scripts/attic/measure-vector-instantiation-cost.sh --runs 1
 ```
 
 It does not read or update `perf/insn-exec-baseline.tsv`.

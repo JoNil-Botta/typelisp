@@ -3,7 +3,7 @@ set -eu
 
 # analyze-emergency-scavenge.sh - opt2 emergency-scavenge census.
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-native-link.sh"
@@ -12,7 +12,7 @@ configure_toolchain
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/analyze-emergency-scavenge.sh [typelisp-binary]
+usage: scripts/attic/analyze-emergency-scavenge.sh [typelisp-binary]
 
 Builds a --cfg scavenge-census CLI, then compiles src/main.tl and every
 benchmarks/*/bench.tl at opt2. Results are written to:

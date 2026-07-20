@@ -9,6 +9,8 @@ The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the
 bootstrap/fixpoint gate [#47](https://github.com/JoNil-Botta/typelisp/issues/47).
+The gate/tool classification and canonical script entry points are documented
+in [`../scripts/README.md`](../scripts/README.md).
 
 ## Intern-ID provenance
 
@@ -306,32 +308,10 @@ there is no generated source to refresh. Run
 deterministic output, one-byte source mutation propagation, and byte-for-byte
 decoding with a branch-built compiler.
 
-Use [`../scripts/analyze-move-traffic.sh`](../scripts/analyze-move-traffic.sh)
-for adjacent `movq` traffic counts in selfhost assembly. It reports exact
-duplicate moves, swap-back pairs, repeated stack-slot loads, store-then-load
-pairs, and overwritten same-slot stores:
-
-```sh
-TYPELISP_BIN=target/stage0/typelisp scripts/analyze-move-traffic.sh --opt-level 2
-scripts/analyze-move-traffic.sh --asm target/path/build.s
-```
-
-The census is a deterministic local measurement helper for regalloc/backend
-traffic work, not a CI gate.
-
-Use
-[`../scripts/analyze-emergency-scavenge.sh`](../scripts/analyze-emergency-scavenge.sh)
-to build a `--cfg scavenge-census` CLI and compile `src/main.tl` plus the
-benchmark corpus at opt level 2. It writes a TSV with total emergency
-scavenge picks, free-fallback picks, occupied-candidate picks, fallback last
-resorts, wrapped instructions, wrapped registers, and max pending registers:
-
-```sh
-TYPELISP_BIN=target/stage0/typelisp scripts/analyze-emergency-scavenge.sh
-```
-
-This is a local prioritization tool for scavenger/regalloc follow-up work, not
-a CI gate.
+Completed regalloc census harnesses for move traffic, call spans, and emergency
+scavenging are preserved under
+[`../scripts/attic/`](../scripts/attic/README.md). They are historical
+reproduction tools, not current CI gates.
 
 `scripts/measure-instruction-counts.sh` is the Linux-only dynamic instruction
 counter for local deterministic performance measurements. It builds TypeLisp
@@ -478,15 +458,9 @@ existing fixture specs. Windows defaults to `lsp batch`. Use
 `scripts/verify-lsp-transcript-batch.sh` for the fast manifest/parser mutation
 coverage, including raw malformed-frame input and incomplete result sets.
 
-`scripts/measure-unused-import-cost.sh` is the paired #3803 diagnostic harness
-for the unused legacy-string import experiment. It copies `src/*.tl` into two
-same-length scratch source trees under `target/`, injects only the
-compatibility spelling `(import "format_doc.tl")` into the second copy of
-`main.tl`, and reports the base, with-import, and delta
-`self_compile/compile_cli_opt1` instruction counts from one compiler binary.
-The instruction-count path is Linux/cachegrind-only; use WSL on Windows. Pass
-`--profile` to also build a `compile-profile` CLI and print load, lower/macro,
-optimize, backend, and total phase deltas.
+The completed #3803 unused-import experiment is preserved as
+`scripts/attic/measure-unused-import-cost.sh`; see the attic README for its
+historical ownership.
 
 `scripts/measure-result-import-cost.sh` is the paired #3903/#3215 diagnostic
 harness for generated `(result T E)` imports in hot selfhost modules. It copies
@@ -495,8 +469,9 @@ result import into each variant source (`format_tokens.tl`, `lex.tl`, or
 `compiler_ctfe.tl`) without editing tracked sources. Linux/cachegrind mode
 reports a baseline plus one `self_compile/compile_cli_opt1` instruction-count
 delta for each variant; `--profile` also emits phase deltas and generated
-macro/import counter deltas. The harness is for local diagnosis before #3903
-optimization attempts, not a CI gate.
+macro/import counter deltas. The full cost measurement is opt-in;
+`scripts/verify-result-import-harness.sh` invokes its `--prepare-only` path to
+gate source-preserving fixture injection.
 
 ### Coverage policy
 

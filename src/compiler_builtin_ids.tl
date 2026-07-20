@@ -628,7 +628,7 @@
 (define compiler-builtin-id-cfg-feature-cleanup-owner-reflection : i64
   -1)
 (define compiler-builtin-ctfe-ids : (Array i64)
-  (make-array i64 219))
+  (make-array i64 234))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -640,7 +640,7 @@
   (let
     [metadata : (Array i64) (make-array i64 4)]
     [ids : (Array i64) (make-array i64 308)]
-    [ctfe-ids : (Array i64) (make-array i64 219)]
+    [ctfe-ids : (Array i64) (make-array i64 234)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
@@ -652,7 +652,7 @@
           (array-set! ids i -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 219)
+      (while (< i 234)
         (begin
           (array-set! ctfe-ids i -1)
           (set! i (+ i 1))))
@@ -714,7 +714,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 219)
+    (while (< i 234)
       (begin
         (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -722,7 +722,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 219)
+    (while (< i 234)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
@@ -1802,7 +1802,24 @@
     (compiler-builtin-load-ctfe-id! insert-missing 215 "expr-list-type-nth")
     (compiler-builtin-load-ctfe-id! insert-missing 216 "module-value?")
     (compiler-builtin-load-ctfe-id! insert-missing 217 "module-value-type")
-    (compiler-builtin-load-ctfe-id! insert-missing 218 "reference-element-type")))
+    (compiler-builtin-load-ctfe-id! insert-missing 218 "reference-element-type")
+    ;; Parser-only fixed syntax names share this reset-aware table with CTFE.
+    ;; Appending preserves every existing index consumed by compiler_ctfe.tl.
+    (compiler-builtin-load-ctfe-id! insert-missing 219 "all")
+    (compiler-builtin-load-ctfe-id! insert-missing 220 "any")
+    (compiler-builtin-load-ctfe-id! insert-missing 221 ":kind")
+    (compiler-builtin-load-ctfe-id! insert-missing 222 "...")
+    (compiler-builtin-load-ctfe-id! insert-missing 223 "string")
+    (compiler-builtin-load-ctfe-id! insert-missing 224 "dyn-array")
+    (compiler-builtin-load-ctfe-id! insert-missing 225 "function")
+    (compiler-builtin-load-ctfe-id! insert-missing 226 "struct")
+    (compiler-builtin-load-ctfe-id! insert-missing 227 "enum")
+    (compiler-builtin-load-ctfe-id! insert-missing 228 "ptr")
+    (compiler-builtin-load-ctfe-id! insert-missing 229 "mut-ptr")
+    (compiler-builtin-load-ctfe-id! insert-missing 230 "ref")
+    (compiler-builtin-load-ctfe-id! insert-missing 231 "mut-ref")
+    (compiler-builtin-load-ctfe-id! insert-missing 232 "region")
+    (compiler-builtin-load-ctfe-id! insert-missing 233 "type-var")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -2865,6 +2882,66 @@
     (if (compiler-builtin-comptime-structural-fields-reset-ok?)
       unit
       (io.panic "compiler builtin comptime structural field IDs failed"))))
+
+(cfg
+  test
+  (define (compiler-builtin-parser-syntax-ids-current-ok?) : bool
+    (and
+      (= (compiler-builtin-ctfe-ref 219) (ci.intern-source-slice "all" 0 3))
+      (= (compiler-builtin-ctfe-ref 220) (ci.intern-source-slice "any" 0 3))
+      (= (compiler-builtin-ctfe-ref 221) (ci.intern-source-slice ":kind" 0 5))
+      (= (compiler-builtin-ctfe-ref 222) (ci.intern-source-slice "..." 0 3))
+      (= (compiler-builtin-ctfe-ref 223) (ci.intern-source-slice "string" 0 6))
+      (=
+        (compiler-builtin-ctfe-ref 224)
+        (ci.intern-source-slice "dyn-array" 0 9))
+      (=
+        (compiler-builtin-ctfe-ref 225)
+        (ci.intern-source-slice "function" 0 8))
+      (= (compiler-builtin-ctfe-ref 226) (ci.intern-source-slice "struct" 0 6))
+      (= (compiler-builtin-ctfe-ref 227) (ci.intern-source-slice "enum" 0 4))
+      (= (compiler-builtin-ctfe-ref 228) (ci.intern-source-slice "ptr" 0 3))
+      (= (compiler-builtin-ctfe-ref 229) (ci.intern-source-slice "mut-ptr" 0 7))
+      (= (compiler-builtin-ctfe-ref 230) (ci.intern-source-slice "ref" 0 3))
+      (= (compiler-builtin-ctfe-ref 231) (ci.intern-source-slice "mut-ref" 0 7))
+      (= (compiler-builtin-ctfe-ref 232) (ci.intern-source-slice "region" 0 6))
+      (=
+        (compiler-builtin-ctfe-ref 233)
+        (ci.intern-source-slice "type-var" 0 8))
+      (not
+        (=
+          (compiler-builtin-ctfe-ref 219)
+          (ci.intern-generated-canonical-name "all"))))))
+
+(cfg
+  test
+  (define (compiler-builtin-parser-syntax-ids-reset-ok?) : bool
+    (begin
+      (ci.intern-reset!)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (unless (compiler-builtin-parser-syntax-ids-current-ok?) (return false))
+      (let
+        [snapshot : CompilerBuiltinIdsState (state-capture)]
+        (begin
+          (compiler-builtin-ctfe-set! 219 -1)
+          (compiler-builtin-ctfe-set! 233 -1)
+          (state-install! snapshot)
+          (unless
+            (compiler-builtin-parser-syntax-ids-current-ok?)
+            (return false))))
+      (ci.intern-reset!)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (compiler-builtin-parser-syntax-ids-current-ok?))))
+
+(cfg
+  test
+  (test
+    compiler-builtin-parser-syntax-ids
+    (if (compiler-builtin-parser-syntax-ids-reset-ok?)
+      unit
+      (io.panic "compiler builtin parser syntax ID lifecycle failed"))))
 
 (cfg
   test

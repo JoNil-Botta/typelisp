@@ -1170,15 +1170,15 @@
       (match (reader.sp-node-get head)
         [(reader.SpannedSexpr.Sym op _)
           (cond
-            [(string.eq (ci.intern-str op) "all")
+            [(= op (cbi.compiler-builtin-ctfe-ref 219))
               (compiler-cfg-eval-list-all
                 dispatch
                 (reader.sp-node-get predicates))]
-            [(string.eq (ci.intern-str op) "any")
+            [(= op (cbi.compiler-builtin-ctfe-ref 220))
               (compiler-cfg-eval-list-any
                 dispatch
                 (reader.sp-node-get predicates))]
-            [(string.eq (ci.intern-str op) "not")
+            [(= op (cbi.compiler-builtin-ctfe-ref 155))
               (compiler-cfg-eval-not dispatch (reader.sp-node-get predicates))]
             [else
               (ResultCompilerCfg.Err
@@ -2985,7 +2985,7 @@
     [(reader.Sexpr.Cons key-node tail)
       (match (box-get key-node)
         [(reader.Sexpr.Sym key)
-          (if (string.eq (ci.intern-str key) ":consume")
+          (if (= key (cbi.compiler-builtin-ctfe-ref 179))
             (match (box-get tail)
               [(reader.Sexpr.Cons ty-node end)
                 (match (box-get end)
@@ -3034,14 +3034,6 @@
     [_
       (ResultAstFuncTypeParts.Err
         "parse: function type needs at least return type")]))
-
-;; Macro output uses these non-lexer-spellable symbols to carry already-resolved
-;; aggregate type operands through declaration-shaped quasiquote output.
-(define (parse-internal-resolved-struct-type-marker) : String
-  "__typelisp internal resolved struct type")
-
-(define (parse-internal-resolved-enum-type-marker) : String
-  "__typelisp internal resolved enum type")
 
 (define (parse-ast-internal-binary-data
   [pools : AstNodePoolContext]
@@ -3205,13 +3197,11 @@
             [head-id : i64 head]
             [tag : i64 (compiler-parse-dispatch-tag-id dispatch head-id)]
             (cond
-              [(string.eq
-                  (ci.intern-str head)
-                  (parse-internal-resolved-struct-type-marker))
+              ;; Macro output uses these non-lexer-spellable builtin IDs to
+              ;; carry already-resolved aggregate types through quasiquotes.
+              [(= head (cbi.compiler-builtin-ctfe-ref 106))
                 (parse-ast-resolved-nominal-type dispatch pools rest true)]
-              [(string.eq
-                  (ci.intern-str head)
-                  (parse-internal-resolved-enum-type-marker))
+              [(= head (cbi.compiler-builtin-ctfe-ref 107))
                 (parse-ast-resolved-nominal-type dispatch pools rest false)]
               [(= tag (compiler-parse-tag-ty-func))
                 (match (parse-ast-func-type-parts dispatch pools rest)
@@ -3398,20 +3388,22 @@
             [(reader.Sexpr.Cons key-node metadata-tail)
               (match (box-get key-node)
                 [(reader.Sexpr.Sym key)
-                  (let
-                    [key-text : String (ci.intern-str key)]
-                    (if (string.eq key-text ":consume")
-                      (match (box-get metadata-tail)
-                        [(reader.Sexpr.Nil)
-                          (if (parse-ast-consuming-param-type-allowed? ty)
-                            (ResultAstParam.Ok
-                              (ast-param-id-with-consume name ty false true))
-                            (ResultAstParam.Err
-                              "parse: :consume requires a non-reference parameter type"))]
-                        [_
+                  (if (= key (cbi.compiler-builtin-ctfe-ref 179))
+                    (match (box-get metadata-tail)
+                      [(reader.Sexpr.Nil)
+                        (if (parse-ast-consuming-param-type-allowed? ty)
+                          (ResultAstParam.Ok
+                            (ast-param-id-with-consume name ty false true))
                           (ResultAstParam.Err
-                            "parse: (:consume) parameter metadata takes no arguments")])
-                      (if (compiler-parse-metadata-key? key)
+                            "parse: :consume requires a non-reference parameter type"))]
+                      [_
+                        (ResultAstParam.Err
+                          "parse: (:consume) parameter metadata takes no arguments")])
+                    (let
+                      [key-text : String (ci.intern-str key)]
+                      (if (and
+                        (> (string.string-length key-text) 0)
+                        (= (string.string-ref key-text 0) ':'))
                         (ResultAstParam.Err
                           (string.append
                             "parse: unknown parameter metadata "
@@ -3433,7 +3425,7 @@
               (match (box-get key-node)
                 [(reader.Sexpr.Sym key)
                   (and
-                    (string.eq (ci.intern-str key) ":consume")
+                    (= key (cbi.compiler-builtin-ctfe-ref 179))
                     (match (box-get metadata-tail)
                       [(reader.Sexpr.Nil) true]
                       [_ false]))]
@@ -3450,7 +3442,7 @@
     [(reader.Sexpr.Cons first rest)
       (match (box-get first)
         [(reader.Sexpr.Sym first-name)
-          (if (string.eq (ci.intern-str first-name) "comptime")
+          (if (= first-name cbi.compiler-builtin-id-fix-comptime)
             (match (box-get rest)
               [(reader.Sexpr.Cons name-node after-name)
                 (match (box-get name-node)
@@ -3534,38 +3526,35 @@
           [_ false]))]))
 
 (define (parse-ast-macro-type-kind-known? [name : i64]) : bool
-  (let
-    [text : String (ci.intern-str name)]
-    (cond
-      [(string.eq text "i64") true]
-      [(string.eq text "i32") true]
-      [(string.eq text "i16") true]
-      [(string.eq text "i8") true]
-      [(string.eq text "u64") true]
-      [(string.eq text "u32") true]
-      [(string.eq text "u16") true]
-      [(string.eq text "u8") true]
-      [(string.eq text "f64") true]
-      [(string.eq text "f32") true]
-      [(string.eq text "bool") true]
-      [(string.eq text "char") true]
-      [(string.eq text "string") true]
-      [(string.eq text "unit") true]
-      [(string.eq text "never") true]
-      [(string.eq text "array") true]
-      [(string.eq text "dyn-array") true]
-      [(string.eq text "function") true]
-      [(string.eq text "tuple") true]
-      [(string.eq text "struct") true]
-      [(string.eq text "enum") true]
-      [(string.eq text "str") true]
-      [(string.eq text "ptr") true]
-      [(string.eq text "mut-ptr") true]
-      [(string.eq text "ref") true]
-      [(string.eq text "mut-ref") true]
-      [(string.eq text "region") true]
-      [(string.eq text "type-var") true]
-      [else false])))
+  (or
+    (= name (cbi.compiler-builtin-ctfe-ref 159))
+    (= name (cbi.compiler-builtin-ctfe-ref 160))
+    (= name (cbi.compiler-builtin-ctfe-ref 161))
+    (= name (cbi.compiler-builtin-ctfe-ref 162))
+    (= name (cbi.compiler-builtin-ctfe-ref 163))
+    (= name (cbi.compiler-builtin-ctfe-ref 164))
+    (= name (cbi.compiler-builtin-ctfe-ref 165))
+    (= name (cbi.compiler-builtin-ctfe-ref 166))
+    (= name (cbi.compiler-builtin-ctfe-ref 167))
+    (= name (cbi.compiler-builtin-ctfe-ref 168))
+    (= name (cbi.compiler-builtin-ctfe-ref 169))
+    (= name (cbi.compiler-builtin-ctfe-ref 170))
+    (= name (cbi.compiler-builtin-ctfe-ref 223))
+    (= name (cbi.compiler-builtin-ctfe-ref 173))
+    (= name (cbi.compiler-builtin-ctfe-ref 174))
+    (= name (cbi.compiler-builtin-ctfe-ref 125))
+    (= name (cbi.compiler-builtin-ctfe-ref 224))
+    (= name (cbi.compiler-builtin-ctfe-ref 225))
+    (= name (cbi.compiler-builtin-ctfe-ref 124))
+    (= name (cbi.compiler-builtin-ctfe-ref 226))
+    (= name (cbi.compiler-builtin-ctfe-ref 227))
+    (= name (cbi.compiler-builtin-ctfe-ref 171))
+    (= name (cbi.compiler-builtin-ctfe-ref 228))
+    (= name (cbi.compiler-builtin-ctfe-ref 229))
+    (= name (cbi.compiler-builtin-ctfe-ref 230))
+    (= name (cbi.compiler-builtin-ctfe-ref 231))
+    (= name (cbi.compiler-builtin-ctfe-ref 232))
+    (= name (cbi.compiler-builtin-ctfe-ref 233))))
 
 (define (parse-ast-macro-type-kind-error
   [operand-name : String]
@@ -3584,26 +3573,24 @@
     [(reader.Sexpr.Cons head tail)
       (match (box-get head)
         [(reader.Sexpr.Sym kind-name)
-          (let
-            [kind-text : String (ci.intern-str kind-name)]
-            (if (parse-ast-macro-type-kind-known? kind-name)
-              (match (parse-ast-macro-type-kind-list
+          (if (parse-ast-macro-type-kind-known? kind-name)
+            (match (parse-ast-macro-type-kind-list operand-name (box-get tail))
+              [(ResultAstMacroTypeKindList.Ok rest)
+                (if (ast-macro-type-kind-list-contains-id? rest kind-name)
+                  (ResultAstMacroTypeKindList.Err
+                    (parse-ast-macro-type-kind-error
+                      operand-name
+                      (string.append
+                        "has duplicate kind "
+                        (ci.intern-str kind-name))))
+                  (ResultAstMacroTypeKindList.Ok
+                    (ast-macro-type-kind-list-cons-id kind-name rest)))]
+              [(ResultAstMacroTypeKindList.Err message)
+                (ResultAstMacroTypeKindList.Err message)])
+            (ResultAstMacroTypeKindList.Err
+              (parse-ast-macro-type-kind-error
                 operand-name
-                (box-get tail))
-                [(ResultAstMacroTypeKindList.Ok rest)
-                  (if (ast-macro-type-kind-list-contains-id? rest kind-name)
-                    (ResultAstMacroTypeKindList.Err
-                      (parse-ast-macro-type-kind-error
-                        operand-name
-                        (string.append "has duplicate kind " kind-text)))
-                    (ResultAstMacroTypeKindList.Ok
-                      (ast-macro-type-kind-list-cons-id kind-name rest)))]
-                [(ResultAstMacroTypeKindList.Err message)
-                  (ResultAstMacroTypeKindList.Err message)])
-              (ResultAstMacroTypeKindList.Err
-                (parse-ast-macro-type-kind-error
-                  operand-name
-                  (string.append "has unknown kind " kind-text)))))]
+                (string.append "has unknown kind " (ci.intern-str kind-name)))))]
         [_
           (ResultAstMacroTypeKindList.Err
             (parse-ast-macro-type-kind-error
@@ -3620,7 +3607,7 @@
     [(reader.Sexpr.Cons head tail)
       (match (box-get head)
         [(reader.Sexpr.Sym tag)
-          (if (string.eq (ci.intern-str tag) ":kind")
+          (if (= tag (cbi.compiler-builtin-ctfe-ref 221))
             (match (box-get tail)
               [(reader.Sexpr.Nil)
                 (ResultAstMacroTypeKindList.Err
@@ -3648,7 +3635,7 @@
 
 (define (parse-ast-macro-type-operand? [ty : AstType]) : bool
   (match ty
-    [(AstType.Var name) (string.eq (intern-str name) "type")]
+    [(AstType.Var name) (= name cbi.compiler-builtin-id-fix-type)]
     [_ false]))
 
 (define (parse-ast-macro-param-after-type
@@ -3663,7 +3650,7 @@
       [(reader.Sexpr.Cons suffix suffix-rest)
         (match (box-get suffix)
           [(reader.Sexpr.Sym suffix-name)
-            (if (string.eq (ci.intern-str suffix-name) "...")
+            (if (= suffix-name (cbi.compiler-builtin-ctfe-ref 222))
               (match (box-get suffix-rest)
                 [(reader.Sexpr.Nil)
                   (ResultAstMacroParam.Ok (ast-macro-param name parsed-ty true))]
@@ -3689,7 +3676,7 @@
                   (match (box-get maybe-dots)
                     [(reader.Sexpr.Sym dots-name)
                       (if (and
-                        (string.eq (ci.intern-str dots-name) "...")
+                        (= dots-name (cbi.compiler-builtin-ctfe-ref 222))
                         (match (box-get after-dots)
                           [(reader.Sexpr.Nil) true]
                           [_ false]))
@@ -3727,7 +3714,7 @@
     [(reader.Sexpr.Cons name-node rest)
       (match (box-get name-node)
         [(reader.Sexpr.Sym name)
-          (if (string.eq (ci.intern-str name) "comptime")
+          (if (= name cbi.compiler-builtin-id-fix-comptime)
             (ResultAstMacroParam.Err
               "parse: defmacro operands are already compile-time")
             (match (box-get rest)
@@ -10183,21 +10170,11 @@
         (ResultAstDeclList.Ok (parse-ast-decl-vec-to-list (& out)))]
       [(ResultParseAstDeclVec.Err message) (ResultAstDeclList.Err message)])))
 
-(define (parse-ast-reserved-symbols-seed!) : unit
-  (begin
-    (reader.read-stable-symbol-id (parse-internal-resolved-struct-type-marker))
-    (reader.read-stable-symbol-id (parse-internal-resolved-enum-type-marker))
-    unit))
-
 (define (parse-ast-program-dispatch) : sym_i64_env.SymI64Env
-  (begin
-    (parse-ast-reserved-symbols-seed!)
-    (compiler-parse-dispatch-env)))
+  (compiler-parse-dispatch-env))
 
 (define (parse-ast-program-dispatch-with-cfg [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (begin
-    (parse-ast-reserved-symbols-seed!)
-    (compiler-parse-dispatch-env-from-cfg cfgs)))
+  (compiler-parse-dispatch-env-from-cfg cfgs))
 
 (define (parse-ast-program-with-cfg-and-pools
   [toks : (Array token.SpannedToken)]
@@ -13476,10 +13453,27 @@
         [_ false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-parse-fixed-syntax-name-provenance-ok?) : bool
+  (let
+    [source-kind : i64 (reader.read-stable-symbol-id "i64")]
+    [generated-kind : i64 (ci.intern-generated-canonical-name "i64")]
+    [source-all : i64 (reader.read-stable-symbol-id "all")]
+    [generated-all : i64 (ci.intern-generated-canonical-name "all")]
+    [source-dots : i64 (reader.read-stable-symbol-id "...")]
+    [generated-dots : i64 (ci.intern-generated-canonical-name "...")]
+    (and
+      (parse-ast-macro-type-kind-known? source-kind)
+      (not (parse-ast-macro-type-kind-known? generated-kind))
+      (= source-all (cbi.compiler-builtin-ctfe-ref 219))
+      (not (= generated-all (cbi.compiler-builtin-ctfe-ref 219)))
+      (= source-dots (cbi.compiler-builtin-ctfe-ref 222))
+      (not (= generated-dots (cbi.compiler-builtin-ctfe-ref 222))))))
+
 (define (compiler-parse-defmacro-tests-ok?) : bool
   (and
     (compiler-parse-defmacro-shape-ok?)
     (compiler-parse-defmacro-type-kind-constraint-shape-ok?)
+    (compiler-parse-fixed-syntax-name-provenance-ok?)
     (compiler-parse-ok?
       "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool (expr-if lhs rhs (expr-bool false)))")
     (compiler-parse-ok?

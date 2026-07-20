@@ -9112,7 +9112,7 @@
         [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteTypeList.Err diag)]))))
 
 (define (ctfe-expr-unary-type
-  [name : String]
+  [name : i64]
   [args : AstExprList]
   [origin : AstExpr]
   [env : CtfeEnv]
@@ -9124,13 +9124,13 @@
         [(ResultCtfeQuoteType.Ok elem-ty next-fuel)
           (ResultCtfeQuoteType.Ok
             (cond
-              [(string.eq name "Array")
+              [(= name (ctfe-builtin-ref 109))
                 (ast-ty-dyn-array-with-pools (ctfe-env-pools env) elem-ty)]
-              [(string.eq name "Box")
+              [(= name cbi.compiler-builtin-id-fix-Box)
                 (ast-ty-box-with-pools (ctfe-env-pools env) elem-ty)]
-              [(string.eq name "Ptr")
+              [(= name (ctfe-builtin-ref 177))
                 (ast-ty-ptr-with-pools (ctfe-env-pools env) elem-ty)]
-              [(string.eq name "MutPtr")
+              [(= name (ctfe-builtin-ref 178))
                 (ast-ty-mut-ptr-with-pools (ctfe-env-pools env) elem-ty)]
               [else elem-ty])
             next-fuel)]
@@ -9348,34 +9348,28 @@
                 (ctfe-expr-resolved-nominal-type args origin env fuel true)]
               [(= name (ctfe-internal-resolved-enum-type-marker-id))
                 (ctfe-expr-resolved-nominal-type args origin env fuel false)]
-              [else
-                (let
-                  [head : String (intern-str name)]
-                  (cond
-                    [(string.eq head "->")
-                      (ctfe-expr-func-type args origin env fuel)]
-                    [(string.eq head "Array")
-                      (ctfe-expr-array-type args origin env fuel)]
-                    [(or
-                        (string.eq head "Box")
-                        (string.eq head "Ptr")
-                        (string.eq head "MutPtr"))
-                      (ctfe-expr-unary-type head args origin env fuel)]
-                    [(string.eq head "&")
-                      (ctfe-expr-reference-type args origin env fuel false)]
-                    [(string.eq head "&mut")
-                      (ctfe-expr-reference-type args origin env fuel true)]
-                    [(string.eq head "in")
-                      (ctfe-expr-region-type args origin env fuel)]
-                    [(string.eq head "Tuple")
-                      (match (ctfe-expr-list-to-type-list args origin env fuel)
-                        [(ResultCtfeQuoteTypeList.Ok elems next-fuel)
-                          (ResultCtfeQuoteType.Ok
-                            (ast-ty-tuple elems)
-                            next-fuel)]
-                        [(ResultCtfeQuoteTypeList.Err diag)
-                          (ResultCtfeQuoteType.Err diag)])]
-                    [else (ctfe-type-expr-error origin)]))])]
+              [(= name (ctfe-builtin-ref 176))
+                (ctfe-expr-func-type args origin env fuel)]
+              [(= name (ctfe-builtin-ref 109))
+                (ctfe-expr-array-type args origin env fuel)]
+              [(or
+                  (= name cbi.compiler-builtin-id-fix-Box)
+                  (= name (ctfe-builtin-ref 177))
+                  (= name (ctfe-builtin-ref 178)))
+                (ctfe-expr-unary-type name args origin env fuel)]
+              [(= name (ctfe-builtin-ref 110))
+                (ctfe-expr-reference-type args origin env fuel false)]
+              [(= name (ctfe-builtin-ref 111))
+                (ctfe-expr-reference-type args origin env fuel true)]
+              [(= name (ctfe-builtin-ref 112))
+                (ctfe-expr-region-type args origin env fuel)]
+              [(= name (ctfe-builtin-ref 175))
+                (match (ctfe-expr-list-to-type-list args origin env fuel)
+                  [(ResultCtfeQuoteTypeList.Ok elems next-fuel)
+                    (ResultCtfeQuoteType.Ok (ast-ty-tuple elems) next-fuel)]
+                  [(ResultCtfeQuoteTypeList.Err diag)
+                    (ResultCtfeQuoteType.Err diag)])]
+              [else (ctfe-type-expr-error origin)])]
           [_ (ctfe-type-expr-error origin)]))]
     [_ (ctfe-type-expr-error origin)]))
 
@@ -12947,6 +12941,36 @@
     (ctfe-ast-push env (AstExpr.Var name-id))
     (ast-expr-cons a (ast-expr-cons b (ast-expr-cons c (ast-expr-list-new))))))
 
+(define (compiler-ctfe-fixed-type-head-name-provenance-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [i64-expr : i64 (ctfe-ast-push env (AstExpr.Var (ctfe-builtin-ref 159)))]
+    [source-call : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 109) i64-expr)]
+    [generated-array : i64 (ctfe-materialize-generated-name-id "Array")]
+    [generated-call : i64
+      (compiler-ctfe-call1-in-env env generated-array i64-expr)]
+    [origin : AstExpr (ctfe-ast-get env source-call)]
+    (and
+      (match (ctfe-expr-to-type
+        (ctfe-ast-get env source-call)
+        origin
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfeQuoteType.Ok actual _)
+          (ctfe-type-eq-in-env
+            env
+            actual
+            (ast-ty-dyn-array-with-pools (ctfe-env-pools env) (AstType.I64)))]
+        [(ResultCtfeQuoteType.Err _) false])
+      (match (ctfe-expr-to-type
+        (ctfe-ast-get env generated-call)
+        origin
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfeQuoteType.Err _) true]
+        [(ResultCtfeQuoteType.Ok _ _) false]))))
+
 (define (compiler-ctfe-eval-i64-ok? [expr : i64] [env : CtfeEnv] [want : i64]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
     [(ResultCtfe.Ok value _)
@@ -15284,6 +15308,7 @@
     (unless (compiler-ctfe-type-literal-ok?) (return 1))
     (unless (compiler-ctfe-type-comparison-ok?) (return 1))
     (unless (compiler-ctfe-raw-pointer-type-comparison-ok?) (return 1))
+    (unless (compiler-ctfe-fixed-type-head-name-provenance-ok?) (return 1))
     (unless (compiler-ctfe-f64-ok?) (return 1))
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))

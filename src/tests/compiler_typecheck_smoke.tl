@@ -2842,7 +2842,7 @@
             (match (typecheck-compiler-program-with-paths-checked
               entry-program
               (ast-decl-path-list-new))
-              [(ResultCompilerTypecheckChecked.Ok _ _ _)
+              [(ResultCompilerTypecheckChecked.Ok _ _ _ _)
                 (set!
                   ok
                   (and
@@ -3204,7 +3204,7 @@
           (match (typecheck-compiler-program-with-paths-checked
             program
             (ast-decl-path-list-new))
-            [(ResultCompilerTypecheckChecked.Ok _ ctx env)
+            [(ResultCompilerTypecheckChecked.Ok _ ctx env _)
               (compiler-typecheck-smoke-lazy-import-full-path-cache-checked?
                 (tc-context-with-module-id
                   ctx
@@ -3862,7 +3862,7 @@
           (match (typecheck-compiler-program-with-paths-checked
             program
             (ast-decl-path-list-new))
-            [(ResultCompilerTypecheckChecked.Ok _ ctx env)
+            [(ResultCompilerTypecheckChecked.Ok _ ctx env _)
               (let
                 [entry-ctx : TcContext
                   (tc-context-with-module-id
@@ -3971,7 +3971,7 @@
           (match (typecheck-compiler-program-with-paths-checked
             (ast-program decls)
             paths)
-            [(ResultCompilerTypecheckChecked.Ok _ _ env)
+            [(ResultCompilerTypecheckChecked.Ok _ _ env _)
               (and
                 (> (tc-lazy-import-summary-backed-stub-count) 0)
                 (not
@@ -4005,7 +4005,7 @@
               (match (typecheck-compiler-program-with-paths-checked
                 (ast-program decls)
                 paths)
-                [(ResultCompilerTypecheckChecked.Ok _ _ _)
+                [(ResultCompilerTypecheckChecked.Ok _ _ _ _)
                   (if array-materialized
                     (io.panic
                       "typecheck: lazy import stdlib.array materialized")
@@ -4046,7 +4046,7 @@
               (match (typecheck-compiler-program-with-paths-checked
                 (ast-program decls)
                 paths)
-                [(ResultCompilerTypecheckChecked.Ok _ _ _)
+                [(ResultCompilerTypecheckChecked.Ok _ _ _ _)
                   (and (= skip-count 0) result-materialized)]
                 [(ResultCompilerTypecheckChecked.Err diag)
                   (let
@@ -4076,7 +4076,7 @@
             (match (typecheck-compiler-program-with-paths-checked
               (ast-program decls)
               paths)
-              [(ResultCompilerTypecheckChecked.Ok _ _ _) true]
+              [(ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
               [(ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [message : String
@@ -4105,7 +4105,7 @@
             (match (typecheck-compiler-program-with-paths-checked
               (ast-program decls)
               paths)
-              [(ResultCompilerTypecheckChecked.Ok _ _ _) true]
+              [(ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
               [(ResultCompilerTypecheckChecked.Err diag)
                 (let
                   [message : String
@@ -4136,7 +4136,7 @@
               (match (typecheck-compiler-program-with-paths-checked
                 (ast-program decls)
                 paths)
-                [(ResultCompilerTypecheckChecked.Ok _ _ _) (= skip-count 0)]
+                [(ResultCompilerTypecheckChecked.Ok _ _ _ _) (= skip-count 0)]
                 [(ResultCompilerTypecheckChecked.Err _) false]))]
           [(ResultCompilerLoadWithPaths.Err _) false]))]
     (begin
@@ -4153,7 +4153,7 @@
           (match (typecheck-compiler-program-with-paths-checked
             (ast-program decls)
             paths)
-            [(ResultCompilerTypecheckChecked.Ok _ _ _) true]
+            [(ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
             [(ResultCompilerTypecheckChecked.Err _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false])]
     (begin
@@ -4170,7 +4170,7 @@
           (match (typecheck-compiler-program-with-paths-checked
             (ast-program decls)
             paths)
-            [(ResultCompilerTypecheckChecked.Ok _ _ _) true]
+            [(ResultCompilerTypecheckChecked.Ok _ _ _ _) true]
             [(ResultCompilerTypecheckChecked.Err _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false])]
     (begin

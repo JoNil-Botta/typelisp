@@ -55294,7 +55294,7 @@
       cache-scope
       pools
       source-names))
-    [(ResultCompilerTypecheckChecked.Ok _ source-ctx source-top-env)
+    [(ResultCompilerTypecheckChecked.Ok _ source-ctx source-top-env _)
       (let
         [_finish-early-exit-facts : unit (tc-body-early-exit-facts-finish!)]
         [clone-roots : CloneNameList

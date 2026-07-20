@@ -736,6 +736,10 @@
   (compiler-live-set-empty))
 (define compiler-backend-current-slot-vars : i64
   0)
+(define compiler-backend-shrinkwrap-bare-label : String
+  "")
+(define compiler-backend-current-block-label : String
+  "")
 
 ;; Compare->branch fusion state. A comparison result may be fused to `cmp`/`jcc`
 ;; (never materialized as a boolean) when EVERY use of it is a branch fed by its
@@ -9139,6 +9143,96 @@
             0)
           "    .seh_endprologue\n"))
       acc)))
+
+;; Cycle 21's frame-free guard must read the incoming ABI locations, not the
+;; allocator's eventual parameter homes.  In particular Win64's third GP
+;; argument is %r8, which is intentionally excluded from parameter pinning
+;; because it is the backend scratch.  The saving edge runs the ordinary
+;; prologue and parameter captures before the rewritten body uses those homes.
+(define (compiler-backend-shrinkwrap-guard-asm
+  [abi : CompilerRegTargetAbi]
+  [params : CompilerIrParamList]
+  [vars : i64]
+  [assignments : CompilerRegAssignmentList]
+  [function : String]
+  [blocks : CompilerIrBlockList]
+  [bare-label : String]
+  [incoming? : bool]) : String
+  (let
+    [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+    [incoming-assignments : CompilerRegAssignmentList
+      (if (not incoming?)
+        assignments
+        (match (compiler-ir-param-list-force-cons params)
+          [(CompilerIrParamList.Cons param0 rest0)
+            (match param0
+              [(CompilerIrParam.Param _ _ var0)
+                (match (compiler-ir-param-list-force-cons (box-get rest0))
+                  [(CompilerIrParamList.Cons param1 rest1)
+                    (match param1
+                      [(CompilerIrParam.Param _ _ var1)
+                        (match (compiler-ir-param-list-force-cons
+                          (box-get rest1))
+                          [(CompilerIrParamList.Cons param2 _)
+                            (match param2
+                              [(CompilerIrParam.Param _ _ var2)
+                                (compiler-reg-assignment-table-to-list
+                                  (compiler-reg-assignment-table-insert
+                                    (compiler-reg-assignment-table-insert
+                                      (compiler-reg-assignment-table-insert
+                                        (compiler-reg-assignment-table-make
+                                          vars)
+                                        var0
+                                        (CompilerRegLocation.Register
+                                          (compiler-abi-gp-arg-register abi 0)))
+                                      var1
+                                      (CompilerRegLocation.Register
+                                        (compiler-abi-gp-arg-register abi 1)))
+                                    var2
+                                    (CompilerRegLocation.Register
+                                      (compiler-abi-gp-arg-register abi 2))))])]
+                          [_ CompilerRegAssignmentList.Nil])])]
+                  [_ CompilerRegAssignmentList.Nil])])]
+          [_ CompilerRegAssignmentList.Nil]))]
+    [incoming-ready? : bool
+      (or
+        (not incoming?)
+        (match incoming-assignments
+          [(CompilerRegAssignmentList.Nil) false]
+          [_ true]))]
+    (if (or (not incoming-ready?) (= (compiler-ir-block-seq-count seq) 0))
+      ""
+      (match (compiler-ir-block-seq-ref seq 0)
+        [(CompilerIrBlock.Block label instrs)
+          (if (= (compiler-ir-instr-seq-count instrs) 2)
+            (match (compiler-ir-instr-seq-ref instrs 0)
+              [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+                (match (compiler-ir-instr-seq-ref instrs 1)
+                  [(CompilerIrInstr.Branch cond on-true on-false)
+                    (match cond
+                      [(CompilerIrValue.Var cond-var)
+                        (if (= cond-var dst)
+                          (match (compiler-backend-emit-compare-branch
+                            incoming-assignments
+                            function
+                            op
+                            lhs
+                            rhs
+                            ty
+                            on-true
+                            on-false
+                            (CompilerBackendMaybeLabel.Some bare-label))
+                            [(ResultCompilerBackend.Ok asm)
+                              (str_cat.str-cat
+                                (compiler-backend-asm-label function label)
+                                ":\n"
+                                asm)]
+                            [(ResultCompilerBackend.Err _) ""])
+                          "")]
+                      [_ ""])]
+                  [_ ""])]
+              [_ ""])
+            "")]))))
 
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (str_cat.str-cat "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
@@ -29920,13 +30014,19 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [return-count : i64]) : String
-  (if (compiler-backend-use-shared-return-count? assignments return-count)
-    (str_cat.str-cat
-      "    jmp "
-      (compiler-backend-return-label source-function)
-      "\n"
-      "")
-    (compiler-backend-inline-return-tail assignments vars)))
+  (if (and
+    (not (string.eq compiler-backend-shrinkwrap-bare-label ""))
+    (string.eq
+      compiler-backend-current-block-label
+      compiler-backend-shrinkwrap-bare-label))
+    "    ret\n"
+    (if (compiler-backend-use-shared-return-count? assignments return-count)
+      (str_cat.str-cat
+        "    jmp "
+        (compiler-backend-return-label source-function)
+        "\n"
+        "")
+      (compiler-backend-inline-return-tail assignments vars))))
 
 (define (compiler-backend-return-tail
   [source-function : i64]
@@ -39786,43 +39886,45 @@
   [use-counts : (Array i64)]) : ResultCompilerBackend
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (match (compiler-backend-emit-instrs
-        (CompilerBackendEmissionContext
-          target
-          function
-          source-function
-          blocks
-          label
-          assignments
-          vars
-          types
-          global-types
-          ret-ty
-          plan
-          functions
-          externs
-          program-index
-          spans
-          func-diag
-          use-counts)
-        fallthrough
-        (compiler-ir-instr-seq-to-list instrs)
-        (text_buf.empty))
-        [(ResultCompilerBackend.Ok body)
-          (ResultCompilerBackend.Ok
-            (str_cat.str-cat
-              ;; M-F: loop-hoisted constant loads registered for this block.
-              ;; Before-label entries (header-is-entry-block loops) land at
-              ;; prologue end, once per call; after-label entries run at a
-              ;; dedicated preheader's start, once per loop entry. "" for
-              ;; every other block.
-              (compiler-backend-const-hoist-injection-for label true)
-              (compiler-backend-asm-label function label)
-              ":\n"
-              (compiler-backend-const-hoist-injection-for label false)
-              body))]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackend.Err message)])]))
+      (begin
+        (set! compiler-backend-current-block-label (string.copy (& label)))
+        (match (compiler-backend-emit-instrs
+          (CompilerBackendEmissionContext
+            target
+            function
+            source-function
+            blocks
+            label
+            assignments
+            vars
+            types
+            global-types
+            ret-ty
+            plan
+            functions
+            externs
+            program-index
+            spans
+            func-diag
+            use-counts)
+          fallthrough
+          (compiler-ir-instr-seq-to-list instrs)
+          (text_buf.empty))
+          [(ResultCompilerBackend.Ok body)
+            (ResultCompilerBackend.Ok
+              (str_cat.str-cat
+                ;; M-F: loop-hoisted constant loads registered for this block.
+                ;; Before-label entries (header-is-entry-block loops) land at
+                ;; prologue end, once per call; after-label entries run at a
+                ;; dedicated preheader's start, once per loop entry. "" for
+                ;; every other block.
+                (compiler-backend-const-hoist-injection-for label true)
+                (compiler-backend-asm-label function label)
+                ":\n"
+                (compiler-backend-const-hoist-injection-for label false)
+                body))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]))
 
 (define (compiler-backend-next-block-label [blocks : CompilerIrBlockList]) : CompilerBackendMaybeLabel
   (match blocks
@@ -45265,10 +45367,11 @@
         ;; shared counter stays live; the offset adds vanish).
         [folded-blocks : CompilerIrBlockList
           (compiler-backend-gep-fold-blocks vars raw-blocks)]
-        ;; Cycle 20: protect GP values only on one admitted cold call edge.  The
-        ;; rewrite precedes regalloc so liveness sees the local kills/reloads;
-        ;; Windows keeps its ordinary fixed unwind-described prologue.
-        [cold-call-rewrite : CompilerRegColdCallRewrite
+        ;; Cycle 21 form (a): split one dominating entry guard before regalloc,
+        ;; so incoming parameters die on the saving edge and may stay in their
+        ;; ABI registers until the guard.  The returned labels drive prologue
+        ;; placement and the bare first-entry return below.
+        [early-exit-func : CompilerIrFunction
           (let
             [folded-func : CompilerIrFunction
               (CompilerIrFunction.Function
@@ -45280,8 +45383,20 @@
             (if (and
               (compiler-backend-mode-scalar? mode)
               compiler-backend-scalar-registers-enabled)
-              (compiler-reg-cold-call-rewrite-function folded-func)
-              (CompilerRegColdCallRewrite.Rewrite folded-func (- 0 1))))]
+              (compiler-reg-early-exit-shrinkwrap-function folded-func)
+              (begin
+                (set! compiler-reg-early-exit-saving-label "")
+                (set! compiler-reg-early-exit-bare-label "")
+                folded-func)))]
+        ;; Cycle 20: protect GP values only on one admitted cold call edge.  The
+        ;; rewrite follows the early-exit split and still precedes regalloc, so
+        ;; liveness sees both transformations.
+        [cold-call-rewrite : CompilerRegColdCallRewrite
+          (if (and
+            (compiler-backend-mode-scalar? mode)
+            compiler-backend-scalar-registers-enabled)
+            (compiler-reg-cold-call-rewrite-function early-exit-func)
+            (CompilerRegColdCallRewrite.Rewrite early-exit-func (- 0 1)))]
         [cold-call-func : CompilerIrFunction
           (compiler-reg-cold-call-rewrite-function-value cold-call-rewrite)]
         [blocks : CompilerIrBlockList
@@ -45636,6 +45751,8 @@
               addressable-group-vars))]
         [symbol : String
           (compiler-backend-function-symbol-index program-index name)]
+        [label-scope : String
+          (compiler-backend-function-label-scope program-index name)]
         [use-counts : (Array i64) (array.make-array i64 scratch-vars)]
         [fuse-free-counts : (Array i64) (array.make-array i64 scratch-vars)]
         [_use-facts : unit
@@ -45650,6 +45767,39 @@
             params
             emit-blocks-list
             program-index)]
+        [shrinkwrap-saving-label : String compiler-reg-early-exit-saving-label]
+        [shrinkwrap-bare-label : String compiler-reg-early-exit-bare-label]
+        [shrinkwrap-planned-guard : String
+          (if (string.eq shrinkwrap-bare-label "")
+            ""
+            (compiler-backend-shrinkwrap-guard-asm
+              fn-abi
+              params
+              scratch-vars
+              assignments
+              label-scope
+              emit-blocks-list
+              shrinkwrap-bare-label
+              false))]
+        [shrinkwrap-incoming-guard : String
+          (if (string.eq shrinkwrap-bare-label "")
+            ""
+            (compiler-backend-shrinkwrap-guard-asm
+              fn-abi
+              params
+              scratch-vars
+              assignments
+              label-scope
+              emit-blocks-list
+              shrinkwrap-bare-label
+              true))]
+        [shrinkwrap-candidate? : bool
+          (and
+            (not (string.eq shrinkwrap-saving-label ""))
+            (not (string.eq shrinkwrap-bare-label ""))
+            (not (string.eq shrinkwrap-planned-guard ""))
+            (not (string.eq shrinkwrap-incoming-guard ""))
+            (not (string.eq (compiler-ir-symbol-text name) "main")))]
         ;; M-F: loop-hoisted divmod magic constants. Built over the FINAL
         ;; emitted IR + the same fresh intervals the scavenge occupancy uses,
         ;; so a hoist register is provably free over its whole loop region and
@@ -45659,7 +45809,10 @@
           (if (and
             call-save-enabled
             (compiler-backend-target-linux? target)
-            (not identity-tail-forwarder?))
+            (not identity-tail-forwarder?)
+            ;; A before-label hoist would execute in the unframed guard and
+            ;; could itself claim a CSR. Keep the admitted prefix literal.
+            (not shrinkwrap-candidate?))
             (compiler-backend-const-hoist-build!
               emit-blocks-list
               assignments
@@ -45669,6 +45822,10 @@
                 slot-vars
                 has-group-vars))
             (compiler-backend-const-hoist-disable!))]
+        [shrinkwrap-active? : bool
+          (and
+            shrinkwrap-candidate?
+            (compiler-backend-plan-uses-callee-regs? assignments))]
         [scavenge-base-vars : i64
           (compiler-backend-const-hoist-extend-vars
             const-hoist-synth
@@ -45749,8 +45906,6 @@
                   slot-vars)))
               [(ResultCompilerBackend.Ok spills)
                 (let
-                  [label-scope : String
-                    (compiler-backend-function-label-scope program-index name)]
                   [_carry-safe : unit
                     (compiler-backend-peephole-collect-carry-safe!
                       label-scope
@@ -45768,6 +45923,12 @@
                     (set!
                       compiler-backend-identity-tail-forwarder-active
                       identity-tail-forwarder?)]
+                  [_shrinkwrap-return : unit
+                    (set!
+                      compiler-backend-shrinkwrap-bare-label
+                      (if shrinkwrap-active?
+                        shrinkwrap-bare-label
+                        ""))]
                   [outgoing-frame-space : i64
                     (compiler-backend-outgoing-frame-space
                       target
@@ -45884,9 +46045,8 @@
                               (compiler-backend-group-vars-disable!)
                               (compiler-backend-fuse-need-disable!)
                               (compiler-backend-gep-fold-disable!))]
-                          [post-prologue : String
+                          [saving-prologue-body : String
                             (str_cat.str-cat
-                              (compiler-backend-mode-prologue mode)
                               (compiler-backend-emit-save-callee-regs
                                 assignments
                                 slot-vars)
@@ -45914,7 +46074,38 @@
                                   program-index)
                                 "")
                               spills
-                              body
+                              "")]
+                          [saving-asm-label : String
+                            (compiler-backend-asm-label
+                              label-scope
+                              shrinkwrap-saving-label)]
+                          [guarded-body : String
+                            (if shrinkwrap-active?
+                              (string.replace
+                                body
+                                shrinkwrap-planned-guard
+                                shrinkwrap-incoming-guard)
+                              body)]
+                          [framed-body : String
+                            (if shrinkwrap-active?
+                              (let
+                                [label-line : String
+                                  (str_cat.str-cat saving-asm-label ":\n" "")]
+                                (string.replace
+                                  guarded-body
+                                  label-line
+                                  (str_cat.str-cat
+                                    label-line
+                                    saving-prologue-body
+                                    "")))
+                              (str_cat.str-cat
+                                saving-prologue-body
+                                guarded-body
+                                ""))]
+                          [post-prologue : String
+                            (str_cat.str-cat
+                              (compiler-backend-mode-prologue mode)
+                              framed-body
                               (compiler-backend-return-epilogue
                                 name
                                 assignments
@@ -46046,6 +46237,53 @@
                                       compiler-backend-emergency-used-count
                                       outgoing-frame-space)
                                     unit))]
+                              [final-body : String
+                                (if fpo-ok
+                                  rebased
+                                  (if fpo-attempt
+                                    ;; FPO audit failed with no %rbp in the
+                                    ;; plan: retain the stage-1 rbp frame.
+                                    (compiler-backend-rsp-rebase
+                                      post-prologue
+                                      frame
+                                      false)
+                                    rebased))]
+                              [entry-symbol : String
+                                (if shrinkwrap-active?
+                                  saving-asm-label
+                                  symbol)]
+                              [selected-prologue : String
+                                (if fpo-ok
+                                  (if (compiler-backend-target-windows? target)
+                                    (compiler-backend-emit-function-entry-fpo-windows
+                                      entry-symbol
+                                      frame
+                                      assignments
+                                      slot-vars
+                                      push-regs
+                                      push-count)
+                                    (if (> push-count 0)
+                                      (compiler-backend-emit-function-entry-fpo-push
+                                        entry-symbol
+                                        frame
+                                        push-regs
+                                        push-count)
+                                      (compiler-backend-emit-function-entry-fpo
+                                        entry-symbol
+                                        frame)))
+                                  (compiler-backend-emit-function-entry
+                                    target
+                                    entry-symbol
+                                    frame
+                                    assignments
+                                    slot-vars))]
+                              [emitted-body : String
+                                (if shrinkwrap-active?
+                                  (string.replace
+                                    final-body
+                                    (str_cat.str-cat saving-asm-label ":\n" "")
+                                    selected-prologue)
+                                  final-body)]
                               (ResultCompilerBackend.Ok
                                 (str_cat.str-cat
                                   (compiler-backend-function-symbol-map-comment
@@ -46054,45 +46292,12 @@
                                   ".globl "
                                   symbol
                                   "\n"
-                                  (if fpo-ok
-                                    (if (compiler-backend-target-windows?
-                                      target)
-                                      (compiler-backend-emit-function-entry-fpo-windows
-                                        symbol
-                                        frame
-                                        assignments
-                                        slot-vars
-                                        push-regs
-                                        push-count)
-                                      (if (> push-count 0)
-                                        (compiler-backend-emit-function-entry-fpo-push
-                                          symbol
-                                          frame
-                                          push-regs
-                                          push-count)
-                                        (compiler-backend-emit-function-entry-fpo
-                                          symbol
-                                          frame)))
-                                    (compiler-backend-emit-function-entry
-                                      target
-                                      symbol
-                                      frame
-                                      assignments
-                                      slot-vars))
+                                  (if shrinkwrap-active?
+                                    (str_cat.str-cat symbol ":\n" "")
+                                    selected-prologue)
                                   ""
                                   ""
-                                  (if fpo-ok
-                                    rebased
-                                    (if fpo-attempt
-                                      ;; FPO audit failed with no %rbp in the
-                                      ;; plan: keep-rbp exactly as stage 1 (the
-                                      ;; stage-1 pass may still rebase locals or
-                                      ;; return the text byte-identical).
-                                      (compiler-backend-rsp-rebase
-                                        post-prologue
-                                        frame
-                                        false)
-                                      rebased))
+                                  emitted-body
                                   (compiler-backend-emit-windows-seh-endproc
                                     target)
                                   "\n"))))))]
@@ -46139,6 +46344,8 @@
     (set! compiler-backend-emit-current-count 0)
     (set! compiler-backend-emit-instrs-loop-active false)
     (set! compiler-backend-emit-instrs-continue-pending false)
+    (set! compiler-backend-shrinkwrap-bare-label "")
+    (set! compiler-backend-current-block-label "")
     (compiler-backend-set-current-mode! (CompilerBackendMode.Scalar))
     (set! compiler-backend-identity-tail-forwarder-active false)
     (set! compiler-backend-emergency-used false)

@@ -17158,7 +17158,7 @@
               (CompilerIrInstr.BinOp
                 6
                 (CompilerIrBinOp.Lt)
-                (CompilerIrValue.Var 3)
+                (CompilerIrValue.Var 4)
                 (CompilerIrValue.I64 4)
                 (AstType.Bool))
               (compiler-ir-instr-cons
@@ -17309,6 +17309,55 @@
       ;; ... and the slow original keeps its per-iteration checks ("" is a
       ;; prefix of every label, so this counts checks function-wide).
       [(< (opt-bce-version-test-prefix-checks blocks "" 0) 2) 4]
+      [else 42])))
+
+;; The unroller's multi-block companion must pick up the check-free versioned
+;; diamond on a later optimizer iteration (after its dedicated preheader has
+;; been synthesized), peel the odd iteration, and emit exactly two body copies.
+(define (compiler-optimize-unroll-mb-self-test) : i64
+  (let
+    [optimized : CompilerIrFunction
+      (optimize-function
+        (CompilerIrFunction.Function
+          (opt-test-symbol "unroll_mb_while_fixture")
+          (opt-bce-version-test-params)
+          (AstType.I64)
+          9
+          (opt-bce-mb-pipeline-blocks)))]
+    [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
+    (cond
+      [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
+      [(not (opt-block-list-has-label? blocks "body__bce_fast__unroll2_guard"))
+        2]
+      [(not (= (opt-bce-mb-test-matching-blocks blocks "__unroll2_0" 0) 4)) 3]
+      [(not (= (opt-bce-mb-test-matching-blocks blocks "__unroll2_1" 0) 4)) 4]
+      ;; The original fast peel and both pair copies remain check-free; the
+      ;; slow original still carries both aborting checks.
+      [(not (= (opt-bce-mb-test-matching-checks blocks "__unroll2" 0) 0)) 5]
+      [(not (= (opt-bce-mb-test-matching-checks blocks "__bce_fast" 0) 0)) 6]
+      [(< (opt-bce-version-test-prefix-checks blocks "" 0) 2) 7]
+      ;; StorePtr is admitted only on this proven-fast path; calls and checks
+      ;; themselves remain outside the cloning whitelist.
+      [(not
+          (opt-unroll-mb-body-instr-ok?
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (AstType.I64))))
+        8]
+      [(opt-unroll-mb-body-instr-ok?
+          (CompilerIrInstr.Call
+            0
+            (opt-test-symbol "unroll_mb_callee")
+            (CompilerIrCallArgs.Nil)
+            (AstType.I64)))
+        9]
+      [(opt-unroll-mb-body-instr-ok?
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            "unroll_mb_check"))
+        10]
       [else 42])))
 
 ;; --- pre-existing-phi SSA construction self-test --------------------------------

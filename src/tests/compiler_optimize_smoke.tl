@@ -1860,6 +1860,10 @@
       (compiler-optimize-unroll-self-test)
       42)
     (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-unroll-mb-self-test"
+      (compiler-optimize-unroll-mb-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
       "compiler-optimize-affine-self-test"
       (compiler-optimize-affine-self-test)
       42)
@@ -2377,6 +2381,13 @@
     (compiler-optimize-bce-version-mb-pipeline-self-test)
     42
     "multi-block versioning full pipeline"))
+
+(test
+  unroll-versioned-multiblock-quicksort-shape
+  (test.assert-i64-eq
+    (compiler-optimize-unroll-mb-self-test)
+    42
+    "2x unrolling of the check-free versioned conditional diamond"))
 
 (test
   bce-version-multiblock-partial

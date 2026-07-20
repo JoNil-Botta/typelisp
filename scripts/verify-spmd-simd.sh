@@ -105,6 +105,9 @@ tests/spmd/masked_if_index_mod_i64.tl
 tests/spmd/masked_if_value_i64.tl
 tests/spmd/masked_if_bitand_value_i64.tl
 tests/spmd/masked_if_bitwise_value_types.tl
+tests/spmd/masked_if_shift_value_types.tl
+tests/spmd/masked_if_shift_inactive.tl
+tests/spmd/masked_if_shift_i16_reject.tl
 tests/spmd/masked_if_value_types.tl
 tests/spmd/masked_if_nested_i64.tl
 tests/spmd/masked_if_i16_u16.tl
@@ -141,6 +144,12 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/i8_mul_reject.tl:avx2 | tests/spmd/i8_mul_reject.tl:avx512)
             printf '%s\n' "lower: SPMD foreach SIMD lowering does not support 8-bit lane multiplication; use scalar or widen before multiplying"
+            ;;
+        tests/spmd/masked_if_shift_i16_reject.tl:avx2)
+            printf '%s\n' "lower: SPMD masked if does not support masked shift 'shr' for lane type i16 in AVX2 backend mode; supported lane types are i32, u32, i64, and u64"
+            ;;
+        tests/spmd/masked_if_shift_i16_reject.tl:avx512)
+            printf '%s\n' "lower: SPMD masked if does not support masked shift 'shr' for lane type i16 in AVX-512 backend mode; supported lane types are i32, u32, i64, and u64"
             ;;
         tests/spmd/private_helper_i64.tl:avx2 | tests/spmd/private_helper_f64.tl:avx2 | tests/spmd/private_helper_bool.tl:avx2 | tests/spmd/private_helper_masked_load.tl:avx2 | tests/spmd/private_helper_store.tl:avx2 | tests/spmd/private_helper_effects.tl:avx2)
             printf '%s\n' "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512"
@@ -456,6 +465,76 @@ verify_masked_bitwise_shape() {
     done
 }
 
+verify_masked_shift_shape() {
+    _mode=$1
+    compile_spmd_mode tests/spmd/masked_if_shift_value_types.tl "$_mode"
+    _tag=tests_spmd_masked_if_shift_value_types_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] masked-shift $_mode shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/masked_if_shift_value_types.tl $_mode (shape compile)" >> "$FAILURES"
+        return
+    fi
+    for lane in i32 u32 i64 u64; do
+        _func="$WORKDIR/$_tag.$_mode.$lane.s"
+        sed -n \
+            "/^_tl_masked_if_shift_value_types_case_$lane:/,/^$/p" \
+            "$_asm" > "$_func"
+        if [ ! -s "$_func" ]; then
+            echo "[spmd-simd] masked-shift $_mode missing case-$lane body" >&2
+            echo "tests/spmd/masked_if_shift_value_types.tl $_mode (missing case-$lane)" >> "$FAILURES"
+            continue
+        fi
+        if [ "$lane" = i32 ]; then
+            _right=vpsravd
+        elif [ "$lane" = u32 ]; then
+            _right=vpsrlvd
+        elif [ "$lane" = i64 ] && [ "$_mode" = avx512 ]; then
+            _right=vpsravq
+        else
+            _right=vpsrlvq
+        fi
+        for opcode in vpsllv "$_right"; do
+            if ! grep -F -- "$opcode" "$_func" > /dev/null; then
+                echo "[spmd-simd] masked-shift $_mode case-$lane missing $opcode" >&2
+                echo "tests/spmd/masked_if_shift_value_types.tl $_mode case-$lane (missing $opcode)" >> "$FAILURES"
+            fi
+        done
+        if ! grep -F -- "call tl_shift_abort" "$_func" > /dev/null; then
+            echo "[spmd-simd] masked-shift $_mode case-$lane lacks active-lane trap guard" >&2
+            echo "tests/spmd/masked_if_shift_value_types.tl $_mode case-$lane (missing trap guard)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx2 ]; then
+            _reduce=vpmovmskb
+        else
+            _reduce=kortest
+        fi
+        if ! grep -F -- "$_reduce" "$_func" > /dev/null; then
+            echo "[spmd-simd] masked-shift $_mode case-$lane lacks a reduced invalid-lane mask" >&2
+            echo "tests/spmd/masked_if_shift_value_types.tl $_mode case-$lane (missing mask reduction)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx2 ] && [ "$lane" = i64 ]; then
+            for opcode in vpcmpgtq vpsllvq vpsrlvq vpor; do
+                if ! grep -F -- "$opcode" "$_func" > /dev/null; then
+                    echo "[spmd-simd] masked-shift AVX2 signed-i64 expansion missing $opcode" >&2
+                    echo "tests/spmd/masked_if_shift_value_types.tl avx2 case-i64 (missing $opcode)" >> "$FAILURES"
+                fi
+            done
+        fi
+        if [ "$_mode" = avx2 ] &&
+            ! grep -F -- "%ymm" "$_func" > /dev/null; then
+            echo "[spmd-simd] masked-shift AVX2 case-$lane lacks vector code" >&2
+            echo "tests/spmd/masked_if_shift_value_types.tl avx2 case-$lane (scalar fallback)" >> "$FAILURES"
+        fi
+        if [ "$_mode" = avx512 ] &&
+            ! grep -E -- '%zmm[0-9]+|%k[0-7]' "$_func" > /dev/null; then
+            echo "[spmd-simd] masked-shift AVX-512 case-$lane lacks vector code" >&2
+            echo "tests/spmd/masked_if_shift_value_types.tl avx512 case-$lane (scalar fallback)" >> "$FAILURES"
+        fi
+    done
+}
+
 while IFS= read -r prog; do
     [ -n "$prog" ] || continue
     if [ ! -f "$prog" ]; then
@@ -524,6 +603,8 @@ verify_avx2_varying_while_shape
 verify_avx2_varying_enum_match_shape
 verify_masked_bitwise_shape avx2
 verify_masked_bitwise_shape avx512
+verify_masked_shift_shape avx2
+verify_masked_shift_shape avx512
 verify_avx2_scan_prefix_shape
 
 # Gather safety is a runtime property, not a same-exit result. Exercise a full
@@ -545,6 +626,31 @@ for gather_oob in tests/integration/spmd_gather_oob.tl tests/integration/spmd_ga
             echo "$gather_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
         else
             echo "[spmd-simd] gather-oob $gather_oob $mode -> bounds abort OK"
+        fi
+    done
+done
+
+# Active invalid counts retain scalar trap semantics. The two fixtures cover a
+# signed negative qword count and an unsigned count equal to the dword width.
+for shift_trap in \
+    tests/spmd/masked_if_shift_negative_trap.tl \
+    tests/spmd/masked_if_shift_large_trap.tl
+do
+    for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
+        mode=${pair%% *}
+        isa=${pair##* }
+        if [ "$mode" != scalar ] && ! isa_available "$isa"; then
+            echo "[spmd-simd]   skip $shift_trap $mode ($isa not runnable)"
+            continue
+        fi
+        run_spmd_mode "$shift_trap" "$mode"
+        if [ "$mode_code" != 129 ] ||
+            ! grep -F -- "tl: shift count out of range" "$mode_err" > /dev/null; then
+            echo "[spmd-simd] $shift_trap $mode did not take the shift abort path:" >&2
+            sed 's/^/    /' "$mode_err" >&2
+            echo "$shift_trap $mode (expected shift abort 129, got $mode_code)" >> "$FAILURES"
+        else
+            echo "[spmd-simd] $shift_trap $mode -> shift abort OK"
         fi
     done
 done

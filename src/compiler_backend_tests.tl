@@ -12140,6 +12140,103 @@
         8
         "backend: unsupported AVX-512 vector binary op"))))
 
+(define (compiler-backend-vector-shift-binop-ok?) : bool
+  (and
+    (backend-and8
+      (compiler-backend-avx2-vector-binop-emits?
+        (CompilerIrBinOp.Shl)
+        (AstType.I32)
+        8
+        "    vpsllvd %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (CompilerIrBinOp.Shr)
+        (AstType.I32)
+        8
+        "    vpsravd %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (CompilerIrBinOp.Shr)
+        (AstType.U32)
+        8
+        "    vpsrlvd %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (CompilerIrBinOp.Shl)
+        (AstType.I64)
+        4
+        "    vpsllvq %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (CompilerIrBinOp.Shr)
+        (AstType.U64)
+        4
+        "    vpsrlvq %ymm7, %ymm6, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-emits?
+        (CompilerIrBinOp.Shr)
+        (AstType.I64)
+        4
+        "    vpxor %ymm1, %ymm1, %ymm1\n    vpcmpgtq %ymm6, %ymm1, %ymm0\n    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpsllq $63, %ymm1, %ymm1\n    vpsrlq $57, %ymm1, %ymm1\n    vpsubq %ymm7, %ymm1, %ymm1\n    vpsllvq %ymm1, %ymm0, %ymm0\n    vpsrlvq %ymm7, %ymm6, %ymm8\n    vpor %ymm0, %ymm8, %ymm8\n")
+      (compiler-backend-avx2-vector-binop-diagnostic?
+        (CompilerIrBinOp.Shl)
+        (AstType.I16)
+        16
+        "backend: unsupported AVX2 vector binary op")
+      (compiler-backend-avx2-vector-binop-diagnostic?
+        (CompilerIrBinOp.Shr)
+        (AstType.U8)
+        32
+        "backend: unsupported AVX2 vector binary op"))
+    (backend-and8
+      (compiler-backend-avx512-vector-binop-emits?
+        (CompilerIrBinOp.Shl)
+        (AstType.U32)
+        16
+        "    vpsllvd %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (CompilerIrBinOp.Shr)
+        (AstType.I32)
+        16
+        "    vpsravd %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (CompilerIrBinOp.Shr)
+        (AstType.U32)
+        16
+        "    vpsrlvd %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (CompilerIrBinOp.Shl)
+        (AstType.U64)
+        8
+        "    vpsllvq %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (CompilerIrBinOp.Shr)
+        (AstType.I64)
+        8
+        "    vpsravq %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-emits?
+        (CompilerIrBinOp.Shr)
+        (AstType.U64)
+        8
+        "    vpsrlvq %zmm7, %zmm6, %zmm8\n")
+      (compiler-backend-avx512-vector-binop-diagnostic?
+        (CompilerIrBinOp.Shl)
+        (AstType.U16)
+        32
+        "backend: unsupported AVX-512 vector binary op")
+      (compiler-backend-avx512-vector-binop-diagnostic?
+        (CompilerIrBinOp.Shr)
+        (AstType.I8)
+        64
+        "backend: unsupported AVX-512 vector binary op"))))
+
+(define (compiler-backend-avx2-unsigned-compare-alias-ok?) : bool
+  ;; Preserve the RHS before writing the destination: the allocator may assign
+  ;; both to the same vector register.
+  (string.eq
+    (compiler-backend-avx2-emit-unsigned-int-compare-asm
+      (CompilerIrBinOp.Ge)
+      "%ymm14"
+      "%ymm7"
+      "%ymm7"
+      (AstType.U32))
+    "    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpslld $31, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm1\n    vpxor %ymm0, %ymm14, %ymm7\n    vpcmpgtd %ymm7, %ymm1, %ymm7\n    vpcmpeqd %ymm0, %ymm0, %ymm0\n    vpxor %ymm0, %ymm7, %ymm7\n"))
+
 (define (compiler-backend-avx2-data-pointer-cse-source) : String
   "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
@@ -12229,6 +12326,8 @@
     (compiler-backend-vector-spill-reload-ok?)
     (compiler-backend-vector-spill-pressure-ok?)
     (compiler-backend-vector-bitwise-binop-ok?)
+    (compiler-backend-vector-shift-binop-ok?)
+    (compiler-backend-avx2-unsigned-compare-alias-ok?)
     (compiler-backend-vector-call-lifetime-spill-ok?)))
 
 (define (compiler-backend-optimizer-rewrite-diagnostic-ok?) : bool

@@ -19051,6 +19051,20 @@
         (array-set! words var next)
         unit))))
 
+(define (compiler-reg-vector-stack-words-set-mask!
+  [words : (Array i64)]
+  [var : i64]) : unit
+  ;; AVX2 represents lane masks in a full YMM register. AVX-512 uses compact
+  ;; k-register spills, but reserving the same four-word range is harmless and
+  ;; keeps this target-neutral census conservative.
+  (if (or (< var 0) (>= var (array-length words)))
+    unit
+    (let
+      [old : i64 (array-ref words var)]
+      (if (> old 3)
+        unit
+        (array-set! words var 4)))))
+
 (define (compiler-reg-vector-stack-words-instr!
   [instr : CompilerIrInstr]
   [words : (Array i64)]) : unit
@@ -19070,14 +19084,28 @@
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload dst _ _ _ lanes elem-ty)
-          (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])]
+          (match elem-ty
+            [(AstType.Bool)
+              (compiler-reg-vector-stack-words-set-mask! words dst)]
+            [_ (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])])]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
+          (compiler-reg-vector-stack-words-set-mask! words dst)])]
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
+      (compiler-reg-vector-stack-words-set-mask! words dst)]
+    [(CompilerIrInstr.MaskNot dst _ _)
+      (compiler-reg-vector-stack-words-set-mask! words dst)]
+    [(CompilerIrInstr.TailMask dst _ _ _)
+      (compiler-reg-vector-stack-words-set-mask! words dst)]
     [(CompilerIrInstr.VectorLoad dst _ _ lanes elem-ty)
       (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ lanes elem-ty)
           (match elem-ty
-            [(AstType.Bool) unit]
+            [(AstType.Bool)
+              (compiler-reg-vector-stack-words-set-mask! words dst)]
             [_ (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
@@ -34161,7 +34189,7 @@
     (compiler-ir-test-symbol "vector_stack_slots")
     CompilerIrParamList.Nil
     (AstType.Unit)
-    2
+    3
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
@@ -34180,8 +34208,14 @@
               8
               (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Return CompilerIrMaybeValue.No)
-              CompilerIrInstrList.Nil))))
+              (CompilerIrInstr.TailMask
+                2
+                (CompilerIrValue.I64 0)
+                (CompilerIrValue.I64 1)
+                8)
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                CompilerIrInstrList.Nil)))))
       CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-color-vector-stack-slots-ok?) : bool
@@ -34195,7 +34229,9 @@
             (CompilerRegInterval.Interval 0 0 2)
             (compiler-reg-interval-cons
               (CompilerRegInterval.Interval 1 1 3)
-              CompilerRegIntervalList.Nil))
+              (compiler-reg-interval-cons
+                (CompilerRegInterval.Interval 2 2 4)
+                CompilerRegIntervalList.Nil)))
           CompilerRegVarTypeList.Nil
           (compiler-reg-call-split-empty)
           (compiler-reg-split-plan-empty))
@@ -34207,8 +34243,66 @@
           (and
             (= (array-ref remap 0) 3)
             (= (array-ref remap 1) 11)
-            (= slots 12))]
+            (= (array-ref remap 2) 15)
+            (= slots 16))]
         [(CompilerRegColoring.None) false])]))
+
+(define (compiler-reg-vector-stack-mask-words-ok?) : bool
+  (let
+    [words : (Array i64) (array.make-array i64 6)]
+    (begin
+      (compiler-reg-vector-stack-words-instr!
+        (ir-instr-vector-compare
+          0
+          (CompilerIrBinOp.Eq)
+          (CompilerIrValue.I64 0)
+          (CompilerIrValue.I64 0)
+          8
+          (AstType.I32))
+        words)
+      (compiler-reg-vector-stack-words-instr!
+        (CompilerIrInstr.MaskBinOp
+          1
+          (CompilerIrMaskBinOp.And)
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 0)
+          8)
+        words)
+      (compiler-reg-vector-stack-words-instr!
+        (CompilerIrInstr.MaskNot 2 (CompilerIrValue.Var 1) 8)
+        words)
+      (compiler-reg-vector-stack-words-instr!
+        (CompilerIrInstr.TailMask
+          3
+          (CompilerIrValue.I64 0)
+          (CompilerIrValue.I64 1)
+          8)
+        words)
+      (compiler-reg-vector-stack-words-instr!
+        (ir-instr-predicated-load
+          4
+          (CompilerIrValue.I64 0)
+          (CompilerIrValue.I64 0)
+          (CompilerIrValue.Var 3)
+          8
+          (AstType.Bool))
+        words)
+      (compiler-reg-vector-stack-words-instr!
+        (ir-instr-select
+          5
+          (CompilerIrValue.Var 3)
+          (CompilerIrValue.Var 4)
+          (CompilerIrValue.Var 4)
+          8
+          (AstType.Bool))
+        words)
+      (and
+        (= (array-ref words 0) 4)
+        (= (array-ref words 1) 4)
+        (= (array-ref words 2) 4)
+        (= (array-ref words 3) 4)
+        (= (array-ref words 4) 4)
+        (= (array-ref words 5) 4)))))
 
 (define (compiler-reg-color-storage-ranges-ok?) : bool
   (match (compiler-reg-color-storage-function)
@@ -34991,6 +35085,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-vector-stack-slots-ok?"
       (compiler-reg-color-vector-stack-slots-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-vector-stack-mask-words-ok?"
+      (compiler-reg-vector-stack-mask-words-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-storage-ranges-ok?"
       (compiler-reg-color-storage-ranges-ok?))

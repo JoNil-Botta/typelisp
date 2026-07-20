@@ -2916,6 +2916,11 @@
     (cbi.compiler-builtin-refresh!)
     cbi.compiler-builtin-id-tl-oob-abort))
 
+(define (lower-tl-shift-abort-symbol) : i64
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    cbi.compiler-builtin-id-tl-shift-abort))
+
 (define (lower-tl-region-reset-symbol) : i64
   (begin
     (cbi.compiler-builtin-refresh!)
@@ -12652,6 +12657,17 @@
         (CompilerIrInstr.Call
           var-id
           (lower-tl-oob-abort-symbol)
+          (CompilerIrCallArgs.Nil)
+          (AstType.Unit)))]))
+
+(define (lower-shift-abort [state : LowerState]) : LowerState
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc allocated var-id)
+      (lower-state-emit
+        allocated
+        (CompilerIrInstr.Call
+          var-id
+          (lower-tl-shift-abort-symbol)
           (CompilerIrCallArgs.Nil)
           (AstType.Unit)))]))
 
@@ -34834,6 +34850,8 @@
     [(AstBinOp.BitAnd) true]
     [(AstBinOp.BitOr) true]
     [(AstBinOp.BitXor) true]
+    [(AstBinOp.Shl) true]
+    [(AstBinOp.Shr) true]
     [(AstBinOp.Eq) true]
     [(AstBinOp.Ne) true]
     [(AstBinOp.Lt) true]
@@ -43996,6 +44014,262 @@
     [(ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr expr message)))]))
 
+(define (lower-masked-shift-op-name [op : AstBinOp]) : String
+  (match op
+    [(AstBinOp.Shl) "shl"]
+    [(AstBinOp.Shr) "shr"]
+    [_ "unknown"]))
+
+(define (lower-masked-shift-mode-name [mode : CompilerLowerMode]) : String
+  (if (lower-mode-avx2? mode)
+    "AVX2"
+    "AVX-512"))
+
+(define (lower-masked-shift-lane-supported? [ty : AstType]) : bool
+  (match ty
+    [(AstType.I32) true]
+    [(AstType.U32) true]
+    [(AstType.I64) true]
+    [(AstType.U64) true]
+    [_ false]))
+
+(define (lower-masked-shift-width [ty : AstType]) : i64
+  (match ty
+    [(AstType.I32) 32]
+    [(AstType.U32) 32]
+    [(AstType.I64) 64]
+    [(AstType.U64) 64]
+    [_ 0]))
+
+(define (lower-masked-shift-unsupported
+  [state : LowerState]
+  [expr : AstExpr]
+  [op : AstBinOp]
+  [lane-ty : AstType]) : ResultLowerExpr
+  (lower-avx512-masked-unsupported
+    expr
+    (str_cat.str-cat
+      "masked shift '"
+      (lower-masked-shift-op-name op)
+      "' for lane type "
+      (tc-type-render lane-ty)
+      " in "
+      (lower-masked-shift-mode-name (lower-state-mode state))
+      " backend mode; supported lane types are i32, u32, i64, and u64")))
+
+(define (lower-avx512-masked-shift-guard-and-emit
+  [state : LowerState]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [op : CompilerIrBinOp]
+  [left-value : CompilerIrValue]
+  [right-value : CompilerIrValue]
+  [lane-ty : AstType]
+  [count-ty : AstType]) : ResultLowerExpr
+  (let
+    [s : LowerState state]
+    [zero : CompilerIrValue CompilerIrValue.Unit]
+    [width : CompilerIrValue CompilerIrValue.Unit]
+    [negative : CompilerIrValue CompilerIrValue.Unit]
+    [too-large : CompilerIrValue CompilerIrValue.Unit]
+    [invalid : CompilerIrValue CompilerIrValue.Unit]
+    [active-invalid : CompilerIrValue CompilerIrValue.Unit]
+    [any-invalid : CompilerIrValue CompilerIrValue.Unit]
+    [abort-label : String ""]
+    [continue-label : String ""]
+    (begin
+      (match (lower-emit-splat s (CompilerIrValue.I64 0) lanes count-ty)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! zero value))])
+      (match (lower-emit-splat
+        s
+        (CompilerIrValue.I64 (lower-masked-shift-width lane-ty))
+        lanes
+        count-ty)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! width value))])
+      (match (if (lower-type-signed? count-ty)
+        (lower-emit-vector-compare
+          s
+          (CompilerIrBinOp.Lt)
+          right-value
+          zero
+          lanes
+          count-ty)
+        ;; Unsigned counts cannot be negative. Materialize an all-false mask
+        ;; without relying on the backend's signed/unsigned compare expansion.
+        (lower-emit-vector-compare
+          s
+          (CompilerIrBinOp.Ne)
+          zero
+          zero
+          lanes
+          count-ty))
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! negative value))])
+      (match (lower-emit-vector-compare
+        s
+        (CompilerIrBinOp.Ge)
+        right-value
+        width
+        lanes
+        count-ty)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! too-large value))])
+      (match (lower-emit-mask-binop
+        s
+        (CompilerIrMaskBinOp.Or)
+        negative
+        too-large
+        lanes)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! invalid value))])
+      (match (lower-emit-mask-binop
+        s
+        (CompilerIrMaskBinOp.And)
+        invalid
+        active-mask
+        lanes)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! active-invalid value))])
+      (match (lower-emit-mask-reduce
+        s
+        (CompilerIrMaskReduceOp.Any)
+        active-invalid
+        lanes)
+        [(LowerExpr.Expr next-s value _)
+          (begin
+            (set! s next-s)
+            (set! any-invalid value))])
+      (match (lower-state-fresh-label s "spmd_shift_abort")
+        [(LowerLabel.Label next-s label)
+          (begin
+            (set! s next-s)
+            (set! abort-label label))])
+      (match (lower-state-fresh-label s "spmd_shift_continue")
+        [(LowerLabel.Label next-s label)
+          (begin
+            (set! s next-s)
+            (set! continue-label label))])
+      (set!
+        s
+        (lower-state-finish-block
+          (lower-state-emit
+            s
+            (CompilerIrInstr.Branch any-invalid abort-label continue-label))
+          abort-label))
+      (set!
+        s
+        (lower-state-finish-block
+          (lower-state-emit
+            (lower-shift-abort s)
+            (CompilerIrInstr.Jump continue-label))
+          continue-label))
+      (ResultLowerExpr.Ok
+        (lower-emit-vector-binop s op left-value right-value lanes lane-ty)))))
+
+(define (lower-avx512-masked-shift
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [expr : AstExpr]
+  [ast-op : AstBinOp]
+  [ir-op : CompilerIrBinOp]
+  [left : AstExpr]
+  [right : AstExpr]) : ResultLowerExpr
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    expr)
+    [(ResultTcType.Ok result-ty)
+      (let
+        [lane-ty : AstType (tc-type-without-regions result-ty)]
+        (if (not (lower-masked-shift-lane-supported? lane-ty))
+          (lower-masked-shift-unsupported state expr ast-op lane-ty)
+          (match (lower-avx512-masked-expr-expected
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            left
+            lane-ty)
+            [(ResultLowerExpr.Ok left-lowered)
+              (match left-lowered
+                [(LowerExpr.Expr left-state left-value _)
+                  (match (lower-avx512-masked-expr-expected
+                    ctx
+                    left-state
+                    env
+                    type-env
+                    lane-locals
+                    index
+                    index-var
+                    active-mask
+                    lanes
+                    right
+                    lane-ty)
+                    [(ResultLowerExpr.Ok right-lowered)
+                      (match right-lowered
+                        [(LowerExpr.Expr right-state right-value right-ty)
+                          (let
+                            [count-ty : AstType
+                              (tc-type-without-regions right-ty)]
+                            (if (and
+                              (tc-integer-type? count-ty)
+                              (=
+                                (lower-simd-lanes-for-elem
+                                  (lower-state-mode state)
+                                  count-ty)
+                                lanes))
+                              (lower-avx512-masked-shift-guard-and-emit
+                                right-state
+                                active-mask
+                                lanes
+                                ir-op
+                                left-value
+                                right-value
+                                lane-ty
+                                count-ty)
+                              (lower-avx512-masked-unsupported
+                                expr
+                                (str_cat.str-cat
+                                  "masked shift '"
+                                  (lower-masked-shift-op-name ast-op)
+                                  "' count lane type "
+                                  (tc-type-render count-ty)
+                                  "; the count must have the same SIMD lane width as "
+                                  (tc-type-render lane-ty)))))])]
+                    [(ResultLowerExpr.Err message)
+                      (ResultLowerExpr.Err message)])])]
+            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))]
+    [(ResultTcType.Err message)
+      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr expr message)))]))
+
 (define (lower-avx512-masked-binary
   [ctx : TcContext]
   [state : LowerState]
@@ -44115,6 +44389,38 @@
         lanes
         expr
         (CompilerIrBinOp.Sub)
+        left
+        right)]
+    [(AstBinOp.Shl)
+      (lower-avx512-masked-shift
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        expr
+        op
+        (CompilerIrBinOp.Shl)
+        left
+        right)]
+    [(AstBinOp.Shr)
+      (lower-avx512-masked-shift
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        expr
+        op
+        (CompilerIrBinOp.Shr)
         left
         right)]
     [(AstBinOp.BitAnd)
@@ -64547,6 +64853,36 @@
             [0 (bit-xor x 3)]
             [_ (bit-or (bit-xor x 5) 2)]))))))")
 
+(define (compiler-lower-masked-if-shift-value-source) : String
+  "(define (fill
+  [xs : (Array i64)]
+  [counts : (Array i64)]
+  [out : (Array i64)]
+  [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (let
+      [x : i64 (array-ref xs i)]
+      [count : i64 (array-ref counts i)]
+      (array-set! out i
+        (if (< x 0)
+          (shr x count)
+          (shl x count))))))")
+
+(define (compiler-lower-masked-if-narrow-shift-source) : String
+  "(define (fill
+  [xs : (Array i16)]
+  [out : (Array i16)]
+  [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (let
+      [x : i16 (array-ref xs i)]
+      (array-set! out i
+        (if (< x 0)
+          (shr x 1)
+          (shl x 1))))))")
+
 (define (compiler-lower-avx512-masked-if-nested-source) : String
   "(define (fill [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
@@ -64803,6 +65139,83 @@
               (>= select-count 4)
               (>= shape-count 18)))])]
     [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-masked-if-shift-value-shape-ok?
+  [mode : CompilerLowerMode]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-masked-if-shift-value-source)
+    mode)
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (let
+            [lanes : i64 (lower-simd-lanes-for-elem mode (AstType.I64))]
+            [shl-count : i64
+              (lower-test-function-vector-binop-op-count
+                functions
+                "fill"
+                (CompilerIrBinOp.Shl))]
+            [shr-count : i64
+              (lower-test-function-vector-binop-op-count
+                functions
+                "fill"
+                (CompilerIrBinOp.Shr))]
+            [abort-count : i64
+              (lower-test-functions-call-count functions "tl_shift_abort")]
+            [shape-count : i64
+              (lower-test-function-vector-shape-count
+                functions
+                "fill"
+                lanes
+                (AstType.I64))]
+            (begin
+              (unless
+                (= shl-count 2)
+                (panic "lower: masked shift shl IR count mismatch"))
+              (unless
+                (= shr-count 2)
+                (panic "lower: masked shift shr IR count mismatch"))
+              (unless
+                (= abort-count 4)
+                (panic "lower: masked shift abort call count mismatch"))
+              (unless
+                (>= shape-count 20)
+                (panic "lower: masked shift vector shape count mismatch"))
+              true))])]
+    [(ResultCompilerLower.Err diag)
+      (panic (compiler-diagnostic-message (box-get diag)))]))
+
+(define (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
+  [mode : CompilerLowerMode]
+  [mode-name : String]) : bool
+  (compiler-lower-mode-error-ok?
+    (compiler-lower-masked-if-narrow-shift-source)
+    mode
+    (str_cat.str-cat
+      "lower: SPMD masked if does not support masked shift 'shr' for lane type i16 in "
+      mode-name
+      " backend mode; supported lane types are i32, u32, i64, and u64")))
+
+(define (compiler-lower-masked-shift-tests-ok?) : bool
+  (begin
+    (unless
+      (compiler-lower-masked-if-shift-value-shape-ok? (CompilerLowerMode.Avx2))
+      (panic "lower: AVX2 masked shift shape mismatch"))
+    (unless
+      (compiler-lower-masked-if-shift-value-shape-ok?
+        (CompilerLowerMode.Avx512))
+      (panic "lower: AVX-512 masked shift shape mismatch"))
+    (unless
+      (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
+        (CompilerLowerMode.Avx2)
+        "AVX2")
+      (panic "lower: AVX2 narrow masked shift diagnostic mismatch"))
+    (unless
+      (compiler-lower-masked-if-narrow-shift-diagnostic-ok?
+        (CompilerLowerMode.Avx512)
+        "AVX-512")
+      (panic "lower: AVX-512 narrow masked shift diagnostic mismatch"))
+    true))
 
 (define (compiler-lower-avx512-masked-if-nested-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
@@ -65124,6 +65537,7 @@
     (compiler-lower-masked-if-bitwise-value-shape-ok? (CompilerLowerMode.Avx2))
     (compiler-lower-masked-if-bitwise-value-shape-ok?
       (CompilerLowerMode.Avx512))
+    (compiler-lower-masked-shift-tests-ok?)
     (compiler-lower-avx512-masked-if-nested-shape-ok?)
     (compiler-lower-avx2-masked-if-shape-ok?)))
 

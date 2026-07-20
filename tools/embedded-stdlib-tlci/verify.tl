@@ -78,6 +78,51 @@
                 [(ResultTlciLoaderUnit.Ok) ok]
                 [(ResultTlciLoaderUnit.Err _) false])))))]))
 
+(define (embedded-verify-native-array-length-error-ok?
+  [fuel : i64]
+  [operand-count : i64]
+  [expected-status : i64]) : bool
+  (match (tlci-loader-load-from-bytes-with-host
+    (compiler-embedded-stdlib-tlci-copy)
+    (compiler-comptime-host-table))
+    [(ResultTlciLoadedImage.Err _) false]
+    [(ResultTlciLoadedImage.Ok loaded)
+      (let
+        [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        [operand-node : i64
+          (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "xs")))]
+        [operands : (Array CompilerCtfeValue)
+          (array.make-array CompilerCtfeValue 1)]
+        (begin
+          (array-set!
+            operands
+            0
+            (CompilerCtfeValue.Expr operand-node (AstType.Expr)))
+          (compiler-comptime-host-session-open!
+            pools
+            operands
+            operand-count
+            fuel
+            embedded-verify-cookie)
+          (let
+            [ok : bool
+              (match (tlci-loader-dispatch-macro
+                (& loaded)
+                "stdlib.array/length"
+                embedded-verify-cookie
+                (array.make-array i64 0)
+                0)
+                [(ResultTlciMacroDispatch.Err _) false]
+                [(ResultTlciMacroDispatch.Ok dispatch)
+                  (and
+                    (= (struct-get dispatch status) expected-status)
+                    (not (compiler-comptime-host-result-ready?)))])]
+            (begin
+              (compiler-comptime-host-session-close!)
+              (match (tlci-loader-release loaded)
+                [(ResultTlciLoaderUnit.Ok) ok]
+                [(ResultTlciLoaderUnit.Err _) false])))))]))
+
 (define (main) : i64
   (match (compiler-embedded-stdlib-tlci-validate)
     [(CompilerEmbeddedStdlibTlciValidation.Err message)
@@ -87,7 +132,16 @@
         1)]
     [(CompilerEmbeddedStdlibTlciValidation.Ok count)
       (if (= count 90)
-        (if (embedded-verify-native-array-length-ok?)
+        (if (and
+          (embedded-verify-native-array-length-ok?)
+          (embedded-verify-native-array-length-error-ok?
+            0
+            1
+            tlci-host-callback-status-fuel-exhausted)
+          (embedded-verify-native-array-length-error-ok?
+            32
+            0
+            tlci-host-callback-status-bad-request))
           42
           (begin
             (io.print-error

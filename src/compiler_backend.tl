@@ -53064,6 +53064,15 @@ tl_comptime_host_invoke_set:
     ""
     (compiler-backend-object-rsp-imm-bytes 0xec value)))
 
+(define (compiler-backend-object-call-r11-bytes) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    (begin
+      (compiler-backend-object-push-u8! (&mut out) 0x41)
+      (compiler-backend-object-push-u8! (&mut out) 0xff)
+      (compiler-backend-object-push-u8! (&mut out) 0xd3)
+      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+
 (define (compiler-backend-object-add-rsp-bytes [value : i64]) : String
   (if (= value 0)
     ""
@@ -53813,12 +53822,33 @@ tl_comptime_host_invoke_set:
         function
         args
         0)]
-    [(CompilerIrInstr.CallIndirectC _ callee args _)
-      (compiler-backend-object-call-args
-        (compiler-backend-object-value-ref parts function callee)
-        function
-        args
-        0)]
+    [(CompilerIrInstr.CallIndirectC dst callee args _)
+      ;; Mirror object-direct-call, with the callee loaded into %r11 after
+      ;; the argument moves (load-value-to-reg scratches through %rax, and
+      ;; %r11 survives the C argument registers), an indirect call, and the
+      ;; result stored from %rax.
+      (let
+        [space : i64 (compiler-backend-object-call-space target args)]
+        (compiler-backend-object-store-reg-to-var
+          (compiler-backend-object-add-nonempty-bytes
+            (compiler-backend-object-add-text
+              (compiler-backend-object-load-value-to-reg
+                (compiler-backend-object-call-arg-moves
+                  (compiler-backend-object-add-nonempty-bytes
+                    parts
+                    (compiler-backend-object-sub-rsp-bytes space))
+                  target
+                  function
+                  args
+                  0)
+                function
+                callee
+                "%r11")
+              (cobj.CompilerObjectX64Instr.Bytes
+                (compiler-backend-object-call-r11-bytes)))
+            (compiler-backend-object-add-rsp-bytes space))
+          dst
+          "%rax"))]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base name args _)

@@ -1696,24 +1696,15 @@
   (if (< path-owner-id 0)
     -1
     (let
-      [owner-name : String (intern-str path-owner-id)]
-      [owner-len : i64 (string.string-length owner-name)]
-      [index : i64 0]
+      [suffix-id : i64 (intern-dotted-tail-id path-owner-id)]
       (begin
-        (while (< index owner-len)
-          (begin
-            (when
-              (= (string.string-ref owner-name index) '.')
-              (let
-                [suffix-id : i64
-                  (intern-slice
-                    owner-name
-                    (+ index 1)
-                    (- owner-len (+ index 1)))]
-                [suffix-owner : i64
-                  (sym_i64_env.sym-i64-lookup-id-or modules suffix-id -1)]
-                (when (>= suffix-owner 0) (return suffix-owner))))
-            (set! index (+ index 1))))
+        (while (>= suffix-id 0)
+          (let
+            [suffix-owner : i64
+              (sym_i64_env.sym-i64-lookup-id-or modules suffix-id -1)]
+            (if (>= suffix-owner 0)
+              (return suffix-owner)
+              (set! suffix-id (intern-dotted-tail-id suffix-id)))))
         -1))))
 
 (defstruct CompilerSymbolsModuleSets
@@ -4986,6 +4977,94 @@
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-symbols-dotted-suffix-owner-module-id-ok?) : bool
+  (let
+    [source-full : i64 (intern "root.branch.leaf")]
+    [source-branch-leaf : i64 (intern "branch.leaf")]
+    [source-leaf : i64 (intern "leaf")]
+    [source-modules : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) source-leaf 12)
+        source-branch-leaf
+        11)]
+    [source-leaf-only : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) source-leaf 12)]
+    [source-full-only : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) source-full 10)]
+    [generated-root : i64 (intern-generated-name "root")]
+    [generated-branch : i64 (intern-generated-name "branch")]
+    [generated-leaf : i64 (intern-generated-name "leaf")]
+    [generated-root-branch : i64
+      (intern-generated-dotted-name
+        "root.branch"
+        generated-root
+        generated-root
+        generated-branch)]
+    [generated-branch-leaf : i64
+      (intern-generated-dotted-name
+        "branch.leaf"
+        generated-branch
+        generated-branch
+        generated-leaf)]
+    [generated-full : i64
+      (intern-generated-dotted-name
+        "root.branch.leaf"
+        generated-root
+        generated-root-branch
+        generated-branch-leaf)]
+    [generated-modules : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id
+        (sym_i64_env.sym-i64-bind-id
+          (sym_i64_env.sym-i64-empty)
+          generated-leaf
+          22)
+        generated-branch-leaf
+        21)]
+    [single : i64 (intern "single")]
+    [single-module : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) single 31)]
+    (and
+      (not (= source-branch-leaf generated-branch-leaf))
+      (not (= source-leaf generated-leaf))
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id
+          source-modules
+          source-full)
+        11)
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id
+          source-leaf-only
+          source-full)
+        12)
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id
+          generated-modules
+          generated-full)
+        21)
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id
+          source-modules
+          generated-full)
+        -1)
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id
+          generated-modules
+          source-full)
+        -1)
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id
+          source-full-only
+          source-full)
+        -1)
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id single-module single)
+        -1)
+      (=
+        (compiler-symbols-dotted-suffix-owner-module-id
+          (sym_i64_env.sym-i64-empty)
+          source-full)
+        -1))))
+
 (define (compiler-symbols-module-id-identity-ok?) : bool
   (let
     [generated-empty-id : i64 (intern-generated-canonical-name "")]
@@ -5105,6 +5184,9 @@
                       unit
                       (set! ok false))
                     (if (compiler-symbols-dotted-variant-id-paths-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-dotted-suffix-owner-module-id-ok?)
                       unit
                       (set! ok false))
                     (if (compiler-symbols-module-id-identity-ok?)

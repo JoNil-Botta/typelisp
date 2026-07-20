@@ -81,6 +81,41 @@ Use `scripts/benchmark-compile-cli.sh` for phase-level local investigation when
 the wall-clock gate fails. There is intentionally no retry path; the headroom,
 absolute caps, and ratio provide flake resistance without masking regressions.
 
+## Scheduled CI timing trends
+
+The daily and manually dispatched `CI Timing Trends` workflow consumes the
+existing `ci-timing-Linux` and `ci-timing-Windows` artifacts from successful
+pull-request CI runs. It does not invoke the compiler or add work to PR CI.
+Runs are considered newest-first, deduplicated by head SHA, and accepted only
+as complete Linux/Windows artifact pairs. Stable gate-total rows
+(`case_or_chunk=all`, `phase=gate`, `exit=0`) are analyzed separately for each
+host and gate.
+
+By default, the median of the newest 3 unique heads is compared with the
+median of the preceding 20. A sustained regression is reported only when the
+recent median is greater than 1.5 times the baseline median. The
+hard-budgeted `stage2 opt1/opt2 build-invariance` gate is explicitly excluded
+to avoid duplicate alerts. Windows, gate names, run links, medians, ratios,
+and the newest-first series are retained in deterministic Markdown. Missing
+per-gate history is reported without fabricating a baseline.
+
+One marked issue titled `CI timing sustained regression alert` is created,
+updated, or reopened while regressions exist. A recovered series receives a
+recovery comment and the issue is closed. Regression detection itself exits
+successfully; collection, API, artifact, or schema failures fail the scheduled
+job visibly but cannot block pull requests.
+
+Recent window, baseline window, factor, scan limit, and the newline-separated
+gate denylist are configurable through `CI_TIMING_TREND_RECENT`,
+`CI_TIMING_TREND_BASELINE`, `CI_TIMING_TREND_FACTOR`,
+`CI_TIMING_TREND_RUN_LIMIT`, and `CI_TIMING_TREND_DENYLIST`. Analyze a
+normalized history offline or run the synthetic suite with:
+
+```sh
+scripts/analyze-ci-timing-trends.sh --offline history.tsv report.md
+scripts/analyze-ci-timing-trends.sh --self-test
+```
+
 TypeLisp deliberately does not auto-vectorize ordinary loops. Explicit SPMD
 (`foreach`, `spmd-reduce`, and `spmd-scan`) is the data-parallel model.
 Accordingly, the per-PR scalar gate compares every TypeLisp row with two clang

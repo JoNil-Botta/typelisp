@@ -781,6 +781,44 @@
           (array-set! out scan value)
           (set! index (+ index 1)))))))
 
+;; Primitives-only packaging boundary: callers (the producer, tools) pass
+;; metadata as canonical text and plain arrays, and every tlci_core nominal
+;; stays inside this module's single import instance.
+(defenum ResultCompilerTlciNativeBytes
+  (Ok (Array u8))
+  (Err String))
+
+(define (compiler-tlci-native-package
+  [metadata-text : String]
+  [build-hash : String]
+  [code : (Array u8)]
+  [imports : (Array u8)]
+  [fixup-offsets : (Array i64)]
+  [fixup-count : i64]
+  [identities : (Array String)]
+  [entry-offsets : (Array i64)]
+  [macro-count : i64]) : ResultCompilerTlciNativeBytes
+  (match (tlci.tlci-metadata-parse metadata-text)
+    [(tlci.ResultTlciMetadata.Err message)
+      (ResultCompilerTlciNativeBytes.Err
+        (string.append "package metadata rejected: " message))]
+    [(tlci.ResultTlciMetadata.Ok metadata)
+      (match (tlci.tlci-emit-native-package-image
+        metadata
+        build-hash
+        (tlci.TlciNativePackageInput
+          code
+          imports
+          fixup-offsets
+          fixup-count
+          identities
+          entry-offsets
+          macro-count))
+        [(tlci.ResultTlciBytes.Err message)
+          (ResultCompilerTlciNativeBytes.Err message)]
+        [(tlci.ResultTlciBytes.Ok bytes)
+          (ResultCompilerTlciNativeBytes.Ok bytes)])]))
+
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64

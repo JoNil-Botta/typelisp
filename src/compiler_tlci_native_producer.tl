@@ -11,7 +11,6 @@
 ;; interpreted fallback.
 (import "compiler_parse_core.tl")
 (import compiler_object as cobj)
-(import tlci_core as tlcic)
 (import "compiler_backend.tl")
 (import "compiler_tlci_native_image.tl")
 (import compiler_builtin_ids as cbi)
@@ -572,21 +571,6 @@
   [build-hash : String]
   [windows-target : bool]
   [names : (Array String)]) : ResultProducerBytes
-  (match (tlcic.tlci-metadata-parse metadata-text)
-    [(tlcic.ResultTlciMetadata.Err message)
-      (ResultProducerBytes.Err (str-cat "package metadata rejected: " message))]
-    [(tlcic.ResultTlciMetadata.Ok metadata)
-      (embedded-native-emit-package-with-metadata
-        metadata
-        build-hash
-        windows-target
-        names)]))
-
-(define (embedded-native-emit-package-with-metadata
-  [metadata : tlcic.TlciMetadata]
-  [build-hash : String]
-  [windows-target : bool]
-  [names : (Array String)]) : ResultProducerBytes
   (let
     [source : String (embedded-native-source names)]
     [target : CompilerBackendTarget
@@ -628,18 +612,17 @@
                       [(ResultCompilerTlciNativeImports.Err message)
                         (ResultProducerBytes.Err message)]
                       [(ResultCompilerTlciNativeImports.Ok imports)
-                        (match (tlcic.tlci-emit-native-package-image
-                          metadata
+                        (match (compiler-tlci-native-package
+                          metadata-text
                           build-hash
-                          (tlcic.TlciNativePackageInput
-                            (struct-get layout bytes)
-                            imports
-                            (struct-get layout fixup-offsets)
-                            (struct-get layout fixup-count)
-                            names
-                            entry-offsets
-                            (array-length names)))
-                          [(tlcic.ResultTlciBytes.Err message)
+                          (struct-get layout bytes)
+                          imports
+                          (struct-get layout fixup-offsets)
+                          (struct-get layout fixup-count)
+                          names
+                          entry-offsets
+                          (array-length names))
+                          [(ResultCompilerTlciNativeBytes.Err message)
                             (ResultProducerBytes.Err message)]
-                          [(tlcic.ResultTlciBytes.Ok bytes)
+                          [(ResultCompilerTlciNativeBytes.Ok bytes)
                             (ResultProducerBytes.Ok bytes)])])))])])])))

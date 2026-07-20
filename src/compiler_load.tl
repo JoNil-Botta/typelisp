@@ -11788,15 +11788,17 @@
       "target/compiler_load_legacy_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
+        ;; Path-import identity is the resolved path relative to the import
+        ;; root (the entry's directory here), so both spellings deduplicate
+        ;; under the root-relative path key and the legacy dotted form of
+        ;; the absolute path is no longer an identity.
         (and
           (= (compiler-load-decl-list-count decls) 2)
-          (compiler-load-test-seen-contains?
-            seen
-            "target.compiler_load_legacy_dep")
+          (compiler-load-test-seen-contains? seen "compiler_load_legacy_dep.tl")
           (not
             (compiler-load-test-seen-contains?
               seen
-              "target/compiler_load_legacy_dep.tl")))]
+              "target.compiler_load_legacy_dep")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-import-alias-preserved-ok?) : bool

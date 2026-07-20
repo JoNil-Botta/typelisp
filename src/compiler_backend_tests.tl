@@ -24217,6 +24217,10 @@
           "%xmm14"
           "%r15"
           diag)]
+      [_group-enable : unit
+        (compiler-backend-group-vars-enable!
+          (compiler-live-set1 0)
+          (compiler-live-set-empty))]
       [word : ResultCompilerBackend
         (compiler-backend-emit-word
           assignments
@@ -24227,6 +24231,7 @@
           3
           "%xmm13"
           diag)]
+      [_group-disable : unit (compiler-backend-group-vars-disable!)]
       [copy : ResultCompilerBackend
         (compiler-backend-emit-copy-bytes
           assignments
@@ -24259,6 +24264,9 @@
         (compiler-backend-scratch-vreg-result-contains?
           word
           "    movsd -8(%rbp), %xmm13\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          word
+          "    movsd %xmm13, -24(%rbp)\n")
         (compiler-backend-scratch-vreg-result-contains?
           copy
           "    movups (%r13), %xmm12\n")
@@ -24623,11 +24631,20 @@
         (= (compiler-backend-scratch-test-plan-count windows) 1)
         (= (compiler-backend-scratch-test-success-count windows) 1)
         (= (compiler-backend-scratch-test-plan-count indirect-linux) 3)
-        (= (compiler-backend-scratch-test-success-count indirect-linux) 3)
+        (= (compiler-backend-scratch-test-success-count indirect-linux) 2)
         (= (compiler-backend-scratch-test-plan-count indirect-windows) 2)
-        (= (compiler-backend-scratch-test-success-count indirect-windows) 2)
+        (= (compiler-backend-scratch-test-success-count indirect-windows) 1)
         (= (compiler-backend-scratch-test-plan-count indirect-no-marker) 2)
-        (= (compiler-backend-scratch-test-success-count indirect-no-marker) 2)
+        (= (compiler-backend-scratch-test-success-count indirect-no-marker) 1)
+        ;; The call target claims the only call-allowed GP scratch register. The
+        ;; simultaneous call-stage requirement intentionally uses the fallback.
+        (string.eq (compiler-backend-scratch-test-register indirect-linux 1) "")
+        (string.eq
+          (compiler-backend-scratch-test-register indirect-windows 1)
+          "")
+        (string.eq
+          (compiler-backend-scratch-test-register indirect-no-marker 1)
+          "")
         (compiler-backend-string-prefix-at?
           (compiler-backend-scratch-test-register linux 1)
           "%xmm"

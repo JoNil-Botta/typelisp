@@ -3,6 +3,7 @@
 (import stdlib.msvc)
 (import stdlib.process)
 (import stdlib.process_runtime)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.test)
 (import stdlib.vector)
@@ -57,7 +58,7 @@
         (process.child-info-stdout-handle info)
         (process.child-info-stderr-handle info))
       (io.panic
-        (string.append
+        (str_cat.str-cat
           message
           (process.child-result-error-message-or result ""))))))
 
@@ -161,7 +162,7 @@
 (define (process-runtime-large-stdin-from [text : String] [i : i64]) : String
   (if (>= i 17)
     text
-    (process-runtime-large-stdin-from (string.append (& text) (& text)) (+ i 1))))
+    (process-runtime-large-stdin-from (str_cat.str-cat text text) (+ i 1))))
 
 (define (process-runtime-large-stdin) : String
   (process-runtime-large-stdin-from "a" 0))

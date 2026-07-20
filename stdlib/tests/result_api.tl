@@ -1,4 +1,5 @@
 (import stdlib.result)
+(import stdlib.comptime)
 (import stdlib.test)
 (import (result i64 String) as result_i64_string)
 (import (result i64 String) as result_i64_string_again)
@@ -15,9 +16,11 @@
   (let
     [module-name : Expr
       (expr-var
-        (string-append
-          (string-append "stdlib.result.test_user.generated." (type-key T))
-          (string-append "." (type-key E))))]
+        (comptime.string-append
+          (comptime.string-append
+            "stdlib.result.test_user.generated."
+            (type-key T))
+          (comptime.string-append "." (type-key E))))]
     `(begin
       (module ,module-name)
       (import (result ,T ,E) as local_result)

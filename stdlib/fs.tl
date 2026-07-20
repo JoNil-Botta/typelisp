@@ -24,6 +24,7 @@
 (import stdlib.comptime)
 (import stdlib.env)
 (import stdlib.io)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -538,7 +539,7 @@
 (cfg
   windows
   (define (fs-windows-read-dir-pattern [path : String]) : String
-    (string.append path "\\*")))
+    (str_cat.str-cat path "\\*")))
 
 ;: Return a pointer to `WIN32_FIND_DATAA.cFileName`.
 (cfg
@@ -1040,7 +1041,7 @@
       [next-prefix : String
         (if (= (string-length prefix) 0)
           segment
-          (string.append prefix (string.append "/" segment)))]
+          (str_cat.str-cat prefix "/" segment))]
       (stdlib.fs.path-segment-vec-render-from segments (+ index 1) next-prefix))))
 
 ;: Render normalized path segments using `/` separators.
@@ -1134,14 +1135,13 @@
           [(if drive-root
               (= (string-length body) 0)
               false)
-            (string.append (string.substring path 0 2) "/")]
-          [drive-root
-            (string.append (string.substring path 0 2) (string.append "/" body))]
+            (str_cat.str-cat (string.substring path 0 2) "/")]
+          [drive-root (str_cat.str-cat (string.substring path 0 2) "/" body)]
           [(if rooted
               (= (string-length body) 0)
               false)
             "/"]
-          [rooted (string.append "/" body)]
+          [rooted (str_cat.str-cat "/" body)]
           [(= (string-length body) 0) "."]
           [else body])))))
 
@@ -1187,15 +1187,15 @@
         (let
           [trimmed-right : String
             (string.substring right 1 (- (string-length right) 1))]
-          (string.append left (& trimmed-right)))
-        (string.append left right))]
+          (str_cat.str-cat left trimmed-right))
+        (str_cat.str-cat left right))]
     [(stdlib.fs.path-separator? (string-ref right 0))
-      (string.append left right)]
+      (str_cat.str-cat left right)]
     [else
       (let
         [separator : String (stdlib.fs.path-separator)]
-        [left-with-separator : String (string.append left (& separator))]
-        (string.append (& left-with-separator) right))]))
+        [left-with-separator : String (str_cat.str-cat left separator)]
+        (str_cat.str-cat left-with-separator right))]))
 
 ;: Join two owned `String` path segments by delegating to `path-join`.
 ;:
@@ -1395,8 +1395,8 @@
         [source-text : String (string.copy source)]
         [destination-text : String (string.copy destination)]
         [arrow : String " -> "]
-        [source-arrow : String (string.append source (& arrow))]
-        [path : String (string.append (& source-arrow) destination)]
+        [source-arrow : String (str_cat.str-cat source arrow)]
+        [path : String (str_cat.str-cat source-arrow destination)]
         [status : i64
           (stdlib.fs.rename-status-owned source-text destination-text)]
         (if (= status io.io-status-ok)
@@ -1583,11 +1583,11 @@
 (define (temp-name [prefix : (& prefix str)] [pid : i64] [attempt : i64]) : String
   (let
     [dash : String "-"]
-    [prefix-dash : String (string.append prefix (& dash))]
+    [prefix-dash : String (str_cat.str-cat prefix dash)]
     [pid-text : String (string.int->string pid)]
     [attempt-text : String (string.int->string attempt)]
-    [pid-dash : String (string.append pid-text dash)]
-    (string.append prefix-dash (string.append pid-dash attempt-text))))
+    [pid-dash : String (str_cat.str-cat pid-text dash)]
+    (str_cat.str-cat prefix-dash pid-dash attempt-text)))
 
 ;: Retry temporary directory creation until an unused candidate is found.
 (define (create-temp-dir-loop
@@ -1610,15 +1610,15 @@
               (let
                 [trimmed-name : String
                   (string.substring (& name) 1 (- (string-length name) 1))]
-                (string.append root (& trimmed-name)))
-              (string.append root (& name)))]
+                (str_cat.str-cat root trimmed-name))
+              (str_cat.str-cat root name))]
           [(stdlib.fs.path-separator? (string-ref name 0))
-            (string.append root (& name))]
+            (str_cat.str-cat root name)]
           [else
             (let
               [separator : String (stdlib.fs.path-separator)]
-              [root-with-separator : String (string.append root (& separator))]
-              (string.append root-with-separator name))])]
+              [root-with-separator : String (str_cat.str-cat root separator)]
+              (str_cat.str-cat root-with-separator name))])]
       [status : i64 (stdlib.fs.mkdir-status-owned path)]
       (if (= status io.io-status-ok)
         (io.OkIoString path)
@@ -1695,9 +1695,12 @@
     [a : String]
     [b : String]
     [c : String]) : String
-    (string.append
-      (string.append (string.append a (stdlib.fs.path-separator)) b)
-      (string.append (stdlib.fs.path-separator) c))))
+    (str_cat.str-cat
+      a
+      (stdlib.fs.path-separator)
+      b
+      (stdlib.fs.path-separator)
+      c)))
 
 (cfg
   test
@@ -1706,9 +1709,10 @@
     [b : String]
     [c : String]
     [d : String]) : String
-    (string.append
+    (str_cat.str-cat
       (fs-path-join-many-api-expected3 a b c)
-      (string.append (stdlib.fs.path-separator) d))))
+      (stdlib.fs.path-separator)
+      d)))
 
 (cfg
   test
@@ -1721,9 +1725,7 @@
         "path-join-many one")
       (fs-path-join-many-api-assert
         (path-join-many "left path" "right file")
-        (string.append
-          (string.append "left path" (path-separator))
-          "right file")
+        (str_cat.str-cat "left path" (path-separator) "right file")
         "path-join-many two")
       (fs-path-join-many-api-assert
         (path-join-many "left" "middle" "right")
@@ -1735,7 +1737,7 @@
         "path-join-many four")
       (fs-path-join-many-api-assert
         (path-join-many "left/" "/right" "leaf")
-        (string.append "left/right" (string.append (path-separator) "leaf"))
+        (str_cat.str-cat "left/right" (path-separator) "leaf")
         "path-join-many duplicate separator")
       42)))
 
@@ -2474,9 +2476,7 @@
     (let
       [joined : String (fs-api-test-fs-path-join "left path" "right file")]
       [expected-join : String
-        (string.append
-          (string.append "left path" (stdlib.fs.path-separator))
-          "right file")]
+        (str_cat.str-cat "left path" (stdlib.fs.path-separator) "right file")]
       (begin
         (fs-test-assert-owned-string-eq
           joined
@@ -2500,27 +2500,27 @@
           "path join many two segments")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join-many3 "left" "middle" "right")
-          (string.append
-            (string.append
-              (string.append "left" (stdlib.fs.path-separator))
-              "middle")
-            (string.append (stdlib.fs.path-separator) "right"))
+          (str_cat.str-cat
+            "left"
+            (stdlib.fs.path-separator)
+            "middle"
+            (stdlib.fs.path-separator)
+            "right")
           "path join many three segments")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join-many4 "left" "middle" "right" "leaf")
-          (string.append
-            (string.append
-              (string.append
-                (string.append "left" (stdlib.fs.path-separator))
-                "middle")
-              (string.append (stdlib.fs.path-separator) "right"))
-            (string.append (stdlib.fs.path-separator) "leaf"))
+          (str_cat.str-cat
+            "left"
+            (stdlib.fs.path-separator)
+            "middle"
+            (stdlib.fs.path-separator)
+            "right"
+            (stdlib.fs.path-separator)
+            "leaf")
           "path join many four segments")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join-many3 "left/" "/right" "leaf")
-          (string.append
-            "left/right"
-            (string.append (stdlib.fs.path-separator) "leaf"))
+          (str_cat.str-cat "left/right" (stdlib.fs.path-separator) "leaf")
           "path join many avoids duplicate separator")
         (fs-test-assert-string-vector3
           (stdlib.fs.read-dir-split-vec "first\nsecond\nthird\n")

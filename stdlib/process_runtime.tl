@@ -402,7 +402,13 @@
           (ProcessRuntimeChildInfo false 3 (- 0 1) (- 0 1) (- 0 1) message)])]))
 
 (import stdlib.io)
+(import stdlib.str_cat)
+
+;; `stdlib.process_borrowed` still resolves legacy unqualified string inspection
+;; helpers through this compatibility import.
+;; lint-allow: unused-import
 (import stdlib.string)
+(import stdlib.text_buf)
 
 ;: Linux inherited environment array (NUL-terminated `char**`). On the freestanding
 ;: Linux entry the kernel lays out `argc`, `argv[0..]`, a NULL, then `envp[0..]`
@@ -1547,16 +1553,18 @@
 ;: Quote a command-line argument with double quotes when it contains a space.
 (define (quote-arg [text : String]) : String
   (if (stdlib.process_runtime.string-has-space? text)
-    (string.append (string.append "\"" text) "\"")
+    (str_cat.str-cat "\"" text "\"")
     text))
 
 ;: Join the executable and argv into a single space-separated command line,
 ;: quoting space-containing entries (the CreateProcessA `lpCommandLine`).
 (define (windows-cmdline [command : ProcessRuntimeCommand]) : String
   (let
-    [line : String
-      (stdlib.process_runtime.quote-arg
-        (stdlib.process_runtime.command-executable command))]
+    [line : text_buf.TextBuf
+      (text_buf.append
+        (text_buf.empty)
+        (stdlib.process_runtime.quote-arg
+          (stdlib.process_runtime.command-executable command)))]
     [cur : ProcessRuntimeStringList
       (stdlib.process_runtime.command-argv command)]
     [continue : bool true]
@@ -1571,14 +1579,11 @@
               [rest : ProcessRuntimeStringList
                 (stdlib.process_runtime.string-step-rest step)]
               (begin
-                (set!
-                  line
-                  (string.append
-                    (string.append line " ")
-                    (stdlib.process_runtime.quote-arg text)))
+                (text_buf.append! line " ")
+                (text_buf.append! line (stdlib.process_runtime.quote-arg text))
                 (set! cur rest)))
             (set! continue false))))
-      line)))
+      (text_buf.render line))))
 
 ;: Append the NUL-terminated C string at `addr` (including its NUL) onto a block.
 ;: Private Windows environment block builder; `CreateProcessA` consumes only the

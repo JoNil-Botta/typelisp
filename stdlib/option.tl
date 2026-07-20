@@ -3,11 +3,14 @@
 ;# Import with `(import stdlib.option)`, then instantiate a concrete module
 ;# with `(import (option i64) as option_i64)` or
 ;# `(import (option String) as option_string)`.
+(import stdlib.comptime)
+
 ;: Emit a generated absence-only option module for payload type `T`.
 (defmacro (option [T : type]) : Module
   (let
     [module-name : Expr
-      (expr-var (string-append "stdlib.option.generated." (type-key T)))]
+      (expr-var
+        (comptime.string-append "stdlib.option.generated." (type-key T)))]
     [option-name : Expr (expr-var "Option")]
     [none-name : Expr (expr-var "Option.None")]
     [some-name : Expr (expr-var "Option.Some")]
@@ -58,7 +61,9 @@
     (let
       [module-name : Expr
         (expr-var
-          (string-append "stdlib.option.test_user.generated." (type-key T)))]
+          (comptime.string-append
+            "stdlib.option.test_user.generated."
+            (type-key T)))]
       `(begin
         (module ,module-name)
         (import (option ,T) as local_option)

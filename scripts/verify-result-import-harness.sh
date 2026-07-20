@@ -108,8 +108,9 @@ if ! awk '
         renamed = renamed + 1
         next
     }
-    $0 == "          (string-append \"stdlib.result.generated.\" (type-key T))" {
-        print "          (string-append \"stdlib.generic_result.generated.\" (type-key T))"
+    index($0, "\"stdlib.result.generated.\"") != 0 {
+        sub(/stdlib[.]result[.]generated[.]/, "stdlib.generic_result.generated.")
+        print
         reprefixed = reprefixed + 1
         next
     }

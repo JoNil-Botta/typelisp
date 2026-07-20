@@ -1254,24 +1254,25 @@
       (if (< k 0)
         "-"
         "+")]
-    (string.concat3
+    (str_cat.str-cat
       sign
       (if (< (string-length digits) 2)
-        (string.concat3 "0" digits "")
+        (str_cat.str-cat "0" digits "")
         digits)
       "")))
 
 ;: A string of n zero characters.
 (define (ftoa-zeros [n : i64]) : String
   (let
-    [s : String ""]
+    [out : (Array u8) (array.make-array u8 n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (set! s (string.concat3 s "0" ""))
+          (array-set! out i (cast '0' : u8))
           (set! i (+ i 1))))
-      s)))
+      (unsafe
+        (string-from-bytes (stdlib.io.array-const-ptr out) n)))))
 
 ;: Format significant-digit string `s` whose leading digit has decimal
 ;: exponent `k`, following printf %g (precision 17) style.
@@ -1284,30 +1285,30 @@
         [(or (< k -4) (>= k 17))
           (set!
             body
-            (string.concat4
+            (str_cat.str-cat
               (string.substring s 0 1)
               (if (> ndig 1)
-                (string.concat3 "." (string.substring s 1 (- ndig 1)) "")
+                (str_cat.str-cat "." (string.substring s 1 (- ndig 1)) "")
                 "")
               "e"
               (stdlib.io.ftoa-pad-exp k)))]
         [(< k 0)
           (set!
             body
-            (string.concat3 "0." (stdlib.io.ftoa-zeros (- (- 0 k) 1)) s))]
+            (str_cat.str-cat "0." (stdlib.io.ftoa-zeros (- (- 0 k) 1)) s))]
         [(>= (+ k 1) ndig)
           (set!
             body
-            (string.concat3 s (stdlib.io.ftoa-zeros (- (+ k 1) ndig)) ""))]
+            (str_cat.str-cat s (stdlib.io.ftoa-zeros (- (+ k 1) ndig)) ""))]
         [else
           (set!
             body
-            (string.concat3
+            (str_cat.str-cat
               (string.substring s 0 (+ k 1))
               "."
               (string.substring s (+ k 1) (- ndig (+ k 1)))))])
       (if neg
-        (string.concat3 "-" body "")
+        (str_cat.str-cat "-" body "")
         body))))
 
 ;: Render value as a shortest round-tripping decimal string (printf %.17g style).
@@ -1402,7 +1403,7 @@
 
 ;: Format an f64 with `%.17g` and a trailing newline.
 (define (format-float [value : f64]) : String
-  (string.concat3 (stdlib.io.format-float-core value) "\n" ""))
+  (str_cat.str-cat (stdlib.io.format-float-core value) "\n" ""))
 
 ;: Write a floating-point value to stdout using `%.17g` plus a newline.
 (define (print-float [value : f64]) : unit
@@ -1539,7 +1540,7 @@
 
 ;: Render the raw `write-file` panic payload with path and host status.
 (define (write-file-failure-message [path : String] [status : i64]) : String
-  (string.concat3
+  (str_cat.str-cat
     "tl: write-file failed: "
     (stdlib.io.error-message (stdlib.io.error-from-owned-status path status))
     "\n"))
@@ -1950,14 +1951,14 @@
 ;: Render an I/O error into a human-readable diagnostic string.
 (define (error-message [error : IoError]) : String
   (match error
-    [(IoNotFound path) (string.append "io: not found: " path)]
-    [(IoPermissionDenied path) (string.append "io: permission denied: " path)]
-    [(IoInvalidPath path) (string.append "io: invalid path: " path)]
-    [(IoUnsupported message) (string.append "io: unsupported: " message)]
-    [(IoInterrupted path) (string.append "io: interrupted: " path)]
+    [(IoNotFound path) (str_cat.str-cat "io: not found: " path)]
+    [(IoPermissionDenied path) (str_cat.str-cat "io: permission denied: " path)]
+    [(IoInvalidPath path) (str_cat.str-cat "io: invalid path: " path)]
+    [(IoUnsupported message) (str_cat.str-cat "io: unsupported: " message)]
+    [(IoInterrupted path) (str_cat.str-cat "io: interrupted: " path)]
     [(IoSystemCode code path)
-      (string.concat4 "io: system error " (string.int->string code) ": " path)]
-    [(IoUnknown path) (string.append "io: unknown failure: " path)]))
+      (str_cat.str-cat "io: system error " (string.int->string code) ": " path)]
+    [(IoUnknown path) (str_cat.str-cat "io: unknown failure: " path)]))
 
 ;: Return true when `error` is a not-found diagnostic.
 (define (error-not-found? [error : IoError]) : bool
@@ -2260,7 +2261,7 @@
 (define (stdout-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-string (string.append text (& newline)))))
+    (print-string (str_cat.str-cat text newline))))
 
 ;: Flush stdout.
 (define (stdout-flush) : unit
@@ -2276,7 +2277,7 @@
 (define (stderr-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-error (string.append text (& newline)))))
+    (print-error (str_cat.str-cat text newline))))
 
 (test
   io-core-macros-prelude
@@ -2387,7 +2388,7 @@
             "missing read error kind")
           (io-edges-test-assert-owned-string-eq
             (error-message error)
-            (string.append "io: not found: " path)
+            (str_cat.str-cat "io: not found: " path)
             "missing read error render"))])))
 
 (cfg
@@ -2440,7 +2441,7 @@
         (while (not done)
           (let
             [suffix : String (string.int->string index)]
-            [path : String (string.append (& prefix) (& suffix))]
+            [path : String (str_cat.str-cat prefix suffix)]
             (match (io-edges-test-try-file-exists? path)
               [(OkIoBool exists)
                 (if exists
@@ -2630,7 +2631,8 @@
     [message : String]) : unit
     (match result
       [(OkIoUnit) unit]
-      [(ErrIoUnit error) (panic (string.append message (error-message error)))])))
+      [(ErrIoUnit error)
+        (panic (str_cat.str-cat message (error-message error)))])))
 
 (cfg
   test
@@ -2639,7 +2641,8 @@
     [message : String]) : FileHandle
     (match result
       [(OkIoFile handle) handle]
-      [(ErrIoFile error) (panic (string.append message (error-message error)))])))
+      [(ErrIoFile error)
+        (panic (str_cat.str-cat message (error-message error)))])))
 
 (cfg
   test
@@ -2648,7 +2651,7 @@
     [message : String]) : unit
     (match result
       [(OkIoUnit)
-        (panic (string.append message "close unexpectedly succeeded"))]
+        (panic (str_cat.str-cat message "close unexpectedly succeeded"))]
       [(ErrIoUnit error)
         (io-handle-test-assert-true (error-unsupported? error) message)])))
 
@@ -2660,10 +2663,7 @@
     [message : String]) : unit
     (match result
       [(OkIoUnit)
-        (panic
-          (string.append
-            message
-            (string.append operation " unexpectedly succeeded")))]
+        (panic (str_cat.str-cat message operation " unexpectedly succeeded"))]
       [(ErrIoUnit error)
         (io-handle-test-assert-true (error-unsupported? error) message)])))
 
@@ -2674,7 +2674,7 @@
     [message : String]) : unit
     (match result
       [(OkIoFile _)
-        (panic (string.append message "open unexpectedly succeeded"))]
+        (panic (str_cat.str-cat message "open unexpectedly succeeded"))]
       [(ErrIoFile error)
         (io-handle-test-assert-true (error-unsupported? error) message)])))
 
@@ -2685,7 +2685,7 @@
     [message : String]) : unit
     (match result
       [(OkIoFile _)
-        (panic (string.append message "open unexpectedly succeeded"))]
+        (panic (str_cat.str-cat message "open unexpectedly succeeded"))]
       [(ErrIoFile error)
         (io-handle-test-assert-true (error-invalid-path? error) message)])))
 
@@ -2696,7 +2696,7 @@
     [message : String]) : unit
     (match result
       [(OkIoFile _)
-        (panic (string.append message "open unexpectedly succeeded"))]
+        (panic (str_cat.str-cat message "open unexpectedly succeeded"))]
       [(ErrIoFile error)
         (io-handle-test-assert-true (error-not-found? error) message)])))
 
@@ -2713,12 +2713,13 @@
           (io-handle-test-assert-owned-string-eq
             (file-read-bytes read)
             expected-bytes
-            (string.append message " bytes"))
+            (str_cat.str-cat message " bytes"))
           (io-handle-test-assert-bool-eq
             (file-read-eof? read)
             expected-eof
-            (string.append message " eof")))]
-      [(ErrIoRead error) (panic (string.append message (error-message error)))])))
+            (str_cat.str-cat message " eof")))]
+      [(ErrIoRead error)
+        (panic (str_cat.str-cat message (error-message error)))])))
 
 (cfg
   test
@@ -2727,7 +2728,7 @@
     [message : String]) : unit
     (match result
       [(OkIoRead _)
-        (panic (string.append message "read unexpectedly succeeded"))]
+        (panic (str_cat.str-cat message "read unexpectedly succeeded"))]
       [(ErrIoRead error)
         (io-handle-test-assert-true (error-unsupported? error) message)])))
 
@@ -2738,7 +2739,7 @@
     [message : String]) : unit
     (match result
       [(OkIoRead _)
-        (panic (string.append message "read unexpectedly succeeded"))]
+        (panic (str_cat.str-cat message "read unexpectedly succeeded"))]
       [(ErrIoRead error)
         (io-handle-test-assert-true (error-invalid-path? error) message)])))
 
@@ -2763,7 +2764,7 @@
         (while (not done)
           (let
             [suffix : String (string.int->string index)]
-            [path : String (string.append (& prefix) (& suffix))]
+            [path : String (str_cat.str-cat prefix suffix)]
             (match (io-handle-test-try-file-exists? path)
               [(OkIoBool exists)
                 (if exists
@@ -2799,7 +2800,7 @@
       [(OkIoString contents)
         (io-handle-test-assert-owned-string-eq contents expected message)]
       [(ErrIoString error)
-        (panic (string.append message (error-message error)))])))
+        (panic (str_cat.str-cat message (error-message error)))])))
 
 (cfg
   test
@@ -2810,7 +2811,8 @@
     (match (io-handle-test-try-file-exists? path)
       [(OkIoBool exists)
         (io-handle-test-assert-bool-eq exists expected message)]
-      [(ErrIoBool error) (panic (string.append message (error-message error)))])))
+      [(ErrIoBool error)
+        (panic (str_cat.str-cat message (error-message error)))])))
 
 (cfg
   test

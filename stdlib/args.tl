@@ -30,6 +30,7 @@
 ;# ```
 (import stdlib.array)
 (import stdlib.io)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -247,9 +248,10 @@
 ;: Render a parse error as a diagnostic message.
 (define (error-message [error : ArgsError]) : String
   (match error
-    [(ArgsUnknownOption option) (string.append "args: unknown option " option)]
+    [(ArgsUnknownOption option)
+      (str_cat.str-cat "args: unknown option " option)]
     [(ArgsMissingValue option)
-      (string.append "args: missing value for " option)]))
+      (str_cat.str-cat "args: missing value for " option)]))
 
 ;: Return true for unknown-option errors.
 (define (error-unknown-option? [error : ArgsError]) : bool
@@ -879,15 +881,15 @@
       (test-assert-i64-eq
         (array-length values)
         2
-        (string.append message " count"))
+        (str_cat.str-cat message " count"))
       (test-assert-owned-string-eq
         (array-ref values 0)
         first
-        (string.append message " first"))
+        (str_cat.str-cat message " first"))
       (test-assert-owned-string-eq
         (array-ref values 1)
         second
-        (string.append message " second")))))
+        (str_cat.str-cat message " second")))))
 
 ;: Assert that a string vector contains exactly three strings.
 (define (test-assert-string-vec3
@@ -902,19 +904,19 @@
       (test-assert-i64-eq
         (array-length values)
         3
-        (string.append message " count"))
+        (str_cat.str-cat message " count"))
       (test-assert-owned-string-eq
         (array-ref values 0)
         first
-        (string.append message " first"))
+        (str_cat.str-cat message " first"))
       (test-assert-owned-string-eq
         (array-ref values 1)
         second
-        (string.append message " second"))
+        (str_cat.str-cat message " second"))
       (test-assert-owned-string-eq
         (array-ref values 2)
         third
-        (string.append message " third")))))
+        (str_cat.str-cat message " third")))))
 
 ;: Exercise an empty argv sequence.
 (define (test-empty-argv) : unit

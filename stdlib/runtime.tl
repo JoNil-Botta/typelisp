@@ -397,7 +397,10 @@
             (runtime-arena-set home))
           view)))))
 
+;; This is the low-level compatibility primitive used to implement public
+;; string building and cannot depend on `stdlib.str_cat`.
 ;: Concatenate two byte ranges into a fresh active-arena string.
+;; lint-allow: deprecated-string-concat
 (define (string-concat
   [a : (Ptr u8)]
   [a-len : i64]

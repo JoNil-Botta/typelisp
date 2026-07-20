@@ -264,87 +264,148 @@
           [capacity-before : i64 (array_ops.length (struct-get map slots))]
           [used-before : i64 (+ (struct-get map len) (struct-get map deleted))]
           (begin
+            ;; Preserve the pre-probe len + deleted growth condition: below
+            ;; the threshold at least one Empty slot remains in the table.
+            ;; Perform this exactly once before deriving data or probing, so a
+            ;; grow cannot invalidate the raw pointer used by the loop.
             (if (if (<= capacity-before 0)
               true
               (>= (* used-before 4) (* capacity-before 3)))
               (grow! map)
               unit)
             (let
-              [data : (Ptr GeneratedHashmapSlot)
+              [data : (MutPtr GeneratedHashmapSlot)
                 (unsafe
                   (ptr-cast
                     (array-data (struct-get map slots))
-                    : (Ptr GeneratedHashmapSlot)))]
-              [slots : (&mut map (Array GeneratedHashmapSlot))
-                (&mut (struct-get map slots))]
-              [cap : i64 (array_ops.length slots)]
+                    : (MutPtr GeneratedHashmapSlot)))]
+              ;; with-capacity and grow! preserve a positive power-of-two
+              ;; capacity, making the masked initial cursor in bounds.
+              [cap : i64 (array_ops.length (struct-get map slots))]
               [hash : i64 (* key 6364136223846793005)]
               [cursor : i64 (bit-and hash (- cap 1))]
-              [walked : i64 0]
+              [start : i64 cursor]
               [first : i64 -1]
               (begin
-                (while (< walked cap)
-                  (match (unsafe
-                    (ptr-read (ptr-offset data cursor)))
-                    [GeneratedHashmapSlot.Empty
-                      (let
-                        [index : i64
-                          (if (>= first 0)
-                            first
-                            cursor)]
-                        (begin
-                          (array-set!
-                            slots
-                            index
-                            (GeneratedHashmapSlot.Occupied key value hash))
-                          (set! (struct-get map len) (+ (struct-get map len) 1))
-                          (if (>= first 0)
-                            (set!
-                              (struct-get map deleted)
-                              (- (struct-get map deleted) 1))
-                            unit)
-                          (return unit)))]
-                    [GeneratedHashmapSlot.Tombstone
-                      (let
-                        [next : i64 (+ cursor 1)]
-                        (begin
-                          (if (< first 0)
-                            (set! first cursor)
-                            unit)
-                          (set!
-                            cursor
-                            (if (>= next cap)
-                              0
-                              next))
-                          (set! walked (+ walked 1))))]
-                    [(GeneratedHashmapSlot.Occupied existing _ _)
-                      (if (= existing key)
-                        (begin
-                          (array-set!
-                            slots
-                            cursor
-                            (GeneratedHashmapSlot.Occupied key value hash))
-                          (return unit))
+                ;; The preserved growth predicate guarantees an Empty slot,
+                ;; so this loop terminates without a redundant walked bound.
+                (while true
+                  (begin
+                    (match (unsafe
+                      (ptr-read (ptr-offset data cursor)))
+                      [GeneratedHashmapSlot.Empty
+                        (if (< first 0)
+                          (let
+                            ;; scalar-family fixes Occupied to the tag followed
+                            ;; by its i64 key, value, and hash payload words.
+                            [slot : (MutPtr i64)
+                              (unsafe
+                                (ptr-cast
+                                  (ptr-offset data cursor)
+                                  : (MutPtr i64)))]
+                            (begin
+                              (unsafe
+                                (ptr-write! slot 2))
+                              (unsafe
+                                (ptr-write! (ptr-offset slot 1) key))
+                              (unsafe
+                                (ptr-write! (ptr-offset slot 2) value))
+                              (unsafe
+                                (ptr-write! (ptr-offset slot 3) hash))
+                              (set!
+                                (struct-get map len)
+                                (+ (struct-get map len) 1))
+                              (return unit)))
+                          (let
+                            [slot : (MutPtr i64)
+                              (unsafe
+                                (ptr-cast
+                                  (ptr-offset data first)
+                                  : (MutPtr i64)))]
+                            (begin
+                              (unsafe
+                                (ptr-write! slot 2))
+                              (unsafe
+                                (ptr-write! (ptr-offset slot 1) key))
+                              (unsafe
+                                (ptr-write! (ptr-offset slot 2) value))
+                              (unsafe
+                                (ptr-write! (ptr-offset slot 3) hash))
+                              (set!
+                                (struct-get map len)
+                                (+ (struct-get map len) 1))
+                              (set!
+                                (struct-get map deleted)
+                                (- (struct-get map deleted) 1))
+                              (return unit))))]
+                      [GeneratedHashmapSlot.Tombstone
                         (let
                           [next : i64 (+ cursor 1)]
                           (begin
+                            (if (< first 0)
+                              (set! first cursor)
+                              unit)
                             (set!
                               cursor
                               (if (>= next cap)
                                 0
                                 next))
-                            (set! walked (+ walked 1)))))]))
-                (if (>= first 0)
-                  (begin
-                    (array-set!
-                      slots
-                      first
-                      (GeneratedHashmapSlot.Occupied key value hash))
-                    (set! (struct-get map len) (+ (struct-get map len) 1))
-                    (set!
-                      (struct-get map deleted)
-                      (- (struct-get map deleted) 1)))
-                  unit)))))
+                            unit))]
+                      [(GeneratedHashmapSlot.Occupied existing _ _)
+                        (if (= existing key)
+                          (let
+                            [slot : (MutPtr i64)
+                              (unsafe
+                                (ptr-cast
+                                  (ptr-offset data cursor)
+                                  : (MutPtr i64)))]
+                            (begin
+                              (unsafe
+                                (ptr-write! slot 2))
+                              (unsafe
+                                (ptr-write! (ptr-offset slot 1) key))
+                              (unsafe
+                                (ptr-write! (ptr-offset slot 2) value))
+                              (unsafe
+                                (ptr-write! (ptr-offset slot 3) hash))
+                              (return unit)))
+                          (let
+                            [next : i64 (+ cursor 1)]
+                            (begin
+                              (set!
+                                cursor
+                                (if (>= next cap)
+                                  0
+                                  next))
+                              unit)))])
+                    ;; Map values may be shallow-copied while sharing their
+                    ;; slot descriptor. Preserve the prior Full-table behavior
+                    ;; for a stale copied len without a per-probe counter.
+                    (if (= cursor start)
+                      (if (< first 0)
+                        (return unit)
+                        (let
+                          [slot : (MutPtr i64)
+                            (unsafe
+                              (ptr-cast (ptr-offset data first) : (MutPtr i64)))]
+                          (begin
+                            (unsafe
+                              (ptr-write! slot 2))
+                            (unsafe
+                              (ptr-write! (ptr-offset slot 1) key))
+                            (unsafe
+                              (ptr-write! (ptr-offset slot 2) value))
+                            (unsafe
+                              (ptr-write! (ptr-offset slot 3) hash))
+                            (set!
+                              (struct-get map len)
+                              (+ (struct-get map len) 1))
+                            (set!
+                              (struct-get map deleted)
+                              (- (struct-get map deleted) 1))
+                            (return unit))))
+                      unit)))
+                unit))))
         `(begin
           (if (needs-grow? map)
             (grow! map)
@@ -973,3 +1034,83 @@
               (HashFailed)))
           -7
           "generated aggregate enum value")))))
+
+(cfg
+  test
+  (test
+    hashmap-generated-insert-update-tombstone-grow-parity
+    (let
+      [scalar : hashmap_i64_i64.Map (hashmap_i64_i64.with-capacity 4)]
+      [general : hashmap_string_i64.Map (hashmap_string_i64.with-capacity 4)]
+      (begin
+        (hashmap_i64_i64.insert! scalar 1 10)
+        (hashmap_string_i64.insert! general "one" 10)
+        (hashmap_i64_i64.insert! scalar 1 11)
+        (hashmap_string_i64.insert! general "one" 11)
+        (test.assert-i64-eq
+          (hashmap_i64_i64.get-value-or (& scalar) 1 -1)
+          11
+          "scalar insert updates in place")
+        (test.assert-i64-eq
+          (hashmap_string_i64.lookup-value-or
+            (hashmap_string_i64.get (& general) "one")
+            -1)
+          11
+          "general insert updates in place")
+        (test.assert-true
+          (hashmap_i64_i64.remove-ok? (hashmap_i64_i64.remove! scalar 1))
+          "scalar remove creates tombstone")
+        (test.assert-true
+          (hashmap_string_i64.remove-ok?
+            (hashmap_string_i64.remove! general "one"))
+          "general remove creates tombstone")
+        (test.assert-i64-eq
+          (hashmap_i64_i64.deleted (& scalar))
+          1
+          "scalar tombstone count after remove")
+        (test.assert-i64-eq
+          (hashmap_string_i64.deleted (& general))
+          1
+          "general tombstone count after remove")
+        (hashmap_i64_i64.insert! scalar 1 12)
+        (hashmap_string_i64.insert! general "one" 12)
+        (test.assert-i64-eq
+          (hashmap_i64_i64.deleted (& scalar))
+          0
+          "scalar insert reuses one tombstone")
+        (test.assert-i64-eq
+          (hashmap_string_i64.deleted (& general))
+          0
+          "general insert reuses one tombstone")
+        (hashmap_i64_i64.insert! scalar 2 20)
+        (hashmap_i64_i64.insert! scalar 3 30)
+        (hashmap_i64_i64.insert! scalar 4 40)
+        (hashmap_string_i64.insert! general "two" 20)
+        (hashmap_string_i64.insert! general "three" 30)
+        (hashmap_string_i64.insert! general "four" 40)
+        (test.assert-i64-eq
+          (hashmap_i64_i64.capacity (& scalar))
+          8
+          "scalar growth runs exactly once before probing")
+        (test.assert-i64-eq
+          (hashmap_string_i64.capacity (& general))
+          8
+          "general growth runs exactly once before probing")
+        (test.assert-i64-eq
+          (hashmap_i64_i64.len (& scalar))
+          4
+          "scalar insert parity after growth")
+        (test.assert-i64-eq
+          (hashmap_string_i64.len (& general))
+          4
+          "general insert parity after growth")
+        (test.assert-i64-eq
+          (hashmap_i64_i64.get-value-or (& scalar) 1 -1)
+          12
+          "scalar tombstone value survives growth")
+        (test.assert-i64-eq
+          (hashmap_string_i64.lookup-value-or
+            (hashmap_string_i64.get (& general) "one")
+            -1)
+          12
+          "general tombstone value survives growth")))))

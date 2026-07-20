@@ -42178,7 +42178,7 @@
 (cfg
   scavenge-self-check
   (define (compiler-backend-scavenge-self-check
-    [name : String]
+    [name : i64]
     [params : CompilerIrParamList]
     [ret-ty : AstType]
     [slot-vars : i64]
@@ -42215,7 +42215,7 @@
             ends
             assignment-index
             slot-vars
-            name
+            (compiler-ir-symbol-text name)
             liveness
             emit-blocks
             0)
@@ -45263,10 +45263,37 @@
         ;; GAP9: fold constant gep index offsets into addressing displacements
         ;; BEFORE the register plan, so liveness sees the folded program (the
         ;; shared counter stays live; the offset adds vanish).
-        [blocks : CompilerIrBlockList
+        [folded-blocks : CompilerIrBlockList
           (compiler-backend-gep-fold-blocks vars raw-blocks)]
+        ;; Cycle 20: protect GP values only on one admitted cold call edge.  The
+        ;; rewrite precedes regalloc so liveness sees the local kills/reloads;
+        ;; Windows keeps its ordinary fixed unwind-described prologue.
+        [cold-call-rewrite : CompilerRegColdCallRewrite
+          (let
+            [folded-func : CompilerIrFunction
+              (CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                vars
+                folded-blocks)]
+            (if (and
+              (compiler-backend-mode-scalar? mode)
+              compiler-backend-scalar-registers-enabled)
+              (compiler-reg-cold-call-rewrite-function folded-func)
+              (CompilerRegColdCallRewrite.Rewrite folded-func (- 0 1))))]
+        [cold-call-func : CompilerIrFunction
+          (compiler-reg-cold-call-rewrite-function-value cold-call-rewrite)]
+        [blocks : CompilerIrBlockList
+          (match cold-call-func
+            [(CompilerIrFunction.Function _ _ _ _ out-blocks) out-blocks])]
+        [walk-vars : i64
+          (match cold-call-func
+            [(CompilerIrFunction.Function _ _ _ out-vars _) out-vars])]
+        [cold-call-temp-start : i64
+          (compiler-reg-cold-call-rewrite-temp-start cold-call-rewrite)]
         [walk-func : CompilerIrFunction
-          (CompilerIrFunction.Function name params ret-ty vars blocks)]
+          (CompilerIrFunction.Function name params ret-ty walk-vars blocks)]
         [func-diag : CompilerDiagnostic
           (compiler-backend-function-diagnostic-index
             span-index
@@ -45299,11 +45326,24 @@
         [reg-plan : CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if compiler-backend-scalar-registers-enabled
-              (compiler-reg-plan-function-scalar-for-abi fn-abi walk-func)
+              (compiler-reg-plan-function-scalar-cold-for-abi
+                fn-abi
+                walk-func
+                cold-call-temp-start)
               (compiler-reg-plan-function-stack-only walk-func))
             (if (compiler-backend-mode-avx2? mode)
               (compiler-reg-plan-function-avx2-for-abi fn-abi walk-func)
               (compiler-reg-plan-function-for-abi fn-abi walk-func)))]
+        [_cold-call-self-check : unit
+          (cfg
+            scavenge-self-check
+            (if (compiler-reg-cold-call-carriers-stack?
+              reg-plan
+              cold-call-temp-start
+              walk-vars)
+              unit
+              (io.panic "regalloc: cold-call carrier escaped its stack home"))
+            unit)]
         [call-save-enabled : bool
           (if (compiler-backend-mode-scalar? mode)
             compiler-backend-scalar-registers-enabled
@@ -45315,13 +45355,13 @@
           (if non-split-passes-enabled
             (compiler-reg-caller-save-rewrite-blocks
               blocks
-              vars
+              walk-vars
               (compiler-reg-function-var-types walk-func)
               reg-plan)
             (CompilerRegCallSaveRewrite.Rewrite
               blocks
-              vars
-              vars
+              walk-vars
+              walk-vars
               CompilerRegAssignmentList.Nil
               CompilerRegVarTypeList.Nil))]
         [call-save-reg-plan : CompilerRegPlan

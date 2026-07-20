@@ -13004,6 +13004,29 @@
       [(CompilerIrInstr.BinOp _ op _ _ _) (opt-bool-branch-compare-op? op)]
       [_ false])))
 
+;; The x2 conditional-loop unroller emits address-only `i + 1` values in each
+;; copy-1 block. Keeping those equivalent adds local to their own block lets
+;; the backend prove that every use is a same-block Gep index and fold them to
+;; SIB displacements. Cross-block CSE would merge them into one dominating add
+;; and force the offset into a register again.
+(define (opt-global-cse-unroll2-address-offset?
+  [block-label : String]
+  [instr : CompilerIrInstr]) : bool
+  (let
+    [marker : String "__unroll2_1"]
+    (and
+      (string.contains (& block-label) (& marker))
+      (match instr
+        [(CompilerIrInstr.BinOp _ op _ rhs _)
+          (and
+            (match op
+              [(CompilerIrBinOp.Add) true]
+              [_ false])
+            (match rhs
+              [(CompilerIrValue.I64 n) (= n 1)]
+              [_ false]))]
+        [_ false]))))
+
 (define (opt-global-cse-instr-seq
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
@@ -13022,10 +13045,9 @@
             (set!
               out
               (compiler-ir-instr-cons
-                (if (opt-global-cse-bool-chain-compare?
-                  block-label
-                  instrs
-                  instr)
+                (if (or
+                  (opt-global-cse-bool-chain-compare? block-label instrs instr)
+                  (opt-global-cse-unroll2-address-offset? block-label instr))
                   instr
                   (opt-global-cse-instr facts doms block-id (+ index 1) instr))
                 out))
@@ -29233,7 +29255,7 @@
               (opt-cfg-entry-label blocks)))
           func))]))
 
-;; --- canonical counted-loop unrolling (x16) ----------------------------------
+;; --- canonical counted-loop unrolling (x16 straight-line / x2 diamond) -------
 ;;
 ;; Recognizes a single-block do-while loop B of the canonical rotated shape
 ;;
@@ -30492,7 +30514,9 @@
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match func
     [(CompilerIrFunction.Function _ _ _ _ prescan-blocks)
-      (if (opt-unroll-blocks-have-candidate? prescan-blocks)
+      (if (or
+        (opt-unroll-blocks-have-candidate? prescan-blocks)
+        (opt-unroll-mb-blocks-have-candidate? prescan-blocks))
         (opt-unroll-function-verified-with-context-result
           context
           verified?
@@ -30534,7 +30558,40 @@
                         (OptFunctionCtxResult.Result next next-context)]
                       [(ResultCompilerOptimizeVerify.Err _)
                         (OptFunctionCtxResult.Result func context)]))
-                  (OptFunctionCtxResult.Result func context))]))])]
+                  ;; The original unroller's prescan and shape scanner only
+                  ;; admit a self-loop whose header is also its latch. A
+                  ;; versioned conditional body instead has a separate merge
+                  ;; latch, so try the conservative x2 diamond path over the
+                  ;; natural-loop records when the straight-line scan misses.
+                  (let
+                    [loops : OptNaturalLoopList
+                      (opt-cfg-natural-loops-with-context blocks context)]
+                    (match (opt-unroll-mb-loops-scan
+                      blocks
+                      loops
+                      loops
+                      (opt-cfg-entry-label blocks)
+                      frame)
+                      [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
+                        (if mb-changed
+                          (let
+                            [mb-next : CompilerIrFunction
+                              (CompilerIrFunction.Function
+                                name
+                                params
+                                ret-ty
+                                mb-frame
+                                mb-blocks)]
+                            [mb-context : OptCfgContext
+                              (opt-cfg-context-build mb-blocks)]
+                            (match (opt-verify-function-with-context
+                              mb-next
+                              mb-context)
+                              [(ResultCompilerOptimizeVerify.Ok)
+                                (OptFunctionCtxResult.Result mb-next mb-context)]
+                              [(ResultCompilerOptimizeVerify.Err _)
+                                (OptFunctionCtxResult.Result func context)]))
+                          (OptFunctionCtxResult.Result func context))])))]))])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -34130,6 +34187,1012 @@
         false
         func)
         [(OptFunctionCtxResult.Result next _) next])]))
+
+;; --- x2 unrolling for versioned conditional diamonds ---------------------------
+;;
+;; The straight-line unroller above deliberately starts with a self-loop
+;; prescan. A versioned partition loop has a four-block natural-loop body
+;; instead:
+;;
+;;   H(phi i, phi state): body; Branch then else
+;;   then/else: ...; Jump L
+;;   L: merged state; inext = i + 1; c = inext < bound; Branch c H exit
+;;
+;; Its separate merge latch is the first gate that rejected quicksort's
+;; `__bce_fast` clone; its store-bearing swap arm would also fail the
+;; straight-line instruction whitelist. This path is intentionally narrower
+;; than the multi-block BCE cloner: exactly one check-free four-block diamond,
+;; at most two header phis, no calls or fallthroughs, <= 32 IR instructions,
+;; <= 6 invariant live-ins, step +1, and an invariant bound. Requiring the
+;; `__bce_fast` provenance keeps the original checked loop as the fallback and
+;; preserves the guard's in-range proof without reintroducing BoundsChecks.
+;;
+;; G tests the parity of (bound - seed). For an odd trip count the original
+;; fast body is peeled once; for an even count G enters copy 0 directly. Copy 0
+;; falls through the diamond to copy 1 without an exit test, and copy 1 uses
+;; the original remapped exit test to loop by two. Thus the steady-state pair
+;; pays one increment/compare/branch while every memory operation remains in
+;; the already-proven check-free fast region.
+(defstruct OptUnrollMbShape
+  (header String)
+  (latch String)
+  (preheader String)
+  (exit-label String)
+  (body-labels OptLabelSet)
+  (body-blocks CompilerIrBlockList)
+  (iphi i64)
+  (seed CompilerIrValue)
+  (inext i64)
+  (cond-var i64)
+  (bound CompilerIrValue))
+
+(defenum OptUnrollMbMaybeShape
+  (No)
+  (Some OptUnrollMbShape))
+
+(define (opt-unroll-mb-copy-suffix [copy : i64]) : String
+  (if (= copy 0)
+    "__unroll2_0"
+    "__unroll2_1"))
+
+(define (opt-unroll-mb-label
+  [body-labels : OptLabelSet]
+  [label : String]
+  [copy : i64]) : String
+  (if (opt-label-contains body-labels label)
+    (string.append label (opt-unroll-mb-copy-suffix copy))
+    label))
+
+(define (opt-unroll-mb-guard-label [header : String]) : String
+  (string.append header "__unroll2_guard"))
+
+(define (opt-unroll-mb-block-terminator-ok? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Jump _) true]
+    [(CompilerIrInstr.Branch _ _ _) true]
+    [_ false]))
+
+(define (opt-unroll-mb-body-instr-ok? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Mov _ _ _) true]
+    [(CompilerIrInstr.Cast _ _ _ _) true]
+    [(CompilerIrInstr.Bitcast _ _ _ _) true]
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.UnOp _ _ _ _) true]
+    [(CompilerIrInstr.Gep _ _ _ _) true]
+    [(CompilerIrInstr.Load _ _ _) true]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [_ false]))
+
+(define (opt-unroll-mb-body-instrs-ok?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    true
+    (and
+      (opt-unroll-mb-body-instr-ok? (compiler-ir-instr-seq-ref instrs index))
+      (opt-unroll-mb-body-instrs-ok? instrs (+ index 1) last))))
+
+(define (opt-unroll-mb-block-ok? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
+        (and
+          (> count phi-count)
+          (opt-unroll-no-phi-from? instrs phi-count)
+          (opt-unroll-mb-block-terminator-ok?
+            (compiler-ir-instr-seq-ref instrs (- count 1)))
+          (opt-unroll-mb-body-instrs-ok? instrs phi-count (- count 1))))]))
+
+(define (opt-unroll-mb-body-ok? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) true]
+    [(CompilerIrBlockList.Cons block rest)
+      (and
+        (opt-unroll-mb-block-ok? block)
+        (opt-unroll-mb-body-ok? (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-mb-body-ok? (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-unroll-mb-all-fast-labels? [labels : OptLabelSet]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Cons label rest)
+      (let
+        [marker : String "__bce_fast"]
+        (and
+          (string.contains (& label) (& marker))
+          (opt-unroll-mb-all-fast-labels? (box-get rest))))]))
+
+(define (opt-unroll-mb-labels-fresh?
+  [blocks : CompilerIrBlockList]
+  [labels : OptLabelSet]) : bool
+  (match labels
+    [(OptLabelSet.Nil) true]
+    [(OptLabelSet.Cons label rest)
+      (and
+        (not
+          (opt-cfg-block-exists?
+            blocks
+            (string.append label (opt-unroll-mb-copy-suffix 0))))
+        (not
+          (opt-cfg-block-exists?
+            blocks
+            (string.append label (opt-unroll-mb-copy-suffix 1))))
+        (opt-unroll-mb-labels-fresh? blocks (box-get rest)))]))
+
+(define (opt-unroll-mb-block-jumps-to?
+  [blocks : CompilerIrBlockList]
+  [label : String]
+  [target : String]) : bool
+  (match (opt-cfg-find-block blocks label)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (and
+              (> count 0)
+              (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                [(CompilerIrInstr.Jump actual) (string.eq actual target)]
+                [_ false])))])]))
+
+;; The only admitted control shape is H -> {then, else} -> L -> {H, exit}.
+(define (opt-unroll-mb-diamond?
+  [blocks : CompilerIrBlockList]
+  [body-labels : OptLabelSet]
+  [header : String]
+  [latch : String]) : bool
+  (match (opt-cfg-find-block blocks header)
+    [(OptMaybeBlock.No) false]
+    [(OptMaybeBlock.Some block)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            (if (< count 1)
+              false
+              (match (compiler-ir-instr-seq-ref instrs (- count 1))
+                [(CompilerIrInstr.Branch _ then-label else-label)
+                  (and
+                    (not (string.eq then-label else-label))
+                    (not (string.eq then-label header))
+                    (not (string.eq else-label header))
+                    (not (string.eq then-label latch))
+                    (not (string.eq else-label latch))
+                    (opt-label-contains body-labels then-label)
+                    (opt-label-contains body-labels else-label)
+                    (opt-unroll-mb-block-jumps-to? blocks then-label latch)
+                    (opt-unroll-mb-block-jumps-to? blocks else-label latch))]
+                [_ false])))])]))
+
+(define (opt-unroll-mb-collect-uses
+  [blocks : CompilerIrBlockList]
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-unroll-mb-collect-uses
+            (box-get rest)
+            (opt-collect-instr-seq-uses set instrs))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-mb-collect-uses (compiler-ir-block-seq-to-list seq) set)]))
+
+(define (opt-unroll-mb-remove-defs-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [uses : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    uses
+    (let
+      [out : opt_i64_i64_map.Map uses]
+      [dst : i64 (compiler-ir-instr-seq-loop-dst-or instrs index (- 0 1))]
+      (begin
+        (if (>= dst 0)
+          (begin
+            (opt_i64_i64_map.remove-ref! (&mut out) dst)
+            unit)
+          unit)
+        (opt-unroll-mb-remove-defs-instrs instrs (+ index 1) out)))))
+
+(define (opt-unroll-mb-remove-defs
+  [blocks : CompilerIrBlockList]
+  [uses : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
+  (match blocks
+    [(CompilerIrBlockList.Nil) uses]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (opt-unroll-mb-remove-defs
+            (box-get rest)
+            (opt-unroll-mb-remove-defs-instrs instrs 0 uses))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-mb-remove-defs (compiler-ir-block-seq-to-list seq) uses)]))
+
+;; This is a deliberately small register-pressure proxy: loop definitions do
+;; not count, because each copy's temporaries die before the next copy starts;
+;; only values kept live into both copies consume steady-state headroom.
+(define (opt-unroll-mb-live-in-count [blocks : CompilerIrBlockList]) : i64
+  (let
+    [uses : opt_i64_i64_map.Map
+      (opt-unroll-mb-collect-uses blocks (opt_i64_i64_map.with-capacity 32))]
+    [live-ins : opt_i64_i64_map.Map (opt-unroll-mb-remove-defs blocks uses)]
+    (opt_i64_i64_map.len (& live-ins))))
+
+(define (opt-unroll-mb-direct-var? [value : CompilerIrValue] [var : i64]) : bool
+  (match value
+    [(CompilerIrValue.Var id) (= id var)]
+    [_ false]))
+
+;; Copy 1 eliminates its counter phi: each indexed Gep gets a same-block
+;; `i + 1` address-only offset (the backend's displacement fold deletes it),
+;; and the sole carried counter update becomes `i + 2`. Reject any other
+;; direct use instead of materializing `i + 1` in the steady-state loop.
+(define (opt-unroll-mb-counter-uses-ok-instrs?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [iphi : i64]
+  [inext : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    true
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [uses : opt_i64_i64_map.Map
+        (opt-collect-instr-uses (opt_i64_i64_map.with-capacity 4) instr)]
+      (and
+        (if (not (opt-used-contains uses iphi))
+          true
+          (match instr
+            ;; Header phis define the carried value; their incoming edges do
+            ;; not execute as body uses.
+            [(CompilerIrInstr.Phi _ _ _) true]
+            [(CompilerIrInstr.Gep _ _ offset _)
+              (opt-unroll-mb-direct-var? offset iphi)]
+            [(CompilerIrInstr.BinOp dst op lhs rhs _)
+              (and
+                (= dst inext)
+                (match op
+                  [(CompilerIrBinOp.Add) true]
+                  [_ false])
+                (opt-unroll-mb-direct-var? lhs iphi)
+                (match rhs
+                  [(CompilerIrValue.I64 step) (= step 1)]
+                  [_ false]))]
+            [_ false]))
+        (opt-unroll-mb-counter-uses-ok-instrs? instrs (+ index 1) iphi inext)))))
+
+(define (opt-unroll-mb-counter-uses-ok?
+  [blocks : CompilerIrBlockList]
+  [iphi : i64]
+  [inext : i64]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) true]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (and
+            (opt-unroll-mb-counter-uses-ok-instrs? instrs 0 iphi inext)
+            (opt-unroll-mb-counter-uses-ok? (box-get rest) iphi inext))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-mb-counter-uses-ok?
+        (compiler-ir-block-seq-to-list seq)
+        iphi
+        inext)]))
+
+(define (opt-unroll-mb-shape-finish
+  [blocks : CompilerIrBlockList]
+  [header : String]
+  [latch : String]
+  [preheader : String]
+  [body-labels : OptLabelSet]
+  [body-blocks : CompilerIrBlockList]
+  [counter : OptBceMbMaybeCounter]
+  [cond-var : i64]
+  [exit-label : String]) : OptUnrollMbMaybeShape
+  (match counter
+    [(OptBceMbMaybeCounter.No) (OptUnrollMbMaybeShape.No)]
+    [(OptBceMbMaybeCounter.Some iphi seed inext bound)
+      (match (opt-cfg-find-block blocks header)
+        [(OptMaybeBlock.No) (OptUnrollMbMaybeShape.No)]
+        [(OptMaybeBlock.Some block)
+          (match block
+            [(CompilerIrBlock.Block _ instrs)
+              (let
+                [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
+                (if (and
+                  (>= phi-count 1)
+                  (<= phi-count 2)
+                  (opt-bce-mb-header-phis-ok?
+                    instrs
+                    0
+                    phi-count
+                    latch
+                    preheader)
+                  (opt-unroll-mb-diamond? blocks body-labels header latch)
+                  (opt-unroll-mb-body-ok? body-blocks)
+                  (<= (compiler-ir-block-list-instruction-count body-blocks) 32)
+                  (<= (opt-unroll-mb-live-in-count body-blocks) 6)
+                  (opt-unroll-mb-counter-uses-ok? body-blocks iphi inext)
+                  (opt-unroll-mb-all-fast-labels? body-labels)
+                  (not
+                    (opt-cfg-block-exists?
+                      blocks
+                      (opt-unroll-mb-guard-label header)))
+                  (opt-unroll-mb-labels-fresh? blocks body-labels)
+                  (opt-unroll-pred-retargetable? blocks preheader))
+                  (OptUnrollMbMaybeShape.Some
+                    (OptUnrollMbShape
+                      header
+                      latch
+                      preheader
+                      exit-label
+                      body-labels
+                      body-blocks
+                      iphi
+                      seed
+                      inext
+                      cond-var
+                      bound))
+                  (OptUnrollMbMaybeShape.No)))])])]))
+
+(define (opt-unroll-mb-loop-shape
+  [blocks : CompilerIrBlockList]
+  [entry-label : String]
+  [loop : OptNaturalLoop]) : OptUnrollMbMaybeShape
+  (match loop
+    [(OptNaturalLoop.Loop header latch body preheader)
+      (match preheader
+        [(OptLoopPreheader.No) (OptUnrollMbMaybeShape.No)]
+        [(OptLoopPreheader.Some pred)
+          (let
+            [body-labels : OptLabelSet (struct-get body labels)]
+            [body-blocks : CompilerIrBlockList (struct-get body blocks)]
+            (if (or
+              (string.eq header entry-label)
+              (not (= (opt-label-count body-labels) 4)))
+              (OptUnrollMbMaybeShape.No)
+              (match (opt-cfg-find-block blocks latch)
+                [(OptMaybeBlock.No) (OptUnrollMbMaybeShape.No)]
+                [(OptMaybeBlock.Some latch-block)
+                  (match (opt-bce-mb-latch-branch
+                    latch-block
+                    header
+                    body-labels)
+                    [(OptBceMbMaybeLatch.No) (OptUnrollMbMaybeShape.No)]
+                    [(OptBceMbMaybeLatch.Some cond-var exit-label)
+                      (let
+                        [defs : opt_i64_i64_map.Map
+                          (opt-bce-mb-collect-defs
+                            body-blocks
+                            (opt_i64_i64_map.with-capacity 64))]
+                        (opt-unroll-mb-shape-finish
+                          blocks
+                          header
+                          latch
+                          pred
+                          body-labels
+                          body-blocks
+                          (opt-bce-mb-counter-step
+                            body-blocks
+                            defs
+                            latch
+                            pred
+                            cond-var)
+                          cond-var
+                          exit-label))])])))])]))
+
+;; Map ordinary intra-loop phi edges for one copy. Header phis are handled
+;; separately because copy 0 has three entry sources and copy 1 has one.
+(define (opt-unroll-mb-clone-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [remap : (Array CompilerIrValue)]
+  [body-labels : OptLabelSet]
+  [copy : i64]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-unroll-mb-clone-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        remap
+        body-labels
+        copy)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (compiler-ir-phi-input-cons
+        (opt-unroll-subst-value remap value)
+        (opt-unroll-mb-label body-labels label copy)
+        (opt-unroll-mb-clone-phi-inputs (box-get rest) remap body-labels copy))]))
+
+(define (opt-unroll-mb-clone-header-phi
+  [instr : CompilerIrInstr]
+  [shape : OptUnrollMbShape]
+  [remap0 : (Array CompilerIrValue)]
+  [remap1 : (Array CompilerIrValue)]
+  [copy : i64]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (match (opt-unroll-split-phi-inputs inputs (struct-get shape latch))
+        [(OptUnrollPhiSplit.No) instr]
+        [(OptUnrollPhiSplit.Split init back _)
+          (if (= copy 0)
+            (CompilerIrInstr.Phi
+              (opt-bce-mb-remap-dst remap0 dst)
+              (compiler-ir-phi-input-cons
+                init
+                (opt-unroll-mb-guard-label (struct-get shape header))
+                (compiler-ir-phi-input-cons
+                  back
+                  (struct-get shape latch)
+                  (compiler-ir-phi-input-cons
+                    (opt-unroll-subst-value remap1 back)
+                    (opt-unroll-mb-label
+                      (struct-get shape body-labels)
+                      (struct-get shape latch)
+                      1)
+                    (CompilerIrPhiInputList.Nil))))
+              ty)
+            (CompilerIrInstr.Phi
+              (opt-bce-mb-remap-dst remap1 dst)
+              (compiler-ir-phi-input-cons
+                (opt-unroll-subst-value remap0 back)
+                (opt-unroll-mb-label
+                  (struct-get shape body-labels)
+                  (struct-get shape latch)
+                  0)
+                (CompilerIrPhiInputList.Nil))
+              ty))])]
+    [_ instr]))
+
+(define (opt-unroll-mb-clone-instr
+  [instr : CompilerIrInstr]
+  [remap : (Array CompilerIrValue)]
+  [body-labels : OptLabelSet]
+  [shape : OptUnrollMbShape]
+  [copy : i64]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.Mov dst src ty)
+      (CompilerIrInstr.Mov
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        ty)]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (CompilerIrInstr.Cast
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (CompilerIrInstr.Bitcast
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        from-ty
+        to-ty)]
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (CompilerIrInstr.BinOp
+        (opt-bce-mb-remap-dst remap dst)
+        op
+        (opt-unroll-subst-value remap lhs)
+        (if (and (= copy 1) (= dst (struct-get shape inext)))
+          (CompilerIrValue.I64 2)
+          (opt-unroll-subst-value remap rhs))
+        ty)]
+    [(CompilerIrInstr.UnOp dst op src ty)
+      (CompilerIrInstr.UnOp
+        (opt-bce-mb-remap-dst remap dst)
+        op
+        (opt-unroll-subst-value remap src)
+        ty)]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (CompilerIrInstr.Gep
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap base)
+        (opt-unroll-subst-value remap offset)
+        ty)]
+    [(CompilerIrInstr.Load dst src ty)
+      (CompilerIrInstr.Load
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-subst-value remap src)
+        ty)]
+    [(CompilerIrInstr.StorePtr ptr value ty)
+      (CompilerIrInstr.StorePtr
+        (opt-unroll-subst-value remap ptr)
+        (opt-unroll-subst-value remap value)
+        ty)]
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (CompilerIrInstr.Phi
+        (opt-bce-mb-remap-dst remap dst)
+        (opt-unroll-mb-clone-phi-inputs inputs remap body-labels copy)
+        ty)]
+    [(CompilerIrInstr.Jump target)
+      (CompilerIrInstr.Jump (opt-unroll-mb-label body-labels target copy))]
+    [(CompilerIrInstr.Branch cond then-label else-label)
+      (CompilerIrInstr.Branch
+        (opt-unroll-subst-value remap cond)
+        (opt-unroll-mb-label body-labels then-label copy)
+        (opt-unroll-mb-label body-labels else-label copy))]
+    [_ instr]))
+
+(define (opt-unroll-mb-copy0-counter-tail?
+  [instr : CompilerIrInstr]
+  [shape : OptUnrollMbShape]) : bool
+  (let
+    [dst : i64 (compiler-ir-instr-loop-dst-or instr (- 0 1))]
+    (and
+      (>= dst 0)
+      (or
+        (= dst (struct-get shape cond-var))
+        (=
+          (opt-bce-mb-resolve (struct-get shape body-blocks) dst 16)
+          (struct-get shape inext))))))
+
+(define (opt-unroll-mb-clone-instrs
+  [label : String]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [shape : OptUnrollMbShape]
+  [remap0 : (Array CompilerIrValue)]
+  [remap1 : (Array CompilerIrValue)]
+  [cell : (Array i64)]
+  [copy : i64]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (if (or
+      (and
+        (= copy 1)
+        (string.eq label (struct-get shape header))
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.Phi dst _ _) (= dst (struct-get shape iphi))]
+          [_ false]))
+      ;; Copy 0 never tests or carries its intermediate counter. Dropping the
+      ;; whole add/copy/compare chain prevents GVN from reusing its dominating
+      ;; `i + 1` in copy 1, where the offset must remain address-only.
+      (and
+        (= copy 0)
+        (string.eq label (struct-get shape latch))
+        (opt-unroll-mb-copy0-counter-tail?
+          (compiler-ir-instr-seq-ref instrs index)
+          shape)))
+      (opt-unroll-mb-clone-instrs
+        label
+        instrs
+        (+ index 1)
+        shape
+        remap0
+        remap1
+        cell
+        copy)
+      (let
+        [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+        [last? : bool (= index (- (compiler-ir-instr-seq-count instrs) 1))]
+        [remap : (Array CompilerIrValue)
+          (if (= copy 0)
+            remap0
+            remap1)]
+        [cloned : CompilerIrInstr
+          (if (and last? (string.eq label (struct-get shape latch)))
+            (match instr
+              [(CompilerIrInstr.Branch cond _ _)
+                (if (= copy 0)
+                  (CompilerIrInstr.Jump
+                    (opt-unroll-mb-label
+                      (struct-get shape body-labels)
+                      (struct-get shape header)
+                      1))
+                  (CompilerIrInstr.Branch
+                    (opt-unroll-subst-value remap1 cond)
+                    (opt-unroll-mb-label
+                      (struct-get shape body-labels)
+                      (struct-get shape header)
+                      0)
+                    (struct-get shape exit-label)))]
+              [_ instr])
+            (if (and
+              (string.eq label (struct-get shape header))
+              (match instr
+                [(CompilerIrInstr.Phi _ _ _) true]
+                [_ false]))
+              (opt-unroll-mb-clone-header-phi instr shape remap0 remap1 copy)
+              (opt-unroll-mb-clone-instr
+                instr
+                remap
+                (struct-get shape body-labels)
+                shape
+                copy)))]
+        [tail : CompilerIrInstrList
+          (opt-unroll-mb-clone-instrs
+            label
+            instrs
+            (+ index 1)
+            shape
+            remap0
+            remap1
+            cell
+            copy)]
+        (if (= copy 1)
+          (match instr
+            [(CompilerIrInstr.Gep _ base offset _ty)
+              (if (opt-unroll-mb-direct-var? offset (struct-get shape iphi))
+                (let
+                  [shifted : i64 (opt-unroll-alloc-var cell)]
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      shifted
+                      (CompilerIrBinOp.Add)
+                      (opt-unroll-subst-value
+                        remap0
+                        (CompilerIrValue.Var (struct-get shape iphi)))
+                      (CompilerIrValue.I64 1)
+                      (AstType.I64))
+                    (match cloned
+                      [(CompilerIrInstr.Gep dst _ _mapped-offset mapped-ty)
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Gep
+                            dst
+                            (opt-unroll-subst-value remap1 base)
+                            (CompilerIrValue.Var shifted)
+                            mapped-ty)
+                          tail)]
+                      [_ (compiler-ir-instr-cons cloned tail)])))
+                (compiler-ir-instr-cons cloned tail))]
+            [_ (compiler-ir-instr-cons cloned tail)])
+          (compiler-ir-instr-cons cloned tail))))))
+
+(define (opt-unroll-mb-clone-blocks
+  [blocks : CompilerIrBlockList]
+  [shape : OptUnrollMbShape]
+  [remap0 : (Array CompilerIrValue)]
+  [remap1 : (Array CompilerIrValue)]
+  [cell : (Array i64)]
+  [copy : i64]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              (opt-unroll-mb-label (struct-get shape body-labels) label copy)
+              (opt-unroll-mb-clone-instrs
+                label
+                instrs
+                0
+                shape
+                remap0
+                remap1
+                cell
+                copy))
+            (opt-unroll-mb-clone-blocks
+              (box-get rest)
+              shape
+              remap0
+              remap1
+              cell
+              copy))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-mb-clone-blocks
+        (compiler-ir-block-seq-to-list seq)
+        shape
+        remap0
+        remap1
+        cell
+        copy)]))
+
+;; The original fast body is now only the odd-trip peel, so each header phi
+;; keeps its outside seed (relabeled to G) and drops its old latch input.
+(define (opt-unroll-mb-peel-header-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [latch : String]
+  [guard-label : String]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (compiler-ir-instr-cons
+        (match instr
+          [(CompilerIrInstr.Phi dst inputs ty)
+            (match (opt-unroll-split-phi-inputs inputs latch)
+              [(OptUnrollPhiSplit.Split init _ _)
+                (CompilerIrInstr.Phi
+                  dst
+                  (compiler-ir-phi-input-cons
+                    init
+                    guard-label
+                    (CompilerIrPhiInputList.Nil))
+                  ty)]
+              [(OptUnrollPhiSplit.No) instr])]
+          [_ instr])
+        (opt-unroll-mb-peel-header-instrs instrs (+ index 1) latch guard-label)))))
+
+(define (opt-unroll-mb-extend-exit-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [latch : String]
+  [clone-latch : String]
+  [remap1 : (Array CompilerIrValue)]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-unroll-mb-extend-exit-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        latch
+        clone-latch
+        remap1)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (let
+        [tail : CompilerIrPhiInputList
+          (opt-unroll-mb-extend-exit-phi-inputs
+            (box-get rest)
+            latch
+            clone-latch
+            remap1)]
+        (if (string.eq label latch)
+          (compiler-ir-phi-input-cons
+            value
+            label
+            (compiler-ir-phi-input-cons
+              (opt-unroll-subst-value remap1 value)
+              clone-latch
+              tail))
+          (compiler-ir-phi-input-cons value label tail)))]))
+
+(define (opt-unroll-mb-extend-exit-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [latch : String]
+  [clone-latch : String]
+  [remap1 : (Array CompilerIrValue)]) : CompilerIrInstrList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (compiler-ir-instr-cons
+        (match instr
+          [(CompilerIrInstr.Phi dst inputs ty)
+            (CompilerIrInstr.Phi
+              dst
+              (opt-unroll-mb-extend-exit-phi-inputs
+                inputs
+                latch
+                clone-latch
+                remap1)
+              ty)]
+          [_ instr])
+        (opt-unroll-mb-extend-exit-instrs
+          instrs
+          (+ index 1)
+          latch
+          clone-latch
+          remap1)))))
+
+(define (opt-unroll-mb-rewrite-blocks
+  [blocks : CompilerIrBlockList]
+  [shape : OptUnrollMbShape]
+  [guard-block : CompilerIrBlock]
+  [copy0 : CompilerIrBlockList]
+  [copy1 : CompilerIrBlockList]
+  [remap1 : (Array CompilerIrValue)]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (let
+            [tail : CompilerIrBlockList
+              (opt-unroll-mb-rewrite-blocks
+                (box-get rest)
+                shape
+                guard-block
+                copy0
+                copy1
+                remap1)]
+            (cond
+              [(string.eq label (struct-get shape header))
+                (compiler-ir-block-cons
+                  guard-block
+                  (opt-bce-mb-blocks-cons-onto
+                    copy0
+                    (opt-bce-mb-blocks-cons-onto
+                      copy1
+                      (compiler-ir-block-cons
+                        (compiler-ir-block
+                          label
+                          (opt-unroll-mb-peel-header-instrs
+                            instrs
+                            0
+                            (struct-get shape latch)
+                            (opt-unroll-mb-guard-label
+                              (struct-get shape header))))
+                        tail))))]
+              [(string.eq label (struct-get shape preheader))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    label
+                    (opt-unroll-retarget-instrs
+                      instrs
+                      0
+                      (struct-get shape header)
+                      (opt-unroll-mb-guard-label (struct-get shape header))))
+                  tail)]
+              [(string.eq label (struct-get shape latch))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    label
+                    (opt-unroll-retarget-instrs
+                      instrs
+                      0
+                      (struct-get shape header)
+                      (opt-unroll-mb-label
+                        (struct-get shape body-labels)
+                        (struct-get shape header)
+                        0)))
+                  tail)]
+              [(opt-label-contains (struct-get shape body-labels) label)
+                (compiler-ir-block-cons block tail)]
+              [else
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    label
+                    (opt-unroll-mb-extend-exit-instrs
+                      instrs
+                      0
+                      (struct-get shape latch)
+                      (opt-unroll-mb-label
+                        (struct-get shape body-labels)
+                        (struct-get shape latch)
+                        1)
+                      remap1))
+                  tail)]))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-mb-rewrite-blocks
+        (compiler-ir-block-seq-to-list seq)
+        shape
+        guard-block
+        copy0
+        copy1
+        remap1)]))
+
+(define (opt-unroll-mb-apply
+  [blocks : CompilerIrBlockList]
+  [shape : OptUnrollMbShape]
+  [frame : i64]) : OptUnrollResult
+  (let
+    [body-blocks : CompilerIrBlockList (struct-get shape body-blocks)]
+    [body-labels : OptLabelSet (struct-get shape body-labels)]
+    [outside : opt_i64_i64_map.Map
+      (opt-bce-mb-outside-uses
+        (opt_i64_i64_map.with-capacity 64)
+        blocks
+        body-labels)]
+    (if (opt-bce-mb-defs-escape? body-blocks outside)
+      (OptUnrollResult.Result blocks frame false)
+      (let
+        [cell : (Array i64) (array.make-array i64 1)]
+        [_cell : unit (array-set! cell 0 frame)]
+        [remap0 : (Array CompilerIrValue)
+          (array.make-array CompilerIrValue frame)]
+        [remap1 : (Array CompilerIrValue)
+          (array.make-array CompilerIrValue frame)]
+        [_fill0 : unit (opt-unroll-remap-fill remap0 0)]
+        [_fill1 : unit (opt-unroll-remap-fill remap1 0)]
+        [_alloc0 : unit (opt-bce-mb-alloc-defs! body-blocks remap0 cell)]
+        [_alloc1 : unit (opt-bce-mb-alloc-defs! body-blocks remap1 cell)]
+        [_counter1 : unit
+          (opt-unroll-remap-set
+            remap1
+            (struct-get shape iphi)
+            (opt-unroll-subst-value
+              remap0
+              (CompilerIrValue.Var (struct-get shape iphi))))]
+        [span : i64 (opt-unroll-alloc-var cell)]
+        [odd : i64 (opt-unroll-alloc-var cell)]
+        [is-odd : i64 (opt-unroll-alloc-var cell)]
+        [guard-label : String
+          (opt-unroll-mb-guard-label (struct-get shape header))]
+        [guard-block : CompilerIrBlock
+          (compiler-ir-block
+            guard-label
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                span
+                (CompilerIrBinOp.Sub)
+                (struct-get shape bound)
+                (struct-get shape seed)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  odd
+                  (CompilerIrBinOp.BitAnd)
+                  (CompilerIrValue.Var span)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    is-odd
+                    (CompilerIrBinOp.Ne)
+                    (CompilerIrValue.Var odd)
+                    (CompilerIrValue.I64 0)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Branch
+                      (CompilerIrValue.Var is-odd)
+                      (struct-get shape header)
+                      (opt-unroll-mb-label
+                        body-labels
+                        (struct-get shape header)
+                        0))
+                    (CompilerIrInstrList.Nil))))))]
+        [copy0 : CompilerIrBlockList
+          (opt-unroll-mb-clone-blocks body-blocks shape remap0 remap1 cell 0)]
+        [copy1 : CompilerIrBlockList
+          (opt-unroll-mb-clone-blocks body-blocks shape remap0 remap1 cell 1)]
+        (OptUnrollResult.Result
+          (opt-unroll-mb-rewrite-blocks
+            blocks
+            shape
+            guard-block
+            copy0
+            copy1
+            remap1)
+          (array-ref cell 0)
+          true)))))
+
+(define (opt-unroll-mb-loops-scan
+  [blocks : CompilerIrBlockList]
+  [_all-loops : OptNaturalLoopList]
+  [loops : OptNaturalLoopList]
+  [entry-label : String]
+  [frame : i64]) : OptUnrollResult
+  (match loops
+    [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
+    [(OptNaturalLoopList.Cons loop rest)
+      (match (opt-unroll-mb-loop-shape blocks entry-label loop)
+        [(OptUnrollMbMaybeShape.Some shape)
+          (match (opt-unroll-mb-apply blocks shape frame)
+            [(OptUnrollResult.Result next-blocks next-frame changed)
+              (if changed
+                (OptUnrollResult.Result next-blocks next-frame true)
+                (opt-unroll-mb-loops-scan
+                  blocks
+                  _all-loops
+                  (box-get rest)
+                  entry-label
+                  frame))])]
+        [(OptUnrollMbMaybeShape.No)
+          (opt-unroll-mb-loops-scan
+            blocks
+            _all-loops
+            (box-get rest)
+            entry-label
+            frame)])]))
+
+(define (opt-unroll-mb-blocks-have-fast-phi? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (let
+            [marker : String "__bce_fast"]
+            (if (and
+              (string.contains (& label) (& marker))
+              (> (compiler-ir-instr-seq-count instrs) 0)
+              (compiler-ir-instr-seq-phi? instrs 0))
+              true
+              (opt-unroll-mb-blocks-have-fast-phi? (box-get rest))))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-mb-blocks-have-fast-phi? (compiler-ir-block-seq-to-list seq))]))
+
+;; Cheap companion to the original self-loop-only prescan. The full natural
+;; loop and diamond checks remain behind this gate.
+(define (opt-unroll-mb-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
+  (and
+    (opt-unroll-mb-blocks-have-fast-phi? blocks)
+    (opt-bce-mb-back-edge-to-phi? blocks blocks (OptLabelSet.Nil))))
 
 ;; --- Gep use-splitting for indexed memory operands --------------------------
 ;;

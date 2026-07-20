@@ -625,7 +625,7 @@ Commands:
     typelisp init           Scaffold a package in the current directory
     typelisp inspect        Inspect a TypeLisp comptime image
     typelisp lint           Lint source files or a package
-    typelisp lsp            Start stdio LSP diagnostics server
+    typelisp lsp            Start stdio language server
     typelisp new            Scaffold a new package directory
     typelisp repl           Start minimal stdio REPL
     typelisp run            Compile, link, and run a source file or package
@@ -662,7 +662,9 @@ checker-proven invalidation,
 safe task threading, SPMD `foreach`/`spmd-reduce`/`spmd-scan` with
 scalar/AVX2/AVX-512 backends and runtime dispatch, comptime macros with type
 reflection, packages with lockfiles, inline tests, doctests, fmt, lint, doc
-generation, a docs site, and an LSP diagnostics server.
+generation, a docs site, and a stdio language server with diagnostics,
+definition lookup, document symbols/highlights, completion, inferred-type
+inlay hints, hover, import links, formatting, and structural-edit extensions.
 
 Not yet (see [SPEC.md §8](SPEC.md) for the authoritative matrix): general
 GC/`free` (deferred by design in favor of arenas), vectorized SPMD

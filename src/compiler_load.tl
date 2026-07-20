@@ -1100,6 +1100,36 @@
   [state : CompilerLoadSessionState]) : unit
   (array-set! (struct-get state cache-enabled) 1 true))
 
+;; Canonical ids of modules whose source came from the embedded stdlib
+;; payload in this process. The tlci macro route consults this per defining
+;; module: a stdlib module loaded from an explicit root must expand from its
+;; own source even when the embedded catalog knows its identities.
+(define compiler-load-embedded-module-ids : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+
+(define (compiler-load-embedded-module-ids-reset!) : unit
+  (set! compiler-load-embedded-module-ids (sym_i64_env.sym-i64-empty)))
+
+(define (compiler-load-note-embedded-module! [path : String]) : unit
+  (let
+    [id : i64 (ci.intern (compiler-load-canonical-module-id-from-path path))]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    (begin
+      ;; The set outlives every load-scoped scratch arena; bind its nodes in
+      ;; the interner's persistent arena like the parse dispatch state does.
+      (unsafe
+        (arena.tl_arena_set (ci.intern-persistent-arena-handle)))
+      (set!
+        compiler-load-embedded-module-ids
+        (sym_i64_env.sym-i64-bind-id compiler-load-embedded-module-ids id 1))
+      (unsafe
+        (arena.tl_arena_set previous-arena)))))
+
+(define (compiler-load-embedded-stdlib-module-id? [module : String]) : bool
+  (sym_i64_env.sym-i64-contains-id
+    compiler-load-embedded-module-ids
+    (ci.intern module)))
+
 (define (compiler-load-session-note-embedded-stdlib-source!) : unit
   (compiler-load-session-state-note-embedded-stdlib-source!
     compiler-load-active-session-state))
@@ -1149,6 +1179,7 @@
 
 (define (compiler-load-session-reset-interns!) : unit
   (begin
+    (compiler-load-embedded-module-ids-reset!)
     (compiler-load-surface-summaries-reset!)
     (compiler-load-lazy-qualified-observer-reset!)
     (array-set!
@@ -2883,13 +2914,27 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
 
+;: The prelude file itself must honor explicit stdlib roots the way a dotted
+;: `stdlib.core_macros` import would; the fixed relative path is only the
+;: rootless spelling (whose load falls back to the embedded payload when the
+;: file is not reachable from the working directory).
+(define (compiler-load-core-macro-prelude-path-with-roots
+  [stdlib-roots : svec.Vec]) : String
+  (match (compiler-load-resolve-module-import-with-roots
+    ""
+    ""
+    "stdlib.core_macros"
+    stdlib-roots)
+    [(ResultPkgResolve.Ok path) path]
+    [(ResultPkgResolve.Err _) compiler-load-core-macro-prelude-path]))
+
 (define (compiler-load-core-macro-prelude-with-roots-cfg
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-file-with-paths-and-roots-cfg
-      compiler-load-core-macro-prelude-path
+      (compiler-load-core-macro-prelude-path-with-roots stdlib-roots)
       seen
       stdlib-roots
       cfgs)))
@@ -2903,7 +2948,7 @@
   (compiler-load-append-root-module-marker
     (compiler-load-file-with-paths-and-roots-cfg-with-pools
       load-state
-      compiler-load-core-macro-prelude-path
+      (compiler-load-core-macro-prelude-path-with-roots stdlib-roots)
       seen
       stdlib-roots
       cfgs
@@ -9030,16 +9075,18 @@
             (match (compiler-load-embedded-stdlib-source-for-path path)
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                   source)
-                (match (if cache-current
-                  (compiler-load-parse-embedded-source-diagnostic-session-id
-                    path
-                    source-path-id
-                    source
-                    parse-cfgs)
-                  (compiler-load-parse-source-diagnostic-escaping
-                    path
-                    source
-                    parse-cfgs))
+                (match (begin
+                  (compiler-load-note-embedded-module! path)
+                  (if cache-current
+                    (compiler-load-parse-embedded-source-diagnostic-session-id
+                      path
+                      source-path-id
+                      source
+                      parse-cfgs)
+                    (compiler-load-parse-source-diagnostic-escaping
+                      path
+                      source
+                      parse-cfgs)))
                   [(ResultAstProgramDiagnostic.Ok program)
                     (compiler-load-bind-path-dedup
                       (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -9190,19 +9237,21 @@
             (match (compiler-load-embedded-stdlib-source-for-path path)
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                   source)
-                (match (if cache-current
-                  (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
-                    load-state
-                    path
-                    source-path-id
-                    source
-                    parse-cfgs
-                    pools)
-                  (compiler-load-parse-source-diagnostic-escaping-with-pools
-                    path
-                    source
-                    parse-cfgs
-                    pools))
+                (match (begin
+                  (compiler-load-note-embedded-module! path)
+                  (if cache-current
+                    (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+                      load-state
+                      path
+                      source-path-id
+                      source
+                      parse-cfgs
+                      pools)
+                    (compiler-load-parse-source-diagnostic-escaping-with-pools
+                      path
+                      source
+                      parse-cfgs
+                      pools)))
                   [(ResultAstProgramDiagnostic.Ok program)
                     (compiler-load-bind-path-dedup
                       (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools

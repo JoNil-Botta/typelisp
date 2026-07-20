@@ -62431,6 +62431,41 @@
   (define macro-expand-stdlib-tlci-catalog-cache : tc_string_i64_map.Map
     (tc_string_i64_map.new)))
 
+;; The catalog cache outlives every expansion-scoped scratch arena and its
+;; buckets regrow on insert; keep all of its allocations in the interner's
+;; persistent arena so sustained self-compiles cannot leave dangling buckets.
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-expand-stdlib-tlci-catalog-cache-reset!) : unit
+    (let
+      [previous-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set (ci.intern-persistent-arena-handle)))
+        (set! macro-expand-stdlib-tlci-catalog-cache (tc_string_i64_map.new))
+        (unsafe
+          (arena.tl_arena_set previous-arena))))))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-expand-stdlib-tlci-catalog-cache-insert!
+    [name : String]
+    [outcome : i64]) : unit
+    (let
+      ;; Intern the key: identity strings are built in expansion scratch
+      ;; arenas, and the map stores the key by value.
+      [stable-name : String (ci.intern-str (ci.intern name))]
+      [previous-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set (ci.intern-persistent-arena-handle)))
+        (tc_string_i64_map.insert-ref!
+          (&mut macro-expand-stdlib-tlci-catalog-cache)
+          stable-name
+          outcome)
+        (unsafe
+          (arena.tl_arena_set previous-arena))))))
+
 (cfg
   embedded-stdlib-tlci
   (define (macro-expand-stdlib-tlci-catalog-lookup-cached [name : String]) : CompilerEmbeddedStdlibTlciLookup
@@ -62449,8 +62484,7 @@
           [lookup : CompilerEmbeddedStdlibTlciLookup
             (compiler-embedded-stdlib-tlci-catalog-lookup name)]
           (begin
-            (tc_string_i64_map.insert-ref!
-              (&mut macro-expand-stdlib-tlci-catalog-cache)
+            (macro-expand-stdlib-tlci-catalog-cache-insert!
               name
               (match lookup
                 [(CompilerEmbeddedStdlibTlciLookup.Cataloged) 1]
@@ -62465,7 +62499,9 @@
   (if (or
     (ctfe-string-prefix? definition-module "stdlib.")
     (ctfe-string-prefix? macro-name "stdlib."))
-    (if macro-expand-stdlib-tlci-route-active
+    (if (and
+      macro-expand-stdlib-tlci-route-active
+      (compiler-load-embedded-stdlib-module-id? definition-module))
       (begin
         (cfg
           embedded-stdlib-tlci
@@ -62544,6 +62580,7 @@
           (str_cat.str-cat definition-module "/" macro-name))]
       (if (or
         (not macro-expand-stdlib-tlci-route-active)
+        (not (compiler-load-embedded-stdlib-module-id? definition-module))
         (not
           (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
             [(CompilerEmbeddedStdlibTlciLookup.Cataloged) true]
@@ -68792,15 +68829,18 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
+    ;; The embedded-source flag is only set when stdlib modules actually load
+    ;; from the embedded payload; a compile with an explicit stdlib root never
+    ;; sets it. Extra roots (the compiler's own src root during self-compiles)
+    ;; therefore must not disable the route -- the catalog identity check
+    ;; still gates every dispatch to embedded-stdlib-defined macros.
     (set!
       macro-expand-stdlib-tlci-route-active
-      (and
-        (= (svec.len (& stdlib-roots)) 0)
-        (compiler-load-session-state-embedded-stdlib-source-used? load-state)))
+      (compiler-load-session-state-embedded-stdlib-source-used? load-state))
     (cfg
       embedded-stdlib-tlci
       (if macro-expand-stdlib-tlci-route-active
-        (set! macro-expand-stdlib-tlci-catalog-cache (tc_string_i64_map.new))
+        (macro-expand-stdlib-tlci-catalog-cache-reset!)
         unit))
     (cfg embedded-stdlib-tlci (compiler-embedded-stdlib-tlci-session-close!))
     (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))

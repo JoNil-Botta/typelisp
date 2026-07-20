@@ -34264,38 +34264,67 @@
     [(CompilerIrInstr.StorePtr _ _ _) true]
     [_ false]))
 
-(define (opt-unroll-mb-body-instrs-ok?
+(define (opt-unroll-mb-body-instr-status [instr : CompilerIrInstr]) : i64
+  (if (not (opt-unroll-mb-body-instr-ok? instr))
+    -1
+    (match instr
+      [(CompilerIrInstr.StorePtr _ _ _) 1]
+      [_ 0])))
+
+;; Returns -1 for an unsafe body, 0 for a safe read-only body, and 1 for a
+;; safe body containing a store.
+(define (opt-unroll-mb-body-instrs-status
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [last : i64]) : bool
+  [last : i64]) : i64
   (if (>= index last)
-    true
-    (and
-      (opt-unroll-mb-body-instr-ok? (compiler-ir-instr-seq-ref instrs index))
-      (opt-unroll-mb-body-instrs-ok? instrs (+ index 1) last))))
+    0
+    (let
+      [current : i64
+        (opt-unroll-mb-body-instr-status
+          (compiler-ir-instr-seq-ref instrs index))]
+      (if (< current 0)
+        -1
+        (let
+          [rest : i64
+            (opt-unroll-mb-body-instrs-status instrs (+ index 1) last)]
+          (if (< rest 0)
+            -1
+            (if (or (= current 1) (= rest 1))
+              1
+              0)))))))
 
-(define (opt-unroll-mb-block-ok? [block : CompilerIrBlock]) : bool
+(define (opt-unroll-mb-block-status [block : CompilerIrBlock]) : i64
   (match block
     [(CompilerIrBlock.Block _ instrs)
       (let
         [count : i64 (compiler-ir-instr-seq-count instrs)]
         [phi-count : i64 (opt-unroll-phi-prefix-count instrs 0)]
-        (and
+        (if (and
           (> count phi-count)
           (opt-unroll-no-phi-from? instrs phi-count)
           (opt-unroll-mb-block-terminator-ok?
-            (compiler-ir-instr-seq-ref instrs (- count 1)))
-          (opt-unroll-mb-body-instrs-ok? instrs phi-count (- count 1))))]))
+            (compiler-ir-instr-seq-ref instrs (- count 1))))
+          (opt-unroll-mb-body-instrs-status instrs phi-count (- count 1))
+          -1))]))
 
-(define (opt-unroll-mb-body-ok? [blocks : CompilerIrBlockList]) : bool
+(define (opt-unroll-mb-body-status [blocks : CompilerIrBlockList]) : i64
   (match blocks
-    [(CompilerIrBlockList.Nil) true]
+    [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons block rest)
-      (and
-        (opt-unroll-mb-block-ok? block)
-        (opt-unroll-mb-body-ok? (box-get rest)))]
+      (let
+        [current : i64 (opt-unroll-mb-block-status block)]
+        (if (< current 0)
+          -1
+          (let
+            [tail : i64 (opt-unroll-mb-body-status (box-get rest))]
+            (if (< tail 0)
+              -1
+              (if (or (= current 1) (= tail 1))
+                1
+                0)))))]
     [(CompilerIrBlockList.Array seq)
-      (opt-unroll-mb-body-ok? (compiler-ir-block-seq-to-list seq))]))
+      (opt-unroll-mb-body-status (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-unroll-mb-all-fast-labels? [labels : OptLabelSet]) : bool
   (match labels
@@ -34515,7 +34544,11 @@
                     latch
                     preheader)
                   (opt-unroll-mb-diamond? blocks body-labels header latch)
-                  (opt-unroll-mb-body-ok? body-blocks)
+                  ;; The 2x path pays an odd-trip guard and duplicates four
+                  ;; blocks. Keep it for the store-bearing swap/update shape
+                  ;; that benefits measurably; read-only reductions/searches
+                  ;; are better left to the ordinary scalar loop pipeline.
+                  (= (opt-unroll-mb-body-status body-blocks) 1)
                   (<= (compiler-ir-block-list-instruction-count body-blocks) 32)
                   (<= (opt-unroll-mb-live-in-count body-blocks) 6)
                   (opt-unroll-mb-counter-uses-ok? body-blocks iphi inext)

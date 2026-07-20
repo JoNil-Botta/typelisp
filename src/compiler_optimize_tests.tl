@@ -17155,15 +17155,20 @@
               (CompilerIrValue.Var 1)
               "mbp_ok0")
             (compiler-ir-instr-cons
-              (CompilerIrInstr.BinOp
-                6
-                (CompilerIrBinOp.Lt)
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 2)
                 (CompilerIrValue.Var 4)
-                (CompilerIrValue.I64 4)
-                (AstType.Bool))
+                (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Branch (CompilerIrValue.Var 6) "then" "else")
-                (CompilerIrInstrList.Nil)))))
+                (CompilerIrInstr.BinOp
+                  6
+                  (CompilerIrBinOp.Lt)
+                  (CompilerIrValue.Var 4)
+                  (CompilerIrValue.I64 4)
+                  (AstType.Bool))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Branch (CompilerIrValue.Var 6) "then" "else")
+                  (CompilerIrInstrList.Nil))))))
         (compiler-ir-block-cons
           (compiler-ir-block
             "then"
@@ -17311,6 +17316,17 @@
       [(< (opt-bce-version-test-prefix-checks blocks "" 0) 2) 4]
       [else 42])))
 
+(define (opt-unroll-mb-read-only-test-body) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "read_only"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 9 (CompilerIrValue.Var 2) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "read_only_exit")
+          (CompilerIrInstrList.Nil))))
+    (CompilerIrBlockList.Nil)))
+
 ;; The unroller's multi-block companion must pick up the check-free versioned
 ;; diamond on a later optimizer iteration (after its dedicated preheader has
 ;; been synthesized), peel the odd iteration, and emit exactly two body copies.
@@ -17336,28 +17352,32 @@
       [(not (= (opt-bce-mb-test-matching-checks blocks "__unroll2" 0) 0)) 5]
       [(not (= (opt-bce-mb-test-matching-checks blocks "__bce_fast" 0) 0)) 6]
       [(< (opt-bce-version-test-prefix-checks blocks "" 0) 2) 7]
-      ;; StorePtr is admitted only on this proven-fast path; calls and checks
+      ;; The profitability gate rejects read-only diamonds; StorePtr is
+      ;; admitted only on this proven-fast path, while calls and checks
       ;; themselves remain outside the cloning whitelist.
+      [(not
+          (= (opt-unroll-mb-body-status (opt-unroll-mb-read-only-test-body)) 0))
+        8]
       [(not
           (opt-unroll-mb-body-instr-ok?
             (CompilerIrInstr.StorePtr
               (CompilerIrValue.Var 0)
               (CompilerIrValue.Var 1)
               (AstType.I64))))
-        8]
+        9]
       [(opt-unroll-mb-body-instr-ok?
           (CompilerIrInstr.Call
             0
             (opt-test-symbol "unroll_mb_callee")
             (CompilerIrCallArgs.Nil)
             (AstType.I64)))
-        9]
+        10]
       [(opt-unroll-mb-body-instr-ok?
           (CompilerIrInstr.BoundsCheck
             (CompilerIrValue.Var 0)
             (CompilerIrValue.Var 1)
             "unroll_mb_check"))
-        10]
+        11]
       [else 42])))
 
 ;; --- pre-existing-phi SSA construction self-test --------------------------------

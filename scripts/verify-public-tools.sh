@@ -681,12 +681,21 @@ cat > "$INLINE_BAD" <<'EOF'
 EOF
 INLINE_BAD_DIAG=$(native_arg_path "$INLINE_BAD")
 
+assert_rich_inline_diagnostic() {
+    if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
+        assert_contains "$err" "error[E0200]"
+        assert_contains "$err" "3 |   (+ true 1))"
+        assert_contains "$err" "|   ^^^^^^^^^"
+    fi
+}
+
 # cli-gate-case normal-inline-check wrapper run_cmd
 run_cmd normal-inline-check "$COMPILER" check "$INLINE_BAD"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "$INLINE_BAD_DIAG:3:"
 assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+assert_rich_inline_diagnostic
 
 INLINE_BAD_ASM="$INLINE_NORMAL/bad-inline.s"
 # cli-gate-case normal-inline-compile wrapper run_cmd
@@ -695,6 +704,7 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "$INLINE_BAD_DIAG:3:"
 assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+assert_rich_inline_diagnostic
 [ ! -f "$INLINE_BAD_ASM" ] || fail "normal-inline-compile wrote assembly despite inline test failure"
 
 INLINE_BAD_BATCH_ASM="$INLINE_NORMAL/bad-inline-batch.s"
@@ -718,6 +728,7 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "$INLINE_BAD_DIAG:3:"
 assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+assert_rich_inline_diagnostic
 [ ! -f "$INLINE_BAD_EXE" ] || fail "normal-inline-build wrote an executable despite inline test failure"
 
 # cli-gate-case normal-inline-run wrapper run_cmd
@@ -726,6 +737,7 @@ assert_failure
 assert_stdout_empty
 assert_contains "$err" "$INLINE_BAD_DIAG:3:"
 assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+assert_rich_inline_diagnostic
 
 INLINE_CFG_PROD="$INLINE_NORMAL/cfg-helper-production-use.tl"
 cat > "$INLINE_CFG_PROD" <<'EOF'
@@ -1077,6 +1089,11 @@ assert_contains "$err" "region-tagged value"
 assert_contains "$err" "cannot escape with-arena"
 if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
     assert_contains "$err" "error[E0200]"
+else
+    assert_contains "$err" "error[E0200]"
+    assert_contains "$err" "4 |   (with-arena r (int->string 41)))"
+    assert_contains "$err" "|                 ^^^^^^^^^^^^^^^"
+    assert_contains "$err" "= help: use with-escape to clone one supported result out of \`r\`"
 fi
 
 cat > "$CLI_MATRIX/stdlib-region-escape.tl" <<'EOF'
@@ -2051,6 +2068,14 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
         [ -n "$expected" ] || continue
         assert_contains "$err" "$expected"
     done < "$contains"
+    rich_contains="$BACKEND_DIAG_DIR/$diag_name.stderr.rich.contains"
+    if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ] && [ -f "$rich_contains" ]; then
+        while IFS= read -r expected || [ -n "$expected" ]; do
+            expected=$(printf '%s' "$expected" | tr -d '\r')
+            [ -n "$expected" ] || continue
+            assert_contains "$err" "$expected"
+        done < "$rich_contains"
+    fi
 done < "$BACKEND_DIAG_MANIFEST"
 
 if [ "$HAS_LINT_COMMAND" = 1 ]; then

@@ -2061,7 +2061,7 @@
                   [(ResultCompilerTypecheck.Err diag)
                     (begin
                       (io.print-error
-                        (compiler-diagnostic-render
+                        (compiler-driver-render-source-diagnostic
                           (tltest-diagnostic-with-source-fallback
                             source
                             (box-get diag))))
@@ -2128,7 +2128,7 @@
           [(ResultCompilerLoadWithPaths.Err diag)
             (begin
               (io.print-error
-                (compiler-diagnostic-render
+                (compiler-driver-render-source-diagnostic
                   (tltest-diagnostic-with-source-fallback source (box-get diag))))
               1)])))))
 
@@ -2167,7 +2167,7 @@
         [(ResultCompilerLoadWithPaths.Err diag)
           (begin
             (io.print-error
-              (compiler-diagnostic-render
+              (compiler-driver-render-source-diagnostic
                 (tltest-diagnostic-with-source-fallback source (box-get diag))))
             1)]))
     0))
@@ -3153,7 +3153,8 @@
       [(ResultCompilerTypecheck.Ok _) true]
       [(ResultCompilerTypecheck.Err diag)
         (begin
-          (io.print-error (compiler-diagnostic-render (box-get diag)))
+          (io.print-error
+            (compiler-driver-render-source-diagnostic (box-get diag)))
           false)])))
 
 (define (tltest-function-base-defined?
@@ -3415,7 +3416,8 @@
             (tltest-cfgs target))
             [(ResultCompilerLoadWithPaths.Err diag)
               (begin
-                (io.print-error (compiler-diagnostic-render (box-get diag)))
+                (io.print-error
+                  (compiler-driver-render-source-diagnostic (box-get diag)))
                 false)]
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (match (lower-compiler-program-with-decl-paths-mode-cache
@@ -3429,7 +3431,7 @@
                 [(ResultCompilerLower.Err diag)
                   (begin
                     (io.print-error
-                      (compiler-diagnostic-render
+                      (compiler-driver-render-source-diagnostic
                         (tltest-diagnostic-with-source-fallback
                           source
                           (box-get diag))))
@@ -3476,7 +3478,8 @@
           0)]
       [(ResultCompilerTypecheck.Err diag)
         (begin
-          (io.print-error (compiler-diagnostic-render (box-get diag)))
+          (io.print-error
+            (compiler-driver-render-source-diagnostic (box-get diag)))
           1)])))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
@@ -3687,7 +3690,7 @@
       [(ResultCompilerLower.Err diag)
         (begin
           (io.print-error
-            (compiler-diagnostic-render
+            (compiler-driver-render-source-diagnostic
               (tltest-diagnostic-with-source-fallback source (box-get diag))))
           (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
           1)])))
@@ -3760,7 +3763,8 @@
           0)]
       [(ResultCompilerTypecheck.Err diag)
         (begin
-          (io.print-error (compiler-diagnostic-render (box-get diag)))
+          (io.print-error
+            (compiler-driver-render-source-diagnostic (box-get diag)))
           1)])))
 
 (define (tltest-no-tests-run
@@ -4108,7 +4112,8 @@
           [(ResultCompilerTypecheck.Ok _) (ResultTestPackageTotals.Ok 1 1)]
           [(ResultCompilerTypecheck.Err diag)
             (begin
-              (io.print-error (compiler-diagnostic-render (box-get diag)))
+              (io.print-error
+                (compiler-driver-render-source-diagnostic (box-get diag)))
               (ResultTestPackageTotals.Err 1))]))
       (begin
         (io.print-error (tltest-package-integration-missing-main source))
@@ -4180,7 +4185,8 @@
       (begin
         (io.print-error
           (string.append "test: integration test source failed: " source))
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (compiler-driver-render-source-diagnostic (box-get diag)))
         (ResultTestPackageTotals.Err 1))]))
 
 (define (tltest-package-run-integration-source-isolated-count
@@ -4251,7 +4257,8 @@
           (begin
             (io.print-error
               (string.append "test: package source failed: " source))
-            (io.print-error (compiler-diagnostic-render (box-get diag)))
+            (io.print-error
+              (compiler-driver-render-source-diagnostic (box-get diag)))
             (ResultTestPackageTotals.Err 1))]))
     (ResultTestPackageTotals.Ok 0 0)))
 
@@ -4571,7 +4578,8 @@
       (tltest-check-file-loaded source decls paths backend-target roots)]
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (compiler-driver-render-source-diagnostic (box-get diag)))
         (ResultTestFileCheck.Err 1))]))
 
 (define (tltest-run-file-loaded
@@ -4620,7 +4628,8 @@
       (tltest-run-file-loaded source target roots opt-level decls paths)]
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (compiler-driver-render-source-diagnostic (box-get diag)))
         (ResultTestFileCheck.Err 1))]))
 
 (define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
@@ -4895,7 +4904,8 @@
                           opt-level)]))])]
             [(ResultCompilerLoadWithPaths.Err diag)
               (begin
-                (io.print-error (compiler-diagnostic-render (box-get diag)))
+                (io.print-error
+                  (compiler-driver-render-source-diagnostic (box-get diag)))
                 1)])])]
     [(TestConfig.Batch paths target _ roots opt-level test-mode)
       (match test-mode

@@ -1496,7 +1496,8 @@
               inline-test-status))]
         [(ResultCompilerCheck.Err diag)
           (begin
-            (io.print-error (compiler-diagnostic-render (box-get diag)))
+            (io.print-error
+              (compiler-driver-render-source-diagnostic (box-get diag)))
             1)])]
     [(CompileCliAction.Help)
       (begin

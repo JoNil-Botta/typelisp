@@ -1086,7 +1086,10 @@ EOF
         exit 1
     fi
     assert_contains "$WORKDIR/test-package-integration-lower-diagnostic.stdout" "TypeLisp integration test file:"
-    assert_contains "$WORKDIR/test-package-integration-lower-diagnostic.stderr" "quote_runtime_value.tl:3:5: Expr value is compile-time only"
+    assert_contains "$WORKDIR/test-package-integration-lower-diagnostic.stderr" "error: Expr value is compile-time only"
+    assert_contains "$WORKDIR/test-package-integration-lower-diagnostic.stderr" "quote_runtime_value.tl:3:5"
+    assert_contains "$WORKDIR/test-package-integration-lower-diagnostic.stderr" "'(+ 1 2)"
+    assert_contains "$WORKDIR/test-package-integration-lower-diagnostic.stderr" "|     ^"
 
     BAD_SRC="$WORKDIR/inline-test-bad.tl"
     cat > "$BAD_SRC" <<'EOF'

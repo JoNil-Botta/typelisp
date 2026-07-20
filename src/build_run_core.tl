@@ -557,7 +557,7 @@
           explicit-inputs))]
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultSourceToolLinkInputs.Err
-        (compiler-diagnostic-render (box-get diag)))]))
+        (compiler-driver-render-source-diagnostic (box-get diag)))]))
 
 (define (source-tool-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
@@ -795,7 +795,7 @@
             (source-tool-augment-assembly-for-target asm target))]
         [(ResultCompilerDriver.Err diag)
           (ResultSourceToolString.Err
-            (compiler-diagnostic-render (box-get diag)))])]))
+            (compiler-driver-render-source-diagnostic (box-get diag)))])]))
 
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
@@ -882,7 +882,7 @@
               (source-tool-render-linkable-linux-elf-object image)]
             [(ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
-                (compiler-diagnostic-render (box-get diag)))])])]
+                (compiler-driver-render-source-diagnostic (box-get diag)))])])]
     [(CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -910,7 +910,7 @@
           (source-tool-render-linkable-linux-elf-object image)]
         [(ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
-            (compiler-diagnostic-render (box-get diag)))])]
+            (compiler-driver-render-source-diagnostic (box-get diag)))])]
     [(CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
@@ -1049,7 +1049,7 @@
               (source-tool-render-linkable-windows-coff-object image)]
             [(ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
-                (compiler-diagnostic-render (box-get diag)))])])]))
+                (compiler-driver-render-source-diagnostic (box-get diag)))])])]))
 
 (define (source-tool-emit-lowered-windows-coff-object
   [source : String]
@@ -1076,7 +1076,7 @@
           (source-tool-render-linkable-windows-coff-object image)]
         [(ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
-            (compiler-diagnostic-render (box-get diag)))])]))
+            (compiler-driver-render-source-diagnostic (box-get diag)))])]))
 
 (define (source-tool-noexecstack-note) : String
   "
@@ -1894,7 +1894,7 @@
                 write-context)]
             [(ResultCompilerDriver.Err diag)
               (SourceToolCommandStatus.Err
-                (compiler-diagnostic-render (box-get diag)))])])]))
+                (compiler-driver-render-source-diagnostic (box-get diag)))])])]))
 
 (define (source-tool-build-source-in-temp
   [source : String]

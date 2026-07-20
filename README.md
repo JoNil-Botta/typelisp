@@ -405,8 +405,8 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   `i64`). Contiguous maps can borrow vector backing or slice storage, so
   public APIs can take vector/slice views.
 - Scalar lowering supports `spmd-reduce` `sum`/`min`/`max`/`all`/`any` and
-  inclusive `spmd-scan` over the SPEC-supported types. AVX2 additionally
-  vectorizes canonical contiguous range-wide scans for i32/i64
+  inclusive `spmd-scan` over the SPEC-supported types. AVX2 and AVX-512
+  additionally vectorize canonical contiguous range-wide scans for i32/i64
   `sum`/`min`/`max` and bool `all`/`any`, carrying the final prefix between
   full gangs and resuming with an in-order scalar tail.
 - Masked varying `if` (including nested masks and value-producing selects),
@@ -426,10 +426,8 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   checks exposed by `stdlib/cpu.tl` (AVX-512 dispatch requires F+BW+DQ and OS
   ZMM/opmask state).
 
-Public vector/mask value types are deferred by design. Vectorized scans remain
-tracked under [#5349](https://github.com/JoNil-Botta/typelisp/issues/5349) and
-[#5350](https://github.com/JoNil-Botta/typelisp/issues/5350); numeric
-`spmd-shuffle` maps and reduction values have native AVX2/AVX-512 lowering.
+Public vector/mask value types are deferred by design. Numeric `spmd-shuffle`
+maps and reduction values have native AVX2/AVX-512 lowering.
 Non-inlined varying helper calls compile and run through the private
 scalar/AVX-512 ABI; AVX2 native emission remains tracked under
 [#5151](https://github.com/JoNil-Botta/typelisp/issues/5151). See SPEC.md

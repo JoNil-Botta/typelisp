@@ -8,7 +8,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-CASES=spmd_map,spmd_zip,spmd_reduce,spmd_shuffle,spmd_short_tail,spmd_mask
+CASES=spmd_map,spmd_zip,spmd_reduce,spmd_scan,spmd_shuffle,spmd_short_tail,spmd_mask
 SUPPORT_TABLE=${TYPELISP_AVX512_IR_SUPPORT:-$ROOT/perf/spmd-avx512-support.tsv}
 BASELINE=${TYPELISP_AVX512_IR_BASELINE:-$ROOT/perf/spmd-avx512-retired-baseline.tsv}
 WORKDIR=${TYPELISP_AVX512_IR_OUT:-target/spmd-avx512-instructions}
@@ -147,7 +147,7 @@ validate_support_table() {
             } else failed = 1
             rows++
         }
-        END { exit failed || rows != 6 ? 1 : 0 }
+        END { exit failed || rows != 7 ? 1 : 0 }
     ' "$SUPPORT_TABLE" || fail "invalid support table: $SUPPORT_TABLE"
     _old_ifs=$IFS
     IFS=,

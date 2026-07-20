@@ -34233,11 +34233,11 @@
         value
         body)]
     (if (and
-      (lower-mode-avx2? (lower-state-mode state))
+      (lower-mode-simd? (lower-state-mode state))
       (lower-type-i64? index-ty))
       (match vector-plan
         [(LowerMaybeVectorScan.Scan _ _ _ _ _)
-          (lower-avx2-spmd-scan-lowered
+          (lower-simd-spmd-scan-lowered
             ctx
             state
             env
@@ -39366,7 +39366,7 @@
   [prefix-ty : AstType]
   [value : AstExpr]
   [body : AstExpr]) : LowerMaybeVectorScan
-  (if (not (lower-mode-avx2? mode))
+  (if (not (lower-mode-simd? mode))
     (LowerMaybeVectorScan.No)
     (match (lower-array-ref-var-for-index ctx env type-env value index)
       [(LowerMaybeArrayVar.Some input-var input-ty)
@@ -40671,7 +40671,15 @@
                   [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))])]
       [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
 
-(define (lower-avx2-spmd-scan-build
+(define (lower-spmd-scan-vector-label [state : LowerState] [suffix : String]) : String
+  (str_cat.str-cat
+    "spmd_scan_"
+    (if (lower-mode-avx512? (lower-state-mode state))
+      "avx512_"
+      "avx2_")
+    suffix))
+
+(define (lower-simd-spmd-scan-build
   [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -40721,12 +40729,16 @@
             [vector-ok : CompilerIrValue CompilerIrValue.Unit]
             [tail-cond : CompilerIrValue CompilerIrValue.Unit]
             (begin
-              (match (lower-state-fresh-label s "spmd_scan_avx2_header")
+              (match (lower-state-fresh-label
+                s
+                (lower-spmd-scan-vector-label s "header"))
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
                     (set! header-label label))])
-              (match (lower-state-fresh-label s "spmd_scan_avx2_body")
+              (match (lower-state-fresh-label
+                s
+                (lower-spmd-scan-vector-label s "body"))
                 [(LowerLabel.Label next-s label)
                   (begin
                     (set! s next-s)
@@ -40857,7 +40869,7 @@
                           (AstType.Unit)))])]
                 [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))])]))
 
-(define (lower-avx2-spmd-scan-lowered
+(define (lower-simd-spmd-scan-lowered
   [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -40887,7 +40899,7 @@
                         [(ResultLowerExpr.Ok start-lowered)
                           (match start-lowered
                             [(LowerExpr.Expr start-state start-value _)
-                              (lower-avx2-spmd-scan-build
+                              (lower-simd-spmd-scan-build
                                 ctx
                                 start-state
                                 env

@@ -678,6 +678,7 @@ contains|_tl_read_list_result:
 contains|reader: unexpected end of input
 end
 
+decision|src/compiler_tlci_native_image.tl|native-region layout for normal-backend object images (#5213 pivot): renders sections with the ELF encoder, resolves internal relocations in place, assigns loader-bound GOT slots for extern value imports, and records base-relative fixups; main-less helper staged for tlci packaging and loader import binding
 decision|src/tlci_core.tl|tlci v1 container and v1/v2 metadata parse/emit helpers (#2651/#2655/#4869/#2754/#4996): main-less helper module with inline tests, executable smoke coverage, backward-compatible package identity metadata, validated stable-order SPMD-callable specialization records, inspect-command parsing, deterministic multi-entry package image assembly, and the focused code-bearing native macro proof image; package SPMD metadata production/consumption and general macro-source body lowering remain staged
 
 decision|src/compiler_comptime_diagnostics_core.tl|shared interpreted/native comptime fuel diagnostic prefix (#2656): main-less helper module imported by compiler_ctfe and tlci_loader so status-2 native failures retain interpreted message parity before appending the registered macro name

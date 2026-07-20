@@ -3078,6 +3078,37 @@
             (set! i (+ i 1)))))
       out)))
 
+(define (compiler-load-strip-first-segment [path : String]) : String
+  (let
+    [n : i64 (string.string-length path)]
+    [i : i64 0]
+    [cut : i64 -1]
+    (begin
+      (while (and (< cut 0) (< i n))
+        (begin
+          (if (compiler-load-path-separator? (string.string-ref path i))
+            (set! cut (+ i 1))
+            unit)
+          (set! i (+ i 1))))
+      (if (< cut 0)
+        path
+        (string.substring path cut (- n cut))))))
+
+(define (compiler-load-bare-file-import? [normalized-import : String]) : bool
+  (let
+    [n : i64 (string.string-length normalized-import)]
+    [i : i64 0]
+    [bare : bool true]
+    (begin
+      (while (< i n)
+        (begin
+          (if (compiler-load-path-separator?
+            (string.string-ref normalized-import i))
+            (set! bare false)
+            unit)
+          (set! i (+ i 1))))
+      bare)))
+
 (define (compiler-load-canonical-module-id-from-path [path : String]) : String
   (compiler-load-module-id-from-path-text path))
 
@@ -3097,11 +3128,26 @@
     [(AstImportKind.Path)
       (let
         [normalized-import : String (compiler-load-normalize-path import-path)]
-        (if (compiler-load-pkg-import? import-path)
-          (compiler-load-canonical-module-id-from-pkg-import import-path)
-          (if (compiler-load-stdlib-import? normalized-import)
-            (compiler-load-canonical-module-id-from-path normalized-import)
-            (compiler-load-canonical-module-id-from-path resolved-path))))]
+        [stripped : String
+          (compiler-load-strip-first-segment normalized-import)]
+        ;; Path imports must deduplicate against their dotted twins even when
+        ;; package loading prefixed the spelling with the owning package: a
+        ;; bare filename is the sibling-module spelling of a dotted import,
+        ;; and one leading owner segment ahead of a stdlib or bare spelling
+        ;; is stripped before the same checks so the owned prefix cannot
+        ;; bifurcate module identity.
+        (cond
+          [(compiler-load-pkg-import? import-path)
+            (compiler-load-canonical-module-id-from-pkg-import import-path)]
+          [(compiler-load-stdlib-import? normalized-import)
+            (compiler-load-canonical-module-id-from-path normalized-import)]
+          [(compiler-load-bare-file-import? normalized-import)
+            (compiler-load-canonical-module-id-from-path normalized-import)]
+          [(compiler-load-stdlib-import? stripped)
+            (compiler-load-canonical-module-id-from-path stripped)]
+          [(compiler-load-bare-file-import? stripped)
+            (compiler-load-canonical-module-id-from-path stripped)]
+          [else (compiler-load-canonical-module-id-from-path resolved-path)]))]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
 
 ;; Linkage ownership for a moduleless import follows its path relative to the

@@ -3078,37 +3078,6 @@
             (set! i (+ i 1)))))
       out)))
 
-(define (compiler-load-strip-first-segment [path : String]) : String
-  (let
-    [n : i64 (string.string-length path)]
-    [i : i64 0]
-    [cut : i64 -1]
-    (begin
-      (while (and (< cut 0) (< i n))
-        (begin
-          (if (compiler-load-path-separator? (string.string-ref path i))
-            (set! cut (+ i 1))
-            unit)
-          (set! i (+ i 1))))
-      (if (< cut 0)
-        path
-        (string.substring path cut (- n cut))))))
-
-(define (compiler-load-bare-file-import? [normalized-import : String]) : bool
-  (let
-    [n : i64 (string.string-length normalized-import)]
-    [i : i64 0]
-    [bare : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (compiler-load-path-separator?
-            (string.string-ref normalized-import i))
-            (set! bare false)
-            unit)
-          (set! i (+ i 1))))
-      bare)))
-
 (define (compiler-load-canonical-module-id-from-path [path : String]) : String
   (compiler-load-module-id-from-path-text path))
 
@@ -3119,36 +3088,58 @@
       (string.substring import-path 4 (- (string.string-length import-path) 4)))
     (compiler-load-module-id-from-path-text import-path)))
 
-(define (compiler-load-canonical-module-id-from-import
+(define (compiler-load-root-relative-path [root : String] [path : String]) : String
+  (let
+    [normalized-path : String (compiler-load-normalize-path path)]
+    [prefix : String (compiler-load-root-prefix root)]
+    [prefix-len : i64 (string.string-length prefix)]
+    [path-len : i64 (string.string-length normalized-path)]
+    (if (and
+      (> prefix-len 0)
+      (compiler-load-string-prefix-at? normalized-path prefix 0))
+      (string.substring normalized-path prefix-len (- path-len prefix-len))
+      normalized-path)))
+
+;; Path-import identity must not depend on which spelling of the resolved
+;; path a graph produced: package loading resolves the same file both
+;; package-owned (typelisp/src/x.tl) and entry-relative (src/x.tl), and an
+;; absolute canonical would load it twice -- every nominal in the chain then
+;; collides. Canonicalize relative to the importing root. Dotted and path
+;; spellings stay distinct on purpose: a moduleless path import is absorbed
+;; into the importer's namespace while a dotted import names a module, so
+;; merging them hands one importer the other's load shape.
+(define (compiler-load-canonical-module-id-from-import-rooted
   [kind : AstImportKind]
   [import-path : String]
-  [resolved-path : String]) : String
+  [resolved-path : String]
+  [import-root : String]) : String
   (match kind
     [(AstImportKind.Module) import-path]
     [(AstImportKind.Path)
       (let
         [normalized-import : String (compiler-load-normalize-path import-path)]
-        [stripped : String
-          (compiler-load-strip-first-segment normalized-import)]
-        ;; Path imports must deduplicate against their dotted twins even when
-        ;; package loading prefixed the spelling with the owning package: a
-        ;; bare filename is the sibling-module spelling of a dotted import,
-        ;; and one leading owner segment ahead of a stdlib or bare spelling
-        ;; is stripped before the same checks so the owned prefix cannot
-        ;; bifurcate module identity.
         (cond
           [(compiler-load-pkg-import? import-path)
             (compiler-load-canonical-module-id-from-pkg-import import-path)]
           [(compiler-load-stdlib-import? normalized-import)
             (compiler-load-canonical-module-id-from-path normalized-import)]
-          [(compiler-load-bare-file-import? normalized-import)
-            (compiler-load-canonical-module-id-from-path normalized-import)]
-          [(compiler-load-stdlib-import? stripped)
-            (compiler-load-canonical-module-id-from-path stripped)]
-          [(compiler-load-bare-file-import? stripped)
-            (compiler-load-canonical-module-id-from-path stripped)]
-          [else (compiler-load-canonical-module-id-from-path resolved-path)]))]
+          [else
+            ;; Keep the raw relative path text (separators and extension) as
+            ;; the identity: it is stable across owned and entry-relative
+            ;; resolutions of the same file, and it can never equal a dotted
+            ;; module id, so the two import kinds cannot merge.
+            (compiler-load-root-relative-path import-root resolved-path)]))]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
+
+(define (compiler-load-canonical-module-id-from-import
+  [kind : AstImportKind]
+  [import-path : String]
+  [resolved-path : String]) : String
+  (compiler-load-canonical-module-id-from-import-rooted
+    kind
+    import-path
+    resolved-path
+    ""))
 
 ;; Linkage ownership for a moduleless import follows its path relative to the
 ;; entry root. Keep this distinct from the absolute module fallback used for
@@ -8903,7 +8894,11 @@
   [context-module-id : i64]) : ResultCompilerLoadWithPaths
   (let
     [fallback : String
-      (compiler-load-canonical-module-id-from-import kind import-path path)]
+      (compiler-load-canonical-module-id-from-import-rooted
+        kind
+        import-path
+        path
+        import-root)]
     [source-module : String
       (compiler-load-canonical-source-module-from-import
         kind

@@ -40311,7 +40311,11 @@
                 ;; regressed hashmap_grow by 1.7%. Regalloc already weights ref
                 ;; counts by loop depth, so the spill has a subtler cause; retry
                 ;; lifting this gate only once merged hot-loop counters provably
-                ;; stay register-resident.
+                ;; stay register-resident. A 2026-07-20 exact admission of the
+                ;; generated i64/i64 get-value-or loop removed both hot calls
+                ;; but regressed hashmap_get by 6.90%: main grew 129 -> 264 IR
+                ;; vars, its frame 696 -> 1208 bytes, and rsp references 16 ->
+                ;; 66, while static bounds checks stayed 5 -> 5 (#5188).
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
                 [bounds-ok? : bool
@@ -40928,7 +40932,10 @@
                 ;; non-Switch exception also regressed hashmap_grow by 1.7%.
                 ;; Regalloc already weights ref counts by loop depth, so the
                 ;; spill has a subtler cause; retry only once merged hot-loop
-                ;; counters provably stay register-resident.
+                ;; counters provably stay register-resident. #5188's 2026-07-20
+                ;; exact i64/i64 get-value-or admission regressed hashmap_get
+                ;; by 6.90% with 129 -> 264 main IR vars, a 696 -> 1208 byte
+                ;; frame, 16 -> 66 rsp references, and no static-BCE gain.
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
                 [bounds-ok? : bool

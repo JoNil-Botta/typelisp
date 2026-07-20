@@ -694,6 +694,65 @@
               (array-ref fixup-count 0))))))))
 
 ;; Region offset of exported text symbol `name`, for macro entry records.
+;; Text offsets of exported functions in symbol-table order. Generated
+;; transformer programs define one entry function per catalog identity and
+;; nothing else, so export order is the identity order; compact function
+;; naming makes label names unstable, so offsets are the contract.
+(define (compiler-tlci-native-function-export-count
+  [image : cobj.CompilerObjectImage]) : i64
+  (let
+    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (cobj.compiler-object-symbol-list-ref symbols index)
+            [(cobj.CompilerObjectSymbol.Symbol _ binding kind _)
+              (if (and
+                (match binding
+                  [(cobj.CompilerObjectSymbolBinding.Export) true]
+                  [_ false])
+                (match kind
+                  [(cobj.CompilerObjectSymbolKind.Function) true]
+                  [_ false]))
+                (set! total (+ total 1))
+                unit)])
+          (set! index (+ index 1))))
+      total)))
+
+(define (compiler-tlci-native-function-export-offsets
+  [image : cobj.CompilerObjectImage]) : (Array i64)
+  (let
+    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
+    [total : i64 (compiler-tlci-native-function-export-count image)]
+    [out : (Array i64) (array.make-array i64 total)]
+    [index : i64 0]
+    [slot : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (cobj.compiler-object-symbol-list-ref symbols index)
+            [(cobj.CompilerObjectSymbol.Symbol name binding kind _)
+              (if (and
+                (match binding
+                  [(cobj.CompilerObjectSymbolBinding.Export) true]
+                  [_ false])
+                (match kind
+                  [(cobj.CompilerObjectSymbolKind.Function) true]
+                  [_ false]))
+                (begin
+                  (array-set!
+                    out
+                    slot
+                    (compiler-tlci-native-entry-offset image name))
+                  (set! slot (+ slot 1)))
+                unit)])
+          (set! index (+ index 1))))
+      out)))
+
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
@@ -726,7 +785,7 @@
 ;; Map an extern value name to its stable host-import ABI id, or -1 when the
 ;; name is not a known host entry point (the closed host ABI).
 (define (compiler-tlci-native-host-import-id [name : (& name str)]) : i64
-  (if (string.eq name "tl_comptime_host_invoke")
+  (if (string.eq name "_tl_comptime_host_invoke")
     tlci.tlci-host-import-invoke
     -1))
 
@@ -947,7 +1006,7 @@
   test
   (define (compiler-tlci-native-test-emitters-ok?) : bool
     (match (compiler-tlci-native-layout-image
-      (compiler-tlci-native-test-image "tl_comptime_host_invoke" false false))
+      (compiler-tlci-native-test-image "_tl_comptime_host_invoke" false false))
       [(ResultCompilerTlciNativeLayout.Err _) false]
       [(ResultCompilerTlciNativeLayout.Ok layout)
         (let

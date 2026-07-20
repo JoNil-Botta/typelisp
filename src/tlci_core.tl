@@ -750,6 +750,210 @@
       (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
       unit)))
 
+;; --- native-backend package assembly (refs #5213 pivot) ----------------------
+;;
+;; A native package image carries transformer code produced by the normal
+;; backend. The macro table lives inside the code region: identity name bytes,
+;; an 8-byte record count, then count 32-byte macro-entry records whose name
+;; and function slots are absolute at map time via base fixups. The loader
+;; finds the table through a single entries record named tlci_macro_table
+;; (code-offset = the count word) instead of calling an image registration
+;; entry, so generated images contain only the transformer functions.
+(define tlci-macro-table-symbol : String
+  "tlci_macro_table")
+
+(defstruct TlciNativePackageInput
+  (code (Array u8))
+  (imports (Array u8))
+  (layout-fixup-offsets (Array i64))
+  (layout-fixup-count i64)
+  (identities (Array String))
+  (entry-offsets (Array i64))
+  (macro-count i64))
+
+(define (tlci-native-package-name-blob-len
+  [identities : (Array String)]
+  [count : i64]) : i64
+  (let
+    [index : i64 0]
+    [total : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            total
+            (+ total (tlci-string-length (array-ref identities index))))
+          (set! index (+ index 1))))
+      total)))
+
+;; Extend the layout code bytes with the name blob, the aligned count word,
+;; and the zeroed macro table. Returns the extended code array.
+(define (tlci-native-package-extend-code [input : TlciNativePackageInput]) : (Array
+    u8)
+  (let
+    [code : (Array u8) (struct-get input code)]
+    [code-len : i64 (array-length code)]
+    [count : i64 (struct-get input macro-count)]
+    [names-len : i64
+      (tlci-native-package-name-blob-len (struct-get input identities) count)]
+    [count-word : i64 (tlci-align-offset (+ code-len names-len) 8)]
+    [table-offset : i64 (+ count-word 8)]
+    [total : i64 (+ table-offset (* count tlci-macro-entry-record-size))]
+    [out : (Array u8) (make-array u8 total)]
+    [index : i64 0]
+    [name-cursor : i64 code-len]
+    (begin
+      (while (< index code-len)
+        (begin
+          (array-set! out index (array-ref code index))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index count)
+        (let
+          [name : String (array-ref (struct-get input identities) index)]
+          [name-len : i64 (tlci-string-length name)]
+          (begin
+            (tlci-put-string! out name-cursor name)
+            (set! name-cursor (+ name-cursor name-len))
+            (set! index (+ index 1)))))
+      (tlci-set-u64! out count-word count)
+      out)))
+
+;; Intra-code offset of the count word for the extended code array.
+(define (tlci-native-package-count-word [input : TlciNativePackageInput]) : i64
+  (tlci-align-offset
+    (+
+      (array-length (struct-get input code))
+      (tlci-native-package-name-blob-len
+        (struct-get input identities)
+        (struct-get input macro-count)))
+    8))
+
+(define (tlci-native-package-entries [input : TlciNativePackageInput]) : (Array
+    u8)
+  (let
+    [out : (Array u8) (make-array u8 tlci-section-entry-record-size)]
+    (begin
+      (tlci-set-u64! out 0 0)
+      (tlci-set-u64! out 8 (tlci-string-length tlci-macro-table-symbol))
+      (tlci-set-u64! out 16 (tlci-native-package-count-word input))
+      out)))
+
+(define (tlci-native-package-symbols) : (Array u8)
+  (let
+    [out : (Array u8) (make-array u8 tlci-section-symbol-record-size)]
+    (begin
+      (tlci-put-string! out 0 tlci-macro-table-symbol)
+      out)))
+
+(define (tlci-native-package-fixups [input : TlciNativePackageInput]) : (Array
+    u8)
+  (make-array
+    u8
+    (*
+      (+
+        (struct-get input layout-fixup-count)
+        (* (struct-get input macro-count) 2))
+      tlci-section-fixup-record-size)))
+
+;; Post-emit patch: resolve layout fixup slots and fill the macro table's name
+;; and function slots plus their fixup records, then restamp the content hash.
+(define (tlci-native-package-patch!
+  [bytes : (Array u8)]
+  [input : TlciNativePackageInput]) : unit
+  (let
+    [code-offset : i64 (tlci-read-u64 bytes 88)]
+    [fixups-offset : i64 (tlci-read-u64 bytes 104)]
+    [count : i64 (struct-get input macro-count)]
+    [layout-count : i64 (struct-get input layout-fixup-count)]
+    [count-word : i64 (tlci-native-package-count-word input)]
+    [table-offset : i64 (+ count-word 8)]
+    [name-cursor : i64 (array-length (struct-get input code))]
+    [index : i64 0]
+    (begin
+      (while (< index layout-count)
+        (begin
+          (tlci-set-u64!
+            bytes
+            (+ fixups-offset (* index tlci-section-fixup-record-size))
+            (+
+              code-offset
+              (array-ref (struct-get input layout-fixup-offsets) index)))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index count)
+        (let
+          [name-len : i64
+            (tlci-string-length (array-ref (struct-get input identities) index))]
+          [record-slot : i64
+            (+
+              code-offset
+              (+ table-offset (* index tlci-macro-entry-record-size)))]
+          [name-slot : i64 (+ record-slot tlci-macro-entry-name-ptr-offset)]
+          [entry-slot : i64 (+ record-slot tlci-macro-entry-function-offset)]
+          [fixup-slot : i64
+            (+
+              fixups-offset
+              (* (+ layout-count (* index 2)) tlci-section-fixup-record-size))]
+          (begin
+            (tlci-set-u64! bytes name-slot (+ code-offset name-cursor))
+            (tlci-set-u64!
+              bytes
+              (+ record-slot tlci-macro-entry-name-len-offset)
+              name-len)
+            (tlci-set-u64!
+              bytes
+              entry-slot
+              (+ code-offset (array-ref (struct-get input entry-offsets) index)))
+            (tlci-set-u64! bytes fixup-slot name-slot)
+            (tlci-set-u64!
+              bytes
+              (+ fixup-slot tlci-section-fixup-record-size)
+              entry-slot)
+            (set! name-cursor (+ name-cursor name-len))
+            (set! index (+ index 1)))))
+      (let
+        [imports-offset : i64 (tlci-read-u64 bytes 152)]
+        [imports-count : i64 (tlci-read-u64 bytes 160)]
+        [import-index : i64 0]
+        (while (< import-index imports-count)
+          (let
+            [slot : i64
+              (+
+                imports-offset
+                (* import-index tlci-section-import-record-size))]
+            (begin
+              (tlci-set-u64!
+                bytes
+                slot
+                (+ code-offset (tlci-read-u64 bytes slot)))
+              (set! import-index (+ import-index 1))))))
+      (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
+      unit)))
+
+;; Assemble a native package image from normal-backend layout output.
+(define (tlci-emit-native-package-image
+  [metadata : TlciMetadata]
+  [compiler-build-hash : String]
+  [input : TlciNativePackageInput]) : ResultTlciBytes
+  (match (tlci-emit-image
+    (tlci-make-image
+      tlci-host-arch-x86-64
+      tlci-callback-abi-version
+      compiler-build-hash
+      metadata
+      (tlci-empty-bytes)
+      (tlci-native-package-extend-code input)
+      (tlci-native-package-fixups input)
+      (tlci-native-package-entries input)
+      (tlci-native-package-symbols)
+      (struct-get input imports)))
+    [(ResultTlciBytes.Err message) (ResultTlciBytes.Err message)]
+    [(ResultTlciBytes.Ok bytes)
+      (begin
+        (tlci-native-package-patch! bytes input)
+        (ResultTlciBytes.Ok bytes))]))
+
 (define (tlci-emit-code-bearing-package-image-from-programs
   [metadata : TlciMetadata]
   [compiler-build-hash : String]

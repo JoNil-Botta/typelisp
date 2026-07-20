@@ -159,7 +159,9 @@ Inline stdlib coverage:
   verifies the checked-in results without consulting host libm.
 - `hash.tl` owns inline tests for stable deterministic hashes,
   equal-values-same-hash checks, primitive key equality predicates, known
-  collision behavior, hash range normalization, and string edge cases.
+  collision behavior, hash range normalization, string edge cases, and
+  generated nested struct/enum/tuple/fixed-array hashes. Safety fixtures reject
+  floats and nested identity-bearing shapes with component paths.
 - `queue.tl` owns inline tests for the generated `(deque i64)` module API:
   capacity clamping, push/pop from both ends through `&mut`, fallback reads,
   wraparound growth, reuse after draining, duplicate generated-module imports,

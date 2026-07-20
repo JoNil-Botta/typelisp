@@ -354,6 +354,51 @@
       (array-length (struct-get image fixups))
       tlci.tlci-section-fixup-record-size)))
 
+;; Bind each image import (a GOT slot referencing a host entry point by stable
+;; ABI id) to the host callback address, writing into the still-writable data
+;; region before the W^X seal. `host-invoke-addr` is 0 when no host table is
+;; installed; an image that declares imports then requires one.
+(define (tlci-loader-bind-imports-at!
+  [image-base : i64]
+  [imports : (Array u8)]
+  [host-invoke-addr : i64]
+  [index : i64]
+  [count : i64]) : ResultTlciLoaderUnit
+  (if (>= index count)
+    (ResultTlciLoaderUnit.Ok)
+    (let
+      [record : i64 (* index tlci.tlci-section-import-record-size)]
+      [slot-offset : i64 (tlci.tlci-read-u64 imports record)]
+      [import-id : i64 (tlci.tlci-read-u64 imports (+ record 8))]
+      (if (= import-id tlci.tlci-host-import-invoke)
+        (if (= host-invoke-addr 0)
+          (ResultTlciLoaderUnit.Err
+            "tlci loader: image imports the host invoke but no host table is installed")
+          (begin
+            (tlci-loader-write-mapped-i64!
+              (+ image-base slot-offset)
+              host-invoke-addr)
+            (tlci-loader-bind-imports-at!
+              image-base
+              imports
+              host-invoke-addr
+              (+ index 1)
+              count)))
+        (ResultTlciLoaderUnit.Err "tlci loader: unknown host import id")))))
+
+(define (tlci-loader-bind-imports!
+  [image-base : i64]
+  [image : tlci.TlciImage]
+  [host-invoke-addr : i64]) : ResultTlciLoaderUnit
+  (tlci-loader-bind-imports-at!
+    image-base
+    (struct-get image imports)
+    host-invoke-addr
+    0
+    (/
+      (array-length (struct-get image imports))
+      tlci.tlci-section-import-record-size)))
+
 (define (tlci-loader-protect-rodata
   [image-base : i64]
   [rodata-offset : i64]
@@ -469,10 +514,20 @@
 (define (tlci-loader-registration-error [message : String]) : String
   (str_cat.str-cat "tlci loader: invalid image registration: " message))
 
+(define (tlci-loader-load-from-bytes-with-invoke
+  [bytes : (Array u8)]
+  [host-invoke-addr : i64]) : ResultTlciLoadedImage
+  (match (tlci.tlci-parse-image bytes)
+    [(ResultTlciImage.Err message) (ResultTlciLoadedImage.Err message)]
+    [(ResultTlciImage.Ok image)
+      (tlci-loader-load-parsed bytes image host-invoke-addr)]))
+
 (define (tlci-loader-load-from-bytes-with-registration
   [bytes : (Array u8)]
   [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
-  (match (tlci-loader-load-from-bytes bytes)
+  (match (tlci-loader-load-from-bytes-with-invoke
+    bytes
+    (struct-get host-table invoke-callback))
     [(ResultTlciLoadedImage.Err message) (ResultTlciLoadedImage.Err message)]
     [(ResultTlciLoadedImage.Ok loaded)
       (let
@@ -525,7 +580,8 @@
   [image-region : pages.TlciPageRegion]
   [entry-code-offset : i64]
   [rodata-offset : i64]
-  [code-offset : i64]) : ResultTlciLoadedImage
+  [code-offset : i64]
+  [host-invoke-addr : i64]) : ResultTlciLoadedImage
   (let
     [image-base : i64 (struct-get image-region addr)]
     [rodata-len : i64 (array-length (struct-get image rodata))]
@@ -550,6 +606,12 @@
             (return (ResultTlciLoadedImage.Err message)))]
         [(pages.ResultTlciPageUnit.Ok) unit])
       (tlci-loader-apply-fixups! image-base image)
+      (match (tlci-loader-bind-imports! image-base image host-invoke-addr)
+        [(ResultTlciLoaderUnit.Err message)
+          (begin
+            (pages.tlci-pages-release image-region)
+            (return (ResultTlciLoadedImage.Err message)))]
+        [(ResultTlciLoaderUnit.Ok) unit])
       (match (tlci-loader-protect-rodata image-base rodata-offset rodata-len)
         [(ResultTlciLoaderUnit.Err message)
           (begin
@@ -575,7 +637,10 @@
           entry-count
           symbol-count)))))
 
-(define (tlci-loader-load-parsed [bytes : (Array u8)] [image : tlci.TlciImage]) : ResultTlciLoadedImage
+(define (tlci-loader-load-parsed
+  [bytes : (Array u8)]
+  [image : tlci.TlciImage]
+  [host-invoke-addr : i64]) : ResultTlciLoadedImage
   (let
     [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
     [code-offset : i64 (tlci.tlci-read-u64 bytes 88)]
@@ -599,12 +664,13 @@
                     image-region
                     entry-code-offset
                     rodata-offset
-                    code-offset)])])]))))
+                    code-offset
+                    host-invoke-addr)])])]))))
 
 (define (tlci-loader-load-from-bytes [bytes : (Array u8)]) : ResultTlciLoadedImage
   (match (tlci.tlci-parse-image bytes)
     [(ResultTlciImage.Err message) (ResultTlciLoadedImage.Err message)]
-    [(ResultTlciImage.Ok image) (tlci-loader-load-parsed bytes image)]))
+    [(ResultTlciImage.Ok image) (tlci-loader-load-parsed bytes image 0)]))
 
 (define (tlci-loader-load-from-bytes-with-host
   [bytes : (Array u8)]

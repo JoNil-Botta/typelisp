@@ -11594,11 +11594,13 @@
     [pack-word : CompilerIrBlockList (opt-global-pack-word-forwarded-blocks)]
     (cond
       [(not (= (opt-count-arith-blocks dominated) 1)) 1]
-      [(not (= (opt-blocks-mov-src-var dominated 4 (- 0 1)) 3)) 2]
-      [(not (= (opt-blocks-mov-src-var dominated 5 (- 0 1)) 3)) 3]
+      ;; The branch-local copies feed only phi edges. Edge-aware forwarding
+      ;; rewrites both inputs to the dominating value, then DCE removes them.
+      [(not (= (opt-blocks-mov-src-var dominated 4 (- 0 1)) (- 0 1))) 2]
+      [(not (= (opt-blocks-mov-src-var dominated 5 (- 0 1)) (- 0 1))) 3]
       [(not (= (opt-count-arith-blocks sibling) 2)) 4]
       [(not (= (opt-count-arith-blocks loop) 1)) 5]
-      [(not (= (opt-blocks-mov-src-var loop 4 (- 0 1)) 3)) 6]
+      [(not (= (opt-blocks-mov-src-var loop 4 (- 0 1)) (- 0 1))) 6]
       [(not (= (opt-count-load-blocks load-safe) 1)) 7]
       [(not (= (opt-blocks-mov-src-var load-safe 4 (- 0 1)) 3)) 8]
       [(not (= (opt-count-load-blocks load-join-safe) 1)) 9]
@@ -17419,6 +17421,125 @@
           (CompilerIrInstrList.Nil))))
     (CompilerIrBlockList.Nil)))
 
+;; Build the exact CFG fragment produced by the production multiblock clone at
+;; an absorbed call site, then leave a self tail call in its continuation. The
+;; optimizer turns that tail call into an entry backedge. This combines the two
+;; shapes that exposed the regression: a cloned, bounds-carrying inner loop and
+;; an enclosing caller loop whose header is the function entry.
+(define (opt-merged-loop-test-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "n" (AstType.I64) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "len" (AstType.I64) 1)
+      (compiler-ir-param-cons
+        ;; Model the unchanged aggregate carried by the real absorbed-call
+        ;; shape. Scalar SSA deliberately does not rename this slot.
+        (CompilerIrParam.Param "base" (AstType.DynArray 0) 2)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "rounds" (AstType.I64) 3)
+          (CompilerIrParamList.Nil))))))
+
+(define (opt-merged-loop-test-callee-args) : CompilerIrCallArgs
+  (let
+    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 3)]
+    (begin
+      (array-set! args 0 (CompilerIrValue.Var 0))
+      (array-set! args 1 (CompilerIrValue.Var 1))
+      (array-set! args 2 (CompilerIrValue.Var 2))
+      (CompilerIrCallArgs.Array args))))
+
+(define (opt-merged-loop-test-tail-args [rounds : i64]) : CompilerIrCallArgs
+  (let
+    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
+    (begin
+      ;; The first three arguments are unchanged. Tail-recursion conversion
+      ;; must not materialize identity writes for them.
+      (array-set! args 0 (CompilerIrValue.Var 0))
+      (array-set! args 1 (CompilerIrValue.Var 1))
+      (array-set! args 2 (CompilerIrValue.Var 2))
+      (array-set! args 3 (CompilerIrValue.Var rounds))
+      (CompilerIrCallArgs.Array args))))
+
+(define (opt-merged-loop-test-callee-blocks) : CompilerIrBlockList
+  (opt-function-blocks
+    (opt-ssa-construct-function
+      (CompilerIrFunction.Function
+        (opt-test-symbol "merged_loop_callee")
+        (opt-bce-version-test-params)
+        (AstType.I64)
+        9
+        (opt-bce-mb-pipeline-blocks)))))
+
+(define (opt-merged-loop-test-function) : CompilerIrFunction
+  (let
+    [name : i64 (opt-test-symbol "merged_loop_caller")]
+    [prefix : String "inl.absorbed.0"]
+    [cont : String "inl.absorbed.0.cont"]
+    (match (opt-inline-clone-multiblock-blocks
+      (opt-merged-loop-test-callee-blocks)
+      prefix
+      cont
+      (opt-merged-loop-test-callee-args)
+      3
+      5)
+      [(OptInlineMultiClone.Clone cloned return-inputs)
+        (let
+          [entry-blocks : CompilerIrBlockList
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "entry"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    4
+                    (CompilerIrBinOp.Gt)
+                    (CompilerIrValue.Var 3)
+                    (CompilerIrValue.I64 0)
+                    (AstType.Bool))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Branch
+                      (CompilerIrValue.Var 4)
+                      "call_site"
+                      "caller_exit")
+                    (CompilerIrInstrList.Nil))))
+              (compiler-ir-block-cons
+                (opt-bce-mb-test-jump-block "call_site" "inl.absorbed.0.entry")
+                (CompilerIrBlockList.Nil)))]
+          [tail-blocks : CompilerIrBlockList
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                cont
+                (compiler-ir-instr-cons
+                  (opt-inline-cont-result-instr 100 return-inputs (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      101
+                      (CompilerIrBinOp.Sub)
+                      (CompilerIrValue.Var 3)
+                      (CompilerIrValue.I64 1)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.TailCall
+                        name
+                        (opt-merged-loop-test-tail-args 101)
+                        (AstType.I64))
+                      (CompilerIrInstrList.Nil)))))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "caller_exit"
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+                    (CompilerIrInstrList.Nil)))
+                (CompilerIrBlockList.Nil)))]
+          (CompilerIrFunction.Function
+            name
+            (opt-merged-loop-test-params)
+            (AstType.I64)
+            102
+            (opt-inline-block-append
+              entry-blocks
+              (opt-inline-block-append cloned tail-blocks))))])))
+
 ;; The unroller's multi-block companion must pick up the check-free versioned
 ;; diamond on a later optimizer iteration (after its dedicated preheader has
 ;; been synthesized), peel the odd iteration, and emit exactly two body copies.
@@ -17433,6 +17554,9 @@
           9
           (opt-bce-mb-pipeline-blocks)))]
     [blocks : CompilerIrBlockList (opt-function-blocks optimized)]
+    [merged : CompilerIrFunction
+      (optimize-function (opt-merged-loop-test-function))]
+    [merged-blocks : CompilerIrBlockList (opt-function-blocks merged)]
     (cond
       [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
       [(not (opt-block-list-has-label? blocks "body__bce_fast__unroll2_guard"))
@@ -17470,6 +17594,22 @@
             (CompilerIrValue.Var 1)
             "unroll_mb_check"))
         11]
+      [(not (opt-verify-ok? (opt-verify-function merged))) 12]
+      [(not (opt-block-list-has-label? merged-blocks "entry__ssa_entry")) 13]
+      [(not
+          (opt-block-list-has-label?
+            merged-blocks
+            "inl.absorbed.0.body__bce_fast__unroll2_guard"))
+        14]
+      [(not
+          (= (opt-bce-mb-test-matching-blocks merged-blocks "__unroll2_0" 0) 4))
+        15]
+      [(not
+          (= (opt-bce-mb-test-matching-blocks merged-blocks "__unroll2_1" 0) 4))
+        16]
+      [(not
+          (= (opt-bce-mb-test-matching-checks merged-blocks "__bce_fast" 0) 0))
+        17]
       [else 42])))
 
 ;; --- pre-existing-phi SSA construction self-test --------------------------------

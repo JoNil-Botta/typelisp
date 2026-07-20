@@ -26,10 +26,10 @@ benchmark/c-scalar/opt_bytecode_vm	716006209
 benchmark/typelisp/opt_crc32	325232611
 benchmark/c/opt_crc32	400698944
 benchmark/c-scalar/opt_crc32	400704123
-benchmark/typelisp/opt_quicksort	541100891
+benchmark/typelisp/opt_quicksort	521953685
 benchmark/c/opt_quicksort	398372863
 benchmark/c-scalar/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	1485929705
 benchmark/c/spmd_reduce	1693815306
 benchmark/c-scalar/spmd_reduce	3381322973
-self_compile/compile_cli_opt1	56235707949
+self_compile/compile_cli_opt1	56568836998

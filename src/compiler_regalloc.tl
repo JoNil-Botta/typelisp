@@ -395,6 +395,15 @@
   (NoCandidate)
   (Candidate i64 String))
 
+;; Form (a) early-exit shrink wrapping is also an IR rewrite before scalar
+;; allocation. These per-function results accompany the returned function;
+;; empty labels mean the input was unchanged. Backend emission is sequential,
+;; including its FPO retry, so the state is reset by every rewrite call.
+(define compiler-reg-early-exit-saving-label : String
+  "")
+(define compiler-reg-early-exit-bare-label : String
+  "")
+
 (define (compiler-reg-cold-call-rewrite-function-value
   [rewrite : CompilerRegColdCallRewrite]) : CompilerIrFunction
   (match rewrite
@@ -12610,6 +12619,356 @@
   64)
 
 ;; ---------------------------------------------------------------------------
+;; Cycle 21: dominating early-return shrink wrapping (form a).
+;;
+;; The admitted shape is intentionally narrow and is rewritten before scalar
+;; allocation:
+;;
+;;   entry: compare two incoming GP values; branch BODY, RETURN
+;;   ... BODY may loop back to entry ...
+;;   RETURN: one return instruction
+;;
+;; A first-entry bare-return clone and a one-shot saving-entry block are added.
+;; The backend emits the initial comparison directly from incoming ABI
+;; locations, so the ordinary parameter homes are needed only after the saving
+;; edge has executed their normal captures. All backedges are redirected to a
+;; framed clone of the guard; it branches to the original return block, never
+;; the bare clone. Thus the prologue executes exactly once on the working path
+;; and every later exit still runs the normal epilogue.
+;; ---------------------------------------------------------------------------
+;; This first form deliberately admits only the classic three-block guard/body/
+;; return loop.  The backend emits the first guard from incoming ABI locations,
+;; then places the normal prologue at the one-shot saving block.  Backedges use
+;; the framed guard and the original return, so only the initial empty range
+;; reaches the bare return.
+(define (compiler-reg-early-exit-shrinkwrap-function
+  [func : CompilerIrFunction]) : CompilerIrFunction
+  (begin
+    (set! compiler-reg-early-exit-saving-label "")
+    (set! compiler-reg-early-exit-bare-label "")
+    (match func
+      [(CompilerIrFunction.Function name params ret-ty vars blocks)
+        (let
+          [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+          [entry-form? : bool
+            (and
+              (= (compiler-ir-param-list-count params) 3)
+              (= (compiler-ir-block-seq-count seq) 3)
+              (match ret-ty
+                [(AstType.Unit) true]
+                [_ false])
+              (match (compiler-ir-block-seq-ref seq 0)
+                [(CompilerIrBlock.Block _ instrs)
+                  (= (compiler-ir-instr-seq-count instrs) 2)]))]
+          [param-vars : CompilerLiveI64Set
+            (compiler-reg-ineligible-params params (compiler-live-set-empty))]
+          [params-safe? : bool
+            (if (not entry-form?)
+              false
+              (match (compiler-ir-param-list-force-cons params)
+                [(CompilerIrParamList.Cons param0 rest0)
+                  (match param0
+                    [(CompilerIrParam.Param _ ty0 _)
+                      (and
+                        (match ty0
+                          [(AstType.Array _ _) true]
+                          [(AstType.DynArray _) true]
+                          [_ false])
+                        (match (compiler-ir-param-list-force-cons
+                          (box-get rest0))
+                          [(CompilerIrParamList.Cons param1 rest1)
+                            (match param1
+                              [(CompilerIrParam.Param _ ty1 _)
+                                (and
+                                  (match ty1
+                                    [(AstType.I64) true]
+                                    [_ false])
+                                  (match (compiler-ir-param-list-force-cons
+                                    (box-get rest1))
+                                    [(CompilerIrParamList.Cons param2 rest2)
+                                      (match param2
+                                        [(CompilerIrParam.Param _ ty2 _)
+                                          (and
+                                            (match ty2
+                                              [(AstType.I64) true]
+                                              [_ false])
+                                            (match (compiler-ir-param-list-force-cons
+                                              (box-get rest2))
+                                              [(CompilerIrParamList.Nil) true]
+                                              [_ false]))])]
+                                    [_ false]))])]
+                          [_ false]))])]
+                [_ false]))]
+          (if (or (not entry-form?) (not params-safe?))
+            func
+            (match (compiler-ir-block-seq-ref seq 0)
+              [(CompilerIrBlock.Block entry-label entry-instrs)
+                (if (not (= (compiler-ir-instr-seq-count entry-instrs) 2))
+                  func
+                  (match (compiler-ir-instr-seq-ref entry-instrs 0)
+                    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+                      (match (compiler-ir-instr-seq-ref entry-instrs 1)
+                        [(CompilerIrInstr.Branch cond on-true on-false)
+                          (match cond
+                            [(CompilerIrValue.Var cond-var)
+                              (let
+                                [true-index : i64
+                                  (compiler-reg-cold-call-find-label
+                                    seq
+                                    on-true)]
+                                [false-index : i64
+                                  (compiler-reg-cold-call-find-label
+                                    seq
+                                    on-false)]
+                                [true-return? : bool
+                                  (and
+                                    (> true-index 0)
+                                    (match (compiler-ir-block-seq-ref
+                                      seq
+                                      true-index)
+                                      [(CompilerIrBlock.Block _ return-instrs)
+                                        (and
+                                          (=
+                                            (compiler-ir-instr-seq-count
+                                              return-instrs)
+                                            1)
+                                          (match (compiler-ir-instr-seq-ref
+                                            return-instrs
+                                            0)
+                                            [(CompilerIrInstr.Return value)
+                                              (match value
+                                                [(CompilerIrMaybeValue.No) true]
+                                                [_ false])]
+                                            [_ false]))]))]
+                                [false-return? : bool
+                                  (and
+                                    (> false-index 0)
+                                    (match (compiler-ir-block-seq-ref
+                                      seq
+                                      false-index)
+                                      [(CompilerIrBlock.Block _ return-instrs)
+                                        (and
+                                          (=
+                                            (compiler-ir-instr-seq-count
+                                              return-instrs)
+                                            1)
+                                          (match (compiler-ir-instr-seq-ref
+                                            return-instrs
+                                            0)
+                                            [(CompilerIrInstr.Return value)
+                                              (match value
+                                                [(CompilerIrMaybeValue.No) true]
+                                                [_ false])]
+                                            [_ false]))]))]
+                                [return-index : i64
+                                  (if true-return?
+                                    true-index
+                                    false-index)]
+                                [body-index : i64
+                                  (if true-return?
+                                    false-index
+                                    true-index)]
+                                [lhs-safe? : bool
+                                  (match lhs
+                                    [(CompilerIrValue.Var var)
+                                      (compiler-live-set-contains?
+                                        param-vars
+                                        var)]
+                                    [(CompilerIrValue.I64 _) true]
+                                    [(CompilerIrValue.Bool _) true]
+                                    [(CompilerIrValue.Char _) true]
+                                    [(CompilerIrValue.Unit) true]
+                                    [_ false])]
+                                [rhs-safe? : bool
+                                  (match rhs
+                                    [(CompilerIrValue.Var var)
+                                      (compiler-live-set-contains?
+                                        param-vars
+                                        var)]
+                                    [(CompilerIrValue.I64 _) true]
+                                    [(CompilerIrValue.Bool _) true]
+                                    [(CompilerIrValue.Char _) true]
+                                    [(CompilerIrValue.Unit) true]
+                                    [_ false])]
+                                [bare-label : String
+                                  (string.append
+                                    entry-label
+                                    "__shrinkwrap_bare")]
+                                [saving-label : String
+                                  (string.append
+                                    entry-label
+                                    "__shrinkwrap_save")]
+                                [framed-label : String
+                                  (string.append
+                                    entry-label
+                                    "__shrinkwrap_framed")]
+                                (if (or
+                                  (not (= cond-var dst))
+                                  (not (compiler-reg-scratch-compare-op? op))
+                                  (not
+                                    (match ty
+                                      [(AstType.I64) true]
+                                      [_ false]))
+                                  (not lhs-safe?)
+                                  (not rhs-safe?)
+                                  (= true-return? false-return?)
+                                  (< body-index 1)
+                                  (>=
+                                    (compiler-reg-cold-call-find-label
+                                      seq
+                                      bare-label)
+                                    0)
+                                  (>=
+                                    (compiler-reg-cold-call-find-label
+                                      seq
+                                      saving-label)
+                                    0)
+                                  (>=
+                                    (compiler-reg-cold-call-find-label
+                                      seq
+                                      framed-label)
+                                    0))
+                                  func
+                                  (let
+                                    [body : CompilerIrBlock
+                                      (compiler-ir-block-seq-ref seq body-index)]
+                                    [ret-block : CompilerIrBlock
+                                      (compiler-ir-block-seq-ref
+                                        seq
+                                        return-index)]
+                                    [body-instrs : CompilerIrInstrSeq
+                                      (match body
+                                        [(CompilerIrBlock.Block _ body-seq)
+                                          body-seq])]
+                                    [body-count : i64
+                                      (compiler-ir-instr-seq-count body-instrs)]
+                                    [body-safe? : bool
+                                      (and
+                                        (> body-count 0)
+                                        (match (compiler-ir-instr-seq-ref
+                                          body-instrs
+                                          0)
+                                          [(CompilerIrInstr.Phi _ _ _) false]
+                                          [_ true])
+                                        (match (compiler-ir-instr-seq-ref
+                                          body-instrs
+                                          (- body-count 1))
+                                          [(CompilerIrInstr.Jump target)
+                                            (string.eq target entry-label)]
+                                          [_ false]))]
+                                    (if (not body-safe?)
+                                      func
+                                      (let
+                                        [body-label : String
+                                          (compiler-reg-cold-call-block-label
+                                            body)]
+                                        [return-label : String
+                                          (compiler-reg-cold-call-block-label
+                                            ret-block)]
+                                        [entry-out : (Array CompilerIrInstr)
+                                          (array.make-array CompilerIrInstr 2)]
+                                        [save-out : (Array CompilerIrInstr)
+                                          (array.make-array CompilerIrInstr 1)]
+                                        [body-out : (Array CompilerIrInstr)
+                                          (array.make-array
+                                            CompilerIrInstr
+                                            body-count)]
+                                        [out : (Array CompilerIrBlock)
+                                          (array.make-array CompilerIrBlock 6)]
+                                        [i : i64 0]
+                                        (begin
+                                          (array-set!
+                                            entry-out
+                                            0
+                                            (compiler-ir-instr-seq-ref
+                                              entry-instrs
+                                              0))
+                                          (array-set!
+                                            entry-out
+                                            1
+                                            (CompilerIrInstr.Branch
+                                              cond
+                                              (if (string.eq
+                                                on-true
+                                                return-label)
+                                                bare-label
+                                                saving-label)
+                                              (if (string.eq
+                                                on-false
+                                                return-label)
+                                                bare-label
+                                                saving-label)))
+                                          (array-set!
+                                            out
+                                            0
+                                            (CompilerIrBlock.Block
+                                              entry-label
+                                              (CompilerIrInstrSeq entry-out 2)))
+                                          (array-set!
+                                            out
+                                            1
+                                            (match ret-block
+                                              [(CompilerIrBlock.Block
+                                                  _
+                                                  ret-instrs)
+                                                (CompilerIrBlock.Block
+                                                  bare-label
+                                                  ret-instrs)]))
+                                          (array-set!
+                                            save-out
+                                            0
+                                            (CompilerIrInstr.Jump body-label))
+                                          (array-set!
+                                            out
+                                            2
+                                            (CompilerIrBlock.Block
+                                              saving-label
+                                              (CompilerIrInstrSeq save-out 1)))
+                                          (while (< i body-count)
+                                            (begin
+                                              (array-set!
+                                                body-out
+                                                i
+                                                (if (= i (- body-count 1))
+                                                  (CompilerIrInstr.Jump
+                                                    framed-label)
+                                                  (compiler-ir-instr-seq-ref
+                                                    body-instrs
+                                                    i)))
+                                              (set! i (+ i 1))))
+                                          (array-set!
+                                            out
+                                            3
+                                            (CompilerIrBlock.Block
+                                              body-label
+                                              (CompilerIrInstrSeq
+                                                body-out
+                                                body-count)))
+                                          (array-set!
+                                            out
+                                            4
+                                            (CompilerIrBlock.Block
+                                              framed-label
+                                              entry-instrs))
+                                          (array-set! out 5 ret-block)
+                                          (set!
+                                            compiler-reg-early-exit-saving-label
+                                            saving-label)
+                                          (set!
+                                            compiler-reg-early-exit-bare-label
+                                            bare-label)
+                                          (CompilerIrFunction.Function
+                                            name
+                                            params
+                                            ret-ty
+                                            vars
+                                            (CompilerIrBlockList.Array
+                                              (CompilerIrBlockSeq out 6)))))))))]
+                            [_ func])]
+                        [_ func])]
+                    [_ func]))])))])))
+
+;; ---------------------------------------------------------------------------
 ;; Cycle 20: cold-call clobber splitting.
 ;;
 ;; The backend's Windows unwind program describes a fixed entry prologue, so
@@ -19417,6 +19776,102 @@
                         [_ (set! ok false)])])
                   (set! v (+ v 1))))
               ok))]))))
+
+(cfg
+  test
+  (define (compiler-reg-early-exit-test-function) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      (compiler-ir-test-symbol "early_exit_shrinkwrap")
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "items" (AstType.Array 0 0) 0)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "lo" (AstType.I64) 1)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "hi" (AstType.I64) 2)
+            CompilerIrParamList.Nil)))
+      (AstType.Unit)
+      5
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              3
+              (CompilerIrBinOp.Lt)
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 2)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch (CompilerIrValue.Var 3) "body" "done")
+              CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "body"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Call
+                4
+                (compiler-ir-test-symbol "partition")
+                (CompilerIrCallArgs.Nil)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "entry")
+                CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "done"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                CompilerIrInstrList.Nil))
+            CompilerIrBlockList.Nil))))))
+
+(cfg
+  test
+  (define (compiler-reg-early-exit-shrinkwrap-ok?) : bool
+    (match (compiler-reg-early-exit-shrinkwrap-function
+      (compiler-reg-early-exit-test-function))
+      [(CompilerIrFunction.Function _ _ _ vars blocks)
+        (let
+          [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+          [entry : CompilerIrInstrSeq
+            (match (compiler-ir-block-seq-ref seq 0)
+              [(CompilerIrBlock.Block _ instrs) instrs])]
+          [body : CompilerIrInstrSeq
+            (match (compiler-ir-block-seq-ref seq 3)
+              [(CompilerIrBlock.Block _ instrs) instrs])]
+          (and
+            (= vars 5)
+            (= (compiler-ir-block-seq-count seq) 6)
+            (string.eq
+              compiler-reg-early-exit-saving-label
+              "entry__shrinkwrap_save")
+            (string.eq
+              compiler-reg-early-exit-bare-label
+              "entry__shrinkwrap_bare")
+            (match (compiler-ir-instr-seq-ref entry 1)
+              [(CompilerIrInstr.Branch _ on-true on-false)
+                (and
+                  (string.eq on-true "entry__shrinkwrap_save")
+                  (string.eq on-false "entry__shrinkwrap_bare"))]
+              [_ false])
+            (match (compiler-ir-instr-seq-ref
+              body
+              (- (compiler-ir-instr-seq-count body) 1))
+              [(CompilerIrInstr.Jump target)
+                (string.eq target "entry__shrinkwrap_framed")]
+              [_ false])
+            (match (compiler-ir-block-seq-ref seq 1)
+              [(CompilerIrBlock.Block label instrs)
+                (and
+                  (string.eq label "entry__shrinkwrap_bare")
+                  (match (compiler-ir-instr-seq-ref instrs 0)
+                    [(CompilerIrInstr.Return _) true]
+                    [_ false]))])
+            (match (compiler-ir-block-seq-ref seq 2)
+              [(CompilerIrBlock.Block label _)
+                (string.eq label "entry__shrinkwrap_save")])
+            (match (compiler-ir-block-seq-ref seq 4)
+              [(CompilerIrBlock.Block label _)
+                (string.eq label "entry__shrinkwrap_framed")])))])))
 
 (cfg
   test
@@ -35514,6 +35969,9 @@
 
 (define (compiler-regalloc-scalar-self-test?) : bool
   (begin
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-early-exit-shrinkwrap-ok?"
+      (cfg test (compiler-reg-early-exit-shrinkwrap-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-cold-call-split-ok?"
       (cfg test (compiler-reg-cold-call-split-ok?) true))

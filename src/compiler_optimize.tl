@@ -34297,6 +34297,27 @@
     [(CompilerIrBlockList.Array seq)
       (opt-unroll-mb-body-ok? (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-unroll-mb-instrs-have-store?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.StorePtr _ _ _) true]
+      [_ (opt-unroll-mb-instrs-have-store? instrs (+ index 1))])))
+
+(define (opt-unroll-mb-body-has-store? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-unroll-mb-instrs-have-store? instrs 0)
+            (opt-unroll-mb-body-has-store? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-unroll-mb-body-has-store? (compiler-ir-block-seq-to-list seq))]))
+
 (define (opt-unroll-mb-all-fast-labels? [labels : OptLabelSet]) : bool
   (match labels
     [(OptLabelSet.Nil) true]
@@ -34516,6 +34537,11 @@
                     preheader)
                   (opt-unroll-mb-diamond? blocks body-labels header latch)
                   (opt-unroll-mb-body-ok? body-blocks)
+                  ;; The 2x path pays an odd-trip guard and duplicates four
+                  ;; blocks. Keep it for the store-bearing swap/update shape
+                  ;; that benefits measurably; read-only reductions/searches
+                  ;; are better left to the ordinary scalar loop pipeline.
+                  (opt-unroll-mb-body-has-store? body-blocks)
                   (<= (compiler-ir-block-list-instruction-count body-blocks) 32)
                   (<= (opt-unroll-mb-live-in-count body-blocks) 6)
                   (opt-unroll-mb-counter-uses-ok? body-blocks iphi inext)

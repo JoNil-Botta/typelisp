@@ -21658,6 +21658,7 @@
   (SplatValueGp)
   (SplatValueXmm)
   (VectorPrefixCarry)
+  (VectorPrefixBits)
   (VectorPrefixValue)
   (VectorReduceAccumulator)
   (VectorReduceScratch)
@@ -23479,19 +23480,27 @@
         point
         (+ point 1)
         var)]
-    [(CompilerIrInstr.VectorPrefix _)
-      (CompilerRegScratchRequirement
-        point
-        ordinal
-        (if (= ordinal 0)
-          (CompilerRegScratchRole.VectorPrefixCarry)
-          (CompilerRegScratchRole.VectorPrefixValue))
-        (if (= ordinal 0)
-          (compiler-reg-scratch-memory-constraint assignments instr)
-          (compiler-reg-scratch-xmm-constraint assignments instr))
-        point
-        (+ point 1)
-        var)]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ _ _ lanes elem-ty)
+          (let
+            [avx512-bool? : bool
+              (match elem-ty
+                [(AstType.Bool) (> lanes 32)]
+                [_ false])]
+            (CompilerRegScratchRequirement
+              point
+              ordinal
+              (cond
+                [(= ordinal 0) (CompilerRegScratchRole.VectorPrefixCarry)]
+                [avx512-bool? (CompilerRegScratchRole.VectorPrefixBits)]
+                [else (CompilerRegScratchRole.VectorPrefixValue)])
+              (if (or (= ordinal 0) avx512-bool?)
+                (compiler-reg-scratch-memory-constraint assignments instr)
+                (compiler-reg-scratch-xmm-constraint assignments instr))
+              point
+              (+ point 1)
+              var))])]
     [(CompilerIrInstr.VectorReduce _ _ _ _ _)
       (CompilerRegScratchRequirement
         point

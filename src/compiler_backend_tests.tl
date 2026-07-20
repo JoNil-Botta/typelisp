@@ -10190,7 +10190,7 @@
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k2"))
     (compiler-reg-assignment-cons
-      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rax"))
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -64))
         CompilerRegAssignmentList.Nil))))
@@ -10206,6 +10206,49 @@
           (CompilerRegLocation.Register "%k3"))
         CompilerRegAssignmentList.Nil))))
 
+(define (compiler-backend-avx512-vector-prefix-bool-scratch-requirement
+  [ordinal : i64]
+  [var : i64]) : CompilerRegScratchRequirement
+  (compiler-reg-scratch-requirement-local
+    (CompilerRegTargetAbi.Linux)
+    (compiler-reg-scratch-policy
+      (CompilerRegTargetAbi.Linux)
+      CompilerRegAssignmentList.Nil
+      CompilerRegStringList.Nil)
+    CompilerRegAssignmentList.Nil
+    CompilerRegVarTypeList.Nil
+    (ir-instr-vector-prefix
+      2
+      (CompilerIrVectorPrefixOp.Any)
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.Var 1)
+      64
+      (AstType.Bool))
+    0
+    ordinal
+    var
+    false))
+
+(define (compiler-backend-avx512-vector-prefix-bool-scratch-classes-ok?) : bool
+  (let
+    [carry : CompilerRegScratchRequirement
+      (compiler-backend-avx512-vector-prefix-bool-scratch-requirement 0 3)]
+    [bits : CompilerRegScratchRequirement
+      (compiler-backend-avx512-vector-prefix-bool-scratch-requirement 1 4)]
+    (and
+      (match (struct-get carry role)
+        [(CompilerRegScratchRole.VectorPrefixCarry) true]
+        [_ false])
+      (match (struct-get bits role)
+        [(CompilerRegScratchRole.VectorPrefixBits) true]
+        [_ false])
+      (match (struct-get (struct-get carry constraint) register-class)
+        [(CompilerRegScratchClass.Gp) true]
+        [_ false])
+      (match (struct-get (struct-get bits constraint) register-class)
+        [(CompilerRegScratchClass.Gp) true]
+        [_ false]))))
+
 (define (compiler-backend-avx512-vector-prefix-bool-spill-ok?) : bool
   (let
     [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
@@ -10219,17 +10262,20 @@
         64
         (AstType.Bool)
         "%r14"
-        "%xmm14"
+        "%r13"
         diag)
         [(ResultCompilerBackend.Ok asm)
           (and
-            (compiler-backend-string-contains? asm "    kmovq %k2, %rax\n")
-            (compiler-backend-string-contains? asm "    notq %rax\n")
+            (compiler-backend-string-contains? asm "    kmovq %k2, %r13\n")
+            (compiler-backend-string-contains? asm "    notq %r13\n")
             (compiler-backend-string-contains? asm "    shlq $32, %r14\n")
+            (compiler-backend-string-contains? asm "    movq %rax, %r14\n")
             (compiler-backend-string-contains? asm "    setne %r14b\n")
-            (compiler-backend-string-contains? asm "    andq %r14, %rax\n")
-            (compiler-backend-string-contains? asm "    kmovq %rax, %k7\n")
+            (compiler-backend-string-contains? asm "    andq %r14, %r13\n")
+            (compiler-backend-string-contains? asm "    kmovq %r13, %k7\n")
             (compiler-backend-string-contains? asm "    kmovq %k7, -64(%rbp)\n")
+            (not
+              (compiler-backend-string-contains? asm "    kmovq %k2, %rax\n"))
             (not (compiler-backend-string-contains? asm "%zmm")))]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-avx512-vector-prefix
@@ -10241,15 +10287,16 @@
         64
         (AstType.Bool)
         "%r14"
-        "%xmm14"
+        "%r13"
         diag)
         [(ResultCompilerBackend.Ok asm)
           (and
             (compiler-backend-string-contains? asm "    kmovq -64(%rbp), %k7\n")
-            (compiler-backend-string-contains? asm "    kmovq %k7, %rax\n")
+            (compiler-backend-string-contains? asm "    kmovq %k7, %r13\n")
             (compiler-backend-string-contains? asm "    movq -8(%rbp), %r14\n")
-            (compiler-backend-string-contains? asm "    orq %r14, %rax\n")
-            (compiler-backend-string-contains? asm "    kmovq %rax, %k3\n"))]
+            (compiler-backend-string-contains? asm "    orq %r14, %r13\n")
+            (compiler-backend-string-contains? asm "    kmovq %r13, %k3\n")
+            (not (compiler-backend-string-contains? asm "%rax")))]
         [(ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-avx512-predicated-load-spill-dst-ok?) : bool
@@ -10332,6 +10379,7 @@
     (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?)
     (compiler-backend-avx2-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-vector-prefix-numeric-spill-ok?)
+    (compiler-backend-avx512-vector-prefix-bool-scratch-classes-ok?)
     (compiler-backend-avx512-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-predicated-load-spill-dst-ok?)
     (compiler-backend-avx512-select-spill-ok?)

@@ -6129,6 +6129,7 @@
   [carry : CompilerIrValue]
   [lanes : i64]
   [planned-carry-gp : String]
+  [planned-bits-gp : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [exclude : (Array String)
@@ -6140,7 +6141,15 @@
         exclude
         7
         "%r10")]
-    [bits-gp : String (compiler-backend-avx512-mask-gpr lanes)]
+    [bits-exclude : (Array String)
+      (compiler-backend-scavenge-exclude-append exclude 7 carry-gp)]
+    [bits-gp : String
+      (compiler-backend-planned-or-scavenge-reg
+        planned-bits-gp
+        -1
+        bits-exclude
+        8
+        "%r11")]
     [mask-move : String (compiler-backend-avx512-mask-move-mnemonic lanes)]
     (match (compiler-backend-avx512-mask-register-use
       assignments
@@ -6315,6 +6324,7 @@
           carry
           lanes
           planned-gp
+          planned-xmm
           instr-diag)]
       [_
         (compiler-backend-emit-avx512-vector-prefix-numeric

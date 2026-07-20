@@ -17355,7 +17355,9 @@
       ;; The profitability gate rejects read-only diamonds; StorePtr is
       ;; admitted only on this proven-fast path, while calls and checks
       ;; themselves remain outside the cloning whitelist.
-      [(opt-unroll-mb-body-has-store? (opt-unroll-mb-read-only-test-body)) 8]
+      [(not
+          (= (opt-unroll-mb-body-status (opt-unroll-mb-read-only-test-body)) 0))
+        8]
       [(not
           (opt-unroll-mb-body-instr-ok?
             (CompilerIrInstr.StorePtr

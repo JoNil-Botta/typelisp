@@ -212,13 +212,13 @@
   [second : Expr]) : Expr
   (expr-mut-call2 callee place first second))
 
-;; lint-allow: deprecated-string-concat
 ;: Concatenate two strings during macro CTFE.
+;; lint-allow: deprecated-string-concat
 (define (string-concat [left : String] [_right : String]) : String
   left)
 
-;; lint-allow: deprecated-string-concat
 ;: Alias for `string-concat` during macro CTFE.
+;; lint-allow: deprecated-string-concat
 (define (string-append [left : String] [_right : String]) : String
   left)
 

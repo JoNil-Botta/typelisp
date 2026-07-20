@@ -336,3 +336,5 @@ vector_cleanup_slots_mut_reject|check-fail|tests/safety/vector_cleanup_slots_mut
 vector_cleanup_move_before_exit_reject|check-fail|tests/safety/vector_cleanup_move_before_exit_reject.tl|-|cleanup owner `items` moved before with scope exit
 vector_cleanup_borrow_live_reject|check-fail|tests/safety/vector_cleanup_borrow_live_reject.tl|-|cannot mutably borrow borrowed place `items`
 vector_cleanup_escape_reject|check-fail|tests/safety/vector_cleanup_escape_reject.tl|-|cleanup-required resource would escape with scope
+hash_generated_float_reject|check-fail|tests/safety/hash_generated_float_reject.tl|-|hash: unsupported type f64 at value
+hash_generated_box_reject|check-fail|tests/safety/hash_generated_box_reject.tl|-|hash: unsupported type box_i64 at value.indirect

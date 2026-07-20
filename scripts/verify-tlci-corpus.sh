@@ -99,7 +99,7 @@ done
 
 EMITTED_EMPTY="$WORKDIR/emitted-metadata-only.tlci"
 EMITTED_SECTIONS="$WORKDIR/emitted-sections.tlci"
-if ! "$COMPILER" run tests/tlci/v1_corpus_emit.tl \
+if ! "$COMPILER" run tests/tlci/corpus_emit.tl \
     --stdlib-root stdlib \
     --stdlib-root src \
     -- "$EMITTED_EMPTY" "$EMITTED_SECTIONS" \
@@ -114,4 +114,4 @@ compare_file "$CORPUS/valid-metadata-only.tlci" "$EMITTED_EMPTY" \
 compare_file "$CORPUS/valid-sections.tlci" "$EMITTED_SECTIONS" \
     "section-bearing emitter bytes"
 
-echo "TLCI v1 compatibility corpus passed (2 valid, 8 malformed)."
+echo "TLCI format corpus passed (2 valid, 8 malformed)."

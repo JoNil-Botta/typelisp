@@ -2462,6 +2462,27 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)))
 
+(define (tlci-test-imports-bytes) : (Array u8)
+  (let
+    [out : (Array u8) (make-array u8 tlci-section-import-record-size)]
+    (begin
+      (tlci-set-u64! out 0 8)
+      (tlci-set-u64! out 8 tlci-host-import-invoke)
+      out)))
+
+(define (tlci-test-imports-image) : TlciImage
+  (TlciImage
+    tlci-host-arch-x86-64
+    tlci-callback-abi-version
+    "abcdef0"
+    (tlci-test-metadata)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-test-imports-bytes)))
+
 (define (tlci-test-code-image) : TlciImage
   (TlciImage
     tlci-host-arch-x86-64
@@ -3255,6 +3276,7 @@
     [(not (tlci-test-v2-metadata-emit-parse?)) 10]
     [(not (tlci-test-parse-round-trip? (tlci-test-v2-metadata-only-image))) 11]
     [(not (tlci-test-v2-metadata-rejections-ok?)) 12]
+    [(not (tlci-test-parse-round-trip? (tlci-test-imports-image))) 13]
     [else 0]))
 
 (define (tlci-core-self-test-ok?) : bool

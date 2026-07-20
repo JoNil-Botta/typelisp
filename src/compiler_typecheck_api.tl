@@ -46,7 +46,8 @@
     cache-scope
     pools))
 
-(define (typecheck-compiler-program-with-paths-cache-and-pools
+(define (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
+  [load-state : CompilerLoadSessionState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -68,7 +69,8 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-then-build-envs
+              (match (macro-expand-then-build-envs-with-load-state
+                load-state
                 generated
                 generated-paths
                 pools
@@ -135,6 +137,22 @@
             [(ResultGenProgramWithPaths.Err diag)
               (ResultCompilerTypecheck.Err diag)]))))))
 
+;; Serial/test compatibility adapter. Production callers with a job context use
+;; the explicit load-state entry above.
+(define (typecheck-compiler-program-with-paths-cache-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
+  (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
+    (compiler-load-serial-test-session-state)
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools))
+
 (define (typecheck-compiler-program-with-paths-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -160,7 +178,8 @@
   (Ok AstProgram AstDeclPathList)
   (Err (Box CompilerDiagnostic)))
 
-(define (typecheck-compiler-doc-expand-program-with-paths-and-pools
+(define (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
+  [load-state : CompilerLoadSessionState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -174,7 +193,8 @@
         (ast-node-pool-context-install! pools)
         (match generated-result
           [(ResultGenProgramWithPaths.Ok generated generated-paths)
-            (match (macro-expand-then-build-envs
+            (match (macro-expand-then-build-envs-with-load-state
+              load-state
               generated
               generated-paths
               pools
@@ -188,6 +208,19 @@
           [(ResultGenProgramWithPaths.Err diag)
             (ResultCompilerDocExpand.Err diag)])))))
 
+;; Serial/test compatibility adapter.
+(define (typecheck-compiler-doc-expand-program-with-paths-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [pools : AstNodePoolContext]) : ResultCompilerDocExpand
+  (typecheck-compiler-doc-expand-program-with-paths-and-load-state-and-pools
+    (compiler-load-serial-test-session-state)
+    program
+    paths
+    stdlib-roots
+    pools))
+
 (define (typecheck-compiler-doc-expand-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -198,7 +231,8 @@
     stdlib-roots
     (ast-node-pool-context-capture-active)))
 
-(define (typecheck-compiler-program-with-paths-checked-cache-and-pools
+(define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-pools
+  [load-state : CompilerLoadSessionState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -214,7 +248,8 @@
           (ast-node-pool-context-install! pools)
           (match generated-result
             [(ResultGenProgramWithPaths.Ok generated generated-paths)
-              (match (macro-expand-then-build-envs
+              (match (macro-expand-then-build-envs-with-load-state
+                load-state
                 generated
                 generated-paths
                 pools
@@ -281,6 +316,21 @@
                   (ResultCompilerTypecheckChecked.Err diag)])]
             [(ResultGenProgramWithPaths.Err diag)
               (ResultCompilerTypecheckChecked.Err diag)]))))))
+
+;; Serial/test compatibility adapter.
+(define (typecheck-compiler-program-with-paths-checked-cache-and-pools
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-pools
+    (compiler-load-serial-test-session-state)
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools))
 
 (define (typecheck-compiler-program-with-paths-checked-cache
   [program : AstProgram]

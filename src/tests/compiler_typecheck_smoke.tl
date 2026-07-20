@@ -2256,6 +2256,311 @@
         (set! ok false))
       ok)))
 
+(defstruct CompilerTypecheckGeneratedImportStateSnapshot
+  (diagnostic String)
+  (cache-hits i64)
+  (cache-misses i64)
+  (cache-stores i64)
+  (seen-nonempty bool)
+  (surface-summary-present bool))
+
+(define (compiler-typecheck-smoke-generated-import-decl
+  [source : String]
+  [key : String]) : AstDecl
+  (match (parse-ast-source-diagnostic "target/tc_state_entry.tl" source)
+    [(ResultAstProgramDiagnostic.Ok (AstProgram.Program decls-box))
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons decl _)
+          (ast-decl-comptime-decl-with-meta
+            (macro-generated-meta "state-isolation" "import" key)
+            decl)]
+        [(AstDeclListStep.Nil)
+          (io.panic "typecheck: generated import fixture parsed no declaration")])]
+    [(ResultAstProgramDiagnostic.Err diag)
+      (io.panic (compiler-diagnostic-render (box-get diag)))]))
+
+(define (compiler-typecheck-smoke-generated-import-state-run
+  [state : CompilerLoadSessionState]
+  [generated-import : AstDecl]
+  [missing-import : AstDecl]
+  [pools : AstNodePoolContext]) : CompilerTypecheckGeneratedImportStateSnapshot
+  (let
+    [entry : String "target/tc_state_entry.tl"]
+    [owner-id : i64 (compiler-load-source-path-id entry)]
+    [roots : svec.Vec (svec.new)]
+    [cfgs : sym_i64_env.SymI64Env (typecheck-compiler-source-language-cfgs)]
+    [empty-seen : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+    (match (macro-materialize-generated-import
+      state
+      generated-import
+      entry
+      owner-id
+      ""
+      cbi.compiler-builtin-id-fix-empty
+      empty-seen
+      roots
+      cfgs
+      pools)
+      [(ResultMacroMaterializeImport.Ok _ _ first-seen)
+        ;; A second traversal from an independent seen set must reuse A's
+        ;; program/surface caches. The selected compatibility session is
+        ;; intentionally irrelevant to both traversals.
+        (match (macro-materialize-generated-import
+          state
+          generated-import
+          entry
+          owner-id
+          ""
+          cbi.compiler-builtin-id-fix-empty
+          empty-seen
+          roots
+          cfgs
+          pools)
+          [(ResultMacroMaterializeImport.Ok _ _ _)
+            (match (macro-materialize-generated-import
+              state
+              generated-import
+              entry
+              owner-id
+              ""
+              cbi.compiler-builtin-id-fix-empty
+              empty-seen
+              roots
+              cfgs
+              pools)
+              [(ResultMacroMaterializeImport.Ok _ _ _)
+                (match (macro-materialize-generated-import
+                  state
+                  missing-import
+                  entry
+                  owner-id
+                  ""
+                  cbi.compiler-builtin-id-fix-empty
+                  first-seen
+                  roots
+                  cfgs
+                  pools)
+                  [(ResultMacroMaterializeImport.Err diag)
+                    (CompilerTypecheckGeneratedImportStateSnapshot
+                      (compiler-diagnostic-message (box-get diag))
+                      (compiler-load-session-state-program-cache-hit-count-value
+                        state)
+                      (compiler-load-session-state-program-cache-miss-count-value
+                        state)
+                      (compiler-load-session-state-program-cache-store-count-value
+                        state)
+                      (match first-seen
+                        [(sym_i64_env.SymI64Nil) false]
+                        [_ true])
+                      (match (compiler-load-session-state-surface-summary-find-module
+                        state
+                        (intern "tc_state.dep"))
+                        [(CompilerLoadSomeSurfaceSummary _) true]
+                        [(CompilerLoadNoSurfaceSummary) false]))]
+                  [(ResultMacroMaterializeImport.Ok _ _ _)
+                    (io.panic
+                      "typecheck: generated missing import unexpectedly loaded")])]
+              [(ResultMacroMaterializeImport.Err diag)
+                (io.panic (compiler-diagnostic-render (box-get diag)))])]
+          [(ResultMacroMaterializeImport.Err diag)
+            (io.panic (compiler-diagnostic-render (box-get diag)))])]
+      [(ResultMacroMaterializeImport.Err diag)
+        (io.panic (compiler-diagnostic-render (box-get diag)))])))
+
+(define (compiler-typecheck-smoke-generated-import-state-isolation-ok?) : bool
+  (let
+    [previous-state : CompilerLoadSessionState
+      (compiler-load-serial-test-session-state)]
+    [baseline-state : CompilerLoadSessionState
+      (compiler-load-session-state-new)]
+    [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [_enable-baseline : unit
+      (compiler-load-session-state-cache-enable! baseline-state)]
+    [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]
+    [_seed-b : unit
+      (array-set! (struct-get state-b program-cache-hit-count) 0 17)]
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [_fixtures : unit
+      (begin
+        (io.write-file
+          "target/tc_state_nested.tl"
+          "(module tc_state.nested)
+(define nested-value : i64 7)")
+        (io.write-file
+          "target/tc_state_dep.tl"
+          "(module tc_state.dep)
+(import \"tc_state_nested.tl\" module tc_state.nested as nested)
+(define dep-value : i64 nested.nested-value)"))]
+    [generated-import : AstDecl
+      (compiler-typecheck-smoke-generated-import-decl
+        "(import \"tc_state_dep.tl\" module tc_state.dep as dep)"
+        "state-import")]
+    [missing-import : AstDecl
+      (compiler-typecheck-smoke-generated-import-decl
+        "(import \"tc_state_missing.tl\" module tc_state.missing as missing)"
+        "state-missing")]
+    [_select-baseline : unit (compiler-load-session-state-use! baseline-state)]
+    [baseline : CompilerTypecheckGeneratedImportStateSnapshot
+      (compiler-typecheck-smoke-generated-import-state-run
+        baseline-state
+        generated-import
+        missing-import
+        pools)]
+    [_select-b : unit (compiler-load-session-state-use! state-b)]
+    [interleaved : CompilerTypecheckGeneratedImportStateSnapshot
+      (compiler-typecheck-smoke-generated-import-state-run
+        state-a
+        generated-import
+        missing-import
+        pools)]
+    (begin
+      (compiler-load-session-state-use! previous-state)
+      (cond
+        [(not
+            (string.eq
+              (struct-get baseline diagnostic)
+              (struct-get interleaved diagnostic)))
+          (io.panic "typecheck: generated import state diagnostic mismatch")]
+        [(not
+            (=
+              (struct-get baseline cache-hits)
+              (struct-get interleaved cache-hits)))
+          (io.panic "typecheck: generated import state cache-hit mismatch")]
+        [(not
+            (=
+              (struct-get baseline cache-misses)
+              (struct-get interleaved cache-misses)))
+          (io.panic "typecheck: generated import state cache-miss mismatch")]
+        [(not
+            (=
+              (struct-get baseline cache-stores)
+              (struct-get interleaved cache-stores)))
+          (io.panic "typecheck: generated import state cache-store mismatch")]
+        [(not
+            (=
+              (struct-get baseline seen-nonempty)
+              (struct-get interleaved seen-nonempty)))
+          (io.panic "typecheck: generated import state seen mismatch")]
+        [(not
+            (=
+              (struct-get baseline surface-summary-present)
+              (struct-get interleaved surface-summary-present)))
+          (io.panic "typecheck: generated import state surface mismatch")]
+        [(not (> (struct-get interleaved cache-hits) 0))
+          (io.panic "typecheck: generated import state missed cache reuse")]
+        [(not (> (struct-get interleaved cache-misses) 0))
+          (io.panic "typecheck: generated import state recorded no cache miss")]
+        [(not (> (struct-get interleaved cache-stores) 0))
+          (io.panic "typecheck: generated import state recorded no cache store")]
+        [(not (struct-get interleaved seen-nonempty))
+          (io.panic "typecheck: generated import state lost seen set")]
+        [(not (struct-get interleaved surface-summary-present))
+          (io.panic "typecheck: generated import state lost surface summary")]
+        [(not
+            (compiler-load-string-contains?
+              (struct-get interleaved diagnostic)
+              "tc_state_missing.tl"))
+          (io.panic "typecheck: generated import state diagnostic uncontrolled")]
+        [(not
+            (=
+              (compiler-load-session-state-program-cache-hit-count-value
+                state-b)
+              17))
+          (io.panic "typecheck: generated import state mutated peer hit count")]
+        [(not
+            (=
+              (compiler-load-session-state-program-cache-miss-count-value
+                state-b)
+              0))
+          (io.panic "typecheck: generated import state mutated peer miss count")]
+        [(not
+            (=
+              (compiler-load-session-state-program-cache-store-count-value
+                state-b)
+              0))
+          (io.panic
+            "typecheck: generated import state mutated peer store count")]
+        [(match (compiler-load-session-state-surface-summary-find-module
+            state-b
+            (intern "tc_state.dep"))
+            [(CompilerLoadNoSurfaceSummary) false]
+            [(CompilerLoadSomeSurfaceSummary _) true])
+          (io.panic "typecheck: generated import state mutated peer surface")]
+        [else true]))))
+
+(define (compiler-typecheck-smoke-generated-import-state-threading-ok?) : bool
+  (let
+    [previous-state : CompilerLoadSessionState
+      (compiler-load-serial-test-session-state)]
+    [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]
+    [_seed-b : unit
+      (array-set! (struct-get state-b program-cache-hit-count) 0 23)]
+    [entry : String "target/tc_state_macro_entry.tl"]
+    [source : String
+      "(defmacro (state-module) : Module
+  `(begin
+    (module generated.state_session)
+    (import \"tc_state_dep.tl\" module tc_state.dep as dep)
+    (define (value) : i64 dep.dep-value)))
+(import (state-module) as generated_state)
+(define (main) : i64 (generated_state.value))"]
+    [roots : svec.Vec (svec.new)]
+    [cfgs : sym_i64_env.SymI64Env (typecheck-compiler-source-language-cfgs)]
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [_reset-typecheck : unit (compiler-typecheck-reset-file-state!)]
+    [_select-b : unit (compiler-load-session-state-use! state-b)]
+    [result : ResultCompilerTypecheck
+      (match (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+        state-a
+        entry
+        source
+        (sym_i64_env.sym-i64-empty)
+        roots
+        AstMaybeModuleName.No
+        cfgs
+        pools)
+        [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
+          (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
+            state-a
+            (ast-program decls)
+            (ast-decl-path-list-with-modules paths modules)
+            roots
+            "typecheck-generated-import-state-threading"
+            pools)]
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerTypecheck.Err diag)])]
+    [ok : bool
+      (and
+        (match result
+          [(ResultCompilerTypecheck.Ok _) true]
+          [(ResultCompilerTypecheck.Err diag)
+            (io.panic (compiler-diagnostic-render (box-get diag)))])
+        (match (compiler-load-session-state-surface-summary-find-module
+          state-a
+          (intern "tc_state.dep"))
+          [(CompilerLoadSomeSurfaceSummary _) true]
+          [(CompilerLoadNoSurfaceSummary) false])
+        (=
+          (compiler-load-session-state-program-cache-hit-count-value state-b)
+          23)
+        (=
+          (compiler-load-session-state-program-cache-miss-count-value state-b)
+          0)
+        (=
+          (compiler-load-session-state-program-cache-store-count-value state-b)
+          0)
+        (match (compiler-load-session-state-surface-summary-find-module
+          state-b
+          (intern "tc_state.dep"))
+          [(CompilerLoadNoSurfaceSummary) true]
+          [(CompilerLoadSomeSurfaceSummary _) false]))]
+    (begin
+      (compiler-load-session-state-use! previous-state)
+      ok)))
+
 (define (compiler-typecheck-smoke-moduleless-stdlib-dotted-import-ok?) : bool
   (let
     [base : String "target/tc_moduleless_stdlib"]
@@ -4271,6 +4576,12 @@
     (unless
       (compiler-typecheck-smoke-generated-moduleless-import-order-ok?)
       (io.panic "typecheck: generated moduleless import order smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-import-state-isolation-ok?)
+      (io.panic "typecheck: generated import state isolation smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-import-state-threading-ok?)
+      (io.panic "typecheck: generated import state threading smoke failed"))
     (unless
       (compiler-typecheck-smoke-moduleless-stdlib-dotted-import-ok?)
       (io.panic "typecheck: moduleless stdlib dotted import smoke failed"))

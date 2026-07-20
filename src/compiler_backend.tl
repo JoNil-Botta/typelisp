@@ -53064,6 +53064,30 @@ tl_comptime_host_invoke_set:
     ""
     (compiler-backend-object-rsp-imm-bytes 0xec value)))
 
+(define (compiler-backend-object-unop-rax-bytes [op : CompilerIrUnOp]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    (begin
+      (match op
+        [(CompilerIrUnOp.Neg)
+          (begin
+            (compiler-backend-object-push-u8! (&mut out) 0x48)
+            (compiler-backend-object-push-u8! (&mut out) 0xf7)
+            (compiler-backend-object-push-u8! (&mut out) 0xd8))]
+        [(CompilerIrUnOp.Not)
+          (begin
+            (compiler-backend-object-push-u8! (&mut out) 0x48)
+            (compiler-backend-object-push-u8! (&mut out) 0x83)
+            (compiler-backend-object-push-u8! (&mut out) 0xf0)
+            (compiler-backend-object-push-u8! (&mut out) 0x01))]
+        [(CompilerIrUnOp.BitNot)
+          (begin
+            (compiler-backend-object-push-u8! (&mut out) 0x48)
+            (compiler-backend-object-push-u8! (&mut out) 0xf7)
+            (compiler-backend-object-push-u8! (&mut out) 0xd0))]
+        [(CompilerIrUnOp.Sqrt) unit])
+      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+
 (define (compiler-backend-object-call-r11-bytes) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
@@ -53787,22 +53811,31 @@ tl_comptime_host_invoke_set:
         (compiler-backend-object-move-value-to-var parts function dst src ty))]
     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
       (compiler-backend-object-binop parts function dst op lhs rhs ty)]
-    [(CompilerIrInstr.UnOp _ op src ty)
+    [(CompilerIrInstr.UnOp dst op src ty)
       (let
         [with-src : CompilerBackendObjectParts
           (compiler-backend-object-value-ref-with-type parts function src ty)]
-        (match op
-          [(CompilerIrUnOp.Neg)
-            (if (compiler-backend-f64-type? ty)
-              (compiler-backend-object-add-rip-instr
-                with-src
-                function
-                (cobj.CompilerObjectRelocationKind.RipValue)
-                (compiler-backend-f64-sign-bit-label)
-                (cobj.CompilerObjectX64Instr.XorpdRip
-                  (compiler-backend-f64-sign-bit-label)))
-              with-src)]
-          [_ with-src]))]
+        (if (and
+          (compiler-backend-f64-type? ty)
+          (match op
+            [(CompilerIrUnOp.Neg) true]
+            [_ false]))
+          (compiler-backend-object-store-reg-to-var
+            (compiler-backend-object-add-rip-instr
+              with-src
+              function
+              (cobj.CompilerObjectRelocationKind.RipValue)
+              (compiler-backend-f64-sign-bit-label)
+              (cobj.CompilerObjectX64Instr.XorpdRip
+                (compiler-backend-f64-sign-bit-label)))
+            dst
+            "%rax")
+          (compiler-backend-object-store-reg-to-var
+            (compiler-backend-object-add-nonempty-bytes
+              with-src
+              (compiler-backend-object-unop-rax-bytes op))
+            dst
+            "%rax")))]
     [(CompilerIrInstr.Call dst name args _)
       (let
         [call-target : String

@@ -201,7 +201,7 @@
     tc-unbound-suggestion-snapshot
     (TcUnboundSuggestionSnapshot.Some
       (> (string.string-length (tc-context-module ctx)) 0)
-      (tc-context-module-id ctx)
+      (tc-unbound-suggestion-scope-module-id ctx name-id)
       env
       name-id)))
 
@@ -22860,6 +22860,22 @@
 (define (tc-unbound-name-message? [message : String]) : bool
   (tc-diag-string-prefix? message (tc-unbound-name-message-prefix)))
 
+(define (tc-unbound-suggestion-scope-module-id
+  [ctx : TcContext]
+  [name-id : i64]) : i64
+  (if (< (tc-name-first-dot-id name-id) 0)
+    (tc-context-module-id ctx)
+    (let
+      [alias-id : i64 (intern-leading-dot-id name-id)]
+      (match (tc-context-program ctx)
+        [(AstProgram.Program decls-box)
+          (match (tc-source-dotted-alias-target-id
+            (box-get decls-box)
+            (tc-context-module-id ctx)
+            alias-id)
+            [(TcMaybeNameId.Some target-id) target-id]
+            [(TcMaybeNameId.No) -1])]))))
+
 ;; These are the compiler-recognized unqualified compatibility names whose
 ;; definitions deliberately live in stdlib modules. Keep this catalog beside
 ;; the typecheck suggestion policy so a missing import can be diagnosed without
@@ -23003,13 +23019,18 @@
 (define (tc-unbound-candidate-visible-id?
   [module-qualified : bool]
   [module-id : i64]
+  [wanted-qualifier-id : i64]
   [env : TcTypeEnv]
   [candidate-id : i64]) : bool
-  (or
-    (tc-name-bound-id? env candidate-id)
-    (and
-      module-qualified
-      (tc-name-bound-id? env (tc-module-name-id-by-id module-id candidate-id)))))
+  (if (>= wanted-qualifier-id 0)
+    (tc-name-bound-id?
+      env
+      (tc-module-name-id-by-id wanted-qualifier-id candidate-id))
+    (or
+      (tc-name-bound-id? env candidate-id)
+      (and
+        module-qualified
+        (tc-name-bound-id? env (tc-module-name-id-by-id module-id candidate-id))))))
 
 (define (tc-unbound-better-candidate?
   [distance : i64]
@@ -23029,7 +23050,26 @@
   [wanted : String]
   [wanted-id : i64]) : String
   (let
-    [wanted-len : i64 (string.string-length wanted)]
+    [wanted-separator : i64 (tc-name-first-char wanted '.')]
+    [wanted-qualified : bool (>= wanted-separator 0)]
+    [wanted-qualifier : String
+      (if wanted-qualified
+        (string.substring wanted 0 wanted-separator)
+        "")]
+    [wanted-qualifier-id : i64
+      (if wanted-qualified
+        (if (>= module-id 0)
+          module-id
+          (intern wanted-qualifier))
+        -1)]
+    [wanted-text : String
+      (if wanted-qualified
+        (string.substring
+          wanted
+          (+ wanted-separator 1)
+          (- (string.string-length wanted) (+ wanted-separator 1)))
+        wanted)]
+    [wanted-len : i64 (string.string-length wanted-text)]
     [max-distance : i64 (tc-unbound-suggestion-max-distance wanted-len)]
     [first-row : (Array i64) (array.make-array i64 (+ wanted-len 1))]
     [second-row : (Array i64) (array.make-array i64 (+ wanted-len 1))]
@@ -23046,6 +23086,9 @@
             [candidate-len : i64 (string.string-length candidate)]
             (begin
               (if (and
+                (or
+                  (not wanted-qualified)
+                  (not (intern-qualified? candidate-id)))
                 (<=
                   (if (> candidate-len wanted-len)
                     (- candidate-len wanted-len)
@@ -23055,12 +23098,13 @@
                 (tc-unbound-candidate-visible-id?
                   module-qualified
                   module-id
+                  wanted-qualifier-id
                   env
                   candidate-id))
                 (let
                   [distance : i64
                     (tc-unbound-edit-distance
-                      wanted
+                      wanted-text
                       candidate
                       first-row
                       second-row)]
@@ -23075,7 +23119,14 @@
                   (if better
                     (begin
                       (set! best-distance distance)
-                      (set! best (clone candidate)))
+                      (set!
+                        best
+                        (if wanted-qualified
+                          (tc-name-slashes-to-dots
+                            (compiler-symbol-module-key
+                              wanted-qualifier
+                              candidate))
+                          (clone candidate))))
                     unit))
                 unit)
               (set! candidate-id (+ candidate-id 1))))))
@@ -23124,9 +23175,16 @@
               name-id)
             (let
               [name : String (tc-hygiene-name-text-id name-id)]
-              [expected-message : String
+              [clean-name : String
+                (string.substring
+                  clean-message
+                  (string.string-length (tc-unbound-name-message-prefix))
+                  (-
+                    (string.string-length clean-message)
+                    (string.string-length (tc-unbound-name-message-prefix))))]
+              [display-message : String
                 (string.append (tc-unbound-name-message-prefix) name)]
-              (if (string.eq clean-message expected-message)
+              (if (string.eq (tc-name-slashes-to-dots clean-name) name)
                 (let
                   [help : String
                     (tc-unbound-help
@@ -23152,7 +23210,7 @@
                             message
                             end-col-start
                             end-col-end)))
-                      clean-message
+                      display-message
                       help)
                     message))
                 message))]

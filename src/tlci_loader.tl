@@ -253,6 +253,39 @@
             found
             found-code-offset)]))))
 
+;; A native package image (normal-backend transformers, refs #5213) carries a
+;; single entries record named tlci_macro_table whose code offset points at an
+;; in-code count word followed by the macro-entry records. Such images have no
+;; registration entry: the loader reads the table directly.
+(define (tlci-loader-native-table-offset [image : tlci.TlciImage]) : i64
+  (let
+    [entries : (Array u8) (struct-get image entries)]
+    [symbols : (Array u8) (struct-get image symbols)]
+    [count : i64 (/ (array-length entries) tlci.tlci-section-entry-record-size)]
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< index count))
+        (let
+          [record-offset : i64 (* index tlci.tlci-section-entry-record-size)]
+          [name-offset : i64 (tlci.tlci-read-u64 entries record-offset)]
+          [name-len : i64 (tlci.tlci-read-u64 entries (+ record-offset 8))]
+          (begin
+            (if (and
+              (tlci-loader-symbol-range-ok? symbols name-offset name-len)
+              (tlci-loader-symbol-name-eq?
+                symbols
+                name-offset
+                name-len
+                tlci.tlci-macro-table-symbol))
+              (set! found (tlci.tlci-read-u64 entries (+ record-offset 16)))
+              unit)
+            (set! index (+ index 1)))))
+      found)))
+
+(define (tlci-loader-native-image? [image : tlci.TlciImage]) : bool
+  (>= (tlci-loader-native-table-offset image) 0))
+
 (define (tlci-loader-find-entry-code-offset [image : tlci.TlciImage]) : ResultTlciLoaderI64
   (let
     [code-len : i64 (array-length (struct-get image code))]
@@ -522,12 +555,80 @@
     [(ResultTlciImage.Ok image)
       (tlci-loader-load-parsed bytes image host-invoke-addr)]))
 
+;; Install the code-resident macro table of a native package image: the count
+;; word sits at table-offset in the code section, records follow it, and every
+;; name/function slot was rebased by the fixup pass. Validation reuses the
+;; same macro-entry checks the registration path applies.
+(define (tlci-loader-install-native-table
+  [bytes : (Array u8)]
+  [loaded : TlciLoadedImage]
+  [host-table : tlci.TlciHostCallbackTable]
+  [table-offset : i64]) : ResultTlciLoadedImage
+  (let
+    [code-file-offset : i64 (tlci.tlci-read-u64 bytes 88)]
+    [count-addr : i64
+      (+
+        (struct-get loaded image-region-addr)
+        (+ code-file-offset table-offset))]
+    [macro-count : i64 (tlci-loader-read-mapped-i64 count-addr)]
+    [host-storage : (Array i64) (tlci-loader-host-table-storage host-table)]
+    [host-table-addr : i64 (tlci-loader-i64-array-addr host-storage)]
+    [installed : TlciLoadedImage
+      (TlciLoadedImage
+        (struct-get loaded image-region-addr)
+        (struct-get loaded image-region-size)
+        (struct-get loaded image-region-code)
+        (struct-get loaded image-region-writable)
+        (struct-get loaded image-region-executable)
+        (struct-get loaded entry-addr)
+        host-storage
+        (struct-get loaded registration-storage)
+        host-table-addr
+        (struct-get loaded registration-addr)
+        0
+        (+ count-addr 8)
+        macro-count
+        (struct-get loaded rodata-addr)
+        (struct-get loaded rodata-len)
+        (struct-get loaded code-addr)
+        (struct-get loaded code-len)
+        (struct-get loaded fixup-count)
+        (struct-get loaded entry-count)
+        (struct-get loaded symbol-count))]
+    (match (tlci-loader-validate-macro-entries (& installed))
+      [(ResultTlciLoaderUnit.Err message)
+        (begin
+          (tlci-loader-release installed)
+          (ResultTlciLoadedImage.Err message))]
+      [(ResultTlciLoaderUnit.Ok) (ResultTlciLoadedImage.Ok installed)])))
+
 (define (tlci-loader-load-from-bytes-with-registration
   [bytes : (Array u8)]
   [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
-  (match (tlci-loader-load-from-bytes-with-invoke
-    bytes
-    (struct-get host-table invoke-callback))
+  (match (tlci.tlci-parse-image bytes)
+    [(ResultTlciImage.Err message) (ResultTlciLoadedImage.Err message)]
+    [(ResultTlciImage.Ok parsed)
+      (let
+        [native-table : i64 (tlci-loader-native-table-offset parsed)]
+        (match (tlci-loader-load-parsed
+          bytes
+          parsed
+          (struct-get host-table invoke-callback))
+          [(ResultTlciLoadedImage.Err message)
+            (ResultTlciLoadedImage.Err message)]
+          [(ResultTlciLoadedImage.Ok loaded)
+            (if (>= native-table 0)
+              (tlci-loader-install-native-table
+                bytes
+                loaded
+                host-table
+                native-table)
+              (tlci-loader-finish-registration loaded host-table))]))]))
+
+(define (tlci-loader-finish-registration
+  [loaded : TlciLoadedImage]
+  [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
+  (match (ResultTlciLoadedImage.Ok loaded)
     [(ResultTlciLoadedImage.Err message) (ResultTlciLoadedImage.Err message)]
     [(ResultTlciLoadedImage.Ok loaded)
       (let
@@ -647,7 +748,9 @@
     [code-len : i64 (array-length (struct-get image code))]
     (if (= code-len 0)
       (ResultTlciLoadedImage.Err "tlci loader: image has no code section")
-      (match (tlci-loader-find-entry-code-offset image)
+      (match (if (tlci-loader-native-image? image)
+        (ResultTlciLoaderI64.Ok 0)
+        (tlci-loader-find-entry-code-offset image))
         [(ResultTlciLoaderI64.Err message) (ResultTlciLoadedImage.Err message)]
         [(ResultTlciLoaderI64.Ok entry-code-offset)
           (match (tlci-loader-validate-fixups image rodata-offset code-offset)

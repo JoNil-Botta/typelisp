@@ -60,12 +60,14 @@ stdlib_eq_mut_ptr_reject|check-fail|tests/safety/stdlib_eq_mut_ptr_reject.tl|-|e
 stdlib_eq_function_reject|check-fail|tests/safety/stdlib_eq_function_reject.tl|-|eq: unsupported type
 vector_unsupported_equality_reject|check-fail|tests/safety/vector_unsupported_equality_reject.tl|-|eq: unsupported type
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
-unimported_print_reject|check-fail|tests/safety/unimported_print_reject.tl|-|unbound name print
-unimported_panic_reject|check-fail|tests/safety/unimported_panic_reject.tl|-|unbound name panic
-unimported_string_length_reject|check-fail|tests/safety/unimported_string_length_reject.tl|-|unbound name string-length
-unimported_string_ref_reject|check-fail|tests/safety/unimported_string_ref_reject.tl|-|unbound name string-ref
-unimported_string_eq_reject|check-fail|tests/safety/unimported_string_eq_reject.tl|-|unbound name string-eq
-unimported_string_to_int_reject|check-fail|tests/safety/unimported_string_to_int_reject.tl|-|unbound name string->int
+unbound_near_miss_reject|check-fail|tests/safety/unbound_near_miss_reject.tl|-|help: did you mean render-value?
+unbound_qualified_near_miss_reject|check-fail|tests/safety/unbound_qualified_near_miss_reject.tl|-|help: did you mean string.eq?
+unimported_print_reject|check-fail|tests/safety/unimported_print_reject.tl|-|help: print is provided by stdlib.io — add (import stdlib.io)
+unimported_panic_reject|check-fail|tests/safety/unimported_panic_reject.tl|-|help: panic is provided by stdlib.io — add (import stdlib.io)
+unimported_string_length_reject|check-fail|tests/safety/unimported_string_length_reject.tl|-|help: string-length is provided by stdlib.string — add (import stdlib.string)
+unimported_string_ref_reject|check-fail|tests/safety/unimported_string_ref_reject.tl|-|help: string-ref is provided by stdlib.string — add (import stdlib.string)
+unimported_string_eq_reject|check-fail|tests/safety/unimported_string_eq_reject.tl|-|help: string-eq is provided by stdlib.string — add (import stdlib.string)
+unimported_string_to_int_reject|check-fail|tests/safety/unimported_string_to_int_reject.tl|-|help: string->int is provided by stdlib.string — add (import stdlib.string)
 result_macro_try_error_mismatch_reject|check-fail|tests/safety/result_macro_try_error_mismatch_reject.tl|-|typecheck: try error type mismatch
 generated_match_pattern_non_exhaustive_reject|check-fail|tests/safety/generated_match_pattern_non_exhaustive_reject.tl|-|match missing arm for variant GeneratedPair
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena

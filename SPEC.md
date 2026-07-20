@@ -5363,6 +5363,12 @@ definitions; unimported uses are unbound source names. `panic` and `error`
 report a failure and terminate the process; `error` is an alias for `panic`,
 and both have return type `never` (section 9).
 
+An unbound compatibility name that is known to come from the standard library
+has a structured help diagnostic naming its provider and the import to add.
+Other unbound names receive a `did you mean NAME?` help diagnostic when a
+deterministic best candidate is within the checker's bounded spelling distance
+among names visible at that source location.
+
 **CPU intrinsics.** The low-level CPU instruction forms `cpuid-eax`,
 `cpuid-ebx`, `cpuid-ecx`, `cpuid-edx`, and `xgetbv` are compiler intrinsics.
 Public CPU capability checks use `stdlib.cpu`. The private polymorphic

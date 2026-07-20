@@ -18,13 +18,14 @@
 ;# ```
 (import stdlib.str_cat_runtime)
 (cfg test (import stdlib.string))
-(cfg test (import stdlib.test))
 
-;: Concatenate any number of `String` operands into a fresh active-arena String.
+;: Concatenate any number of string expressions into a fresh active-arena String.
 ;:
 ;: The implementation lives in `stdlib.str_cat_runtime` so bootstrap compiler
-;: sources and public callers execute one checked-in macro body.
-(defmacro (str-cat [args : String ...]) : String
+;: sources and public callers execute one checked-in macro body. Capturing raw
+;: syntax lets the implementation select borrowed helpers for owned or borrowed
+;: string variables while retaining owned-helper handling for rvalues.
+(defmacro (str-cat [args : Expr ...]) : String
   `(stdlib.str_cat_runtime.str-cat-scoped ,@args))
 
 (cfg
@@ -66,6 +67,11 @@
           (string.eq got3 "1:2")
           (string.eq got4 "1:23")
           (string.eq got5 "1:234"))))))
+
+(cfg
+  test
+  (define (str-cat-borrowed-input [text : (& text str)]) : String
+    (str-cat text "!")))
 
 (cfg
   test
@@ -151,12 +157,17 @@
         (if (str-cat-scoped-region-ok?)
           (set! score (+ score 1))
           unit)
+        (let
+          [borrowed : String "borrowed"]
+          (if (string.eq (str-cat-borrowed-input (& borrowed)) "borrowed!")
+            (set! score (+ score 1))
+            unit))
         score))))
 
 (cfg
   test
   (define (str-cat-test-main) : i64
-    (if (= (str-cat-api-checks) 11)
+    (if (= (str-cat-api-checks) 12)
       42
       1)))
 
@@ -164,4 +175,8 @@
   test
   (test
     str-cat-api
-    (test.assert-i64-eq (str-cat-test-main) 42 "str-cat-api fixture result")))
+    (if (= (str-cat-test-main) 42)
+      unit
+      (begin
+        (/ 1 0)
+        unit))))

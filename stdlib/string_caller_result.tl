@@ -3,6 +3,7 @@
 ;# This module stays separate from `string.tl` while the compatibility wrapper
 ;# keeps the owned `String` API. It exposes helpers that may return
 ;# caller-provided text without copying.
+(import stdlib.str_cat)
 (import stdlib.string)
 
 ;: Result for lifetime-preserving string replacement.
@@ -91,10 +92,10 @@
     [hlen : i64 (string-length s)]
     [olen : i64 (string-length old)]
     [prefix : String (string.substring s 0 index)]
-    [prefix-new : String (string.append (& prefix) new)]
+    [prefix-new : String (str_cat.str-cat prefix new)]
     [suffix : String
       (string.substring s (+ index olen) (- (- hlen index) olen))]
-    (string.append prefix-new suffix)))
+    (str_cat.str-cat prefix-new suffix)))
 
 ;: Replace the first occurrence of `old` in `text`, returning a no-match borrow
 ;: tied to `text` or fresh active-arena owned text when a replacement is made.

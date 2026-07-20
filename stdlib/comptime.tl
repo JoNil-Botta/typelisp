@@ -213,10 +213,12 @@
   (expr-mut-call2 callee place first second))
 
 ;: Concatenate two strings during macro CTFE.
+;; lint-allow: deprecated-string-concat
 (define (string-concat [left : String] [_right : String]) : String
   left)
 
 ;: Alias for `string-concat` during macro CTFE.
+;; lint-allow: deprecated-string-concat
 (define (string-append [left : String] [_right : String]) : String
   left)
 
@@ -349,9 +351,14 @@
 (define (module-export-macro? [_module : String] [_name : String]) : bool
   false)
 
+;; `stdlib.comptime` cannot import the runtime `str_cat` macro because that
+;; macro depends on these CTFE declarations.
 ;: Build an expression that calls a macro hook exported by a module strategy.
 (define (module-hook [module : String] [name : String]) : Expr
-  (expr-var (string-concat (string-concat module ".") name)))
+  (expr-var
+    (stdlib.comptime.string-concat
+      (stdlib.comptime.string-concat module ".")
+      name)))
 
 ;: Return true when an expression is a bool literal.
 (define (expr-bool? [value : Expr]) : bool

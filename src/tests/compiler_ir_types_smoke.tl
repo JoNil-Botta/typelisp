@@ -2,9 +2,121 @@
 (import stdlib.string)
 (import "../compiler_ir_types.tl")
 (import compiler_intern as ci)
+(import compiler_builtin_ids as cbi)
 
 (define (compiler-ir-smoke-symbol-id [name : String]) : i64
   (ci.intern-generated-canonical-name name))
+
+(define (compiler-ir-smoke-call-effect-id-is?
+  [name : i64]
+  [effect : CompilerIrEffect]) : bool
+  (compiler-ir-effect-eq? (compiler-ir-direct-call-effect-id name) effect))
+
+(define (compiler-ir-smoke-runtime-effect-ids-ok?) : bool
+  (and
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-region-mark
+      CompilerIrEffect.MemoryRead)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-stdin-eof-label
+      CompilerIrEffect.MemoryRead)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-alloc
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-int-to-string
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-substring
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-string-concat
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-string-concat3
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-string-concat4
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-string-concat5
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-region-reset
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-array-fill8
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-array-zero
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-flush-stdout-label
+      CompilerIrEffect.MemoryWrite)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-abort-label
+      CompilerIrEffect.ControlFlow)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-oob-abort
+      CompilerIrEffect.ControlFlow)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-div-abort
+      CompilerIrEffect.ControlFlow)
+    (compiler-ir-smoke-call-effect-id-is?
+      cbi.compiler-builtin-id-tl-shift-abort
+      CompilerIrEffect.ControlFlow)))
+
+(define (compiler-ir-smoke-runtime-effect-identity-ok?) : bool
+  (let
+    [generated-alloc : i64 (ci.intern-generated-canonical-name "tl_alloc")]
+    [generated-abort : i64 (ci.intern-generated-canonical-name ".L_tl_abort")]
+    [unknown-extern : i64 (ci.intern-source-slice "user_or_extern_call" 0 19)]
+    (and
+      (not (= generated-alloc cbi.compiler-builtin-id-tl-alloc))
+      (string.eq
+        (compiler-ir-symbol-text generated-alloc)
+        (compiler-ir-symbol-text cbi.compiler-builtin-id-tl-alloc))
+      (compiler-ir-symbol-eq?
+        cbi.compiler-builtin-id-tl-alloc
+        cbi.compiler-builtin-id-tl-alloc)
+      (not
+        (compiler-ir-symbol-eq?
+          generated-alloc
+          cbi.compiler-builtin-id-tl-alloc))
+      (compiler-ir-smoke-call-effect-id-is?
+        generated-alloc
+        CompilerIrEffect.Unknown)
+      (compiler-ir-smoke-call-effect-id-is?
+        generated-abort
+        CompilerIrEffect.Unknown)
+      (compiler-ir-smoke-call-effect-id-is?
+        unknown-extern
+        CompilerIrEffect.Unknown))))
+
+(define (compiler-ir-smoke-runtime-effect-reset-ok?) : bool
+  (let
+    [old-alloc : i64 cbi.compiler-builtin-id-tl-alloc]
+    [old-stdin : i64 cbi.compiler-builtin-id-tl-stdin-eof-label]
+    (begin
+      (ci.intern-reset!)
+      (cbi.compiler-builtin-reset!)
+      (ci.intern-source-slice "reset-prefix" 0 12)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (and
+        (not (= old-alloc cbi.compiler-builtin-id-tl-alloc))
+        (not (= old-stdin cbi.compiler-builtin-id-tl-stdin-eof-label))
+        (compiler-ir-smoke-runtime-effect-ids-ok?)
+        (compiler-ir-smoke-runtime-effect-identity-ok?)))))
+
+(define (compiler-ir-smoke-runtime-effect-self-test-ok?) : bool
+  (begin
+    (ci.intern-reset!)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (and
+      (compiler-ir-smoke-runtime-effect-ids-ok?)
+      (compiler-ir-smoke-runtime-effect-identity-ok?)
+      (compiler-ir-smoke-runtime-effect-reset-ok?))))
 
 (define (compiler-ir-smoke-function-list-first-name?
   [functions : CompilerIrFunctionList]
@@ -482,4 +594,5 @@
     (unless (compiler-ir-smoke-dense-function-params-ok?) (return 4))
     (unless (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) (return 5))
     (unless (compiler-ir-smoke-access-helpers-ok?) (return 6))
+    (unless (compiler-ir-smoke-runtime-effect-self-test-ok?) (return 7))
     (compiler-ir-effect-self-test)))

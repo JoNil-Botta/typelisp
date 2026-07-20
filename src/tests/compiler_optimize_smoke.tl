@@ -2301,6 +2301,10 @@
 
 (define (main) : i64
   (begin
+    (compiler-optimize-self-test-require-i64!
+      "compiler-optimize-runtime-call-identity-self-test"
+      (compiler-optimize-runtime-call-identity-self-test)
+      42)
     (smoke-optimizer-core-self-tests)
     (smoke-optimizer-loop-self-tests)
     (smoke-optimizer-late-self-tests)

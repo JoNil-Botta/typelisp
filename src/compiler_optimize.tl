@@ -2811,7 +2811,7 @@
   (match instr
     [(CompilerIrInstr.Call dst name args ty)
       (if (and
-        (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+        (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (opt-aggregate-fixed-type? ty))
         (match (opt-aggregate-tl-alloc-size args)
           [(option_i64.Some size)
@@ -3171,7 +3171,9 @@
   [ptrs : opt_aggregate_pointer_vec.Vec]) : bool
   (match instr
     [(CompilerIrInstr.Call dst name _ _)
-      (and (= dst base) (string.eq (compiler-ir-symbol-text name) "tl_alloc"))]
+      (and
+        (= dst base)
+        (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc))]
     [(CompilerIrInstr.Gep _ src offset _)
       (match (opt-aggregate-value-offset base ptrs src)
         [(option_i64.Some _)
@@ -11589,6 +11591,28 @@
           (> (- (array-ref offsets (+ id 1)) (array-ref offsets id)) 0))]
       [(option_i64.None) false])))
 
+;; Give the implicit function-entry edge an ordinary CFG label when a backedge
+;; targets the first lowered block. Parameters dominate this fresh preheader,
+;; which makes their initial values available as normal phi inputs at the old
+;; entry. The old entry remains the loop header and every existing backedge
+;; remains untouched. A label collision fails closed by returning the original
+;; blocks; the caller observes that their entry still has predecessors.
+(define (opt-ssa-explicit-entry-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [entry : String (opt-cfg-entry-label blocks)]
+    [preheader : String (string.append entry "__ssa_entry")]
+    (if (or
+      (= (string.string-length entry) 0)
+      (opt-cfg-block-exists? blocks preheader))
+      blocks
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          preheader
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump entry)
+            (CompilerIrInstrList.Nil)))
+        blocks))))
+
 (define (opt-ssa-construct-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -11605,17 +11629,6 @@
               func
               (let
                 [context : OptCfgContext (opt-cfg-context-build blocks)]
-                ;; A CFG edge into the entry block (the tail-recursion-to-loop
-                ;; back edge) cannot be represented in SSA: the entry block's
-                ;; initial values (parameters and prologue defs) arrive over the
-                ;; implicit function-entry edge, which has no predecessor block
-                ;; or label. A phi inserted at the entry block only sees the
-                ;; explicit predecessors, so renaming silently drops the
-                ;; first-iteration values (opt2 self-build miscompile: the
-                ;; emitted entry block of intern-fill-empty read the back-edge
-                ;; staging temps before their first write). Skip SSA
-                ;; construction for such functions; the non-SSA passes still
-                ;; run.
                 (if (opt-ssa-entry-has-preds? context)
                   func
                   (opt-ssa-construct-with-context
@@ -11708,14 +11721,6 @@
                 (OptFunctionCtxResult.Result func context)]
               [(not (opt-ssa-any-candidate? facts))
                 (OptFunctionCtxResult.Result func context)]
-              ;; A CFG edge into the entry block (the tail-recursion-to-loop
-              ;; back edge) cannot be represented in SSA: the entry block's
-              ;; initial values (parameters and prologue defs) arrive over the
-              ;; implicit function-entry edge, which has no predecessor block
-              ;; or label. A phi inserted at the entry block only sees the
-              ;; explicit predecessors, so renaming silently drops the
-              ;; first-iteration values. Skip SSA construction for such
-              ;; functions; the non-SSA passes still run.
               [(opt-ssa-entry-has-preds? context)
                 (OptFunctionCtxResult.Result func context)]
               [else
@@ -11736,7 +11741,8 @@
 ;; unchanged and the existing block-local optimizer still runs. For verified
 ;; functions, a copy/expression fact is available only in the defining block
 ;; after the defining instruction, or in a block dominated by the definition's
-;; block. Phi inputs are edge uses and are intentionally not rewritten.
+;; block. Phi inputs are resolved at the end of their named predecessor, never
+;; at the phi block itself.
 (defenum OptGlobalExprKey
   (MovKey CompilerIrValue AstType)
   (GepKey CompilerIrValue CompilerIrValue AstType)
@@ -12469,10 +12475,52 @@
             0)
           (CompilerIrSpmdCallArgList.Array (CompilerIrSpmdCallArgSeq out count))))]))
 
+;; A phi input is read on its named predecessor edge. Resolve a copy using the
+;; predecessor as the use block and a position after its final instruction.
+;; This folds latch-local copies such as `%next = mov %step` directly into a
+;; loop-header phi without relying on whole-function register pressure for the
+;; allocator to coalesce them.
+(define (opt-global-copy-subst-phi-inputs
+  [facts : OptGlobalCopyFactTable]
+  [doms : OptDomInfo]
+  [uses : (Array i64)]
+  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-global-copy-subst-phi-inputs
+        facts
+        doms
+        uses
+        (compiler-ir-phi-input-seq-to-list seq))]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (compiler-ir-phi-input-cons
+        (match value
+          [(CompilerIrValue.Var var)
+            ;; A multiply-used copy can be an intentional live-range split.
+            ;; Forward only a single-use copy into its phi edge; this removes
+            ;; redundant latch/arm copies without extending the source across
+            ;; other outgoing edges or phi consumers.
+            (if (and
+              (>= var 0)
+              (< var (array-length uses))
+              (= (array-ref uses var) 1))
+              (opt-global-copy-resolve
+                facts
+                doms
+                (opt-global-block-id doms label)
+                9223372036854775807
+                value)
+              value)]
+          [_ value])
+        label
+        (opt-global-copy-subst-phi-inputs facts doms uses (box-get rest)))]))
+
 (define (opt-global-copy-subst-instr
   [facts : OptGlobalCopyFactTable]
   [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
+  [uses : (Array i64)]
   [block-id : i64]
   [pos : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -12684,7 +12732,11 @@
     [(CompilerIrInstr.Alloc _ _) instr]
     [(CompilerIrInstr.LaneId _ _ _) instr]
     [(CompilerIrInstr.Jump _) instr]
-    [(CompilerIrInstr.Phi _ _ _) instr]
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (CompilerIrInstr.Phi
+        dst
+        (opt-global-copy-subst-phi-inputs facts doms uses inputs)
+        ty)]
     ;; Pack operands remain unchanged. A dominated Word of a known Pack becomes
     ;; an ordinary copy; the pass's second copy sweep forwards that copy into
     ;; all non-phi uses, and late DCE retires the dead Word/Pack chain.
@@ -12719,6 +12771,7 @@
   [facts : OptGlobalCopyFactTable]
   [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
+  [uses : (Array i64)]
   [block-label : String]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
@@ -12736,6 +12789,7 @@
                 facts
                 pack-facts
                 doms
+                uses
                 block-id
                 (+ index 1)
                 (array-ref slots index))
@@ -12747,6 +12801,7 @@
   [facts : OptGlobalCopyFactTable]
   [pack-facts : OptGlobalPackWordFactTable]
   [doms : OptDomInfo]
+  [uses : (Array i64)]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -12756,13 +12811,20 @@
           (compiler-ir-block-cons
             (compiler-ir-block
               label
-              (opt-global-copy-instr-seq facts pack-facts doms label instrs))
-            (opt-global-copy-blocks facts pack-facts doms (box-get rest)))])]
+              (opt-global-copy-instr-seq
+                facts
+                pack-facts
+                doms
+                uses
+                label
+                instrs))
+            (opt-global-copy-blocks facts pack-facts doms uses (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-global-copy-blocks
         facts
         pack-facts
         doms
+        uses
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-global-expr-facts-from-instr-seq-from
@@ -13084,6 +13146,7 @@
 
 (define (opt-global-value-number-blocks-with-context
   [context : OptCfgContext]
+  [frame : i64]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [doms : OptDomInfo (struct-get context doms)]
@@ -13098,8 +13161,9 @@
         (OptGlobalPackWordFacts.Nil))]
     [pack-word-facts : OptGlobalPackWordFactTable
       (opt-global-pack-word-table-from-facts pack-word-fact-list)]
+    [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
     [copied : CompilerIrBlockList
-      (opt-global-copy-blocks copy-facts pack-word-facts doms blocks)]
+      (opt-global-copy-blocks copy-facts pack-word-facts doms uses blocks)]
     [expr-fact-list : OptGlobalExprFacts
       (opt-global-expr-facts-from-blocks doms copied (OptGlobalExprFacts.Nil))]
     [expr-facts : OptGlobalExprFactTable
@@ -13110,7 +13174,8 @@
       (opt-global-copy-facts-from-blocks doms cse (OptGlobalCopyFacts.Nil))]
     [cse-copy-facts : OptGlobalCopyFactTable
       (opt-global-copy-table-from-facts cse-copy-fact-list)]
-    (opt-global-copy-blocks cse-copy-facts pack-word-facts doms cse)))
+    [cse-uses : (Array i64) (opt-collect-blocks-uses-array frame cse)]
+    (opt-global-copy-blocks cse-copy-facts pack-word-facts doms cse-uses cse)))
 
 (define (opt-global-value-number-function-with-context
   [context : OptCfgContext]
@@ -13130,7 +13195,7 @@
             params
             ret-ty
             frame
-            (opt-global-value-number-blocks-with-context context blocks))])]
+            (opt-global-value-number-blocks-with-context context frame blocks))])]
     [(ResultCompilerOptimizeVerify.Err _) func]))
 
 (define (opt-global-value-number-function [func : CompilerIrFunction]) : CompilerIrFunction
@@ -14782,47 +14847,11 @@
           (opt-loop-rotation-blocks-fixed next (- remaining 1))
           next)])))
 
-(define (opt-loop-rotation-successor-seen?
-  [successors : OptLabelSet]
-  [seen : OptLabelSet]) : bool
-  (match successors
-    [(OptLabelSet.Nil) false]
-    [(OptLabelSet.Cons label rest)
-      (if (opt-label-contains seen label)
-        true
-        (opt-loop-rotation-successor-seen? (box-get rest) seen))]))
-
-(define (opt-loop-rotation-has-backedge-candidate-from?
-  [blocks : CompilerIrBlockList]
-  [seen : OptLabelSet]) : bool
-  (match blocks
-    [(CompilerIrBlockList.Nil) false]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block label _)
-          (let
-            [next-label : String (opt-cfg-entry-label (box-get rest))]
-            [next-seen : OptLabelSet (opt-label-add seen label)]
-            (if (opt-loop-rotation-successor-seen?
-              (opt-cfg-block-successors-with-next block next-label)
-              next-seen)
-              true
-              (opt-loop-rotation-has-backedge-candidate-from?
-                (box-get rest)
-                next-seen)))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-loop-rotation-has-backedge-candidate-from?
-        (compiler-ir-block-seq-to-list seq)
-        seen)]))
-
-(define (opt-loop-rotation-has-backedge-candidate?
-  [blocks : CompilerIrBlockList]) : bool
-  (opt-loop-rotation-has-backedge-candidate-from? blocks (OptLabelSet.Nil)))
-
 (define (opt-loop-rotation-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (if (or
-    (opt-ssa-blocks-have-phi? blocks)
-    (not (opt-loop-rotation-has-backedge-candidate? blocks)))
+  ;; The natural-loop finder is dominance based, so let it decide whether the
+  ;; CFG contains a loop. Textual block order is not a loop property: inlining
+  ;; and block layout may put a latch before its header.
+  (if (opt-ssa-blocks-have-phi? blocks)
     blocks
     (opt-loop-rotation-blocks-fixed
       blocks
@@ -14906,9 +14935,6 @@
 
 (define (opt-rotate-ssa-land-label [header : String]) : String
   (string.append header "__rotate_land"))
-
-(define (opt-rotate-ssa-block-limit) : i64
-  512)
 
 (define (opt-rotate-ssa-only-label? [set : OptLabelSet] [label : String]) : bool
   (and (= (opt-label-count set) 1) (opt-label-contains set label)))
@@ -15622,39 +15648,37 @@
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (> (compiler-ir-block-list-count blocks) (opt-rotate-ssa-block-limit))
-        (OptFunctionCtxResult.Result func context)
-        (match (opt-verify-gate verified? func context)
-          [(ResultCompilerOptimizeVerify.Ok)
-            (match (opt-rotate-ssa-loops
-              blocks
-              context
-              frame
-              (opt-cfg-natural-loops-with-context blocks context))
-              [(OptRotateSsaRewrite.No)
-                (OptFunctionCtxResult.Result func context)]
-              [(OptRotateSsaRewrite.Some next-blocks next-frame)
-                (let
-                  [next : CompilerIrFunction
-                    (CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      next-frame
-                      next-blocks)]
-                  ;; Rotation rewires the CFG, so build one fresh context for
-                  ;; the rewritten blocks, reuse it for the post-pass verify,
-                  ;; and hand it back for the next pass. Any verifier rejection
-                  ;; falls back to the input function unchanged.
-                  [next-context : OptCfgContext
-                    (opt-cfg-context-build next-blocks)]
-                  (match (opt-verify-function-with-context next next-context)
-                    [(ResultCompilerOptimizeVerify.Ok)
-                      (OptFunctionCtxResult.Result next next-context)]
-                    [(ResultCompilerOptimizeVerify.Err _)
-                      (OptFunctionCtxResult.Result func context)]))])]
-          [(ResultCompilerOptimizeVerify.Err _)
-            (OptFunctionCtxResult.Result func context)]))]))
+      (match (opt-verify-gate verified? func context)
+        [(ResultCompilerOptimizeVerify.Ok)
+          (match (opt-rotate-ssa-loops
+            blocks
+            context
+            frame
+            (opt-cfg-natural-loops-with-context blocks context))
+            [(OptRotateSsaRewrite.No)
+              (OptFunctionCtxResult.Result func context)]
+            [(OptRotateSsaRewrite.Some next-blocks next-frame)
+              (let
+                [next : CompilerIrFunction
+                  (CompilerIrFunction.Function
+                    name
+                    params
+                    ret-ty
+                    next-frame
+                    next-blocks)]
+                ;; Rotation rewires the CFG, so build one fresh context for
+                ;; the rewritten blocks, reuse it for the post-pass verify,
+                ;; and hand it back for the next pass. Any verifier rejection
+                ;; falls back to the input function unchanged.
+                [next-context : OptCfgContext
+                  (opt-cfg-context-build next-blocks)]
+                (match (opt-verify-function-with-context next next-context)
+                  [(ResultCompilerOptimizeVerify.Ok)
+                    (OptFunctionCtxResult.Result next next-context)]
+                  [(ResultCompilerOptimizeVerify.Err _)
+                    (OptFunctionCtxResult.Result func context)]))])]
+        [(ResultCompilerOptimizeVerify.Err _)
+          (OptFunctionCtxResult.Result func context)])]))
 
 ;; --- conservative loop-invariant code motion --------------------------------
 ;;
@@ -15925,7 +15949,7 @@
     (& direct-call-clean)
     (compiler-ir-symbol-id name))
     (opt-licm-store-summary-empty)
-    (match (compiler-ir-direct-call-effect (compiler-ir-symbol-text name))
+    (match (compiler-ir-direct-call-effect-id name)
       [(CompilerIrEffect.MemoryRead) (opt-licm-store-summary-empty)]
       [(CompilerIrEffect.MemoryWrite)
         (opt-licm-store-summary-header-or-unknown-store)]
@@ -16110,7 +16134,7 @@
     ;; opt-licm-provenance-state-instr immediately after this update.
     [(CompilerIrInstr.Load dst _ _) (opt-licm-root-env-remove! env dst)]
     [(CompilerIrInstr.Call dst name _ _)
-      (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+      (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (opt-licm-root-env-bind! env dst (OptLicmRoot.Fresh dst))
         unit)]
     [_ unit]))
@@ -17082,7 +17106,7 @@
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [(CompilerIrInstr.Store _ _ _) true]
     [(CompilerIrInstr.Call _ name _ _)
-      (compiler-ir-runtime-control-flow? (compiler-ir-symbol-text name))]
+      (compiler-ir-runtime-control-flow-id? name)]
     [(CompilerIrInstr.Jump _) true]
     ;; a Branch is only ever a terminator; the walk itself validates both
     ;; of its arms.
@@ -28968,11 +28992,9 @@
     (array.make-array i64 0)
     blocks))
 
-;; Block-count ceiling for the dominator-based heavy passes (GVN, LICM,
-;; induction, global GVN). Dominance now uses the integer CFG index and idom
-;; Euler ranges, so >1024-block functions can keep the heavy passes. Keep this
-;; raise narrow for now because the same ceiling also bounds self-host inlining
-;; across the heavy-pass gate.
+;; Whole-function transforms keep a pathological-CFG work cap. Loop transforms
+;; do not use this value: `run-loop?` below is deliberately unconditional and
+;; every loop pass applies its own natural-loop-local admission checks.
 (define (opt-heavy-pass-block-limit) : i64
   1026)
 
@@ -29034,6 +29056,103 @@
     [(CompilerIrCallArgs.Array values)
       (opt-tailrec-array-values-to-list values 0)]))
 
+;; An unchanged tail argument needs no write back to its parameter slot. A
+;; non-scalar identity is the structural trigger: when a caller containing an
+;; already-SSA inner region is converted to a loop, non-scalars remain outside
+;; scalar SSA and such a write would be a permanent duplicate definition. Once
+;; that exact hybrid call-site shape is proven, the rewrite also omits its
+;; unchanged scalar arguments. The predicate is paired by parameter and
+;; argument at this call site; it is independent of enclosing function size and
+;; layout.
+(define (opt-tailrec-hybrid-identity-args?
+  [params : CompilerIrParamList]
+  [args : CompilerIrValueList]) : bool
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) false]
+    [(CompilerIrParamList.Array seq)
+      (opt-tailrec-hybrid-identity-args?
+        (compiler-ir-param-seq-to-list seq)
+        args)]
+    [(CompilerIrParamList.Cons param prest)
+      (match args
+        [(CompilerIrValueList.Nil) false]
+        [(CompilerIrValueList.Array seq)
+          (opt-tailrec-hybrid-identity-args?
+            params
+            (compiler-ir-value-seq-to-list seq))]
+        [(CompilerIrValueList.Cons arg arest)
+          (match param
+            [(CompilerIrParam.Param _ ty var-id)
+              (if (and
+                (not (opt-ssa-scalar-type? ty))
+                (match arg
+                  [(CompilerIrValue.Var source) (= source var-id)]
+                  [_ false]))
+                true
+                (opt-tailrec-hybrid-identity-args?
+                  (box-get prest)
+                  (box-get arest)))])])]))
+
+(define (opt-tailrec-instrs-have-hybrid-identity-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [fname : i64]
+  [n : i64]
+  [params : CompilerIrParamList]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.TailCall name args _)
+        (if (and
+          (compiler-ir-symbol-eq? name fname)
+          (= (compiler-ir-call-args-count args) n)
+          (opt-tailrec-hybrid-identity-args?
+            params
+            (opt-tailrec-args-to-list args)))
+          true
+          (opt-tailrec-instrs-have-hybrid-identity-from?
+            instrs
+            (+ index 1)
+            fname
+            n
+            params))]
+      [_
+        (opt-tailrec-instrs-have-hybrid-identity-from?
+          instrs
+          (+ index 1)
+          fname
+          n
+          params)])))
+
+(define (opt-tailrec-blocks-have-hybrid-identity?
+  [blocks : CompilerIrBlockList]
+  [fname : i64]
+  [n : i64]
+  [params : CompilerIrParamList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (opt-tailrec-instrs-have-hybrid-identity-from?
+            instrs
+            0
+            fname
+            n
+            params)
+            true
+            (opt-tailrec-blocks-have-hybrid-identity?
+              (box-get rest)
+              fname
+              n
+              params))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-tailrec-blocks-have-hybrid-identity?
+        (compiler-ir-block-seq-to-list seq)
+        fname
+        n
+        params)]))
+
 ;; Copy each parameter's staged temp back into the parameter slot, then append
 ;; `tail` (the back-edge jump). Run after all of the staging moves so the temps
 ;; already hold the new argument values.
@@ -29056,6 +29175,53 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Mov var-id (CompilerIrValue.Var (+ base index)) ty)
             (opt-tailrec-assign-movs (box-get prest) base (+ index 1) tail))])]))
+
+(define (opt-tailrec-assign-movs-hybrid
+  [params : CompilerIrParamList]
+  [args : CompilerIrValueList]
+  [base : i64]
+  [index : i64]
+  [tail : CompilerIrInstrList]) : CompilerIrInstrList
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) tail]
+    [(CompilerIrParamList.Array seq)
+      (opt-tailrec-assign-movs-hybrid
+        (compiler-ir-param-seq-to-list seq)
+        args
+        base
+        index
+        tail)]
+    [(CompilerIrParamList.Cons param prest)
+      (match args
+        [(CompilerIrValueList.Nil) tail]
+        [(CompilerIrValueList.Array seq)
+          (opt-tailrec-assign-movs-hybrid
+            params
+            (compiler-ir-value-seq-to-list seq)
+            base
+            index
+            tail)]
+        [(CompilerIrValueList.Cons arg arest)
+          (match param
+            [(CompilerIrParam.Param _ ty var-id)
+              (let
+                [next : CompilerIrInstrList
+                  (opt-tailrec-assign-movs-hybrid
+                    (box-get prest)
+                    (box-get arest)
+                    base
+                    (+ index 1)
+                    tail)]
+                (if (match arg
+                  [(CompilerIrValue.Var source) (= source var-id)]
+                  [_ false])
+                  next
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      var-id
+                      (CompilerIrValue.Var (+ base index))
+                      ty)
+                    next)))])])]))
 
 ;; Evaluate each argument into a fresh temp slot (`base + i`) before any
 ;; parameter slot is overwritten, so argument aliasing on the parameters is
@@ -29115,6 +29281,7 @@
   [params : CompilerIrParamList]
   [n : i64]
   [base : i64]
+  [hybrid? : bool]
   [entry-label : String]) : CompilerIrInstrList
   (if (>= index (compiler-ir-instr-seq-count instrs))
     CompilerIrInstrList.Nil
@@ -29123,18 +29290,29 @@
       (if (opt-tailrec-self-call? instr fname n)
         (match instr
           [(CompilerIrInstr.TailCall _ args _)
-            (opt-tailrec-stage-movs
-              params
-              (opt-tailrec-args-to-list args)
-              base
-              0
-              (opt-tailrec-assign-movs
+            (let
+              [arg-list : CompilerIrValueList (opt-tailrec-args-to-list args)]
+              (opt-tailrec-stage-movs
                 params
+                arg-list
                 base
                 0
-                (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump entry-label)
-                  CompilerIrInstrList.Nil)))]
+                (if hybrid?
+                  (opt-tailrec-assign-movs-hybrid
+                    params
+                    arg-list
+                    base
+                    0
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump entry-label)
+                      CompilerIrInstrList.Nil))
+                  (opt-tailrec-assign-movs
+                    params
+                    base
+                    0
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump entry-label)
+                      CompilerIrInstrList.Nil)))))]
           [_ CompilerIrInstrList.Nil])
         (compiler-ir-instr-cons
           instr
@@ -29145,6 +29323,7 @@
             params
             n
             base
+            hybrid?
             entry-label))))))
 
 (define (opt-tailrec-rewrite-instr-seq
@@ -29153,8 +29332,17 @@
   [params : CompilerIrParamList]
   [n : i64]
   [base : i64]
+  [hybrid? : bool]
   [entry-label : String]) : CompilerIrInstrList
-  (opt-tailrec-rewrite-instr-seq-from instrs 0 fname params n base entry-label))
+  (opt-tailrec-rewrite-instr-seq-from
+    instrs
+    0
+    fname
+    params
+    n
+    base
+    hybrid?
+    entry-label))
 
 (define (opt-tailrec-rewrite-blocks
   [blocks : CompilerIrBlockList]
@@ -29162,6 +29350,7 @@
   [params : CompilerIrParamList]
   [n : i64]
   [base : i64]
+  [hybrid? : bool]
   [entry-label : String]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -29177,6 +29366,7 @@
                 params
                 n
                 base
+                hybrid?
                 entry-label))
             (opt-tailrec-rewrite-blocks
               (box-get rest)
@@ -29184,6 +29374,7 @@
               params
               n
               base
+              hybrid?
               entry-label))])]
     [(CompilerIrBlockList.Array seq)
       (opt-tailrec-rewrite-blocks
@@ -29192,6 +29383,7 @@
         params
         n
         base
+        hybrid?
         entry-label)]))
 
 (define (opt-tailrec-instr-seq-has-convertible-from?
@@ -29241,18 +29433,28 @@
       (let
         [n : i64 (opt-tailrec-param-count params)]
         (if (opt-tailrec-blocks-have-convertible? blocks name n)
-          (CompilerIrFunction.Function
-            name
-            params
-            ret
-            (+ vars n)
-            (opt-tailrec-rewrite-blocks
-              blocks
+          (let
+            [hybrid? : bool
+              (and
+                (opt-ssa-blocks-have-phi? blocks)
+                (opt-tailrec-blocks-have-hybrid-identity? blocks name n params))]
+            [rewritten : CompilerIrBlockList
+              (opt-tailrec-rewrite-blocks
+                blocks
+                name
+                params
+                n
+                vars
+                hybrid?
+                (opt-cfg-entry-label blocks))]
+            (CompilerIrFunction.Function
               name
               params
-              n
-              vars
-              (opt-cfg-entry-label blocks)))
+              ret
+              (+ vars n)
+              (if hybrid?
+                (opt-ssa-explicit-entry-blocks rewritten)
+                rewritten)))
           func))]))
 
 ;; --- canonical counted-loop unrolling (x16 straight-line / x2 diamond) -------
@@ -29318,10 +29520,6 @@
 
 (defenum OptUnrollResult
   (Result CompilerIrBlockList i64 bool))
-
-;; Hard cap: skip the whole pass on very large functions.
-(define (opt-unroll-block-limit) : i64
-  512)
 
 (define (opt-unroll-phi-prefix-count
   [instrs : CompilerIrInstrSeq]
@@ -30531,67 +30729,65 @@
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
-          (if (> (compiler-ir-block-list-count blocks) (opt-unroll-block-limit))
-            (OptFunctionCtxResult.Result func context)
-            (match (opt-unroll-blocks-scan
-              blocks
-              blocks
-              (opt-cfg-entry-label blocks)
-              frame)
-              [(OptUnrollResult.Result next-blocks next-frame changed)
-                (if changed
-                  (let
-                    [next : CompilerIrFunction
-                      (CompilerIrFunction.Function
-                        name
-                        params
-                        ret-ty
-                        next-frame
-                        next-blocks)]
-                    ;; Unrolling rewrites the CFG, so build one fresh context
-                    ;; for the new blocks, reuse it for the post-pass verify,
-                    ;; and hand it back for the next pass.
-                    [next-context : OptCfgContext
-                      (opt-cfg-context-build next-blocks)]
-                    (match (opt-verify-function-with-context next next-context)
-                      [(ResultCompilerOptimizeVerify.Ok)
-                        (OptFunctionCtxResult.Result next next-context)]
-                      [(ResultCompilerOptimizeVerify.Err _)
-                        (OptFunctionCtxResult.Result func context)]))
-                  ;; The original unroller's prescan and shape scanner only
-                  ;; admit a self-loop whose header is also its latch. A
-                  ;; versioned conditional body instead has a separate merge
-                  ;; latch, so try the conservative x2 diamond path over the
-                  ;; natural-loop records when the straight-line scan misses.
-                  (let
-                    [loops : OptNaturalLoopList
-                      (opt-cfg-natural-loops-with-context blocks context)]
-                    (match (opt-unroll-mb-loops-scan
-                      blocks
-                      loops
-                      loops
-                      (opt-cfg-entry-label blocks)
-                      frame)
-                      [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
-                        (if mb-changed
-                          (let
-                            [mb-next : CompilerIrFunction
-                              (CompilerIrFunction.Function
-                                name
-                                params
-                                ret-ty
-                                mb-frame
-                                mb-blocks)]
-                            [mb-context : OptCfgContext
-                              (opt-cfg-context-build mb-blocks)]
-                            (match (opt-verify-function-with-context
-                              mb-next
-                              mb-context)
-                              [(ResultCompilerOptimizeVerify.Ok)
-                                (OptFunctionCtxResult.Result mb-next mb-context)]
-                              [(ResultCompilerOptimizeVerify.Err _)
-                                (OptFunctionCtxResult.Result func context)]))
-                          (OptFunctionCtxResult.Result func context))])))]))])]
+          (match (opt-unroll-blocks-scan
+            blocks
+            blocks
+            (opt-cfg-entry-label blocks)
+            frame)
+            [(OptUnrollResult.Result next-blocks next-frame changed)
+              (if changed
+                (let
+                  [next : CompilerIrFunction
+                    (CompilerIrFunction.Function
+                      name
+                      params
+                      ret-ty
+                      next-frame
+                      next-blocks)]
+                  ;; Unrolling rewrites the CFG, so build one fresh context
+                  ;; for the new blocks, reuse it for the post-pass verify,
+                  ;; and hand it back for the next pass.
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  (match (opt-verify-function-with-context next next-context)
+                    [(ResultCompilerOptimizeVerify.Ok)
+                      (OptFunctionCtxResult.Result next next-context)]
+                    [(ResultCompilerOptimizeVerify.Err _)
+                      (OptFunctionCtxResult.Result func context)]))
+                ;; The original unroller's prescan and shape scanner only
+                ;; admit a self-loop whose header is also its latch. A
+                ;; versioned conditional body instead has a separate merge
+                ;; latch, so try the conservative x2 diamond path over the
+                ;; natural-loop records when the straight-line scan misses.
+                (let
+                  [loops : OptNaturalLoopList
+                    (opt-cfg-natural-loops-with-context blocks context)]
+                  (match (opt-unroll-mb-loops-scan
+                    blocks
+                    loops
+                    loops
+                    (opt-cfg-entry-label blocks)
+                    frame)
+                    [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
+                      (if mb-changed
+                        (let
+                          [mb-next : CompilerIrFunction
+                            (CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              mb-frame
+                              mb-blocks)]
+                          [mb-context : OptCfgContext
+                            (opt-cfg-context-build mb-blocks)]
+                          (match (opt-verify-function-with-context
+                            mb-next
+                            mb-context)
+                            [(ResultCompilerOptimizeVerify.Ok)
+                              (OptFunctionCtxResult.Result mb-next mb-context)]
+                            [(ResultCompilerOptimizeVerify.Err _)
+                              (OptFunctionCtxResult.Result func context)]))
+                        (OptFunctionCtxResult.Result func context))])))])])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -30640,9 +30836,6 @@
 (defenum OptBceVersionGuardResult
   (No)
   (Some CompilerIrInstrList CompilerIrValue))
-
-(define (opt-bce-version-block-limit) : i64
-  512)
 
 (define (opt-bce-version-body-max) : i64
   48)
@@ -34016,58 +34209,6 @@
             frame)])]))
 
 ;; --- prescan ---------------------------------------------------------------------
-(define (opt-bce-mb-block-starts-phi?
-  [blocks : CompilerIrBlockList]
-  [label : String]) : bool
-  (match (opt-cfg-find-block blocks label)
-    [(OptMaybeBlock.No) false]
-    [(OptMaybeBlock.Some block)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (and
-            (> (compiler-ir-instr-seq-count instrs) 0)
-            (compiler-ir-instr-seq-phi? instrs 0))])]))
-
-;; A back edge into a phi header: some block branches or jumps to an EARLIER
-;; block that starts with a Phi.
-(define (opt-bce-mb-back-edge-to-phi?
-  [blocks : CompilerIrBlockList]
-  [all : CompilerIrBlockList]
-  [seen : OptLabelSet]) : bool
-  (match blocks
-    [(CompilerIrBlockList.Nil) false]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block label instrs)
-          (let
-            [count : i64 (compiler-ir-instr-seq-count instrs)]
-            (if (and
-              (> count 0)
-              (match (compiler-ir-instr-seq-ref instrs (- count 1))
-                [(CompilerIrInstr.Jump target)
-                  (and
-                    (opt-label-contains seen target)
-                    (opt-bce-mb-block-starts-phi? all target))]
-                [(CompilerIrInstr.Branch _ then-label else-label)
-                  (or
-                    (and
-                      (opt-label-contains seen then-label)
-                      (opt-bce-mb-block-starts-phi? all then-label))
-                    (and
-                      (opt-label-contains seen else-label)
-                      (opt-bce-mb-block-starts-phi? all else-label)))]
-                [_ false]))
-              true
-              (opt-bce-mb-back-edge-to-phi?
-                (box-get rest)
-                all
-                (opt-label-add seen label))))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-bce-mb-back-edge-to-phi?
-        (compiler-ir-block-seq-to-list seq)
-        all
-        seen)]))
-
 (define (opt-bce-mb-blocks-have-check? [blocks : CompilerIrBlockList]) : bool
   (match blocks
     [(CompilerIrBlockList.Nil) false]
@@ -34086,12 +34227,10 @@
     [(CompilerIrBlockList.Array seq)
       (opt-bce-mb-blocks-have-check? (compiler-ir-block-seq-to-list seq))]))
 
-;; Cheap prescan: a candidate needs a back edge into a phi header and at
-;; least one BoundsCheck anywhere in the function.
+;; Cheap prescan only checks facts that are invariant under block layout. The
+;; full candidate scan below uses dominance-based natural loops.
 (define (opt-bce-mb-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
-  (and
-    (opt-bce-mb-blocks-have-check? blocks)
-    (opt-bce-mb-back-edge-to-phi? blocks blocks (OptLabelSet.Nil))))
+  (and (opt-bce-mb-blocks-have-check? blocks) (opt-ssa-blocks-have-phi? blocks)))
 
 ;; Rebuild the function around a versioned block list and verify it, falling
 ;; back to the original function when the verifier rejects the rewrite.
@@ -34125,41 +34264,37 @@
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function _ _ _ frame blocks)
-          (if (>
-            (compiler-ir-block-list-count blocks)
-            (opt-bce-version-block-limit))
-            (OptFunctionCtxResult.Result func context)
-            (match (opt-bce-version-blocks-scan
-              blocks
-              blocks
-              (opt-cfg-entry-label blocks)
-              frame)
-              [(OptUnrollResult.Result next-blocks next-frame changed)
-                (if changed
-                  (opt-bce-version-finish-with-context
-                    context
-                    func
-                    next-blocks
-                    next-frame)
-                  ;; no single-block self-loop matched: try multi-block
-                  ;; counted loops over the natural-loop back edges.
-                  (let
-                    [loops : OptNaturalLoopList
-                      (opt-cfg-natural-loops-with-context blocks context)]
-                    (match (opt-bce-mb-loops-scan
-                      blocks
-                      loops
-                      loops
-                      (opt-cfg-entry-label blocks)
-                      frame)
-                      [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
-                        (if mb-changed
-                          (opt-bce-version-finish-with-context
-                            context
-                            func
-                            mb-blocks
-                            mb-frame)
-                          (OptFunctionCtxResult.Result func context))])))]))])]
+          (match (opt-bce-version-blocks-scan
+            blocks
+            blocks
+            (opt-cfg-entry-label blocks)
+            frame)
+            [(OptUnrollResult.Result next-blocks next-frame changed)
+              (if changed
+                (opt-bce-version-finish-with-context
+                  context
+                  func
+                  next-blocks
+                  next-frame)
+                ;; no single-block self-loop matched: try multi-block
+                ;; counted loops over the natural-loop back edges.
+                (let
+                  [loops : OptNaturalLoopList
+                    (opt-cfg-natural-loops-with-context blocks context)]
+                  (match (opt-bce-mb-loops-scan
+                    blocks
+                    loops
+                    loops
+                    (opt-cfg-entry-label blocks)
+                    frame)
+                    [(OptUnrollResult.Result mb-blocks mb-frame mb-changed)
+                      (if mb-changed
+                        (opt-bce-version-finish-with-context
+                          context
+                          func
+                          mb-blocks
+                          mb-frame)
+                        (OptFunctionCtxResult.Result func context))])))])])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -35220,12 +35355,10 @@
     [(CompilerIrBlockList.Array seq)
       (opt-unroll-mb-blocks-have-fast-phi? (compiler-ir-block-seq-to-list seq))]))
 
-;; Cheap companion to the original self-loop-only prescan. The full natural
-;; loop and diamond checks remain behind this gate.
+;; Cheap companion to the original self-loop-only prescan. The full
+;; dominance-based natural-loop and diamond checks remain behind this gate.
 (define (opt-unroll-mb-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
-  (and
-    (opt-unroll-mb-blocks-have-fast-phi? blocks)
-    (opt-bce-mb-back-edge-to-phi? blocks blocks (OptLabelSet.Nil))))
+  (opt-unroll-mb-blocks-have-fast-phi? blocks))
 
 ;; --- Gep use-splitting for indexed memory operands --------------------------
 ;;
@@ -37075,7 +37208,15 @@
   (if (or
     (> (array-ref (struct-get context planned) var) 0)
     (> (array-ref (struct-get context base-allowed) var) 0)
-    (> (array-ref (struct-get context leaf-uses) var) 0))
+    (> (array-ref (struct-get context leaf-uses) var) 0)
+    ;; The backward slice of the source terminator is already live at the
+    ;; dispatch. Reusing one of its address producers in the selected arm
+    ;; cannot extend that producer's live range, and avoids pointlessly
+    ;; cloning `base + iv*scale` for a payload beside the tag load.
+    (and
+      (struct-get context source-loop-target)
+      (> (array-ref (struct-get context terminator-live) var) 0)
+      (<= (array-ref (struct-get context loop-phi-leaves) var) 0)))
     true
     (let
       [def-tag : i64 (array-ref (struct-get context defs) var)]
@@ -37804,21 +37945,21 @@
                 (match sroa
                   [(CompilerIrFunction.Function _ _ _ _ sroa-blocks)
                     (let
-                      ;; #perf: the dominator-based passes (GVN, LICM, induction,
-                      ;; global GVN) use the integer CFG/dominator index now, so
-                      ;; large inlined functions keep those passes. The remaining
-                      ;; threshold is a pathological-input guard; register
-                      ;; allocation and the linear cleanups still run above it.
                       [run-heavy? : bool
                         (<=
                           (compiler-ir-block-list-count sroa-blocks)
                           (opt-heavy-pass-block-limit))]
+                      ;; Dominator and natural-loop analyses use the integer CFG
+                      ;; index. Their admission decisions are loop-local, so an
+                      ;; unrelated block elsewhere in the enclosing function
+                      ;; must not turn the loop pipeline off.
+                      [run-loop? : bool true]
                       [_t-rotation : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [rotated : CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           "rotation"
-                          (if run-heavy?
+                          (if run-loop?
                             (opt-loop-rotation-function
                               (CompilerIrFunction.Function
                                 name
@@ -37845,7 +37986,7 @@
                       ;; original function, so the optimization path remains safe.
                       [_t-ssa : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [ssa-result : OptFunctionCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-ssa-construct-function-with-context-result
                             rotated)
                           (OptFunctionCtxResult.Result
@@ -37908,7 +38049,7 @@
                           ret-ty
                           ssa-frame
                           (if (and
-                            run-heavy?
+                            run-loop?
                             (opt-verify-ok?
                               (opt-verify-function-with-context ssa ssa-context)))
                             (opt-bounds-dom-blocks-with-context
@@ -37926,7 +38067,7 @@
                           unit)]
                       [_t-sccp : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-sccp-blocks-with-context-result-raw
                             ssa-context
                             params
@@ -38003,7 +38144,7 @@
                           unit)]
                       [_t-cfg2 : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [cfg-result : OptBlockCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-cfg-simplify-blocks-with-context-result
                             (OptBlockCtxResult.Result
                               bool-branch
@@ -38053,7 +38194,7 @@
                       [switch-blocks : CompilerIrBlockList
                         (opt-function-blocks switched)]
                       [switch-context : OptCfgContext
-                        (if run-heavy?
+                        (if run-loop?
                           (if switch-changed
                             (opt-cfg-context-build switch-blocks)
                             cfg-context)
@@ -38086,7 +38227,7 @@
                       ;; input stays verified across the chain.
                       [loop-cluster-verified? : bool
                         (and
-                          run-heavy?
+                          run-loop?
                           (opt-verify-ok?
                             (opt-verify-function-with-context
                               (CompilerIrFunction.Function
@@ -38097,7 +38238,7 @@
                                 switch-blocks)
                               switch-context)))]
                       [preheaders-result : OptFunctionCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (let
                             [preheaders-input : CompilerIrFunction
                               (CompilerIrFunction.Function
@@ -38137,7 +38278,7 @@
                       [_t-rotate-ssa : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [rotate-ssa-result : OptFunctionCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-rotate-ssa-function-with-context-result
                             preheaders-context
                             loop-cluster-verified?
@@ -38162,7 +38303,7 @@
                       [_t-scratch-reset : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [scratch-reset-result : OptFunctionCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-scratch-reset-function-with-context-result
                             rotate-ssa-context
                             loop-cluster-verified?
@@ -38186,7 +38327,7 @@
                           unit)]
                       [_t-licm : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-licm-function-with-context-result-and-direct-call-clean
                             scratch-reset-context
                             loop-cluster-verified?
@@ -38214,18 +38355,18 @@
                       [pre-induction-sink : CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           "pre_induction_sink"
-                          (if run-heavy?
+                          (if run-loop?
                             (opt-successor-sink-function licm)
                             licm))]
                       [pre-induction-sink-context : OptCfgContext
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-cfg-context-build
                             (opt-function-blocks pre-induction-sink))
                           licm-context)]
                       [_t-induction : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [induction-result : OptFunctionCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-induction-function-with-context-result
                             pre-induction-sink-context
                             loop-cluster-verified?
@@ -38255,7 +38396,7 @@
                       [_t-bce-version : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [bce-version-result : OptFunctionCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-bce-version-function-with-context-result
                             induction-context
                             loop-cluster-verified?
@@ -38284,7 +38425,7 @@
                       ;; below keep valid dominance facts.
                       [_t-unroll : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [unroll-result : OptFunctionCtxResult
-                        (if run-heavy?
+                        (if run-loop?
                           (opt-unroll-function-with-context-result
                             bce-version-context
                             loop-cluster-verified?
@@ -45589,7 +45730,7 @@
   (or
     (opt_i64_i64_map.contains? (& clean) (compiler-ir-symbol-id name))
     (opt-loop-bce-direct-call-clean-effect?
-      (compiler-ir-direct-call-effect (compiler-ir-symbol-text name)))))
+      (compiler-ir-direct-call-effect-id name))))
 
 (define (opt-loop-bce-direct-call-clean-instr?
   [clean : opt_i64_i64_map.Map]
@@ -45905,7 +46046,7 @@
               [(OptMaybeLicmRoot.Some root)
                 (opt-licm-root-env-bind! roots dst root)])]
           [(CompilerIrInstr.Call _ name _ _)
-            (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+            (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
               (opt-licm-root-env-bind! roots dst (OptLicmRoot.Fresh dst))
               (opt-licm-root-env-remove! roots dst))]
           [_ (opt-licm-root-env-remove! roots dst)]))]))
@@ -46047,8 +46188,7 @@
             (& function-set)
             (compiler-ir-symbol-id name))
             (OptCallMemoryCandidate.Unresolved)
-            (match (compiler-ir-direct-call-effect
-              (compiler-ir-symbol-text name))
+            (match (compiler-ir-direct-call-effect-id name)
               [(CompilerIrEffect.MemoryRead) candidate]
               [_
                 (OptCallMemoryCandidate.Known
@@ -47788,7 +47928,7 @@
       ;; its returned pointer is nevertheless a fresh root for subsequent
       ;; scalar-store filtering.
       [(CompilerIrInstr.Call dst name _ _)
-        (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+        (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
           (opt-alias-mark-unique base dst)
           base)]
       [(CompilerIrInstr.Load dst _ _) (opt-alias-mark-may-alias base dst)]
@@ -47911,7 +48051,7 @@
     [(CompilerIrInstr.Alloc dst ty)
       (OptScratchAlloc.Alloc dst (opt-scratch-alloc-type-size ty))]
     [(CompilerIrInstr.Call dst name args _)
-      (if (string.eq (compiler-ir-symbol-text name) "tl_alloc")
+      (if (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (match (opt-aggregate-tl-alloc-size args)
           [(option_i64.Some size)
             (OptScratchAlloc.Alloc
@@ -47924,21 +48064,19 @@
     [_ (OptScratchAlloc.NoAlloc)]))
 
 (define (opt-scratch-arena-helper-call? [symbol : i64]) : bool
-  (let
-    [name : String (compiler-ir-symbol-text symbol)]
-    (or
-      (string.eq name "arena-current")
-      (string.eq name "arena-mark")
-      (string.eq name "arena-set!")
-      (string.eq name "arena-rewind")
-      (string.eq name "arena-destroy")
-      (string.eq name "tl_region_mark")
-      (string.eq name "tl_region_reset")
-      (string.eq name "tl_arena_make")
-      (string.eq name "tl_arena_current")
-      (string.eq name "tl_arena_set")
-      (string.eq name "tl_arena_destroy")
-      (string.eq name "tl_arena_poison_enable"))))
+  (or
+    (= symbol cbi.compiler-builtin-id-arena-current)
+    (= symbol cbi.compiler-builtin-id-arena-mark)
+    (= symbol cbi.compiler-builtin-id-arena-set-bang)
+    (= symbol cbi.compiler-builtin-id-arena-rewind)
+    (= symbol cbi.compiler-builtin-id-arena-destroy)
+    (= symbol cbi.compiler-builtin-id-tl-region-mark)
+    (= symbol cbi.compiler-builtin-id-tl-region-reset)
+    (= symbol cbi.compiler-builtin-id-tl-arena-make)
+    (= symbol cbi.compiler-builtin-id-tl-arena-current)
+    (= symbol cbi.compiler-builtin-id-tl-arena-set)
+    (= symbol cbi.compiler-builtin-id-tl-arena-destroy)
+    (= symbol cbi.compiler-builtin-id-tl-arena-poison-enable)))
 
 (define (opt-scratch-var-derived?
   [roots : OptScratchRootList]
@@ -50933,8 +51071,7 @@
                 (OptLoadTable.Nil)
                 (opt-load-table-filter-call-writes table facts args summary 0))]
             [(opt_i64_i64_map.LookupMissing)
-              (match (compiler-ir-direct-call-effect
-                (compiler-ir-symbol-text name))
+              (match (compiler-ir-direct-call-effect-id name)
                 [(CompilerIrEffect.MemoryRead) table]
                 [_ (OptLoadTable.Nil)])])]
         (OptLoadCseState.State

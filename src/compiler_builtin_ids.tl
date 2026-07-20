@@ -123,6 +123,10 @@
   -1)
 (define compiler-builtin-id-tl-shift-abort : i64
   -1)
+(define compiler-builtin-id-tl-stdin-eof-label : i64
+  -1)
+(define compiler-builtin-id-tl-flush-stdout-label : i64
+  -1)
 (define compiler-builtin-id-tl-array-fill8 : i64
   -1)
 (define compiler-builtin-id-tl-array-zero : i64
@@ -639,7 +643,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 308)]
+    [ids : (Array i64) (make-array i64 310)]
     [ctfe-ids : (Array i64) (make-array i64 234)]
     [i : i64 0]
     (begin
@@ -647,7 +651,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 308)
+      (while (< i 310)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -1114,6 +1118,8 @@
     (state-set! state 305 compiler-builtin-id-arena-phase-base)
     (state-set! state 306 compiler-builtin-id-arena-rewind-safe-base)
     (state-set! state 307 compiler-builtin-id-arena-destroy-safe-base)
+    (state-set! state 308 compiler-builtin-id-tl-stdin-eof-label)
+    (state-set! state 309 compiler-builtin-id-tl-flush-stdout-label)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1507,6 +1513,8 @@
     (set! compiler-builtin-id-arena-phase-base (state-ref state 305))
     (set! compiler-builtin-id-arena-rewind-safe-base (state-ref state 306))
     (set! compiler-builtin-id-arena-destroy-safe-base (state-ref state 307))
+    (set! compiler-builtin-id-tl-stdin-eof-label (state-ref state 308))
+    (set! compiler-builtin-id-tl-flush-stdout-label (state-ref state 309))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -1998,6 +2006,12 @@
     (set!
       compiler-builtin-id-tl-shift-abort
       (compiler-builtin-resolve-name insert-missing "tl_shift_abort"))
+    (set!
+      compiler-builtin-id-tl-stdin-eof-label
+      (compiler-builtin-resolve-name insert-missing ".L_tl_stdin_eof"))
+    (set!
+      compiler-builtin-id-tl-flush-stdout-label
+      (compiler-builtin-resolve-name insert-missing ".L_tl_flush_stdout"))
     (set!
       compiler-builtin-id-tl-array-fill8
       (compiler-builtin-resolve-name insert-missing "tl_array_fill8"))

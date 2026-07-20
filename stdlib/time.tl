@@ -1,18 +1,18 @@
 ;# Portable wall-clock and monotonic timestamp helpers.
 ;#
 ;# This module owns user-facing time names separately from `profile.tl`.
-;# It exposes coarse millisecond timestamps only: Unix wall-clock milliseconds
-;# and monotonic elapsed milliseconds. Calendar conversion, formatting, time
-;# zones, locale behavior, sleep, timers, and scheduling are out of scope.
+;# It exposes coarse millisecond timestamps and a portable blocking sleep.
+;# Calendar conversion, formatting, time zones, locale behavior, timers, and
+;# scheduling are out of scope.
 ;#
 ;# Usage: `(import stdlib.time)`
 ;#
 ;# ```typelisp
 ;# (import stdlib.time)
 ;# (define (main) : i64
-;#   (match (time.unix-ms)
-;#     [(time.OkTimeMs ms) (if (> ms 0) 42 1)]
-;#     [(time.ErrTimeMs _) 2]))
+;#   (match (time.sleep-ms 1)
+;#     [(time.OkTimeUnit) 42]
+;#     [(time.ErrTimeUnit _) 1]))
 ;# ```
 (import stdlib.array)
 (import stdlib.string)
@@ -25,6 +25,11 @@
 (defenum ResultTimeMs
   (OkTimeMs i64)
   (ErrTimeMs TimeError))
+
+;: Result of a time operation that returns no value.
+(defenum ResultTimeUnit
+  (OkTimeUnit)
+  (ErrTimeUnit TimeError))
 
 ;: Return a human-readable time error message.
 (define (error-message [err : TimeError]) : String
@@ -41,9 +46,19 @@
 (define (unavailable [message : String]) : ResultTimeMs
   (ErrTimeMs (TimeUnavailable message)))
 
+;: Shared error result for unavailable platform sleep operations.
+(define (sleep-unavailable [message : String]) : ResultTimeUnit
+  (ErrTimeUnit (TimeUnavailable message)))
+
 ;: Convert a `timespec {sec,nsec}` array to milliseconds.
 (define (timespec-ms [timespec : (Array i64)]) : i64
   (+ (* (array-ref timespec 0) 1000) (/ (array-ref timespec 1) 1000000)))
+
+;: Fill a Linux `timespec {sec,nsec}` without overflowing for any nonnegative i64 milliseconds.
+(define (timespec-from-ms! [timespec : (Array i64)] [milliseconds : i64]) : unit
+  (begin
+    (array-set! timespec 0 (/ milliseconds 1000))
+    (array-set! timespec 1 (* (% milliseconds 1000) 1000000))))
 
 ;: Return the raw data address of an `i64` array for Linux syscalls.
 (cfg
@@ -65,6 +80,44 @@
         (stdlib.time.unavailable "time: clock_gettime unavailable")
         (OkTimeMs (stdlib.time.timespec-ms timespec))))))
 
+;: True when a raw Linux syscall result requests a nanosleep restart.
+(cfg
+  (not windows)
+  (define (linux-sleep-interrupted? [status : i64]) : bool
+    (= status -4)))
+
+;: Linux blocking sleep via raw `nanosleep` syscall 35.
+(cfg
+  (not windows)
+  (define (linux-sleep-ms [milliseconds : i64]) : ResultTimeUnit
+    (let
+      [request : (Array i64) (array.make-array i64 2)]
+      [remaining : (Array i64) (array.make-array i64 2)]
+      [done : bool false]
+      [ok : bool false]
+      (begin
+        (stdlib.time.timespec-from-ms! request milliseconds)
+        (while (not done)
+          (let
+            [status : i64
+              (unsafe
+                (syscall
+                  35
+                  (stdlib.time.array-addr request)
+                  (stdlib.time.array-addr remaining)))]
+            (if (= status 0)
+              (begin
+                (set! ok true)
+                (set! done true))
+              (if (stdlib.time.linux-sleep-interrupted? status)
+                (begin
+                  (array-set! request 0 (array-ref remaining 0))
+                  (array-set! request 1 (array-ref remaining 1)))
+                (set! done true)))))
+        (if ok
+          (OkTimeUnit)
+          (stdlib.time.sleep-unavailable "time: nanosleep unavailable"))))))
+
 ;: Windows kernel32 `GetSystemTimeAsFileTime` binding.
 (cfg
   windows
@@ -77,6 +130,11 @@
 (cfg
   windows
   (extern (windows-query-performance-frequency [arg0 : (MutPtr i64)]) : i32 (:symbol "QueryPerformanceFrequency")))
+
+;: Windows kernel32 blocking `Sleep` binding.
+(cfg
+  windows
+  (extern (windows-sleep [milliseconds : u32]) : unit (:symbol "Sleep")))
 
 ;: Windows FILETIME milliseconds between 1601-01-01 UTC and Unix epoch.
 (cfg
@@ -125,6 +183,110 @@
             "time: performance counter frequency is zero")
           (OkTimeMs (/ (* (array-ref counter 0) 1000) freq-value)))))))
 
+;: Largest finite duration accepted by one Windows `Sleep` call.
+(cfg
+  windows
+  (define (windows-sleep-max-chunk-ms) : i64
+    4294967294))
+
+;: Select one finite Windows sleep chunk, never the `0xffffffff` INFINITE sentinel.
+(cfg
+  windows
+  (define (windows-sleep-chunk-ms [remaining : i64]) : u32
+    (cast
+      (if (> remaining (stdlib.time.windows-sleep-max-chunk-ms))
+        (stdlib.time.windows-sleep-max-chunk-ms)
+        remaining)
+      : u32)))
+
+;: Convert a sub-second millisecond remainder to the first counter tick at or after it.
+(cfg
+  windows
+  (define (windows-sleep-remainder-ticks
+    [millisecond-remainder : i64]
+    [frequency : i64]) : i64
+    (+
+      (* millisecond-remainder (/ frequency 1000))
+      (/ (+ (* millisecond-remainder (% frequency 1000)) 999) 1000))))
+
+;: True once a performance-counter interval covers the requested duration.
+(cfg
+  windows
+  (define (windows-sleep-complete?
+    [elapsed-ticks : i64]
+    [frequency : i64]
+    [milliseconds : i64]) : bool
+    (let
+      [elapsed-seconds : i64 (/ elapsed-ticks frequency)]
+      [requested-seconds : i64 (/ milliseconds 1000)]
+      (or
+        (> elapsed-seconds requested-seconds)
+        (and
+          (= elapsed-seconds requested-seconds)
+          (>=
+            (% elapsed-ticks frequency)
+            (stdlib.time.windows-sleep-remainder-ticks
+              (% milliseconds 1000)
+              frequency)))))))
+
+;: Windows blocking sleep split into finite `DWORD` chunks and checked against QPC.
+(cfg
+  windows
+  (define (windows-sleep-ms [milliseconds : i64]) : ResultTimeUnit
+    (let
+      [counter : (Array i64) (array.make-array i64 1)]
+      [frequency-buffer : (Array i64) (array.make-array i64 1)]
+      [counter-ok : i32
+        (stdlib.time.windows-query-performance-counter
+          (unsafe
+            (array-data counter)))]
+      [frequency-ok : i32
+        (stdlib.time.windows-query-performance-frequency
+          (unsafe
+            (array-data frequency-buffer)))]
+      [frequency : i64 (array-ref frequency-buffer 0)]
+      [start : i64 (array-ref counter 0)]
+      [remaining : i64 milliseconds]
+      [done : bool false]
+      [ok : bool false]
+      (begin
+        (if (or
+          (= counter-ok (cast 0 : i32))
+          (= frequency-ok (cast 0 : i32))
+          (<= frequency 0))
+          (set! done true)
+          unit)
+        (while (not done)
+          (let
+            [chunk : u32 (stdlib.time.windows-sleep-chunk-ms remaining)]
+            (begin
+              (stdlib.time.windows-sleep chunk)
+              (if (> remaining (cast chunk : i64))
+                (set! remaining (- remaining (cast chunk : i64)))
+                (set! remaining 0))
+              (let
+                [status : i32
+                  (stdlib.time.windows-query-performance-counter
+                    (unsafe
+                      (array-data counter)))]
+                [elapsed : i64 (- (array-ref counter 0) start)]
+                (if (or (= status (cast 0 : i32)) (< elapsed 0))
+                  (set! done true)
+                  (if (stdlib.time.windows-sleep-complete?
+                    elapsed
+                    frequency
+                    milliseconds)
+                    (begin
+                      (set! ok true)
+                      (set! done true))
+                    (if (= remaining 0)
+                      (set! remaining 1)
+                      unit)))))))
+        (if ok
+          (OkTimeUnit)
+          (stdlib.time.sleep-unavailable
+            "time: performance counter unavailable"))))))
+
 ;: Return wall-clock Unix epoch milliseconds.
 (define (unix-ms) : ResultTimeMs
   (cfg windows (stdlib.time.windows-unix-ms) (stdlib.time.linux-clock-ms 0)))
@@ -135,6 +297,22 @@
     windows
     (stdlib.time.windows-monotonic-ms)
     (stdlib.time.linux-clock-ms 1)))
+
+;: Block the current thread for at least `milliseconds` of relative time.
+;:
+;: Negative durations return `ErrTimeUnit`; zero is an immediate successful
+;: no-op. The operation may wake later than requested and does not promise
+;: scheduler fairness. Linux restarts an interrupted wait from the kernel's
+;: returned remainder. Windows uses finite chunks and never passes `INFINITE`.
+(define (sleep-ms [milliseconds : i64]) : ResultTimeUnit
+  (if (< milliseconds 0)
+    (stdlib.time.sleep-unavailable "time: sleep duration must be nonnegative")
+    (if (= milliseconds 0)
+      (OkTimeUnit)
+      (cfg
+        windows
+        (stdlib.time.windows-sleep-ms milliseconds)
+        (stdlib.time.linux-sleep-ms milliseconds)))))
 
 ;: Inline test failure helper.
 (define (test-fail) : unit
@@ -165,6 +343,21 @@
         (stdlib.time.error-message err)
         "time unavailable")]))
 
+;: Inline test assertion for a successful unit result.
+(define (test-assert-unit-ok [result : ResultTimeUnit]) : unit
+  (match result
+    [(OkTimeUnit) unit]
+    [(ErrTimeUnit _) (stdlib.time.test-fail)]))
+
+;: Inline test assertion for a unit error result.
+(define (test-assert-unit-error [result : ResultTimeUnit] [message : String]) : unit
+  (match result
+    [(OkTimeUnit) (stdlib.time.test-fail)]
+    [(ErrTimeUnit err)
+      (stdlib.time.test-assert-string-eq
+        (stdlib.time.error-message err)
+        message)]))
+
 ;: Inline test assertion for wall-clock range.
 (define (test-assert-unix-range [result : ResultTimeMs]) : unit
   (match result
@@ -187,16 +380,56 @@
   time-api
   (begin
     (stdlib.time.test-assert-result-error-shape)
+    (stdlib.time.test-assert-unit-error
+      (stdlib.time.sleep-ms -1)
+      "time: sleep duration must be nonnegative")
+    (stdlib.time.test-assert-unit-ok (stdlib.time.sleep-ms 0))
+    (let
+      [converted : (Array i64) (array.make-array i64 2)]
+      (begin
+        (stdlib.time.timespec-from-ms! converted 9223372036854775807)
+        (stdlib.time.test-assert-i64-eq
+          (array-ref converted 0)
+          9223372036854775)
+        (stdlib.time.test-assert-i64-eq (array-ref converted 1) 807000000)))
+    (cfg
+      windows
+      (begin
+        (stdlib.time.test-assert-i64-eq
+          (cast (stdlib.time.windows-sleep-chunk-ms 1) : i64)
+          1)
+        (stdlib.time.test-assert-i64-eq
+          (cast (stdlib.time.windows-sleep-chunk-ms 4294967294) : i64)
+          4294967294)
+        (stdlib.time.test-assert-i64-eq
+          (cast (stdlib.time.windows-sleep-chunk-ms 4294967295) : i64)
+          4294967294)
+        (stdlib.time.test-assert-i64-eq
+          (stdlib.time.windows-sleep-remainder-ticks 1 3)
+          1)
+        (stdlib.time.test-assert-i64-eq
+          (stdlib.time.windows-sleep-remainder-ticks 999 3)
+          3)
+        (stdlib.time.test-assert
+          (not (stdlib.time.windows-sleep-complete? 189999 10000000 19)))
+        (stdlib.time.test-assert
+          (stdlib.time.windows-sleep-complete? 190000 10000000 19)))
+      (begin
+        (stdlib.time.test-assert (stdlib.time.linux-sleep-interrupted? -4))
+        (stdlib.time.test-assert
+          (not (stdlib.time.linux-sleep-interrupted? -1)))))
     (stdlib.time.test-assert-unix-range (stdlib.time.unix-ms))
     (let
       [first : i64
         (stdlib.time.test-assert-monotonic-nonnegative
           (stdlib.time.monotonic-ms))]
+      [_sleep-ok : unit
+        (stdlib.time.test-assert-unit-ok (stdlib.time.sleep-ms 20))]
       [second : i64
         (stdlib.time.test-assert-monotonic-nonnegative
           (stdlib.time.monotonic-ms))]
       (begin
-        (stdlib.time.test-assert (>= second first))
+        (stdlib.time.test-assert (>= (- second first) 1))
         (stdlib.time.test-assert-i64-eq
           (stdlib.time.ms-or (OkTimeMs 123) 0)
           123)

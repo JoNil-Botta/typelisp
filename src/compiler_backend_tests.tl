@@ -19453,6 +19453,194 @@
         [(ResultCompilerBackend.Err _) false])]
     [(ResultCompilerBackend.Err _) false]))
 
+;; C22 regression: Gep/Load pairs feed an ALU, then constant modulo, then a
+;; same-array store.  The explicit homes reproduce the saturated Win64 choice:
+;; %r9 carries the magic and divmod SRC must emergency-borrow the live array base
+;; in %rcx.  The direct store must reject that address/clobber intersection so
+;; %rcx is restored before the ordinary Gep+StorePtr reads it.
+(define (compiler-backend-c22-divmod-store-collision-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rcx"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r8"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          4
+          (CompilerRegLocation.Register "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            7
+            (CompilerRegLocation.Register "%rdx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              8
+              (CompilerRegLocation.Register "%rax"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                10
+                (CompilerRegLocation.Register "%r10"))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment.Assignment
+                  11
+                  (CompilerRegLocation.Register "%r11"))
+                CompilerRegAssignmentList.Nil))))))))
+
+(define (compiler-backend-c22-divmod-store-collision-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.Var 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Gep
+          5
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 4)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 6 (CompilerIrValue.Var 5) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              7
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.Var 6)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                8
+                (CompilerIrBinOp.SafeMod)
+                (CompilerIrValue.Var 7)
+                (CompilerIrValue.I64 1000000007)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Gep
+                  9
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.Var 4)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.StorePtr
+                    (CompilerIrValue.Var 9)
+                    (CompilerIrValue.Var 8)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      12
+                      (CompilerIrValue.Var 1)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Mov
+                        13
+                        (CompilerIrValue.Var 10)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Mov
+                          14
+                          (CompilerIrValue.Var 11)
+                          (AstType.I64))
+                        CompilerIrInstrList.Nil))))))))))))
+
+(define (compiler-backend-c22-divmod-store-collision-asm) : ResultCompilerBackend
+  (let
+    [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
+    [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+    [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+    [prev-current-count : i64 compiler-backend-emit-current-count]
+    [prev-win64 : bool (compiler-backend-current-fn-win64?)]
+    [prev-gep-ready : bool compiler-backend-gep-fold-ready]
+    [prev-gep-disp : (Array i64) compiler-backend-gep-fold-disp-table]
+    [prev-gep-kind : (Array i64) compiler-backend-gep-fold-kind-table]
+    [prev-gep-scale : (Array i64) compiler-backend-gep-fold-scale-table]
+    [prev-gep-cursor : i64 compiler-backend-gep-fold-cursor]
+    [prev-gep-drift : bool compiler-backend-gep-fold-drift]
+    [prev0-var : i64 compiler-backend-emit-home-override0-var]
+    [prev0-reg : String compiler-backend-emit-home-override0-reg]
+    [prev1-var : i64 compiler-backend-emit-home-override1-var]
+    [prev1-reg : String compiler-backend-emit-home-override1-reg]
+    [prev-emergency-slot-offset : i64 compiler-backend-emergency-slot-offset]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-c22-divmod-store-collision-assignments)]
+    [instrs : CompilerIrInstrList
+      (compiler-backend-c22-divmod-store-collision-instrs)]
+    [count : i64 (compiler-ir-instr-list-count instrs)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
+    [_ctx : unit
+      (begin
+        (compiler-backend-set-current-fn-win64!)
+        (compiler-backend-gep-fold-disable!)
+        (compiler-backend-emit-home-overrides-disable!)
+        (compiler-backend-test-scavenge-install-ctx!
+          "c22_divmod_store_collision"
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          15
+          blocks
+          assignments)
+        (set! compiler-backend-emit-instr-post-base count)
+        (set! compiler-backend-emit-current-count count)
+        (set! compiler-backend-emergency-slot-offset -512))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-test-instrs instrs assignments 15)]
+    [_restore : unit
+      (begin
+        (compiler-backend-set-scavenge-ctx-ready!
+          prev-starts
+          prev-ends
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
+          prev-vars)
+        (set! compiler-backend-emit-instr-post-base prev-post-base)
+        (set! compiler-backend-emit-current-count prev-current-count)
+        (if prev-win64
+          (compiler-backend-set-current-fn-win64!)
+          (compiler-backend-set-current-fn-linux!))
+        (set! compiler-backend-gep-fold-ready prev-gep-ready)
+        (set! compiler-backend-gep-fold-disp-table prev-gep-disp)
+        (set! compiler-backend-gep-fold-kind-table prev-gep-kind)
+        (set! compiler-backend-gep-fold-scale-table prev-gep-scale)
+        (set! compiler-backend-gep-fold-cursor prev-gep-cursor)
+        (set! compiler-backend-gep-fold-drift prev-gep-drift)
+        (compiler-backend-divmod-overrides-install!
+          prev0-var
+          prev0-reg
+          prev1-var
+          prev1-reg)
+        (set! compiler-backend-emergency-slot-offset prev-emergency-slot-offset))]
+    result))
+
+(define (compiler-backend-c22-divmod-store-clobber-rejected-ok?) : bool
+  (match (compiler-backend-c22-divmod-store-collision-asm)
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    movq (%rcx,%r8,8), %rdx\n    addq (%rcx,%r12,8), %rdx\n")
+        (compiler-backend-string-contains?
+          asm
+          "    movabsq $-8543223828751151131, %r9\n")
+        (compiler-backend-string-contains?
+          asm
+          "    movq -512(%rbp), %rcx\n    movq %rax, (%rcx,%r12,8)\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    subq %rax, %rcx\n    movq %rcx, %r9\n    movq %r9, (%rcx,%r12,8)\n")))]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-divrem-binop-types [ty : AstType]) : CompilerRegVarTypeList
   (compiler-reg-var-type-cons
     (CompilerRegVarType.Type 0 ty)
@@ -24029,6 +24217,10 @@
           "%xmm14"
           "%r15"
           diag)]
+      [_group-enable : unit
+        (compiler-backend-group-vars-enable!
+          (compiler-live-set1 0)
+          (compiler-live-set-empty))]
       [word : ResultCompilerBackend
         (compiler-backend-emit-word
           assignments
@@ -24039,6 +24231,7 @@
           3
           "%xmm13"
           diag)]
+      [_group-disable : unit (compiler-backend-group-vars-disable!)]
       [copy : ResultCompilerBackend
         (compiler-backend-emit-copy-bytes
           assignments
@@ -24071,6 +24264,9 @@
         (compiler-backend-scratch-vreg-result-contains?
           word
           "    movsd -8(%rbp), %xmm13\n")
+        (compiler-backend-scratch-vreg-result-contains?
+          word
+          "    movsd %xmm13, -24(%rbp)\n")
         (compiler-backend-scratch-vreg-result-contains?
           copy
           "    movups (%r13), %xmm12\n")
@@ -24435,11 +24631,20 @@
         (= (compiler-backend-scratch-test-plan-count windows) 1)
         (= (compiler-backend-scratch-test-success-count windows) 1)
         (= (compiler-backend-scratch-test-plan-count indirect-linux) 3)
-        (= (compiler-backend-scratch-test-success-count indirect-linux) 3)
+        (= (compiler-backend-scratch-test-success-count indirect-linux) 2)
         (= (compiler-backend-scratch-test-plan-count indirect-windows) 2)
-        (= (compiler-backend-scratch-test-success-count indirect-windows) 2)
+        (= (compiler-backend-scratch-test-success-count indirect-windows) 1)
         (= (compiler-backend-scratch-test-plan-count indirect-no-marker) 2)
-        (= (compiler-backend-scratch-test-success-count indirect-no-marker) 2)
+        (= (compiler-backend-scratch-test-success-count indirect-no-marker) 1)
+        ;; The call target claims the only call-allowed GP scratch register. The
+        ;; simultaneous call-stage requirement intentionally uses the fallback.
+        (string.eq (compiler-backend-scratch-test-register indirect-linux 1) "")
+        (string.eq
+          (compiler-backend-scratch-test-register indirect-windows 1)
+          "")
+        (string.eq
+          (compiler-backend-scratch-test-register indirect-no-marker 1)
+          "")
         (compiler-backend-string-prefix-at?
           (compiler-backend-scratch-test-register linux 1)
           "%xmm"
@@ -26669,6 +26874,7 @@
         (compiler-backend-constant-divisor-strength-ok?)
         (compiler-backend-signed-constant-divisor-clang-shape-ok?)
         (compiler-backend-divmod-producer-result-forwarding-ok?)
+        (compiler-backend-c22-divmod-store-clobber-rejected-ok?)
         (compiler-backend-divrem-rax-rhs-preserved-ok?)
         (compiler-backend-safe-divrem-guard-elision-ok?))
       (and

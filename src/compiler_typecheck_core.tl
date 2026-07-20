@@ -183,6 +183,28 @@
     AstNodePoolContext
     ci.InternSourceNameSessionHandle))
 
+(defenum TcUnboundSuggestionSnapshot
+  (No)
+  (Some bool i64 TcTypeEnv i64))
+
+(define tc-unbound-suggestion-snapshot : TcUnboundSuggestionSnapshot
+  (TcUnboundSuggestionSnapshot.No))
+
+(define (tc-unbound-suggestion-snapshot-reset!) : unit
+  (set! tc-unbound-suggestion-snapshot (TcUnboundSuggestionSnapshot.No)))
+
+(define (tc-unbound-suggestion-snapshot-record!
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : unit
+  (set!
+    tc-unbound-suggestion-snapshot
+    (TcUnboundSuggestionSnapshot.Some
+      (> (string.string-length (tc-context-module ctx)) 0)
+      (tc-unbound-suggestion-scope-module-id ctx name-id)
+      env
+      name-id)))
+
 (define (tc-context-new
   [program : AstProgram]
   [symbols : CompilerSymbols]
@@ -1231,6 +1253,18 @@
     "|"
     (string.int->string (ast-source-span-end-col span))
     "|"))
+
+(define (tc-rich-error-with-help
+  [primary : AstSourceSpan]
+  [message : String]
+  [help : String]) : String
+  (str_cat.str-cat
+    (tc-rich-error-prefix)
+    (tc-rich-error-span-fields primary)
+    message
+    "|"
+    help
+    "|0"))
 
 (define (tc-rich-error-one-secondary
   [primary : AstSourceSpan]
@@ -22073,7 +22107,7 @@
         (match result
           [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
           [(ResultTcType.Err message)
-            (tc-locate-spanned-error inner span message)]))]
+            (tc-locate-spanned-error-with-context ctx env inner span message)]))]
     [(AstExpr.Binary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -22819,6 +22853,388 @@
     (match (tc-spanned-escape-error inner span message)
       [(TcMaybeString.Some rich) (ResultTcType.Err rich)]
       [(TcMaybeString.No) (tc-locate-call-arity-error inner span message)])))
+
+(define (tc-unbound-name-message-prefix) : String
+  "typecheck: unbound name ")
+
+(define (tc-unbound-name-message? [message : String]) : bool
+  (tc-diag-string-prefix? message (tc-unbound-name-message-prefix)))
+
+(define (tc-unbound-suggestion-scope-module-id
+  [ctx : TcContext]
+  [name-id : i64]) : i64
+  (if (< (tc-name-first-dot-id name-id) 0)
+    (tc-context-module-id ctx)
+    (let
+      [alias-id : i64 (intern-leading-dot-id name-id)]
+      (match (tc-context-program ctx)
+        [(AstProgram.Program decls-box)
+          (match (tc-source-dotted-alias-target-id
+            (box-get decls-box)
+            (tc-context-module-id ctx)
+            alias-id)
+            [(TcMaybeNameId.Some target-id) target-id]
+            [(TcMaybeNameId.No) -1])]))))
+
+;; These are the compiler-recognized unqualified compatibility names whose
+;; definitions deliberately live in stdlib modules. Keep this catalog beside
+;; the typecheck suggestion policy so a missing import can be diagnosed without
+;; loading or parsing unrelated stdlib modules on an error path.
+(define (tc-unbound-stdlib-provider [name : String]) : String
+  (cond
+    [(or
+        (string.eq name "print")
+        (string.eq name "print-bool")
+        (string.eq name "print-char")
+        (string.eq name "print-error")
+        (string.eq name "print-float")
+        (string.eq name "print-format")
+        (string.eq name "print-newline")
+        (string.eq name "print-str")
+        (string.eq name "print-string")
+        (string.eq name "println")
+        (string.eq name "panic")
+        (string.eq name "error")
+        (string.eq name "flush-stdout"))
+      "stdlib.io"]
+    [(or
+        (string.eq name "string-length")
+        (string.eq name "string-ref")
+        (string.eq name "char-at")
+        (string.eq name "string-eq")
+        (string.eq name "string=?")
+        (string.eq name "string->int")
+        (string.eq name "string-append")
+        (string.eq name "string-concat"))
+      "stdlib.string"]
+    [else ""]))
+
+(define (tc-unbound-import-help [name : String] [module : String]) : String
+  (str_cat.str-cat
+    name
+    " is provided by "
+    module
+    " — add (import "
+    module
+    ")"))
+
+(define (tc-unbound-suggestion-max-distance [name-len : i64]) : i64
+  (cond [(<= name-len 4) 1] [(<= name-len 12) 2] [else 3]))
+
+(define (tc-unbound-suggestion-candidate-name? [name : String]) : bool
+  (let
+    [n : i64 (string.string-length name)]
+    [i : i64 0]
+    [ok : bool (> n 0)]
+    (begin
+      ;; Compiler-private names are implementation details, not useful fixes.
+      (if (and
+        (> n 1)
+        (string.char-eq (string.string-ref name 0) '_')
+        (string.char-eq (string.string-ref name 1) '_'))
+        (set! ok false)
+        unit)
+      (while (and ok (< i n))
+        (let
+          [ch : char (string.string-ref name i)]
+          (if (or
+            (string.char-eq ch '.')
+            (string.char-eq ch '/')
+            (string.char-eq ch '\\'))
+            (set! ok false)
+            (set! i (+ i 1)))))
+      ok)))
+
+(define (tc-unbound-string-less? [left : String] [right : String]) : bool
+  (let
+    [left-len : i64 (string.string-length left)]
+    [right-len : i64 (string.string-length right)]
+    [limit : i64
+      (if (< left-len right-len)
+        left-len
+        right-len)]
+    [i : i64 0]
+    (begin
+      (while (< i limit)
+        (let
+          [left-byte : i64 (cast (string.string-ref left i) : i64)]
+          [right-byte : i64 (cast (string.string-ref right i) : i64)]
+          (cond
+            [(< left-byte right-byte) (return true)]
+            [(> left-byte right-byte) (return false)]
+            [else (set! i (+ i 1))])))
+      (< left-len right-len))))
+
+;; Reuse two rows for every candidate. Suggestions run only after lookup has
+;; failed, and this keeps the rare error path bounded to O(length(name)) storage.
+(define (tc-unbound-edit-distance
+  [wanted : String]
+  [candidate : String]
+  [first-row : (Array i64)]
+  [second-row : (Array i64)]) : i64
+  (let
+    [wanted-len : i64 (string.string-length wanted)]
+    [candidate-len : i64 (string.string-length candidate)]
+    [j : i64 0]
+    [i : i64 1]
+    (begin
+      (while (<= j wanted-len)
+        (begin
+          (array-set! first-row j j)
+          (set! j (+ j 1))))
+      (while (<= i candidate-len)
+        (begin
+          (array-set! second-row 0 i)
+          (set! j 1)
+          (while (<= j wanted-len)
+            (let
+              [deletion : i64 (+ (array-ref first-row j) 1)]
+              [insertion : i64 (+ (array-ref second-row (- j 1)) 1)]
+              [substitution : i64
+                (+
+                  (array-ref first-row (- j 1))
+                  (if (string.char-eq
+                    (string.string-ref candidate (- i 1))
+                    (string.string-ref wanted (- j 1)))
+                    0
+                    1))]
+              [best : i64
+                (if (< deletion insertion)
+                  deletion
+                  insertion)]
+              (begin
+                (if (< substitution best)
+                  (set! best substitution)
+                  unit)
+                (array-set! second-row j best)
+                (set! j (+ j 1)))))
+          (set! j 0)
+          (while (<= j wanted-len)
+            (begin
+              (array-set! first-row j (array-ref second-row j))
+              (set! j (+ j 1))))
+          (set! i (+ i 1))))
+      (array-ref first-row wanted-len))))
+
+(define (tc-unbound-candidate-visible-id?
+  [module-qualified : bool]
+  [module-id : i64]
+  [wanted-qualifier-id : i64]
+  [env : TcTypeEnv]
+  [candidate-id : i64]) : bool
+  (if (>= wanted-qualifier-id 0)
+    (tc-name-bound-id?
+      env
+      (tc-module-name-id-by-id wanted-qualifier-id candidate-id))
+    (or
+      (tc-name-bound-id? env candidate-id)
+      (and
+        module-qualified
+        (tc-name-bound-id? env (tc-module-name-id-by-id module-id candidate-id))))))
+
+(define (tc-unbound-better-candidate?
+  [distance : i64]
+  [best-distance : i64]
+  [candidate : String]
+  [best : String]) : bool
+  (or
+    (< distance best-distance)
+    (and
+      (= distance best-distance)
+      (or (string.eq best "") (tc-unbound-string-less? candidate best)))))
+
+(define (tc-unbound-near-miss
+  [module-qualified : bool]
+  [module-id : i64]
+  [env : TcTypeEnv]
+  [wanted : String]
+  [wanted-id : i64]) : String
+  (let
+    [wanted-separator : i64 (tc-name-first-char wanted '.')]
+    [wanted-qualified : bool (>= wanted-separator 0)]
+    [wanted-qualifier : String
+      (if wanted-qualified
+        (string.substring wanted 0 wanted-separator)
+        "")]
+    [wanted-qualifier-id : i64
+      (if wanted-qualified
+        (if (>= module-id 0)
+          module-id
+          (intern wanted-qualifier))
+        -1)]
+    [wanted-text : String
+      (if wanted-qualified
+        (string.substring
+          wanted
+          (+ wanted-separator 1)
+          (- (string.string-length wanted) (+ wanted-separator 1)))
+        wanted)]
+    [wanted-len : i64 (string.string-length wanted-text)]
+    [max-distance : i64 (tc-unbound-suggestion-max-distance wanted-len)]
+    [first-row : (Array i64) (array.make-array i64 (+ wanted-len 1))]
+    [second-row : (Array i64) (array.make-array i64 (+ wanted-len 1))]
+    [candidate-id : i64 0]
+    [candidate-limit : i64 (intern-pool-len)]
+    [best-distance : i64 (+ max-distance 1)]
+    [best : String ""]
+    (begin
+      (while (< candidate-id candidate-limit)
+        (if (= candidate-id wanted-id)
+          (set! candidate-id (+ candidate-id 1))
+          (let
+            [candidate : String (intern-str candidate-id)]
+            [candidate-len : i64 (string.string-length candidate)]
+            (begin
+              (if (and
+                (or
+                  (not wanted-qualified)
+                  (not (intern-qualified? candidate-id)))
+                (<=
+                  (if (> candidate-len wanted-len)
+                    (- candidate-len wanted-len)
+                    (- wanted-len candidate-len))
+                  max-distance)
+                (tc-unbound-suggestion-candidate-name? candidate)
+                (tc-unbound-candidate-visible-id?
+                  module-qualified
+                  module-id
+                  wanted-qualifier-id
+                  env
+                  candidate-id))
+                (let
+                  [distance : i64
+                    (tc-unbound-edit-distance
+                      wanted-text
+                      candidate
+                      first-row
+                      second-row)]
+                  [better : bool
+                    (and
+                      (<= distance max-distance)
+                      (tc-unbound-better-candidate?
+                        distance
+                        best-distance
+                        candidate
+                        best))]
+                  (if better
+                    (begin
+                      (set! best-distance distance)
+                      (set!
+                        best
+                        (if wanted-qualified
+                          (tc-name-slashes-to-dots
+                            (compiler-symbol-module-key
+                              wanted-qualifier
+                              candidate))
+                          (clone candidate))))
+                    unit))
+                unit)
+              (set! candidate-id (+ candidate-id 1))))))
+      best)))
+
+(define (tc-unbound-help
+  [module-qualified : bool]
+  [module-id : i64]
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]) : String
+  (let
+    [provider : String (tc-unbound-stdlib-provider name)]
+    (if (> (string.string-length provider) 0)
+      (tc-unbound-import-help name provider)
+      (let
+        [near-miss : String
+          (tc-unbound-near-miss module-qualified module-id env name name-id)]
+        (if (> (string.string-length near-miss) 0)
+          (string.append "did you mean " (string.append near-miss "?"))
+          "")))))
+
+(define (tc-unbound-finalize-located-error [message : String]) : String
+  (if (and (tc-located-error? message) (not (tc-rich-error? message)))
+    (let
+      [prefix-len : i64 (string.string-length (tc-located-error-prefix))]
+      [line-end : i64 (tc-located-error-field-end message prefix-len)]
+      [col-start : i64 (+ line-end 1)]
+      [col-end : i64 (tc-located-error-field-end message col-start)]
+      [end-line-start : i64 (+ col-end 1)]
+      [end-line-end : i64 (tc-located-error-field-end message end-line-start)]
+      [end-col-start : i64 (+ end-line-end 1)]
+      [end-col-end : i64 (tc-located-error-field-end message end-col-start)]
+      [clean-start : i64 (+ end-col-end 1)]
+      [clean-message : String
+        (string.substring
+          message
+          clean-start
+          (- (string.string-length message) clean-start))]
+      (if (tc-unbound-name-message? clean-message)
+        (match tc-unbound-suggestion-snapshot
+          [(TcUnboundSuggestionSnapshot.Some
+              module-qualified
+              module-id
+              env
+              name-id)
+            (let
+              [name : String (tc-hygiene-name-text-id name-id)]
+              [clean-name : String
+                (string.substring
+                  clean-message
+                  (string.string-length (tc-unbound-name-message-prefix))
+                  (-
+                    (string.string-length clean-message)
+                    (string.string-length (tc-unbound-name-message-prefix))))]
+              [display-message : String
+                (string.append (tc-unbound-name-message-prefix) name)]
+              (if (string.eq (tc-name-slashes-to-dots clean-name) name)
+                (let
+                  [help : String
+                    (tc-unbound-help
+                      module-qualified
+                      module-id
+                      env
+                      name
+                      name-id)]
+                  (if (> (string.string-length help) 0)
+                    (tc-rich-error-with-help
+                      (ast-source-span
+                        (string.>int
+                          (tc-located-error-field message prefix-len line-end))
+                        (string.>int
+                          (tc-located-error-field message col-start col-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            end-line-start
+                            end-line-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            end-col-start
+                            end-col-end)))
+                      display-message
+                      help)
+                    message))
+                message))]
+          [(TcUnboundSuggestionSnapshot.No) message])
+        message))
+    message))
+
+(define (tc-locate-spanned-error-with-context
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [inner : AstExpr]
+  [span : AstSourceSpan]
+  [message : String]) : ResultTcType
+  (if (and
+    (tc-unbound-name-message? message)
+    (not (tc-rich-error? message))
+    (not (tc-located-error? message)))
+    (match inner
+      [(AstExpr.Var name-id)
+        (begin
+          (tc-unbound-suggestion-snapshot-record! ctx env name-id)
+          (ResultTcType.Err (tc-located-error span message)))]
+      [_ (tc-locate-spanned-error inner span message)])
+    (tc-locate-spanned-error inner span message)))
 
 (define (tc-call-arity-callee-name [func : AstExpr]) : String
   (let
@@ -40477,7 +40893,7 @@
         (match result
           [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
           [(ResultTcType.Err message)
-            (tc-locate-spanned-error inner span message)]))]
+            (tc-locate-spanned-error-with-context ctx env inner span message)]))]
     [(AstExpr.Literal lit) (tc-literal-type-checked lit)]
     [(AstExpr.BinaryData _) (ResultTcType.Ok (ast-ty-dyn-array (AstType.U8)))]
     [(AstExpr.Var name)
@@ -69228,7 +69644,9 @@
             [escaped : ResultTcUnit
               (match raw
                 [(ResultTcUnit.Ok) ResultTcUnit.Ok]
-                [(ResultTcUnit.Err message) (ResultTcUnit.Err (clone message))])]
+                [(ResultTcUnit.Err message)
+                  (ResultTcUnit.Err
+                    (clone (tc-unbound-finalize-located-error message)))])]
             [new-enclosing : i64 (arena.tl_arena_current)]
             (begin
               (unsafe
@@ -69322,7 +69740,8 @@
                 (match raw
                   [(ResultTcUnit.Ok) ResultTcUnit.Ok]
                   [(ResultTcUnit.Err message)
-                    (ResultTcUnit.Err (clone message))])]
+                    (ResultTcUnit.Err
+                      (clone (tc-unbound-finalize-located-error message)))])]
               [new-enclosing : i64 (arena.tl_arena_current)]
               (begin
                 (unsafe
@@ -69467,22 +69886,28 @@
   [top-env : TcTypeEnv]
   [global-env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcUnit
-  (if (ast-decl-comptime-only? decl)
-    (let
-      [template : AstDecl (ast-decl-with-meta ast-decl-meta-runtime decl)]
-      (match (ast-decl-generated-meta decl)
-        [(AstGeneratedDeclMeta.Some _ _ _ _)
-          (tc-check-decl-with-global-env-inner ctx top-env global-env template)]
-        [(AstGeneratedDeclMeta.No)
-          (match (tc-check-comptime-decl-purity ctx top-env template)
-            [(ResultTcUnit.Ok)
-              (tc-check-decl-with-global-env-inner
-                ctx
-                top-env
-                global-env
-                template)]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))
-    (tc-check-decl-with-global-env-inner ctx top-env global-env decl)))
+  (begin
+    (tc-unbound-suggestion-snapshot-reset!)
+    (if (ast-decl-comptime-only? decl)
+      (let
+        [template : AstDecl (ast-decl-with-meta ast-decl-meta-runtime decl)]
+        (match (ast-decl-generated-meta decl)
+          [(AstGeneratedDeclMeta.Some _ _ _ _)
+            (tc-check-decl-with-global-env-inner
+              ctx
+              top-env
+              global-env
+              template)]
+          [(AstGeneratedDeclMeta.No)
+            (match (tc-check-comptime-decl-purity ctx top-env template)
+              [(ResultTcUnit.Ok)
+                (tc-check-decl-with-global-env-inner
+                  ctx
+                  top-env
+                  global-env
+                  template)]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))
+      (tc-check-decl-with-global-env-inner ctx top-env global-env decl))))
 
 (define (tc-check-decl [ctx : TcContext] [top-env : TcTypeEnv] [decl : AstDecl]) : ResultTcUnit
   (tc-check-decl-with-global-env
@@ -70429,6 +70854,7 @@
 
 (define (compiler-typecheck-clear-macro-expanded-source-caches!) : unit
   (begin
+    (tc-unbound-suggestion-snapshot-reset!)
     (tc-clone-able-cache-reset!)
     (tc-macro-helper-env-cache-reset!)
     (tc-spmd-inline-helper-stack-reset!)
@@ -70464,6 +70890,7 @@
 
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin
+    (tc-unbound-suggestion-snapshot-reset!)
     (tc-fn-scratch-arena-release!)
     (tc-decl-scratch-arena-release!)
     (tc-body-early-exit-facts-abort!)

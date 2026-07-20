@@ -163,8 +163,15 @@ use.
   `(Ptr u8)` C string allocation. Compatibility `String` wrappers borrow their
   input text and delegate to the byte-slice path. Import it with
   `(import stdlib.ffi)`.
-- `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
-  future collections. Import it with `(import stdlib.hash)`.
+- `hash.tl`: deterministic, non-cryptographic hash and key equality helpers.
+  Import `stdlib.hash`, then import `(hash.hash T)` for a generated `hash`
+  operation over unit, bool, char, fixed-width integers, `String`, structs,
+  enums, tuples, and fixed arrays. Nested types must stay in that finite
+  structural set; floats, references, boxes, raw pointers, functions, dynamic
+  arrays, and borrowed views are rejected with a path-qualified compile-time
+  diagnostic. Equal values under `(eq.eq T)` always hash equally. This unkeyed
+  v1 API is a deterministic bucket hint, not cryptographic or hash-flood
+  protection, so consumers must still compare candidate keys.
 - `hashmap.tl`: generated hashmap modules (collections v1, #817) over
   open-addressed linear-probing slot arrays. Every specialization emits its
   complete slot, probe, map, lookup, mutation, and iteration implementation;
@@ -349,8 +356,10 @@ use.
 - `time.tl`: portable millisecond timestamp helpers separate from profiling
   counters. `unix-ms` returns wall-clock Unix epoch milliseconds and
   `monotonic-ms` returns monotonic elapsed milliseconds, both as
-  `ResultTimeMs`. Calendar conversion, formatting, time zones, locale,
-  sleeping, and timers are deferred. Import it with `(import stdlib.time)`.
+  `ResultTimeMs`; `sleep-ms` performs a portable blocking relative wait and
+  returns `ResultTimeUnit`. Calendar conversion, formatting, time zones,
+  locale, timers, and scheduling remain out of scope. Import it with
+  `(import stdlib.time)`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction with owned `TextBuf` chunks and the shared ordered-chunk render
   helper used by the borrowed companion. Its declarations are emitted from

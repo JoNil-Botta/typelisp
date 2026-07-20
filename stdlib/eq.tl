@@ -213,7 +213,7 @@
 (defmacro (eq [T : type]) : Module
   (let
     [module-name : Expr
-      (expr-var (string-append "stdlib.eq.generated." (type-key T)))]
+      (expr-var (comptime.string-append "stdlib.eq.generated." (type-key T)))]
     [kind : String (type-kind T)]
     (match kind
       ["string"

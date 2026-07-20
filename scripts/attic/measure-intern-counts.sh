@@ -10,7 +10,7 @@
 # gate -- a local iteration metric.
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-native-link.sh"

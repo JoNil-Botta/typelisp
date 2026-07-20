@@ -11,12 +11,12 @@ set -eu
 # Use this before and after compiler-throughput work for #3803/#3857:
 #
 #   TYPELISP_BIN=target/stage2/typelisp \
-#     scripts/measure-unused-import-cost.sh --runs 1 --profile
+#     scripts/attic/measure-unused-import-cost.sh --runs 1 --profile
 #
 # The scratch sources live under target/ by default and the tracked src/main.tl
 # is never edited.
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$ROOT"
 
 RUNS=${TYPELISP_UNUSED_IMPORT_RUNS:-1}
@@ -29,7 +29,7 @@ SEED_ARG=
 
 usage() {
     cat <<'EOF'
-usage: scripts/measure-unused-import-cost.sh [options] [typelisp-compiler]
+usage: scripts/attic/measure-unused-import-cost.sh [options] [typelisp-compiler]
 
 Options:
   --runs N           Cachegrind runs for each source variant (default: 1)

@@ -3,7 +3,7 @@
 ;# Equivalent to benchmarks/spmd_scan/baseline.c. Each pass writes the
 ;# inclusive prefix of a fixed i64 array, seeded by the pass number, then folds
 ;# a pass-varying prefix into an observable accumulator. The direct contiguous
-;# array-ref/array-set! shape is the canonical AVX2 scan lowering.
+;# array-ref/array-set! shape is the canonical AVX2/AVX-512 scan lowering.
 ;#
 ;# The i64 additions wrap modulo 2^64, matching the baseline's uint64_t
 ;# arithmetic. `base-reps + io.arg-count` prevents whole-program constant

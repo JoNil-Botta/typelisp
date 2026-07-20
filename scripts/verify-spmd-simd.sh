@@ -366,6 +366,50 @@ verify_avx2_scan_prefix_shape() {
     fi
 }
 
+verify_avx512_scan_prefix_shape() {
+    compile_spmd_mode tests/integration/spmd_scan_scalar.tl avx512 2
+    _tag=tests_integration_spmd_scan_scalar_tl
+    _asm="$WORKDIR/$_tag.avx512.compile.s"
+    _func="$WORKDIR/$_tag.avx512.scan-sum.s"
+    _gang="$WORKDIR/$_tag.avx512.scan-sum-gang.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] scan-prefix AVX-512 shape compile failed:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/integration/spmd_scan_scalar.tl avx512 (prefix compile)" >> "$FAILURES"
+        return
+    fi
+    sed -n '/^_tl_spmd_scan_scalar_scan_sum_i64:/,/^$/p' "$_asm" > "$_func"
+    sed -n '/spmd_scan_avx512_body/,/spmd_scan_tail_header/p' "$_func" > "$_gang"
+    for shape in \
+        spmd_scan_avx512_body \
+        valignd \
+        valignq \
+        vpaddd \
+        vpaddq \
+        vpminsd \
+        vpminsq \
+        vpmaxsd \
+        vpmaxsq \
+        kmovq \
+        'shlq $32'
+    do
+        if ! grep -F -- "$shape" "$_asm" > /dev/null; then
+            echo "[spmd-simd] scan-prefix AVX-512 assembly missing $shape" >&2
+            echo "tests/integration/spmd_scan_scalar.tl avx512 (missing $shape)" >> "$FAILURES"
+        fi
+    done
+    for shape in valignq vpaddq; do
+        if ! grep -F -- "$shape" "$_gang" > /dev/null; then
+            echo "[spmd-simd] scan-prefix AVX-512 i64 sum gang missing $shape" >&2
+            echo "tests/integration/spmd_scan_scalar.tl avx512 (sum gang missing $shape)" >> "$FAILURES"
+        fi
+    done
+    if grep -F -- spmd_scan_avx2_body "$_asm" > /dev/null; then
+        echo "[spmd-simd] scan-prefix AVX-512 assembly uses the AVX2 scan label" >&2
+        echo "tests/integration/spmd_scan_scalar.tl avx512 (AVX2 scan label)" >> "$FAILURES"
+    fi
+}
+
 verify_avx2_varying_while_shape() {
     compile_spmd_mode tests/spmd/varying_while_i64.tl avx2
     _tag=tests_spmd_varying_while_i64_tl
@@ -606,6 +650,7 @@ verify_masked_bitwise_shape avx512
 verify_masked_shift_shape avx2
 verify_masked_shift_shape avx512
 verify_avx2_scan_prefix_shape
+verify_avx512_scan_prefix_shape
 
 # Gather safety is a runtime property, not a same-exit result. Exercise a full
 # gang with multiple invalid active lanes in every runnable mode. The lowering

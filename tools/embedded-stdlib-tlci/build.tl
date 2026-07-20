@@ -4,7 +4,8 @@
 ;; loader/container path are production-shaped build inputs now.
 (import "../../src/compiler_parse_core.tl")
 (import "../../src/tlci_core.tl")
-(import compiler_comptime_image_core as comptime_image)
+(import "../../src/compiler_backend.tl")
+(import "../../src/compiler_tlci_native_image.tl")
 (import compiler_builtin_ids as cbi)
 (import stdlib.io)
 (import stdlib.string)
@@ -238,62 +239,6 @@
         [_ -1])]
     [_ -1]))
 
-;; Compile a two-operand intrinsic body (array-ref / array-push): both
-;; operands must be unquoted parameters. Emits the two operand pushes, the
-;; intrinsic op, and the commit.
-(define (embedded-stdlib-tlci-compile-binary-intrinsic
-  [identity : String]
-  [params : AstMacroParamList]
-  [target-node : i64]
-  [operand-node : i64]
-  [intrinsic-op : i64]
-  [out : (&mut out (Array comptime_image.CompilerComptimeMacroProgram))]
-  [slot : i64]) : bool
-  (let
-    [ti : i64 (embedded-stdlib-tlci-unquoted-param (& params) target-node)]
-    [oi : i64 (embedded-stdlib-tlci-unquoted-param (& params) operand-node)]
-    (if (or (< ti 0) (< oi 0))
-      false
-      (let
-        [ops : (Array comptime_image.CompilerComptimeOperation)
-          (array.make-array comptime_image.CompilerComptimeOperation 4)]
-        (begin
-          (array-set!
-            ops
-            0
-            (comptime_image.CompilerComptimeOperation.HostCallArgs
-              tlci-host-callback-op-push-operand
-              ti
-              0
-              0))
-          (array-set!
-            ops
-            1
-            (comptime_image.CompilerComptimeOperation.HostCallArgs
-              tlci-host-callback-op-push-operand
-              oi
-              0
-              0))
-          (array-set!
-            ops
-            2
-            (comptime_image.CompilerComptimeOperation.HostCall intrinsic-op))
-          (array-set!
-            ops
-            3
-            (comptime_image.CompilerComptimeOperation.HostCall
-              tlci-host-callback-op-commit-result))
-          (array-set!
-            out
-            slot
-            (comptime_image.CompilerComptimeMacroProgram
-              identity
-              ops
-              (array.make-array String 0)
-              0
-              0))
-          true)))))
-
 (define (embedded-stdlib-tlci-type-unquote-param
   [params : (& params AstMacroParamList)]
   [ty : AstType]) : i64
@@ -310,179 +255,6 @@
             (ast-lifetime-fallback)))
         -1)]
     [_ -1]))
-
-;; Compile a make-array body `(__tl_make-array ,T ,count)`: the element type
-;; is a type-unquote of a type parameter and the size is an unquoted
-;; expression parameter. Emits the type push, the size push, expr-make-array,
-;; and the commit.
-(define (embedded-stdlib-tlci-compile-make-array
-  [identity : String]
-  [params : AstMacroParamList]
-  [elem-type : AstType]
-  [size-node : i64]
-  [out : (&mut out (Array comptime_image.CompilerComptimeMacroProgram))]
-  [slot : i64]) : bool
-  (let
-    [ti : i64 (embedded-stdlib-tlci-type-unquote-param (& params) elem-type)]
-    [si : i64 (embedded-stdlib-tlci-unquoted-param (& params) size-node)]
-    (if (or (< ti 0) (< si 0))
-      false
-      (let
-        [ops : (Array comptime_image.CompilerComptimeOperation)
-          (array.make-array comptime_image.CompilerComptimeOperation 4)]
-        (begin
-          (array-set!
-            ops
-            0
-            (comptime_image.CompilerComptimeOperation.HostCallArgs
-              tlci-host-callback-op-push-operand
-              ti
-              0
-              0))
-          (array-set!
-            ops
-            1
-            (comptime_image.CompilerComptimeOperation.HostCallArgs
-              tlci-host-callback-op-push-operand
-              si
-              0
-              0))
-          (array-set!
-            ops
-            2
-            (comptime_image.CompilerComptimeOperation.HostCall
-              tlci-host-callback-op-expr-make-array))
-          (array-set!
-            ops
-            3
-            (comptime_image.CompilerComptimeOperation.HostCall
-              tlci-host-callback-op-commit-result))
-          (array-set!
-            out
-            slot
-            (comptime_image.CompilerComptimeMacroProgram
-              identity
-              ops
-              (array.make-array String 0)
-              0
-              0))
-          true)))))
-
-(define (embedded-stdlib-tlci-compile-native-program
-  [identity : String]
-  [params : AstMacroParamList]
-  [body-node : i64]
-  [out : (&mut out (Array comptime_image.CompilerComptimeMacroProgram))]
-  [slot : i64]) : bool
-  (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(AstExpr.Quasiquote quoted)
-      (match (embedded-stdlib-tlci-unwrap-expr quoted)
-        [(AstExpr.Call func-id args)
-          (match (embedded-stdlib-tlci-unwrap-expr func-id)
-            [(AstExpr.Var head-id)
-              (let
-                [argc : i64 (ast-expr-list-len (& args))]
-                [ops : (Array comptime_image.CompilerComptimeOperation)
-                  (array.make-array
-                    comptime_image.CompilerComptimeOperation
-                    (+ 4 (* argc 2)))]
-                [names : (Array String) (array.make-array String 1)]
-                [index : i64 0]
-                [ok : bool true]
-                (begin
-                  (array-set! names 0 (intern-str head-id))
-                  (array-set!
-                    ops
-                    0
-                    (comptime_image.CompilerComptimeOperation.HostCallName
-                      tlci-host-callback-op-expr-var
-                      0))
-                  (array-set!
-                    ops
-                    1
-                    (comptime_image.CompilerComptimeOperation.HostCall
-                      tlci-host-callback-op-expr-list-empty))
-                  (while (and ok (< index argc))
-                    (match (embedded-stdlib-tlci-unwrap-expr
-                      (ast-expr-list-get (& args) index 0))
-                      [(AstExpr.Unquote unquoted)
-                        (match (embedded-stdlib-tlci-unwrap-expr unquoted)
-                          [(AstExpr.Var pname)
-                            (let
-                              [param : i64
-                                (embedded-stdlib-tlci-param-index
-                                  (& params)
-                                  pname)]
-                              (if (< param 0)
-                                (set! ok false)
-                                (begin
-                                  (array-set!
-                                    ops
-                                    (+ 2 (* index 2))
-                                    (comptime_image.CompilerComptimeOperation.HostCallArgs
-                                      tlci-host-callback-op-push-operand
-                                      param
-                                      0
-                                      0))
-                                  (array-set!
-                                    ops
-                                    (+ 3 (* index 2))
-                                    (comptime_image.CompilerComptimeOperation.HostCall
-                                      tlci-host-callback-op-expr-list-append))
-                                  (set! index (+ index 1)))))]
-                          [_ (set! ok false)])]
-                      [_ (set! ok false)]))
-                  (when
-                    ok
-                    (array-set!
-                      ops
-                      (+ 2 (* argc 2))
-                      (comptime_image.CompilerComptimeOperation.HostCall
-                        tlci-host-callback-op-expr-call))
-                    (array-set!
-                      ops
-                      (+ 3 (* argc 2))
-                      (comptime_image.CompilerComptimeOperation.HostCall
-                        tlci-host-callback-op-commit-result))
-                    (array-set!
-                      out
-                      slot
-                      (comptime_image.CompilerComptimeMacroProgram
-                        identity
-                        ops
-                        names
-                        0
-                        0)))
-                  ok))]
-            [_ false])]
-        [(AstExpr.ArrayRef target-node index-node)
-          (embedded-stdlib-tlci-compile-binary-intrinsic
-            identity
-            params
-            target-node
-            index-node
-            tlci-host-callback-op-expr-array-ref
-            (&mut out)
-            slot)]
-        [(AstExpr.ArrayPush target-node value-node)
-          (embedded-stdlib-tlci-compile-binary-intrinsic
-            identity
-            params
-            target-node
-            value-node
-            tlci-host-callback-op-expr-array-push
-            (&mut out)
-            slot)]
-        [(AstExpr.MakeArray elem-type size-node)
-          (embedded-stdlib-tlci-compile-make-array
-            identity
-            params
-            elem-type
-            size-node
-            (&mut out)
-            slot)]
-        [_ false])]
-    [_ false]))
 
 (define embedded-stdlib-tlci-native-report-count : (Array i64)
   (make-array 0))
@@ -501,95 +273,350 @@
           (set! index (+ index 1))))
       found)))
 
-(define (embedded-stdlib-tlci-programs [names : (Array String)]) : (Array
-    comptime_image.CompilerComptimeMacroProgram)
+(define (embedded-native-status-fold [opened : i64]) : String
   (let
+    [out : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index opened)
+        (begin
+          (set!
+            out
+            (str-cat
+              out
+              (if (< index (- opened 1))
+                (str-cat "(bit-or q" (string.int->string index) " ")
+                (str-cat "q" (string.int->string index)))))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index (- opened 1))
+        (begin
+          (set! out (str-cat out ")"))
+          (set! index (+ index 1))))
+      out)))
+
+(define (embedded-native-op-open
+  [status-index : i64]
+  [op : i64]
+  [arg-a : String]
+  [arg-b : String]) : String
+  (str-cat
+    "  (let [q"
+    (string.int->string status-index)
+    " : i64 (comptime-host-invoke host session 1 0 0 0)]\n"
+    "  (let [q"
+    (string.int->string (+ status-index 1))
+    " : i64 (comptime-host-invoke host session "
+    (string.int->string op)
+    " "
+    arg-a
+    " "
+    arg-b
+    " 0)]\n"))
+
+(define (embedded-native-name-arg [name : String]) : String
+  (str-cat "(cast (unsafe (ptr->int (string-data \"" name "\"))) : i64)"))
+
+;; Emit the op-call chain for one eligible body into `ops`; returns the count
+;; of opened let/if pairs, or -1 when the body is outside the subset.
+(define (embedded-native-body-ops
+  [params : AstMacroParamList]
+  [body-node : i64]
+  [ops : (&mut ops svec.Vec)]) : i64
+  (match (embedded-stdlib-tlci-unwrap-expr body-node)
+    [(AstExpr.Quasiquote quoted)
+      (match (embedded-stdlib-tlci-unwrap-expr quoted)
+        [(AstExpr.Call func-id args)
+          (match (embedded-stdlib-tlci-unwrap-expr func-id)
+            [(AstExpr.Var head-id)
+              (let
+                [argc : i64 (ast-expr-list-len (& args))]
+                [head : String (intern-str head-id)]
+                [index : i64 0]
+                [opened : i64 0]
+                [ok : bool true]
+                (begin
+                  (svec.push
+                    ops
+                    (embedded-native-op-open
+                      opened
+                      103
+                      (embedded-native-name-arg head)
+                      (string.int->string (string.string-length head))))
+                  (set! opened (+ opened 2))
+                  (svec.push ops (embedded-native-op-open opened 178 "0" "0"))
+                  (set! opened (+ opened 2))
+                  (while (and ok (< index argc))
+                    (let
+                      [param : i64
+                        (embedded-stdlib-tlci-unquoted-param
+                          (& params)
+                          (ast-expr-list-get (& args) index 0))]
+                      (if (< param 0)
+                        (set! ok false)
+                        (begin
+                          (svec.push
+                            ops
+                            (embedded-native-op-open
+                              opened
+                              180
+                              (string.int->string param)
+                              "0"))
+                          (set! opened (+ opened 2))
+                          (svec.push
+                            ops
+                            (embedded-native-op-open opened 179 "0" "0"))
+                          (set! opened (+ opened 2))
+                          (set! index (+ index 1))))))
+                  (if (not ok)
+                    -1
+                    (begin
+                      (svec.push
+                        ops
+                        (embedded-native-op-open opened 181 "0" "0"))
+                      (+ opened 2)))))]
+            [_ -1])]
+        [(AstExpr.ArrayRef target-node index-node)
+          (embedded-native-binary-ops params target-node index-node 183 ops)]
+        [(AstExpr.ArrayPush target-node value-node)
+          (embedded-native-binary-ops params target-node value-node 184 ops)]
+        [(AstExpr.MakeArray elem-type size-node)
+          (let
+            [ti : i64
+              (embedded-stdlib-tlci-type-unquote-param (& params) elem-type)]
+            [si : i64
+              (embedded-stdlib-tlci-unquoted-param (& params) size-node)]
+            (if (or (< ti 0) (< si 0))
+              -1
+              (begin
+                (svec.push
+                  ops
+                  (embedded-native-op-open 0 180 (string.int->string ti) "0"))
+                (svec.push
+                  ops
+                  (embedded-native-op-open 2 180 (string.int->string si) "0"))
+                (svec.push ops (embedded-native-op-open 4 185 "0" "0"))
+                6)))]
+        [_ -1])]
+    [_ -1]))
+
+(define (embedded-native-binary-ops
+  [params : AstMacroParamList]
+  [target-node : i64]
+  [operand-node : i64]
+  [op : i64]
+  [ops : (&mut ops svec.Vec)]) : i64
+  (let
+    [ti : i64 (embedded-stdlib-tlci-unquoted-param (& params) target-node)]
+    [oi : i64 (embedded-stdlib-tlci-unquoted-param (& params) operand-node)]
+    (if (or (< ti 0) (< oi 0))
+      -1
+      (begin
+        (svec.push
+          ops
+          (embedded-native-op-open 0 180 (string.int->string ti) "0"))
+        (svec.push
+          ops
+          (embedded-native-op-open 2 180 (string.int->string oi) "0"))
+        (svec.push ops (embedded-native-op-open 4 op "0" "0"))
+        6))))
+
+;; Full source for the native package: the host extern plus one entry function
+;; per identity in catalog order.
+(define (embedded-native-source [names : (Array String)]) : String
+  (let
+    [out : String
+      (str-cat
+        "(module tlci-entries)\n"
+        "(extern comptime-host-invoke (:symbol "
+        "\"_tl_comptime_host_invoke\") : (-> i64 i64 i64 i64 i64 i64 i64))\n")]
     [count : i64 (array-length names)]
-    [programs : (Array comptime_image.CompilerComptimeMacroProgram)
-      (array.make-array comptime_image.CompilerComptimeMacroProgram count)]
     [index : i64 0]
     [native-count : i64 0]
-    [floor-native : bool false]
     (begin
-      (while (and
-        (= (string.string-length embedded-stdlib-tlci-build-error) 0)
-        (< index count))
+      (while (< index count)
         (let
-          [name : String (array-ref names index)]
-          [slot : i64 (embedded-stdlib-tlci-capture-slot name)]
-          (begin
-            (if (and
-              (>= slot 0)
-              (embedded-stdlib-tlci-compile-native-program
-                name
+          [slot : i64
+            (embedded-stdlib-tlci-capture-slot (array-ref names index))]
+          [ops : svec.Vec (svec.new)]
+          [opened : i64
+            (if (>= slot 0)
+              (embedded-native-body-ops
                 (array-ref embedded-stdlib-tlci-capture-params slot)
                 (array-ref embedded-stdlib-tlci-capture-bodies slot)
-                (&mut programs)
-                index))
-              (begin
-                (set! native-count (+ native-count 1))
-                (when
-                  (string.eq name embedded-stdlib-tlci-native-floor-name)
-                  (set! floor-native true)))
-              (array-set!
-                programs
-                index
-                (comptime_image.compiler-comptime-registration-shell-program
-                  name)))
+                (&mut ops))
+              -1)]
+          (begin
+            (set!
+              out
+              (str-cat
+                out
+                "(define (macro-entry-"
+                (string.int->string index)
+                " [image-ctx : i64] [host : i64] [session : i64]"
+                " [operands : i64] [count : i64] [result : i64]) : i64\n"))
+            (if (< opened 0)
+              (set!
+                out
+                (str-cat
+                  out
+                  "  (if (= count -"
+                  (string.int->string (+ index 2))
+                  ") 1 0))\n"))
+              (let
+                [oi : i64 0]
+                (begin
+                  (set! native-count (+ native-count 1))
+                  (while (< oi (svec.len (& ops)))
+                    (begin
+                      (set! out (str-cat out (svec.get (& ops) oi "")))
+                      (set! oi (+ oi 1))))
+                  (set!
+                    out
+                    (str-cat out (embedded-native-op-open opened 182 "0" "0")))
+                  (set! opened (+ opened 2))
+                  (set!
+                    out
+                    (str-cat out "  " (embedded-native-status-fold opened) "\n"))
+                  (set! oi 0)
+                  (while (< oi opened)
+                    (begin
+                      (set! out (str-cat out ")"))
+                      (set! oi (+ oi 1))))
+                  (set! out (str-cat out ")\n")))))
             (set! index (+ index 1)))))
-      (when
-        (and
-          (= (string.string-length embedded-stdlib-tlci-build-error) 0)
-          (not floor-native))
-        (set!
-          embedded-stdlib-tlci-build-error
-          (str-cat
-            "native regression floor missing: "
-            embedded-stdlib-tlci-native-floor-name)))
       (array-set! embedded-stdlib-tlci-native-report-count 0 native-count)
-      programs)))
+      out)))
 
-(define (embedded-stdlib-tlci-write
+(define (embedded-native-entry-offsets
+  [image : CompilerObjectImage]
+  [count : i64]) : (Array i64)
+  (let
+    [out : (Array i64) (array.make-array i64 count)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [offset : i64
+            (compiler-tlci-native-entry-offset
+              image
+              (str-cat "_tl_f" (string.int->string index)))]
+          (if (< offset 0)
+            (set! ok false)
+            (begin
+              (array-set! out index offset)
+              (set! index (+ index 1))))))
+      (if ok
+        out
+        (array.make-array i64 0)))))
+
+(define (embedded-native-write
   [output : String]
   [build-hash : String]
   [windows-target : bool]
   [names : (Array String)]) : i64
   (let
-    [programs : (Array comptime_image.CompilerComptimeMacroProgram)
-      (embedded-stdlib-tlci-programs names)]
-    (if (> (string.string-length embedded-stdlib-tlci-build-error) 0)
-      (begin
-        (io.print-error
-          (str-cat
-            "embedded stdlib tlci: "
-            embedded-stdlib-tlci-build-error
-            "\n"))
-        1)
-      (match (tlci-emit-code-bearing-package-image-from-programs
-        (tlci-make-metadata "v1" "stdlib" "0.1.0")
-        build-hash
-        programs
-        windows-target)
-        [(ResultTlciBytes.Err message)
-          (begin
-            (io.print-error (str-cat "embedded stdlib tlci: " message "\n"))
-            1)]
-        [(ResultTlciBytes.Ok bytes)
-          (begin
-            (io.write-file
-              output
-              (tlci-bytes->string bytes 0 (array-length bytes)))
-            (io.print-string
-              (str-cat
-                "embedded stdlib tlci: wrote "
-                (string.int->string (array-length bytes))
-                " bytes for "
-                (string.int->string (array-length names))
-                " macro entries ("
-                (string.int->string
-                  (array-ref embedded-stdlib-tlci-native-report-count 0))
-                " native)\n"))
-            0)]))))
+    [source : String (embedded-native-source names)]
+    [target : CompilerBackendTarget
+      (if windows-target
+        (CompilerBackendTarget.Windows)
+        (CompilerBackendTarget.Linux))]
+    (begin
+      (io.write-file (str-cat output ".source.tl") source)
+      unit)
+    (match (compiler-backend-lower-source-for-target source target)
+      [(ResultCompilerLower.Err diag)
+        (begin
+          (io.print-error
+            (str-cat
+              "embedded stdlib tlci: generated source rejected: "
+              (compiler-diagnostic-render (box-get diag))
+              "\n"))
+          1)]
+      [(ResultCompilerLower.Ok program spans)
+        (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+          program
+          target
+          (CompilerBackendMode.Scalar)
+          spans
+          false
+          false)
+          [(ResultCompilerBackendObject.Err diag)
+            (begin
+              (io.print-error
+                (str-cat
+                  "embedded stdlib tlci: object emission failed: "
+                  (compiler-diagnostic-render (box-get diag))
+                  "\n"))
+              1)]
+          [(ResultCompilerBackendObject.Ok image)
+            (match (compiler-tlci-native-layout-image image)
+              [(ResultCompilerTlciNativeLayout.Err message)
+                (begin
+                  (io.print-error
+                    (str-cat "embedded stdlib tlci: " message "\n"))
+                  1)]
+              [(ResultCompilerTlciNativeLayout.Ok layout)
+                (let
+                  [entry-offsets : (Array i64)
+                    (embedded-native-entry-offsets image (array-length names))]
+                  (if (not
+                    (= (array-length entry-offsets) (array-length names)))
+                    (begin
+                      (io.print-error
+                        (str-cat
+                          "embedded stdlib tlci: entry count "
+                          (string.int->string (array-length entry-offsets))
+                          " does not match catalog count "
+                          (string.int->string (array-length names))
+                          "
+"))
+                      1)
+                    (match (compiler-tlci-native-emit-imports (& layout))
+                      [(ResultCompilerTlciNativeImports.Err message)
+                        (begin
+                          (io.print-error
+                            (str-cat "embedded stdlib tlci: " message "\n"))
+                          1)]
+                      [(ResultCompilerTlciNativeImports.Ok imports)
+                        (match (tlci-emit-native-package-image
+                          (tlci-make-metadata "v1" "stdlib" "0.1.0")
+                          build-hash
+                          (TlciNativePackageInput
+                            (struct-get layout bytes)
+                            imports
+                            (struct-get layout fixup-offsets)
+                            (struct-get layout fixup-count)
+                            names
+                            entry-offsets
+                            (array-length names)))
+                          [(ResultTlciBytes.Err message)
+                            (begin
+                              (io.print-error
+                                (str-cat "embedded stdlib tlci: " message "\n"))
+                              1)]
+                          [(ResultTlciBytes.Ok bytes)
+                            (begin
+                              (io.write-file
+                                output
+                                (tlci-bytes->string
+                                  bytes
+                                  0
+                                  (array-length bytes)))
+                              (io.print-string
+                                (str-cat
+                                  "embedded stdlib tlci: wrote "
+                                  (string.int->string (array-length bytes))
+                                  " bytes for "
+                                  (string.int->string (array-length names))
+                                  " macro entries ("
+                                  (string.int->string
+                                    (array-ref
+                                      embedded-stdlib-tlci-native-report-count
+                                      0))
+                                  " native)\n"))
+                              0)])])))])])])))
 
 (define (main) : i64
   (if (not (= (io.arg-count) 6))
@@ -622,7 +649,7 @@
                 embedded-stdlib-tlci-build-error
                 "\n"))
             1)
-          (embedded-stdlib-tlci-write
+          (embedded-native-write
             output
             (str-cat
               build-hash

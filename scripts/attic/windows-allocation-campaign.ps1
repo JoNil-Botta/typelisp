@@ -25,7 +25,7 @@ if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Fail "Windows VirtualAlloc and system commit counters are required"
 }
 
-$root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $seedCandidate = if ([System.IO.Path]::IsPathRooted($Seed)) {
     $Seed
 } else {

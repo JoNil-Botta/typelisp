@@ -8,7 +8,7 @@ set -eu
 # compile-profile variant of that compiler and reports matching phase/counter
 # deltas. It never rewrites perf/insn-exec-baseline.tsv.
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$ROOT"
 
 RUNS=${TYPELISP_VECTOR_COST_RUNS:-1}
@@ -18,7 +18,7 @@ COMPILER_ARG=
 
 usage() {
     cat <<'EOF'
-usage: scripts/measure-vector-instantiation-cost.sh [options] [typelisp-compiler]
+usage: scripts/attic/measure-vector-instantiation-cost.sh [options] [typelisp-compiler]
 
 Options:
   --runs N       Cachegrind runs per fixture (default: 1)

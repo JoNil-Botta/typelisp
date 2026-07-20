@@ -128,6 +128,13 @@
 
 ;; Resolve symbol `name` to its region offset: text labels, rodata/data
 ;; labels, then bss labels. Externs resolve to their GOT slot. -1 = unknown.
+;; Module-qualified spellings of host externs resolve to the canonical ABI
+;; symbol (generated entry modules qualify the extern user id).
+(define (compiler-tlci-native-extern-alias [name : String]) : String
+  (if (string.eq name "_tl_tlci_entries_comptime_host_invoke")
+    "_tl_comptime_host_invoke"
+    name))
+
 (define (compiler-tlci-native-symbol-offset!
   [import-names : (Array String)]
   [import-offsets : (Array i64)]
@@ -176,14 +183,16 @@
                     (struct-get bases bss))]
                 (if (>= bss 0)
                   bss
-                  (if (compiler-tlci-native-extern-symbol? image name)
+                  (if (compiler-tlci-native-extern-symbol?
+                    image
+                    (compiler-tlci-native-extern-alias name))
                     (compiler-tlci-native-got-slot!
                       import-names
                       import-offsets
                       import-count
                       error
                       bases
-                      name)
+                      (compiler-tlci-native-extern-alias name))
                     (compiler-tlci-native-fail!
                       error
                       (string.append
@@ -751,7 +760,26 @@
                   (set! slot (+ slot 1)))
                 unit)])
           (set! index (+ index 1))))
+      (compiler-tlci-native-sort-offsets! out)
       out)))
+
+;; Function bodies are emitted in definition order, so ascending text offsets
+;; are definition order regardless of symbol-table ordering.
+(define (compiler-tlci-native-sort-offsets! [out : (Array i64)]) : unit
+  (let
+    [count : i64 (array-length out)]
+    [index : i64 1]
+    (while (< index count)
+      (let
+        [value : i64 (array-ref out index)]
+        [scan : i64 index]
+        (begin
+          (while (and (> scan 0) (> (array-ref out (- scan 1)) value))
+            (begin
+              (array-set! out scan (array-ref out (- scan 1)))
+              (set! scan (- scan 1))))
+          (array-set! out scan value)
+          (set! index (+ index 1)))))))
 
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]
@@ -785,7 +813,9 @@
 ;; Map an extern value name to its stable host-import ABI id, or -1 when the
 ;; name is not a known host entry point (the closed host ABI).
 (define (compiler-tlci-native-host-import-id [name : (& name str)]) : i64
-  (if (string.eq name "_tl_comptime_host_invoke")
+  (if (or
+    (string.eq name "_tl_comptime_host_invoke")
+    (string.eq name "_tl_tlci_entries_comptime_host_invoke"))
     tlci.tlci-host-import-invoke
     -1))
 

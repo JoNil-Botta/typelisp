@@ -5888,6 +5888,456 @@
           (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message instr-diag message)))]))))
 
+(define (compiler-backend-avx512-vector-prefix-shape-ok?
+  [op : CompilerIrVectorPrefixOp]
+  [lanes : i64]
+  [elem-ty : AstType]) : bool
+  (match elem-ty
+    [(AstType.I32)
+      (and (= lanes 16) (not (compiler-backend-vector-prefix-bool-op? op)))]
+    [(AstType.I64)
+      (and (= lanes 8) (not (compiler-backend-vector-prefix-bool-op? op)))]
+    [(AstType.Bool)
+      (and (= lanes 64) (compiler-backend-vector-prefix-bool-op? op))]
+    [_ false]))
+
+(define (compiler-backend-avx512-vector-prefix-numeric-mnemonic
+  [op : CompilerIrVectorPrefixOp]
+  [elem-ty : AstType]) : String
+  (match op
+    [(CompilerIrVectorPrefixOp.Sum)
+      (match elem-ty
+        [(AstType.I32) "vpaddd"]
+        [_ "vpaddq"])]
+    [(CompilerIrVectorPrefixOp.Min)
+      (match elem-ty
+        [(AstType.I32) "vpminsd"]
+        [_ "vpminsq"])]
+    [(CompilerIrVectorPrefixOp.Max)
+      (match elem-ty
+        [(AstType.I32) "vpmaxsd"]
+        [_ "vpmaxsq"])]
+    [_ ""]))
+
+(define (compiler-backend-avx512-vector-prefix-numeric-combine
+  [op : CompilerIrVectorPrefixOp]
+  [elem-ty : AstType]
+  [dst-reg : String]
+  [offset : i64]) : String
+  (let
+    [masked? : bool
+      (and
+        (>= offset 0)
+        (not
+          (match op
+            [(CompilerIrVectorPrefixOp.Sum) true]
+            [_ false])))]
+    (str_cat.str-cat
+      (if masked?
+        (str_cat.str-cat
+          "    kxnorw %k7, %k7, %k7\n    kshiftlw $"
+          (string.int->string offset)
+          ", %k7, %k7\n")
+        "")
+      "    "
+      (compiler-backend-avx512-vector-prefix-numeric-mnemonic op elem-ty)
+      " %zmm0, "
+      dst-reg
+      ", "
+      dst-reg
+      (if masked?
+        "{%k7}"
+        "")
+      "\n")))
+
+(define (compiler-backend-avx512-vector-prefix-numeric-stage
+  [op : CompilerIrVectorPrefixOp]
+  [elem-ty : AstType]
+  [dst-reg : String]
+  [offset : i64]
+  [align : i64]) : String
+  (str_cat.str-cat
+    "    "
+    (match elem-ty
+      [(AstType.I32) "valignd"]
+      [_ "valignq"])
+    " $"
+    (string.int->string align)
+    ", %zmm1, "
+    dst-reg
+    ", %zmm0\n"
+    (compiler-backend-avx512-vector-prefix-numeric-combine
+      op
+      elem-ty
+      dst-reg
+      offset)))
+
+;; VALIGN with a zero high source shifts the current prefix toward higher lane
+;; numbers. Doubling the offset after each combine covers the whole ZMM.
+(define (compiler-backend-avx512-vector-prefix-numeric-body
+  [op : CompilerIrVectorPrefixOp]
+  [elem-ty : AstType]
+  [dst-reg : String]) : String
+  (str_cat.str-cat
+    "    vpxord %zmm1, %zmm1, %zmm1\n"
+    (match elem-ty
+      [(AstType.I32)
+        (str_cat.str-cat
+          (compiler-backend-avx512-vector-prefix-numeric-stage
+            op
+            elem-ty
+            dst-reg
+            1
+            15)
+          (compiler-backend-avx512-vector-prefix-numeric-stage
+            op
+            elem-ty
+            dst-reg
+            2
+            14)
+          (compiler-backend-avx512-vector-prefix-numeric-stage
+            op
+            elem-ty
+            dst-reg
+            4
+            12)
+          (compiler-backend-avx512-vector-prefix-numeric-stage
+            op
+            elem-ty
+            dst-reg
+            8
+            8))]
+      [_
+        (str_cat.str-cat
+          (compiler-backend-avx512-vector-prefix-numeric-stage
+            op
+            elem-ty
+            dst-reg
+            1
+            7)
+          (compiler-backend-avx512-vector-prefix-numeric-stage
+            op
+            elem-ty
+            dst-reg
+            2
+            6)
+          (compiler-backend-avx512-vector-prefix-numeric-stage
+            op
+            elem-ty
+            dst-reg
+            4
+            4))])))
+
+(define (compiler-backend-avx512-vector-prefix-bool-stage
+  [bits-gp : String]
+  [temp-gp : String]
+  [shift : i64]) : String
+  (str_cat.str-cat
+    "    movq "
+    bits-gp
+    ", "
+    temp-gp
+    "\n    shlq $"
+    (string.int->string shift)
+    ", "
+    temp-gp
+    "\n    orq "
+    temp-gp
+    ", "
+    bits-gp
+    "\n"))
+
+;; AVX-512 bool lanes are already one bit per lane in an opmask. Shift/OR
+;; propagates Any directly; All applies the same operation to the false bits.
+(define (compiler-backend-avx512-vector-prefix-bool-body
+  [op : CompilerIrVectorPrefixOp]
+  [bits-gp : String]
+  [temp-gp : String]) : String
+  (let
+    [all? : bool
+      (match op
+        [(CompilerIrVectorPrefixOp.All) true]
+        [_ false])]
+    (str_cat.str-cat
+      (if all?
+        (str_cat.str-cat "    notq " bits-gp "\n")
+        "")
+      (compiler-backend-avx512-vector-prefix-bool-stage bits-gp temp-gp 1)
+      (compiler-backend-avx512-vector-prefix-bool-stage bits-gp temp-gp 2)
+      (compiler-backend-avx512-vector-prefix-bool-stage bits-gp temp-gp 4)
+      (compiler-backend-avx512-vector-prefix-bool-stage bits-gp temp-gp 8)
+      (compiler-backend-avx512-vector-prefix-bool-stage bits-gp temp-gp 16)
+      (compiler-backend-avx512-vector-prefix-bool-stage bits-gp temp-gp 32)
+      (if all?
+        (str_cat.str-cat "    notq " bits-gp "\n")
+        ""))))
+
+(define (compiler-backend-avx512-vector-prefix-bool-carry-asm
+  [op : CompilerIrVectorPrefixOp]
+  [carry-gp : String]
+  [bits-gp : String]) : String
+  (let
+    [carry32 : String (compiler-backend-reg-part carry-gp 4)]
+    [carry8 : String (compiler-backend-reg-part carry-gp 1)]
+    [combine : String
+      (match op
+        [(CompilerIrVectorPrefixOp.Any) "orq"]
+        [_ "andq"])]
+    (str_cat.str-cat
+      "    testq "
+      carry-gp
+      ", "
+      carry-gp
+      "\n    setne "
+      carry8
+      "\n    movzbl "
+      carry8
+      ", "
+      carry32
+      "\n    negq "
+      carry-gp
+      "\n    "
+      combine
+      " "
+      carry-gp
+      ", "
+      bits-gp
+      "\n")))
+
+(define (compiler-backend-avx512-vector-prefix-bool-result-asm
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [lanes : i64]
+  [mask-move : String]
+  [bits-gp : String]
+  [dst-reg : String]) : String
+  (str_cat.str-cat
+    "    "
+    mask-move
+    " "
+    bits-gp
+    ", "
+    dst-reg
+    "\n"
+    (compiler-backend-avx512-mask-store-dst assignments dst lanes dst-reg)))
+
+(define (compiler-backend-emit-avx512-vector-prefix-bool
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrVectorPrefixOp]
+  [src : CompilerIrValue]
+  [carry : CompilerIrValue]
+  [lanes : i64]
+  [planned-carry-gp : String]
+  [planned-bits-gp : String]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [exclude : (Array String)
+      (compiler-backend-scavenge-exclude-ops2 assignments src carry)]
+    [carry-gp : String
+      (compiler-backend-planned-or-scavenge-reg
+        planned-carry-gp
+        -1
+        exclude
+        7
+        "%r10")]
+    [bits-exclude : (Array String)
+      (compiler-backend-scavenge-exclude-append exclude 7 carry-gp)]
+    [bits-gp : String
+      (compiler-backend-planned-or-scavenge-reg
+        planned-bits-gp
+        -1
+        bits-exclude
+        8
+        "%r11")]
+    [mask-move : String (compiler-backend-avx512-mask-move-mnemonic lanes)]
+    (match (compiler-backend-avx512-mask-register-use
+      assignments
+      src
+      "vector prefix source"
+      lanes
+      (compiler-backend-mask-spill-scratch 0))
+      [(ResultBackendMaskUse.Ok src-use)
+        (match src-use
+          [(CompilerBackendMaskUse.Use src-asm src-reg)
+            (match (compiler-backend-avx512-mask-dst-reg
+              assignments
+              dst
+              "vector prefix dst"
+              (compiler-backend-mask-spill-scratch 0))
+              [(ResultBackendReg.Ok dst-reg)
+                (match (compiler-backend-emit-load-value-with-plan
+                  assignments
+                  carry
+                  carry-gp)
+                  [(ResultCompilerBackend.Ok carry-asm)
+                    (ResultCompilerBackend.Ok
+                      (str_cat.str-cat
+                        src-asm
+                        "    "
+                        mask-move
+                        " "
+                        src-reg
+                        ", "
+                        bits-gp
+                        "\n"
+                        (compiler-backend-avx512-vector-prefix-bool-body
+                          op
+                          bits-gp
+                          carry-gp)
+                        carry-asm
+                        (compiler-backend-avx512-vector-prefix-bool-carry-asm
+                          op
+                          carry-gp
+                          bits-gp)
+                        (compiler-backend-avx512-vector-prefix-bool-result-asm
+                          assignments
+                          dst
+                          lanes
+                          mask-move
+                          bits-gp
+                          dst-reg)))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (box-get message)
+                          instr-diag)))])]
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
+                  (box (compiler-diagnostic-with-message instr-diag message)))])])]
+      [(ResultBackendMaskUse.Err message)
+        (ResultCompilerBackend.Err
+          (box (compiler-diagnostic-with-message instr-diag message)))])))
+
+(define (compiler-backend-emit-avx512-vector-prefix-numeric
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrVectorPrefixOp]
+  [src : CompilerIrValue]
+  [carry : CompilerIrValue]
+  [elem-ty : AstType]
+  [planned-gp : String]
+  [planned-xmm : String]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [no-exclude : (Array String) (array.make-array String 0)]
+    [dst-scratch-xmm : String
+      (if (string.eq planned-xmm "")
+        (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm15")
+        planned-xmm)]
+    [dst-scratch : String
+      (compiler-backend-xmm-family-register dst-scratch-xmm "zmm")]
+    (match (compiler-backend-vector-dst-reg
+      assignments
+      dst
+      "vector prefix dst"
+      "zmm"
+      dst-scratch)
+      [(ResultBackendReg.Ok dst-reg)
+        (match (compiler-backend-vector-register-use
+          assignments
+          src
+          "vector prefix source"
+          "zmm"
+          elem-ty
+          dst-reg)
+          [(ResultBackendVectorUse.Ok src-use)
+            (match src-use
+              [(CompilerBackendVectorUse.Use src-asm src-reg)
+                (let
+                  [copy-asm : String
+                    (if (string.eq src-reg dst-reg)
+                      ""
+                      (str_cat.str-cat
+                        "    vmovdqu64 "
+                        src-reg
+                        ", "
+                        dst-reg
+                        "\n"))]
+                  (match (compiler-backend-avx512-splat-load
+                    assignments
+                    dst
+                    carry
+                    elem-ty
+                    planned-gp
+                    planned-xmm)
+                    [(ResultCompilerBackend.Ok carry-asm)
+                      (ResultCompilerBackend.Ok
+                        (str_cat.str-cat
+                          src-asm
+                          copy-asm
+                          (compiler-backend-avx512-vector-prefix-numeric-body
+                            op
+                            elem-ty
+                            dst-reg)
+                          carry-asm
+                          "%zmm0\n"
+                          (compiler-backend-avx512-vector-prefix-numeric-combine
+                            op
+                            elem-ty
+                            dst-reg
+                            -1)
+                          (compiler-backend-vector-store-dst
+                            assignments
+                            dst
+                            "zmm"
+                            elem-ty
+                            dst-reg)))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err
+                        (box
+                          (compiler-backend-apply-instr-diagnostic
+                            (box-get message)
+                            instr-diag)))]))])]
+          [(ResultBackendVectorUse.Err message)
+            (ResultCompilerBackend.Err
+              (box (compiler-diagnostic-with-message instr-diag message)))])]
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
+          (box (compiler-diagnostic-with-message instr-diag message)))])))
+
+(define (compiler-backend-emit-avx512-vector-prefix
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrVectorPrefixOp]
+  [src : CompilerIrValue]
+  [carry : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [planned-gp : String]
+  [planned-xmm : String]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (not (compiler-backend-avx512-vector-prefix-shape-ok? op lanes elem-ty))
+    (ResultCompilerBackend.Err
+      (box
+        (compiler-diagnostic-with-message
+          instr-diag
+          "backend: unsupported AVX-512 vector prefix shape")))
+    (match elem-ty
+      [(AstType.Bool)
+        (compiler-backend-emit-avx512-vector-prefix-bool
+          assignments
+          dst
+          op
+          src
+          carry
+          lanes
+          planned-gp
+          planned-xmm
+          instr-diag)]
+      [_
+        (compiler-backend-emit-avx512-vector-prefix-numeric
+          assignments
+          dst
+          op
+          src
+          carry
+          elem-ty
+          planned-gp
+          planned-xmm
+          instr-diag)])))
+
 (define (compiler-backend-emit-vector-prefix
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -5911,11 +6361,17 @@
       planned-gp
       planned-xmm
       instr-diag)
-    (ResultCompilerBackend.Err
-      (box
-        (compiler-diagnostic-with-message
-          instr-diag
-          "backend: vector prefix requires AVX2 lowering")))))
+    (compiler-backend-emit-avx512-vector-prefix
+      assignments
+      dst
+      op
+      src
+      carry
+      lanes
+      elem-ty
+      planned-gp
+      planned-xmm
+      instr-diag)))
 
 (define (compiler-backend-avx512-partial-mask [active-lanes : i64]) : i64
   (let
@@ -41722,7 +42178,7 @@
 (cfg
   scavenge-self-check
   (define (compiler-backend-scavenge-self-check
-    [name : String]
+    [name : i64]
     [params : CompilerIrParamList]
     [ret-ty : AstType]
     [slot-vars : i64]
@@ -41759,7 +42215,7 @@
             ends
             assignment-index
             slot-vars
-            name
+            (compiler-ir-symbol-text name)
             liveness
             emit-blocks
             0)
@@ -44807,10 +45263,37 @@
         ;; GAP9: fold constant gep index offsets into addressing displacements
         ;; BEFORE the register plan, so liveness sees the folded program (the
         ;; shared counter stays live; the offset adds vanish).
-        [blocks : CompilerIrBlockList
+        [folded-blocks : CompilerIrBlockList
           (compiler-backend-gep-fold-blocks vars raw-blocks)]
+        ;; Cycle 20: protect GP values only on one admitted cold call edge.  The
+        ;; rewrite precedes regalloc so liveness sees the local kills/reloads;
+        ;; Windows keeps its ordinary fixed unwind-described prologue.
+        [cold-call-rewrite : CompilerRegColdCallRewrite
+          (let
+            [folded-func : CompilerIrFunction
+              (CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                vars
+                folded-blocks)]
+            (if (and
+              (compiler-backend-mode-scalar? mode)
+              compiler-backend-scalar-registers-enabled)
+              (compiler-reg-cold-call-rewrite-function folded-func)
+              (CompilerRegColdCallRewrite.Rewrite folded-func (- 0 1))))]
+        [cold-call-func : CompilerIrFunction
+          (compiler-reg-cold-call-rewrite-function-value cold-call-rewrite)]
+        [blocks : CompilerIrBlockList
+          (match cold-call-func
+            [(CompilerIrFunction.Function _ _ _ _ out-blocks) out-blocks])]
+        [walk-vars : i64
+          (match cold-call-func
+            [(CompilerIrFunction.Function _ _ _ out-vars _) out-vars])]
+        [cold-call-temp-start : i64
+          (compiler-reg-cold-call-rewrite-temp-start cold-call-rewrite)]
         [walk-func : CompilerIrFunction
-          (CompilerIrFunction.Function name params ret-ty vars blocks)]
+          (CompilerIrFunction.Function name params ret-ty walk-vars blocks)]
         [func-diag : CompilerDiagnostic
           (compiler-backend-function-diagnostic-index
             span-index
@@ -44843,11 +45326,24 @@
         [reg-plan : CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if compiler-backend-scalar-registers-enabled
-              (compiler-reg-plan-function-scalar-for-abi fn-abi walk-func)
+              (compiler-reg-plan-function-scalar-cold-for-abi
+                fn-abi
+                walk-func
+                cold-call-temp-start)
               (compiler-reg-plan-function-stack-only walk-func))
             (if (compiler-backend-mode-avx2? mode)
               (compiler-reg-plan-function-avx2-for-abi fn-abi walk-func)
               (compiler-reg-plan-function-for-abi fn-abi walk-func)))]
+        [_cold-call-self-check : unit
+          (cfg
+            scavenge-self-check
+            (if (compiler-reg-cold-call-carriers-stack?
+              reg-plan
+              cold-call-temp-start
+              walk-vars)
+              unit
+              (io.panic "regalloc: cold-call carrier escaped its stack home"))
+            unit)]
         [call-save-enabled : bool
           (if (compiler-backend-mode-scalar? mode)
             compiler-backend-scalar-registers-enabled
@@ -44859,13 +45355,13 @@
           (if non-split-passes-enabled
             (compiler-reg-caller-save-rewrite-blocks
               blocks
-              vars
+              walk-vars
               (compiler-reg-function-var-types walk-func)
               reg-plan)
             (CompilerRegCallSaveRewrite.Rewrite
               blocks
-              vars
-              vars
+              walk-vars
+              walk-vars
               CompilerRegAssignmentList.Nil
               CompilerRegVarTypeList.Nil))]
         [call-save-reg-plan : CompilerRegPlan
@@ -52568,6 +53064,15 @@ tl_comptime_host_invoke_set:
     ""
     (compiler-backend-object-rsp-imm-bytes 0xec value)))
 
+(define (compiler-backend-object-call-r11-bytes) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    (begin
+      (compiler-backend-object-push-u8! (&mut out) 0x41)
+      (compiler-backend-object-push-u8! (&mut out) 0xff)
+      (compiler-backend-object-push-u8! (&mut out) 0xd3)
+      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+
 (define (compiler-backend-object-add-rsp-bytes [value : i64]) : String
   (if (= value 0)
     ""
@@ -53317,12 +53822,33 @@ tl_comptime_host_invoke_set:
         function
         args
         0)]
-    [(CompilerIrInstr.CallIndirectC _ callee args _)
-      (compiler-backend-object-call-args
-        (compiler-backend-object-value-ref parts function callee)
-        function
-        args
-        0)]
+    [(CompilerIrInstr.CallIndirectC dst callee args _)
+      ;; Mirror object-direct-call, with the callee loaded into %r11 after
+      ;; the argument moves (load-value-to-reg scratches through %rax, and
+      ;; %r11 survives the C argument registers), an indirect call, and the
+      ;; result stored from %rax.
+      (let
+        [space : i64 (compiler-backend-object-call-space target args)]
+        (compiler-backend-object-store-reg-to-var
+          (compiler-backend-object-add-nonempty-bytes
+            (compiler-backend-object-add-text
+              (compiler-backend-object-load-value-to-reg
+                (compiler-backend-object-call-arg-moves
+                  (compiler-backend-object-add-nonempty-bytes
+                    parts
+                    (compiler-backend-object-sub-rsp-bytes space))
+                  target
+                  function
+                  args
+                  0)
+                function
+                callee
+                "%r11")
+              (cobj.CompilerObjectX64Instr.Bytes
+                (compiler-backend-object-call-r11-bytes)))
+            (compiler-backend-object-add-rsp-bytes space))
+          dst
+          "%rax"))]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base name args _)

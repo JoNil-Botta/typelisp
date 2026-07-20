@@ -383,6 +383,28 @@
     CompilerRegAssignmentList
     CompilerRegVarTypeList))
 
+;; Conservative cold-call clobber splitting happens before scalar allocation.
+;; `temp-start` is the first synthetic stack-home used to carry a protected GP
+;; value across the cold call, or -1 when the input function was returned
+;; unchanged.  The rewritten function is the single source of truth for both
+;; liveness and emission.
+(defenum CompilerRegColdCallRewrite
+  (Rewrite CompilerIrFunction i64))
+
+(defenum CompilerRegColdCallCandidate
+  (NoCandidate)
+  (Candidate i64 String))
+
+(define (compiler-reg-cold-call-rewrite-function-value
+  [rewrite : CompilerRegColdCallRewrite]) : CompilerIrFunction
+  (match rewrite
+    [(CompilerRegColdCallRewrite.Rewrite func _) func]))
+
+(define (compiler-reg-cold-call-rewrite-temp-start
+  [rewrite : CompilerRegColdCallRewrite]) : i64
+  (match rewrite
+    [(CompilerRegColdCallRewrite.Rewrite _ temp-start) temp-start]))
+
 (defstruct CompilerRegRematTable
   (def-counts (Array i64))
   (candidates (Array i64))
@@ -4170,7 +4192,8 @@
   [func : CompilerIrFunction]
   [interval-index : CompilerRegIntervalIndex]
   [base-ineligible : CompilerLiveI64Set]
-  [vars : i64]) : CompilerRegParamAssignPlan
+  [vars : i64]
+  [ignore-single-cold-call? : bool]) : CompilerRegParamAssignPlan
   (match func
     [(CompilerIrFunction.Function _ params _ _ _)
       (match (compiler-ir-param-list-force-cons params)
@@ -4194,7 +4217,9 @@
               0
               0
               true
-              (compiler-reg-clobber-kind-points func 0)
+              (if ignore-single-cold-call?
+                (compiler-live-set-empty)
+                (compiler-reg-clobber-kind-points func 0))
               (compiler-reg-clobber-kind-points func 1)
               (compiler-reg-clobber-kind-points func 2)))]
         [(CompilerIrParamList.Cons _ _)
@@ -4226,7 +4251,9 @@
               0
               0
               true
-              (compiler-reg-clobber-kind-points func 0)
+              (if ignore-single-cold-call?
+                (compiler-live-set-empty)
+                (compiler-reg-clobber-kind-points func 0))
               (compiler-reg-clobber-kind-points func 1)
               (compiler-reg-clobber-kind-points func 2)))])]))
 
@@ -5036,8 +5063,10 @@
           (compiler-live-set-insert set dst)])]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
-          (compiler-live-set-insert set dst)])]
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ elem-ty)
+          (match elem-ty
+            [(AstType.Bool) set]
+            [_ (compiler-live-set-insert set dst)])])]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
@@ -5083,6 +5112,12 @@
           (compiler-live-set-insert set dst)])]
     [(CompilerIrInstr.MaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
     [(CompilerIrInstr.MaskNot dst _ _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ elem-ty)
+          (match elem-ty
+            [(AstType.Bool) (compiler-live-set-insert set dst)]
+            [_ set])])]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ elem-ty)
@@ -12574,6 +12609,370 @@
 (define (compiler-reg-call-region-function-cap) : i64
   64)
 
+;; ---------------------------------------------------------------------------
+;; Cycle 20: cold-call clobber splitting.
+;;
+;; The backend's Windows unwind program describes a fixed entry prologue, so
+;; sinking nonvolatile pushes into arbitrary body blocks is not a portable
+;; first shrink-wrap form.  Instead, recognize one deliberately narrow CFG
+;; shape and make the call clobber disappear from GP allocation:
+;;
+;;   * exactly one kind-0 clobber in the function;
+;;   * that clobber is the sole instruction before a jump in a side block;
+;;   * the jump has a bypass predecessor and leads toward a real loop;
+;;   * two to twelve ordinary GP values are live through the call.
+;;
+;; Each live-through value V gets a stack-only carrier S.  The cold block is
+;; rewritten to `S <- V; call; V <- S; jump`.  The scalar allocator then ignores
+;; this one GP call-mask point: V has been killed before the call and redefined
+;; after it, while S is forced to memory.  The no-call edge retains V in its
+;; caller-saved home and executes no boundary copies.  Float/vector call masks
+;; are intentionally unchanged.
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-cold-call-clobber-count-seq [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [i : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< i (compiler-ir-instr-seq-count instrs))
+        (begin
+          (if (compiler-reg-call-region-boundary-instr?
+            (compiler-ir-instr-seq-ref instrs i))
+            (set! count (+ count 1))
+            unit)
+          (set! i (+ i 1))))
+      count)))
+
+(define (compiler-reg-cold-call-find-candidate [seq : CompilerIrBlockSeq]) : CompilerRegColdCallCandidate
+  (let
+    [b : i64 0]
+    [clobbers : i64 0]
+    [candidate : i64 (- 0 1)]
+    [join : String ""]
+    (begin
+      (while (< b (compiler-ir-block-seq-count seq))
+        (begin
+          (match (compiler-ir-block-seq-ref seq b)
+            [(CompilerIrBlock.Block _ instrs)
+              (begin
+                (set!
+                  clobbers
+                  (+ clobbers (compiler-reg-cold-call-clobber-count-seq instrs)))
+                (if (= (compiler-ir-instr-seq-count instrs) 2)
+                  (match (compiler-ir-instr-seq-ref instrs 0)
+                    [(CompilerIrInstr.Call _ _ _ _)
+                      (match (compiler-ir-instr-seq-ref instrs 1)
+                        [(CompilerIrInstr.Jump target)
+                          (if (= candidate (- 0 1))
+                            (begin
+                              (set! candidate b)
+                              (set! join target))
+                            (set! candidate (- 0 2)))]
+                        [_ unit])]
+                    [_ unit])
+                  unit))])
+          (set! b (+ b 1))))
+      (if (and (= clobbers 1) (>= candidate 0))
+        (CompilerRegColdCallCandidate.Candidate candidate join)
+        CompilerRegColdCallCandidate.NoCandidate))))
+
+(define (compiler-reg-cold-call-block-label [block : CompilerIrBlock]) : String
+  (match block
+    [(CompilerIrBlock.Block label _) label]))
+
+(define (compiler-reg-cold-call-find-label
+  [seq : CompilerIrBlockSeq]
+  [label : String]) : i64
+  (let
+    [i : i64 0]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< i (compiler-ir-block-seq-count seq)) (< found 0))
+        (begin
+          (if (string.eq
+            (compiler-reg-cold-call-block-label
+              (compiler-ir-block-seq-ref seq i))
+            label)
+            (set! found i)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
+(define (compiler-reg-cold-call-predecessor-count
+  [seq : CompilerIrBlockSeq]
+  [label : String]
+  [excluded : i64]) : i64
+  (let
+    [i : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< i (compiler-ir-block-seq-count seq))
+        (begin
+          (if (and
+            (not (= i excluded))
+            (compiler-live-label-set-contains?
+              (compiler-live-block-successors (compiler-ir-block-seq-ref seq i))
+              label))
+            (set! count (+ count 1))
+            unit)
+          (set! i (+ i 1))))
+      count)))
+
+(define (compiler-reg-cold-call-reaches-loop-labels?
+  [seq : CompilerIrBlockSeq]
+  [depths : (Array i64)]
+  [labels : CompilerLiveLabelSet]
+  [seen : (Array bool)]) : bool
+  (match labels
+    [(CompilerLiveLabelSet.Nil) false]
+    [(CompilerLiveLabelSet.Cons label rest)
+      (or
+        (compiler-reg-cold-call-reaches-loop-from?
+          seq
+          depths
+          (compiler-reg-cold-call-find-label seq label)
+          seen)
+        (compiler-reg-cold-call-reaches-loop-labels?
+          seq
+          depths
+          (box-get rest)
+          seen))]))
+
+(define (compiler-reg-cold-call-reaches-loop-from?
+  [seq : CompilerIrBlockSeq]
+  [depths : (Array i64)]
+  [block : i64]
+  [seen : (Array bool)]) : bool
+  (if (or
+    (< block 0)
+    (>= block (compiler-ir-block-seq-count seq))
+    (array-ref seen block))
+    false
+    (begin
+      (array-set! seen block true)
+      (or
+        (> (array-ref depths block) 0)
+        (compiler-reg-cold-call-reaches-loop-labels?
+          seq
+          depths
+          (compiler-live-block-successors (compiler-ir-block-seq-ref seq block))
+          seen)))))
+
+(define (compiler-reg-cold-call-cfg-ok?
+  [blocks : CompilerIrBlockList]
+  [seq : CompilerIrBlockSeq]
+  [call-block : i64]
+  [join-label : String]) : bool
+  (let
+    [join-block : i64 (compiler-reg-cold-call-find-label seq join-label)]
+    [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+    [reaches-loop? : bool
+      (compiler-reg-cold-call-reaches-loop-from?
+        seq
+        depths
+        join-block
+        (array.make-array bool (compiler-ir-block-seq-count seq)))]
+    [call-label : String
+      (compiler-reg-cold-call-block-label
+        (compiler-ir-block-seq-ref seq call-block))]
+    (and
+      (> call-block 0)
+      (> join-block call-block)
+      (= (array-ref depths call-block) 0)
+      reaches-loop?
+      (> (compiler-reg-cold-call-predecessor-count seq call-label (- 0 1)) 0)
+      ;; One predecessor is the call block and at least one distinct predecessor
+      ;; is the bypass edge.
+      (> (compiler-reg-cold-call-predecessor-count seq join-label (- 0 1)) 1)
+      (> (compiler-reg-cold-call-predecessor-count seq join-label call-block) 0))))
+
+(define (compiler-reg-cold-call-protectable-type? [ty : AstType]) : bool
+  (and
+    (compiler-reg-register-eligible-type? ty)
+    (not (compiler-reg-float-type? ty))
+    (not (compiler-reg-type-register-group? ty))))
+
+;; Fill `selected` in ascending var-id order.  Returning cap+1 means either the
+;; bounded budget was exceeded or a live GP register-group could not be carried
+;; in one stack word.  Edge-precise liveness keeps loop-phi back-edge inputs off
+;; this preheader boundary.
+(define (compiler-reg-cold-call-select-live!
+  [live-after : CompilerLiveI64Set]
+  [defs : CompilerLiveI64Set]
+  [memory-vars : CompilerLiveI64Set]
+  [type-info : CompilerRegVarTypes]
+  [vars : i64]
+  [selected : (Array i64)]) : i64
+  (let
+    [v : i64 0]
+    [count : i64 0]
+    [unsafe : bool false]
+    (begin
+      (while (< v vars)
+        (begin
+          (if (and
+            (compiler-live-set-contains? live-after v)
+            (not (compiler-live-set-contains? defs v))
+            (not (compiler-live-set-contains? memory-vars v)))
+            (match (compiler-reg-var-types-lookup type-info v)
+              [(CompilerRegMaybeType.Some ty)
+                (if (compiler-reg-cold-call-protectable-type? ty)
+                  (begin
+                    (if (< count (array-length selected))
+                      (array-set! selected count v)
+                      unit)
+                    (set! count (+ count 1)))
+                  ;; XMM-family values retain their real call masks; values
+                  ;; that are not register-eligible already have stack homes.
+                  ;; A GP register group would be exposed by the ignored mask,
+                  ;; but this first form has only one-word carriers.
+                  (if (and
+                    (compiler-reg-register-eligible-type? ty)
+                    (not (compiler-reg-float-type? ty)))
+                    (set! unsafe true)
+                    unit))]
+              [(CompilerRegMaybeType.No) unit])
+            unit)
+          (set! v (+ v 1))))
+      (if unsafe
+        (+ (array-length selected) 1)
+        count))))
+
+(define (compiler-reg-cold-call-rewrite-instrs
+  [instrs : CompilerIrInstrSeq]
+  [selected : (Array i64)]
+  [selected-count : i64]
+  [temp-start : i64]
+  [type-info : CompilerRegVarTypes]) : CompilerIrInstrSeq
+  (let
+    [old-count : i64 (compiler-ir-instr-seq-count instrs)]
+    [out-count : i64 (+ old-count (* 2 selected-count))]
+    [out : (Array CompilerIrInstr) (array.make-array CompilerIrInstr out-count)]
+    [w : i64 0]
+    [i : i64 0]
+    (begin
+      ;; Candidate admission fixes the call at instruction zero.
+      (while (< i selected-count)
+        (let
+          [v : i64 (array-ref selected i)]
+          (begin
+            (match (compiler-reg-var-types-lookup type-info v)
+              [(CompilerRegMaybeType.Some ty)
+                (array-set!
+                  out
+                  w
+                  (CompilerIrInstr.Mov
+                    (+ temp-start i)
+                    (CompilerIrValue.Var v)
+                    ty))]
+              [(CompilerRegMaybeType.No) unit])
+            (set! w (+ w 1))
+            (set! i (+ i 1)))))
+      (array-set! out w (compiler-ir-instr-seq-ref instrs 0))
+      (set! w (+ w 1))
+      (set! i 0)
+      (while (< i selected-count)
+        (let
+          [v : i64 (array-ref selected i)]
+          (begin
+            (match (compiler-reg-var-types-lookup type-info v)
+              [(CompilerRegMaybeType.Some ty)
+                (array-set!
+                  out
+                  w
+                  (CompilerIrInstr.Mov
+                    v
+                    (CompilerIrValue.Var (+ temp-start i))
+                    ty))]
+              [(CompilerRegMaybeType.No) unit])
+            (set! w (+ w 1))
+            (set! i (+ i 1)))))
+      (set! i 1)
+      (while (< i old-count)
+        (begin
+          (array-set! out w (compiler-ir-instr-seq-ref instrs i))
+          (set! w (+ w 1))
+          (set! i (+ i 1))))
+      (CompilerIrInstrSeq out out-count))))
+
+(define (compiler-reg-cold-call-rewrite-function [func : CompilerIrFunction]) : CompilerRegColdCallRewrite
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty vars blocks)
+      (let
+        [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+        (match (compiler-reg-cold-call-find-candidate seq)
+          [(CompilerRegColdCallCandidate.NoCandidate)
+            (CompilerRegColdCallRewrite.Rewrite func (- 0 1))]
+          [(CompilerRegColdCallCandidate.Candidate call-block join-label)
+            (if (not
+              (compiler-reg-cold-call-cfg-ok? blocks seq call-block join-label))
+              (CompilerRegColdCallRewrite.Rewrite func (- 0 1))
+              (let
+                [type-info : CompilerRegVarTypes
+                  (compiler-reg-function-var-types func)]
+                [liveness
+                  : CompilerFunctionLiveness
+                  ;; Phi inputs belong to predecessor edges.  The baseline
+                  ;; block analysis conservatively made back-edge inputs look
+                  ;; live across this preheader call (nine values in the
+                  ;; hashmap helper instead of the three real parameters).
+                  (compiler-live-analyze-function-edge-precise func)]
+                [call-instrs : CompilerIrInstrSeq
+                  (match (compiler-ir-block-seq-ref seq call-block)
+                    [(CompilerIrBlock.Block _ instrs) instrs])]
+                [call-instr : CompilerIrInstr
+                  (compiler-ir-instr-seq-ref call-instrs 0)]
+                [selected : (Array i64) (array.make-array i64 12)]
+                [selected-count : i64
+                  (compiler-reg-cold-call-select-live!
+                    (compiler-live-after
+                      liveness
+                      (compiler-reg-cold-call-block-label
+                        (compiler-ir-block-seq-ref seq call-block))
+                      0)
+                    (compiler-live-instr-defs call-instr)
+                    (compiler-reg-ineligible-memory
+                      blocks
+                      (compiler-live-set-empty))
+                    type-info
+                    vars
+                    selected)]
+                (if (or (< selected-count 2) (> selected-count 12))
+                  (CompilerRegColdCallRewrite.Rewrite func (- 0 1))
+                  (let
+                    [count : i64 (compiler-ir-block-seq-count seq)]
+                    [out : (Array CompilerIrBlock)
+                      (array.make-array CompilerIrBlock count)]
+                    [b : i64 0]
+                    (begin
+                      (while (< b count)
+                        (begin
+                          (array-set!
+                            out
+                            b
+                            (if (= b call-block)
+                              (match (compiler-ir-block-seq-ref seq b)
+                                [(CompilerIrBlock.Block label instrs)
+                                  (CompilerIrBlock.Block
+                                    label
+                                    (compiler-reg-cold-call-rewrite-instrs
+                                      instrs
+                                      selected
+                                      selected-count
+                                      vars
+                                      type-info))])
+                              (compiler-ir-block-seq-ref seq b)))
+                          (set! b (+ b 1))))
+                      (CompilerRegColdCallRewrite.Rewrite
+                        (CompilerIrFunction.Function
+                          name
+                          params
+                          ret-ty
+                          (+ vars selected-count)
+                          (CompilerIrBlockList.Array
+                            (CompilerIrBlockSeq out count)))
+                        vars))))))]))]))
+
 (define (compiler-reg-call-region-root
   [parents : (Array i64)]
   [n : i64]
@@ -18026,14 +18425,28 @@
   [blocked : CompilerLiveI64Set]
   [allow-caller-saved-zero-call : bool]
   [mask-vars-use-vector-registers : bool]
-  [abi : CompilerRegTargetAbi]) : CompilerRegPlan
+  [abi : CompilerRegTargetAbi]
+  [ignore-single-cold-call? : bool]
+  [forced-spill-from : i64]) : CompilerRegPlan
   (let
     [storage-identity-vars : CompilerLiveI64Set
-      (if allow-caller-saved-zero-call
-        (match func
-          [(CompilerIrFunction.Function _ _ _ _ blocks)
-            (compiler-reg-ineligible-memory blocks (compiler-live-set-empty))])
-        (compiler-live-set-empty))]
+      (let
+        [base : CompilerLiveI64Set
+          (if allow-caller-saved-zero-call
+            (match func
+              [(CompilerIrFunction.Function _ _ _ _ blocks)
+                (compiler-reg-ineligible-memory
+                  blocks
+                  (compiler-live-set-empty))])
+            (compiler-live-set-empty))]
+        (if (>= forced-spill-from 0)
+          (match func
+            [(CompilerIrFunction.Function _ _ _ fn-vars _)
+              (compiler-reg-live-set-insert-range
+                base
+                forced-spill-from
+                fn-vars)])
+          base))]
     ;; Destructive operand/result ties carry different values and never receive
     ;; the same-value overlap waiver. Keep their ordinary non-overlap relation
     ;; out of intervals spanning call-like, fixed div/mod, or variable-shift
@@ -18041,7 +18454,9 @@
     ;; a different-value destructive chain must not reshape itself across any of
     ;; those physical-register boundaries.
     [clobber-points : CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points func 0)]
+      (if ignore-single-cold-call?
+        (compiler-live-set-empty)
+        (compiler-reg-clobber-kind-points func 0))]
     [destructive-fixed-points : CompilerLiveI64Set
       (compiler-live-set-union
         (compiler-reg-clobber-kind-points func 1)
@@ -18705,7 +19120,9 @@
       ineligible
       false
       false
-      abi)))
+      abi
+      false
+      (- 0 1))))
 
 (define (compiler-reg-plan-function [func : CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-for-abi CompilerRegTargetAbi.Linux func))
@@ -18738,7 +19155,9 @@
       ineligible
       false
       true
-      abi)))
+      abi
+      false
+      (- 0 1))))
 
 (define (compiler-reg-plan-function-avx2 [func : CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-avx2-for-abi CompilerRegTargetAbi.Linux func))
@@ -18873,9 +19292,21 @@
                 (box-get rest)
                 interval-index)))])]))
 
-(define (compiler-reg-plan-function-scalar-for-abi
+(define (compiler-reg-live-set-insert-range
+  [set : CompilerLiveI64Set]
+  [start : i64]
+  [end : i64]) : CompilerLiveI64Set
+  (if (>= start end)
+    set
+    (compiler-reg-live-set-insert-range
+      (compiler-live-set-insert set start)
+      (+ start 1)
+      end)))
+
+(define (compiler-reg-plan-function-scalar-cold-for-abi
   [abi : CompilerRegTargetAbi]
-  [func : CompilerIrFunction]) : CompilerRegPlan
+  [func : CompilerIrFunction]
+  [forced-spill-from : i64]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make func true)]
@@ -18888,7 +19319,9 @@
       (if (compiler-reg-scalar-full-intervals? func)
         (compiler-reg-live-interval-selection
           func
-          (struct-get liveness-handle baseline))
+          (if (>= forced-spill-from 0)
+            (compiler-reg-liveness-handle-edge-precise liveness-handle)
+            (struct-get liveness-handle baseline)))
         (let
           [block-intervals : CompilerRegIntervalList
             (compiler-reg-block-intervals func)]
@@ -18914,15 +19347,22 @@
               (struct-get interval-index ends)
               (- vars 1)
               CompilerRegIntervalList.Nil)]
+          [cold-split? : bool (>= forced-spill-from 0)]
           [base-ineligible : CompilerLiveI64Set
-            (compiler-reg-ineligible-vars-non-params func types abi)]
+            (let
+              [base : CompilerLiveI64Set
+                (compiler-reg-ineligible-vars-non-params func types abi)]
+              (if cold-split?
+                (compiler-reg-live-set-insert-range base forced-spill-from vars)
+                base))]
           [param-plan : CompilerRegParamAssignPlan
             (compiler-reg-param-assign-plan
               abi
               func
               interval-index
               base-ineligible
-              vars)]
+              vars
+              cold-split?)]
           (match param-plan
             [(CompilerRegParamAssignPlan.Plan preassignments ineligible blocked)
               (compiler-reg-plan-from
@@ -18937,10 +19377,210 @@
                 blocked
                 true
                 false
-                abi)]))])))
+                abi
+                cold-split?
+                forced-spill-from)]))])))
+
+(define (compiler-reg-plan-function-scalar-for-abi
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]) : CompilerRegPlan
+  (compiler-reg-plan-function-scalar-cold-for-abi abi func (- 0 1)))
 
 (define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-scalar-for-abi CompilerRegTargetAbi.Linux func))
+
+;; The cold-call carrier is the ABI boundary: it must never be colored into a
+;; register or rematerialized, because the real call is deliberately absent
+;; from the GP clobber mask.  Missing assignments are the backend's ordinary
+;; stack-home representation and are therefore valid here.
+(cfg
+  (any test scavenge-self-check)
+  (define (compiler-reg-cold-call-carriers-stack?
+    [plan : CompilerRegPlan]
+    [temp-start : i64]
+    [vars : i64]) : bool
+    (if (< temp-start 0)
+      true
+      (match plan
+        [(CompilerRegPlan.Plan assignments _ _ _ _ _)
+          (let
+            [v : i64 temp-start]
+            [ok : bool (< temp-start vars)]
+            (begin
+              (while (and ok (< v vars))
+                (begin
+                  (match (compiler-reg-assignment-lookup assignments v)
+                    [(CompilerRegMaybeLocation.No) unit]
+                    [(CompilerRegMaybeLocation.Some location)
+                      (match location
+                        [(CompilerRegLocation.Spill _) unit]
+                        [_ (set! ok false)])])
+                  (set! v (+ v 1))))
+              ok))]))))
+
+(cfg
+  test
+  (define (compiler-reg-cold-call-test-function) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      (compiler-ir-test-symbol "cold_call_split")
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "map" (compiler-reg-i64-ty) 0)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "key" (compiler-reg-i64-ty) 1)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "value" (compiler-reg-i64-ty) 2)
+            CompilerIrParamList.Nil)))
+      (AstType.I64)
+      6
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch
+              (CompilerIrValue.Bool false)
+              "cold"
+              "bypass")
+            CompilerIrInstrList.Nil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "cold"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Call
+                3
+                (compiler-ir-test-symbol "grow")
+                (CompilerIrCallArgs.Nil)
+                (AstType.Unit))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "join")
+                CompilerIrInstrList.Nil)))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "bypass"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "join")
+                CompilerIrInstrList.Nil))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "join"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    4
+                    (CompilerIrBinOp.Add)
+                    (CompilerIrValue.Var 0)
+                    (CompilerIrValue.Var 1)
+                    (compiler-reg-i64-ty))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      5
+                      (CompilerIrBinOp.Add)
+                      (CompilerIrValue.Var 4)
+                      (CompilerIrValue.Var 2)
+                      (compiler-reg-i64-ty))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Jump "loop")
+                      CompilerIrInstrList.Nil))))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "loop"
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Branch
+                      (CompilerIrValue.Bool false)
+                      "loop"
+                      "exit")
+                    CompilerIrInstrList.Nil))
+                (compiler-ir-block-cons
+                  (compiler-ir-block
+                    "exit"
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Return
+                        (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+                      CompilerIrInstrList.Nil))
+                  CompilerIrBlockList.Nil)))))))))
+
+(cfg
+  test
+  (define (compiler-reg-cold-call-test-mov?
+    [instr : CompilerIrInstr]
+    [dst : i64]
+    [src : i64]) : bool
+    (match instr
+      [(CompilerIrInstr.Mov found-dst (CompilerIrValue.Var found-src) _)
+        (and (= found-dst dst) (= found-src src))]
+      [_ false])))
+
+(cfg
+  test
+  (define (compiler-reg-cold-call-split-ok?) : bool
+    (let
+      [rewrite : CompilerRegColdCallRewrite
+        (compiler-reg-cold-call-rewrite-function
+          (compiler-reg-cold-call-test-function))]
+      [rewritten : CompilerIrFunction
+        (compiler-reg-cold-call-rewrite-function-value rewrite)]
+      [temp-start : i64 (compiler-reg-cold-call-rewrite-temp-start rewrite)]
+      (match rewritten
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
+          (let
+            [seq : CompilerIrBlockSeq
+              (compiler-live-ir-block-list-to-seq blocks)]
+            [instrs : CompilerIrInstrSeq
+              (match (compiler-ir-block-seq-ref seq 1)
+                [(CompilerIrBlock.Block _ found) found])]
+            [plan : CompilerRegPlan
+              (compiler-reg-plan-function-scalar-cold-for-abi
+                CompilerRegTargetAbi.Linux
+                rewritten
+                temp-start)]
+            (and
+              (= temp-start 6)
+              (= vars 9)
+              (= (compiler-ir-instr-seq-count instrs) 8)
+              (compiler-reg-cold-call-test-mov?
+                (compiler-ir-instr-seq-ref instrs 0)
+                6
+                0)
+              (compiler-reg-cold-call-test-mov?
+                (compiler-ir-instr-seq-ref instrs 1)
+                7
+                1)
+              (compiler-reg-cold-call-test-mov?
+                (compiler-ir-instr-seq-ref instrs 2)
+                8
+                2)
+              (match (compiler-ir-instr-seq-ref instrs 3)
+                [(CompilerIrInstr.Call _ _ _ _) true]
+                [_ false])
+              (compiler-reg-cold-call-test-mov?
+                (compiler-ir-instr-seq-ref instrs 4)
+                0
+                6)
+              (compiler-reg-cold-call-test-mov?
+                (compiler-ir-instr-seq-ref instrs 5)
+                1
+                7)
+              (compiler-reg-cold-call-test-mov?
+                (compiler-ir-instr-seq-ref instrs 6)
+                2
+                8)
+              (match (compiler-ir-instr-seq-ref instrs 7)
+                [(CompilerIrInstr.Jump target) (string.eq target "join")]
+                [_ false])
+              (compiler-reg-location-register?
+                (match plan
+                  [(CompilerRegPlan.Plan assignments _ _ _ _ _)
+                    (compiler-reg-assignment-lookup assignments 0)])
+                "%rdi")
+              (compiler-reg-location-register?
+                (match plan
+                  [(CompilerRegPlan.Plan assignments _ _ _ _ _)
+                    (compiler-reg-assignment-lookup assignments 1)])
+                "%rsi")
+              (compiler-reg-location-register?
+                (match plan
+                  [(CompilerRegPlan.Plan assignments _ _ _ _ _)
+                    (compiler-reg-assignment-lookup assignments 2)])
+                "%rdx")
+              (compiler-reg-cold-call-carriers-stack? plan temp-start vars)))]))))
 
 ;; Fast scalar backend plan: keep type discovery for emission decisions, but
 ;; leave values in their stack slots instead of spending compile time on liveness
@@ -21650,6 +22290,7 @@
   (SplatValueGp)
   (SplatValueXmm)
   (VectorPrefixCarry)
+  (VectorPrefixBits)
   (VectorPrefixValue)
   (VectorReduceAccumulator)
   (VectorReduceScratch)
@@ -23471,19 +24112,27 @@
         point
         (+ point 1)
         var)]
-    [(CompilerIrInstr.VectorPrefix _)
-      (CompilerRegScratchRequirement
-        point
-        ordinal
-        (if (= ordinal 0)
-          (CompilerRegScratchRole.VectorPrefixCarry)
-          (CompilerRegScratchRole.VectorPrefixValue))
-        (if (= ordinal 0)
-          (compiler-reg-scratch-memory-constraint assignments instr)
-          (compiler-reg-scratch-xmm-constraint assignments instr))
-        point
-        (+ point 1)
-        var)]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ _ _ lanes elem-ty)
+          (let
+            [avx512-bool? : bool
+              (match elem-ty
+                [(AstType.Bool) (> lanes 32)]
+                [_ false])]
+            (CompilerRegScratchRequirement
+              point
+              ordinal
+              (cond
+                [(= ordinal 0) (CompilerRegScratchRole.VectorPrefixCarry)]
+                [avx512-bool? (CompilerRegScratchRole.VectorPrefixBits)]
+                [else (CompilerRegScratchRole.VectorPrefixValue)])
+              (if (or (= ordinal 0) avx512-bool?)
+                (compiler-reg-scratch-memory-constraint assignments instr)
+                (compiler-reg-scratch-xmm-constraint assignments instr))
+              point
+              (+ point 1)
+              var))])]
     [(CompilerIrInstr.VectorReduce _ _ _ _ _)
       (CompilerRegScratchRequirement
         point
@@ -34865,6 +35514,9 @@
 
 (define (compiler-regalloc-scalar-self-test?) : bool
   (begin
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-cold-call-split-ok?"
+      (cfg test (compiler-reg-cold-call-split-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-scalar-call-live-ok?"
       (compiler-reg-scalar-call-live-ok?))

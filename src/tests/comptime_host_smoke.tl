@@ -121,9 +121,24 @@
         (=
           (comptime-host-smoke-invoke 9999 0 0)
           tlci-host-callback-status-bad-request)
+        (=
+          (comptime-host-smoke-invoke tlci-host-callback-op-fuel-check 0 0)
+          tlci-host-callback-status-bad-request)
+        (begin
+          (compiler-comptime-host-session-close!)
+          (compiler-comptime-host-session-open!
+            pools
+            operands
+            0
+            1
+            comptime-host-smoke-cookie)
+          true)
         (= (comptime-host-smoke-invoke tlci-host-callback-op-fuel-check 0 0) 0)
         (=
           (comptime-host-smoke-invoke tlci-host-callback-op-fuel-check 0 0)
+          tlci-host-callback-status-fuel-exhausted)
+        (=
+          (comptime-host-smoke-invoke tlci-host-callback-op-expr-list-empty 0 0)
           tlci-host-callback-status-fuel-exhausted)
         (not (compiler-comptime-host-result-ready?))))))
 

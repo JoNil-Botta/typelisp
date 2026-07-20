@@ -4259,13 +4259,17 @@ Type rules:
   as reduction types. `f32` remains rejected for `min`/`max`, as does `f64`.
 
 Backend coverage: scalar lowering covers every supported operator/type
-combination above, and `spmd-scan` has the in-order scalar reference
-semantics in every backend mode. SIMD backend modes vectorize eligible
-contiguous array folds and checked gather-only folds through either an i64
-index array or `i + offsets[program-index]`, and otherwise keep scalar semantics
-rather than changing source behavior; per-backend matrices are specified in
-section 8. Eligible `spmd-shuffle` expressions over the numeric types above use
-native AVX2/AVX-512 permutations in `foreach` maps and reduction value plans.
+combination above. SIMD backend modes vectorize eligible contiguous array
+folds and checked gather-only folds through either an i64 index array or
+`i + offsets[program-index]`, and otherwise keep scalar semantics rather than
+changing source behavior. AVX2 also vectorizes a canonical range-wide
+`spmd-scan` whose value is `input[i]` and whose body directly stores `prefix`
+to `output[i]`: full gangs use an inclusive carry-seeded vector prefix and an
+in-order scalar tail resumes from the final gang prefix. Other scan shapes and
+AVX-512 scans retain the scalar reference lowering. Per-backend matrices are
+specified in section 8. Eligible `spmd-shuffle` expressions over the numeric
+types above use native AVX2/AVX-512 permutations in `foreach` maps and
+reduction value plans.
 
 Purity and varying rules:
 
@@ -6484,7 +6488,7 @@ in documentation passes.
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
-| Vectorized `spmd-scan` | Deferred under #5349 and #5350. |
+| AVX-512 `spmd-scan` vectorization | AVX2 canonical contiguous range-wide scans are implemented; AVX-512 is deferred under #5350. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Frontend analysis plus private scalar/AVX-512 IR lowering and native emission are implemented; AVX2 native emission is deferred under #5151. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |

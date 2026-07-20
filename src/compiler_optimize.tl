@@ -1422,6 +1422,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
           (opt-invalidate-def env dst instr)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -1535,6 +1539,10 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
           (opt-invalidate-def env dst instr)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (opt-invalidate-def env dst instr)]
@@ -1759,6 +1767,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
           (opt-collect-value-uses (opt-collect-value-uses set lhs) rhs)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (opt-collect-value-uses (opt-collect-value-uses set src) carry)])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (opt-collect-value-uses set src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -1967,6 +1979,10 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+          (not (opt-used-contains set dst))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
           (not (opt-used-contains set dst))])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (not (opt-used-contains set dst))]
@@ -2222,6 +2238,12 @@
           (begin
             (opt-collect-value-uses-array items lhs)
             (opt-collect-value-uses-array items rhs))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (begin
+            (opt-collect-value-uses-array items src)
+            (opt-collect-value-uses-array items carry))])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (opt-collect-value-uses-array items src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -2407,6 +2429,12 @@
           (begin
             (opt-uncount-value-uses-array items lhs)
             (opt-uncount-value-uses-array items rhs))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (begin
+            (opt-uncount-value-uses-array items src)
+            (opt-uncount-value-uses-array items carry))])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (opt-uncount-value-uses-array items src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -2523,6 +2551,10 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+          (not (opt-used-array-contains items dst))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
           (not (opt-used-array-contains items dst))])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (not (opt-used-array-contains items dst))]
@@ -2967,6 +2999,12 @@
           (or
             (opt-aggregate-value-has-pointer? base ptrs lhs)
             (opt-aggregate-value-has-pointer? base ptrs rhs))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs src)
+            (opt-aggregate-value-has-pointer? base ptrs carry))])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (opt-aggregate-value-has-pointer? base ptrs src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -3822,6 +3860,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
           (opt-aggregate-field-facts-invalidate-var facts dst)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
+          (opt-aggregate-field-facts-invalidate-var facts dst)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -4078,6 +4120,19 @@
   [a : CompilerIrVectorReduceOp]
   [b : CompilerIrVectorReduceOp]) : bool
   (= (opt-vector-reduce-tag a) (opt-vector-reduce-tag b)))
+
+(define (opt-vector-prefix-op-tag [op : CompilerIrVectorPrefixOp]) : i64
+  (match op
+    [(CompilerIrVectorPrefixOp.Sum) 0]
+    [(CompilerIrVectorPrefixOp.Min) 1]
+    [(CompilerIrVectorPrefixOp.Max) 2]
+    [(CompilerIrVectorPrefixOp.All) 3]
+    [(CompilerIrVectorPrefixOp.Any) 4]))
+
+(define (opt-vector-prefix-op-eq?
+  [a : CompilerIrVectorPrefixOp]
+  [b : CompilerIrVectorPrefixOp]) : bool
+  (= (opt-vector-prefix-op-tag a) (opt-vector-prefix-op-tag b)))
 
 (define (opt-mask-reduce-tag [op : CompilerIrMaskReduceOp]) : i64
   (match op
@@ -4855,6 +4910,27 @@
                     (= alanes blanes)
                     (opt-type-eq aty bty))])]
             [_ false])])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload ad aop as ac alanes aty)
+          (match b
+            [(CompilerIrInstr.VectorPrefix other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrVectorPrefixPayload.Payload
+                    bd
+                    bop
+                    bs
+                    bc
+                    blanes
+                    bty)
+                  (and
+                    (= ad bd)
+                    (opt-vector-prefix-op-eq? aop bop)
+                    (opt-value-eq as bs)
+                    (opt-value-eq ac bc)
+                    (= alanes blanes)
+                    (opt-type-eq aty bty))])]
+            [_ false])])]
     [(CompilerIrInstr.GatherLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrGatherLoadPayload.Payload
@@ -5622,6 +5698,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
           (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
+          (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -5995,6 +6075,9 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload _ _ _ _ _ _) instr])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ _ _ _ _) instr])]
     [(CompilerIrInstr.VectorReduce _ _ _ _ _) instr]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
@@ -6172,6 +6255,10 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+          (opt-copy-invalidate-var env dst)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
           (opt-copy-invalidate-var env dst)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (opt-copy-invalidate-var env dst)]
@@ -6444,6 +6531,10 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+          (opt-bounds-invalidate-var facts dst)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
           (opt-bounds-invalidate-var facts dst)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (opt-bounds-invalidate-var facts dst)]
@@ -8659,6 +8750,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
           (option_i64.Some dst)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
+          (option_i64.Some dst)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _) (option_i64.Some dst)]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
@@ -9130,6 +9225,12 @@
           (opt-verify-two
             (opt-verify-value-use defs doms lhs block-label pos)
             (opt-verify-value-use defs doms rhs block-label pos))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms src block-label pos)
+            (opt-verify-value-use defs doms carry block-label pos))])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (opt-verify-value-use defs doms src block-label pos)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -9864,6 +9965,10 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+          (opt-ssa-facts-add-def-bad facts dst)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
           (opt-ssa-facts-add-def-bad facts dst)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (opt-ssa-facts-add-def-bad facts dst)]
@@ -10701,6 +10806,19 @@
               op
               (opt-ssa-rewrite-value env lhs)
               (opt-ssa-rewrite-value env rhs)
+              lanes
+              ty)
+            env
+            next-var)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst op src carry lanes ty)
+          (OptSsaInstrResult.Result
+            (ir-instr-vector-prefix
+              dst
+              op
+              (opt-ssa-rewrite-value env src)
+              (opt-ssa-rewrite-value env carry)
               lanes
               ty)
             env
@@ -12521,6 +12639,9 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload _ _ _ _ _ _) instr])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ _ _ _ _) instr])]
     [(CompilerIrInstr.VectorReduce _ _ _ _ _) instr]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
@@ -20900,6 +21021,9 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _) dst])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
@@ -21278,6 +21402,10 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
           (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
@@ -21812,6 +21940,16 @@
             op
             (opt-sccp-rewrite-value env lhs)
             (opt-sccp-rewrite-value env rhs)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst op src carry lanes ty)
+          (ir-instr-vector-prefix
+            dst
+            op
+            (opt-sccp-rewrite-value env src)
+            (opt-sccp-rewrite-value env carry)
             lanes
             ty)])]
     [(CompilerIrInstr.GatherLoad payload-box)
@@ -23176,6 +23314,9 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _) dst])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
@@ -26707,6 +26848,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
           (opt-loop-bce-state-invalidate-def state dst)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
+          (opt-loop-bce-state-invalidate-def state dst)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)
       (opt-loop-bce-state-invalidate-def state dst)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -28350,6 +28495,12 @@
           (begin
             (opt-scan-note-value-uses items generation lhs)
             (opt-scan-note-value-uses items generation rhs))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (begin
+            (opt-scan-note-value-uses items generation src)
+            (opt-scan-note-value-uses items generation carry))])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (opt-scan-note-value-uses items generation src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -37511,6 +37662,13 @@
             index
             (opt-inline-census-value index census lhs)
             rhs)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (opt-inline-census-value
+            index
+            (opt-inline-census-value index census src)
+            carry)])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (opt-inline-census-value index census src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -42740,6 +42898,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
           (opt-reach-value index (opt-reach-value index state lhs) rhs)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (opt-reach-value index (opt-reach-value index state src) carry)])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (opt-reach-value index state src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -44494,6 +44656,12 @@
           (opt-const-globals-disq-value
             (opt-const-globals-disq-value disq lhs)
             rhs)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (opt-const-globals-disq-value
+            (opt-const-globals-disq-value disq src)
+            carry)])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (opt-const-globals-disq-value disq src)]
     [(CompilerIrInstr.VectorCompare payload-box)
@@ -45081,6 +45249,11 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+          (OptRemapSpanKey.SomeKey
+            (CompilerSourceSpansInstrKey.Value function dst))])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
           (OptRemapSpanKey.SomeKey
             (CompilerSourceSpansInstrKey.Value function dst))])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _)

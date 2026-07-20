@@ -803,6 +803,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
           (compiler-live-values2-vars lhs rhs)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload _ _ src carry _ _)
+          (compiler-live-values2-vars src carry)])]
     [(CompilerIrInstr.VectorReduce _ _ src _ _) (compiler-live-value-vars src)]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
@@ -926,6 +930,10 @@
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorBinOpPayload.Payload dst _ _ _ _ _)
+          (compiler-live-set1 dst)])]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
           (compiler-live-set1 dst)])]
     [(CompilerIrInstr.VectorReduce dst _ _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.VectorCompare payload-box)

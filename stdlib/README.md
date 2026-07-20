@@ -356,8 +356,10 @@ use.
 - `time.tl`: portable millisecond timestamp helpers separate from profiling
   counters. `unix-ms` returns wall-clock Unix epoch milliseconds and
   `monotonic-ms` returns monotonic elapsed milliseconds, both as
-  `ResultTimeMs`. Calendar conversion, formatting, time zones, locale,
-  sleeping, and timers are deferred. Import it with `(import stdlib.time)`.
+  `ResultTimeMs`; `sleep-ms` performs a portable blocking relative wait and
+  returns `ResultTimeUnit`. Calendar conversion, formatting, time zones,
+  locale, timers, and scheduling remain out of scope. Import it with
+  `(import stdlib.time)`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction with owned `TextBuf` chunks and the shared ordered-chunk render
   helper used by the borrowed companion. Its declarations are emitted from

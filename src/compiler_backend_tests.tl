@@ -10122,6 +10122,136 @@
           "    vmovdqu %ymm14, -64(%rbp)\n"))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-avx512-vector-prefix-numeric-spill-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-vector-prefix-spill-assignments)]
+    (and
+      (match (compiler-backend-emit-avx512-vector-prefix
+        assignments
+        2
+        (CompilerIrVectorPrefixOp.Min)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        8
+        (AstType.I64)
+        "%r14"
+        "%xmm14"
+        (compiler-diagnostic-at-start "" ""))
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    vmovdqu64 %zmm6, %zmm14\n")
+            (compiler-backend-string-contains?
+              asm
+              "    valignq $7, %zmm1, %zmm14, %zmm0\n")
+            (compiler-backend-string-contains?
+              asm
+              "    kshiftlw $4, %k7, %k7\n")
+            (compiler-backend-string-contains?
+              asm
+              "    vpminsq %zmm0, %zmm14, %zmm14{%k7}\n")
+            (compiler-backend-string-contains?
+              asm
+              "    vpbroadcastq %r14, %zmm0\n")
+            (compiler-backend-string-contains?
+              asm
+              "    vmovdqu64 %zmm14, -64(%rbp)\n"))]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-avx512-vector-prefix
+        assignments
+        2
+        (CompilerIrVectorPrefixOp.Max)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        16
+        (AstType.I32)
+        "%r14"
+        "%xmm14"
+        (compiler-diagnostic-at-start "" ""))
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+              "    valignd $15, %zmm1, %zmm14, %zmm0\n")
+            (compiler-backend-string-contains?
+              asm
+              "    valignd $8, %zmm1, %zmm14, %zmm0\n")
+            (compiler-backend-string-contains?
+              asm
+              "    vpmaxsd %zmm0, %zmm14, %zmm14{%k7}\n")
+            (compiler-backend-string-contains?
+              asm
+              "    vpbroadcastd %r14d, %zmm0\n"))]
+        [(ResultCompilerBackend.Err _) false]))))
+
+(define (compiler-backend-avx512-vector-prefix-bool-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%k2"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Spill -64))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -64))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -8))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%k3"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-avx512-vector-prefix-bool-spill-ok?) : bool
+  (let
+    [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+    (and
+      (match (compiler-backend-emit-avx512-vector-prefix
+        (compiler-backend-avx512-vector-prefix-bool-assignments)
+        2
+        (CompilerIrVectorPrefixOp.All)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        64
+        (AstType.Bool)
+        "%r14"
+        "%xmm14"
+        diag)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    kmovq %k2, %rax\n")
+            (compiler-backend-string-contains? asm "    notq %rax\n")
+            (compiler-backend-string-contains? asm "    shlq $32, %r14\n")
+            (compiler-backend-string-contains? asm "    setne %r14b\n")
+            (compiler-backend-string-contains? asm "    andq %r14, %rax\n")
+            (compiler-backend-string-contains? asm "    kmovq %rax, %k7\n")
+            (compiler-backend-string-contains? asm "    kmovq %k7, -64(%rbp)\n")
+            (not (compiler-backend-string-contains? asm "%zmm")))]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-avx512-vector-prefix
+        (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments)
+        2
+        (CompilerIrVectorPrefixOp.Any)
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        64
+        (AstType.Bool)
+        "%r14"
+        "%xmm14"
+        diag)
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "    kmovq -64(%rbp), %k7\n")
+            (compiler-backend-string-contains? asm "    kmovq %k7, %rax\n")
+            (compiler-backend-string-contains? asm "    movq -8(%rbp), %r14\n")
+            (compiler-backend-string-contains? asm "    orq %r14, %rax\n")
+            (compiler-backend-string-contains? asm "    kmovq %rax, %k3\n"))]
+        [(ResultCompilerBackend.Err _) false]))))
+
 (define (compiler-backend-avx512-predicated-load-spill-dst-ok?) : bool
   (match (compiler-backend-emit-avx512-predicated-load
     (compiler-backend-vector-spill-assignments)
@@ -10201,6 +10331,8 @@
     (compiler-backend-avx2-vector-prefix-i64-spill-ok?)
     (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?)
     (compiler-backend-avx2-vector-prefix-bool-spill-ok?)
+    (compiler-backend-avx512-vector-prefix-numeric-spill-ok?)
+    (compiler-backend-avx512-vector-prefix-bool-spill-ok?)
     (compiler-backend-avx512-predicated-load-spill-dst-ok?)
     (compiler-backend-avx512-select-spill-ok?)
     (compiler-backend-avx2-vector-reduce-spill-source-ok?)

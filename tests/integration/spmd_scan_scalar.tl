@@ -1,4 +1,5 @@
-; Scalar-reference and AVX2 lowering for `spmd-scan` (#2905, #5349). Each scan
+; Scalar-reference, AVX2, and AVX-512 lowering for `spmd-scan` (#2905, #5349,
+; #5350). Each scan
 ; writes inclusive prefixes and is checked across empty, sub-lane, exact-lane,
 ; multiple-gang, and tail-sized ranges.
 ; Compatibility exception for #3772: spmd-scan value expressions and direct

@@ -2,6 +2,7 @@ benchmark	mode	status	expected_diagnostic
 spmd_map	avx512	measured	-
 spmd_zip	avx512	measured	-
 spmd_reduce	avx512	measured	-
+spmd_scan	avx512	measured	-
 spmd_shuffle	avx512	measured	-
 spmd_short_tail	avx512	measured	-
 spmd_mask	avx512	supported	-

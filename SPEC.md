@@ -4269,14 +4269,14 @@ Backend coverage: scalar lowering covers every supported operator/type
 combination above. SIMD backend modes vectorize eligible contiguous array
 folds and checked gather-only folds through either an i64 index array or
 `i + offsets[program-index]`, and otherwise keep scalar semantics rather than
-changing source behavior. AVX2 also vectorizes a canonical range-wide
-`spmd-scan` whose value is `input[i]` and whose body directly stores `prefix`
-to `output[i]`: full gangs use an inclusive carry-seeded vector prefix and an
-in-order scalar tail resumes from the final gang prefix. Other scan shapes and
-AVX-512 scans retain the scalar reference lowering. Per-backend matrices are
-specified in section 8. Eligible `spmd-shuffle` expressions over the numeric
-types above use native AVX2/AVX-512 permutations in `foreach` maps and
-reduction value plans.
+changing source behavior. AVX2 and AVX-512 also vectorize a canonical
+range-wide `spmd-scan` whose value is `input[i]` and whose body directly stores
+`prefix` to `output[i]`: full gangs use an inclusive carry-seeded vector prefix
+and an in-order scalar tail resumes from the final gang prefix. Other scan
+shapes retain the scalar reference lowering. Per-backend matrices are specified
+in section 8. Eligible `spmd-shuffle` expressions over the numeric types above
+use native AVX2/AVX-512 permutations in `foreach` maps and reduction value
+plans.
 
 Purity and varying rules:
 
@@ -6468,7 +6468,9 @@ in documentation passes.
   all scalar integer and float lane types, including straight-line
   multi-destination maps with one shared lane shape, distinct destinations,
   and no destination read by a fused value; eligible vectorized
-  `spmd-reduce` folds; native AVX2/AVX-512 `spmd-shuffle` permutations for
+  `spmd-reduce` folds; canonical contiguous range-wide AVX2/AVX-512
+  `spmd-scan` prefixes over i32/i64 and bool lanes; native AVX2/AVX-512
+  `spmd-shuffle` permutations for
   i32/u32/i64/u64/f32/f64 maps and reduction values, including active-count
   preserving tails and ordered bounds traps; AVX2/AVX-512 masked varying `if` subsets including
   nested branch-mask composition, value-producing selects, and guarded native
@@ -6497,7 +6499,6 @@ in documentation passes.
 |---------|--------|
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
-| AVX-512 `spmd-scan` vectorization | AVX2 canonical contiguous range-wide scans are implemented; AVX-512 is deferred under #5350. |
 | Narrow masked integer shifts | AVX2/AVX-512 masked `i32`/`u32`/`i64`/`u64` shifts are implemented. `i8`/`u8`/`i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Frontend analysis plus private scalar/AVX-512 IR lowering and native emission are implemented; AVX2 native emission is deferred under #5151. |

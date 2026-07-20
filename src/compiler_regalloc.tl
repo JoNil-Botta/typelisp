@@ -5036,8 +5036,10 @@
           (compiler-live-set-insert set dst)])]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ _)
-          (compiler-live-set-insert set dst)])]
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ elem-ty)
+          (match elem-ty
+            [(AstType.Bool) set]
+            [_ (compiler-live-set-insert set dst)])])]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
@@ -5083,6 +5085,12 @@
           (compiler-live-set-insert set dst)])]
     [(CompilerIrInstr.MaskBinOp dst _ _ _ _) (compiler-live-set-insert set dst)]
     [(CompilerIrInstr.MaskNot dst _ _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.VectorPrefix payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorPrefixPayload.Payload dst _ _ _ _ elem-ty)
+          (match elem-ty
+            [(AstType.Bool) (compiler-live-set-insert set dst)]
+            [_ set])])]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ elem-ty)

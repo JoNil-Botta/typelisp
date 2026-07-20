@@ -5,6 +5,8 @@
 (import "../../src/compiler_parse_core.tl")
 (import "../../src/tlci_core.tl")
 (import compiler_comptime_image_core as comptime_image)
+(import "../../src/compiler_backend.tl")
+(import "../../src/compiler_tlci_native_image.tl")
 (import compiler_builtin_ids as cbi)
 (import stdlib.io)
 (import stdlib.string)
@@ -549,6 +551,386 @@
       (array-set! embedded-stdlib-tlci-native-report-count 0 native-count)
       programs)))
 
+;; --- normal-backend producer (refs #5213 N1/N2) -------------------------------
+;;
+;; Each catalog identity becomes an ordinary TypeLisp function compiled by the
+;; normal pipeline: eligible captured bodies desugar to host-callback call
+;; sequences (the splice-only quasiquote subset and the array intrinsic
+;; nodes), and everything else becomes a shell that returns ok with no
+;; committed result so the route keeps its counted interpreted fallback.
+;; Function order is catalog order; the export-offset contract maps entries
+;; back to identities.
+(define (embedded-native-status-sum [opened : i64]) : String
+  (let
+    [out : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index opened)
+        (begin
+          (set!
+            out
+            (str-cat
+              out
+              (if (< index (- opened 1))
+                (str-cat "(+ q" (string.int->string index) " ")
+                (str-cat "q" (string.int->string index)))))
+          (set! index (+ index 1))))
+      (set! index 0)
+      (while (< index (- opened 1))
+        (begin
+          (set! out (str-cat out ")"))
+          (set! index (+ index 1))))
+      out)))
+
+(define (embedded-native-op-open
+  [status-index : i64]
+  [op : i64]
+  [arg-a : String]
+  [arg-b : String]) : String
+  (str-cat
+    "  (let [q"
+    (string.int->string status-index)
+    " : i64 (comptime-host-invoke host session "
+    (string.int->string op)
+    " "
+    arg-a
+    " "
+    arg-b
+    " 0)]\n"))
+
+(define (embedded-native-name-arg [name : String]) : String
+  (str-cat "(cast (unsafe (ptr->int (string-data \"" name "\"))) : i64)"))
+
+;; Emit the op-call chain for one eligible body into `ops`; returns the count
+;; of opened let/if pairs, or -1 when the body is outside the subset.
+(define (embedded-native-body-ops
+  [params : AstMacroParamList]
+  [body-node : i64]
+  [ops : (&mut ops svec.Vec)]) : i64
+  (match (embedded-stdlib-tlci-unwrap-expr body-node)
+    [(AstExpr.Quasiquote quoted)
+      (match (embedded-stdlib-tlci-unwrap-expr quoted)
+        [(AstExpr.Call func-id args)
+          (match (embedded-stdlib-tlci-unwrap-expr func-id)
+            [(AstExpr.Var head-id)
+              (let
+                [argc : i64 (ast-expr-list-len (& args))]
+                [head : String (intern-str head-id)]
+                [index : i64 0]
+                [opened : i64 0]
+                [ok : bool true]
+                (begin
+                  (svec.push
+                    ops
+                    (embedded-native-op-open
+                      opened
+                      103
+                      (embedded-native-name-arg head)
+                      (string.int->string (string.string-length head))))
+                  (set! opened (+ opened 1))
+                  (svec.push ops (embedded-native-op-open opened 178 "0" "0"))
+                  (set! opened (+ opened 1))
+                  (while (and ok (< index argc))
+                    (let
+                      [param : i64
+                        (embedded-stdlib-tlci-unquoted-param
+                          (& params)
+                          (ast-expr-list-get (& args) index 0))]
+                      (if (< param 0)
+                        (set! ok false)
+                        (begin
+                          (svec.push
+                            ops
+                            (embedded-native-op-open
+                              opened
+                              180
+                              (string.int->string param)
+                              "0"))
+                          (set! opened (+ opened 1))
+                          (svec.push
+                            ops
+                            (embedded-native-op-open opened 179 "0" "0"))
+                          (set! opened (+ opened 1))
+                          (set! index (+ index 1))))))
+                  (if (not ok)
+                    -1
+                    (begin
+                      (svec.push
+                        ops
+                        (embedded-native-op-open opened 181 "0" "0"))
+                      (+ opened 1)))))]
+            [_ -1])]
+        [(AstExpr.ArrayRef target-node index-node)
+          (embedded-native-binary-ops params target-node index-node 183 ops)]
+        [(AstExpr.ArrayPush target-node value-node)
+          (embedded-native-binary-ops params target-node value-node 184 ops)]
+        [(AstExpr.MakeArray elem-type size-node)
+          (let
+            [ti : i64
+              (embedded-stdlib-tlci-type-unquote-param (& params) elem-type)]
+            [si : i64
+              (embedded-stdlib-tlci-unquoted-param (& params) size-node)]
+            (if (or (< ti 0) (< si 0))
+              -1
+              (begin
+                (svec.push
+                  ops
+                  (embedded-native-op-open 0 180 (string.int->string ti) "0"))
+                (svec.push
+                  ops
+                  (embedded-native-op-open 1 180 (string.int->string si) "0"))
+                (svec.push ops (embedded-native-op-open 2 185 "0" "0"))
+                3)))]
+        [_ -1])]
+    [_ -1]))
+
+(define (embedded-native-binary-ops
+  [params : AstMacroParamList]
+  [target-node : i64]
+  [operand-node : i64]
+  [op : i64]
+  [ops : (&mut ops svec.Vec)]) : i64
+  (let
+    [ti : i64 (embedded-stdlib-tlci-unquoted-param (& params) target-node)]
+    [oi : i64 (embedded-stdlib-tlci-unquoted-param (& params) operand-node)]
+    (if (or (< ti 0) (< oi 0))
+      -1
+      (begin
+        (svec.push
+          ops
+          (embedded-native-op-open 0 180 (string.int->string ti) "0"))
+        (svec.push
+          ops
+          (embedded-native-op-open 1 180 (string.int->string oi) "0"))
+        (svec.push ops (embedded-native-op-open 2 op "0" "0"))
+        3))))
+
+;; Full source for the native package: the host extern plus one entry function
+;; per identity in catalog order.
+(define (embedded-native-source [names : (Array String)]) : String
+  (let
+    [out : String
+      (str-cat
+        "(module tlci-entries)\n"
+        "(extern comptime-host-invoke (:symbol "
+        "\"_tl_comptime_host_invoke\") : (-> i64 i64 i64 i64 i64 i64 i64))\n")]
+    [count : i64 (array-length names)]
+    [index : i64 0]
+    [native-count : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [slot : i64
+            (embedded-stdlib-tlci-capture-slot (array-ref names index))]
+          [ops : svec.Vec (svec.new)]
+          [opened : i64
+            (if (>= slot 0)
+              (embedded-native-body-ops
+                (array-ref embedded-stdlib-tlci-capture-params slot)
+                (array-ref embedded-stdlib-tlci-capture-bodies slot)
+                (&mut ops))
+              -1)]
+          (begin
+            (set!
+              out
+              (str-cat
+                out
+                "(define (macro-entry-"
+                (string.int->string index)
+                " [image-ctx : i64] [host : i64] [session : i64]"
+                " [operands : i64] [count : i64] [result : i64]) : i64\n"))
+            (if (< opened 0)
+              (set!
+                out
+                (str-cat
+                  out
+                  "  (if (= count -"
+                  (string.int->string (+ index 2))
+                  ") 1 0))\n"))
+              (let
+                [oi : i64 0]
+                (begin
+                  (set! native-count (+ native-count 1))
+                  (set!
+                    out
+                    (str-cat out (embedded-native-op-open 99 1 "0" "0")))
+                  (while (< oi (svec.len (& ops)))
+                    (begin
+                      (set! out (str-cat out (svec.get (& ops) oi "")))
+                      (set! oi (+ oi 1))))
+                  (set!
+                    out
+                    (str-cat
+                      out
+                      "  (+ q99 (+ "
+                      (embedded-native-status-sum opened)
+                      " (comptime-host-invoke host session 182 0 0 0)))\n"))
+                  (set! oi 0)
+                  (while (< oi (+ opened 1))
+                    (begin
+                      (set! out (str-cat out ")"))
+                      (set! oi (+ oi 1))))
+                  (set! out (str-cat out ")\n")))))
+            (set! index (+ index 1)))))
+      (array-set! embedded-stdlib-tlci-native-report-count 0 native-count)
+      out)))
+
+;; Compile the generated program with the normal backend and package the
+;; native tlci image: layout, imports, export-offset entry mapping, and the
+;; code-resident macro table.
+(define (embedded-native-export-dump [image : CompilerObjectImage]) : String
+  (match (struct-get image symbols)
+    [(CompilerObjectSymbolList.Array items len)
+      (let
+        [out : String " exports:"]
+        [i : i64 0]
+        [shown : i64 0]
+        (begin
+          (while (and (< i len) (< shown 4))
+            (begin
+              (match (array-ref items i)
+                [(CompilerObjectSymbol.Symbol name binding _ _)
+                  (match binding
+                    [(CompilerObjectSymbolBinding.Export)
+                      (begin
+                        (set! out (str-cat out " " name))
+                        (set! shown (+ shown 1)))]
+                    [_ unit])])
+              (set! i (+ i 1))))
+          out))]
+    [_ " exports:?"]))
+
+(define (embedded-native-entry-offsets
+  [image : CompilerObjectImage]
+  [count : i64]) : (Array i64)
+  (let
+    [out : (Array i64) (array.make-array i64 count)]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index count))
+        (let
+          [offset : i64
+            (compiler-tlci-native-entry-offset
+              image
+              (str-cat "_tl_f" (string.int->string index)))]
+          (if (< offset 0)
+            (set! ok false)
+            (begin
+              (array-set! out index offset)
+              (set! index (+ index 1))))))
+      (if ok
+        out
+        (array.make-array i64 0)))))
+
+(define (embedded-native-write
+  [output : String]
+  [build-hash : String]
+  [windows-target : bool]
+  [names : (Array String)]) : i64
+  (let
+    [source : String (embedded-native-source names)]
+    [target : CompilerBackendTarget
+      (if windows-target
+        (CompilerBackendTarget.Windows)
+        (CompilerBackendTarget.Linux))]
+    (begin
+      (io.write-file (str-cat output ".source.tl") source)
+      unit)
+    (match (compiler-backend-lower-source-for-target source target)
+      [(ResultCompilerLower.Err diag)
+        (begin
+          (io.print-error
+            (str-cat
+              "embedded stdlib tlci: generated source rejected: "
+              (compiler-diagnostic-render (box-get diag))
+              "\n"))
+          1)]
+      [(ResultCompilerLower.Ok program spans)
+        (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
+          program
+          target
+          (CompilerBackendMode.Scalar)
+          spans
+          false
+          false)
+          [(ResultCompilerBackendObject.Err diag)
+            (begin
+              (io.print-error
+                (str-cat
+                  "embedded stdlib tlci: object emission failed: "
+                  (compiler-diagnostic-render (box-get diag))
+                  "\n"))
+              1)]
+          [(ResultCompilerBackendObject.Ok image)
+            (match (compiler-tlci-native-layout-image image)
+              [(ResultCompilerTlciNativeLayout.Err message)
+                (begin
+                  (io.print-error
+                    (str-cat "embedded stdlib tlci: " message "\n"))
+                  1)]
+              [(ResultCompilerTlciNativeLayout.Ok layout)
+                (let
+                  [entry-offsets : (Array i64)
+                    (embedded-native-entry-offsets image (array-length names))]
+                  (if (not
+                    (= (array-length entry-offsets) (array-length names)))
+                    (begin
+                      (io.print-error
+                        (str-cat
+                          "embedded stdlib tlci: entry count "
+                          (string.int->string (array-length entry-offsets))
+                          (embedded-native-export-dump image)
+                          " does not match catalog count "
+                          (string.int->string (array-length names))
+                          "
+"))
+                      1)
+                    (match (compiler-tlci-native-emit-imports (& layout))
+                      [(ResultCompilerTlciNativeImports.Err message)
+                        (begin
+                          (io.print-error
+                            (str-cat "embedded stdlib tlci: " message "\n"))
+                          1)]
+                      [(ResultCompilerTlciNativeImports.Ok imports)
+                        (match (tlci-emit-native-package-image
+                          (tlci-make-metadata "v1" "stdlib" "0.1.0")
+                          build-hash
+                          (TlciNativePackageInput
+                            (struct-get layout bytes)
+                            imports
+                            (struct-get layout fixup-offsets)
+                            (struct-get layout fixup-count)
+                            names
+                            entry-offsets
+                            (array-length names)))
+                          [(ResultTlciBytes.Err message)
+                            (begin
+                              (io.print-error
+                                (str-cat "embedded stdlib tlci: " message "\n"))
+                              1)]
+                          [(ResultTlciBytes.Ok bytes)
+                            (begin
+                              (io.write-file
+                                output
+                                (tlci-bytes->string
+                                  bytes
+                                  0
+                                  (array-length bytes)))
+                              (io.print-string
+                                (str-cat
+                                  "embedded stdlib tlci: wrote "
+                                  (string.int->string (array-length bytes))
+                                  " bytes for "
+                                  (string.int->string (array-length names))
+                                  " macro entries ("
+                                  (string.int->string
+                                    (array-ref
+                                      embedded-stdlib-tlci-native-report-count
+                                      0))
+                                  " native)\n"))
+                              0)])])))])])])))
+
 (define (embedded-stdlib-tlci-write
   [output : String]
   [build-hash : String]
@@ -622,7 +1004,7 @@
                 embedded-stdlib-tlci-build-error
                 "\n"))
             1)
-          (embedded-stdlib-tlci-write
+          (embedded-native-write
             output
             (str-cat
               build-hash

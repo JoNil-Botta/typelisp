@@ -199,20 +199,93 @@
         remaining)
       : u32)))
 
-;: Windows blocking sleep split into finite `DWORD` chunks.
+;: Convert a sub-second millisecond remainder to the first counter tick at or after it.
+(cfg
+  windows
+  (define (windows-sleep-remainder-ticks
+    [millisecond-remainder : i64]
+    [frequency : i64]) : i64
+    (+
+      (* millisecond-remainder (/ frequency 1000))
+      (/ (+ (* millisecond-remainder (% frequency 1000)) 999) 1000))))
+
+;: True once a performance-counter interval covers the requested duration.
+(cfg
+  windows
+  (define (windows-sleep-complete?
+    [elapsed-ticks : i64]
+    [frequency : i64]
+    [milliseconds : i64]) : bool
+    (let
+      [elapsed-seconds : i64 (/ elapsed-ticks frequency)]
+      [requested-seconds : i64 (/ milliseconds 1000)]
+      (or
+        (> elapsed-seconds requested-seconds)
+        (and
+          (= elapsed-seconds requested-seconds)
+          (>=
+            (% elapsed-ticks frequency)
+            (stdlib.time.windows-sleep-remainder-ticks
+              (% milliseconds 1000)
+              frequency)))))))
+
+;: Windows blocking sleep split into finite `DWORD` chunks and checked against QPC.
 (cfg
   windows
   (define (windows-sleep-ms [milliseconds : i64]) : ResultTimeUnit
     (let
+      [counter : (Array i64) (array.make-array i64 1)]
+      [frequency-buffer : (Array i64) (array.make-array i64 1)]
+      [counter-ok : i32
+        (stdlib.time.windows-query-performance-counter
+          (unsafe
+            (array-data counter)))]
+      [frequency-ok : i32
+        (stdlib.time.windows-query-performance-frequency
+          (unsafe
+            (array-data frequency-buffer)))]
+      [frequency : i64 (array-ref frequency-buffer 0)]
+      [start : i64 (array-ref counter 0)]
       [remaining : i64 milliseconds]
+      [done : bool false]
+      [ok : bool false]
       (begin
-        (while (> remaining 0)
+        (if (or
+          (= counter-ok (cast 0 : i32))
+          (= frequency-ok (cast 0 : i32))
+          (<= frequency 0))
+          (set! done true)
+          unit)
+        (while (not done)
           (let
             [chunk : u32 (stdlib.time.windows-sleep-chunk-ms remaining)]
             (begin
               (stdlib.time.windows-sleep chunk)
-              (set! remaining (- remaining (cast chunk : i64))))))
-        (OkTimeUnit)))))
+              (if (> remaining (cast chunk : i64))
+                (set! remaining (- remaining (cast chunk : i64)))
+                (set! remaining 0))
+              (let
+                [status : i32
+                  (stdlib.time.windows-query-performance-counter
+                    (unsafe
+                      (array-data counter)))]
+                [elapsed : i64 (- (array-ref counter 0) start)]
+                (if (or (= status (cast 0 : i32)) (< elapsed 0))
+                  (set! done true)
+                  (if (stdlib.time.windows-sleep-complete?
+                    elapsed
+                    frequency
+                    milliseconds)
+                    (begin
+                      (set! ok true)
+                      (set! done true))
+                    (if (= remaining 0)
+                      (set! remaining 1)
+                      unit)))))))
+        (if ok
+          (OkTimeUnit)
+          (stdlib.time.sleep-unavailable
+            "time: performance counter unavailable"))))))
 
 ;: Return wall-clock Unix epoch milliseconds.
 (define (unix-ms) : ResultTimeMs
@@ -330,7 +403,17 @@
           4294967294)
         (stdlib.time.test-assert-i64-eq
           (cast (stdlib.time.windows-sleep-chunk-ms 4294967295) : i64)
-          4294967294))
+          4294967294)
+        (stdlib.time.test-assert-i64-eq
+          (stdlib.time.windows-sleep-remainder-ticks 1 3)
+          1)
+        (stdlib.time.test-assert-i64-eq
+          (stdlib.time.windows-sleep-remainder-ticks 999 3)
+          3)
+        (stdlib.time.test-assert
+          (not (stdlib.time.windows-sleep-complete? 189999 10000000 19)))
+        (stdlib.time.test-assert
+          (stdlib.time.windows-sleep-complete? 190000 10000000 19)))
       (begin
         (stdlib.time.test-assert (stdlib.time.linux-sleep-interrupted? -4))
         (stdlib.time.test-assert

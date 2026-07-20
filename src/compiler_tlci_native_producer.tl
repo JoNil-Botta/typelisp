@@ -577,7 +577,7 @@
       (if windows-target
         (CompilerBackendTarget.Windows)
         (CompilerBackendTarget.Linux))]
-    (match (compiler-backend-lower-source-for-target source target)
+    (match (compiler-backend-lower-source-for-target-in-session source target)
       [(ResultCompilerLower.Err diag)
         (ResultProducerBytes.Err
           (str-cat

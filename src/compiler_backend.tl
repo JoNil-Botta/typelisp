@@ -58644,6 +58644,26 @@ tl_comptime_host_invoke_set:
             (CompilerBackendMode.Scalar)))]
       [(ResultAstProgramDiagnostic.Err diag) (ResultCompilerLower.Err diag)])))
 
+;; Session-additive variant for compiles nested inside a live build session:
+;; interning, builtin ids, and typecheck caches stay untouched so the
+;; enclosing session's id-keyed state remains valid. The tool-grade entry
+;; above resets those globals and must never run mid-session.
+(define (compiler-backend-lower-source-for-target-in-session
+  [src : String]
+  [target : CompilerBackendTarget]) : ResultCompilerLower
+  (match (parse-ast-source-diagnostic-with-cfg
+    "<source>"
+    src
+    (compiler-backend-target-cfgs target))
+    [(ResultAstProgramDiagnostic.Ok program)
+      (lower-compiler-program-with-path-mode
+        "<source>"
+        program
+        (compiler-backend-lower-mode-for-target
+          target
+          (CompilerBackendMode.Scalar)))]
+    [(ResultAstProgramDiagnostic.Err diag) (ResultCompilerLower.Err diag)]))
+
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)
     [(ResultCompilerLower.Ok program spans)

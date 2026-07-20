@@ -64939,10 +64939,20 @@
     [(ResultMacroDeclExpansion.Ok collapsed _) collapsed]
     [(ResultMacroDeclExpansion.Err _) decls]))
 
+(define (macro-call-not-macro-head-name [call-expr : AstExpr]) : String
+  (match (ast-expr-unspan call-expr)
+    [(AstExpr.Call head-id _)
+      (match (ast-expr-unspan (ast-node-get head-id))
+        [(AstExpr.Var name-id) (intern-str name-id)]
+        [_ "<non-symbol-head>"])]
+    [_ "<non-call>"]))
+
 (define (macro-call-not-macro-diag [call-expr : AstExpr]) : CompilerDiagnostic
   (ctfe-diagnostic-at-expr
     call-expr
-    "typecheck: module-scope macro call does not name a macro"))
+    (str_cat.str-cat
+      "typecheck: module-scope macro call does not name a macro: "
+      (macro-call-not-macro-head-name call-expr))))
 
 (define (macro-module-existing-collision-diag
   [call-expr : AstExpr]

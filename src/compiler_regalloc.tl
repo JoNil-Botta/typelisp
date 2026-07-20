@@ -24271,10 +24271,12 @@
   [policy : CompilerRegScratchPolicy]
   [assignment-list : CompilerRegAssignmentList]
   [assignment-table : CompilerRegAssignmentTable]
+  [var-types : CompilerRegVarTypeList]
   [instr : CompilerIrInstr]
   [point : i64]
   [ordinal : i64]
   [var : i64]
+  [binop-return : bool]
   [starts : (Array i64)]
   [ends : (Array i64)]
   [segments : (Array CompilerRegIntervalList)]
@@ -24288,10 +24290,12 @@
           abi
           policy
           assignment-list
+          var-types
           instr
           point
           ordinal
-          var))]
+          var
+          binop-return))]
     [fixed : String (struct-get (struct-get requirement constraint) fixed)]
     (begin
       (compiler-reg-scratch-mark-requirement!
@@ -24319,6 +24323,7 @@
   [policy : CompilerRegScratchPolicy]
   [assignment-list : CompilerRegAssignmentList]
   [assignment-table : CompilerRegAssignmentTable]
+  [var-types : CompilerRegVarTypeList]
   [instrs : CompilerIrInstrSeq]
   [block-weight : i64]
   [instruction-start : i64]
@@ -24353,10 +24358,12 @@
                         policy
                         assignment-list
                         assignment-table
+                        var-types
                         instr
                         (* 2 instruction)
                         ordinal
                         (+ scratch-base scratch ordinal)
+                        (compiler-reg-scratch-binop-return-next? instrs i)
                         starts
                         ends
                         segments
@@ -24383,6 +24390,7 @@
   [policy : CompilerRegScratchPolicy]
   [assignment-list : CompilerRegAssignmentList]
   [assignment-table : CompilerRegAssignmentTable]
+  [var-types : CompilerRegVarTypeList]
   [blocks : CompilerIrBlockList]
   [depths : (Array i64)]
   [block-index : i64]
@@ -24407,6 +24415,7 @@
             policy
             assignment-list
             assignment-table
+            var-types
             instrs
             (compiler-reg-loop-depth-weight (array-ref depths block-index))
             instruction-start
@@ -24425,6 +24434,7 @@
                 policy
                 assignment-list
                 assignment-table
+                var-types
                 (box-get rest)
                 depths
                 (+ block-index 1)
@@ -24454,6 +24464,7 @@
                     policy
                     assignment-list
                     assignment-table
+                    var-types
                     instrs
                     (compiler-reg-loop-depth-weight
                       (array-ref depths (+ block-index i)))
@@ -24549,6 +24560,7 @@
                 policy
                 assignment-list
                 assignments
+                (compiler-reg-var-types-list base-types)
                 blocks
                 depths
                 0

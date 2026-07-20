@@ -6,6 +6,7 @@
 (import stdlib.string)
 (import stdlib.array)
 (import compiler_intern as ci)
+(import compiler_builtin_ids as cbi)
 (import "compiler_ast_types.tl")
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -4191,35 +4192,46 @@
     [(CompilerIrEffect.Pure) false]
     [_ true]))
 
-(define (compiler-ir-runtime-memory-read? [name : String]) : bool
-  (or (string.eq name "tl_region_mark") (string.eq name ".L_tl_stdin_eof")))
+;; Runtime call semantics are keyed by the source-symbol identities installed
+;; alongside the active interner. Generated or hygienic symbols with identical
+;; display text are ordinary unknown calls.
+(define (compiler-ir-runtime-memory-read-id? [name : i64]) : bool
+  (and
+    (>= name 0)
+    (or
+      (= name cbi.compiler-builtin-id-tl-region-mark)
+      (= name cbi.compiler-builtin-id-tl-stdin-eof-label))))
 
-(define (compiler-ir-runtime-memory-write? [name : String]) : bool
-  (or
-    (string.eq name "tl_alloc")
-    (string.eq name "tl_int_to_string")
-    (string.eq name "tl_substring")
-    (string.eq name "tl_string_concat")
-    (string.eq name "tl_string_concat3")
-    (string.eq name "tl_string_concat4")
-    (string.eq name "tl_string_concat5")
-    (string.eq name "tl_region_reset")
-    (string.eq name "tl_array_fill8")
-    (string.eq name "tl_array_zero")
-    (string.eq name ".L_tl_flush_stdout")))
+(define (compiler-ir-runtime-memory-write-id? [name : i64]) : bool
+  (and
+    (>= name 0)
+    (or
+      (compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
+      (= name cbi.compiler-builtin-id-tl-int-to-string)
+      (= name cbi.compiler-builtin-id-tl-substring)
+      (= name cbi.compiler-builtin-id-tl-string-concat)
+      (= name cbi.compiler-builtin-id-tl-string-concat3)
+      (= name cbi.compiler-builtin-id-tl-string-concat4)
+      (= name cbi.compiler-builtin-id-tl-string-concat5)
+      (= name cbi.compiler-builtin-id-tl-region-reset)
+      (= name cbi.compiler-builtin-id-tl-array-fill8)
+      (= name cbi.compiler-builtin-id-tl-array-zero)
+      (= name cbi.compiler-builtin-id-tl-flush-stdout-label))))
 
-(define (compiler-ir-runtime-control-flow? [name : String]) : bool
-  (or
-    (string.eq name ".L_tl_abort")
-    (string.eq name "tl_oob_abort")
-    (string.eq name "tl_div_abort")
-    (string.eq name "tl_shift_abort")))
+(define (compiler-ir-runtime-control-flow-id? [name : i64]) : bool
+  (and
+    (>= name 0)
+    (or
+      (= name cbi.compiler-builtin-id-tl-abort-label)
+      (= name cbi.compiler-builtin-id-tl-oob-abort)
+      (= name cbi.compiler-builtin-id-tl-div-abort)
+      (= name cbi.compiler-builtin-id-tl-shift-abort))))
 
-(define (compiler-ir-direct-call-effect [name : String]) : CompilerIrEffect
+(define (compiler-ir-direct-call-effect-id [name : i64]) : CompilerIrEffect
   (cond
-    [(compiler-ir-runtime-memory-read? name) CompilerIrEffect.MemoryRead]
-    [(compiler-ir-runtime-memory-write? name) CompilerIrEffect.MemoryWrite]
-    [(compiler-ir-runtime-control-flow? name) CompilerIrEffect.ControlFlow]
+    [(compiler-ir-runtime-memory-read-id? name) CompilerIrEffect.MemoryRead]
+    [(compiler-ir-runtime-memory-write-id? name) CompilerIrEffect.MemoryWrite]
+    [(compiler-ir-runtime-control-flow-id? name) CompilerIrEffect.ControlFlow]
     [else CompilerIrEffect.Unknown]))
 
 (define (compiler-ir-instr-effect [instr : CompilerIrInstr]) : CompilerIrEffect
@@ -4284,8 +4296,7 @@
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedStorePayload.Payload _ _ _ _ _ _)
           CompilerIrEffect.MemoryWrite])]
-    [(CompilerIrInstr.Call _ name _ _)
-      (compiler-ir-direct-call-effect (compiler-ir-symbol-text name))]
+    [(CompilerIrInstr.Call _ name _ _) (compiler-ir-direct-call-effect-id name)]
     [(CompilerIrInstr.CallIndirect _ _ _ _) CompilerIrEffect.Unknown]
     [(CompilerIrInstr.CallIndirectC _ _ _ _) CompilerIrEffect.Unknown]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
@@ -6311,7 +6322,7 @@
     (compiler-ir-effect-is?
       (CompilerIrInstr.Call
         9
-        (compiler-ir-test-symbol "tl_region_mark")
+        cbi.compiler-builtin-id-tl-region-mark
         (CompilerIrCallArgs.Nil)
         (AstType.I64))
       CompilerIrEffect.MemoryRead)
@@ -6469,39 +6480,6 @@
         4
         (AstType.I64))
       CompilerIrEffect.MemoryWrite)))
-
-(define (compiler-ir-runtime-effects-ok?) : bool
-  (and
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect "tl_region_mark")
-      CompilerIrEffect.MemoryRead)
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect ".L_tl_stdin_eof")
-      CompilerIrEffect.MemoryRead)
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect "tl_alloc")
-      CompilerIrEffect.MemoryWrite)
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect ".L_tl_flush_stdout")
-      CompilerIrEffect.MemoryWrite)
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect ".L_tl_abort")
-      CompilerIrEffect.ControlFlow)
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect "tl_shift_abort")
-      CompilerIrEffect.ControlFlow)
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect ".L_tl_arg_count")
-      CompilerIrEffect.Unknown)
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect "tl_volatile_i64_load_ptr")
-      CompilerIrEffect.Unknown)
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect "tl_volatile_i64_store_ptr")
-      CompilerIrEffect.Unknown)
-    (compiler-ir-effect-eq?
-      (compiler-ir-direct-call-effect "user_or_extern_call")
-      CompilerIrEffect.Unknown)))
 
 (define (compiler-ir-effect-predicates-ok?) : bool
   (and
@@ -7462,7 +7440,6 @@
   (begin
     (unless (compiler-ir-instruction-effects-ok?) (return 1))
     (unless (compiler-ir-vector-mask-effects-ok?) (return 1))
-    (unless (compiler-ir-runtime-effects-ok?) (return 1))
     (unless (compiler-ir-effect-predicates-ok?) (return 1))
     (unless (compiler-ir-display-self-test-ok?) (return 1))
     (unless (compiler-ir-tail-call-render-ok?) (return 1))

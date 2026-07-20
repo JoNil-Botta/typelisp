@@ -338,6 +338,14 @@ if ! cmp -s "$EXPECTED" "$ACTUAL"; then
     exit 1
 fi
 
+echo "[stdlib] checking source conventions and deprecated string concatenation"
+find stdlib -type f -name '*.tl' -print0 |
+    sort -z |
+    xargs -0 "$COMPILER" lint \
+        --check \
+        --deprecated-string-concat \
+        --stdlib-root "$ROOT/stdlib"
+
 TEST_MANIFEST="$WORKDIR/stdlib-test-manifest.psv"
 CHECK_MANIFEST="$WORKDIR/stdlib-check-manifest.psv"
 TEST_EXPECTED="$WORKDIR/expected-stdlib-tests.txt"

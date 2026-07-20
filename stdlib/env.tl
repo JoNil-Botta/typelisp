@@ -15,6 +15,7 @@
 ;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env.get (& name))))
 ;# ```
 (import stdlib.array)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -646,8 +647,8 @@
     [(EnvStringCons head rest)
       (path-join-tail
         (let
-          [acc-with-separator : String (string.append (& acc) separator)]
-          (string.append acc-with-separator head))
+          [acc-with-separator : String (str_cat.str-cat acc separator)]
+          (str_cat.str-cat acc-with-separator head))
         (box-get rest)
         separator)]))
 
@@ -661,8 +662,8 @@
     acc
     (path-join-vec-tail
       (let
-        [acc-with-separator : String (string.append (& acc) separator)]
-        (string.append acc-with-separator (svec.get items index "")))
+        [acc-with-separator : String (str_cat.str-cat acc separator)]
+        (str_cat.str-cat acc-with-separator (svec.get items index "")))
       items
       (+ index 1)
       separator)))

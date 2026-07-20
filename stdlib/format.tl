@@ -17,6 +17,10 @@
 ;# `f32`. Other types require an explicit string conversion before formatting.
 (import stdlib.comptime)
 (import stdlib.io)
+
+;; `io.format-with` expands to a scoped `str_cat.str-cat` call.
+;; lint-allow: unused-import
+(import stdlib.str_cat)
 (cfg test (import stdlib.test))
 
 ;: Format a literal template and positional values into a freshly allocated String.

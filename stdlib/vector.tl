@@ -102,7 +102,7 @@
         [_ (comptime-error "vector: expected at most one capability")])]
     [module-name : Expr
       (expr-var
-        (string-append
+        (comptime.string-append
           (if core-only
             "stdlib.vector.generated.core."
             "stdlib.vector.generated.")

@@ -1,6 +1,7 @@
 (import stdlib.array)
 (import stdlib.thread)
 (import (thread.handle i64) as thread_i64)
+(import stdlib.str_cat)
 (import stdlib.string)
 
 (define (test-array-i64-addr [items : (Array i64)]) : i64
@@ -70,7 +71,7 @@
           (+ base delta)))
       (thread.spawn-string
         (lambda () : String
-          (string.append "thread:" (string.int->string (+ base 2)))))
+          (str_cat.str-cat "thread:" (string.int->string (+ base 2)))))
       (thread.spawn-array-i64
         (lambda () : (Array i64)
           (thread-api-array-i64-build 10)))

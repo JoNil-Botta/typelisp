@@ -1,5 +1,5 @@
 (import stdlib.io)
-(import stdlib.string)
+(import stdlib.str_cat)
 (import stdlib.test)
 
 (define (assert-owned-string-eq
@@ -17,11 +17,11 @@
     (assert-owned-string-eq
       (io.stdin-read-text read)
       expected-text
-      (string.append message " text"))
+      (str_cat.str-cat message " text"))
     (test.assert-bool-eq
       (io.stdin-read-eof? read)
       expected-eof
-      (string.append message " eof"))))
+      (str_cat.str-cat message " eof"))))
 
 (define (main) : i64
   (begin

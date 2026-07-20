@@ -17,6 +17,7 @@
 ;# (define sample : String (json.stringify (json.JsonBool true)))
 ;# ```
 (import stdlib.comptime)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.io)
 (import stdlib.text_buf)
@@ -424,18 +425,17 @@
     [(= code 12) "\\f"]
     [(= code 13) "\\r"]
     [else
-      (string.append
+      (str_cat.str-cat
         "\\u00"
-        (string.append
-          (stdlib.json.hex-digit (/ code 16))
-          (stdlib.json.hex-digit (- code (* (/ code 16) 16)))))]))
+        (stdlib.json.hex-digit (/ code 16))
+        (stdlib.json.hex-digit (- code (* (/ code 16) 16))))]))
 
 ;: Return the JSON escape spelling for one string scalar code.
 (define (escape-char [code : i64]) : String
   (if (= code 34)
-    (string.append "\\" "\"")
+    (str_cat.str-cat "\\" "\"")
     (if (= code 92)
-      (string.append "\\" "\\")
+      (str_cat.str-cat "\\" "\\")
       (stdlib.json.control-escape code))))
 
 ;: Escape borrowed raw text for JSON string output.
@@ -540,17 +540,14 @@
         "false")]
     [(JsonNumber text) text]
     [(JsonString text)
-      (string.append
-        "\""
-        (string.append (stdlib.json.escape-string (& text)) "\""))]
+      (str_cat.str-cat "\"" (stdlib.json.escape-string (& text)) "\"")]
     [(JsonArray items)
-      (string.append
-        "["
-        (string.append (stdlib.json.stringify-list (box-get items)) "]"))]
+      (str_cat.str-cat "[" (stdlib.json.stringify-list (box-get items)) "]")]
     [(JsonObject members)
-      (string.append
+      (str_cat.str-cat
         "{"
-        (string.append (stdlib.json.stringify-members (box-get members)) "}"))]))
+        (stdlib.json.stringify-members (box-get members))
+        "}")]))
 
 ;: Render an i64 as a JSON number value.
 (define (i64->number [value : i64]) : Json
@@ -1853,11 +1850,11 @@
   helpers-api
   (begin
     (stdlib.json.stdlib-inline-test-assert-owned-string-eq
-      (string.append "a" (string.append "b" "c"))
+      (str_cat.str-cat "a" "b" "c")
       "abc"
       "json-cat3")
     (stdlib.json.stdlib-inline-test-assert-owned-string-eq
-      (string.append "a" (string.append "b" (string.append "c" "d")))
+      (str_cat.str-cat "a" "b" "c" "d")
       "abcd"
       "json-cat4")
     (stdlib.json.stdlib-inline-test-assert-i64-eq

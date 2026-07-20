@@ -5,6 +5,7 @@
 (import (sync.channel i64) as channel_i64_again)
 (import (sync.mutex i64) as mutex_i64)
 (import (sync.mutex i64) as mutex_i64_again)
+(import stdlib.str_cat)
 (import stdlib.string)
 
 (define (sync-api-create-rejects-invalid?) : bool
@@ -101,16 +102,16 @@
         [send-a : bool
           (sync.channel-string-send-value-ok?
             loaded
-            (in-arena owner (string.append "alpha" ":one")))]
+            (in-arena owner (str_cat.str-cat "alpha" ":one")))]
         [send-b : bool
           (sync.channel-string-send-value-ok?
             loaded
-            (in-arena owner (string.append "beta" ":two")))]
+            (in-arena owner (str_cat.str-cat "beta" ":two")))]
         [first : String (sync.channel-string-recv-or loaded "missing")]
         [send-c : bool
           (sync.channel-string-send-value-ok?
             loaded
-            (in-arena owner (string.append "gamma" ":three")))]
+            (in-arena owner (str_cat.str-cat "gamma" ":three")))]
         [second : String (sync.channel-string-recv-or loaded "missing")]
         [third : String (sync.channel-string-recv-or loaded "missing")]
         [closed : bool (sync.channel-string-close loaded)]

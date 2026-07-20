@@ -19,6 +19,7 @@
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.process)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -316,7 +317,7 @@
 (define (path-list-prepend-owned [head : String] [tail : String]) : String
   (if (string.eq tail "")
     head
-    (string.append (string.append head (env.path-list-separator)) tail)))
+    (str_cat.str-cat head (env.path-list-separator) tail)))
 
 ;: Join `head` before an optional PATH-style suffix.
 (define (path-list-prepend [head : (& head str)] [tail : (& tail str)]) : String
@@ -327,7 +328,7 @@
 
 ;: Join two owned required PATH-style entries.
 (define (path-list-join2-owned [a : String] [b : String]) : String
-  (string.append (string.append a (env.path-list-separator)) b))
+  (str_cat.str-cat a (env.path-list-separator) b))
 
 ;: Join two required PATH-style entries.
 (define (path-list-join2 [a : (& a str)] [b : (& b str)]) : String
@@ -462,8 +463,9 @@
         [tool-text : String (string.copy tool)]
         (ErrMsvcTool
           (MsvcToolNotFound
-            (string.append
-              (string.append "msvc: could not find " tool-text)
+            (str_cat.str-cat
+              "msvc: could not find "
+              tool-text
               " on PATH; run from a Developer Command Prompt or install Visual Studio Build Tools"))))]))
 
 ;: Program Files root used by ordinary Visual Studio SKUs.
@@ -775,8 +777,9 @@
       [(MsvcNoToolset)
         (ErrMsvcTool
           (MsvcToolNotFound
-            (string.append
-              (string.append "msvc: could not discover " tool-text)
+            (str_cat.str-cat
+              "msvc: could not discover "
+              tool-text
               " under standard Visual Studio Build Tools locations")))]
       [(MsvcSomeToolset toolset)
         (match (find-sdk)
@@ -800,7 +803,7 @@
         (let
           [target-text : String (string.copy target)]
           (MsvcUnsupported
-            (string.append "msvc: unsupported target " target-text))))
+            (str_cat.str-cat "msvc: unsupported target " target-text))))
       (match (find-tool-configured tool)
         [(OkMsvcTool resolved) (OkMsvcTool resolved)]
         [(ErrMsvcTool _) (find-tool-auto tool)]))))

@@ -75,6 +75,8 @@
         [(TextBufChunkCons chunk rest)
           (stdlib.text_buf.chunks-render-rev
             (box-get rest)
+            ;; This is the low-level fallback that implements text_buf itself.
+            ;; lint-allow: deprecated-string-concat
             (string.append chunk out))]))
     (define (chunk-count [chunks : TextBufChunkList] [count : i64]) : i64
       (match chunks
@@ -104,6 +106,8 @@
           (array-ref items lo)
           (let
             [mid : i64 (/ (+ lo hi) 2)]
+            ;; This is the low-level fallback that implements text_buf itself.
+            ;; lint-allow: deprecated-string-concat
             (string.append
               (stdlib.text_buf.chunks-render-array-range items lo mid)
               (stdlib.text_buf.chunks-render-array-range items mid hi))))))

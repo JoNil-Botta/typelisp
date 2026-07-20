@@ -13,6 +13,7 @@
 ;#     42))
 ;# ```
 (import stdlib.io)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.text_buf)
 
@@ -31,7 +32,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : never
-  (io.panic (string.concat5 message ": expected " expected ", found " actual)))
+  (io.panic (str_cat.str-cat message ": expected " expected ", found " actual)))
 
 ;: Assert that two bool values are equal.
 ;:
@@ -81,8 +82,8 @@
   (if (= (cast actual : i64) (cast expected : i64))
     unit
     (assert-eq-failure
-      (string.concat3 "'" (text_buf.char-string actual) "'")
-      (string.concat3 "'" (text_buf.char-string expected) "'")
+      (str_cat.str-cat "'" (text_buf.char-string actual) "'")
+      (str_cat.str-cat "'" (text_buf.char-string expected) "'")
       message)))
 
 ;: Assert that two borrowed text values compare equal without allocating on success.
@@ -105,8 +106,8 @@
   (if (string.eq actual expected)
     unit
     (assert-eq-failure
-      (string.concat3 "\"" (string.copy actual) "\"")
-      (string.concat3 "\"" (string.copy expected) "\"")
+      (str_cat.str-cat "\"" (string.copy actual) "\"")
+      (str_cat.str-cat "\"" (string.copy expected) "\"")
       message)))
 
 (test

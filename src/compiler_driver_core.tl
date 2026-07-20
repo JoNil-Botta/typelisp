@@ -536,10 +536,10 @@
   (begin
     ;; Load/typecheck/lower mutate the state-owned context cells directly; do
     ;; not overwrite them from whichever compatibility pool happens to be
-    ;; installed when a batch entry finishes.
+    ;; installed when a batch entry finishes, and do not install the loader's
+    ;; serial/test selector as a compile-job handoff.
     (compiler-driver-state-capture-active-interns! state)
-    (compiler-driver-state-capture-active-transients! state)
-    (compiler-load-session-state-use! (struct-get state load-session))))
+    (compiler-driver-state-capture-active-transients! state)))
 
 (define (compiler-driver-lowered-from-active-pools
   [program : CompilerIrProgram]
@@ -2556,7 +2556,8 @@
                     0))
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
-              (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names
+              (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
+                (struct-get state load-session)
                 input-path
                 (ast-program decls)
                 (ast-decl-path-list-with-modules paths modules)
@@ -2746,7 +2747,8 @@
                   0)
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
-              (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names
+              (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
+                (struct-get state load-session)
                 input-path
                 (ast-program decls)
                 (ast-decl-path-list-with-modules paths modules)

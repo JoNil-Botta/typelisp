@@ -67267,6 +67267,7 @@
 ;; macro-materialize-generated-imports step did -- there is no deferred
 ;; fallback pass and no follow-up worklist.
 (define (macro-expand-decls
+  [load-state : CompilerLoadSessionState]
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
@@ -67684,6 +67685,7 @@
                         [_capture-before-load : unit
                           (tc-context-capture-active-pools! cur-ctx)]
                         (match (macro-materialize-generated-import
+                          load-state
                           decl
                           decl-path
                           decl-owner-id
@@ -67955,6 +67957,7 @@
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
 ;; case.
 (define (macro-expand-program-pass-with-paths-and-pools
+  [load-state : CompilerLoadSessionState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
@@ -68089,6 +68092,7 @@
                                         (compiler-tc-macro-profile-note-walk-share-gate
                                           true))
                                       (match (macro-expand-decls
+                                        load-state
                                         ctx
                                         top-env
                                         active-decls
@@ -68240,6 +68244,7 @@
     (compiler-diagnostic-from-ast-span path span message)))
 
 (define (macro-materialize-generated-import
+  [load-state : CompilerLoadSessionState]
   [decl : AstDecl]
   [decl-path : String]
   [decl-owner-id : i64]
@@ -68275,9 +68280,11 @@
           expected
           stdlib-roots)
           [(ResultPkgResolve.Ok resolved)
-            (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
+            (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
+              load-state
               resolved
-              (compiler-load-resolved-path-id-for-generated-import
+              (compiler-load-resolved-path-id-for-generated-import-with-state
+                load-state
                 resolved
                 expected)
               seen
@@ -68298,8 +68305,9 @@
                 (let
                   [after-import-expected : AstMaybeModuleName
                     (compiler-load-after-import-expected-module
-                      compiler-load-active-session-state
-                      (compiler-load-resolved-path-id-for-generated-import
+                      load-state
+                      (compiler-load-resolved-path-id-for-generated-import-with-state
+                        load-state
                         resolved
                         expected)
                       kind
@@ -68308,8 +68316,9 @@
                       imported-decls)]
                   [after-import-alias : AstMaybeImportAlias
                     (compiler-load-after-import-alias
-                      compiler-load-active-session-state
-                      (compiler-load-resolved-path-id-for-generated-import
+                      load-state
+                      (compiler-load-resolved-path-id-for-generated-import-with-state
+                        load-state
                         resolved
                         expected)
                       kind
@@ -68348,6 +68357,7 @@
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
+  [load-state : CompilerLoadSessionState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
@@ -68359,7 +68369,7 @@
       macro-expand-stdlib-tlci-route-active
       (and
         (= (svec.len (& stdlib-roots)) 0)
-        (compiler-load-session-embedded-stdlib-source-used?)))
+        (compiler-load-session-state-embedded-stdlib-source-used? load-state)))
     (cfg
       embedded-stdlib-tlci
       (if macro-expand-stdlib-tlci-route-active
@@ -68385,6 +68395,7 @@
     ;; declarations mid-walk.
     (macro-live-prescan-reset!)
     (match (macro-expand-program-pass-with-paths-and-pools
+      load-state
       program
       paths
       pools
@@ -68420,17 +68431,35 @@
           (macro-expand-scratch-release!)
           (ResultMacroExpand.Err diag))])))
 
-(define (macro-expand-program-with-paths-and-pools-roots-cfg
+(define (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
+  [load-state : CompilerLoadSessionState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
+    load-state
     program
     paths
     pools
     (ci.intern-source-name-session-capture-active-handle)
+    stdlib-roots
+    cfgs))
+
+;; Serial/test compatibility adapter. Production macro-expansion jobs call the
+;; explicit load-state entry above.
+(define (macro-expand-program-with-paths-and-pools-roots-cfg
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
+    (compiler-load-serial-test-session-state)
+    program
+    paths
+    pools
     stdlib-roots
     cfgs))
 
@@ -68440,13 +68469,31 @@
 ;; caller. The typecheck entry then builds the heavy top-env once over the
 ;; expanded program and reuses the CTFE env the expansion left cached, instead
 ;; of rebuilding either per pass.
+(define (macro-expand-then-build-envs-with-load-state
+  [load-state : CompilerLoadSessionState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [pools : AstNodePoolContext]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
+  (macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state
+    load-state
+    program
+    paths
+    pools
+    stdlib-roots
+    cfgs))
+
+;; Serial/test compatibility adapter. Production typecheck jobs call the
+;; explicit load-state entry above.
 (define (macro-expand-then-build-envs
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-and-pools-roots-cfg
+  (macro-expand-then-build-envs-with-load-state
+    (compiler-load-serial-test-session-state)
     program
     paths
     pools

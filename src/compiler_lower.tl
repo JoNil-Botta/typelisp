@@ -55657,7 +55657,8 @@
     cache-scope
     (ast-node-pool-context-capture-active)))
 
-(define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names
+(define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
+  [load-state : CompilerLoadSessionState]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -55726,6 +55727,7 @@
               (lower-checked-dest-pools-rollover-for-macro!)
               unit)]
           (match (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
+            load-state
             macro-program
             macro-paths
             committed-macro-pools
@@ -55827,6 +55829,28 @@
           (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
           (ResultCompilerLower.Err
             (box (lower-diagnostic-with-path (box-get diag) entry-path))))])))
+
+;; Serial/test compatibility adapter. Driver-owned compilation uses the
+;; explicit load-state entry above.
+(define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
+  (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
+    (compiler-load-serial-test-session-state)
+    entry-path
+    program
+    paths
+    mode
+    stdlib-roots
+    cache-scope
+    pools
+    source-names))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache-and-pools
   [entry-path : String]

@@ -410,6 +410,12 @@
 (define compiler-load-active-session-state : CompilerLoadSessionState
   (array-ref compiler-load-default-session-state 0))
 
+;; Serial/test compatibility accessor. Production jobs pass their owned state
+;; directly; adapters that cannot yet own a job context use this accessor so
+;; stateful compiler modules do not depend on the selector variable itself.
+(define (compiler-load-serial-test-session-state) : CompilerLoadSessionState
+  compiler-load-active-session-state)
+
 ;; Global compatibility entry points must not retain a state-owned session
 ;; after its driver arena is retired. Stateful driver paths install their own
 ;; session explicitly; legacy resets return to this process-lifetime owner.
@@ -1085,6 +1091,10 @@
 
 (define (compiler-load-session-embedded-stdlib-source-used?) : bool
   (array-ref (struct-get compiler-load-active-session-state cache-enabled) 1))
+
+(define (compiler-load-session-state-embedded-stdlib-source-used?
+  [state : CompilerLoadSessionState]) : bool
+  (array-ref (struct-get state cache-enabled) 1))
 
 (define (compiler-load-session-state-note-embedded-stdlib-source!
   [state : CompilerLoadSessionState]) : unit
@@ -3633,13 +3643,16 @@
             (ast-decl-module-list-new)
             seen)))]))
 
-(define (compiler-load-resolved-path-id-for-generated-import
+(define (compiler-load-resolved-path-id-for-generated-import-with-state
+  [state : CompilerLoadSessionState]
   [resolved : String]
   [expected-module : AstMaybeModuleName]) : i64
   (match expected-module
     [(AstMaybeModuleName.No) (ci.intern-generated-canonical-name resolved)]
     [(AstMaybeModuleName.Some module-id)
-      (match (compiler-load-surface-summary-find-module module-id)
+      (match (compiler-load-session-state-surface-summary-find-module
+        state
+        module-id)
         [(CompilerLoadNoSurfaceSummary)
           (ci.intern-generated-canonical-name resolved)]
         [(CompilerLoadSomeSurfaceSummary summary)
@@ -3648,6 +3661,15 @@
             (compiler-load-normalize-path resolved))
             (struct-get summary source-path-id)
             (ci.intern-generated-canonical-name resolved))])]))
+
+;; Serial/test compatibility adapter.
+(define (compiler-load-resolved-path-id-for-generated-import
+  [resolved : String]
+  [expected-module : AstMaybeModuleName]) : i64
+  (compiler-load-resolved-path-id-for-generated-import-with-state
+    (compiler-load-serial-test-session-state)
+    resolved
+    expected-module))
 
 (define (compiler-load-surface-summary-remove-source-in
   [summaries : CompilerLoadSurfaceSummaryList]

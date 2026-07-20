@@ -33103,30 +33103,27 @@
   ;; rewrite candidate exists pay for verification. Rejection keeps the input.
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (begin
-        (match (opt-late-bounds-pair-scan-loops
-          blocks
-          frame
-          (opt-cfg-natural-loops blocks))
-          [(OptLateBoundsPairResult.No) func]
-          [(OptLateBoundsPairResult.Some next-blocks next-frame)
-            (let
-              [candidate : CompilerIrFunction
-                (CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  next-frame
-                  (compiler-ir-block-list-compact next-blocks))]
-              ;; The rewrite extends the versioning guard's branch chain, so
-              ;; the pre-rewrite CFG context does not describe the candidate;
-              ;; verify against a fresh view and keep the input on rejection.
-              (match (opt-verify-function candidate)
-                [(ResultCompilerOptimizeVerify.Ok)
-                  (compiler-opt-debug-observe-function
-                    "paired_bounds"
-                    candidate)]
-                [(ResultCompilerOptimizeVerify.Err _) func]))]))]))
+      (match (opt-late-bounds-pair-scan-loops
+        blocks
+        frame
+        (opt-cfg-natural-loops blocks))
+        [(OptLateBoundsPairResult.No) func]
+        [(OptLateBoundsPairResult.Some next-blocks next-frame)
+          (let
+            [candidate : CompilerIrFunction
+              (CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                next-frame
+                (compiler-ir-block-list-compact next-blocks))]
+            ;; The rewrite extends the versioning guard's branch chain, so
+            ;; the pre-rewrite CFG context does not describe the candidate;
+            ;; verify against a fresh view and keep the input on rejection.
+            (match (opt-verify-function candidate)
+              [(ResultCompilerOptimizeVerify.Ok)
+                (compiler-opt-debug-observe-function "paired_bounds" candidate)]
+              [(ResultCompilerOptimizeVerify.Err _) func]))])]))
 
 (define (opt-late-bounds-pair-function-list
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList

@@ -223,6 +223,7 @@ Summary:
           (tlci-empty-bytes)
           (tlci-empty-bytes)
           (tlci-empty-bytes)
+          (tlci-empty-bytes)
           (tlci-empty-bytes))]
       [ok : bool
         (match (tlci-emit-image image)

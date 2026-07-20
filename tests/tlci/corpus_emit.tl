@@ -1,6 +1,6 @@
-;; Emit the two canonical valid images used by the immutable TLCI v1 corpus.
-;; The compatibility gate compares these bytes with checked-in fixtures; it
-;; never rewrites the fixtures.
+;; Emit the two canonical valid images used by the TLCI format corpus. The
+;; gate compares these bytes with the checked-in fixtures, so a synchronized
+;; emitter/parser change cannot silently redefine the container format.
 (import stdlib.io)
 (import "../../src/tlci_core.tl")
 
@@ -10,6 +10,7 @@
     tlci-callback-abi-version
     "tlci-v1-corpus"
     (tlci-make-metadata "v1" "corpus.empty" "1.0.0")
+    (tlci-empty-bytes)
     (tlci-empty-bytes)
     (tlci-empty-bytes)
     (tlci-empty-bytes)
@@ -46,7 +47,8 @@
         (make-array (tlci-byte 195) (tlci-byte 144) (tlci-byte 144))
         fixups
         entries
-        symbols))))
+        symbols
+        (tlci-empty-bytes)))))
 
 (define (tlci-v1-corpus-write [path : String] [result : ResultTlciBytes]) : i64
   (match result

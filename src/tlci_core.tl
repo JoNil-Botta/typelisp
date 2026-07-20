@@ -107,7 +107,8 @@
   (code (Array u8))
   (fixups (Array u8))
   (entries (Array u8))
-  (symbols (Array u8)))
+  (symbols (Array u8))
+  (imports (Array u8)))
 
 ;; Construct the aggregate in its declaring module. Besides keeping the tlci
 ;; API concise, this lets the published stage0 compile dotted importers before
@@ -121,7 +122,8 @@
   [code : (Array u8)]
   [fixups : (Array u8)]
   [entries : (Array u8)]
-  [symbols : (Array u8)]) : TlciImage
+  [symbols : (Array u8)]
+  [imports : (Array u8)]) : TlciImage
   (TlciImage
     host-arch
     callback-abi-version
@@ -131,7 +133,8 @@
     code
     fixups
     entries
-    symbols))
+    symbols
+    imports))
 
 (defenum ResultTlciString
   (Ok String)
@@ -190,7 +193,7 @@
   (Err String))
 
 (define tlci-format-version : i64
-  1)
+  2)
 (define tlci-metadata-version : String
   "v1")
 (define tlci-metadata-version-v2 : String
@@ -471,7 +474,7 @@
 (define tlci-host-callback-stdlib-op-count : i64
   86)
 (define tlci-header-size : i64
-  160)
+  176)
 (define tlci-page-align : i64
   4096)
 (define tlci-hash-field-offset : i64
@@ -484,6 +487,14 @@
   24)
 (define tlci-section-symbol-record-size : i64
   40)
+
+;; Import records bind a GOT slot in a native-region image to a host entry
+;; point identified by a stable ABI id (a closed, versioned host ABI, not a
+;; string-resolved symbol). Record: (got-slot-offset u64, host-import-id u64).
+(define tlci-section-import-record-size : i64
+  16)
+(define tlci-host-import-invoke : i64
+  0)
 
 (define (tlci-host-abi-version-error [actual : i64]) : String
   (str_cat.str-cat
@@ -621,7 +632,8 @@
     code
     (tlci-code-bearing-probe-fixups)
     (tlci-code-bearing-probe-entry)
-    (tlci-code-bearing-probe-symbols)))
+    (tlci-code-bearing-probe-symbols)
+    (tlci-empty-bytes)))
 
 (define (tlci-code-bearing-probe-patch!
   [bytes : (Array u8)]
@@ -693,7 +705,8 @@
     code
     (tlci-code-bearing-package-fixups macro-count)
     (tlci-code-bearing-probe-entry)
-    (tlci-code-bearing-probe-symbols)))
+    (tlci-code-bearing-probe-symbols)
+    (tlci-empty-bytes)))
 
 (define (tlci-code-bearing-package-patch!
   [bytes : (Array u8)]
@@ -2090,8 +2103,12 @@
         [after-entries : i64
           (tlci-section-end after-fixups entries-offset entries-len)]
         [symbols-offset : i64 (tlci-section-offset after-entries symbols-len 8)]
-        [file-size : i64
+        [after-symbols : i64
           (tlci-section-end after-entries symbols-offset symbols-len)]
+        [imports-len : i64 (array-length (struct-get image imports))]
+        [imports-offset : i64 (tlci-section-offset after-symbols imports-len 8)]
+        [file-size : i64
+          (tlci-section-end after-symbols imports-offset imports-len)]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
         (begin
@@ -2120,6 +2137,10 @@
           (tlci-push-u64!
             (&mut out)
             (/ symbols-len tlci-section-symbol-record-size))
+          (tlci-push-u64! (&mut out) imports-offset)
+          (tlci-push-u64!
+            (&mut out)
+            (/ imports-len tlci-section-import-record-size))
           (tlci-push-u64! (&mut out) file-size)
           (tlci-append-bytes! (&mut out) compiler-hash-bytes)
           (tlci-pad-to! (&mut out) metadata-offset)
@@ -2148,6 +2169,11 @@
             (begin
               (tlci-pad-to! (&mut out) symbols-offset)
               (tlci-append-bytes! (&mut out) (struct-get image symbols)))
+            unit)
+          (if (> imports-len 0)
+            (begin
+              (tlci-pad-to! (&mut out) imports-offset)
+              (tlci-append-bytes! (&mut out) (struct-get image imports)))
             unit)
           (let
             [out-bytes : (Array u8)
@@ -2204,10 +2230,13 @@
           [entries-count : i64 (tlci-read-u64 bytes 128)]
           [symbols-offset : i64 (tlci-read-u64 bytes 136)]
           [symbols-count : i64 (tlci-read-u64 bytes 144)]
-          [declared-size : i64 (tlci-read-u64 bytes 152)]
+          [imports-offset : i64 (tlci-read-u64 bytes 152)]
+          [imports-count : i64 (tlci-read-u64 bytes 160)]
+          [declared-size : i64 (tlci-read-u64 bytes 168)]
           [fixups-len : i64 (* fixups-count tlci-section-fixup-record-size)]
           [entries-len : i64 (* entries-count tlci-section-entry-record-size)]
           [symbols-len : i64 (* symbols-count tlci-section-symbol-record-size)]
+          [imports-len : i64 (* imports-count tlci-section-import-record-size)]
           [hash-end : i64 (+ hash-offset hash-len)]
           [metadata-end : i64 (+ metadata-offset metadata-len)]
           [rodata-end : i64
@@ -2217,8 +2246,10 @@
             (tlci-section-end code-end fixups-offset fixups-len)]
           [entries-end : i64
             (tlci-section-end fixups-end entries-offset entries-len)]
-          [content-end : i64
+          [symbols-end : i64
             (tlci-section-end entries-end symbols-offset symbols-len)]
+          [content-end : i64
+            (tlci-section-end symbols-end imports-offset imports-len)]
           (cond
             [(not (= version tlci-format-version))
               (ResultTlciImage.Err
@@ -2302,6 +2333,12 @@
             [(not
                 (tlci-table-len-ok? symbols-len tlci-section-symbol-record-size))
               (ResultTlciImage.Err "tlci: malformed symbol table length")]
+            [(not
+                (tlci-table-len-ok? imports-len tlci-section-import-record-size))
+              (ResultTlciImage.Err "tlci: malformed import table length")]
+            [(not
+                (tlci-section-range-ok? actual-size imports-offset imports-len))
+              (tlci-section-error "imports")]
             [(not (= declared-size content-end))
               (ResultTlciImage.Err "tlci: file has trailing bytes")]
             [(not (= expected-hash (tlci-content-hash bytes)))
@@ -2325,7 +2362,8 @@
                         (tlci-slice-bytes bytes code-offset code-len)
                         (tlci-slice-bytes bytes fixups-offset fixups-len)
                         (tlci-slice-bytes bytes entries-offset entries-len)
-                        (tlci-slice-bytes bytes symbols-offset symbols-len)))]))]))))))
+                        (tlci-slice-bytes bytes symbols-offset symbols-len)
+                        (tlci-slice-bytes bytes imports-offset imports-len)))]))]))))))
 
 (define (tlci-test-metadata) : TlciMetadata
   (tlci-make-metadata "v1" "demo" "0.1.0"))
@@ -2408,6 +2446,7 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)
     (tlci-empty-bytes)
+    (tlci-empty-bytes)
     (tlci-empty-bytes)))
 
 (define (tlci-test-v2-metadata-only-image) : TlciImage
@@ -2420,7 +2459,29 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)
     (tlci-empty-bytes)
+    (tlci-empty-bytes)
     (tlci-empty-bytes)))
+
+(define (tlci-test-imports-bytes) : (Array u8)
+  (let
+    [out : (Array u8) (make-array u8 tlci-section-import-record-size)]
+    (begin
+      (tlci-set-u64! out 0 8)
+      (tlci-set-u64! out 8 tlci-host-import-invoke)
+      out)))
+
+(define (tlci-test-imports-image) : TlciImage
+  (TlciImage
+    tlci-host-arch-x86-64
+    tlci-callback-abi-version
+    "abcdef0"
+    (tlci-test-metadata)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-empty-bytes)
+    (tlci-test-imports-bytes)))
 
 (define (tlci-test-code-image) : TlciImage
   (TlciImage
@@ -2432,7 +2493,8 @@
     (tlci-test-bytes3 195 144 144)
     (tlci-test-zero-records tlci-section-fixup-record-size 1)
     (tlci-test-zero-records tlci-section-entry-record-size 1)
-    (tlci-test-zero-records tlci-section-symbol-record-size 1)))
+    (tlci-test-zero-records tlci-section-symbol-record-size 1)
+    (tlci-empty-bytes)))
 
 (define (tlci-test-malformed-fixups-image) : TlciImage
   (TlciImage
@@ -2443,6 +2505,7 @@
     (tlci-empty-bytes)
     (tlci-empty-bytes)
     (tlci-test-bytes3 1 2 3)
+    (tlci-empty-bytes)
     (tlci-empty-bytes)
     (tlci-empty-bytes)))
 
@@ -2958,8 +3021,8 @@
           (tlci-test-corrupt-byte bytes 0 0)
           "tlci: bad magic")
         (tlci-test-parse-rejects?
-          (tlci-test-corrupt-byte bytes 8 2)
-          "tlci: unsupported format version 2")
+          (tlci-test-corrupt-byte bytes 8 9)
+          "tlci: unsupported format version 9")
         (tlci-test-parse-rejects?
           (tlci-test-corrupt-byte bytes 16 9)
           "tlci: unsupported host arch")
@@ -3213,6 +3276,7 @@
     [(not (tlci-test-v2-metadata-emit-parse?)) 10]
     [(not (tlci-test-parse-round-trip? (tlci-test-v2-metadata-only-image))) 11]
     [(not (tlci-test-v2-metadata-rejections-ok?)) 12]
+    [(not (tlci-test-parse-round-trip? (tlci-test-imports-image))) 13]
     [else 0]))
 
 (define (tlci-core-self-test-ok?) : bool

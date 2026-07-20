@@ -1,16 +1,16 @@
 tlci image
-format-version: 1
+format-version: 2
 host-arch: x86_64 (1)
 callback-abi-version: 1
 compiler-build-hash: tlci-v1-corpus
-content-hash: 1467257121
-file-size: 270
+content-hash: 996449910
+file-size: 0
 metadata-version: v1
 package-name: corpus.empty
 package-version: 1.0.0
 sections:
-  compiler-build-hash: offset=160 bytes=14
-  metadata: offset=176 bytes=94
+  compiler-build-hash: offset=176 bytes=14
+  metadata: offset=192 bytes=94
   rodata: offset=0 bytes=0
   code: offset=0 bytes=0
   fixups: offset=0 records=0 bytes=0

@@ -2021,6 +2021,19 @@
         [(AstType.F64) "vmulpd"]
         [(AstType.F32) "vmulps"]
         [_ ""])]
+    [(CompilerIrBinOp.Shl)
+      (match elem-ty
+        [(AstType.I64) "vpsllvq"]
+        [(AstType.U64) "vpsllvq"]
+        [(AstType.I32) "vpsllvd"]
+        [(AstType.U32) "vpsllvd"]
+        [_ ""])]
+    [(CompilerIrBinOp.Shr)
+      (match elem-ty
+        [(AstType.U64) "vpsrlvq"]
+        [(AstType.I32) "vpsravd"]
+        [(AstType.U32) "vpsrlvd"]
+        [_ ""])]
     [(CompilerIrBinOp.BitAnd)
       (match elem-ty
         [(AstType.I64) "vpand"]
@@ -2064,6 +2077,16 @@
       (match elem-ty
         [(AstType.I64) true]
         [(AstType.U64) true]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-backend-avx2-i64-vector-shr?
+  [op : CompilerIrBinOp]
+  [elem-ty : AstType]) : bool
+  (match op
+    [(CompilerIrBinOp.Shr)
+      (match elem-ty
+        [(AstType.I64) true]
         [_ false])]
     [_ false]))
 
@@ -2612,6 +2635,75 @@
       (ResultCompilerBackend.Err
         (box (compiler-diagnostic-with-message instr-diag message)))]))
 
+(define (compiler-backend-emit-avx2-i64-vector-shr
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (match (compiler-backend-vector-register-use
+    assignments
+    lhs
+    "lhs"
+    "ymm"
+    (AstType.I64)
+    (compiler-backend-vector-spill-scratch "ymm" 0))
+    [(ResultBackendVectorUse.Ok lhs-use)
+      (match lhs-use
+        [(CompilerBackendVectorUse.Use lhs-asm lhs-reg)
+          (match (compiler-backend-vector-register-use
+            assignments
+            rhs
+            "rhs"
+            "ymm"
+            (AstType.I64)
+            (compiler-backend-vector-spill-scratch "ymm" 1))
+            [(ResultBackendVectorUse.Ok rhs-use)
+              (match rhs-use
+                [(CompilerBackendVectorUse.Use rhs-asm rhs-reg)
+                  (match (compiler-backend-vector-dst-reg
+                    assignments
+                    dst
+                    "binop dst"
+                    "ymm"
+                    (compiler-backend-vector-spill-scratch "ymm" 0))
+                    [(ResultBackendReg.Ok dst-reg)
+                      (ResultCompilerBackend.Ok
+                        (str_cat.str-cat
+                          lhs-asm
+                          rhs-asm
+                          "    vpxor %ymm1, %ymm1, %ymm1\n    vpcmpgtq "
+                          lhs-reg
+                          ", %ymm1, %ymm0\n    vpcmpeqd %ymm1, %ymm1, %ymm1\n    vpsllq $63, %ymm1, %ymm1\n    vpsrlq $57, %ymm1, %ymm1\n    vpsubq "
+                          rhs-reg
+                          ", %ymm1, %ymm1\n    vpsllvq %ymm1, %ymm0, %ymm0\n    vpsrlvq "
+                          rhs-reg
+                          ", "
+                          lhs-reg
+                          ", "
+                          dst-reg
+                          "\n    vpor %ymm0, "
+                          dst-reg
+                          ", "
+                          dst-reg
+                          "\n"
+                          (compiler-backend-vector-store-dst
+                            assignments
+                            dst
+                            "ymm"
+                            (AstType.I64)
+                            dst-reg)))]
+                    [(ResultBackendReg.Err message)
+                      (ResultCompilerBackend.Err
+                        (box
+                          (compiler-diagnostic-with-message instr-diag message)))])])]
+            [(ResultBackendVectorUse.Err message)
+              (ResultCompilerBackend.Err
+                (box (compiler-diagnostic-with-message instr-diag message)))])])]
+    [(ResultBackendVectorUse.Err message)
+      (ResultCompilerBackend.Err
+        (box (compiler-diagnostic-with-message instr-diag message)))]))
+
 (define (compiler-backend-emit-avx2-vector-binop
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -2625,19 +2717,28 @@
     (let
       [mnemonic : String
         (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
-      (if (compiler-backend-avx2-i64-vector-mul? op elem-ty)
-        (compiler-backend-emit-avx2-i64-vector-mul
-          assignments
-          dst
-          lhs
-          rhs
-          instr-diag)
-        (if (= (string.string-length mnemonic) 0)
+      (cond
+        [(compiler-backend-avx2-i64-vector-mul? op elem-ty)
+          (compiler-backend-emit-avx2-i64-vector-mul
+            assignments
+            dst
+            lhs
+            rhs
+            instr-diag)]
+        [(compiler-backend-avx2-i64-vector-shr? op elem-ty)
+          (compiler-backend-emit-avx2-i64-vector-shr
+            assignments
+            dst
+            lhs
+            rhs
+            instr-diag)]
+        [(= (string.string-length mnemonic) 0)
           (ResultCompilerBackend.Err
             (box
               (compiler-diagnostic-with-message
                 instr-diag
-                "backend: unsupported AVX2 vector binary op")))
+                "backend: unsupported AVX2 vector binary op")))]
+        [else
           (match (compiler-backend-vector-register-use
             assignments
             lhs
@@ -2697,7 +2798,7 @@
                           (compiler-diagnostic-with-message instr-diag message)))])])]
             [(ResultBackendVectorUse.Err message)
               (ResultCompilerBackend.Err
-                (box (compiler-diagnostic-with-message instr-diag message)))]))))
+                (box (compiler-diagnostic-with-message instr-diag message)))])]))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
 (define (compiler-backend-emit-avx2-vector-binop-memory-source
@@ -3066,6 +3167,20 @@
         [(AstType.U16) "vpmullw"]
         [(AstType.F64) "vmulpd"]
         [(AstType.F32) "vmulps"]
+        [_ ""])]
+    [(CompilerIrBinOp.Shl)
+      (match elem-ty
+        [(AstType.I64) "vpsllvq"]
+        [(AstType.U64) "vpsllvq"]
+        [(AstType.I32) "vpsllvd"]
+        [(AstType.U32) "vpsllvd"]
+        [_ ""])]
+    [(CompilerIrBinOp.Shr)
+      (match elem-ty
+        [(AstType.I64) "vpsravq"]
+        [(AstType.U64) "vpsrlvq"]
+        [(AstType.I32) "vpsravd"]
+        [(AstType.U32) "vpsrlvd"]
         [_ ""])]
     [(CompilerIrBinOp.BitAnd)
       (match elem-ty
@@ -4026,12 +4141,12 @@
             " $"
             (string.int->string shift)
             ", %ymm0, %ymm0\n    vpxor %ymm0, "
+            rhs-reg
+            ", %ymm1\n    vpxor %ymm0, "
             lhs-reg
             ", "
             dst-reg
-            "\n    vpxor %ymm0, "
-            rhs-reg
-            ", %ymm1\n")]
+            "\n")]
         (match op
           [(CompilerIrBinOp.Lt)
             (str_cat.str-cat

@@ -4077,6 +4077,13 @@ Masked varying control flow:
   every contiguous integer array lane type (`i8`/`u8` through `i64`/`u64`).
   Leading integer literals are contextually typed from the other operand.
   These operators do not accept `f32` or `f64` lanes.
+- Masked `shl` and `shr` value lanes support `i32`, `u32`, `i64`, and `u64`
+  in AVX2 and AVX-512 modes. Signed `shr` is arithmetic and unsigned `shr` is
+  logical. The section 5.4 shift-count rule remains normative: an invalid
+  count traps only when its lane is active after intersecting the current
+  branch and tail masks. Unsupported `i8`, `u8`, `i16`, and `u16` masked
+  shifts are rejected with an operator-, lane-type-, and backend-specific
+  diagnostic; they do not silently use a scalar loop.
 - Side effects other than supported contiguous `array-set!` and explicit
   `stdlib/atomic.tl` integer element operations are rejected in masked
   branches. This includes `set!` to bindings declared outside the `foreach`,
@@ -6464,7 +6471,9 @@ in documentation passes.
   `spmd-reduce` folds; native AVX2/AVX-512 `spmd-shuffle` permutations for
   i32/u32/i64/u64/f32/f64 maps and reduction values, including active-count
   preserving tails and ordered bounds traps; AVX2/AVX-512 masked varying `if` subsets including
-  nested branch-mask composition and value-producing selects; AVX2/AVX-512
+  nested branch-mask composition, value-producing selects, and guarded native
+  `i32`/`u32`/`i64`/`u64` shifts with active-lane-only invalid-count traps;
+  AVX2/AVX-512
   scalar-lane varying `match`; AVX2 enum tag/payload varying `match` with
   active-lane-only scalar field loads; AVX2/AVX-512
   standalone bool dynamic-array lanes, including bool copies and numeric
@@ -6489,6 +6498,7 @@ in documentation passes.
 | Garbage collection / general `free` | Not planned: arenas are the reclamation model. |
 | SIMD early exits | Deferred; varying `while` provides per-lane loop exit, while source `return`/`break`/`continue` from SIMD regions remain unsupported. |
 | AVX-512 `spmd-scan` vectorization | AVX2 canonical contiguous range-wide scans are implemented; AVX-512 is deferred under #5350. |
+| Narrow masked integer shifts | AVX2/AVX-512 masked `i32`/`u32`/`i64`/`u64` shifts are implemented. `i8`/`u8`/`i16`/`u16` widening/packing expansions are deferred and rejected with stable operator/type/backend diagnostics. |
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Frontend analysis plus private scalar/AVX-512 IR lowering and native emission are implemented; AVX2 native emission is deferred under #5151. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |

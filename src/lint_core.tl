@@ -2649,7 +2649,7 @@
   [alias : String]
   [module-name : String]) : bool
   (match meta
-    [(AstExternMetadata.Metadata abi _ _ _)
+    [(AstExternMetadata.Metadata abi _ _ _ _)
       (lint-extern-abi-uses-import? abi alias module-name)]))
 
 (define (lint-field-cleanup-uses-import?

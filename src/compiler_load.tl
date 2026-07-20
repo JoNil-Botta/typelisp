@@ -19,6 +19,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
+(import "tlci_core.tl")
 
 (defenum ResultCompilerLoad
   (Ok AstDeclList sym_i64_env.SymI64Env)
@@ -43,11 +44,29 @@
 (defstruct CompilerLoadPackageEntry
   (entry-path String)
   (manifest-dir String)
-  (owner String))
+  (owner String)
+  (version String))
 
 (defenum ResultCompilerLoadPackageEntry
   (Ok CompilerLoadPackageEntry)
   (Err String))
+
+(defenum CompilerLoadPackageSpmdInterface
+  (Unavailable)
+  (Available TlciSpmdCallableList))
+
+(defenum ResultCompilerLoadPackageSpmdInterface
+  (Ok CompilerLoadPackageSpmdInterface)
+  (Err String))
+
+;; Package dependency artifacts use the build profile selected by the package
+;; driver. Other compiler entry points retain the release default and can still
+;; typecheck source dependencies when no artifact has been built yet.
+(define compiler-load-package-artifact-profile : String
+  "release")
+
+(define (compiler-load-set-package-artifact-profile! [profile : String]) : unit
+  (set! compiler-load-package-artifact-profile profile))
 
 (defenum CompilerLoadMaybeModuleId
   (CompilerLoadNoModuleId)
@@ -9599,6 +9618,150 @@
           (ast-type-list-push out (ast-node-pool-reader-type-push ty))])
       (compiler-load-param-type-list-into params (+ index 1) out))))
 
+(define (compiler-load-package-tlci-path
+  [manifest-dir : String]
+  [package-name : String]) : String
+  (compiler-load-join-root-path
+    (compiler-load-join-root-path
+      (compiler-load-join-root-path manifest-dir "target")
+      compiler-load-package-artifact-profile)
+    (str_cat.str-cat package-name ".tlci")))
+
+(define (compiler-load-package-spmd-interface
+  [manifest-dir : String]
+  [package-name : String]
+  [package-version : String]) : ResultCompilerLoadPackageSpmdInterface
+  (let
+    [path : String (compiler-load-package-tlci-path manifest-dir package-name)]
+    (if (not (io.file-exists? path))
+      (ResultCompilerLoadPackageSpmdInterface.Ok
+        CompilerLoadPackageSpmdInterface.Unavailable)
+      (match (io.try-read-file (& path))
+        [(io.ErrIoString error)
+          (ResultCompilerLoadPackageSpmdInterface.Err
+            (str_cat.str-cat
+              "compiler-load: cannot read dependency tlci '"
+              path
+              "': "
+              (io.error-message error)))]
+        [(io.OkIoString contents)
+          (match (tlci-parse-image (tlci-string->bytes contents))
+            [(ResultTlciImage.Err message)
+              (ResultCompilerLoadPackageSpmdInterface.Err
+                (str_cat.str-cat
+                  "compiler-load: invalid dependency tlci '"
+                  path
+                  "': "
+                  message))]
+            [(ResultTlciImage.Ok image)
+              (let
+                [metadata : TlciMetadata (struct-get image metadata)]
+                (if (or
+                  (not
+                    (string.eq (struct-get metadata package-name) package-name))
+                  (not
+                    (string.eq
+                      (struct-get metadata package-version)
+                      package-version)))
+                  (ResultCompilerLoadPackageSpmdInterface.Err
+                    (str_cat.str-cat
+                      "compiler-load: dependency tlci package identity mismatch for '"
+                      path
+                      "': expected "
+                      package-name
+                      "@"
+                      package-version
+                      ", found "
+                      (struct-get metadata package-name)
+                      "@"
+                      (struct-get metadata package-version)))
+                  (ResultCompilerLoadPackageSpmdInterface.Ok
+                    (CompilerLoadPackageSpmdInterface.Available
+                      (struct-get metadata spmd-callables)))))])]))))
+
+(define (compiler-load-imported-spmd-specializations-into
+  [items : TlciSpmdSpecializationList]
+  [out : (&mut out AstImportedSpmdSpecializationList)]) : unit
+  (match items
+    [(TlciSpmdSpecializationList.Nil) unit]
+    [(TlciSpmdSpecializationList.Cons item rest)
+      (begin
+        (ast-imported-spmd-specialization-list-push
+          out
+          (AstImportedSpmdSpecialization
+            (ci.intern-generated-canonical-name (struct-get item abi))
+            (ci.intern-generated-canonical-name (struct-get item backend))
+            (struct-get item lanes)
+            (ci.intern-generated-canonical-name (struct-get item args))
+            (ci.intern-generated-canonical-name (struct-get item result))
+            (struct-get item index-param)
+            (ci.intern-generated-canonical-name (struct-get item symbol))))
+        (compiler-load-imported-spmd-specializations-into (box-get rest) out))]))
+
+(define (compiler-load-imported-spmd-specializations
+  [items : TlciSpmdSpecializationList]) : AstImportedSpmdSpecializationList
+  (let
+    [out : AstImportedSpmdSpecializationList
+      (ast-imported-spmd-specialization-list-new)]
+    (begin
+      (compiler-load-imported-spmd-specializations-into items (&mut out))
+      out)))
+
+(define (compiler-load-imported-spmd-callables-for-into
+  [canonical-name : String]
+  [items : TlciSpmdCallableList]
+  [out : (&mut out AstImportedSpmdCallableList)]) : unit
+  (match items
+    [(TlciSpmdCallableList.Nil) unit]
+    [(TlciSpmdCallableList.Cons item rest)
+      (begin
+        (if (string.eq (struct-get item name) canonical-name)
+          (ast-imported-spmd-callable-list-push
+            out
+            (AstImportedSpmdCallable
+              (ci.intern-generated-canonical-name (struct-get item signature))
+              (compiler-load-imported-spmd-specializations
+                (struct-get item specializations))))
+          unit)
+        (compiler-load-imported-spmd-callables-for-into
+          canonical-name
+          (box-get rest)
+          out))]))
+
+(define (compiler-load-imported-spmd-callables-for
+  [canonical-name : String]
+  [items : TlciSpmdCallableList]) : AstImportedSpmdCallableList
+  (let
+    [out : AstImportedSpmdCallableList (ast-imported-spmd-callable-list-new)]
+    (begin
+      (compiler-load-imported-spmd-callables-for-into
+        canonical-name
+        items
+        (&mut out))
+      out)))
+
+(define (compiler-load-imported-spmd-metadata
+  [package-owner : String]
+  [module : String]
+  [name : i64]
+  [interface : CompilerLoadPackageSpmdInterface]) : AstImportedSpmdMetadata
+  (let
+    [canonical-name : String
+      (compiler-load-package-module-key
+        (if (= (string.string-length module) 0)
+          package-owner
+          module)
+        (intern-str name))]
+    [callables : AstImportedSpmdCallableList
+      (match interface
+        [(CompilerLoadPackageSpmdInterface.Unavailable)
+          (ast-imported-spmd-callable-list-new)]
+        [(CompilerLoadPackageSpmdInterface.Available items)
+          (compiler-load-imported-spmd-callables-for canonical-name items)])]
+    (AstImportedSpmdMetadata.Package
+      (ci.intern-generated-canonical-name canonical-name)
+      (box callables))))
+
 (define (compiler-load-package-def-fn-extern
   [package-owner : String]
   [package-root : String]
@@ -9607,7 +9770,8 @@
   [module : String]
   [name : i64]
   [params : AstParamList]
-  [ret : AstType]) : AstDecl
+  [ret : AstType]
+  [spmd-interface : CompilerLoadPackageSpmdInterface]) : AstDecl
   (let
     [name-str : String (intern-str name)]
     [logical-path : String
@@ -9628,7 +9792,12 @@
           (AstExternAbi.C)
           (ci.intern-generated-canonical-name link-name)
           (ast-extern-link-input-list-new)
-          (ast-extern-metadata-flags false (string.eq link-name logical))))
+          (ast-extern-metadata-flags false (string.eq link-name logical))
+          (compiler-load-imported-spmd-metadata
+            package-owner
+            module
+            name
+            spmd-interface)))
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl
@@ -9637,6 +9806,7 @@
   [stdlib-roots : svec.Vec]
   [decl-path : String]
   [module : String]
+  [spmd-interface : CompilerLoadPackageSpmdInterface]
   [decl : AstDecl]) : CompilerLoadMaybeDecl
   (match decl
     [(AstDecl.DefFn decl-meta name params ret _ _)
@@ -9651,7 +9821,8 @@
             module
             name
             params
-            ret)))]
+            ret
+            spmd-interface)))]
     [(AstDecl.DefStruct decl-meta _ _ _ _) (CompilerLoadSomeDecl decl)]
     [(AstDecl.Module _) (CompilerLoadSomeDecl decl)]
     [(AstDecl.Unsafe inner-box)
@@ -9663,6 +9834,7 @@
           stdlib-roots
           decl-path
           module
+          spmd-interface
           inner)
           [(CompilerLoadSomeDecl transformed)
             (CompilerLoadSomeDecl (ast-decl-unsafe transformed))]
@@ -9790,7 +9962,8 @@
   [paths : AstDeclPathList]
   [seen : sym_i64_env.SymI64Env]
   [module : String]
-  [module-id : i64]) : ResultCompilerLoadWithPaths
+  [module-id : i64]
+  [spmd-interface : CompilerLoadPackageSpmdInterface]) : ResultCompilerLoadWithPaths
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
@@ -9831,7 +10004,8 @@
           rest-paths
           seen
           next-module
-          next-module-id)
+          next-module-id
+          spmd-interface)
           [(ResultCompilerLoadWithPaths.Ok
               rest-decls
               rest-decl-paths
@@ -9843,6 +10017,7 @@
               stdlib-roots
               decl-path
               module
+              spmd-interface
               decl)
               [(CompilerLoadSomeDecl transformed)
                 (ResultCompilerLoadWithPaths.Ok
@@ -9897,7 +10072,8 @@
                     manifest-dir
                     (struct-get manifest entry)))
                 manifest-dir
-                (struct-get manifest name))))])]))
+                (struct-get manifest name)
+                (struct-get manifest version))))])]))
 
 (define (compiler-load-package-externs-from-import
   [resolved : String]
@@ -9912,30 +10088,39 @@
       (ResultCompilerLoadWithPaths.Err
         (box (compiler-diagnostic-at-start resolved message)))]
     [(ResultCompilerLoadPackageEntry.Ok entry)
-      (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
-        resolved
-        seen
-        stdlib-roots
-        expected-module
-        cfgs
-        module-id-fallback
-        source-module-fallback)
-        [(ResultCompilerLoadWithPaths.Ok
-            imported-decls
-            imported-paths
-            _
-            import-seen)
-          (compiler-load-package-extern-decls
-            (struct-get entry owner)
-            (struct-get entry manifest-dir)
+      (match (compiler-load-package-spmd-interface
+        (struct-get entry manifest-dir)
+        (struct-get entry owner)
+        (struct-get entry version))
+        [(ResultCompilerLoadPackageSpmdInterface.Err message)
+          (ResultCompilerLoadWithPaths.Err
+            (box (compiler-diagnostic-at-start resolved message)))]
+        [(ResultCompilerLoadPackageSpmdInterface.Ok spmd-interface)
+          (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
+            resolved
+            seen
             stdlib-roots
-            imported-decls
-            imported-paths
-            import-seen
-            ""
-            cbi.compiler-builtin-id-fix-empty)]
-        [(ResultCompilerLoadWithPaths.Err diag)
-          (ResultCompilerLoadWithPaths.Err diag)])]))
+            expected-module
+            cfgs
+            module-id-fallback
+            source-module-fallback)
+            [(ResultCompilerLoadWithPaths.Ok
+                imported-decls
+                imported-paths
+                _
+                import-seen)
+              (compiler-load-package-extern-decls
+                (struct-get entry owner)
+                (struct-get entry manifest-dir)
+                stdlib-roots
+                imported-decls
+                imported-paths
+                import-seen
+                ""
+                cbi.compiler-builtin-id-fix-empty
+                spmd-interface)]
+            [(ResultCompilerLoadWithPaths.Err diag)
+              (ResultCompilerLoadWithPaths.Err diag)])])]))
 
 (define (compiler-load-package-expand-include-str
   [importer-path : String]
@@ -12588,6 +12773,7 @@
       (svec.new)
       "src/main.tl"
       "main"
+      CompilerLoadPackageSpmdInterface.Unavailable
       decl)
       [(CompilerLoadSomeDecl transformed)
         (and
@@ -15072,13 +15258,71 @@
         ""
         (intern "helper")
         (ast-param-list-new)
-        (AstType.I64))]
+        (AstType.I64)
+        CompilerLoadPackageSpmdInterface.Unavailable)]
     (match decl
       [(AstDecl.Extern decl-meta _ _ metadata _)
         (string.eq
           (ast-extern-metadata-symbol (box-get metadata))
           "_tl_dep_src_lib_helper")]
       [_ false])))
+
+(define (compiler-load-package-imported-spmd-metadata-ok?) : bool
+  (let
+    [specialization : TlciSpmdSpecialization
+      (tlci-make-spmd-specialization
+        "spmd-call-v1"
+        "avx512"
+        8
+        "vu"
+        "v"
+        0
+        "_tl___tl_spmd_fixture_helper")]
+    [callable : TlciSpmdCallable
+      (tlci-make-spmd-callable
+        "spmd_fixture/helper"
+        "(-> i64 i64 i64)"
+        (tlci-spmd-specialization-list-cons
+          specialization
+          (tlci-spmd-specialization-list-empty)))]
+    [metadata : AstImportedSpmdMetadata
+      (compiler-load-imported-spmd-metadata
+        "spmd_fixture"
+        "spmd_fixture"
+        (intern "helper")
+        (CompilerLoadPackageSpmdInterface.Available
+          (tlci-spmd-callable-list-cons
+            callable
+            (tlci-spmd-callable-list-empty))))]
+    (match metadata
+      [(AstImportedSpmdMetadata.No) false]
+      [(AstImportedSpmdMetadata.Package canonical-name callables-box)
+        (let
+          [callables : AstImportedSpmdCallableList (box-get callables-box)]
+          [copied-callable : AstImportedSpmdCallable
+            (ast-imported-spmd-callable-list-get
+              (& callables)
+              0
+              (ast-imported-spmd-callable-fallback))]
+          [specializations : AstImportedSpmdSpecializationList
+            (struct-get copied-callable specializations)]
+          [copied-specialization : AstImportedSpmdSpecialization
+            (ast-imported-spmd-specialization-list-get
+              (& specializations)
+              0
+              (ast-imported-spmd-specialization-fallback))]
+          (and
+            (string.eq (intern-str canonical-name) "spmd_fixture/helper")
+            (= (ast-imported-spmd-callable-list-len (& callables)) 1)
+            (string.eq
+              (intern-str (struct-get copied-callable signature))
+              "(-> i64 i64 i64)")
+            (=
+              (ast-imported-spmd-specialization-list-len (& specializations))
+              1)
+            (string.eq
+              (intern-str (struct-get copied-specialization symbol))
+              "_tl___tl_spmd_fixture_helper")))])))
 
 (define (compiler-load-module-list-slots-address [items : AstDeclModuleList]) : i64
   (unsafe
@@ -15454,6 +15698,11 @@
       (compiler-load-package-owner-extern-symbol-ok?)
       (return
         (io.panic "compiler-load: package owner extern symbol smoke mismatch")))
+    (unless
+      (compiler-load-package-imported-spmd-metadata-ok?)
+      (return
+        (io.panic
+          "compiler-load: package imported SPMD metadata smoke mismatch")))
     (unless
       (compiler-load-source-provenance-ok?)
       (return (io.panic "compiler-load: source provenance smoke mismatch")))

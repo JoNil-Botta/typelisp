@@ -763,6 +763,7 @@
 
 (defenum TcSpmdInlineHelper
   (No)
+  (Imported AstType (Box AstImportedSpmdCallableList))
   (Some i64 i64 AstParamList AstType AstExpr))
 
 (defenum ResultTcSpmdInlineHelper
@@ -28917,6 +28918,13 @@
         [body : AstExpr (ast-node-get body-box)]
         (ResultTcSpmdInlineHelper.Ok
           (TcSpmdInlineHelper.Some name-id module-id params ret body)))]
+    [(AstDecl.Extern _ _ (AstExternKind.Function) metadata ty)
+      (match (ast-extern-metadata-imported-spmd (box-get metadata))
+        [(AstImportedSpmdMetadata.No)
+          (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No))]
+        [(AstImportedSpmdMetadata.Package _ callables)
+          (ResultTcSpmdInlineHelper.Ok
+            (TcSpmdInlineHelper.Imported ty callables))])]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -28939,9 +28947,13 @@
               lookup-id
               (compiler-symbols-missing-handle))]
           (if (compiler-symbols-handle-found? handle)
-            (if (=
-              (compiler-symbol-handle-kind handle)
-              (compiler-symbol-kind-function-define))
+            (if (or
+              (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-function-define))
+              (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-extern)))
               (let
                 [declaration-id : i64 (compiler-symbol-handle-index handle)]
                 [module-id : i64
@@ -29124,6 +29136,124 @@
                       (tc-spmd-finish expr-ty TcSpmdClass.Uniform args-env)]
                     [(ResultTcUnit.Err message)
                       (ResultTcSpmdExprInfo.Err message)])])]
+            [(ResultTcSpmdExprListInfo.Err message)
+              (ResultTcSpmdExprInfo.Err message)])])]
+    [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
+
+(define (tc-spmd-imported-callable-has-specialization-at?
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [signature : String]
+  [index : i64]) : bool
+  (if (>= index (ast-imported-spmd-callable-list-len callables))
+    false
+    (let
+      [callable : AstImportedSpmdCallable
+        (ast-imported-spmd-callable-list-get
+          callables
+          index
+          (ast-imported-spmd-callable-fallback))]
+      [specializations : AstImportedSpmdSpecializationList
+        (struct-get callable specializations)]
+      (or
+        (and
+          (string.eq (intern-str (struct-get callable signature)) signature)
+          (> (ast-imported-spmd-specialization-list-len (& specializations)) 0))
+        (tc-spmd-imported-callable-has-specialization-at?
+          callables
+          signature
+          (+ index 1))))))
+
+(define (tc-spmd-imported-specializations-have-varying-result-at?
+  [specializations : (& specializations AstImportedSpmdSpecializationList)]
+  [index : i64]) : bool
+  (if (>= index (ast-imported-spmd-specialization-list-len specializations))
+    false
+    (let
+      [item : AstImportedSpmdSpecialization
+        (ast-imported-spmd-specialization-list-get
+          specializations
+          index
+          (ast-imported-spmd-specialization-fallback))]
+      (or
+        (string.eq (intern-str (struct-get item result)) "v")
+        (tc-spmd-imported-specializations-have-varying-result-at?
+          specializations
+          (+ index 1))))))
+
+(define (tc-spmd-imported-callable-has-varying-result-at?
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [signature : String]
+  [index : i64]) : bool
+  (if (>= index (ast-imported-spmd-callable-list-len callables))
+    false
+    (let
+      [callable : AstImportedSpmdCallable
+        (ast-imported-spmd-callable-list-get
+          callables
+          index
+          (ast-imported-spmd-callable-fallback))]
+      [specializations : AstImportedSpmdSpecializationList
+        (struct-get callable specializations)]
+      (or
+        (and
+          (string.eq (intern-str (struct-get callable signature)) signature)
+          (tc-spmd-imported-specializations-have-varying-result-at?
+            (& specializations)
+            0))
+        (tc-spmd-imported-callable-has-varying-result-at?
+          callables
+          signature
+          (+ index 1))))))
+
+(define (tc-spmd-imported-call-result-class
+  [expr-ty : AstType]
+  [fn-ty : AstType]
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [args-class : TcSpmdClass]) : TcSpmdClass
+  (if (not (tc-spmd-varying? args-class))
+    TcSpmdClass.Uniform
+    (if (tc-type-eq (tc-type-without-regions expr-ty) (AstType.Unit))
+      TcSpmdClass.Uniform
+      (let
+        [signature : String (tc-type-render (tc-type-without-regions fn-ty))]
+        (if (tc-spmd-imported-callable-has-varying-result-at?
+          callables
+          signature
+          0)
+          TcSpmdClass.Varying
+          (if (tc-spmd-imported-callable-has-specialization-at?
+            callables
+            signature
+            0)
+            TcSpmdClass.Uniform
+            TcSpmdClass.Varying))))))
+
+(define (tc-spmd-imported-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : AstType]
+  [fn-ty : AstType]
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-expr ctx env spmd-env func)
+    [(ResultTcSpmdExprInfo.Ok func-info)
+      (match func-info
+        [(TcSpmdExprInfo _ _ func-env)
+          (match (tc-spmd-expr-list ctx env func-env args)
+            [(ResultTcSpmdExprListInfo.Ok args-info)
+              (match args-info
+                [(TcSpmdExprListInfo args-class args-env)
+                  (tc-spmd-finish-ctx
+                    ctx
+                    expr-ty
+                    (tc-spmd-imported-call-result-class
+                      expr-ty
+                      fn-ty
+                      callables
+                      args-class)
+                    args-env)])]
             [(ResultTcSpmdExprListInfo.Err message)
               (ResultTcSpmdExprInfo.Err message)])])]
     [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
@@ -29381,6 +29511,18 @@
                       (tc-spmd-finish expr-ty TcSpmdClass.Uniform caller-next))])]
               [(ResultTcSpmdInlineCallState.Err message)
                 (ResultTcSpmdExprInfo.Err message)]))]
+        [(TcSpmdInlineHelper.Imported fn-ty callables)
+          (let
+            [callable-items : AstImportedSpmdCallableList (box-get callables)]
+            (tc-spmd-imported-call
+              ctx
+              env
+              spmd-env
+              expr-ty
+              fn-ty
+              (& callable-items)
+              func
+              args))]
         [(TcSpmdInlineHelper.No)
           (tc-spmd-call-uniform-only ctx env spmd-env expr-ty func args)])]
     [(ResultTcSpmdInlineHelper.Err message) (ResultTcSpmdExprInfo.Err message)]))
@@ -29458,6 +29600,8 @@
                       body)])]
               [(ResultTcSpmdInlineCallState.Err message)
                 (ResultTcUnit.Err message)]))]
+        [(TcSpmdInlineHelper.Imported _ _)
+          (tc-spmd-masked-if-expr-list ctx env spmd-env args)]
         [(TcSpmdInlineHelper.No)
           (tc-spmd-masked-if-unsupported "varying calls inside masked branches")])]
     [(ResultTcSpmdInlineHelper.Err message) (ResultTcUnit.Err message)]))
@@ -41777,7 +41921,7 @@
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
-    [(AstExternMetadata.Metadata abi _ _ _)
+    [(AstExternMetadata.Metadata abi _ _ _ _)
       (let
         [explicit-abi : bool (ast-extern-metadata-explicit-abi? metadata)]
         [resolved : AstType (tc-resolve-type ctx ty)]

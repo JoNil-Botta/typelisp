@@ -388,6 +388,37 @@
   (No)
   (Callable AstSpmdSpecializationList))
 
+;; Package imports remain ordinary scalar externs outside SPMD regions.  The
+;; loader copies just the TLCI selection fields into this AST-owned form so the
+;; metadata has the same compile-job lifetime as the synthetic extern and the
+;; lowerer does not depend on loader/TLCI global state.
+(defstruct AstImportedSpmdSpecialization
+  (abi i64)
+  (backend i64)
+  (lanes i64)
+  (args i64)
+  (result i64)
+  (index-param i64)
+  (symbol i64))
+
+(defstruct AstImportedSpmdSpecializationList
+  (slots (Array AstImportedSpmdSpecialization))
+  (len i64))
+
+(defstruct AstImportedSpmdCallable
+  (signature i64)
+  (specializations AstImportedSpmdSpecializationList))
+
+(defstruct AstImportedSpmdCallableList
+  (slots (Array AstImportedSpmdCallable))
+  (len i64))
+
+(defenum AstImportedSpmdMetadata
+  (No)
+  ;; Canonical helper name plus every TLCI callable record having that name.
+  ;; An empty list marks a package-owned extern for which no record exists.
+  (Package i64 (Box AstImportedSpmdCallableList)))
+
 ;; Export and callable metadata are mutually exclusive. Keep the common `No`
 ;; and export cases inline at the old `AstFnExport` footprint, while boxing the
 ;; rare specialization list so every ordinary function remains allocation-free.
@@ -402,7 +433,7 @@
   ;; established at the parser/loader boundary so lowering never has to render
   ;; two ids and compare their bytes to recover that identity fact. Packing the
   ;; bits preserves the compact boxed metadata layout.
-  (Metadata AstExternAbi i64 AstExternLinkInputList i64))
+  (Metadata AstExternAbi i64 AstExternLinkInputList i64 AstImportedSpmdMetadata))
 
 (define (ast-extern-metadata-flags
   [explicit-abi : bool]
@@ -2204,8 +2235,8 @@
 (define ast-decl-meta-runtime : AstDeclMeta
   (AstDeclMeta (box AstDeclMetaValue.Runtime)))
 
-;; `AstExternMetadata` is 72 B while the other `AstDecl.Extern` fields total
-;; 40 B. Keeping it inline made Extern the 120 B layout ceiling for every
+;; `AstExternMetadata` is larger than the other `AstDecl.Extern` fields
+;; combined. Keeping it inline made Extern the layout ceiling for every
 ;; declaration slot, including the whole-program vectors rebuilt around macro
 ;; splices. Extern declarations are rare, so box their metadata and keep the
 ;; common declaration vectors compact.
@@ -3135,6 +3166,202 @@
               (ast-spmd-specialization-list-get (& items) index fallback)))
           (set! index (+ index 1))))
       out)))
+
+(define (ast-imported-spmd-specialization-fallback) : AstImportedSpmdSpecialization
+  (AstImportedSpmdSpecialization 0 0 0 0 0 -1 0))
+
+(define (ast-imported-spmd-specialization-list-with-capacity [capacity : i64]) : AstImportedSpmdSpecializationList
+  (AstImportedSpmdSpecializationList
+    (array.make-array
+      AstImportedSpmdSpecialization
+      (if (< capacity 1)
+        1
+        capacity))
+    0))
+
+(define (ast-imported-spmd-specialization-list-new) : AstImportedSpmdSpecializationList
+  (ast-imported-spmd-specialization-list-with-capacity 2))
+
+(define (ast-imported-spmd-specialization-list-len
+  [items : (& items AstImportedSpmdSpecializationList)]) : i64
+  (struct-get items len))
+
+(define (ast-imported-spmd-specialization-list-get
+  [items : (& items AstImportedSpmdSpecializationList)]
+  [index : i64]
+  [fallback : AstImportedSpmdSpecialization]) : AstImportedSpmdSpecialization
+  (if (and (>= index 0) (< index (struct-get items len)))
+    (array-ref (struct-get items slots) index)
+    fallback))
+
+(define (ast-imported-spmd-specialization-list-copy-range
+  [dst : (&mut dst (Array AstImportedSpmdSpecialization))]
+  [src : (& src (Array AstImportedSpmdSpecialization))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (ast-imported-spmd-specialization-list-copy-range
+        dst
+        src
+        (+ index 1)
+        count))))
+
+(define (ast-imported-spmd-specialization-list-grow
+  [items : (&mut items AstImportedSpmdSpecializationList)]) : unit
+  (let
+    [len : i64 (struct-get items len)]
+    [old-cap : i64 (array-length (struct-get items slots))]
+    [next : (Array AstImportedSpmdSpecialization)
+      (array.make-array
+        AstImportedSpmdSpecialization
+        (if (< old-cap 1)
+          1
+          (* old-cap 2)))]
+    (begin
+      (ast-imported-spmd-specialization-list-copy-range
+        (&mut next)
+        (& (struct-get items slots))
+        0
+        len)
+      (set! (struct-get items slots) next))))
+
+(define (ast-imported-spmd-specialization-list-push
+  [items : (&mut items AstImportedSpmdSpecializationList)]
+  [value : AstImportedSpmdSpecialization]) : unit
+  (begin
+    (if (< (struct-get items len) (array-length (struct-get items slots)))
+      unit
+      (ast-imported-spmd-specialization-list-grow items))
+    (let
+      [index : i64 (struct-get items len)]
+      (begin
+        (array-set! (struct-get items slots) index value)
+        (set! (struct-get items len) (+ index 1))))))
+
+(define (ast-imported-spmd-callable-fallback) : AstImportedSpmdCallable
+  (AstImportedSpmdCallable 0 (ast-imported-spmd-specialization-list-new)))
+
+(define (ast-imported-spmd-callable-list-with-capacity [capacity : i64]) : AstImportedSpmdCallableList
+  (AstImportedSpmdCallableList
+    (array.make-array
+      AstImportedSpmdCallable
+      (if (< capacity 1)
+        1
+        capacity))
+    0))
+
+(define (ast-imported-spmd-callable-list-new) : AstImportedSpmdCallableList
+  (ast-imported-spmd-callable-list-with-capacity 1))
+
+(define (ast-imported-spmd-callable-list-len
+  [items : (& items AstImportedSpmdCallableList)]) : i64
+  (struct-get items len))
+
+(define (ast-imported-spmd-callable-list-get
+  [items : (& items AstImportedSpmdCallableList)]
+  [index : i64]
+  [fallback : AstImportedSpmdCallable]) : AstImportedSpmdCallable
+  (if (and (>= index 0) (< index (struct-get items len)))
+    (array-ref (struct-get items slots) index)
+    fallback))
+
+(define (ast-imported-spmd-callable-list-copy-range
+  [dst : (&mut dst (Array AstImportedSpmdCallable))]
+  [src : (& src (Array AstImportedSpmdCallable))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (ast-imported-spmd-callable-list-copy-range dst src (+ index 1) count))))
+
+(define (ast-imported-spmd-callable-list-grow
+  [items : (&mut items AstImportedSpmdCallableList)]) : unit
+  (let
+    [len : i64 (struct-get items len)]
+    [old-cap : i64 (array-length (struct-get items slots))]
+    [next : (Array AstImportedSpmdCallable)
+      (array.make-array
+        AstImportedSpmdCallable
+        (if (< old-cap 1)
+          1
+          (* old-cap 2)))]
+    (begin
+      (ast-imported-spmd-callable-list-copy-range
+        (&mut next)
+        (& (struct-get items slots))
+        0
+        len)
+      (set! (struct-get items slots) next))))
+
+(define (ast-imported-spmd-callable-list-push
+  [items : (&mut items AstImportedSpmdCallableList)]
+  [value : AstImportedSpmdCallable]) : unit
+  (begin
+    (if (< (struct-get items len) (array-length (struct-get items slots)))
+      unit
+      (ast-imported-spmd-callable-list-grow items))
+    (let
+      [index : i64 (struct-get items len)]
+      (begin
+        (array-set! (struct-get items slots) index value)
+        (set! (struct-get items len) (+ index 1))))))
+
+(define (ast-imported-spmd-specialization-list-clone
+  [items : AstImportedSpmdSpecializationList]) : AstImportedSpmdSpecializationList
+  (let
+    [count : i64 (ast-imported-spmd-specialization-list-len (& items))]
+    [out : AstImportedSpmdSpecializationList
+      (ast-imported-spmd-specialization-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (ast-imported-spmd-specialization-list-push
+            (&mut out)
+            (ast-imported-spmd-specialization-list-get
+              (& items)
+              index
+              (ast-imported-spmd-specialization-fallback)))
+          (set! index (+ index 1))))
+      out)))
+
+(define (ast-imported-spmd-callable-list-clone
+  [items : AstImportedSpmdCallableList]) : AstImportedSpmdCallableList
+  (let
+    [count : i64 (ast-imported-spmd-callable-list-len (& items))]
+    [out : AstImportedSpmdCallableList
+      (ast-imported-spmd-callable-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [item : AstImportedSpmdCallable
+            (ast-imported-spmd-callable-list-get
+              (& items)
+              index
+              (ast-imported-spmd-callable-fallback))]
+          (begin
+            (ast-imported-spmd-callable-list-push
+              (&mut out)
+              (AstImportedSpmdCallable
+                (struct-get item signature)
+                (ast-imported-spmd-specialization-list-clone
+                  (struct-get item specializations))))
+            (set! index (+ index 1)))))
+      out)))
+
+(define (ast-imported-spmd-metadata-clone [metadata : AstImportedSpmdMetadata]) : AstImportedSpmdMetadata
+  (match metadata
+    [(AstImportedSpmdMetadata.No) AstImportedSpmdMetadata.No]
+    [(AstImportedSpmdMetadata.Package name callables)
+      (AstImportedSpmdMetadata.Package
+        name
+        (box (ast-imported-spmd-callable-list-clone (box-get callables))))]))
 
 (define (ast-fn-metadata-clone [metadata : AstFnMetadata]) : AstFnMetadata
   (match metadata
@@ -5832,12 +6059,13 @@
   [remap : AstProgramCompactionRemap]
   [metadata : AstExternMetadata]) : AstExternMetadata
   (match metadata
-    [(AstExternMetadata.Metadata abi symbol links flags)
+    [(AstExternMetadata.Metadata abi symbol links flags imported-spmd)
       (AstExternMetadata.Metadata
         (ast-compaction-remap-extern-abi remap abi)
         symbol
         (ast-compaction-remap-extern-link-input-list links)
-        flags)]))
+        flags
+        (ast-imported-spmd-metadata-clone imported-spmd))]))
 
 (define (ast-compaction-remap-variant-payload-cleanup
   [cleanup : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup
@@ -7222,30 +7450,34 @@
 
 (define (ast-extern-metadata-symbol [metadata : AstExternMetadata]) : String
   (match metadata
-    [(AstExternMetadata.Metadata _ symbol-id _ _) (ci.intern-str symbol-id)]))
+    [(AstExternMetadata.Metadata _ symbol-id _ _ _) (ci.intern-str symbol-id)]))
 
 (define (ast-extern-metadata-symbol-id [metadata : AstExternMetadata]) : i64
   (match metadata
-    [(AstExternMetadata.Metadata _ symbol-id _ _) symbol-id]))
+    [(AstExternMetadata.Metadata _ symbol-id _ _ _) symbol-id]))
 
 (define (ast-extern-metadata-abi [metadata : AstExternMetadata]) : AstExternAbi
   (match metadata
-    [(AstExternMetadata.Metadata abi _ _ _) abi]))
+    [(AstExternMetadata.Metadata abi _ _ _ _) abi]))
 
 (define (ast-extern-metadata-link-inputs [metadata : AstExternMetadata]) : AstExternLinkInputList
   (match metadata
-    [(AstExternMetadata.Metadata _ _ link-inputs _) link-inputs]))
+    [(AstExternMetadata.Metadata _ _ link-inputs _ _) link-inputs]))
 
 (define (ast-extern-metadata-explicit-abi? [metadata : AstExternMetadata]) : bool
   (match metadata
-    [(AstExternMetadata.Metadata _ _ _ flags)
+    [(AstExternMetadata.Metadata _ _ _ flags _)
       (ast-extern-metadata-flags-explicit-abi? flags)]))
 
 (define (ast-extern-metadata-symbol-matches-source?
   [metadata : AstExternMetadata]) : bool
   (match metadata
-    [(AstExternMetadata.Metadata _ _ _ flags)
+    [(AstExternMetadata.Metadata _ _ _ flags _)
       (ast-extern-metadata-flags-symbol-matches-source? flags)]))
+
+(define (ast-extern-metadata-imported-spmd [metadata : AstExternMetadata]) : AstImportedSpmdMetadata
+  (match metadata
+    [(AstExternMetadata.Metadata _ _ _ _ imported-spmd) imported-spmd]))
 
 (define (ast-struct-cleanup? [cleanup : AstStructCleanup]) : bool
   (match cleanup
@@ -7577,6 +7809,48 @@
                   [_ false])))]
           [_ false])))))
 
+(define (compiler-ast-imported-spmd-metadata-clone-smoke?) : bool
+  (let
+    [specializations : AstImportedSpmdSpecializationList
+      (ast-imported-spmd-specialization-list-new)]
+    [callables : AstImportedSpmdCallableList
+      (ast-imported-spmd-callable-list-new)]
+    (begin
+      (ast-imported-spmd-specialization-list-push
+        (&mut specializations)
+        (AstImportedSpmdSpecialization 1 2 8 3 4 0 5))
+      (ast-imported-spmd-callable-list-push
+        (&mut callables)
+        (AstImportedSpmdCallable 6 specializations))
+      (match (ast-imported-spmd-metadata-clone
+        (AstImportedSpmdMetadata.Package 7 (box callables)))
+        [(AstImportedSpmdMetadata.Package name copied-callables)
+          (let
+            [copied : AstImportedSpmdCallableList (box-get copied-callables)]
+            [callable : AstImportedSpmdCallable
+              (ast-imported-spmd-callable-list-get
+                (& copied)
+                0
+                (ast-imported-spmd-callable-fallback))]
+            [copied-specializations : AstImportedSpmdSpecializationList
+              (struct-get callable specializations)]
+            [item : AstImportedSpmdSpecialization
+              (ast-imported-spmd-specialization-list-get
+                (& copied-specializations)
+                0
+                (ast-imported-spmd-specialization-fallback))]
+            (and
+              (= name 7)
+              (= (ast-imported-spmd-callable-list-len (& copied)) 1)
+              (= (struct-get callable signature) 6)
+              (=
+                (ast-imported-spmd-specialization-list-len
+                  (& copied-specializations))
+                1)
+              (= (struct-get item lanes) 8)
+              (= (struct-get item symbol) 5)))]
+        [(AstImportedSpmdMetadata.No) false]))))
+
 (define (compiler-ast-smoke) : i64
   (let
     [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
@@ -7618,6 +7892,8 @@
     [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]
     [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
     [spmd-metadata-clone-ok? : bool (compiler-ast-spmd-metadata-clone-smoke?)]
+    [imported-spmd-metadata-clone-ok? : bool
+      (compiler-ast-imported-spmd-metadata-clone-smoke?)]
     [param : AstParam (ast-param-id cbi.compiler-builtin-id-fix-x i64-ty false)]
     [params : AstParamList (ast-param-cons param (ast-param-list-new))]
     [decl : AstDecl
@@ -7632,7 +7908,8 @@
           decl-program-ok?
           type-dedup-ok?
           pool-exhaustion-ok?
-          spmd-metadata-clone-ok?)
+          spmd-metadata-clone-ok?
+          imported-spmd-metadata-clone-ok?)
           (+
             (ast-type-tag fn-ty)
             (+ (ast-expr-tag (ast-node-get expr)) (ast-decl-tag decl)))

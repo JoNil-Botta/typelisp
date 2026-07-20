@@ -1,0 +1,6 @@
+(package
+  (name "spmd_consumer")
+  (version "0.1.0")
+  (kind "bin")
+  (dependencies
+    (fixture "../package_callable")))

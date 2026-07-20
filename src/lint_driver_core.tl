@@ -1802,7 +1802,7 @@
   [meta : AstExternMetadata]
   [refs : lint_svec.Vec]) : lint_svec.Vec
   (match meta
-    [(AstExternMetadata.Metadata abi _ _ _)
+    [(AstExternMetadata.Metadata abi _ _ _ _)
       (selfhost-lint-dead-extern-abi-refs abi refs)]))
 
 (define (selfhost-lint-dead-generated-meta-refs

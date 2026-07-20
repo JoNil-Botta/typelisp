@@ -3952,6 +3952,8 @@
       (compiler-load-join-root-path manifest-dir (struct-get manifest entry))]
     [name : String (struct-get manifest name)]
     [_spmd-package-name : unit (lower-spmd-set-package-name! name)]
+    [_package-artifact-profile : unit
+      (compiler-load-set-package-artifact-profile! (build-profile-name profile))]
     [kind : CompilerPkgKind (struct-get manifest kind)]
     [asm-path : String
       (build-package-asm-path-profile manifest-dir name profile)]

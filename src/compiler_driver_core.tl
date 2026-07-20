@@ -3428,6 +3428,18 @@
   [buf : text_buf.TextBuf]) : i64
   (text_buf.write-file output-path buf))
 
+;; Human-facing compiler commands render the diagnostic against its primary
+;; source file. Keep `compiler-diagnostic-render` as the stable flat form for
+;; LSP, public-tool, and other machine-readable consumers.
+(define (compiler-driver-render-source-diagnostic [diag : CompilerDiagnostic]) : String
+  (let
+    [path : String (compiler-diagnostic-path diag)]
+    (if (string.eq path "")
+      (compiler-diagnostic-render-source diag "")
+      (match (io.try-read-file (& path))
+        [(io.OkIoString source) (compiler-diagnostic-render-source diag source)]
+        [(io.ErrIoString _) (compiler-diagnostic-render-source diag "")]))))
+
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]
   [output-path : String]) : i64
@@ -3444,7 +3456,8 @@
     [(ResultCompilerDriver.Err diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-total))
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))
 
 (define (compiler-driver-write-buffer-result
@@ -3471,7 +3484,8 @@
       (begin
         (compiler-driver-allocation-profile-snapshot! "write-error")
         (cfg compile-profile (compiler-driver-profile-finish-total))
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))
 
 (define (compiler-driver-pic-fixups-path [output-path : String]) : String
@@ -3498,5 +3512,6 @@
     [(ResultCompilerDriverPic.Err diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-total))
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))

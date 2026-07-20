@@ -646,6 +646,11 @@ checking the combined session. Scalar results are printed directly; structs,
 enums, tuples, and fixed arrays use the stable fallback `<value: Type>` because
 TypeLisp does not currently provide runtime reflection for their contents.
 
+Human-facing `check`, `compile`, `build`, `run`, and test-preflight failures
+render error codes, source locations and snippets, carets, secondary labels,
+and available help/notes. LSP and other machine consumers keep their structured
+or stable flat diagnostic representations.
+
 Disposable measurements and diagnostics belong under `target/exp/<name>/`;
 `typelisp clean --experiments` removes that subtree at the nearest package root
 without touching bootstrap or package build outputs.

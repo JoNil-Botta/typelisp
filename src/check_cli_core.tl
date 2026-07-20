@@ -163,7 +163,8 @@
           inline-test-status))]
     [(ResultCompilerCheck.Err diag)
       (begin
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]))
 
 (define (selfhost-check-package-kind-entry? [kind : CompilerPkgKind]) : bool
@@ -258,7 +259,8 @@
                 inline-test-status))]
           [(ResultCompilerCheckWithPaths.Err diag)
             (begin
-              (io.print-error (compiler-diagnostic-render (box-get diag)))
+              (io.print-error
+                (compiler-driver-render-source-diagnostic (box-get diag)))
               1)]))]))
 
 ;; Run the `check` command over arguments starting at `start`.

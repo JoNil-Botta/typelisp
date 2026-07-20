@@ -2764,7 +2764,8 @@
       [(ResultCompilerDriverObject.Ok image)
         (build-package-render-linux-direct-object kind image)]
       [(ResultCompilerDriverObject.Err diag)
-        (ResultSourceToolString.Err (compiler-diagnostic-render (box-get diag)))])
+        (ResultSourceToolString.Err
+          (compiler-driver-render-source-diagnostic (box-get diag)))])
     (ResultSourceToolString.Err "linux direct object disabled")))
 
 (define (build-package-graph-node-artifact-paths
@@ -3810,7 +3811,8 @@
     owned-paths)
     [(ResultCompilerDriver.Err diag)
       (begin
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]
     [(ResultCompilerDriver.Ok asm)
       (begin
@@ -3849,7 +3851,8 @@
     decls
     owned-paths)
     [(ResultCompilerDriver.Err diag)
-      (SourceToolCommandStatus.Err (compiler-diagnostic-render (box-get diag)))]
+      (SourceToolCommandStatus.Err
+        (compiler-driver-render-source-diagnostic (box-get diag)))]
     [(ResultCompilerDriver.Ok asm)
       (begin
         (compiler-driver-release-lower-arenas-after-emit!)
@@ -3891,7 +3894,8 @@
     emit-entry)
     [(ResultCompilerLoadWithPaths.Err diag)
       (begin
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (io.print-error
+          (compiler-driver-render-source-diagnostic (box-get diag)))
         1)]
     [(ResultCompilerLoadWithPaths.Ok _ paths _ _)
       (build-doctest-typecheck-package-paths
@@ -4014,7 +4018,8 @@
                 emit-entry)
                 [(ResultCompilerLoadWithPaths.Err diag)
                   (begin
-                    (io.print-error (compiler-diagnostic-render (box-get diag)))
+                    (io.print-error
+                      (compiler-driver-render-source-diagnostic (box-get diag)))
                     1)]
                 [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
                   (let

@@ -18,6 +18,8 @@
     [after : i64 (time.ms-or (time.monotonic-ms) -1)]
     (if (and
       (negative-error? (time.sleep-ms -1))
-      (and (unit-ok? (time.sleep-ms 0)) (and slept (>= (- after before) 1))))
+      (unit-ok? (time.sleep-ms 0))
+      slept
+      (>= (- after before) 1))
       42
       1)))

@@ -3124,11 +3124,14 @@
           [(compiler-load-stdlib-import? normalized-import)
             (compiler-load-canonical-module-id-from-path normalized-import)]
           [else
-            ;; Keep the raw relative path text (separators and extension) as
-            ;; the identity: it is stable across owned and entry-relative
-            ;; resolutions of the same file, and it can never equal a dotted
-            ;; module id, so the two import kinds cannot merge.
-            (compiler-load-root-relative-path import-root resolved-path)]))]
+            ;; The identity is the root-relative path with the extension
+            ;; stripped: stable across owned and entry-relative resolutions
+            ;; of the same file, slash-separated so it can never equal a
+            ;; dotted module id (the import kinds cannot merge), and
+            ;; dot-free so name resolution in moduleless files never takes
+            ;; the qualified-name path per lookup.
+            (compiler-load-strip-tl-extension
+              (compiler-load-root-relative-path import-root resolved-path))]))]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
 
 (define (compiler-load-canonical-module-id-from-import
@@ -11794,7 +11797,7 @@
         ;; the absolute path is no longer an identity.
         (and
           (= (compiler-load-decl-list-count decls) 2)
-          (compiler-load-test-seen-contains? seen "compiler_load_legacy_dep.tl")
+          (compiler-load-test-seen-contains? seen "compiler_load_legacy_dep")
           (not
             (compiler-load-test-seen-contains?
               seen

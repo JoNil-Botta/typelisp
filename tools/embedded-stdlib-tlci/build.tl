@@ -273,7 +273,7 @@
           (set! index (+ index 1))))
       found)))
 
-(define (embedded-native-status-sum [opened : i64]) : String
+(define (embedded-native-status-fold [opened : i64]) : String
   (let
     [out : String ""]
     [index : i64 0]
@@ -285,7 +285,7 @@
             (str-cat
               out
               (if (< index (- opened 1))
-                (str-cat "(+ q" (string.int->string index) " ")
+                (str-cat "(bit-or q" (string.int->string index) " ")
                 (str-cat "q" (string.int->string index)))))
           (set! index (+ index 1))))
       (set! index 0)
@@ -303,6 +303,9 @@
   (str-cat
     "  (let [q"
     (string.int->string status-index)
+    " : i64 (comptime-host-invoke host session 1 0 0 0)]\n"
+    "  (let [q"
+    (string.int->string (+ status-index 1))
     " : i64 (comptime-host-invoke host session "
     (string.int->string op)
     " "
@@ -340,9 +343,9 @@
                       103
                       (embedded-native-name-arg head)
                       (string.int->string (string.string-length head))))
-                  (set! opened (+ opened 1))
+                  (set! opened (+ opened 2))
                   (svec.push ops (embedded-native-op-open opened 178 "0" "0"))
-                  (set! opened (+ opened 1))
+                  (set! opened (+ opened 2))
                   (while (and ok (< index argc))
                     (let
                       [param : i64
@@ -359,11 +362,11 @@
                               180
                               (string.int->string param)
                               "0"))
-                          (set! opened (+ opened 1))
+                          (set! opened (+ opened 2))
                           (svec.push
                             ops
                             (embedded-native-op-open opened 179 "0" "0"))
-                          (set! opened (+ opened 1))
+                          (set! opened (+ opened 2))
                           (set! index (+ index 1))))))
                   (if (not ok)
                     -1
@@ -371,7 +374,7 @@
                       (svec.push
                         ops
                         (embedded-native-op-open opened 181 "0" "0"))
-                      (+ opened 1)))))]
+                      (+ opened 2)))))]
             [_ -1])]
         [(AstExpr.ArrayRef target-node index-node)
           (embedded-native-binary-ops params target-node index-node 183 ops)]
@@ -391,9 +394,9 @@
                   (embedded-native-op-open 0 180 (string.int->string ti) "0"))
                 (svec.push
                   ops
-                  (embedded-native-op-open 1 180 (string.int->string si) "0"))
-                (svec.push ops (embedded-native-op-open 2 185 "0" "0"))
-                3)))]
+                  (embedded-native-op-open 2 180 (string.int->string si) "0"))
+                (svec.push ops (embedded-native-op-open 4 185 "0" "0"))
+                6)))]
         [_ -1])]
     [_ -1]))
 
@@ -414,9 +417,9 @@
           (embedded-native-op-open 0 180 (string.int->string ti) "0"))
         (svec.push
           ops
-          (embedded-native-op-open 1 180 (string.int->string oi) "0"))
-        (svec.push ops (embedded-native-op-open 2 op "0" "0"))
-        3))))
+          (embedded-native-op-open 2 180 (string.int->string oi) "0"))
+        (svec.push ops (embedded-native-op-open 4 op "0" "0"))
+        6))))
 
 ;; Full source for the native package: the host extern plus one entry function
 ;; per identity in catalog order.
@@ -464,22 +467,19 @@
                 [oi : i64 0]
                 (begin
                   (set! native-count (+ native-count 1))
-                  (set!
-                    out
-                    (str-cat out (embedded-native-op-open 99 1 "0" "0")))
                   (while (< oi (svec.len (& ops)))
                     (begin
                       (set! out (str-cat out (svec.get (& ops) oi "")))
                       (set! oi (+ oi 1))))
                   (set!
                     out
-                    (str-cat
-                      out
-                      "  (+ q99 (+ "
-                      (embedded-native-status-sum opened)
-                      " (comptime-host-invoke host session 182 0 0 0)))\n"))
+                    (str-cat out (embedded-native-op-open opened 182 "0" "0")))
+                  (set! opened (+ opened 2))
+                  (set!
+                    out
+                    (str-cat out "  " (embedded-native-status-fold opened) "\n"))
                   (set! oi 0)
-                  (while (< oi (+ opened 1))
+                  (while (< oi opened)
                     (begin
                       (set! out (str-cat out ")"))
                       (set! oi (+ oi 1))))

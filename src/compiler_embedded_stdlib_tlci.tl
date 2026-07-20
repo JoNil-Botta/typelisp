@@ -187,6 +187,8 @@
   0)
 (define compiler-comptime-host-session-fuel : i64
   0)
+(define compiler-comptime-host-session-status : i64
+  tlci-host-callback-status-ok)
 (define compiler-comptime-host-pools : (Array AstNodePoolContext)
   (array.make-array AstNodePoolContext 1))
 (define compiler-comptime-host-operands : (Array CompilerCtfeValue)
@@ -231,6 +233,7 @@
           (set! index (+ index 1)))))
     (set! compiler-comptime-host-operand-count operand-count)
     (set! compiler-comptime-host-session-fuel fuel)
+    (set! compiler-comptime-host-session-status tlci-host-callback-status-ok)
     (set! compiler-comptime-host-stack-len 0)
     (set! compiler-comptime-host-result-ready false)
     (array-set! compiler-comptime-host-diagnostic 0 "")
@@ -239,6 +242,7 @@
 (define (compiler-comptime-host-session-close!) : unit
   (begin
     (set! compiler-comptime-host-session-cookie 0)
+    (set! compiler-comptime-host-session-status tlci-host-callback-status-ok)
     (set! compiler-comptime-host-stack-len 0)
     (set! compiler-comptime-host-operand-count 0)
     (set! compiler-comptime-host-result-ready false)))
@@ -313,7 +317,7 @@
 ;; table. TypeLisp's native convention passes scalar arguments in the SysV
 ;; integer registers, so this function is directly callable from the mapped
 ;; image on Linux; the Windows adapter is tracked with the dispatch slice.
-(define (compiler-comptime-host-invoke
+(define (compiler-comptime-host-invoke-step
   [session : i64]
   [operation : i64]
   [arg-a : i64]
@@ -484,6 +488,37 @@
           (set! compiler-comptime-host-result-ready true)
           tlci-host-callback-status-ok))]
     [else tlci-host-callback-status-bad-request]))
+
+;; A valid-session callback failure is terminal for that transformer
+;; invocation. Native entries may remain branch-free: later probes observe the
+;; first status without mutating the value stack or committing a result.
+;; Invalid cookies do not poison the active session.
+(define (compiler-comptime-host-invoke
+  [session : i64]
+  [operation : i64]
+  [arg-a : i64]
+  [arg-b : i64]
+  [arg-c : i64]) : i64
+  (if (or
+    (= compiler-comptime-host-session-cookie 0)
+    (not (= session compiler-comptime-host-session-cookie)))
+    tlci-host-callback-status-bad-request
+    (if (not
+      (= compiler-comptime-host-session-status tlci-host-callback-status-ok))
+      compiler-comptime-host-session-status
+      (let
+        [status : i64
+          (compiler-comptime-host-invoke-step
+            session
+            operation
+            arg-a
+            arg-b
+            arg-c)]
+        (begin
+          (when
+            (not (= status tlci-host-callback-status-ok))
+            (set! compiler-comptime-host-session-status status))
+          status)))))
 
 ;; Real host callback table for production dispatch: the invoke slot carries
 ;; the address of the compiler-owned dispatcher. The abort slot keeps the

@@ -5495,6 +5495,7 @@
           (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-prologue-bytes
+              (CompilerBackendTarget.Linux)
               (compiler-backend-frame-size 8)))
           ;; Pack word1, copy it to the next pair, then extract it.
           (cobj.compiler-object-section-contains-bytes?

@@ -15158,7 +15158,7 @@
                           fail-label
                           scrut-reg-group?)
                         (match ctx
-                          [(TcContext _ symbols registries _ _ _ _)
+                          [(TcContext _ symbols registries _ _ _ _ _)
                             (let
                               [handle : i64
                                 (lower-variant-handle-for-scrut-id-or
@@ -15528,7 +15528,7 @@
                   [nested-args : AstPatternList (box-get nested-args-box)]
                   [nested-name-str : String (tc-env-key-name-text nested-name)]
                   (match ctx
-                    [(TcContext _ symbols registries _ _ _ _)
+                    [(TcContext _ symbols registries _ _ _ _ _)
                       (let
                         [handle : i64
                           (lower-variant-handle-for-scrut-id-or
@@ -16061,7 +16061,7 @@
 
 (define (lower-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _ _ _)
+    [(TcContext program _ _ _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (lower-program-imports-atomic? (box-get decls-box))])]))
@@ -16906,7 +16906,7 @@
   [enum-name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ _ _ _ _ _)
+    [(TcContext _ _ _ _ _ _ _ _)
       (match (tc-context-enum-variants-id ctx enum-name-id enum-name)
         [(ResultAstVariantDefList.Ok variants)
           (match (lower-reserve-heap-storage
@@ -18219,7 +18219,7 @@
   [return-info : TcResultInfo]
   [payload : CompilerIrValue]) : ResultLowerState
   (match ctx
-    [(TcContext _ _ registries _ _ _ _)
+    [(TcContext _ _ registries _ _ _ _ _)
       (let
         [enum-name-id : i64 (tc-result-info-enum-id return-info)]
         [enum-name : String (tc-nominal-name-id-display enum-name-id)]
@@ -18362,7 +18362,7 @@
   [return-info : TcResultInfo]
   [origin : AstExpr]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ registries _ _ _ _)
+    [(TcContext _ _ registries _ _ _ _ _)
       (let
         [ok-id : i64 (tc-result-info-ok-id operand-info)]
         [ok-name : String
@@ -18473,7 +18473,7 @@
 
 (define (lower-top-level-value-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols _ module module-id _ _)
+    [(TcContext _ symbols _ module module-id _ _ _)
       (compiler-symbols-handle-found?
         (if (and
           (> (string.string-length module) 0)
@@ -18490,7 +18490,7 @@
 
 (define (lower-top-level-callable-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols _ module module-id _ _)
+    [(TcContext _ symbols _ module module-id _ _ _)
       (let
         [handle : i64
           (if (and
@@ -18537,7 +18537,7 @@
   [source-id : i64]
   [lookup-id : i64]) : i64
   (match ctx
-    [(TcContext _ _ _ module module-id _ _)
+    [(TcContext _ _ _ module module-id _ _ _)
       (if (and
         (> (string.string-length module) 0)
         (not (tc-name-qualified-id? source-id))
@@ -20096,7 +20096,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols _ _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
@@ -20228,7 +20228,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols _ _ _ _ _)
+    [(TcContext _ symbols _ _ _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
@@ -21250,7 +21250,7 @@
         type-cache
         else-branch)
         [(ResultTcType.Ok else-ty)
-          (match (tc-merge-branch-type then-ty else-ty)
+          (match (tc-merge-branch-type ctx then-ty else-ty)
             [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
             [(ResultTcType.Err message)
               (if (and
@@ -21261,7 +21261,7 @@
                   then-branch
                   else-ty)
                   [(ResultTcType.Ok contextual-then)
-                    (tc-merge-branch-type contextual-then else-ty)]
+                    (tc-merge-branch-type ctx contextual-then else-ty)]
                   [(ResultTcType.Err literal-message)
                     (ResultTcType.Err literal-message)])
                 (if (and
@@ -21272,7 +21272,7 @@
                     else-branch
                     then-ty)
                     [(ResultTcType.Ok contextual-else)
-                      (tc-merge-branch-type then-ty contextual-else)]
+                      (tc-merge-branch-type ctx then-ty contextual-else)]
                     [(ResultTcType.Err literal-message)
                       (ResultTcType.Err literal-message)])
                   (ResultTcType.Err message)))])]
@@ -21385,7 +21385,7 @@
       scrut-ty
       (ast-match-arm-list-get arms index (ast-match-arm-fallback)))
       [(ResultTcType.Ok got)
-        (match (tc-merge-branch-type want got)
+        (match (tc-merge-branch-type ctx want got)
           [(ResultTcType.Ok merged)
             (lower-match-rest-result-types-fast-at
               ctx
@@ -50918,7 +50918,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _ _ _)
+    [(TcContext _ symbols registries _ _ _ _ _)
       (let
         [variant-name : String (tc-env-key-name-text variant-name-id)]
         [resolved-scrut-ty : AstType
@@ -51152,7 +51152,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _ _ _)
+    [(TcContext _ symbols registries _ _ _ _ _)
       (let
         [variant-name : String (tc-env-key-name-text variant-name-id)]
         [resolved-scrut-ty : AstType
@@ -53285,7 +53285,7 @@
   [borrow-lifetime : TcMaybeNameId]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _ _ _)
+    [(TcContext _ symbols registries _ _ _ _ _)
       (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
         [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err
@@ -53414,7 +53414,7 @@
   [borrow-lifetime : TcMaybeNameId]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _ _ _)
+    [(TcContext _ symbols registries _ _ _ _ _)
       (match (lower-variant-arm-resolution ctx symbols scrut-ty variant-name-id)
         [(LowerVariantArmResolution.Missing variant-name)
           (ResultLowerState.Err

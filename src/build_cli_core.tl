@@ -28,6 +28,7 @@
 (import "compiler_driver_core.tl")
 (import "compiler_typecheck_api.tl")
 (import "tlci_core.tl")
+(import "compiler_tlci_native_producer.tl")
 (import sym_i64_env)
 
 (defenum BuildConfig
@@ -3669,21 +3670,25 @@
       (let
         [metadata : TlciMetadata
           (build-package-tlci-metadata manifest (struct-get collector items))]
-        [emitted : ResultTlciBytes
-          (if (= (array-length macro-names) 0)
-            (tlci-emit-image (build-package-tlci-image metadata))
-            (tlci-emit-code-bearing-package-image
-              metadata
-              build-package-tlci-compiler-build-hash
-              macro-names
-              (cfg windows true false)))]
-        (match emitted
-          [(ResultTlciBytes.Err message)
-            (ResultBuildPackageTlciText.Err
-              (str_cat.str-cat "build: failed to emit package tlci: " message))]
-          [(ResultTlciBytes.Ok bytes)
-            (ResultBuildPackageTlciText.Ok
-              (tlci-bytes->string bytes 0 (array-length bytes)))])))))
+        (if (= (array-length macro-names) 0)
+          (match (tlci-emit-image (build-package-tlci-image metadata))
+            [(ResultTlciBytes.Err message)
+              (ResultBuildPackageTlciText.Err
+                (str_cat.str-cat "build: failed to emit package tlci: " message))]
+            [(ResultTlciBytes.Ok bytes)
+              (ResultBuildPackageTlciText.Ok
+                (tlci-bytes->string bytes 0 (array-length bytes)))])
+          (match (embedded-native-emit-package
+            (tlci-metadata-emit metadata)
+            build-package-tlci-compiler-build-hash
+            (cfg windows true false)
+            macro-names)
+            [(ResultProducerBytes.Err message)
+              (ResultBuildPackageTlciText.Err
+                (str_cat.str-cat "build: failed to emit package tlci: " message))]
+            [(ResultProducerBytes.Ok bytes)
+              (ResultBuildPackageTlciText.Ok
+                (tlci-bytes->string bytes 0 (array-length bytes)))]))))))
 
 (define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
   (source-tool-write-file path text "build: failed to write package tlci"))

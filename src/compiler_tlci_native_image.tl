@@ -12,7 +12,7 @@
 ;; extern *values* (GOT loads), never direct extern calls.
 (import compiler_object as cobj)
 (import "compiler_object_elf.tl")
-(import tlci_core as tlci)
+(import "tlci_core.tl")
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
@@ -96,13 +96,10 @@
     -1))
 
 ;; GOT slot offset for extern `name`, allocating on first use.
-(define (compiler-tlci-native-got-slot!
+(define (compiler-tlci-native-got-slot-find
   [import-names : (Array String)]
-  [import-offsets : (Array i64)]
   [import-count : (Array i64)]
-  [error : (Array String)]
-  [bases : CompilerTlciNativeBases]
-  [name : String]) : i64
+  [name : (& name str)]) : i64
   (let
     [count : i64 (array-ref import-count 0)]
     [index : i64 0]
@@ -112,19 +109,49 @@
         (if (string.eq (array-ref import-names index) name)
           (set! found index)
           (set! index (+ index 1))))
-      (if (>= found 0)
-        (array-ref import-offsets found)
-        (if (>= count compiler-tlci-native-import-cap)
-          (compiler-tlci-native-fail!
-            error
-            "tlci native image: too many imported symbols")
-          (let
-            [offset : i64 (+ (struct-get bases got) (* count 8))]
-            (begin
-              (array-set! import-names count name)
-              (array-set! import-offsets count offset)
-              (array-set! import-count 0 (+ count 1))
-              offset)))))))
+      found)))
+
+;; Insert is a separate function on purpose: a body that both borrows the
+;; name inside the search loop and then consumes it into the name array
+;; sends the ownership analysis into a multi-second blowup at whole-compiler
+;; scale (typechecker performance bug; the split keeps each body linear).
+(define (compiler-tlci-native-got-slot-insert!
+  [import-names : (Array String)]
+  [import-offsets : (Array i64)]
+  [import-count : (Array i64)]
+  [bases : CompilerTlciNativeBases]
+  [name : String]) : i64
+  (let
+    [count : i64 (array-ref import-count 0)]
+    [offset : i64 (+ (struct-get bases got) (* count 8))]
+    (begin
+      (array-set! import-names count name)
+      (array-set! import-offsets count offset)
+      (array-set! import-count 0 (+ count 1))
+      offset)))
+
+(define (compiler-tlci-native-got-slot!
+  [import-names : (Array String)]
+  [import-offsets : (Array i64)]
+  [import-count : (Array i64)]
+  [error : (Array String)]
+  [bases : CompilerTlciNativeBases]
+  [name : String]) : i64
+  (let
+    [found : i64
+      (compiler-tlci-native-got-slot-find import-names import-count (& name))]
+    (if (>= found 0)
+      (array-ref import-offsets found)
+      (if (>= (array-ref import-count 0) compiler-tlci-native-import-cap)
+        (compiler-tlci-native-fail!
+          error
+          "tlci native image: too many imported symbols")
+        (compiler-tlci-native-got-slot-insert!
+          import-names
+          import-offsets
+          import-count
+          bases
+          name)))))
 
 ;; Resolve symbol `name` to its region offset: text labels, rodata/data
 ;; labels, then bss labels. Externs resolve to their GOT slot. -1 = unknown.
@@ -781,6 +808,43 @@
           (array-set! out scan value)
           (set! index (+ index 1)))))))
 
+;; Primitives-only packaging boundary: callers (the producer, tools) pass
+;; metadata as canonical text and plain arrays, and every tlci_core nominal
+;; stays inside this module's single import instance.
+(defenum ResultCompilerTlciNativeBytes
+  (Ok (Array u8))
+  (Err String))
+
+(define (compiler-tlci-native-package
+  [metadata-text : String]
+  [build-hash : String]
+  [code : (Array u8)]
+  [imports : (Array u8)]
+  [fixup-offsets : (Array i64)]
+  [fixup-count : i64]
+  [identities : (Array String)]
+  [entry-offsets : (Array i64)]
+  [macro-count : i64]) : ResultCompilerTlciNativeBytes
+  (match (tlci-metadata-parse metadata-text)
+    [(ResultTlciMetadata.Err message)
+      (ResultCompilerTlciNativeBytes.Err
+        (string.append "package metadata rejected: " message))]
+    [(ResultTlciMetadata.Ok metadata)
+      (match (tlci-emit-native-package-image
+        metadata
+        build-hash
+        (TlciNativePackageInput
+          code
+          imports
+          fixup-offsets
+          fixup-count
+          identities
+          entry-offsets
+          macro-count))
+        [(ResultTlciBytes.Err message)
+          (ResultCompilerTlciNativeBytes.Err message)]
+        [(ResultTlciBytes.Ok bytes) (ResultCompilerTlciNativeBytes.Ok bytes)])]))
+
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64
@@ -798,14 +862,14 @@
   (let
     [count : i64 (struct-get layout fixup-count)]
     [out : (Array u8)
-      (array.make-array u8 (* count tlci.tlci-section-fixup-record-size))]
+      (array.make-array u8 (* count tlci-section-fixup-record-size))]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (tlci.tlci-set-u64!
+          (tlci-set-u64!
             out
-            (* index tlci.tlci-section-fixup-record-size)
+            (* index tlci-section-fixup-record-size)
             (array-ref (struct-get layout fixup-offsets) index))
           (set! index (+ index 1))))
       out)))
@@ -816,7 +880,7 @@
   (if (or
     (string.eq name "_tl_comptime_host_invoke")
     (string.eq name "_tl_tlci_entries_comptime_host_invoke"))
-    tlci.tlci-host-import-invoke
+    tlci-host-import-invoke
     -1))
 
 ;; Emit the layout's imports as a tlci imports section: one 16-byte record
@@ -831,7 +895,7 @@
   (let
     [count : i64 (struct-get layout import-count)]
     [out : (Array u8)
-      (array.make-array u8 (* count tlci.tlci-section-import-record-size))]
+      (array.make-array u8 (* count tlci-section-import-record-size))]
     [index : i64 0]
     [error : String ""]
     (begin
@@ -847,13 +911,13 @@
                 "tlci native image: unknown host import "
                 (array-ref (struct-get layout import-names) index)))
             (let
-              [record : i64 (* index tlci.tlci-section-import-record-size)]
+              [record : i64 (* index tlci-section-import-record-size)]
               (begin
-                (tlci.tlci-set-u64!
+                (tlci-set-u64!
                   out
                   record
                   (array-ref (struct-get layout import-offsets) index))
-                (tlci.tlci-set-u64! out (+ record 8) id)
+                (tlci-set-u64! out (+ record 8) id)
                 (set! index (+ index 1)))))))
       (if (= (string.string-length error) 0)
         (ResultCompilerTlciNativeImports.Ok out)
@@ -1042,19 +1106,15 @@
         (let
           [fixups : (Array u8) (compiler-tlci-native-emit-fixups (& layout))]
           (and
-            (= (array-length fixups) tlci.tlci-section-fixup-record-size)
-            (= (tlci.tlci-read-u64 fixups 0) 32)
+            (= (array-length fixups) tlci-section-fixup-record-size)
+            (= (tlci-read-u64 fixups 0) 32)
             (match (compiler-tlci-native-emit-imports (& layout))
               [(ResultCompilerTlciNativeImports.Err _) false]
               [(ResultCompilerTlciNativeImports.Ok imports)
                 (and
-                  (=
-                    (array-length imports)
-                    tlci.tlci-section-import-record-size)
-                  (= (tlci.tlci-read-u64 imports 0) 40)
-                  (=
-                    (tlci.tlci-read-u64 imports 8)
-                    tlci.tlci-host-import-invoke))])
+                  (= (array-length imports) tlci-section-import-record-size)
+                  (= (tlci-read-u64 imports 0) 40)
+                  (= (tlci-read-u64 imports 8) tlci-host-import-invoke))])
             (match (compiler-tlci-native-layout-image
               (compiler-tlci-native-test-image "host-a" false false))
               [(ResultCompilerTlciNativeLayout.Err _) false]

@@ -3088,21 +3088,63 @@
       (string.substring import-path 4 (- (string.string-length import-path) 4)))
     (compiler-load-module-id-from-path-text import-path)))
 
-(define (compiler-load-canonical-module-id-from-import
+(define (compiler-load-root-relative-path [root : String] [path : String]) : String
+  (let
+    [normalized-path : String (compiler-load-normalize-path path)]
+    [prefix : String (compiler-load-root-prefix root)]
+    [prefix-len : i64 (string.string-length prefix)]
+    [path-len : i64 (string.string-length normalized-path)]
+    (if (and
+      (> prefix-len 0)
+      (compiler-load-string-prefix-at? normalized-path prefix 0))
+      (string.substring normalized-path prefix-len (- path-len prefix-len))
+      normalized-path)))
+
+;; Path-import identity must not depend on which spelling of the resolved
+;; path a graph produced: package loading resolves the same file both
+;; package-owned (typelisp/src/x.tl) and entry-relative (src/x.tl), and an
+;; absolute canonical would load it twice -- every nominal in the chain then
+;; collides. Canonicalize relative to the importing root. Dotted and path
+;; spellings stay distinct on purpose: a moduleless path import is absorbed
+;; into the importer's namespace while a dotted import names a module, so
+;; merging them hands one importer the other's load shape.
+(define (compiler-load-canonical-module-id-from-import-rooted
   [kind : AstImportKind]
   [import-path : String]
-  [resolved-path : String]) : String
+  [resolved-path : String]
+  [import-root : String]) : String
   (match kind
     [(AstImportKind.Module) import-path]
     [(AstImportKind.Path)
       (let
         [normalized-import : String (compiler-load-normalize-path import-path)]
-        (if (compiler-load-pkg-import? import-path)
-          (compiler-load-canonical-module-id-from-pkg-import import-path)
-          (if (compiler-load-stdlib-import? normalized-import)
-            (compiler-load-canonical-module-id-from-path normalized-import)
-            (compiler-load-canonical-module-id-from-path resolved-path))))]
+        (cond
+          [(compiler-load-pkg-import? import-path)
+            (compiler-load-canonical-module-id-from-pkg-import import-path)]
+          [(compiler-load-stdlib-import? normalized-import)
+            (compiler-load-canonical-module-id-from-path normalized-import)]
+          [else
+            ;; The identity is the root-relative path with the extension
+            ;; stripped: stable across owned and entry-relative resolutions
+            ;; of the same file, slash-separated so it can never equal a
+            ;; dotted module id (the import kinds cannot merge), and
+            ;; dot-free so name resolution in moduleless files never takes
+            ;; the qualified-name path per lookup.
+            (string.append
+              "/"
+              (compiler-load-strip-tl-extension
+                (compiler-load-root-relative-path import-root resolved-path)))]))]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
+
+(define (compiler-load-canonical-module-id-from-import
+  [kind : AstImportKind]
+  [import-path : String]
+  [resolved-path : String]) : String
+  (compiler-load-canonical-module-id-from-import-rooted
+    kind
+    import-path
+    resolved-path
+    ""))
 
 ;; Linkage ownership for a moduleless import follows its path relative to the
 ;; entry root. Keep this distinct from the absolute module fallback used for
@@ -8857,7 +8899,11 @@
   [context-module-id : i64]) : ResultCompilerLoadWithPaths
   (let
     [fallback : String
-      (compiler-load-canonical-module-id-from-import kind import-path path)]
+      (compiler-load-canonical-module-id-from-import-rooted
+        kind
+        import-path
+        path
+        import-root)]
     [source-module : String
       (compiler-load-canonical-source-module-from-import
         kind
@@ -11747,15 +11793,17 @@
       "target/compiler_load_legacy_entry.tl"
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
+        ;; Path-import identity is the resolved path relative to the import
+        ;; root (the entry's directory here), so both spellings deduplicate
+        ;; under the root-relative path key and the legacy dotted form of
+        ;; the absolute path is no longer an identity.
         (and
           (= (compiler-load-decl-list-count decls) 2)
-          (compiler-load-test-seen-contains?
-            seen
-            "target.compiler_load_legacy_dep")
+          (compiler-load-test-seen-contains? seen "/compiler_load_legacy_dep")
           (not
             (compiler-load-test-seen-contains?
               seen
-              "target/compiler_load_legacy_dep.tl")))]
+              "target.compiler_load_legacy_dep")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-import-alias-preserved-ok?) : bool

@@ -57,7 +57,8 @@
             operands
             1
             32
-            embedded-verify-cookie)
+            embedded-verify-cookie
+            (ctfe-reflect-info-list-empty))
           (let
             [ok : bool
               (match (tlci-loader-dispatch-macro
@@ -103,7 +104,8 @@
             operands
             operand-count
             fuel
-            embedded-verify-cookie)
+            embedded-verify-cookie
+            (ctfe-reflect-info-list-empty))
           (let
             [ok : bool
               (match (tlci-loader-dispatch-macro

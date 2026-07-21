@@ -6050,6 +6050,7 @@
     movq %r9, -24(%rbp)
     movq %rax, -32(%rbp)
     movq %r8, -40(%rbp)
+    cmpq -40(%rbp), %r11
     movq -56(%rbp), %rax
     movq %rax, -64(%rbp)
     movq -56(%rbp), %rax
@@ -6080,6 +6081,7 @@
     movq %r9, -24(%rbp)
     movq %rax, -32(%rbp)
     movq %r8, -40(%rbp)
+    cmpq %r8, %r11
     movq -56(%rbp), %rax
     movq %rax, -64(%rbp)
     movq %rax, -72(%rbp)

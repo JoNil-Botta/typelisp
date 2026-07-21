@@ -650,6 +650,8 @@
 
 (define compiler-backend-current-mode : CompilerBackendMode
   (CompilerBackendMode.Scalar))
+(define compiler-backend-win-owner-barrier : bool
+  false)
 
 (define (compiler-backend-set-current-mode! [mode : CompilerBackendMode]) : unit
   (set! compiler-backend-current-mode mode))
@@ -9816,17 +9818,37 @@
 (define (compiler-backend-emergency-wrap [head : String]) : String
   (if compiler-backend-emergency-pending
     (let
-      [count : i64 compiler-backend-emergency-pending-count]
+      ;; Omit a single ordinary GP save when the finished head cannot write it.
+      [count : i64
+        (if (= compiler-backend-emergency-pending-count 1)
+          (let
+            [reg : String (array-ref compiler-backend-emergency-regs 0)]
+            (if (and
+              (or
+                (string.eq reg "%r9")
+                (string.eq reg "%r10")
+                (string.eq reg "%r8")
+                (string.eq reg "%r12")
+                (string.eq reg "%r13")
+                (string.eq reg "%r14")
+                (string.eq reg "%r15"))
+              (not (compiler-backend-string-contains? head reg))
+              (not (compiler-backend-string-contains? head "call")))
+              0
+              1))
+          compiler-backend-emergency-pending-count)]
       [save-asm : String (compiler-backend-emergency-save-asm 0 count)]
       [restore-asm : String
         (if compiler-backend-emergency-restore-suppressed
           ""
           (compiler-backend-emergency-restore-asm (- count 1)))]
       (begin
-        (cfg
-          scavenge-census
-          (compiler-backend-scavenge-census-record-wrap! count)
-          unit)
+        (when
+          (> count 0)
+          (cfg
+            scavenge-census
+            (compiler-backend-scavenge-census-record-wrap! count)
+            unit))
         (set! compiler-backend-emergency-pending false)
         (set! compiler-backend-emergency-pending-count 0)
         (set! compiler-backend-emergency-restore-suppressed false)
@@ -58649,11 +58671,14 @@ tl_comptime_host_invoke_set:
         [movq-prefix? : bool
           (compiler-backend-peephole-movq-prefix-at-range? data start end)]
         [zext? : bool (compiler-backend-peephole-mnemonic-zext? data ms mlen)]
+        [cmp-or-test? : bool
+          (compiler-backend-peephole-cmp-or-test-token? data ms mlen)]
         (begin
-          ;; Only move/zext pair rules consume split operands. Most assembly
-          ;; lines need just their mnemonic classification, so do not rescan
-          ;; their full text looking for a comma that no rule will read.
-          (if (or movq-prefix? zext?)
+          ;; Move/zext pair rules and compare owner forwarding consume split
+          ;; operands. Most assembly lines need just their mnemonic
+          ;; classification, so do not rescan their full text looking for a
+          ;; comma that no rule will read.
+          (if (or movq-prefix? zext? cmp-or-test?)
             (begin
               (while (and
                 (< operand-start end)
@@ -58685,8 +58710,6 @@ tl_comptime_host_invoke_set:
               (and
                 (< ms end)
                 (= (compiler-backend-peephole-byte-at data (- end 1)) 58))]
-            [cmp-or-test? : bool
-              (compiler-backend-peephole-cmp-or-test-token? data ms mlen)]
             [clears : bool
               (cond
                 [(>= ms end) false]
@@ -59048,136 +59071,144 @@ tl_comptime_host_invoke_set:
         unit)
       (= result 1))))
 
+(define (compiler-backend-peephole-store-compare-operands?
+  [pending : CompilerBackendPeepholeLine]
+  [next : CompilerBackendPeepholeLine]) : bool
+  (and
+    (struct-get next has-operands)
+    (or
+      (compiler-backend-peephole-line-mnemonic-eq? next "cmpq")
+      (compiler-backend-peephole-line-mnemonic-eq? next "testq"))
+    (compiler-backend-peephole-op-flag?
+      (struct-get pending op-src-flags)
+      compiler-backend-peephole-op-register-flag)
+    (compiler-backend-peephole-op-flag?
+      (struct-get pending op-dst-flags)
+      compiler-backend-peephole-op-local-frame-flag)
+    (compiler-backend-peephole-ranges-eq?
+      (struct-get pending data)
+      (struct-get pending op-dst-start)
+      (struct-get pending op-dst-end)
+      (struct-get next data)
+      (struct-get next op-src-start)
+      (struct-get next op-src-end))))
+
 (define (compiler-backend-peephole-pair-action-desc
   [asm : String]
   [asm-data : (Ptr u8)]
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : i64
-  (if (compiler-backend-peephole-redundant-zext-pair-desc? pending next)
-    2
-    (if (struct-get pending movq)
-      (if (compiler-backend-peephole-line-self-move-desc? pending)
-        1
-        (if (struct-get next movq)
-          (let
-            [pd : (Ptr u8) (struct-get pending data)]
-            [nd : (Ptr u8) (struct-get next data)]
-            [pss : i64 (struct-get pending op-src-start)]
-            [pse : i64 (struct-get pending op-src-end)]
-            [pds : i64 (struct-get pending op-dst-start)]
-            [pde : i64 (struct-get pending op-dst-end)]
-            [nss : i64 (struct-get next op-src-start)]
-            [nse : i64 (struct-get next op-src-end)]
-            [nds : i64 (struct-get next op-dst-start)]
-            [nde : i64 (struct-get next op-dst-end)]
-            [psf : i64 (struct-get pending op-src-flags)]
-            [pdf : i64 (struct-get pending op-dst-flags)]
-            [nsf : i64 (struct-get next op-src-flags)]
-            [ndf : i64 (struct-get next op-dst-flags)]
-            (cond
-              [(and
-                  (compiler-backend-peephole-op-flag?
-                    psf
-                    compiler-backend-peephole-op-register-flag)
-                  (compiler-backend-peephole-op-flag?
-                    pdf
-                    compiler-backend-peephole-op-local-frame-flag)
-                  (compiler-backend-peephole-op-flag?
-                    nsf
-                    compiler-backend-peephole-op-register-flag)
-                  (compiler-backend-peephole-op-flag?
-                    ndf
-                    compiler-backend-peephole-op-local-frame-flag)
+  (cond
+    [(compiler-backend-peephole-redundant-zext-pair-desc? pending next) 2]
+    [(not (struct-get pending movq)) 0]
+    [(compiler-backend-peephole-line-self-move-desc? pending) 1]
+    [(struct-get next movq)
+      (let
+        [pd : (Ptr u8) (struct-get pending data)]
+        [nd : (Ptr u8) (struct-get next data)]
+        [pss : i64 (struct-get pending op-src-start)]
+        [pse : i64 (struct-get pending op-src-end)]
+        [pds : i64 (struct-get pending op-dst-start)]
+        [pde : i64 (struct-get pending op-dst-end)]
+        [nss : i64 (struct-get next op-src-start)]
+        [nse : i64 (struct-get next op-src-end)]
+        [nds : i64 (struct-get next op-dst-start)]
+        [nde : i64 (struct-get next op-dst-end)]
+        [psf : i64 (struct-get pending op-src-flags)]
+        [pdf : i64 (struct-get pending op-dst-flags)]
+        [nsf : i64 (struct-get next op-src-flags)]
+        [ndf : i64 (struct-get next op-dst-flags)]
+        (cond
+          [(and
+              (compiler-backend-peephole-op-flag?
+                psf
+                compiler-backend-peephole-op-register-flag)
+              (compiler-backend-peephole-op-flag?
+                pdf
+                compiler-backend-peephole-op-local-frame-flag)
+              (compiler-backend-peephole-op-flag?
+                nsf
+                compiler-backend-peephole-op-register-flag)
+              (compiler-backend-peephole-op-flag?
+                ndf
+                compiler-backend-peephole-op-local-frame-flag)
+              (compiler-backend-peephole-ranges-eq? pd pds pde nd nds nde))
+            1]
+          [(and
+              (not (= (bit-and psf 3) 0))
+              (not (= (bit-and pdf 3) 0))
+              (not (= (bit-and nsf 3) 0))
+              (not (= (bit-and ndf 3) 0))
+              (or
+                (and
+                  (compiler-backend-peephole-ranges-eq? pd pss pse nd nss nse)
                   (compiler-backend-peephole-ranges-eq? pd pds pde nd nds nde))
-                1]
-              [(and
-                  (not (= (bit-and psf 3) 0))
-                  (not (= (bit-and pdf 3) 0))
-                  (not (= (bit-and nsf 3) 0))
-                  (not (= (bit-and ndf 3) 0))
-                  (or
-                    (and
-                      (compiler-backend-peephole-ranges-eq?
-                        pd
-                        pss
-                        pse
-                        nd
-                        nss
-                        nse)
-                      (compiler-backend-peephole-ranges-eq?
-                        pd
-                        pds
-                        pde
-                        nd
-                        nds
-                        nde))
-                    (and
-                      (compiler-backend-peephole-ranges-eq?
-                        pd
-                        pds
-                        pde
-                        nd
-                        nss
-                        nse)
-                      (compiler-backend-peephole-ranges-eq?
-                        pd
-                        pss
-                        pse
-                        nd
-                        nds
-                        nde))))
-                2]
-              [(and
-                  (compiler-backend-peephole-op-flag?
-                    psf
-                    compiler-backend-peephole-op-register-flag)
-                  (compiler-backend-peephole-op-flag?
-                    pdf
-                    compiler-backend-peephole-op-local-frame-flag)
-                  (compiler-backend-peephole-op-flag?
-                    nsf
-                    compiler-backend-peephole-op-local-frame-flag)
-                  (compiler-backend-peephole-op-flag?
-                    ndf
-                    compiler-backend-peephole-op-register-flag)
-                  (compiler-backend-peephole-ranges-eq? pd pds pde nd nss nse))
-                3]
-              [(and
-                  (compiler-backend-peephole-op-flag?
-                    psf
-                    compiler-backend-peephole-op-register-flag)
-                  (not (compiler-backend-peephole-range-eq? pd pss pse "%r10"))
-                  (not (compiler-backend-peephole-range-eq? pd pss pse "%rbp"))
-                  (= (struct-get pending op-dst-reg) 8)
-                  (compiler-backend-peephole-op-flag?
-                    nsf
-                    compiler-backend-peephole-op-r10-base-flag)
-                  (compiler-backend-peephole-op-flag?
-                    ndf
-                    compiler-backend-peephole-op-register-flag)
-                  (or
-                    (= (struct-get next op-dst-reg) 8)
-                    (compiler-backend-peephole-r10-dead-after-desc?
-                      asm
-                      asm-data
-                      (if (< (struct-get next end) (string.string-length asm))
-                        (+ (struct-get next end) 1)
-                        (struct-get next end))
-                      (string.string-length asm))))
-                4]
-              [else 0]))
-          0))
-      0)))
+                (and
+                  (compiler-backend-peephole-ranges-eq? pd pds pde nd nss nse)
+                  (compiler-backend-peephole-ranges-eq? pd pss pse nd nds nde))))
+            2]
+          [(and
+              (compiler-backend-peephole-op-flag?
+                psf
+                compiler-backend-peephole-op-register-flag)
+              (compiler-backend-peephole-op-flag?
+                pdf
+                compiler-backend-peephole-op-local-frame-flag)
+              (compiler-backend-peephole-op-flag?
+                nsf
+                compiler-backend-peephole-op-local-frame-flag)
+              (compiler-backend-peephole-op-flag?
+                ndf
+                compiler-backend-peephole-op-register-flag)
+              (compiler-backend-peephole-ranges-eq? pd pds pde nd nss nse))
+            3]
+          [(and
+              (compiler-backend-peephole-op-flag?
+                psf
+                compiler-backend-peephole-op-register-flag)
+              (not (compiler-backend-peephole-range-eq? pd pss pse "%r10"))
+              (not (compiler-backend-peephole-range-eq? pd pss pse "%rbp"))
+              (= (struct-get pending op-dst-reg) 8)
+              (compiler-backend-peephole-op-flag?
+                nsf
+                compiler-backend-peephole-op-r10-base-flag)
+              (compiler-backend-peephole-op-flag?
+                ndf
+                compiler-backend-peephole-op-register-flag)
+              (or
+                (= (struct-get next op-dst-reg) 8)
+                (compiler-backend-peephole-r10-dead-after-desc?
+                  asm
+                  asm-data
+                  (if (< (struct-get next end) (string.string-length asm))
+                    (+ (struct-get next end) 1)
+                    (struct-get next end))
+                  (string.string-length asm))))
+            4]
+          [else 0]))]
+    [(compiler-backend-peephole-store-compare-operands? pending next) 3]
+    [else 0]))
 
 (define (compiler-backend-peephole-forward-frame-load-line-desc
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : String
-  (if (and (struct-get pending movq) (struct-get next movq))
-    (str_cat.str-cat
-      "    movq "
-      (compiler-backend-peephole-line-op-src-text pending)
-      ", "
-      (compiler-backend-peephole-line-op-dst-text next))
+  (if (struct-get pending movq)
+    (if (struct-get next movq)
+      (str_cat.str-cat
+        "    movq "
+        (compiler-backend-peephole-line-op-src-text pending)
+        ", "
+        (compiler-backend-peephole-line-op-dst-text next))
+      (str_cat.str-cat
+        "    "
+        (string.substring
+          (struct-get next src)
+          (struct-get next mnemonic-start)
+          (struct-get next mnemonic-len))
+        " "
+        (compiler-backend-peephole-line-op-src-text pending)
+        ", "
+        (compiler-backend-peephole-line-op-dst-text next)))
     (compiler-backend-peephole-line-text next)))
 
 (define (compiler-backend-peephole-r10-base-fold-line-desc
@@ -59206,6 +59237,14 @@ tl_comptime_host_invoke_set:
       [src-key : i64 (struct-get line op-src-key)]
       [dst-key : i64 (struct-get line op-dst-key)]
       [is-slot : bool (compiler-backend-peephole-owner-key-known? src-key)]
+      ;; Drop an exact owner store; clobbers invalidate the owner proof.
+      [src-already-stored : bool
+        (and
+          (>= src-reg 0)
+          (compiler-backend-peephole-owner-key-stack? dst-key)
+          (compiler-backend-peephole-owner-key-eq?
+            (compiler-backend-peephole-owners-get-index owners src-reg)
+            dst-key))]
       [dst-owns : bool
         (and
           is-slot
@@ -59221,6 +59260,7 @@ tl_comptime_host_invoke_set:
           "")]
       [next-out : (text_buf_borrowed.TextBufBorrowed asm)
         (cond
+          [src-already-stored out]
           [dst-owns out]
           [(not (string.eq ry ""))
             (let
@@ -59481,18 +59521,28 @@ tl_comptime_host_invoke_set:
 (define (compiler-backend-assembly-stream-process-string! [raw-asm : String]) : unit
   (when
     compiler-backend-assembly-stream-active
-    (begin
-      (set!
-        compiler-backend-assembly-stream-batch
-        (text_buf.append compiler-backend-assembly-stream-batch raw-asm))
-      (set!
-        compiler-backend-assembly-stream-batch-count
-        (+ compiler-backend-assembly-stream-batch-count 1))
-      (when
-        (>=
+    (let
+      [with-owner-barrier : String
+        (if compiler-backend-win-owner-barrier
+          (string.replace
+            raw-asm
+            ", %r12\n"
+            ", %r12\n# tl-win-r12-owner-barrier\n")
+          raw-asm)]
+      (begin
+        (set!
+          compiler-backend-assembly-stream-batch
+          (text_buf.append
+            compiler-backend-assembly-stream-batch
+            with-owner-barrier))
+        (set!
           compiler-backend-assembly-stream-batch-count
-          compiler-backend-assembly-stream-batch-function-limit)
-        (compiler-backend-assembly-stream-flush-batch!)))))
+          (+ compiler-backend-assembly-stream-batch-count 1))
+        (when
+          (>=
+            compiler-backend-assembly-stream-batch-count
+            compiler-backend-assembly-stream-batch-function-limit)
+          (compiler-backend-assembly-stream-flush-batch!))))))
 
 (define (compiler-backend-assembly-stream-process-buffer!
   [raw : text_buf.TextBuf]) : unit
@@ -59676,6 +59726,9 @@ tl_comptime_host_invoke_set:
     [raw-arena : arena.Arena (arena.make)]
     [peephole-arena : arena.Arena (arena.make)]
     (begin
+      (set!
+        compiler-backend-win-owner-barrier
+        (compiler-backend-target-windows? target))
       (unsafe
         (arena.set! raw-arena))
       (let

@@ -721,6 +721,34 @@
           (arena.tl_arena_set macro-frontend-arena))))
     unit))
 
+;; Macro expansion rebuilt only temporary list spines and proved that every
+;; retained declaration/path/node is still the first compact generation.  Drop
+;; the macro frontend, cancel the deferred second destination, and make that
+;; generation the driver's committed result.
+(define (lower-checked-dest-pools-retain-macro-source!
+  [source-pools : AstNodePoolContext]) : unit
+  (if (and lower-checked-dest-pools-active lower-checked-dest-pools-rolled-over)
+    (let
+      [macro-frontend-arena : i64 lower-checked-frontend-release-arena]
+      [source-arena : i64 (ast-node-pool-context-base-arena source-pools)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set source-arena))
+        (set! lower-checked-dest-pools-context source-pools)
+        (ast-node-pool-context-install! lower-checked-dest-pools-context)
+        (if (= macro-frontend-arena 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy macro-frontend-arena)))
+        (set! lower-checked-source-release-arena 0)
+        (set! lower-checked-frontend-release-arena 0)
+        (set! lower-checked-dest-pools-deferred false)
+        (set! lower-checked-dest-pools-rolled-over false)
+        (set! lower-checked-dest-pools-committed true)
+        (set! lower-checked-dest-pools-active false)
+        (set! lower-checked-frontend-released true)))
+    unit))
+
 (define (lower-copy-string-into-pools
   [text : String]
   [pools : AstNodePoolContext]) : String
@@ -57016,9 +57044,32 @@
                     "macro_expand"
                     committed-macro-pools))
                 (let
-                  [detach-load-pools? : bool lower-checked-dest-pools-active]
+                  [checked-detach? : bool lower-checked-dest-pools-active]
+                  [macro-changed? : bool
+                    (macro-expand-program-structurally-changed?)]
+                  [retain-macro-source? : bool
+                    (and checked-detach? (not macro-changed?))]
+                  [detach-load-pools? : bool
+                    (and checked-detach? macro-changed?)]
+                  [_detach-profile-decision : unit
+                    (cfg
+                      compile-profile
+                      (begin
+                        (compiler-lower-profile-counter
+                          "macro_detach.fast_path_hits"
+                          (if retain-macro-source?
+                            1
+                            0))
+                        (compiler-lower-profile-counter
+                          "macro_detach.fast_path_misses"
+                          (if detach-load-pools?
+                            1
+                            0))
+                        (compiler-lower-profile-counter
+                          "macro_detach.change_reasons"
+                          (macro-expand-program-structural-change-reasons-value))))]
                   [_detach-profile-start : unit
-                    (if detach-load-pools?
+                    (if checked-detach?
                       (cfg compile-profile (compiler-lower-profile-start))
                       unit)]
                   [detached-compaction : AstProgramCompaction
@@ -57027,7 +57078,11 @@
                         committed-macro-pools
                         (compiler-lower-checked-dest-pools-current)
                         expanded)
-                      (AstProgramCompaction expanded committed-macro-pools))]
+                      (AstProgramCompaction
+                        (if retain-macro-source?
+                          macro-program
+                          expanded)
+                        committed-macro-pools))]
                   [detached-program : AstProgram
                     (match detached-compaction
                       [(AstProgramCompaction out _) out])]
@@ -57051,26 +57106,32 @@
                       (lower-copy-paths-into-pools
                         expanded-paths
                         detached-pools)
-                      expanded-paths)]
+                      (if retain-macro-source?
+                        macro-paths
+                        expanded-paths))]
                   [_clear-source-derived-caches : unit
-                    (if detach-load-pools?
+                    (if checked-detach?
                       (lower-clear-macro-expanded-source-caches-into-pools!
                         detached-pools)
                       unit)]
                   [_commit-detached-pools : unit
-                    (if detach-load-pools?
-                      (lower-checked-dest-pools-commit! detached-pools)
-                      unit)]
+                    (cond
+                      [detach-load-pools?
+                        (lower-checked-dest-pools-commit! detached-pools)]
+                      [retain-macro-source?
+                        (lower-checked-dest-pools-retain-macro-source!
+                          detached-pools)]
+                      [else unit])]
                   [committed-pools : AstNodePoolContext
-                    (if detach-load-pools?
+                    (if checked-detach?
                       (compiler-lower-checked-dest-pools-current)
                       detached-pools)]
                   [_disable-late-detach : unit
-                    (if detach-load-pools?
+                    (if checked-detach?
                       (lower-checked-dest-pools-deactivate-after-commit!)
                       unit)]
                   [_detach-profile-finish : unit
-                    (if detach-load-pools?
+                    (if checked-detach?
                       (cfg
                         compile-profile
                         (compiler-lower-profile-finish "macro_detach"))

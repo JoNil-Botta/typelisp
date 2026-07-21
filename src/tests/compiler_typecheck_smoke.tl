@@ -4363,6 +4363,49 @@
       (macro-hygiene-local-id? surface-local-id)
       (not (= direct-local-id surface-local-id)))))
 
+(define (compiler-typecheck-smoke-macro-change-signal-source-ok?
+  [source : String]
+  [expected-change : bool]) : bool
+  (let
+    [ok : bool
+      (match (parse-ast-source-diagnostic "" source)
+        [(ResultAstProgramDiagnostic.Ok program)
+          (match (macro-expand-program program)
+            [(ResultMacroExpand.Ok _ _)
+              (if expected-change
+                (macro-expand-program-structurally-changed?)
+                (not (macro-expand-program-structurally-changed?)))]
+            [(ResultMacroExpand.Err _) false])]
+        [(ResultAstProgramDiagnostic.Err _) false])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      ok)))
+
+(define (compiler-typecheck-smoke-macro-no-change-signal-ok?) : bool
+  ;; An unused defmacro forces the full declaration walk while every output
+  ;; declaration remains shared with the compact input program.
+  (compiler-typecheck-smoke-macro-change-signal-source-ok?
+    "(defmacro (one) : i64 `1)
+(test ignored-test true)
+(define (main) : i64 0)"
+    false))
+
+(define (compiler-typecheck-smoke-macro-expr-change-signal-ok?) : bool
+  (compiler-typecheck-smoke-macro-change-signal-source-ok?
+    "(defmacro (one) : i64 `1)
+(define (main) : i64 (one))"
+    true))
+
+(define (compiler-typecheck-smoke-macro-decl-change-signal-ok?) : bool
+  ;; Declaration splices must miss the retain-source fast path even if their
+  ;; generated body contains no expression node that would serve as a proxy.
+  (compiler-typecheck-smoke-macro-change-signal-source-ok?
+    "(defmacro (items) : Decls
+  `(begin (defstruct Marker (value i64))))
+(items)
+(define (main) : i64 0)"
+    true))
+
 (define (compiler-typecheck-core-and-body-source) : String
   "(module stdlib.core_macros)
 (defmacro (and [_args : bool ...]) : bool
@@ -4489,6 +4532,15 @@
     (unless
       (compiler-typecheck-smoke-hygiene-structural-ids-ok?)
       (io.panic "typecheck: hygiene structural id smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-macro-no-change-signal-ok?)
+      (io.panic "typecheck: unchanged macro walk signal smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-macro-expr-change-signal-ok?)
+      (io.panic "typecheck: expression macro change signal smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-macro-decl-change-signal-ok?)
+      (io.panic "typecheck: declaration macro change signal smoke failed"))
     (unless
       (compiler-typecheck-smoke-module-macro-identity-tests-ok?)
       (io.panic "typecheck: module macro identity smoke failed"))

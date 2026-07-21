@@ -2326,7 +2326,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup)
+      [(AstResourceBinding.Binding _ init cleanup _)
         (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
           true
           (if (lint-expr-uses-import? (ast-node-get cleanup) alias module-name)
@@ -3621,7 +3621,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup)
+      [(AstResourceBinding.Binding _ init cleanup _)
         (lint-copy-on-update-resource-bindings-at
           bindings
           (lint-copy-on-update-expr
@@ -4094,7 +4094,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup)
+      [(AstResourceBinding.Binding _ init cleanup _)
         (lint-prefer-dotted-field-resource-bindings-at
           bindings
           (lint-prefer-dotted-field-expr
@@ -4467,7 +4467,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup)
+      [(AstResourceBinding.Binding _ init cleanup _)
         (lint-prefer-dotted-field-quasiquote-resource-bindings-at
           bindings
           (lint-prefer-dotted-field-quasiquote-expr
@@ -5360,7 +5360,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init cleanup)
+      [(AstResourceBinding.Binding name init cleanup _)
         (let
           [after-init : LintSingleElementArrayState
             (lint-single-element-array-expr (ast-node-get init) state)]
@@ -6139,7 +6139,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup)
+      [(AstResourceBinding.Binding _ init cleanup _)
         (lint-unused-assignment-note-reads-resource-bindings-at
           bindings
           (lint-unused-assignment-note-reads
@@ -8081,7 +8081,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup)
+      [(AstResourceBinding.Binding _ init cleanup _)
         (lint-unused-variable-quasiquote-resource-bindings-at
           bindings
           (lint-unused-variable-quasiquote-expr
@@ -8417,7 +8417,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init cleanup)
+      [(AstResourceBinding.Binding name init cleanup _)
         (let
           [text : String (intern-str name)]
           [init-expr : AstExpr (ast-node-get init)]
@@ -9488,7 +9488,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]

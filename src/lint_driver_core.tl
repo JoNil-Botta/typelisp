@@ -1306,7 +1306,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup)
+      [(AstResourceBinding.Binding _ init cleanup _)
         (selfhost-lint-dead-resource-binding-refs-at
           bindings
           (selfhost-lint-dead-expr-refs

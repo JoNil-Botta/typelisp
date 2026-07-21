@@ -15587,7 +15587,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -15725,7 +15725,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -27995,7 +27995,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding bind-name init-box cleanup-box)
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -28814,7 +28814,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -30391,7 +30391,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -32079,7 +32079,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name _ _)
+      [(AstResourceBinding.Binding name _ _ _)
         (tc-resource-binding-list-add-bound-names-at
           bindings
           (tc-string-list-add bound (tc-env-key-name-text name))
@@ -32147,7 +32147,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding bind-name init-box cleanup-box)
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -32653,7 +32653,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding bind-name init-box cleanup-box)
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -42278,7 +42278,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box _)
         (match (tc-comptime-purity-node2-mode
           ctx
           env
@@ -43879,7 +43879,7 @@
 
 (defenum TcMoveCleanupOwners
   (Nil)
-  (Cons i64 i64 (Box TcMoveCleanupOwners)))
+  (Cons i64 i64 bool (Box TcMoveCleanupOwners)))
 
 (defenum TcMoveResourceBindings
   (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet TcMoveCleanupOwners)
@@ -43896,6 +43896,9 @@
 (defenum TcMaybeMoveName
   (No)
   (Some i64 String))
+
+(define (tc-for-item-owner-payload-id) : i64
+  (tc-generated-name-id "__for_item_owner_payload"))
 
 (defenum TcMoveConflict
   (No)
@@ -46794,9 +46797,9 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box _)
+      [(AstResourceBinding.Binding name init-box _ move-aware?)
         (let
-          [_init : AstExpr (ast-node-get init-box)]
+          [init : AstExpr (ast-node-get init-box)]
           (match (tc-move-check-expr-id
             ctx
             env
@@ -46844,7 +46847,11 @@
                             moved3
                             locals2
                             loop-carried2
-                            (TcMoveCleanupOwners.Cons name init-box (box roots)))]
+                            (TcMoveCleanupOwners.Cons
+                              name
+                              init-box
+                              move-aware?
+                              (box roots)))]
                         [(TcMoveResourceBindings.Err message)
                           (TcMoveResourceBindings.Err message)])]
                     [(ResultTcType.Err message)
@@ -46859,17 +46866,23 @@
   [scope : AstExpr]) : TcMoveResult
   (match roots
     [(TcMoveCleanupOwners.Nil) (TcMoveResult.Ok moved)]
-    [(TcMoveCleanupOwners.Cons name-id owner-origin-id rest)
-      (if (or
-        (tc-moved-contains? moved name-id)
-        (tc-moved-partial? moved name-id))
-        (TcMoveResult.Err
-          (tc-move-rich-cleanup-owner-exit-message
-            (tc-moved-root-conflict moved name-id)
-            (tc-hygiene-name-text-id name-id)
-            owner-origin-id
-            scope))
-        (tc-move-check-cleanup-owner-exit moved (box-get rest) scope))]))
+    [(TcMoveCleanupOwners.Cons name-id owner-origin-id move-aware? rest)
+      (cond
+        [move-aware?
+          (tc-move-check-cleanup-owner-exit
+            (tc-moved-remove-root-state moved name-id)
+            (box-get rest)
+            scope)]
+        [(or
+            (tc-moved-contains? moved name-id)
+            (tc-moved-partial? moved name-id))
+          (TcMoveResult.Err
+            (tc-move-rich-cleanup-owner-exit-message
+              (tc-moved-root-conflict moved name-id)
+              (tc-hygiene-name-text-id name-id)
+              owner-origin-id
+              scope))]
+        [else (tc-move-check-cleanup-owner-exit moved (box-get rest) scope)])]))
 
 (define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcNameIdList]) : TcMovedSet
   (match names
@@ -51229,7 +51242,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box _)
+      [(AstResourceBinding.Binding name init-box _ _)
         (let
           [_init : AstExpr (ast-node-get init-box)]
           (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
@@ -52378,7 +52391,7 @@
       (& bindings)
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ _ init-box)
+      [(AstResourceBinding.Binding _ _ init-box _)
         (or
           (tc-borrow-gate-expr-relevant? ctx (ast-node-get init-box))
           (tc-borrow-gate-resource-bindings-relevant? ctx bindings (+ index 1)))])))
@@ -59097,7 +59110,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -59108,7 +59121,11 @@
               (begin
                 (ast-resource-binding-list-push
                   out
-                  (ast-resource-binding-id renamed-id ninit ncleanup))
+                  (AstResourceBinding.Binding
+                    renamed-id
+                    ninit
+                    ncleanup
+                    move-aware?))
                 (macro-hygiene-resource-bindings-into
                   bindings
                   next-env
@@ -63619,38 +63636,31 @@
                               (+ index 1)
                               count)
                               [(ResultMacroCoreForPlanList.Ok rest)
-                                (if (and
-                                  (>= (struct-get protocol item-cleanup) 0)
-                                  (not (macro-core-for-plan-list-empty? rest)))
-                                  (ResultMacroCoreForPlanList.Err
-                                    (macro-core-for-diagnostic
-                                      expanded-expr
-                                      "typecheck: cleanup-owning for item binding must be final in a zipped loop"))
-                                  (ResultMacroCoreForPlanList.Ok
-                                    (MacroCoreForPlanList.Cons
-                                      (MacroCoreForPlan
-                                        binding
-                                        expanded-source
-                                        (match (tc-type-strip-region
-                                          (tc-resolve-type ctx source-ty))
-                                          [(AstType.MutRef _ _) false]
-                                          [_
-                                            (not
-                                              (tc-cleanup-owning-aggregate-type?
-                                                ctx
-                                                source-ty))])
-                                        (macro-core-for-temp-id
-                                          hygiene
-                                          depth
-                                          "__for_source_"
-                                          index)
-                                        (macro-core-for-temp-id
-                                          hygiene
-                                          depth
-                                          "__for_iterator_"
-                                          index)
-                                        protocol)
-                                      (box rest))))]
+                                (ResultMacroCoreForPlanList.Ok
+                                  (MacroCoreForPlanList.Cons
+                                    (MacroCoreForPlan
+                                      binding
+                                      expanded-source
+                                      (match (tc-type-strip-region
+                                        (tc-resolve-type ctx source-ty))
+                                        [(AstType.MutRef _ _) false]
+                                        [_
+                                          (not
+                                            (tc-cleanup-owning-aggregate-type?
+                                              ctx
+                                              source-ty))])
+                                      (macro-core-for-temp-id
+                                        hygiene
+                                        depth
+                                        "__for_source_"
+                                        index)
+                                      (macro-core-for-temp-id
+                                        hygiene
+                                        depth
+                                        "__for_iterator_"
+                                        index)
+                                      protocol)
+                                    (box rest)))]
                               [(ResultMacroCoreForPlanList.Err diag)
                                 (ResultMacroCoreForPlanList.Err diag)])]
                           [(ResultMacroCoreForProtocol.Err diag)
@@ -63761,11 +63771,33 @@
   [binding : AstExprBindingClause]) : ResultMacroCoreForType
   (macro-core-for-binding-maybe-type ctx decls binding))
 
+(define (macro-core-for-item-scope [plan : MacroCoreForPlan] [inner : i64]) : i64
+  (let
+    [cleanup : i64 (struct-get (struct-get plan protocol) item-cleanup)]
+    (if (< cleanup 0)
+      inner
+      (match (struct-get plan binding)
+        [(AstExprBindingClause name _ _ _ _)
+          (let
+            [bindings : AstResourceBindingList (ast-resource-binding-list-new)]
+            [body : AstExprList (ast-expr-list-with-capacity 1)]
+            (begin
+              (ast-resource-binding-list-push
+                (&mut bindings)
+                (ast-move-aware-resource-binding-id
+                  name
+                  (macro-core-for-var (tc-for-item-owner-payload-id))
+                  (macro-core-for-var cleanup)))
+              (ast-expr-list-push (&mut body) inner)
+              (ast-node-push
+                (AstExpr.WithResource
+                  (box (AstWithResource.WithResource bindings body))))))]))))
+
 (define (macro-core-for-one-match
   [ctx : TcContext]
   [decls : AstDeclList]
   [plan : MacroCoreForPlan]
-  [done-name : i64]
+  [done-body : i64]
   [inner : i64]) : ResultMacroExpr
   (let
     [binding : AstExprBindingClause (struct-get plan binding)]
@@ -63775,11 +63807,16 @@
           [(AstExprBindingClause name has-type _ _ _)
             (let
               [protocol : MacroCoreForProtocol (struct-get plan protocol)]
+              [item-cleanup : i64 (struct-get protocol item-cleanup)]
+              [pattern-name : i64
+                (if (>= item-cleanup 0)
+                  (tc-for-item-owner-payload-id)
+                  name)]
               [item-patterns : AstPatternList
                 (ast-pattern-cons
                   (if has-type
-                    (AstPattern.Var name (AstMaybeType.Some annotation))
-                    (AstPattern.Binding name))
+                    (AstPattern.Var pattern-name (AstMaybeType.Some annotation))
+                    (AstPattern.Binding pattern-name))
                   (ast-pattern-list-new))]
               [done-pattern : AstPattern
                 (ast-pat-variant-id
@@ -63800,12 +63837,12 @@
               (begin
                 (ast-match-arm-list-push
                   (&mut arms)
-                  (ast-match-arm
-                    done-pattern
-                    (ast-expr-set-id done-name (macro-core-bool-lit true))))
+                  (ast-match-arm done-pattern done-body))
                 (ast-match-arm-list-push
                   (&mut arms)
-                  (ast-match-arm item-pattern inner))
+                  (ast-match-arm
+                    item-pattern
+                    (macro-core-for-item-scope plan inner)))
                 (ResultMacroExpr.Ok (ast-expr-match next-call arms))))])]
       [(ResultMacroCoreForType.Err diag) (ResultMacroExpr.Err diag)])))
 
@@ -63813,7 +63850,7 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [plans : MacroCoreForPlanList]
-  [done-name : i64]
+  [done-body : i64]
   [body : i64]) : ResultMacroExpr
   (match plans
     [(MacroCoreForPlanList.Nil) (ResultMacroExpr.Ok body)]
@@ -63822,10 +63859,10 @@
         ctx
         decls
         (box-get rest)
-        done-name
+        done-body
         body)
         [(ResultMacroExpr.Ok inner)
-          (macro-core-for-one-match ctx decls plan done-name inner)]
+          (macro-core-for-one-match ctx decls plan done-body inner)]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]))
 
 (define (macro-core-for-build
@@ -63855,7 +63892,7 @@
             ctx
             decls
             plans
-            done-name
+            (ast-expr-set-id done-name (macro-core-bool-lit true))
             body-expr)
             [(ResultMacroExpr.Ok loop-body)
               (let
@@ -64283,7 +64320,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -64293,7 +64330,11 @@
                 [(ResultMacroExpr.Ok ncleanup)
                   (let
                     [binding : AstResourceBinding
-                      (ast-resource-binding-id name ninit ncleanup)]
+                      (AstResourceBinding.Binding
+                        name
+                        ninit
+                        ncleanup
+                        move-aware?)]
                     [single : AstResourceBindingList
                       (ast-resource-binding-cons
                         binding
@@ -66829,7 +66870,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]

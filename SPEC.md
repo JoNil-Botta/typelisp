@@ -1586,10 +1586,11 @@ iterator yielded `Item`, and the loop ends as soon as any iterator yields
 against the yielded owned/reference type and reports the expected and yielded
 types on mismatch. Cleanup-owning iterator state uses its declared resource
 cleanup scope, so early `break`, `return`, or normal exhaustion cleans
-unvisited consuming items. In a zipped loop, a cleanup-owning item binding must
-be final so a later `Done` result cannot strand an already-acquired owner; an
-earlier cleanup-owning item is rejected until cleanup-aware zip short-circuiting
-lands (#5281). This scalar construct is unrelated to SPMD `foreach` (section
+unvisited consuming items. In a zipped loop, every cleanup-owning item acquired
+before a later iterator reports `Done` is cleaned exactly once, in reverse
+acquisition order. The same item scopes unwind on `break`, `continue`, and
+`return`; moving an item in the body transfers that responsibility and suppresses
+its loop cleanup. This scalar construct is unrelated to SPMD `foreach` (section
 5.15).
 
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference

@@ -43,6 +43,71 @@
       (ForCleanupToken 10))
     (ForCleanupToken 100)))
 
+(define (reset-for-cleanup-total!) : unit
+  (set! for-cleanup-total 0))
+
+(define (for-cleanup-later-done-ok?) : bool
+  (let
+    [visits : i64 0]
+    (begin
+      (reset-for-cleanup-total!)
+      (for
+        [token : ForCleanupToken (cleanup-token-vec)]
+        [index (iterator.range 0 0)]
+        (set! visits (+ visits (+ token.value index 1))))
+      (and (= visits 0) (= for-cleanup-total 111)))))
+
+(define (for-cleanup-body-consume-ok?) : bool
+  (let
+    [visits : i64 0]
+    (begin
+      (reset-for-cleanup-total!)
+      (for
+        [token : ForCleanupToken (cleanup-token-vec)]
+        [index (iterator.range 0 1)]
+        (set! visits (+ visits (+ index 1)))
+        (cleanup-for-cleanup-token token))
+      (and (= visits 1) (= for-cleanup-total 111)))))
+
+(define (for-cleanup-break-ok?) : bool
+  (let
+    [visits : i64 0]
+    (begin
+      (reset-for-cleanup-total!)
+      (for
+        [token : ForCleanupToken (cleanup-token-vec)]
+        [index (iterator.range 0 3)]
+        (set! visits (+ visits (+ token.value index)))
+        (break))
+      (and (= visits 1) (= for-cleanup-total 111)))))
+
+(define (for-cleanup-continue-ok?) : bool
+  (let
+    [visits : i64 0]
+    (begin
+      (reset-for-cleanup-total!)
+      (for
+        [token : ForCleanupToken (cleanup-token-vec)]
+        [index (iterator.range 0 2)]
+        (set! visits (+ visits (+ index 1)))
+        (continue))
+      (and (= visits 3) (= for-cleanup-total 111)))))
+
+(define (for-cleanup-return-value) : i64
+  (begin
+    (for
+      [token : ForCleanupToken (cleanup-token-vec)]
+      [index (iterator.range 0 3)]
+      (return (+ token.value index)))
+    99))
+
+(define (for-cleanup-return-ok?) : bool
+  (begin
+    (reset-for-cleanup-total!)
+    (let
+      [value : i64 (for-cleanup-return-value)]
+      (and (= value 1) (= for-cleanup-total 111)))))
+
 (define (main) : i64
   (let
     [borrowed : counters.Vec (counter-vec 4 5)]
@@ -85,4 +150,9 @@
         [(not (= cleanup-visits 1)) 3]
         [(not (= for-source-evaluations 1)) 4]
         [(not (= for-cleanup-total 111)) for-cleanup-total]
+        [(not (for-cleanup-later-done-ok?)) 5]
+        [(not (for-cleanup-body-consume-ok?)) 6]
+        [(not (for-cleanup-break-ok?)) 7]
+        [(not (for-cleanup-continue-ok?)) 8]
+        [(not (for-cleanup-return-ok?)) 9]
         [else 42]))))

@@ -26691,6 +26691,91 @@
               [_ false])))])
     true))
 
+(define (compiler-backend-scratch-vreg-select-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (ir-instr-select
+          3
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 2)
+          0
+          (AstType.I64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+;; The select result may reuse the dying true operand's ordinary home. In that
+;; shape emission must stage the result in a planned scratch register distinct
+;; from every select home; otherwise loading the false value destroys the true
+;; value before cmovne reads it.
+(define (compiler-backend-scratch-vreg-select-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rdi"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rax"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%rax"))
+          CompilerRegAssignmentList.Nil)))))
+
+(define (compiler-backend-scratch-vreg-select-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-select-assignments)]
+      (match (compiler-backend-scratch-test-result
+        "scratch_vreg_select"
+        (compiler-backend-scratch-vreg-select-blocks)
+        4
+        assignments)
+        [(CompilerRegScratchPlanResult.Result _ plan)
+          (let
+            [result : String (compiler-reg-scratch-plan-register plan 0 0)]
+            [value : String (compiler-reg-scratch-plan-register plan 0 1)]
+            [test : String (compiler-reg-scratch-plan-register plan 0 2)]
+            (match (compiler-backend-emit-scalar-select
+              assignments
+              3
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 2)
+              (AstType.I64)
+              result
+              value
+              test
+              (compiler-diagnostic-at-start "" ""))
+              [(ResultCompilerBackend.Ok asm)
+                (and
+                  (= (compiler-reg-scratch-plan-count plan) 3)
+                  (not (string.eq result ""))
+                  (not (string.eq value ""))
+                  (not (string.eq test ""))
+                  (not (string.eq result value))
+                  (not (string.eq result test))
+                  (not (string.eq value test))
+                  (not (string.eq result "%rax"))
+                  (not (string.eq result "%rdi"))
+                  (not (string.eq result "%r12"))
+                  (compiler-backend-string-contains?
+                    asm
+                    (str_cat.str-cat
+                      "    cmovne %rax, "
+                      (str_cat.str-cat result "\n")))
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      "    cmovne %rax, %rax\n")))]
+              [(ResultCompilerBackend.Err _) false]))]))
+    true))
+
 (define (compiler-backend-scratch-vreg-result-contains?
   [result : ResultCompilerBackend]
   [needle : String]) : bool
@@ -27002,6 +27087,7 @@
         (compiler-backend-scratch-vreg-scalar-shift-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-return-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
+        (compiler-backend-scratch-vreg-select-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-incomplete-group-fallback-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)

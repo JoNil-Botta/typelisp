@@ -24182,6 +24182,16 @@
       (compiler-reg-string-list-append
         (compiler-reg-scratch-location-registers assignments dst)
         (compiler-reg-scratch-value-registers assignments src))]
+    [(CompilerIrInstr.Select payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload.Payload dst mask on-true on-false _ _)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-location-registers assignments dst)
+            (compiler-reg-string-list-append
+              (compiler-reg-scratch-value-registers assignments mask)
+              (compiler-reg-string-list-append
+                (compiler-reg-scratch-value-registers assignments on-true)
+                (compiler-reg-scratch-value-registers assignments on-false))))])]
     [_ CompilerRegStringList.Nil]))
 
 (define (compiler-reg-scratch-memory-constraint

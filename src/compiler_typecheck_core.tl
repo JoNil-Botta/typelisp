@@ -54748,10 +54748,12 @@
 (define macro-expand-macro-name-set : tc_i64_i64_map.Map
   (tc_i64_i64_map.with-capacity 128))
 
-;; Macro names whose transformer bodies can call `expr-type`. Only those macros
-;; need fixed `Expr` operands to carry produced type metadata.
-(define macro-expand-expr-type-macro-names : TcStringList
-  (TcStringList.Nil))
+;; Exact module-qualified macro identities whose transformer bodies can call
+;; `expr-type`. Only those macros need fixed `Expr` operands to carry produced
+;; type metadata. Keep the hot per-call membership check ID-keyed: the former
+;; TcStringList compared module/name strings linearly for every expansion.
+(define macro-expand-expr-type-macro-name-set : tc_i64_i64_map.Map
+  (tc_i64_i64_map.with-capacity 16))
 
 ;; Cached CTFE base environment (reflection + layout metadata) for the current
 ;; expansion run. `macro-expand-call` rebuilt this via `tc-ctfe-env` -- which runs
@@ -55132,8 +55134,8 @@
   false)
 (define macro-live-prescan-has-defmacro : bool
   false)
-(define macro-live-prescan-expr-type-names : TcStringList
-  (TcStringList.Nil))
+(define macro-live-prescan-expr-type-names : TcNameIdList
+  (TcNameIdList.Nil))
 (define macro-live-prescan-needs-expansion : bool
   false)
 (define macro-live-prescan-summary-import : bool
@@ -55154,7 +55156,7 @@
         macro-live-prescan-expr-type-names
         (if has-defmacro
           (macro-collect-expr-type-macro-names decls)
-          (TcStringList.Nil)))
+          (TcNameIdList.Nil)))
       (set! macro-live-prescan-needs-expansion needs-expansion)
       (set!
         macro-live-prescan-summary-import
@@ -55310,11 +55312,13 @@
   (begin
     (set! macro-expand-active-module "")
     (macro-expand-set-macro-names! (TcNameIdList.Nil))
-    (set! macro-expand-expr-type-macro-names (TcStringList.Nil))
+    (set!
+      macro-expand-expr-type-macro-name-set
+      (tc_i64_i64_map.with-capacity 16))
     (macro-live-symbols-clear!)
     (macro-live-prescan-reset!)
     (set! macro-live-prescan-has-defmacro false)
-    (set! macro-live-prescan-expr-type-names (TcStringList.Nil))
+    (set! macro-live-prescan-expr-type-names (TcNameIdList.Nil))
     (set! macro-live-prescan-needs-expansion false)
     (set! macro-live-prescan-summary-import false)
     (set! macro-live-prescan-visible-names (TcNameIdList.Nil))
@@ -59503,6 +59507,14 @@
 (define (macro-expand-set-macro-names! [names : TcNameIdList]) : unit
   (set! macro-expand-macro-name-set (macro-name-set-from-list names)))
 
+(define (macro-expand-set-expr-type-macro-names! [names : TcNameIdList]) : unit
+  (set! macro-expand-expr-type-macro-name-set (macro-name-set-from-list names)))
+
+(define (macro-expand-expr-type-macro? [module-id : i64] [name-id : i64]) : bool
+  (tc_i64_i64_map.contains?
+    (& macro-expand-expr-type-macro-name-set)
+    (compiler-symbol-module-key-id-by-id module-id name-id)))
+
 (define (macro-surface-decl-macro-in-module?
   [decl : CompilerLoadSurfaceDecl]
   [target-module-id : i64]
@@ -59896,28 +59908,29 @@
 
 (define (macro-collect-expr-type-decl-name
   [decl : AstDecl]
-  [module : String]
-  [acc : TcStringList]) : TcStringList
+  [module-id : i64]
+  [acc : TcNameIdList]) : TcNameIdList
   (match decl
     [(AstDecl.DefMacro decl-meta name _ _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
-        [name-str : String (tc-env-key-name-text name)]
         (if (macro-expr-uses-expr-type? body)
-          (tc-string-list-add acc (compiler-symbol-module-key module name-str))
+          (tc-name-id-list-add
+            acc
+            (compiler-symbol-module-key-id-by-id module-id name))
           acc))]
     [(AstDecl.Unsafe inner-box)
-      (macro-collect-expr-type-decl-name (box-get inner-box) module acc)]
+      (macro-collect-expr-type-decl-name (box-get inner-box) module-id acc)]
     [_ acc]))
 
 (define (macro-collect-expr-type-macro-names-in
   [decls : AstDeclList]
   [module-id : i64]
-  [acc : TcStringList]) : TcStringList
+  [acc : TcNameIdList]) : TcNameIdList
   (let
     [cur : AstDeclList decls]
     [cur-module-id : i64 module-id]
-    [out : TcStringList acc]
+    [out : TcNameIdList acc]
     (begin
       (while (not (ast-decl-list-empty? (& cur)))
         (match (ast-decl-list-step cur)
@@ -59929,18 +59942,15 @@
                 [_
                   (set!
                     out
-                    (macro-collect-expr-type-decl-name
-                      decl
-                      (intern-str cur-module-id)
-                      out))])
+                    (macro-collect-expr-type-decl-name decl cur-module-id out))])
               (set! cur rest))]))
       out)))
 
-(define (macro-collect-expr-type-macro-names [decls : AstDeclList]) : TcStringList
+(define (macro-collect-expr-type-macro-names [decls : AstDeclList]) : TcNameIdList
   (macro-collect-expr-type-macro-names-in
     decls
     cbi.compiler-builtin-id-fix-empty
-    TcStringList.Nil))
+    TcNameIdList.Nil))
 
 (define (macro-hygiene-structural-base) : i64
   (ci.intern-macro-global-structural-base))
@@ -64631,6 +64641,7 @@
   [fallback-module : String]
   [fallback-module-id : i64]
   [type-env : TcTypeEnv]
+  [macro-name-id : i64]
   [macro-name : String]
   [params : AstMacroParamList]
   [body : AstExpr]
@@ -64669,9 +64680,7 @@
           params
           expanded-args
           (tc-ctfe-env ctx)
-          (tc-string-list-contains
-            macro-expand-expr-type-macro-names
-            macro-name)
+          (macro-expand-expr-type-macro? fallback-module-id macro-name-id)
           call-expr)]
       (begin
         (cfg compile-profile (compiler-tc-walk-bind-params-finish!))
@@ -64736,6 +64745,7 @@
   [fallback-module : String]
   [fallback-module-id : i64]
   [type-env : TcTypeEnv]
+  [macro-name-id : i64]
   [macro-name : String]
   [params : AstMacroParamList]
   [body : AstExpr]
@@ -64747,6 +64757,7 @@
     fallback-module
     fallback-module-id
     type-env
+    macro-name-id
     macro-name
     params
     body
@@ -64761,6 +64772,7 @@
   [decls : AstDeclList]
   [fallback-module : String]
   [fallback-module-id : i64]
+  [macro-name-id : i64]
   [macro-name : String]
   [params : AstMacroParamList]
   [body : AstExpr]
@@ -64779,6 +64791,7 @@
         fallback-module
         fallback-module-id
         type-env
+        macro-name-id
         macro-name
         params
         body
@@ -66048,6 +66061,7 @@
             decls
             definition-module
             definition-module-id
+            macro-name-id
             macro-name
             params
             body
@@ -66169,6 +66183,29 @@
             (macro-expand-exprs-into ctx env decls depth exprs (+ index 1) out))]
         [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)]))))
 
+;; Expand a node after its might-fire result is already known. Match arms use
+;; this entry so deciding whether an arm needs a type environment does not make
+;; the firing arm pay for the same recursive predicate walk a second time.
+(define (macro-expand-node-with-fire-decision
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [expr-id : i64]
+  [expr : AstExpr]
+  [fires : bool]) : ResultMacroExpr
+  (begin
+    (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
+    (if (or (not fires) (< (macro-expand-depth-limit) depth))
+      (if (not fires)
+        (ResultMacroExpr.Ok expr-id)
+        (ResultMacroExpr.Err
+          (box
+            (ctfe-diagnostic-at-expr
+              expr
+              "macro expansion exceeded depth limit"))))
+      (macro-expand-expr-fire ctx env decls depth expr))))
+
 (define (macro-expand-arms
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -66206,33 +66243,63 @@
       [(AstMatchArm.Arm pattern body-box)
         (let
           [body : AstExpr (ast-node-get body-box)]
-          (begin
-            (cfg compile-profile (compiler-tc-walk-arm-bind-start!))
-            (let
-              [arm-env-result : ResultTcEnv
-                (tc-bind-match-pattern ctx env scrut-ty pattern)]
-              (begin
-                (cfg compile-profile (compiler-tc-walk-arm-bind-finish!))
-                (match arm-env-result
-                  [(ResultTcEnv.Ok arm-env)
-                    (match (macro-expand-node ctx arm-env decls depth body-box)
-                      [(ResultMacroExpr.Ok nbody)
-                        (begin
-                          (ast-match-arm-list-push
-                            out
-                            (ast-match-arm pattern nbody))
-                          (macro-expand-arms-into
-                            ctx
-                            env
-                            decls
-                            depth
-                            scrut-ty
-                            arms
-                            (+ index 1)
-                            out))]
-                      [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])]
-                  [(ResultTcEnv.Err message)
-                    (ResultMacroCheck.Err (box (tc-expr-diag body message)))])))))])))
+          [body-fires : bool (macro-expr-might-fire? body)]
+          (if (not body-fires)
+            (match (macro-expand-node-with-fire-decision
+              ctx
+              env
+              decls
+              depth
+              body-box
+              body
+              false)
+              [(ResultMacroExpr.Ok nbody)
+                (begin
+                  (ast-match-arm-list-push out (ast-match-arm pattern nbody))
+                  (macro-expand-arms-into
+                    ctx
+                    env
+                    decls
+                    depth
+                    scrut-ty
+                    arms
+                    (+ index 1)
+                    out))]
+              [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])
+            (begin
+              (cfg compile-profile (compiler-tc-walk-arm-bind-start!))
+              (let
+                [arm-env-result : ResultTcEnv
+                  (tc-bind-match-pattern ctx env scrut-ty pattern)]
+                (begin
+                  (cfg compile-profile (compiler-tc-walk-arm-bind-finish!))
+                  (match arm-env-result
+                    [(ResultTcEnv.Ok arm-env)
+                      (match (macro-expand-node-with-fire-decision
+                        ctx
+                        arm-env
+                        decls
+                        depth
+                        body-box
+                        body
+                        true)
+                        [(ResultMacroExpr.Ok nbody)
+                          (begin
+                            (ast-match-arm-list-push
+                              out
+                              (ast-match-arm pattern nbody))
+                            (macro-expand-arms-into
+                              ctx
+                              env
+                              decls
+                              depth
+                              scrut-ty
+                              arms
+                              (+ index 1)
+                              out))]
+                        [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])]
+                    [(ResultTcEnv.Err message)
+                      (ResultMacroCheck.Err (box (tc-expr-diag body message)))]))))))])))
 
 (define (macro-expand-bindings
   [ctx : TcContext]
@@ -66510,20 +66577,17 @@
   [decls : AstDeclList]
   [depth : i64]
   [expr-id : i64]) : ResultMacroExpr
-  (begin
-    (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
-    (let
-      [expr : AstExpr (ast-node-get expr-id)]
-      [fires : bool (macro-expr-might-fire? expr)]
-      (if (or (not fires) (< (macro-expand-depth-limit) depth))
-        (if (not fires)
-          (ResultMacroExpr.Ok expr-id)
-          (ResultMacroExpr.Err
-            (box
-              (ctfe-diagnostic-at-expr
-                expr
-                "macro expansion exceeded depth limit"))))
-        (macro-expand-expr-fire ctx env decls depth expr)))))
+  (let
+    [expr : AstExpr (ast-node-get expr-id)]
+    [fires : bool (macro-expr-might-fire? expr)]
+    (macro-expand-node-with-fire-decision
+      ctx
+      env
+      decls
+      depth
+      expr-id
+      expr
+      fires)))
 
 ;; One subtree scan per visit: the no-fire majority used to pay the scan
 ;; twice (once in the branch condition, once to pick the no-fire arm).
@@ -66676,32 +66740,39 @@
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
-          (match (macro-expand-node ctx env decls depth scrut-box)
-            [(ResultMacroExpr.Ok nscrut)
-              (begin
-                (cfg compile-profile (compiler-tc-walk-scrut-tc-start!))
-                (let
-                  [scrut-ty-result : ResultTcType
-                    (tc-expr ctx env (ast-node-get nscrut))]
+          (let
+            [arms-fire : bool (macro-match-arms-might-fire? arms)]
+            (match (macro-expand-node ctx env decls depth scrut-box)
+              [(ResultMacroExpr.Ok nscrut)
+                (if (not arms-fire)
+                  (ResultMacroExpr.Ok (ast-expr-match nscrut arms))
                   (begin
-                    (cfg compile-profile (compiler-tc-walk-scrut-tc-finish!))
-                    (match scrut-ty-result
-                      [(ResultTcType.Ok scrut-ty)
-                        (match (macro-expand-arms
-                          ctx
-                          env
-                          decls
-                          depth
-                          scrut-ty
-                          arms)
-                          [(ResultMacroArms.Ok narms)
-                            (ResultMacroExpr.Ok (ast-expr-match nscrut narms))]
-                          [(ResultMacroArms.Err diag)
-                            (ResultMacroExpr.Err diag)])]
-                      [(ResultTcType.Err message)
-                        (ResultMacroExpr.Err
-                          (box (tc-expr-diag (ast-node-get nscrut) message)))]))))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])])]
+                    (cfg compile-profile (compiler-tc-walk-scrut-tc-start!))
+                    (let
+                      [scrut-ty-result : ResultTcType
+                        (tc-expr ctx env (ast-node-get nscrut))]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-tc-walk-scrut-tc-finish!))
+                        (match scrut-ty-result
+                          [(ResultTcType.Ok scrut-ty)
+                            (match (macro-expand-arms
+                              ctx
+                              env
+                              decls
+                              depth
+                              scrut-ty
+                              arms)
+                              [(ResultMacroArms.Ok narms)
+                                (ResultMacroExpr.Ok
+                                  (ast-expr-match nscrut narms))]
+                              [(ResultMacroArms.Err diag)
+                                (ResultMacroExpr.Err diag)])]
+                          [(ResultTcType.Err message)
+                            (ResultMacroExpr.Err
+                              (box (tc-expr-diag (ast-node-get nscrut) message)))])))))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
     [(AstExpr.While cond-box body-box)
       (match (macro-expand-node ctx env decls depth cond-box)
         [(ResultMacroExpr.Ok ncond)
@@ -67842,6 +67913,7 @@
                                 (macro-decl-module-display definition-module)
                                 definition-module
                                 global-env
+                                macro-name
                                 (macro-decl-name-display
                                   macro-name
                                   definition-module)
@@ -68065,6 +68137,7 @@
                                         definition-module)
                                       definition-module
                                       global-env
+                                      macro-name
                                       (macro-decl-name-display
                                         macro-name
                                         definition-module)
@@ -70139,8 +70212,7 @@
                                             (macro-live-prescan-reset!)
                                             (macro-live-prescan-ensure!
                                               next-decls)
-                                            (set!
-                                              macro-expand-expr-type-macro-names
+                                            (macro-expand-set-expr-type-macro-names!
                                               macro-live-prescan-expr-type-names)
                                             (set!
                                               ctfe-needs-metadata
@@ -70298,8 +70370,7 @@
                                       (compiler-typecheck-ctfe-env-cache-clear!)
                                       unit)
                                     (macro-live-prescan-ensure! next-decls)
-                                    (set!
-                                      macro-expand-expr-type-macro-names
+                                    (macro-expand-set-expr-type-macro-names!
                                       macro-live-prescan-expr-type-names)
                                     (set!
                                       ctfe-needs-metadata
@@ -70546,11 +70617,11 @@
           [decls : AstDeclList (box-get decls-box)]
           [_prescan : unit (macro-live-prescan-ensure! decls)]
           [has-defmacro : bool macro-live-prescan-has-defmacro]
-          [expr-type-macro-names : TcStringList
+          [expr-type-macro-names : TcNameIdList
             macro-live-prescan-expr-type-names]
           [has-expr-type-macros : bool
             (match expr-type-macro-names
-              [(TcStringList.Nil) false]
+              [(TcNameIdList.Nil) false]
               [_ true])]
           [program-needs-expansion : bool macro-live-prescan-needs-expansion]
           [has-summary-macro-import : bool macro-live-prescan-summary-import]
@@ -70587,7 +70658,7 @@
             ;; cached visible-name prescan) and repopulates it on the non-inert
             ;; splice fallback. Clearing it here left every pass after the first
             ;; with an empty export set, breaking module-hook.
-            (set! macro-expand-expr-type-macro-names expr-type-macro-names)
+            (macro-expand-set-expr-type-macro-names! expr-type-macro-names)
             ;; Scan once for type literals and module-value queries. The latter
             ;; enables only the compact signature index; it must not force the
             ;; much larger layout/nominal-reflection metadata build.
@@ -73171,7 +73242,7 @@
     (ctfe-build-seen-reset!)
     (set! macro-expand-active-module "")
     (macro-expand-set-macro-names! (TcNameIdList.Nil))
-    (set! macro-expand-expr-type-macro-names (TcStringList.Nil))
+    (macro-expand-set-expr-type-macro-names! (TcNameIdList.Nil))
     (compiler-typecheck-ctfe-env-cache-clear!)
     (macro-live-symbols-reset!)
     (macro-live-prescan-reset!)
@@ -73222,7 +73293,7 @@
         (set! tc-hygiene-module-env-cache-arena 0)))
     (set! macro-expand-active-module "")
     (macro-expand-set-macro-names! (TcNameIdList.Nil))
-    (set! macro-expand-expr-type-macro-names (TcStringList.Nil))
+    (macro-expand-set-expr-type-macro-names! (TcNameIdList.Nil))
     (set! macro-expand-ctfe-env-ready false)
     (set! macro-expand-ctfe-env-has-metadata false)
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))

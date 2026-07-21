@@ -12641,6 +12641,9 @@
                   (set! steps (+ steps 1)))))))
         unit))))
 
+(define (tc-module-identity-id-eq? [a : i64] [b : i64]) : bool
+  (or (= a b) (string.eq (intern-str a) (intern-str b))))
+
 (define (tc-imported-module-identity-ids?
   [decls : AstDeclList]
   [current-module-id : i64]
@@ -12669,7 +12672,7 @@
                   (if (= current-module current-module-id)
                     (match expected
                       [(AstMaybeModuleName.Some target)
-                        (if (= target target-id)
+                        (if (tc-module-identity-id-eq? target target-id)
                           (set! found true)
                           unit)]
                       [(AstMaybeModuleName.No) unit])
@@ -12706,6 +12709,11 @@
                       found)
                     found))
                 (> cached 0))))])]))
+
+(define (tc-source-name-id-or [name : i64] [fallback : i64]) : i64
+  (match (ci.intern-lookup (intern-str name))
+    [(InternLookupFound source-id) source-id]
+    [(InternLookupMissing) fallback]))
 
 (define (tc-stdlib-string-module-name? [module-name : String]) : bool
   (or
@@ -15268,9 +15276,74 @@
   [types : AstTypeList]) : AstTypeList
   (tc-canonicalize-resolved-nominal-type-list-at ctx (& types) 0))
 
+(define (tc-symbol-handle-decls-eq?
+  [symbols : CompilerSymbols]
+  [left : i64]
+  [right : i64]) : bool
+  (match (compiler-symbols-decl-at-index
+    symbols
+    (compiler-symbol-handle-index left))
+    [(ResultAstDecl.Ok left-decl)
+      (match (compiler-symbols-decl-at-index
+        symbols
+        (compiler-symbol-handle-index right))
+        [(ResultAstDecl.Ok right-decl) (gen-decl-eq? left-decl right-decl)]
+        [(ResultAstDecl.Err _) false])]
+    [(ResultAstDecl.Err _) false]))
+
+(define (tc-qualified-nominal-indexed-owner-id-or
+  [ctx : TcContext]
+  [name : i64]
+  [fallback : i64]) : i64
+  (let
+    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    [base-id : i64 (tc-qualified-name-base-id name)]
+    [source-module-id : i64 (tc-qualified-name-module-id name)]
+    [lookup-module-id : i64
+      (tc-source-name-id-or source-module-id source-module-id)]
+    [handle : i64
+      (compiler-symbols-lookup-type-id-or
+        symbols
+        (tc-qualified-name-key-id lookup-module-id base-id)
+        (compiler-symbols-missing-handle))]
+    [flat-handle : i64
+      (compiler-symbols-lookup-type-id-or
+        symbols
+        base-id
+        (compiler-symbols-missing-handle))]
+    [flat-root? : bool
+      (and
+        (compiler-symbols-handle-found? flat-handle)
+        (compiler-symbol-root-module-id?
+          (compiler-symbols-owner-module-id-at-index-or
+            symbols
+            (compiler-symbol-handle-index flat-handle)
+            (compiler-symbol-root-module-id))))]
+    (if (compiler-symbols-handle-found? handle)
+      (let
+        [owner-id : i64
+          (compiler-symbols-owner-id-at-index-or
+            symbols
+            (compiler-symbol-handle-index handle)
+            fallback)]
+        (if (and
+          flat-root?
+          (tc-name-qualified-id? owner-id)
+          (tc-imported-module-identity-id? ctx source-module-id)
+          (tc-symbol-handle-decls-eq? symbols handle flat-handle))
+          base-id
+          owner-id))
+      (if (and
+        flat-root?
+        (tc-symbols-unique-nominal-name-id? symbols base-id)
+        (tc-imported-module-identity-id? ctx source-module-id))
+        base-id
+        fallback))))
+
 (define (tc-source-owned-nominal-name-id [ctx : TcContext] [name : i64]) : i64
   (cond
-    [(tc-name-qualified-id? name) name]
+    [(tc-name-qualified-id? name)
+      (tc-qualified-nominal-indexed-owner-id-or ctx name name)]
     [else
       (let
         [symbols : CompilerSymbols (tc-context-symbols ctx)]
@@ -17473,6 +17546,16 @@
       true
       (tc-f32-to-f64-compatible? expected actual))))
 
+(define (tc-match-canonicalized-inferred-type-for-expected
+  [ctx : TcContext]
+  [canonical : AstType]
+  [expected : AstType]) : TcInferredTypeMatch
+  (let
+    [canonical-expected : AstType (tc-canonicalize-inferred-type ctx expected)]
+    (if (tc-type-compatible? canonical-expected canonical)
+      (TcInferredTypeMatch.Compatible canonical)
+      (TcInferredTypeMatch.Mismatch canonical))))
+
 (define (tc-match-inferred-type-for-expected
   [ctx : TcContext]
   [ty : AstType]
@@ -17483,7 +17566,10 @@
       [canonical : AstType (tc-canonicalize-inferred-type ctx ty)]
       (if (tc-type-compatible? expected canonical)
         (TcInferredTypeMatch.Compatible canonical)
-        (TcInferredTypeMatch.Mismatch canonical)))))
+        (tc-match-canonicalized-inferred-type-for-expected
+          ctx
+          canonical
+          expected)))))
 
 (define (tc-merge-branch-type-raw [a : AstType] [b : AstType]) : ResultTcType
   (cond
@@ -21975,6 +22061,29 @@
     ResultTcUnit.Ok
     (ResultTcUnit.Err (tc-type-mismatch-message actual expected message))))
 
+(define (tc-expect-in-context
+  [ctx : TcContext]
+  [actual : AstType]
+  [expected : AstType]
+  [message : String]) : ResultTcUnit
+  (cond
+    [(tc-type-compatible? expected actual) ResultTcUnit.Ok]
+    [else
+      (let
+        [canonical-actual : AstType (tc-canonicalize-inferred-type ctx actual)]
+        (cond
+          [(tc-type-compatible? expected canonical-actual) ResultTcUnit.Ok]
+          [else
+            (let
+              [canonical-expected : AstType
+                (tc-canonicalize-inferred-type ctx expected)]
+              (cond
+                [(tc-type-compatible? canonical-expected canonical-actual)
+                  ResultTcUnit.Ok]
+                [else
+                  (ResultTcUnit.Err
+                    (tc-type-mismatch-message canonical-actual expected message))]))]))]))
+
 (define (tc-contextual-result-type [expected : AstType] [actual : AstType]) : AstType
   (if (tc-type-contains-any-region actual)
     actual
@@ -22618,13 +22727,18 @@
   [result : ResultTcType]) : ResultTcType
   (match result
     [(ResultTcType.Ok actual)
-      (if (tc-type-compatible? expected actual)
-        (ResultTcType.Ok (tc-contextual-result-type expected actual))
-        (if (and
-          allow-mut-by-value-borrow
-          (tc-call-string-temporary-ref-compatible? ctx expected actual))
-          (ResultTcType.Ok expected)
-          (ResultTcType.Ok actual)))]
+      (cond
+        [(tc-type-compatible? expected actual)
+          (ResultTcType.Ok (tc-contextual-result-type expected actual))]
+        [(and
+            allow-mut-by-value-borrow
+            (tc-call-string-temporary-ref-compatible? ctx expected actual))
+          (ResultTcType.Ok expected)]
+        [else
+          (match (tc-match-inferred-type-for-expected ctx actual expected)
+            [(TcInferredTypeMatch.Compatible matched)
+              (ResultTcType.Ok (tc-contextual-result-type expected matched))]
+            [(TcInferredTypeMatch.Mismatch _) (ResultTcType.Ok actual)])])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (tc-expr-with-expected-or-actual-core-inner
@@ -24664,15 +24778,39 @@
                     lifetimes
                     next-subst)]
                 [(ResultTcLifetimeSubst.Err _message)
-                  (ResultTcLifetimeSubst.Err
-                    (tc-locate-error-at-expr
-                      arg
-                      (tc-call-argument-mismatch-message
-                        ctx
-                        func
-                        index
-                        got
-                        want)))])]
+                  (let
+                    [canonical-want : AstType
+                      (tc-canonicalize-inferred-type ctx want)]
+                    [canonical-got : AstType
+                      (tc-canonicalize-inferred-type ctx got)]
+                    (match (tc-infer-lifetime-subst-from-type
+                      ctx
+                      lifetimes
+                      subst
+                      canonical-want
+                      canonical-got)
+                      [(ResultTcLifetimeSubst.Ok next-subst)
+                        (tc-infer-call-lifetime-subst-at
+                          ctx
+                          env
+                          func
+                          all-args
+                          all-params
+                          args
+                          params
+                          (+ index 1)
+                          lifetimes
+                          next-subst)]
+                      [(ResultTcLifetimeSubst.Err _)
+                        (ResultTcLifetimeSubst.Err
+                          (tc-locate-error-at-expr
+                            arg
+                            (tc-call-argument-mismatch-message
+                              ctx
+                              func
+                              index
+                              canonical-got
+                              canonical-want)))]))])]
             [(ResultTcType.Err message)
               (ResultTcLifetimeSubst.Err (tc-locate-error-at-expr arg message))]))))))
 
@@ -28339,12 +28477,16 @@
     [(AstMaybeType.No) (tc-expr ctx env init)]))
 
 (define (tc-let-binding-plain-expected-ok
-  [_ctx : TcContext]
+  [ctx : TcContext]
   [maybe-ty : AstMaybeType]
   [init-ty : AstType]) : ResultTcUnit
   (match maybe-ty
     [(AstMaybeType.Some want)
-      (tc-expect init-ty want "typecheck: let binding type mismatch")]
+      (tc-expect-in-context
+        ctx
+        init-ty
+        want
+        "typecheck: let binding type mismatch")]
     [(AstMaybeType.No) ResultTcUnit.Ok]))
 
 (define (tc-let-binding-plain-bind-type
@@ -29249,10 +29391,10 @@
                   [(AstMaybeType.Some want)
                     (let
                       [resolved-want : AstType (tc-resolve-type ctx want)]
-                      (match (tc-expect
-                        init-ty
-                        resolved-want
-                        "typecheck: let binding type mismatch")
+                      (match (tc-let-binding-plain-expected-ok
+                        ctx
+                        (AstMaybeType.Some resolved-want)
+                        init-ty)
                         [(ResultTcUnit.Ok)
                           (match (tc-ensure-cleanup-resource-not-let-bound
                             ctx
@@ -41545,7 +41687,8 @@
       [(ResultTcType.Ok var-ty)
         (match (tc-expr-with-expected-or-actual-id ctx env value-box var-ty)
           [(ResultTcType.Ok value-ty)
-            (match (tc-expect
+            (match (tc-expect-in-context
+              ctx
               value-ty
               var-ty
               "typecheck: assignment type mismatch")

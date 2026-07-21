@@ -2,4 +2,7 @@
 (import "mixed_global_annotation_bridge.tl")
 
 (define (main) : i64
-  (+ 1 (mixed-global-annotation-bridge)))
+  (let
+    [items : (Array MixedGlobalAnnotationItem)
+      (mixed-global-annotation-bridge-items)]
+    (+ (array-length items) (mixed-global-annotation-bridge))))

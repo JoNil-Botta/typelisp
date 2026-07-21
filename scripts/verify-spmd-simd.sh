@@ -120,6 +120,7 @@ tests/spmd/varying_while_nested_i64.tl
 tests/spmd/varying_match_i64.tl
 tests/spmd/varying_match_enum_payload.tl
 tests/spmd/bool_lanes.tl
+tests/spmd/map_fused_reduce_i64.tl
 tests/integration/spmd_foreach.tl
 tests/integration/spmd_gather_read.tl
 tests/integration/spmd_reduce_scalar.tl
@@ -321,6 +322,36 @@ verify_reduce_accumulator_shape() {
     if ! grep -E -- 'vextract|vpsrldq' "$_func" > /dev/null; then
         echo "[spmd-simd] reduce-accumulator $_mode function lacks the post-loop horizontal reduction" >&2
         echo "tests/integration/spmd_reduce_scalar.tl $_mode (missing post-loop horizontal reduce)" >> "$FAILURES"
+    fi
+}
+
+verify_map_fused_reduce_shape() {
+    _mode=$1
+    compile_spmd_mode tests/spmd/map_fused_reduce_i64.tl "$_mode" 2
+    _tag=tests_spmd_map_fused_reduce_i64_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    _func="$WORKDIR/$_tag.$_mode.reduce-map-fused.s"
+    _gang="$WORKDIR/$_tag.$_mode.reduce-map-fused-gang.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] map-fused reduce shape compile failed in $_mode:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/map_fused_reduce_i64.tl $_mode (shape compile)" >> "$FAILURES"
+        return
+    fi
+    sed -n '/^_tl_map_fused_reduce_i64_reduce_map_fused:/,/^$/p' "$_asm" > "$_func"
+    sed -n '/spmd_reduce_value_body/,/spmd_reduce_value_tail_init/p' "$_func" > "$_gang"
+    _gang_adds=$(grep -c -F -- "vpaddq" "$_gang" || true)
+    if [ "$_gang_adds" != 2 ]; then
+        echo "[spmd-simd] map-fused reduce $_mode gang has $_gang_adds vpaddq instructions; wanted map + accumulator" >&2
+        echo "tests/spmd/map_fused_reduce_i64.tl $_mode (gang vpaddq count)" >> "$FAILURES"
+    fi
+    if grep -E -- 'vextract|vpsrldq' "$_gang" > /dev/null; then
+        echo "[spmd-simd] map-fused reduce $_mode gang performs a horizontal reduction" >&2
+        echo "tests/spmd/map_fused_reduce_i64.tl $_mode (horizontal reduce in gang)" >> "$FAILURES"
+    fi
+    if ! grep -E -- 'vextract|vpsrldq' "$_func" > /dev/null; then
+        echo "[spmd-simd] map-fused reduce $_mode function lacks the post-loop horizontal reduction" >&2
+        echo "tests/spmd/map_fused_reduce_i64.tl $_mode (missing post-loop horizontal reduce)" >> "$FAILURES"
     fi
 }
 
@@ -641,6 +672,7 @@ for mode in avx2 avx512; do
     verify_gather_reduce_opcodes "$mode"
     verify_shuffle_opcodes "$mode"
     verify_reduce_accumulator_shape "$mode"
+    verify_map_fused_reduce_shape "$mode"
 done
 
 verify_avx2_varying_while_shape

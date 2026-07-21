@@ -39926,27 +39926,11 @@
                   elem
                   value)
                   [(LowerMaybeVectorMapValue.Some value-plan)
-                    (match value-plan
-                      [(LowerVectorMapValue.Gather _ _)
-                        (LowerMaybeVectorReduce.Value
-                          value-plan
-                          (lower-simple-vector-reduce-op op)
-                          elem
-                          lanes)]
-                      [_
-                        (if (or
-                          (lower-vector-map-value-has-shuffle? value-plan)
-                          (=
-                            (struct-get
-                              (lower-vector-map-value-array-vars value-plan)
-                              count)
-                            0))
-                          (LowerMaybeVectorReduce.Value
-                            value-plan
-                            (lower-simple-vector-reduce-op op)
-                            elem
-                            lanes)
-                          (LowerMaybeVectorReduce.No))])]
+                    (LowerMaybeVectorReduce.Value
+                      value-plan
+                      (lower-simple-vector-reduce-op op)
+                      elem
+                      lanes)]
                   [(LowerMaybeVectorMapValue.No) (LowerMaybeVectorReduce.No)])
                 (LowerMaybeVectorReduce.No)))])])
     (LowerMaybeVectorReduce.No)))
@@ -67071,12 +67055,39 @@
             (> (lower-test-function-bounds-count functions "f") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-avx2-spmd-reduce-stays-scalar-ok? [src : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerMode.Avx2))
+(define (compiler-lower-spmd-reduce-stays-scalar-ok?
+  [src : String]
+  [mode : CompilerLowerMode]) : bool
+  (match (lower-compiler-source-with-mode src mode)
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (= (lower-test-function-vector-reduce-count functions "f") 0)])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-spmd-reduce-map-fused-shape-ok?
+  [mode : CompilerLowerMode]
+  [lanes : i64]) : bool
+  (match (lower-compiler-source-with-mode
+    "(define (f [xs : (Array i64)] [n : i64] [r : i64]) : i64
+  (spmd-reduce sum ([i : i64 0 n]) 0
+    (+ (+ (array-ref xs i) r) (bit-and (program-index) 0))))"
+    mode)
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-function-vector-load-count functions "f") 1)
+            (= (lower-test-function-vector-reduce-count functions "f") 1)
+            (= (lower-test-function-vector-binop-count functions "f") 4)
+            (=
+              (lower-test-function-vector-shape-count
+                functions
+                "f"
+                lanes
+                (AstType.I64))
+              9)
+            (> (lower-test-function-bounds-count functions "f") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-avx512-spmd-reduce-shape-ok?
@@ -67201,8 +67212,9 @@
         4
         2
         0)
-      (compiler-lower-avx2-spmd-reduce-stays-scalar-ok?
-        "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))")
+      (compiler-lower-spmd-reduce-stays-scalar-ok?
+        "(define (f [xs : (Array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
+        (CompilerLowerMode.Avx2))
       (compiler-lower-spmd-reduce-lane-identity-shape-ok?
         (CompilerLowerMode.Avx2)
         4)
@@ -67213,6 +67225,7 @@
       8
       2
       0)
+    (compiler-lower-spmd-reduce-map-fused-shape-ok? (CompilerLowerMode.Avx2) 4)
     (compiler-lower-spmd-reduce-gather-shape-ok? (CompilerLowerMode.Avx2) 8)))
 
 (define (compiler-lower-avx512-spmd-reduce-tests-ok?) : bool
@@ -67263,6 +67276,9 @@
         16
         2
         0))
+    (compiler-lower-spmd-reduce-map-fused-shape-ok?
+      (CompilerLowerMode.Avx512)
+      8)
     (compiler-lower-spmd-reduce-gather-shape-ok? (CompilerLowerMode.Avx512) 16)))
 
 ;; `spmd-reduce` lowering: integer, f32, and f64 sum reductions lower (to

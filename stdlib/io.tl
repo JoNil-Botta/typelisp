@@ -9,6 +9,10 @@
 ;# helpers are stdlib definitions in this module. Programs must import this module
 ;# to use them.
 ;#
+;# `print` is the integer-specific `(i64) -> unit` helper and appends a newline.
+;# Use `print-string` for text, `print-bool`, `print-char`, or `print-float` for
+;# those scalar types, and `print-format` / `println` for mixed formatted output.
+;#
 ;# The `try-*` helpers return explicit monomorphic result enums. Host errors
 ;# are reported through status-code primitives and mapped into `IoError`.
 ;#
@@ -519,6 +523,10 @@
   (print-string "\n"))
 
 ;: Write an integer followed by a newline.
+;:
+;: This helper accepts only `i64`. Use `print-string`, `print-bool`,
+;: `print-char`, or `print-float` for one value of those types, and use
+;: `print-format` / `println` for mixed formatted output.
 (define (print [value : i64]) : unit
   (begin
     (print-string (string.int->string value))

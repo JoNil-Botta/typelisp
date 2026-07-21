@@ -1586,10 +1586,11 @@ iterator yielded `Item`, and the loop ends as soon as any iterator yields
 against the yielded owned/reference type and reports the expected and yielded
 types on mismatch. Cleanup-owning iterator state uses its declared resource
 cleanup scope, so early `break`, `return`, or normal exhaustion cleans
-unvisited consuming items. In a zipped loop, a cleanup-owning item binding must
-be final so a later `Done` result cannot strand an already-acquired owner; an
-earlier cleanup-owning item is rejected until cleanup-aware zip short-circuiting
-lands (#5281). This scalar construct is unrelated to SPMD `foreach` (section
+unvisited consuming items. In a zipped loop, every cleanup-owning item acquired
+before a later iterator reports `Done` is cleaned exactly once, in reverse
+acquisition order. The same item scopes unwind on `break`, `continue`, and
+`return`; moving an item in the body transfers that responsibility and suppresses
+its loop cleanup. This scalar construct is unrelated to SPMD `foreach` (section
 5.15).
 
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference
@@ -4038,15 +4039,18 @@ SPMD helper calls:
   arguments are scalar lane values. Results may be `unit`, a uniform scalar,
   or a varying scalar lane value; aggregate, string, array, and function
   returns are rejected.
-- Function values and indirect calls, extern calls, `defdispatch` logical
-  calls, recursion through SPMD helpers, and cross-package/tlci SPMD calls
-  are deferred by design; they are rejected with diagnostics naming the
-  specific boundary rather than silently scalarizing.
+- Function values and indirect calls, ordinary extern calls, `defdispatch`
+  logical calls, and recursion through SPMD helpers are deferred by design;
+  they are rejected with diagnostics naming the specific boundary rather than
+  silently scalarizing.
 - Metadata schema v2 in section 5.17.1 can describe compiler-private
-  specializations stored in a package runtime archive. Advertising a record
-  does not itself make cross-package calls valid: a consumer must explicitly
-  support its `abi`, backend, lane count, and argument/result classes before
-  selecting it, and otherwise diagnoses the unsupported capability.
+  specializations stored in a package runtime archive. A direct imported
+  package call may select such a specialization only when the canonical helper
+  name and ordinary signature match and the consumer supports its `abi`,
+  backend, lane count, positional argument classes, result class, and
+  `index-param`. The call uses the record's exact hidden archive symbol.
+  Missing metadata, signature mismatches, unsupported ABIs, and absent requested
+  specializations are diagnostics rather than scalar fallbacks.
 
 Masked varying control flow:
 
@@ -4421,9 +4425,8 @@ Reserved and deferred surface:
   gather-only reads.
 - Lane extraction/insertion, floating-point scans, and general atomics beyond
   the explicit integer element helpers.
-- Out-of-line SPMD calls to function values/indirect callees, extern callees,
-  `defdispatch` logical names, recursive helpers, and cross-package/tlci
-  callees.
+- Out-of-line SPMD calls to function values/indirect callees, ordinary extern
+  callees, `defdispatch` logical names, and recursive helpers.
 - `String`, struct, enum, tuple, function, and nested array lane values.
 - Nested public SPMD constructs, task parallelism, multicore scheduling, and
   public AVX-specific intrinsics.
@@ -6908,14 +6911,22 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 
 ### Hello world (factorial)
 
-```lisp test=run name=factorial exit=120 stdout=""
+```lisp test=run name=factorial exit=0 stdout="Hello, TypeLisp!\nfactorial(5) = 120\n"
+(import stdlib.io)
+
 (define (factorial [n : i64]) : i64
   (if (= n 0)
       1
       (* n (factorial (- n 1)))))
 
 (define (main) : i64
-  (factorial 5))  ; returns 120
+  (let
+    [result : i64 (factorial 5)]
+    (begin
+      (io.print-string "Hello, TypeLisp!\n")
+      (io.print-string "factorial(5) = ")
+      (io.print result)
+      0)))  ; prints the greeting/result and exits successfully
 ```
 
 ### Enum with match

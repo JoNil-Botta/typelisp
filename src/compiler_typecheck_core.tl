@@ -763,6 +763,7 @@
 
 (defenum TcSpmdInlineHelper
   (No)
+  (Imported AstType (Box AstImportedSpmdCallableList))
   (Some i64 i64 AstParamList AstType AstExpr))
 
 (defenum ResultTcSpmdInlineHelper
@@ -15587,7 +15588,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -15725,7 +15726,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -27995,7 +27996,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding bind-name init-box cleanup-box)
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -28814,7 +28815,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -28917,6 +28918,13 @@
         [body : AstExpr (ast-node-get body-box)]
         (ResultTcSpmdInlineHelper.Ok
           (TcSpmdInlineHelper.Some name-id module-id params ret body)))]
+    [(AstDecl.Extern _ _ (AstExternKind.Function) metadata ty)
+      (match (ast-extern-metadata-imported-spmd (box-get metadata))
+        [(AstImportedSpmdMetadata.No)
+          (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No))]
+        [(AstImportedSpmdMetadata.Package _ callables)
+          (ResultTcSpmdInlineHelper.Ok
+            (TcSpmdInlineHelper.Imported ty callables))])]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -28939,9 +28947,13 @@
               lookup-id
               (compiler-symbols-missing-handle))]
           (if (compiler-symbols-handle-found? handle)
-            (if (=
-              (compiler-symbol-handle-kind handle)
-              (compiler-symbol-kind-function-define))
+            (if (or
+              (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-function-define))
+              (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-extern)))
               (let
                 [declaration-id : i64 (compiler-symbol-handle-index handle)]
                 [module-id : i64
@@ -29124,6 +29136,126 @@
                       (tc-spmd-finish expr-ty TcSpmdClass.Uniform args-env)]
                     [(ResultTcUnit.Err message)
                       (ResultTcSpmdExprInfo.Err message)])])]
+            [(ResultTcSpmdExprListInfo.Err message)
+              (ResultTcSpmdExprInfo.Err message)])])]
+    [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
+
+(define (tc-spmd-imported-callable-has-specialization-at?
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [signature : String]
+  [index : i64]) : bool
+  (if (>= index (ast-imported-spmd-callable-list-len callables))
+    false
+    (let
+      [callable : AstImportedSpmdCallable
+        (ast-imported-spmd-callable-list-get
+          callables
+          index
+          (ast-imported-spmd-callable-fallback))]
+      [specializations : AstImportedSpmdSpecializationList
+        (struct-get callable specializations)]
+      (or
+        (and
+          (string.eq (intern-str (struct-get callable signature)) signature)
+          (> (ast-imported-spmd-specialization-list-len (& specializations)) 0))
+        (tc-spmd-imported-callable-has-specialization-at?
+          callables
+          signature
+          (+ index 1))))))
+
+(define (tc-spmd-imported-specializations-have-varying-result-at?
+  [specializations : (& specializations AstImportedSpmdSpecializationList)]
+  [index : i64]) : bool
+  (if (>= index (ast-imported-spmd-specialization-list-len specializations))
+    false
+    (let
+      [item : AstImportedSpmdSpecialization
+        (ast-imported-spmd-specialization-list-get
+          specializations
+          index
+          (ast-imported-spmd-specialization-fallback))]
+      (or
+        (string.eq (intern-str (struct-get item result)) "v")
+        (tc-spmd-imported-specializations-have-varying-result-at?
+          specializations
+          (+ index 1))))))
+
+(define (tc-spmd-imported-callable-has-varying-result-at?
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [signature : String]
+  [index : i64]) : bool
+  (if (>= index (ast-imported-spmd-callable-list-len callables))
+    false
+    (let
+      [callable : AstImportedSpmdCallable
+        (ast-imported-spmd-callable-list-get
+          callables
+          index
+          (ast-imported-spmd-callable-fallback))]
+      [specializations : AstImportedSpmdSpecializationList
+        (struct-get callable specializations)]
+      (or
+        (and
+          (string.eq (intern-str (struct-get callable signature)) signature)
+          (tc-spmd-imported-specializations-have-varying-result-at?
+            (& specializations)
+            0))
+        (tc-spmd-imported-callable-has-varying-result-at?
+          callables
+          signature
+          (+ index 1))))))
+
+(define (tc-spmd-imported-call-result-class
+  [expr-ty : AstType]
+  [fn-ty : AstType]
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [args-class : TcSpmdClass]) : TcSpmdClass
+  (cond
+    [(not (tc-spmd-varying? args-class)) TcSpmdClass.Uniform]
+    [(tc-type-eq (tc-type-without-regions expr-ty) (AstType.Unit))
+      TcSpmdClass.Uniform]
+    [else
+      (let
+        [signature : String (tc-type-render (tc-type-without-regions fn-ty))]
+        (cond
+          [(tc-spmd-imported-callable-has-varying-result-at?
+              callables
+              signature
+              0)
+            TcSpmdClass.Varying]
+          [(tc-spmd-imported-callable-has-specialization-at?
+              callables
+              signature
+              0)
+            TcSpmdClass.Uniform]
+          [else TcSpmdClass.Varying]))]))
+
+(define (tc-spmd-imported-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : AstType]
+  [fn-ty : AstType]
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-expr ctx env spmd-env func)
+    [(ResultTcSpmdExprInfo.Ok func-info)
+      (match func-info
+        [(TcSpmdExprInfo _ _ func-env)
+          (match (tc-spmd-expr-list ctx env func-env args)
+            [(ResultTcSpmdExprListInfo.Ok args-info)
+              (match args-info
+                [(TcSpmdExprListInfo args-class args-env)
+                  (tc-spmd-finish-ctx
+                    ctx
+                    expr-ty
+                    (tc-spmd-imported-call-result-class
+                      expr-ty
+                      fn-ty
+                      callables
+                      args-class)
+                    args-env)])]
             [(ResultTcSpmdExprListInfo.Err message)
               (ResultTcSpmdExprInfo.Err message)])])]
     [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
@@ -29381,6 +29513,18 @@
                       (tc-spmd-finish expr-ty TcSpmdClass.Uniform caller-next))])]
               [(ResultTcSpmdInlineCallState.Err message)
                 (ResultTcSpmdExprInfo.Err message)]))]
+        [(TcSpmdInlineHelper.Imported fn-ty callables)
+          (let
+            [callable-items : AstImportedSpmdCallableList (box-get callables)]
+            (tc-spmd-imported-call
+              ctx
+              env
+              spmd-env
+              expr-ty
+              fn-ty
+              (& callable-items)
+              func
+              args))]
         [(TcSpmdInlineHelper.No)
           (tc-spmd-call-uniform-only ctx env spmd-env expr-ty func args)])]
     [(ResultTcSpmdInlineHelper.Err message) (ResultTcSpmdExprInfo.Err message)]))
@@ -29458,6 +29602,8 @@
                       body)])]
               [(ResultTcSpmdInlineCallState.Err message)
                 (ResultTcUnit.Err message)]))]
+        [(TcSpmdInlineHelper.Imported _ _)
+          (tc-spmd-masked-if-expr-list ctx env spmd-env args)]
         [(TcSpmdInlineHelper.No)
           (tc-spmd-masked-if-unsupported "varying calls inside masked branches")])]
     [(ResultTcSpmdInlineHelper.Err message) (ResultTcUnit.Err message)]))
@@ -30391,7 +30537,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -32079,7 +32225,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name _ _)
+      [(AstResourceBinding.Binding name _ _ _)
         (tc-resource-binding-list-add-bound-names-at
           bindings
           (tc-string-list-add bound (tc-env-key-name-text name))
@@ -32147,7 +32293,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding bind-name init-box cleanup-box)
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -32653,7 +32799,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding bind-name init-box cleanup-box)
+      [(AstResourceBinding.Binding bind-name init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -41777,7 +41923,7 @@
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
-    [(AstExternMetadata.Metadata abi _ _ _)
+    [(AstExternMetadata.Metadata abi _ _ _ _)
       (let
         [explicit-abi : bool (ast-extern-metadata-explicit-abi? metadata)]
         [resolved : AstType (tc-resolve-type ctx ty)]
@@ -42278,7 +42424,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box _)
         (match (tc-comptime-purity-node2-mode
           ctx
           env
@@ -43879,7 +44025,7 @@
 
 (defenum TcMoveCleanupOwners
   (Nil)
-  (Cons i64 i64 (Box TcMoveCleanupOwners)))
+  (Cons i64 i64 bool (Box TcMoveCleanupOwners)))
 
 (defenum TcMoveResourceBindings
   (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet TcMoveCleanupOwners)
@@ -43896,6 +44042,9 @@
 (defenum TcMaybeMoveName
   (No)
   (Some i64 String))
+
+(define (tc-for-item-owner-payload-id) : i64
+  (tc-generated-name-id "__for_item_owner_payload"))
 
 (defenum TcMoveConflict
   (No)
@@ -46794,7 +46943,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box _)
+      [(AstResourceBinding.Binding name init-box _ move-aware?)
         (let
           [_init : AstExpr (ast-node-get init-box)]
           (match (tc-move-check-expr-id
@@ -46844,7 +46993,11 @@
                             moved3
                             locals2
                             loop-carried2
-                            (TcMoveCleanupOwners.Cons name init-box (box roots)))]
+                            (TcMoveCleanupOwners.Cons
+                              name
+                              init-box
+                              move-aware?
+                              (box roots)))]
                         [(TcMoveResourceBindings.Err message)
                           (TcMoveResourceBindings.Err message)])]
                     [(ResultTcType.Err message)
@@ -46859,17 +47012,23 @@
   [scope : AstExpr]) : TcMoveResult
   (match roots
     [(TcMoveCleanupOwners.Nil) (TcMoveResult.Ok moved)]
-    [(TcMoveCleanupOwners.Cons name-id owner-origin-id rest)
-      (if (or
-        (tc-moved-contains? moved name-id)
-        (tc-moved-partial? moved name-id))
-        (TcMoveResult.Err
-          (tc-move-rich-cleanup-owner-exit-message
-            (tc-moved-root-conflict moved name-id)
-            (tc-hygiene-name-text-id name-id)
-            owner-origin-id
-            scope))
-        (tc-move-check-cleanup-owner-exit moved (box-get rest) scope))]))
+    [(TcMoveCleanupOwners.Cons name-id owner-origin-id move-aware? rest)
+      (cond
+        [move-aware?
+          (tc-move-check-cleanup-owner-exit
+            (tc-moved-remove-root-state moved name-id)
+            (box-get rest)
+            scope)]
+        [(or
+            (tc-moved-contains? moved name-id)
+            (tc-moved-partial? moved name-id))
+          (TcMoveResult.Err
+            (tc-move-rich-cleanup-owner-exit-message
+              (tc-moved-root-conflict moved name-id)
+              (tc-hygiene-name-text-id name-id)
+              owner-origin-id
+              scope))]
+        [else (tc-move-check-cleanup-owner-exit moved (box-get rest) scope)])]))
 
 (define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcNameIdList]) : TcMovedSet
   (match names
@@ -51229,7 +51388,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box _)
+      [(AstResourceBinding.Binding name init-box _ _)
         (let
           [_init : AstExpr (ast-node-get init-box)]
           (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
@@ -52378,7 +52537,7 @@
       (& bindings)
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ _ init-box)
+      [(AstResourceBinding.Binding _ _ init-box _)
         (or
           (tc-borrow-gate-expr-relevant? ctx (ast-node-get init-box))
           (tc-borrow-gate-resource-bindings-relevant? ctx bindings (+ index 1)))])))
@@ -59097,7 +59256,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -59108,7 +59267,11 @@
               (begin
                 (ast-resource-binding-list-push
                   out
-                  (ast-resource-binding-id renamed-id ninit ncleanup))
+                  (AstResourceBinding.Binding
+                    renamed-id
+                    ninit
+                    ncleanup
+                    move-aware?))
                 (macro-hygiene-resource-bindings-into
                   bindings
                   next-env
@@ -63656,38 +63819,31 @@
                               (+ index 1)
                               count)
                               [(ResultMacroCoreForPlanList.Ok rest)
-                                (if (and
-                                  (>= (struct-get protocol item-cleanup) 0)
-                                  (not (macro-core-for-plan-list-empty? rest)))
-                                  (ResultMacroCoreForPlanList.Err
-                                    (macro-core-for-diagnostic
-                                      expanded-expr
-                                      "typecheck: cleanup-owning for item binding must be final in a zipped loop"))
-                                  (ResultMacroCoreForPlanList.Ok
-                                    (MacroCoreForPlanList.Cons
-                                      (MacroCoreForPlan
-                                        binding
-                                        expanded-source
-                                        (match (tc-type-strip-region
-                                          (tc-resolve-type ctx source-ty))
-                                          [(AstType.MutRef _ _) false]
-                                          [_
-                                            (not
-                                              (tc-cleanup-owning-aggregate-type?
-                                                ctx
-                                                source-ty))])
-                                        (macro-core-for-temp-id
-                                          hygiene
-                                          depth
-                                          "__for_source_"
-                                          index)
-                                        (macro-core-for-temp-id
-                                          hygiene
-                                          depth
-                                          "__for_iterator_"
-                                          index)
-                                        protocol)
-                                      (box rest))))]
+                                (ResultMacroCoreForPlanList.Ok
+                                  (MacroCoreForPlanList.Cons
+                                    (MacroCoreForPlan
+                                      binding
+                                      expanded-source
+                                      (match (tc-type-strip-region
+                                        (tc-resolve-type ctx source-ty))
+                                        [(AstType.MutRef _ _) false]
+                                        [_
+                                          (not
+                                            (tc-cleanup-owning-aggregate-type?
+                                              ctx
+                                              source-ty))])
+                                      (macro-core-for-temp-id
+                                        hygiene
+                                        depth
+                                        "__for_source_"
+                                        index)
+                                      (macro-core-for-temp-id
+                                        hygiene
+                                        depth
+                                        "__for_iterator_"
+                                        index)
+                                      protocol)
+                                    (box rest)))]
                               [(ResultMacroCoreForPlanList.Err diag)
                                 (ResultMacroCoreForPlanList.Err diag)])]
                           [(ResultMacroCoreForProtocol.Err diag)
@@ -63798,11 +63954,33 @@
   [binding : AstExprBindingClause]) : ResultMacroCoreForType
   (macro-core-for-binding-maybe-type ctx decls binding))
 
+(define (macro-core-for-item-scope [plan : MacroCoreForPlan] [inner : i64]) : i64
+  (let
+    [cleanup : i64 (struct-get (struct-get plan protocol) item-cleanup)]
+    (if (< cleanup 0)
+      inner
+      (match (struct-get plan binding)
+        [(AstExprBindingClause name _ _ _ _)
+          (let
+            [bindings : AstResourceBindingList (ast-resource-binding-list-new)]
+            [body : AstExprList (ast-expr-list-with-capacity 1)]
+            (begin
+              (ast-resource-binding-list-push
+                (&mut bindings)
+                (ast-move-aware-resource-binding-id
+                  name
+                  (macro-core-for-var (tc-for-item-owner-payload-id))
+                  (macro-core-for-var cleanup)))
+              (ast-expr-list-push (&mut body) inner)
+              (ast-node-push
+                (AstExpr.WithResource
+                  (box (AstWithResource.WithResource bindings body))))))]))))
+
 (define (macro-core-for-one-match
   [ctx : TcContext]
   [decls : AstDeclList]
   [plan : MacroCoreForPlan]
-  [done-name : i64]
+  [done-body : i64]
   [inner : i64]) : ResultMacroExpr
   (let
     [binding : AstExprBindingClause (struct-get plan binding)]
@@ -63812,11 +63990,16 @@
           [(AstExprBindingClause name has-type _ _ _)
             (let
               [protocol : MacroCoreForProtocol (struct-get plan protocol)]
+              [item-cleanup : i64 (struct-get protocol item-cleanup)]
+              [pattern-name : i64
+                (if (>= item-cleanup 0)
+                  (tc-for-item-owner-payload-id)
+                  name)]
               [item-patterns : AstPatternList
                 (ast-pattern-cons
                   (if has-type
-                    (AstPattern.Var name (AstMaybeType.Some annotation))
-                    (AstPattern.Binding name))
+                    (AstPattern.Var pattern-name (AstMaybeType.Some annotation))
+                    (AstPattern.Binding pattern-name))
                   (ast-pattern-list-new))]
               [done-pattern : AstPattern
                 (ast-pat-variant-id
@@ -63837,12 +64020,12 @@
               (begin
                 (ast-match-arm-list-push
                   (&mut arms)
-                  (ast-match-arm
-                    done-pattern
-                    (ast-expr-set-id done-name (macro-core-bool-lit true))))
+                  (ast-match-arm done-pattern done-body))
                 (ast-match-arm-list-push
                   (&mut arms)
-                  (ast-match-arm item-pattern inner))
+                  (ast-match-arm
+                    item-pattern
+                    (macro-core-for-item-scope plan inner)))
                 (ResultMacroExpr.Ok (ast-expr-match next-call arms))))])]
       [(ResultMacroCoreForType.Err diag) (ResultMacroExpr.Err diag)])))
 
@@ -63850,7 +64033,7 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [plans : MacroCoreForPlanList]
-  [done-name : i64]
+  [done-body : i64]
   [body : i64]) : ResultMacroExpr
   (match plans
     [(MacroCoreForPlanList.Nil) (ResultMacroExpr.Ok body)]
@@ -63859,10 +64042,10 @@
         ctx
         decls
         (box-get rest)
-        done-name
+        done-body
         body)
         [(ResultMacroExpr.Ok inner)
-          (macro-core-for-one-match ctx decls plan done-name inner)]
+          (macro-core-for-one-match ctx decls plan done-body inner)]
         [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]))
 
 (define (macro-core-for-build
@@ -63892,7 +64075,7 @@
             ctx
             decls
             plans
-            done-name
+            (ast-expr-set-id done-name (macro-core-bool-lit true))
             body-expr)
             [(ResultMacroExpr.Ok loop-body)
               (let
@@ -64320,7 +64503,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -64330,7 +64513,11 @@
                 [(ResultMacroExpr.Ok ncleanup)
                   (let
                     [binding : AstResourceBinding
-                      (ast-resource-binding-id name ninit ncleanup)]
+                      (AstResourceBinding.Binding
+                        name
+                        ninit
+                        ncleanup
+                        move-aware?)]
                     [single : AstResourceBindingList
                       (ast-resource-binding-cons
                         binding
@@ -66866,7 +67053,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -69531,21 +69718,74 @@
     ;; Validate payload cleanup requirements without looking for a user body.
     (tc-check-cleanup-enum-variants ctx env enum-name name-id cleanup variants)))
 
-;: Check one function declaration's body against its signature.
+(define (tc-check-fn-params-from-types-at
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [types : (& types AstTypeList)]
+  [index : i64]
+  [out : (&mut out AstParamList)]) : unit
+  (if (>= index (ast-param-list-len params))
+    unit
+    (begin
+      (match (ast-param-list-get params index (ast-param-fallback))
+        [(AstParam.Param name _ mutable? consume?)
+          (ast-param-list-push
+            out
+            (AstParam.Param
+              name
+              (ast-type-strip-consuming-param
+                (tc-context-type-get
+                  ctx
+                  (ast-type-list-get types index (ast-type-id-fallback))))
+              mutable?
+              consume?))])
+      (tc-check-fn-params-from-types-at ctx params types (+ index 1) out))))
+
+(define (tc-check-fn-params-from-types
+  [ctx : TcContext]
+  [params : AstParamList]
+  [types : AstTypeList]) : AstParamList
+  (let
+    [out : AstParamList
+      (ast-param-list-with-capacity (ast-param-list-len (& params)))]
+    (begin
+      (tc-check-fn-params-from-types-at ctx (& params) (& types) 0 (&mut out))
+      out)))
+
+(define (tc-check-fn-registered-params
+  [ctx : TcContext]
+  [global-env : TcTypeEnv]
+  [name : i64]
+  [params : AstParamList]) : AstParamList
+  (match (tc-lookup-persistent-id global-env name)
+    [(ResultTcType.Ok (AstType.Func types _))
+      (let
+        [registered : AstTypeList (box-get types)]
+        (if (=
+          (ast-type-list-len (& registered))
+          (ast-param-list-len (& params)))
+          (tc-check-fn-params-from-types ctx params registered)
+          params))]
+    [_ params]))
+
+;: Check one function declaration's body against its registered signature.
 (define (tc-check-fn-decl-body
   [ctx : TcContext]
   [global-env : TcTypeEnv]
+  [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body-box : i64]) : ResultTcUnit
   (let
     [body : AstExpr (ast-node-get body-box)]
+    [registered-params : AstParamList
+      (tc-check-fn-registered-params ctx global-env name params)]
     [carrier : TcTypeEnvScopedCarrier
       (tc-type-env-scoped-carrier-bind-return-type
         (tc-type-env-scoped-carrier-bind-params
           ctx
           (tc-type-env-scoped-carrier-from-env global-env)
-          params)
+          registered-params)
         (tc-resolve-type ctx ret))]
     [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
     [scoped-save : TcTypeEnvScopedRuntimeSave
@@ -69557,12 +69797,12 @@
           (let
             [persistent : TcTypeEnv
               (tc-bind-return-type
-                (tc-bind-params ctx global-env params)
+                (tc-bind-params ctx global-env registered-params)
                 (tc-resolve-type ctx ret))]
             (if (tc-type-env-scoped-carrier-fn-entry-matches-persistent?
               carrier
               persistent
-              params)
+              registered-params)
               unit
               (io.panic
                 "typecheck: scoped carrier diverged from persistent function env")))
@@ -69591,14 +69831,18 @@
                   got
                   "return value")
                   [(ResultTcUnit.Ok)
-                    (match (tc-move-check-body-id ctx env params body-box)
+                    (match (tc-move-check-body-id
+                      ctx
+                      env
+                      registered-params
+                      body-box)
                       [(ResultTcUnit.Ok)
                         (let
                           [result : ResultTcUnit
                             (tc-borrow-check-body-id-with-ret
                               ctx
                               env
-                              params
+                              registered-params
                               ret
                               body-box)]
                           (begin
@@ -69683,6 +69927,7 @@
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
   [global-env : TcTypeEnv]
+  [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body-box : i64]) : ResultTcUnit
@@ -69695,7 +69940,7 @@
       (let
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultTcUnit
-          (tc-check-fn-decl-body ctx global-env params ret body-box)]
+          (tc-check-fn-decl-body ctx global-env name params ret body-box)]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
@@ -69838,12 +70083,13 @@
     ;; walk, so keep cache entries scoped to one checked declaration.
     (tc-nominal-owner-cache-reset!)
     (match decl
-      [(AstDecl.DefFn decl-meta _ params ret body-box _)
+      [(AstDecl.DefFn decl-meta name params ret body-box _)
         (match (tc-elide-function-signature params ret)
           [(ResultTcElidedSignature.Ok signature)
             (tc-check-fn-decl-scoped
               ctx
               global-env
+              name
               (struct-get signature params)
               (struct-get signature ret)
               body-box)]
@@ -69881,7 +70127,7 @@
           (match (tc-expr-id ctx global-env expr-box)
             [(ResultTcType.Ok _) ResultTcUnit.Ok]
             [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
-    [(AstDecl.DefFn decl-meta _ params ret body-box _)
+    [(AstDecl.DefFn decl-meta name params ret body-box _)
       ;; Unreachable via the dispatcher above; kept so a direct call can never
       ;; silently skip a function body check.
       (match (tc-elide-function-signature params ret)
@@ -69889,6 +70135,7 @@
           (tc-check-fn-decl-scoped
             ctx
             global-env
+            name
             (struct-get signature params)
             (struct-get signature ret)
             body-box)]

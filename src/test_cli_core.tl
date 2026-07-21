@@ -829,7 +829,8 @@
       (AstExternAbi.C)
       (ci.intern-generated-name "GetStdHandle")
       (ast-extern-link-input-list-new)
-      (ast-extern-metadata-flags true false))
+      (ast-extern-metadata-flags true false)
+      AstImportedSpmdMetadata.No)
     (ast-ty-func
       (ast-type-cons (AstType.I32) (ast-type-list-new))
       (AstType.I64))))
@@ -842,7 +843,8 @@
       (AstExternAbi.C)
       (ci.intern-generated-name "WriteFile")
       (ast-extern-link-input-list-new)
-      (ast-extern-metadata-flags true false))
+      (ast-extern-metadata-flags true false)
+      AstImportedSpmdMetadata.No)
     (ast-ty-func
       (ast-type-cons
         (AstType.I64)
@@ -1270,7 +1272,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]

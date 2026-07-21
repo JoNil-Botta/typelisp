@@ -2167,6 +2167,122 @@
   (define (compiler-tc-walk-decl-sample-note! [kind : i64]) : unit
     (set! compiler-tc-walk-decl-sample-kind kind)))
 
+;; Splice sub-kind buckets: 4 = marker-only import with deferred refresh,
+;; 5 = marker-only import with the full top-env refresh, 6 = forced inline
+;; splice, 7 = generated-normal-import materialization. Kind 3 remains the
+;; placeholder arm's default (empty expansions and any path that noted
+;; nothing more specific).
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-defer-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-defer-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-defer-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-defer-count : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-refresh-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-refresh-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-refresh-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-refresh-count : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-inline-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-inline-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-inline-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-inline-count : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-mat-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-mat-alloc : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-mat-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-decl-sp-mat-count : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-registry-incremental : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-registry-invalidated : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-deferred : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-ctfe-cleared : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-splice-prescan-resets : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-splice-flag-note! [flag : i64]) : unit
+    (cond
+      [(= flag 1)
+        (set!
+          compiler-tc-walk-splice-registry-incremental
+          (+ compiler-tc-walk-splice-registry-incremental 1))]
+      [(= flag 2)
+        (set!
+          compiler-tc-walk-splice-registry-invalidated
+          (+ compiler-tc-walk-splice-registry-invalidated 1))]
+      [(= flag 3)
+        (set!
+          compiler-tc-walk-splice-ctfe-deferred
+          (+ compiler-tc-walk-splice-ctfe-deferred 1))]
+      [(= flag 4)
+        (set!
+          compiler-tc-walk-splice-ctfe-cleared
+          (+ compiler-tc-walk-splice-ctfe-cleared 1))]
+      [(= flag 5)
+        (set!
+          compiler-tc-walk-splice-prescan-resets
+          (+ compiler-tc-walk-splice-prescan-resets 1))]
+      [else unit])))
+
 (cfg
   compile-profile
   (define (compiler-tc-walk-decl-sample-add!
@@ -2204,6 +2320,62 @@
           (set!
             compiler-tc-walk-decl-splice-count
             (+ compiler-tc-walk-decl-splice-count 1)))]
+      [(= kind 4)
+        (begin
+          (set!
+            compiler-tc-walk-decl-sp-defer-ns
+            (+ compiler-tc-walk-decl-sp-defer-ns ns))
+          (set!
+            compiler-tc-walk-decl-sp-defer-alloc
+            (+ compiler-tc-walk-decl-sp-defer-alloc alloc))
+          (set!
+            compiler-tc-walk-decl-sp-defer-live
+            (+ compiler-tc-walk-decl-sp-defer-live live))
+          (set!
+            compiler-tc-walk-decl-sp-defer-count
+            (+ compiler-tc-walk-decl-sp-defer-count 1)))]
+      [(= kind 5)
+        (begin
+          (set!
+            compiler-tc-walk-decl-sp-refresh-ns
+            (+ compiler-tc-walk-decl-sp-refresh-ns ns))
+          (set!
+            compiler-tc-walk-decl-sp-refresh-alloc
+            (+ compiler-tc-walk-decl-sp-refresh-alloc alloc))
+          (set!
+            compiler-tc-walk-decl-sp-refresh-live
+            (+ compiler-tc-walk-decl-sp-refresh-live live))
+          (set!
+            compiler-tc-walk-decl-sp-refresh-count
+            (+ compiler-tc-walk-decl-sp-refresh-count 1)))]
+      [(= kind 6)
+        (begin
+          (set!
+            compiler-tc-walk-decl-sp-inline-ns
+            (+ compiler-tc-walk-decl-sp-inline-ns ns))
+          (set!
+            compiler-tc-walk-decl-sp-inline-alloc
+            (+ compiler-tc-walk-decl-sp-inline-alloc alloc))
+          (set!
+            compiler-tc-walk-decl-sp-inline-live
+            (+ compiler-tc-walk-decl-sp-inline-live live))
+          (set!
+            compiler-tc-walk-decl-sp-inline-count
+            (+ compiler-tc-walk-decl-sp-inline-count 1)))]
+      [(= kind 7)
+        (begin
+          (set!
+            compiler-tc-walk-decl-sp-mat-ns
+            (+ compiler-tc-walk-decl-sp-mat-ns ns))
+          (set!
+            compiler-tc-walk-decl-sp-mat-alloc
+            (+ compiler-tc-walk-decl-sp-mat-alloc alloc))
+          (set!
+            compiler-tc-walk-decl-sp-mat-live
+            (+ compiler-tc-walk-decl-sp-mat-live live))
+          (set!
+            compiler-tc-walk-decl-sp-mat-count
+            (+ compiler-tc-walk-decl-sp-mat-count 1)))]
       [fired
         (begin
           (set!
@@ -4232,6 +4404,69 @@
       (compiler-tc-macro-counter-profile-line
         "walk_rewalk_calls"
         compiler-tc-walk-rewalk-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_defer_us"
+        (/ compiler-tc-walk-decl-sp-defer-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_defer_alloc_kb"
+        (/ compiler-tc-walk-decl-sp-defer-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_defer_live_kb"
+        (/ compiler-tc-walk-decl-sp-defer-live 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_defer_count"
+        compiler-tc-walk-decl-sp-defer-count)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_refresh_us"
+        (/ compiler-tc-walk-decl-sp-refresh-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_refresh_alloc_kb"
+        (/ compiler-tc-walk-decl-sp-refresh-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_refresh_live_kb"
+        (/ compiler-tc-walk-decl-sp-refresh-live 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_refresh_count"
+        compiler-tc-walk-decl-sp-refresh-count)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_inline_us"
+        (/ compiler-tc-walk-decl-sp-inline-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_inline_alloc_kb"
+        (/ compiler-tc-walk-decl-sp-inline-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_inline_live_kb"
+        (/ compiler-tc-walk-decl-sp-inline-live 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_inline_count"
+        compiler-tc-walk-decl-sp-inline-count)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_mat_us"
+        (/ compiler-tc-walk-decl-sp-mat-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_mat_alloc_kb"
+        (/ compiler-tc-walk-decl-sp-mat-alloc 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_mat_live_kb"
+        (/ compiler-tc-walk-decl-sp-mat-live 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_sp_mat_count"
+        compiler-tc-walk-decl-sp-mat-count)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_registry_incremental"
+        compiler-tc-walk-splice-registry-incremental)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_registry_invalidated"
+        compiler-tc-walk-splice-registry-invalidated)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_deferred"
+        compiler-tc-walk-splice-ctfe-deferred)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_ctfe_cleared"
+        compiler-tc-walk-splice-ctfe-cleared)
+      (compiler-tc-macro-counter-profile-line
+        "walk_splice_prescan_resets"
+        compiler-tc-walk-splice-prescan-resets)
       (compiler-tc-reinfer-profile-emit)
       (compiler-tc-body-fact-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
@@ -69474,6 +69709,10 @@
                                               (macro-alias-derived-cache-reset!)
                                               (if defer-refresh?
                                                 (begin
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-decl-sample-note!
+                                                      4))
                                                   (set!
                                                     cur-top-env
                                                     (tc-env-with-cache-layer-over-explicit
@@ -69503,6 +69742,10 @@
                                                   [(ResultTcEnv.Ok
                                                       refreshed-top-env)
                                                     (begin
+                                                      (cfg
+                                                        compile-profile
+                                                        (compiler-tc-walk-decl-sample-note!
+                                                          5))
                                                       (set!
                                                         cur-top-env
                                                         (tc-env-with-cache-layer-over-explicit
@@ -69608,6 +69851,9 @@
                                                 _)
                                               true]))]
                                       (begin
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-decl-sample-note! 6))
                                         (if (and
                                           (macro-decls-registry-incremental-safe?
                                             expanded)
@@ -69620,15 +69866,40 @@
                                             expanded-paths
                                             splice-index
                                             cur-module-id)
-                                            unit
-                                            (macro-live-registries-invalidate!))
-                                          (macro-live-registries-invalidate!))
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-walk-splice-flag-note!
+                                                1)
+                                              unit)
+                                            (begin
+                                              (cfg
+                                                compile-profile
+                                                (compiler-tc-walk-splice-flag-note!
+                                                  2))
+                                              (macro-live-registries-invalidate!)))
+                                          (begin
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-walk-splice-flag-note!
+                                                2))
+                                            (macro-live-registries-invalidate!)))
                                         (if (and
                                           (macro-decls-reflection-relevant?
                                             expanded)
                                           (not defer-ctfe-extension))
-                                          (compiler-typecheck-ctfe-env-cache-clear!)
-                                          unit)
+                                          (begin
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-walk-splice-flag-note!
+                                                4))
+                                            (compiler-typecheck-ctfe-env-cache-clear!))
+                                          (cfg
+                                            compile-profile
+                                            (if defer-ctfe-extension
+                                              (compiler-tc-walk-splice-flag-note!
+                                                3)
+                                              unit)
+                                            unit))
                                         ;; Generated Module catalogs are usually
                                         ;; inert additions, but a full catalog can
                                         ;; legitimately introduce a defmacro. Its
@@ -69643,6 +69914,10 @@
                                         (if (macro-program-has-defmacro?
                                           expanded)
                                           (begin
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-walk-splice-flag-note!
+                                                5))
                                             (macro-live-prescan-reset!)
                                             (macro-live-prescan-ensure!
                                               next-decls)
@@ -69741,7 +70016,7 @@
                         (begin
                           (cfg
                             compile-profile
-                            (compiler-tc-walk-decl-sample-note! 3))
+                            (compiler-tc-walk-decl-sample-note! 7))
                           (let
                             ;; Keep the pools context's captured state current
                             ;; around the loader: it parses new content into the

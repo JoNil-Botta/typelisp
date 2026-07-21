@@ -66212,6 +66212,7 @@
   [decls : AstDeclList]
   [depth : i64]
   [scrut-ty : AstType]
+  [first-fire-index : i64]
   [arms : AstMatchArmList]) : ResultMacroArms
   (let
     [out : AstMatchArmList
@@ -66222,6 +66223,7 @@
       decls
       depth
       scrut-ty
+      first-fire-index
       (& arms)
       0
       (&mut out))
@@ -66234,6 +66236,7 @@
   [decls : AstDeclList]
   [depth : i64]
   [scrut-ty : AstType]
+  [first-fire-index : i64]
   [arms : (& arms AstMatchArmList)]
   [index : i64]
   [out : (&mut out AstMatchArmList)]) : ResultMacroCheck
@@ -66243,7 +66246,10 @@
       [(AstMatchArm.Arm pattern body-box)
         (let
           [body : AstExpr (ast-node-get body-box)]
-          [body-fires : bool (macro-expr-might-fire? body)]
+          [body-fires : bool
+            (if (<= index first-fire-index)
+              (= index first-fire-index)
+              (macro-expr-might-fire? body))]
           (if (not body-fires)
             (match (macro-expand-node-with-fire-decision
               ctx
@@ -66262,6 +66268,7 @@
                     decls
                     depth
                     scrut-ty
+                    first-fire-index
                     arms
                     (+ index 1)
                     out))]
@@ -66294,6 +66301,7 @@
                               decls
                               depth
                               scrut-ty
+                              first-fire-index
                               arms
                               (+ index 1)
                               out))]
@@ -66741,10 +66749,10 @@
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
-            [arms-fire : bool (macro-match-arms-might-fire? arms)]
+            [first-fire-index : i64 (macro-match-arms-first-fire-index arms)]
             (match (macro-expand-node ctx env decls depth scrut-box)
               [(ResultMacroExpr.Ok nscrut)
-                (if (not arms-fire)
+                (if (< first-fire-index 0)
                   (ResultMacroExpr.Ok (ast-expr-match nscrut arms))
                   (begin
                     (cfg compile-profile (compiler-tc-walk-scrut-tc-start!))
@@ -66763,6 +66771,7 @@
                               decls
                               depth
                               scrut-ty
+                              first-fire-index
                               arms)
                               [(ResultMacroArms.Ok narms)
                                 (ResultMacroExpr.Ok
@@ -68872,20 +68881,23 @@
             (macro-let-binding-list-might-fire-at? bindings (+ index 1))))])))
 
 (define (macro-match-arms-might-fire? [arms : AstMatchArmList]) : bool
-  (macro-match-arms-might-fire-at? (& arms) 0))
+  (not (= (macro-match-arms-first-fire-index arms) -1)))
 
-(define (macro-match-arms-might-fire-at?
+(define (macro-match-arms-first-fire-index [arms : AstMatchArmList]) : i64
+  (macro-match-arms-first-fire-index-at (& arms) 0))
+
+(define (macro-match-arms-first-fire-index-at
   [arms : (& arms AstMatchArmList)]
-  [index : i64]) : bool
+  [index : i64]) : i64
   (if (>= index (struct-get arms len))
-    false
+    -1
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm _ body-box)
         (let
           [body : AstExpr (ast-node-get body-box)]
-          (or
-            (macro-expr-might-fire? body)
-            (macro-match-arms-might-fire-at? arms (+ index 1))))])))
+          (if (macro-expr-might-fire? body)
+            index
+            (macro-match-arms-first-fire-index-at arms (+ index 1))))])))
 
 (define (macro-resource-binding-list-might-fire?
   [bindings : AstResourceBindingList]) : bool

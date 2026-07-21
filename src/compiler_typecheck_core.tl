@@ -69658,21 +69658,74 @@
     ;; Validate payload cleanup requirements without looking for a user body.
     (tc-check-cleanup-enum-variants ctx env enum-name name-id cleanup variants)))
 
-;: Check one function declaration's body against its signature.
+(define (tc-check-fn-params-from-types-at
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [types : (& types AstTypeList)]
+  [index : i64]
+  [out : (&mut out AstParamList)]) : unit
+  (if (>= index (ast-param-list-len params))
+    unit
+    (begin
+      (match (ast-param-list-get params index (ast-param-fallback))
+        [(AstParam.Param name _ mutable? consume?)
+          (ast-param-list-push
+            out
+            (AstParam.Param
+              name
+              (ast-type-strip-consuming-param
+                (tc-context-type-get
+                  ctx
+                  (ast-type-list-get types index (ast-type-id-fallback))))
+              mutable?
+              consume?))])
+      (tc-check-fn-params-from-types-at ctx params types (+ index 1) out))))
+
+(define (tc-check-fn-params-from-types
+  [ctx : TcContext]
+  [params : AstParamList]
+  [types : AstTypeList]) : AstParamList
+  (let
+    [out : AstParamList
+      (ast-param-list-with-capacity (ast-param-list-len (& params)))]
+    (begin
+      (tc-check-fn-params-from-types-at ctx (& params) (& types) 0 (&mut out))
+      out)))
+
+(define (tc-check-fn-registered-params
+  [ctx : TcContext]
+  [global-env : TcTypeEnv]
+  [name : i64]
+  [params : AstParamList]) : AstParamList
+  (match (tc-lookup-persistent-id global-env name)
+    [(ResultTcType.Ok (AstType.Func types _))
+      (let
+        [registered : AstTypeList (box-get types)]
+        (if (=
+          (ast-type-list-len (& registered))
+          (ast-param-list-len (& params)))
+          (tc-check-fn-params-from-types ctx params registered)
+          params))]
+    [_ params]))
+
+;: Check one function declaration's body against its registered signature.
 (define (tc-check-fn-decl-body
   [ctx : TcContext]
   [global-env : TcTypeEnv]
+  [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body-box : i64]) : ResultTcUnit
   (let
     [body : AstExpr (ast-node-get body-box)]
+    [registered-params : AstParamList
+      (tc-check-fn-registered-params ctx global-env name params)]
     [carrier : TcTypeEnvScopedCarrier
       (tc-type-env-scoped-carrier-bind-return-type
         (tc-type-env-scoped-carrier-bind-params
           ctx
           (tc-type-env-scoped-carrier-from-env global-env)
-          params)
+          registered-params)
         (tc-resolve-type ctx ret))]
     [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
     [scoped-save : TcTypeEnvScopedRuntimeSave
@@ -69684,12 +69737,12 @@
           (let
             [persistent : TcTypeEnv
               (tc-bind-return-type
-                (tc-bind-params ctx global-env params)
+                (tc-bind-params ctx global-env registered-params)
                 (tc-resolve-type ctx ret))]
             (if (tc-type-env-scoped-carrier-fn-entry-matches-persistent?
               carrier
               persistent
-              params)
+              registered-params)
               unit
               (io.panic
                 "typecheck: scoped carrier diverged from persistent function env")))
@@ -69718,14 +69771,18 @@
                   got
                   "return value")
                   [(ResultTcUnit.Ok)
-                    (match (tc-move-check-body-id ctx env params body-box)
+                    (match (tc-move-check-body-id
+                      ctx
+                      env
+                      registered-params
+                      body-box)
                       [(ResultTcUnit.Ok)
                         (let
                           [result : ResultTcUnit
                             (tc-borrow-check-body-id-with-ret
                               ctx
                               env
-                              params
+                              registered-params
                               ret
                               body-box)]
                           (begin
@@ -69810,6 +69867,7 @@
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
   [global-env : TcTypeEnv]
+  [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body-box : i64]) : ResultTcUnit
@@ -69822,7 +69880,7 @@
       (let
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultTcUnit
-          (tc-check-fn-decl-body ctx global-env params ret body-box)]
+          (tc-check-fn-decl-body ctx global-env name params ret body-box)]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
@@ -69965,12 +70023,13 @@
     ;; walk, so keep cache entries scoped to one checked declaration.
     (tc-nominal-owner-cache-reset!)
     (match decl
-      [(AstDecl.DefFn decl-meta _ params ret body-box _)
+      [(AstDecl.DefFn decl-meta name params ret body-box _)
         (match (tc-elide-function-signature params ret)
           [(ResultTcElidedSignature.Ok signature)
             (tc-check-fn-decl-scoped
               ctx
               global-env
+              name
               (struct-get signature params)
               (struct-get signature ret)
               body-box)]
@@ -70008,7 +70067,7 @@
           (match (tc-expr-id ctx global-env expr-box)
             [(ResultTcType.Ok _) ResultTcUnit.Ok]
             [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
-    [(AstDecl.DefFn decl-meta _ params ret body-box _)
+    [(AstDecl.DefFn decl-meta name params ret body-box _)
       ;; Unreachable via the dispatcher above; kept so a direct call can never
       ;; silently skip a function body check.
       (match (tc-elide-function-signature params ret)
@@ -70016,6 +70075,7 @@
           (tc-check-fn-decl-scoped
             ctx
             global-env
+            name
             (struct-get signature params)
             (struct-get signature ret)
             body-box)]
@@ -70656,60 +70716,6 @@
   [decl : AstDecl]) : ResultTcUnit
   (tc-check-decl ctx top-env decl))
 
-(define (tc-check-decl-logical-module-id
-  [ctx : TcContext]
-  [lookup-module-id : i64]
-  [decl : AstDecl]) : i64
-  (let
-    [handle : i64
-      (match decl
-        [(AstDecl.DefFn decl-meta name _ _ _ _)
-          (compiler-symbols-lookup-value-in-module-id-or
-            (tc-context-symbols ctx)
-            lookup-module-id
-            name
-            (compiler-symbols-missing-handle))]
-        [_ (compiler-symbols-missing-handle)])]
-    (if (compiler-symbols-handle-found? handle)
-      (compiler-symbols-owner-module-id-at-index-or
-        (tc-context-symbols ctx)
-        (compiler-symbol-handle-index handle)
-        lookup-module-id)
-      lookup-module-id)))
-
-(define (tc-check-decl-in-logical-module
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
-  [fallback-local-env : TcTypeEnv]
-  [fallback-global-env : TcTypeEnv]
-  [lookup-module : String]
-  [lookup-module-id : i64]
-  [decl : AstDecl]) : ResultTcUnit
-  (let
-    [module-id : i64
-      (tc-check-decl-logical-module-id ctx lookup-module-id decl)]
-    [module : String
-      (if (= module-id lookup-module-id)
-        lookup-module
-        (if (compiler-symbol-root-module-id? module-id)
-          ""
-          (intern-str module-id)))]
-    [decl-ctx : TcContext (tc-context-with-module-id ctx module module-id)]
-    (if (= module-id lookup-module-id)
-      (tc-check-decl-with-global-env
-        decl-ctx
-        fallback-local-env
-        fallback-global-env
-        decl)
-      (match (tc-module-local-env-id ctx top-env module module-id)
-        [(ResultTcEnv.Ok local-env)
-          (tc-check-decl-with-global-env
-            decl-ctx
-            local-env
-            (tc-hygiene-global-env local-env)
-            decl)]
-        [(ResultTcEnv.Err message) (ResultTcUnit.Err message)]))))
-
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -70863,20 +70869,19 @@
                       (set! cur-paths rest-paths)
                       (set! cur-summary (tc-summary-add-decl cur-summary decl)))
                     (let
+                      [decl-ctx : TcContext
+                        (tc-context-with-module-id ctx cur-module cur-module-id)]
                       [prev-path : String
                         (tc-unused-unsafe-set-current-path! decl-path)]
                       (begin
                         (cfg
                           compile-profile
                           (compiler-tc-decl-profile-start-section))
-                        (tc-context-capture-active-pools! ctx)
-                        (match (tc-check-decl-in-logical-module
-                          ctx
-                          top-env
+                        (tc-context-capture-active-pools! decl-ctx)
+                        (match (tc-check-decl-with-global-env
+                          decl-ctx
                           cur-local-env
                           cur-global-env
-                          cur-module
-                          cur-module-id
                           decl)
                           [(ResultTcUnit.Ok)
                             (begin

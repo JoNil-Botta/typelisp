@@ -2565,13 +2565,12 @@
                           decl
                           cur-index
                           (if (and
-                            ;; Functions from the same mixed path/dotted source
-                            ;; must be checked in the logical module that owns
-                            ;; their canonical nominal annotations. Keep generated
-                            ;; comptime declarations on their expansion owner.
+                            ;; Generated enum metadata used to sit on an outer
+                            ;; wrapper, so only source enums participated in
+                            ;; dotted path-owner reassignment. Preserve that
+                            ;; ownership boundary now that metadata is inline.
                             (not (ast-decl-comptime-only? decl))
                             (match decl
-                              [(AstDecl.DefFn decl-meta _ _ _ _ _) true]
                               [(AstDecl.DefEnum decl-meta _ _ _) true]
                               [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _)
                                 true]

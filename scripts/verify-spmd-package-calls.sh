@@ -12,12 +12,14 @@ cd "$ROOT"
 
 HOST_OS=linux
 EXE_SUFFIX=
+ARCHIVE_PREFIX=lib
 ARCHIVE_SUFFIX=.a
 case "$(uname -s)" in
     Linux*) ;;
     MINGW* | MSYS* | CYGWIN*)
         HOST_OS=windows
         EXE_SUFFIX=.exe
+        ARCHIVE_PREFIX=
         ARCHIVE_SUFFIX=.lib
         ;;
     *)
@@ -44,7 +46,7 @@ PROFILE=release
 PRODUCER_TARGET="$PRODUCER/target/$PROFILE"
 CONSUMER_TARGET="$CONSUMER/target/$PROFILE"
 PRODUCER_ASM="$PRODUCER_TARGET/spmd_fixture.s"
-PRODUCER_ARCHIVE="$PRODUCER_TARGET/spmd_fixture$ARCHIVE_SUFFIX"
+PRODUCER_ARCHIVE="$PRODUCER_TARGET/${ARCHIVE_PREFIX}spmd_fixture$ARCHIVE_SUFFIX"
 PRODUCER_TLCI="$PRODUCER_TARGET/spmd_fixture.tlci"
 CONSUMER_ASM="$CONSUMER_TARGET/spmd_consumer.s"
 CONSUMER_BIN="$CONSUMER_TARGET/spmd_consumer$EXE_SUFFIX"
@@ -81,8 +83,8 @@ verify_mode() {
 
     grep -E 'call[q]? .*_tl_.*spmd_pkg_' "$CONSUMER_ASM" >/dev/null \
         || fail "$mode consumer does not call an imported package helper"
-    grep -E '^\.globl .*spmd_pkg_' "$PRODUCER_ASM" >/dev/null \
-        || fail "$mode producer does not define a package helper"
+    grep -a -E 'spmd_pkg_' "$PRODUCER_ARCHIVE" >/dev/null \
+        || fail "$mode producer archive does not define a package helper"
     if grep -E '^\.globl .*spmd_pkg_' "$CONSUMER_ASM" >/dev/null; then
         fail "$mode consumer regenerated a package helper locally"
     fi

@@ -6,7 +6,14 @@ Parts of `stdlib/math.tl` are derived from musl libc revision
 
 The `f64-exp` and `f32-exp` implementations, coefficient bit patterns, and
 table data derive from musl's `exp.c`, `expf.c`, `exp_data.c`, and
-`exp2f_data.c` at that revision:
+`exp2f_data.c` at that revision.
+
+The `f64-log` and `f32-log` implementations, coefficient bit patterns, and
+table data derive from musl's `log.c`, `logf.c`, `log_data.c`, and
+`logf_data.c` at that revision. The binary64 port uses the documented non-FMA
+`chi`/`clo` reduction path.
+
+These Arm-authored files carry:
 
 > Copyright (c) 2017-2018, Arm Limited.
 >

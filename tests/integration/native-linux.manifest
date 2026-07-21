@@ -258,6 +258,7 @@ string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\
 core_string_length|tests/integration/core_string_length.tl|42|-|-|stdlib/string.tl
 stdlib_math_ieee|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl
 stdlib_math_exp|tests/integration/stdlib_math_exp.tl|0|-|-|stdlib/math.tl
+stdlib_math_log|tests/integration/stdlib_math_log.tl|0|-|-|stdlib/math.tl
 stdlib_math_trig|tests/integration/stdlib_math_trig.tl|0|-|-|stdlib/math.tl
 string_length|tests/integration/string_length.tl|5|-|-|stdlib/string.tl
 string_match|tests/integration/string_match.tl|42|-|-|-

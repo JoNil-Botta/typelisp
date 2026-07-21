@@ -70656,6 +70656,27 @@
   [decl : AstDecl]) : ResultTcUnit
   (tc-check-decl ctx top-env decl))
 
+(define (tc-check-decl-logical-module-id
+  [ctx : TcContext]
+  [lookup-module-id : i64]
+  [decl : AstDecl]) : i64
+  (let
+    [handle : i64
+      (match decl
+        [(AstDecl.DefFn decl-meta name _ _ _ _)
+          (compiler-symbols-lookup-value-in-module-id-or
+            (tc-context-symbols ctx)
+            lookup-module-id
+            name
+            (compiler-symbols-missing-handle))]
+        [_ (compiler-symbols-missing-handle)])]
+    (if (compiler-symbols-handle-found? handle)
+      (compiler-symbols-owner-module-id-at-index-or
+        (tc-context-symbols ctx)
+        (compiler-symbol-handle-index handle)
+        lookup-module-id)
+      lookup-module-id)))
+
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -70809,8 +70830,20 @@
                       (set! cur-paths rest-paths)
                       (set! cur-summary (tc-summary-add-decl cur-summary decl)))
                     (let
+                      [decl-module-id : i64
+                        (tc-check-decl-logical-module-id
+                          ctx
+                          cur-module-id
+                          decl)]
+                      [decl-module : String
+                        (if (compiler-symbol-root-module-id? decl-module-id)
+                          ""
+                          (intern-str decl-module-id))]
                       [decl-ctx : TcContext
-                        (tc-context-with-module-id ctx cur-module cur-module-id)]
+                        (tc-context-with-module-id
+                          ctx
+                          decl-module
+                          decl-module-id)]
                       [prev-path : String
                         (tc-unused-unsafe-set-current-path! decl-path)]
                       (begin

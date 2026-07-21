@@ -17,4 +17,6 @@
     [flat-choice : CanonicalImportChoice (canonical-import-make)]
     (+
       (struct-get qualified-value value)
-      (canonical-import-path-first-read flat-choice))))
+      (+
+        (canonical-import-path-first-read flat-choice)
+        (canonical-import-choice-countdown (& flat-choice) 0)))))

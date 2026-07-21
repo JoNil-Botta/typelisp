@@ -68834,11 +68834,19 @@
     ;; sets it. Extra roots (the compiler's own src root during self-compiles)
     ;; therefore must not disable the route -- the catalog identity check
     ;; still gates every dispatch to embedded-stdlib-defined macros.
+    ;; Windows: a scale-dependent memory corruption in sustained native
+    ;; dispatch is still open (three fixed layers deep: provenance arenas,
+    ;; mapping lifetime, guard-page probes; the residual fault surfaces at
+    ;; unrelated allocations after ~13k dispatches). Until it is pinned,
+    ;; Windows keeps the interpreted route -- identical behavior to main.
     (set!
       macro-expand-stdlib-tlci-route-active
-      (or
-        (compiler-load-session-state-embedded-stdlib-source-used? load-state)
-        (compiler-load-embedded-provenance-noted?)))
+      (cfg
+        windows
+        false
+        (or
+          (compiler-load-session-state-embedded-stdlib-source-used? load-state)
+          (compiler-load-embedded-provenance-noted?))))
     (cfg
       embedded-stdlib-tlci
       (if macro-expand-stdlib-tlci-route-active

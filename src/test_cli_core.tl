@@ -13,6 +13,7 @@
 (import (hashmap.hashmap i64 i64) as tltest_name_map)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
+(import cli_option_core as cli_option)
 (import "build_run_core.tl")
 (import "compiler_backend.tl")
 (import compiler_builtin_ids as cbi)
@@ -349,6 +350,83 @@
     (string.eq value "avx2")
     (string.eq value "avx512")))
 
+(define (tltest-parse-common-option
+  [kind : cli_option.CliCommonOptionKind]
+  [value : String]
+  [next-idx : i64]
+  [count : i64]
+  [source : String]
+  [has-source : bool]
+  [manifest-path : String]
+  [has-manifest : bool]
+  [target : String]
+  [mode : String]
+  [roots : cli_svec.Vec]
+  [has-opt-level : bool]
+  [opt-level : i64]
+  [test-mode : TestMode]
+  [batch-list : TestMaybeString]) : ResultTestConfig
+  (match kind
+    [(cli_option.CliCommonOptionKind.StdlibRoot)
+      (tltest-parse-options
+        next-idx
+        count
+        source
+        has-source
+        manifest-path
+        has-manifest
+        target
+        mode
+        (let
+          [next-roots : cli_svec.Vec roots]
+          (begin
+            (cli_svec.push (&mut next-roots) value)
+            next-roots))
+        has-opt-level
+        opt-level
+        test-mode
+        batch-list)]
+    [(cli_option.CliCommonOptionKind.Target)
+      (if (tltest-target-valid? value)
+        (tltest-parse-options
+          next-idx
+          count
+          source
+          has-source
+          manifest-path
+          has-manifest
+          value
+          mode
+          roots
+          has-opt-level
+          opt-level
+          test-mode
+          batch-list)
+        (ResultTestConfig.Err (tltest-unknown-target value)))]
+    [(cli_option.CliCommonOptionKind.OptLevel)
+      (if has-opt-level
+        (ResultTestConfig.Err "test: --opt-level was provided more than once")
+        (match (compiler-optimize-parse-level value)
+          [(ResultCompilerOptimizeLevel.Ok parsed-level)
+            (tltest-parse-options
+              next-idx
+              count
+              source
+              has-source
+              manifest-path
+              has-manifest
+              target
+              mode
+              roots
+              true
+              parsed-level
+              test-mode
+              batch-list)]
+          [(ResultCompilerOptimizeLevel.Err)
+            (ResultTestConfig.Err (tltest-invalid-opt-level value))]))]
+    [(cli_option.CliCommonOptionKind.Cfg)
+      (ResultTestConfig.Err "test: internal unsupported common option")]))
+
 (define (tltest-parse-options
   [idx : i64]
   [count : i64]
@@ -377,10 +455,19 @@
       batch-list)
     (let
       [current : String (io.arg idx)]
-      (cond
-        [(string.eq current "--check")
-          (tltest-parse-options
-            (+ idx 1)
+      (match (cli_option.cli-common-option-parse
+        current
+        idx
+        count
+        cli_option.cli-common-option-build)
+        [(cli_option.CliCommonOption.Missing kind)
+          (ResultTestConfig.Err
+            (cli_option.cli-common-option-missing-message "test" kind))]
+        [(cli_option.CliCommonOption.Value kind value next-idx)
+          (tltest-parse-common-option
+            kind
+            value
+            next-idx
             count
             source
             has-source
@@ -391,101 +478,93 @@
             roots
             has-opt-level
             opt-level
-            TestMode.Check
+            test-mode
             batch-list)]
-        [(string.eq current "--target")
-          (if (>= (+ idx 1) count)
-            (ResultTestConfig.Err "test: --target requires a value")
-            (let
-              [value : String (io.arg (+ idx 1))]
-              (if (tltest-target-valid? value)
-                (tltest-parse-options
-                  (+ idx 2)
-                  count
-                  source
-                  has-source
-                  manifest-path
-                  has-manifest
-                  value
-                  mode
-                  roots
-                  has-opt-level
-                  opt-level
-                  test-mode
-                  batch-list)
-                (ResultTestConfig.Err (tltest-unknown-target value)))))]
-        [(string.eq current "--backend-mode")
-          (if (>= (+ idx 1) count)
-            (ResultTestConfig.Err "test: --backend-mode requires a value")
-            (let
-              [value : String (io.arg (+ idx 1))]
-              (if (tltest-backend-mode-valid? value)
-                (if (string.eq value "scalar")
-                  (tltest-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    has-source
-                    manifest-path
-                    has-manifest
-                    target
-                    value
-                    roots
-                    has-opt-level
-                    opt-level
-                    test-mode
-                    batch-list)
-                  (ResultTestConfig.Err (tltest-unsupported-mode value)))
-                (ResultTestConfig.Err (tltest-unknown-mode value)))))]
-        [(string.eq current "--stdlib-root")
-          (if (>= (+ idx 1) count)
-            (ResultTestConfig.Err "test: --stdlib-root requires a value")
-            (tltest-parse-options
-              (+ idx 2)
-              count
-              source
-              has-source
-              manifest-path
-              has-manifest
-              target
-              mode
-              (let
-                [next-roots : cli_svec.Vec roots]
-                (begin
-                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
-                  next-roots))
-              has-opt-level
-              opt-level
-              test-mode
-              batch-list))]
-        [(string.eq current "--manifest-path")
-          (if (>= (+ idx 1) count)
-            (ResultTestConfig.Err "test: --manifest-path requires a value")
-            (if has-manifest
-              (ResultTestConfig.Err "test: duplicate --manifest-path")
+        [(cli_option.CliCommonOption.NotCommon)
+          (cond
+            [(string.eq current "--check")
               (tltest-parse-options
-                (+ idx 2)
+                (+ idx 1)
                 count
                 source
                 has-source
-                (io.arg (+ idx 1))
-                true
+                manifest-path
+                has-manifest
                 target
                 mode
                 roots
                 has-opt-level
                 opt-level
-                test-mode
-                batch-list)))]
-        [(string.eq current "--batch")
-          (if (>= (+ idx 1) count)
-            (ResultTestConfig.Err "test: --batch requires a value")
-            (match batch-list
-              [(TestMaybeString.Some _)
-                (ResultTestConfig.Err "test: duplicate --batch")]
-              [(TestMaybeString.No)
+                TestMode.Check
+                batch-list)]
+            [(string.eq current "--backend-mode")
+              (if (>= (+ idx 1) count)
+                (ResultTestConfig.Err "test: --backend-mode requires a value")
+                (let
+                  [value : String (io.arg (+ idx 1))]
+                  (if (tltest-backend-mode-valid? value)
+                    (if (string.eq value "scalar")
+                      (tltest-parse-options
+                        (+ idx 2)
+                        count
+                        source
+                        has-source
+                        manifest-path
+                        has-manifest
+                        target
+                        value
+                        roots
+                        has-opt-level
+                        opt-level
+                        test-mode
+                        batch-list)
+                      (ResultTestConfig.Err (tltest-unsupported-mode value)))
+                    (ResultTestConfig.Err (tltest-unknown-mode value)))))]
+            [(string.eq current "--manifest-path")
+              (if (>= (+ idx 1) count)
+                (ResultTestConfig.Err "test: --manifest-path requires a value")
+                (if has-manifest
+                  (ResultTestConfig.Err "test: duplicate --manifest-path")
+                  (tltest-parse-options
+                    (+ idx 2)
+                    count
+                    source
+                    has-source
+                    (io.arg (+ idx 1))
+                    true
+                    target
+                    mode
+                    roots
+                    has-opt-level
+                    opt-level
+                    test-mode
+                    batch-list)))]
+            [(string.eq current "--batch")
+              (if (>= (+ idx 1) count)
+                (ResultTestConfig.Err "test: --batch requires a value")
+                (match batch-list
+                  [(TestMaybeString.Some _)
+                    (ResultTestConfig.Err "test: duplicate --batch")]
+                  [(TestMaybeString.No)
+                    (tltest-parse-options
+                      (+ idx 2)
+                      count
+                      source
+                      has-source
+                      manifest-path
+                      has-manifest
+                      target
+                      mode
+                      roots
+                      has-opt-level
+                      opt-level
+                      test-mode
+                      (TestMaybeString.Some (io.arg (+ idx 1))))]))]
+            [(string.eq current "--prefix-cache-stats")
+              (begin
+                (set! tltest-prefix-cache-stats true)
                 (tltest-parse-options
-                  (+ idx 2)
+                  (+ idx 1)
                   count
                   source
                   has-source
@@ -497,68 +576,27 @@
                   has-opt-level
                   opt-level
                   test-mode
-                  (TestMaybeString.Some (io.arg (+ idx 1))))]))]
-        [(string.eq current "--opt-level")
-          (if (>= (+ idx 1) count)
-            (ResultTestConfig.Err "test: --opt-level requires a value")
-            (if has-opt-level
+                  batch-list))]
+            [(source-tool-flag? current)
               (ResultTestConfig.Err
-                "test: --opt-level was provided more than once")
-              (let
-                [value : String (io.arg (+ idx 1))]
-                (match (compiler-optimize-parse-level value)
-                  [(ResultCompilerOptimizeLevel.Ok parsed-level)
-                    (tltest-parse-options
-                      (+ idx 2)
-                      count
-                      source
-                      has-source
-                      manifest-path
-                      has-manifest
-                      target
-                      mode
-                      roots
-                      true
-                      parsed-level
-                      test-mode
-                      batch-list)]
-                  [(ResultCompilerOptimizeLevel.Err)
-                    (ResultTestConfig.Err (tltest-invalid-opt-level value))]))))]
-        [(string.eq current "--prefix-cache-stats")
-          (begin
-            (set! tltest-prefix-cache-stats true)
-            (tltest-parse-options
-              (+ idx 1)
-              count
-              source
-              has-source
-              manifest-path
-              has-manifest
-              target
-              mode
-              roots
-              has-opt-level
-              opt-level
-              test-mode
-              batch-list))]
-        [(source-tool-flag? current)
-          (ResultTestConfig.Err (string.append "test: unknown flag " current))]
-        [has-source (ResultTestConfig.Err "test: accepts only one source file")]
-        [else
-          (tltest-parse-options
-            (+ idx 1)
-            count
-            current
-            true
-            manifest-path
-            has-manifest
-            target
-            mode
-            roots
-            has-opt-level
-            opt-level
-            test-mode
-            batch-list)]))))
+                (string.append "test: unknown flag " current))]
+            [has-source
+              (ResultTestConfig.Err "test: accepts only one source file")]
+            [else
+              (tltest-parse-options
+                (+ idx 1)
+                count
+                current
+                true
+                manifest-path
+                has-manifest
+                target
+                mode
+                roots
+                has-opt-level
+                opt-level
+                test-mode
+                batch-list)])]))))
 
 ;; Parse the `test` config from arguments starting at `start` (the index of the
 ;; first argument after any subcommand name). `count` is `(arg-count)`.

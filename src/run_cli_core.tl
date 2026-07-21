@@ -7,6 +7,7 @@
 (import stdlib.process)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
+(import cli_option_core as cli_option)
 (import "build_run_core.tl")
 (import "build_cli_core.tl")
 (import "doc_test.tl")
@@ -105,27 +106,49 @@
         link-inputs))
     (let
       [current : String (io.arg idx)]
-      (cond
-        [(string.eq current "--")
-          (ResultRunCliConfig.Ok
-            (RunCliConfig.Config
-              source
-              target
-              mode
-              stdlib-roots
-              cfgs
-              (source-tool-args-from-argv (+ idx 1) count runtime-args)
-              opt-level
-              link-inputs))]
-        [(string.eq current "--target")
-          (if (>= (+ idx 1) count)
-            (ResultRunCliConfig.Err "run: --target requires a value")
-            (let
-              [value : String (io.arg (+ idx 1))]
+      (match (cli_option.cli-common-option-parse
+        current
+        idx
+        count
+        cli_option.cli-common-option-all)
+        [(cli_option.CliCommonOption.Missing kind)
+          (ResultRunCliConfig.Err
+            (cli_option.cli-common-option-missing-message "run" kind))]
+        [(cli_option.CliCommonOption.Value kind value next-idx)
+          (match kind
+            [(cli_option.CliCommonOptionKind.StdlibRoot)
+              (run-cli-parse-options
+                next-idx
+                count
+                source
+                target
+                mode
+                (let
+                  [next-roots : cli_svec.Vec stdlib-roots]
+                  (begin
+                    (cli_svec.push (&mut next-roots) value)
+                    next-roots))
+                cfgs
+                runtime-args
+                opt-level
+                link-inputs)]
+            [(cli_option.CliCommonOptionKind.Cfg)
+              (run-cli-parse-options
+                next-idx
+                count
+                source
+                target
+                mode
+                stdlib-roots
+                (source-tool-cfg-names-add cfgs value)
+                runtime-args
+                opt-level
+                link-inputs)]
+            [(cli_option.CliCommonOptionKind.Target)
               (match (source-tool-target value)
                 [(ResultSourceToolTarget.Ok parsed-target)
                   (run-cli-parse-options
-                    (+ idx 2)
+                    next-idx
                     count
                     source
                     parsed-target
@@ -136,35 +159,11 @@
                     opt-level
                     link-inputs)]
                 [(ResultSourceToolTarget.Err _)
-                  (ResultRunCliConfig.Err (run-cli-unknown-target value))])))]
-        [(string.eq current "--backend-mode")
-          (if (>= (+ idx 1) count)
-            (ResultRunCliConfig.Err "run: --backend-mode requires a value")
-            (let
-              [value : String (io.arg (+ idx 1))]
-              (match (source-tool-backend-mode "run" value)
-                [(ResultSourceToolBackendMode.Ok parsed-mode)
-                  (run-cli-parse-options
-                    (+ idx 2)
-                    count
-                    source
-                    target
-                    parsed-mode
-                    stdlib-roots
-                    cfgs
-                    runtime-args
-                    opt-level
-                    link-inputs)]
-                [(ResultSourceToolBackendMode.Err message)
-                  (ResultRunCliConfig.Err message)])))]
-        [(string.eq current "--opt-level")
-          (if (>= (+ idx 1) count)
-            (ResultRunCliConfig.Err "run: --opt-level requires a value")
-            (let
-              [value : String (io.arg (+ idx 1))]
+                  (ResultRunCliConfig.Err (run-cli-unknown-target value))])]
+            [(cli_option.CliCommonOptionKind.OptLevel)
               (if (source-tool-opt-level-valid? value)
                 (run-cli-parse-options
-                  (+ idx 2)
+                  next-idx
                   count
                   source
                   target
@@ -174,96 +173,99 @@
                   runtime-args
                   (string.>int value)
                   link-inputs)
-                (ResultRunCliConfig.Err (run-cli-unknown-opt-level value)))))]
-        [(string.eq current "--stdlib-root")
-          (if (>= (+ idx 1) count)
-            (ResultRunCliConfig.Err "run: --stdlib-root requires a value")
-            (run-cli-parse-options
-              (+ idx 2)
-              count
-              source
-              target
-              mode
-              (let
-                [next-roots : cli_svec.Vec stdlib-roots]
-                (begin
-                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
-                  next-roots))
-              cfgs
-              runtime-args
-              opt-level
-              link-inputs))]
-        [(string.eq current "--cfg")
-          (if (>= (+ idx 1) count)
-            (ResultRunCliConfig.Err "run: --cfg requires a value")
-            (run-cli-parse-options
-              (+ idx 2)
-              count
-              source
-              target
-              mode
-              stdlib-roots
-              (source-tool-cfg-names-add cfgs (io.arg (+ idx 1)))
-              runtime-args
-              opt-level
-              link-inputs))]
-        [(string.eq current "--link-lib")
-          (if (>= (+ idx 1) count)
-            (ResultRunCliConfig.Err "run: --link-lib requires a value")
-            (run-cli-parse-options
-              (+ idx 2)
-              count
-              source
-              target
-              mode
-              stdlib-roots
-              cfgs
-              runtime-args
-              opt-level
-              (source-tool-link-inputs-add-lib link-inputs (io.arg (+ idx 1)))))]
-        [(string.eq current "--link-search")
-          (if (>= (+ idx 1) count)
-            (ResultRunCliConfig.Err "run: --link-search requires a value")
-            (run-cli-parse-options
-              (+ idx 2)
-              count
-              source
-              target
-              mode
-              stdlib-roots
-              cfgs
-              runtime-args
-              opt-level
-              (source-tool-link-inputs-add-search-dir
-                link-inputs
-                (io.arg (+ idx 1)))))]
-        [(string.eq current "--link-arg")
-          (if (>= (+ idx 1) count)
-            (ResultRunCliConfig.Err "run: --link-arg requires a value")
-            (run-cli-parse-options
-              (+ idx 2)
-              count
-              source
-              target
-              mode
-              stdlib-roots
-              cfgs
-              runtime-args
-              opt-level
-              (source-tool-link-inputs-add-raw-arg
-                link-inputs
-                (io.arg (+ idx 1)))))]
-        [else
-          (ResultRunCliConfig.Ok
-            (RunCliConfig.Config
-              source
-              target
-              mode
-              stdlib-roots
-              cfgs
-              (source-tool-args-from-argv idx count runtime-args)
-              opt-level
-              link-inputs))]))))
+                (ResultRunCliConfig.Err (run-cli-unknown-opt-level value)))])]
+        [(cli_option.CliCommonOption.NotCommon)
+          (cond
+            [(string.eq current "--")
+              (ResultRunCliConfig.Ok
+                (RunCliConfig.Config
+                  source
+                  target
+                  mode
+                  stdlib-roots
+                  cfgs
+                  (source-tool-args-from-argv (+ idx 1) count runtime-args)
+                  opt-level
+                  link-inputs))]
+            [(string.eq current "--backend-mode")
+              (if (>= (+ idx 1) count)
+                (ResultRunCliConfig.Err "run: --backend-mode requires a value")
+                (let
+                  [value : String (io.arg (+ idx 1))]
+                  (match (source-tool-backend-mode "run" value)
+                    [(ResultSourceToolBackendMode.Ok parsed-mode)
+                      (run-cli-parse-options
+                        (+ idx 2)
+                        count
+                        source
+                        target
+                        parsed-mode
+                        stdlib-roots
+                        cfgs
+                        runtime-args
+                        opt-level
+                        link-inputs)]
+                    [(ResultSourceToolBackendMode.Err message)
+                      (ResultRunCliConfig.Err message)])))]
+            [(string.eq current "--link-lib")
+              (if (>= (+ idx 1) count)
+                (ResultRunCliConfig.Err "run: --link-lib requires a value")
+                (run-cli-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  target
+                  mode
+                  stdlib-roots
+                  cfgs
+                  runtime-args
+                  opt-level
+                  (source-tool-link-inputs-add-lib
+                    link-inputs
+                    (io.arg (+ idx 1)))))]
+            [(string.eq current "--link-search")
+              (if (>= (+ idx 1) count)
+                (ResultRunCliConfig.Err "run: --link-search requires a value")
+                (run-cli-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  target
+                  mode
+                  stdlib-roots
+                  cfgs
+                  runtime-args
+                  opt-level
+                  (source-tool-link-inputs-add-search-dir
+                    link-inputs
+                    (io.arg (+ idx 1)))))]
+            [(string.eq current "--link-arg")
+              (if (>= (+ idx 1) count)
+                (ResultRunCliConfig.Err "run: --link-arg requires a value")
+                (run-cli-parse-options
+                  (+ idx 2)
+                  count
+                  source
+                  target
+                  mode
+                  stdlib-roots
+                  cfgs
+                  runtime-args
+                  opt-level
+                  (source-tool-link-inputs-add-raw-arg
+                    link-inputs
+                    (io.arg (+ idx 1)))))]
+            [else
+              (ResultRunCliConfig.Ok
+                (RunCliConfig.Config
+                  source
+                  target
+                  mode
+                  stdlib-roots
+                  cfgs
+                  (source-tool-args-from-argv idx count runtime-args)
+                  opt-level
+                  link-inputs))])]))))
 
 (define (run-cli-config-from [idx : i64] [count : i64]) : ResultRunCliConfig
   (if (or (<= count idx) (source-tool-flag? (io.arg idx)))

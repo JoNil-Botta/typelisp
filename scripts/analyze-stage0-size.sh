@@ -357,6 +357,7 @@ collecting {
     echo "embedded stdlib build-input declaration list is empty" >&2
     exit 1
 }
+expected_payload_streams=$(wc -l < "$payload_paths" | tr -d ' ')
 
 # Recover each bounded static LZSS stream directly from the linked binary.
 # This keeps the report useful now that no base64/generated source exists.
@@ -447,8 +448,8 @@ payload_streams=$1
 compressed_payload_bytes=$2
 static_payload_bytes=$3
 encoded_payload_bytes=0
-[ "$payload_streams" -eq 45 ] || {
-    echo "expected 45 embedded stdlib payloads in binary, found $payload_streams" >&2
+[ "$payload_streams" -eq "$expected_payload_streams" ] || {
+    echo "expected $expected_payload_streams embedded stdlib payloads in binary, found $payload_streams" >&2
     exit 1
 }
 

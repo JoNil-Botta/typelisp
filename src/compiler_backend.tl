@@ -650,9 +650,6 @@
 
 (define compiler-backend-current-mode : CompilerBackendMode
   (CompilerBackendMode.Scalar))
-(define compiler-backend-win-owner-barrier : bool
-  false)
-
 (define (compiler-backend-set-current-mode! [mode : CompilerBackendMode]) : unit
   (set! compiler-backend-current-mode mode))
 
@@ -59509,20 +59506,12 @@ tl_comptime_host_invoke_set:
 (define (compiler-backend-assembly-stream-process-string! [raw-asm : String]) : unit
   (when
     compiler-backend-assembly-stream-active
-    (let
-      [with-owner-barrier : String
-        (if compiler-backend-win-owner-barrier
-          (string.replace
-            raw-asm
-            ", %r12\n"
-            ", %r12\n# tl-win-r12-owner-barrier\n")
-          raw-asm)]
-      (begin
+    (begin
         (set!
           compiler-backend-assembly-stream-batch
           (text_buf.append
             compiler-backend-assembly-stream-batch
-            with-owner-barrier))
+            raw-asm))
         (set!
           compiler-backend-assembly-stream-batch-count
           (+ compiler-backend-assembly-stream-batch-count 1))
@@ -59530,7 +59519,7 @@ tl_comptime_host_invoke_set:
           (>=
             compiler-backend-assembly-stream-batch-count
             compiler-backend-assembly-stream-batch-function-limit)
-          (compiler-backend-assembly-stream-flush-batch!))))))
+          (compiler-backend-assembly-stream-flush-batch!)))))
 
 (define (compiler-backend-assembly-stream-process-buffer!
   [raw : text_buf.TextBuf]) : unit
@@ -59714,9 +59703,6 @@ tl_comptime_host_invoke_set:
     [raw-arena : arena.Arena (arena.make)]
     [peephole-arena : arena.Arena (arena.make)]
     (begin
-      (set!
-        compiler-backend-win-owner-barrier
-        (compiler-backend-target-windows? target))
       (unsafe
         (arena.set! raw-arena))
       (let

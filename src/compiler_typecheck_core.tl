@@ -62395,29 +62395,39 @@
       arg)
       [(ResultMacroTypeArg.Ok _) ResultMacroCheck.Ok]
       [(ResultMacroTypeArg.Err diag) (ResultMacroCheck.Err diag)])
-    (let
-      [resolved-expected : AstType
-        (macro-resolve-signature-type-id
-          ctx
-          fallback-module
-          fallback-module-id
-          expected)]
-      (cond
-        [(tc-macro-expr-clause-type? resolved-expected)
-          (match (macro-expr-clause-from-arg arg)
-            [(ResultMacroClause.Ok _) ResultMacroCheck.Ok]
-            [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)])]
-        [(tc-macro-expr-binding-clause-type? resolved-expected)
-          (match (macro-expr-binding-clause-from-arg arg)
-            [(ResultMacroBindingClause.Ok _) ResultMacroCheck.Ok]
-            [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)])]
-        [(macro-operand-bracket-clause? arg)
-          (ResultMacroCheck.Err
-            (box
-              (ctfe-diagnostic-at-expr
-                arg
-                (macro-clause-operand-mismatch-message resolved-expected))))]
-        [else (macro-check-ordinary-operand ctx env resolved-expected arg)]))))
+    (macro-check-operand-with-resolved
+      ctx
+      env
+      (macro-resolve-signature-type-id
+        ctx
+        fallback-module
+        fallback-module-id
+        expected)
+      arg)))
+
+;; Operand check for a param whose signature type is already resolved;
+;; callers that resolve once for several checks use this entry directly.
+(define (macro-check-operand-with-resolved
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [resolved-expected : AstType]
+  [arg : AstExpr]) : ResultMacroCheck
+  (cond
+    [(tc-macro-expr-clause-type? resolved-expected)
+      (match (macro-expr-clause-from-arg arg)
+        [(ResultMacroClause.Ok _) ResultMacroCheck.Ok]
+        [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)])]
+    [(tc-macro-expr-binding-clause-type? resolved-expected)
+      (match (macro-expr-binding-clause-from-arg arg)
+        [(ResultMacroBindingClause.Ok _) ResultMacroCheck.Ok]
+        [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)])]
+    [(macro-operand-bracket-clause? arg)
+      (ResultMacroCheck.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            arg
+            (macro-clause-operand-mismatch-message resolved-expected))))]
+    [else (macro-check-ordinary-operand ctx env resolved-expected arg)]))
 
 (define (macro-check-variadic-operands
   [ctx : TcContext]
@@ -62426,14 +62436,27 @@
   [fallback-module-id : i64]
   [expected : AstType]
   [args : AstExprList]) : ResultMacroCheck
-  (macro-check-variadic-operands-at
-    ctx
-    env
-    fallback-module
-    fallback-module-id
-    expected
-    (& args)
-    0))
+  (if (tc-macro-type-param-kind? expected)
+    (macro-check-variadic-operands-at
+      ctx
+      env
+      fallback-module
+      fallback-module-id
+      expected
+      (& args)
+      0)
+    ;; Resolve the shared signature type once for the whole operand list
+    ;; instead of once per operand.
+    (macro-check-variadic-operands-resolved-at
+      ctx
+      env
+      (macro-resolve-signature-type-id
+        ctx
+        fallback-module
+        fallback-module-id
+        expected)
+      (& args)
+      0)))
 
 (define (macro-check-variadic-operands-at
   [ctx : TcContext]
@@ -62461,6 +62484,26 @@
             fallback-module
             fallback-module-id
             expected
+            args
+            (+ index 1))]
+        [(ResultMacroCheck.Err diag) (ResultMacroCheck.Err diag)]))))
+
+(define (macro-check-variadic-operands-resolved-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [resolved-expected : AstType]
+  [args : (& args AstExprList)]
+  [index : i64]) : ResultMacroCheck
+  (if (>= index (struct-get args len))
+    ResultMacroCheck.Ok
+    (let
+      [head : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
+      (match (macro-check-operand-with-resolved ctx env resolved-expected head)
+        [(ResultMacroCheck.Ok)
+          (macro-check-variadic-operands-resolved-at
+            ctx
+            env
+            resolved-expected
             args
             (+ index 1))]
         [(ResultMacroCheck.Err diag) (ResultMacroCheck.Err diag)]))))
@@ -62663,26 +62706,10 @@
               (CompilerCtfeValue.String module module-id)
               (AstType.String)))]
         [(ResultMacroModuleArg.Err diag) (ResultMacroEnv.Err diag)])]
-    [(macro-param-expr-clause? ctx fallback-module fallback-module-id ty)
-      (match (macro-expr-clause-from-arg arg-expr)
-        [(ResultMacroClause.Ok clause)
-          (ResultMacroEnv.Ok
-            (ctfe-env-extend-id env name (CompilerCtfeValue.ExprClause clause)))]
-        [(ResultMacroClause.Err diag) (ResultMacroEnv.Err diag)])]
-    [(macro-param-expr-binding-clause?
-        ctx
-        fallback-module
-        fallback-module-id
-        ty)
-      (match (macro-expr-binding-clause-from-arg arg-expr)
-        [(ResultMacroBindingClause.Ok clause)
-          (ResultMacroEnv.Ok
-            (ctfe-env-extend-id
-              env
-              name
-              (CompilerCtfeValue.ExprBindingClause clause)))]
-        [(ResultMacroBindingClause.Err diag) (ResultMacroEnv.Err diag)])]
     [else
+      ;; Every remaining param kind needs the resolved signature type;
+      ;; resolve it once instead of once per kind predicate plus once per
+      ;; operand check.
       (let
         [resolved-expected : AstType
           (macro-resolve-signature-type-id
@@ -62690,31 +62717,49 @@
             fallback-module
             fallback-module-id
             ty)]
-        (match (macro-check-operand
-          ctx
-          type-env
-          fallback-module
-          fallback-module-id
-          ty
-          arg-expr)
-          [(ResultMacroCheck.Ok)
-            (ResultMacroEnv.Ok
-              (ctfe-env-extend-id
-                env
-                name
-                (CompilerCtfeValue.Expr
-                  (if (and
-                    capture-expr-types
-                    (tc-type-eq resolved-expected (AstType.Expr)))
-                    (macro-captured-expr-node ctx arg-id arg-expr)
-                    arg-id)
-                  (macro-captured-expr-produced-type
-                    ctx
-                    type-env
-                    resolved-expected
-                    capture-expr-types
-                    arg-expr))))]
-          [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)]))]))
+        (cond
+          [(tc-macro-expr-clause-type? resolved-expected)
+            (match (macro-expr-clause-from-arg arg-expr)
+              [(ResultMacroClause.Ok clause)
+                (ResultMacroEnv.Ok
+                  (ctfe-env-extend-id
+                    env
+                    name
+                    (CompilerCtfeValue.ExprClause clause)))]
+              [(ResultMacroClause.Err diag) (ResultMacroEnv.Err diag)])]
+          [(tc-macro-expr-binding-clause-type? resolved-expected)
+            (match (macro-expr-binding-clause-from-arg arg-expr)
+              [(ResultMacroBindingClause.Ok clause)
+                (ResultMacroEnv.Ok
+                  (ctfe-env-extend-id
+                    env
+                    name
+                    (CompilerCtfeValue.ExprBindingClause clause)))]
+              [(ResultMacroBindingClause.Err diag) (ResultMacroEnv.Err diag)])]
+          [else
+            (match (macro-check-operand-with-resolved
+              ctx
+              type-env
+              resolved-expected
+              arg-expr)
+              [(ResultMacroCheck.Ok)
+                (ResultMacroEnv.Ok
+                  (ctfe-env-extend-id
+                    env
+                    name
+                    (CompilerCtfeValue.Expr
+                      (if (and
+                        capture-expr-types
+                        (tc-type-eq resolved-expected (AstType.Expr)))
+                        (macro-captured-expr-node ctx arg-id arg-expr)
+                        arg-id)
+                      (macro-captured-expr-produced-type
+                        ctx
+                        type-env
+                        resolved-expected
+                        capture-expr-types
+                        arg-expr))))]
+              [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))]))
 
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
 ;; A trailing variadic parameter collects the remaining operands. A non-final

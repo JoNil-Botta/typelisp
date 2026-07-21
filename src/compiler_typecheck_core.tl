@@ -64977,14 +64977,16 @@
   [decls : AstDeclList]
   [depth : i64]
   [expr : AstExpr]) : ResultMacroExpr
-  (if (or
-    (not (macro-expr-might-fire? expr))
-    (< (macro-expand-depth-limit) depth))
-    (if (not (macro-expr-might-fire? expr))
-      (ResultMacroExpr.Ok (ast-node-push expr))
-      (ResultMacroExpr.Err
-        (box
-          (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit"))))
+  ;; One subtree scan per visit: the no-fire majority used to pay the scan
+  ;; twice (once in the branch condition, once to pick the no-fire arm).
+  (let
+    [fires : bool (macro-expr-might-fire? expr)]
+    (if (or (not fires) (< (macro-expand-depth-limit) depth))
+      (if (not fires)
+        (ResultMacroExpr.Ok (ast-node-push expr))
+        (ResultMacroExpr.Err
+          (box
+            (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit"))))
     (match expr
       [(AstExpr.Spanned inner-box span)
         (let
@@ -65519,7 +65521,7 @@
           [(ResultMacroExprList.Ok nargs)
             (ResultMacroExpr.Ok (ast-expr-syscall nargs))]
           [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [_ (ResultMacroExpr.Ok (ast-node-push expr))])))
+      [_ (ResultMacroExpr.Ok (ast-node-push expr))]))))
 
 (define (macro-expand-module-call-position
   [ctx : TcContext]

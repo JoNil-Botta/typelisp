@@ -30,7 +30,7 @@
   : bool
   (> x 5))
 
-(define (constant [x : i64] [value : i64])
+(define (constant [_x : i64] [value : i64])
   (:spmd-callable
     (specialization
       (lanes 8)
@@ -40,7 +40,7 @@
   : i64
   value)
 
-(define (sink [x : i64])
+(define (sink [_x : i64])
   (:spmd-callable
     (specialization
       (lanes 8)

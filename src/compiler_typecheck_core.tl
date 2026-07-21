@@ -46799,7 +46799,7 @@
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding name init-box _ move-aware?)
         (let
-          [init : AstExpr (ast-node-get init-box)]
+          [_init : AstExpr (ast-node-get init-box)]
           (match (tc-move-check-expr-id
             ctx
             env

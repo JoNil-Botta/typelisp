@@ -68839,14 +68839,24 @@
     ;; mapping lifetime, guard-page probes; the residual fault surfaces at
     ;; unrelated allocations after ~13k dispatches). Until it is pinned,
     ;; Windows keeps the interpreted route -- identical behavior to main.
+    ;; Native dispatch is opt-in (--cfg tlci-native-route) until its
+    ;; environmental sensitivity is closed out: parity holds everywhere it
+    ;; runs, but sustained dispatch has shown machine-dependent instability
+    ;; (#5460 on Windows; CI-runner-only failures on Linux) that local
+    ;; batteries cannot reproduce. The routing contracts build with the cfg
+    ;; so the machinery stays continuously verified.
     (set!
       macro-expand-stdlib-tlci-route-active
       (cfg
-        windows
-        false
-        (or
-          (compiler-load-session-state-embedded-stdlib-source-used? load-state)
-          (compiler-load-embedded-provenance-noted?))))
+        tlci-native-route
+        (cfg
+          windows
+          false
+          (or
+            (compiler-load-session-state-embedded-stdlib-source-used?
+              load-state)
+            (compiler-load-embedded-provenance-noted?)))
+        false))
     (cfg
       embedded-stdlib-tlci
       (if macro-expand-stdlib-tlci-route-active

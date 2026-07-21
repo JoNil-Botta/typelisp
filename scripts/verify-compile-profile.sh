@@ -330,6 +330,7 @@ if ! "$COMPILER" compile src/main.tl \
     --stdlib-root src \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
+    --cfg tlci-native-route \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI compile failed"

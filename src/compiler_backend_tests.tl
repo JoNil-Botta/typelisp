@@ -6108,6 +6108,32 @@
     [got : String (compiler-backend-peephole-asm input)]
     (and (string.eq direct "    movq %r8, %r10") (string.eq got want))))
 
+(define (compiler-backend-peephole-vector-gp-owners-ok?) : bool
+  (let
+    [input : String
+      "    movq 16(%rsp), %r9
+    vmovdqu (%r13,%r9,8), %ymm7
+    movq 16(%rsp), %r9
+    vpaddq (%r15,%r9,8), %ymm7, %ymm7
+    movq 16(%rsp), %r9
+    vmovdqu %ymm7, (%rbx,%r9,8)
+    movq 16(%rsp), %r9
+    vpmovmskb %ymm7, %r9
+    movq 16(%rsp), %r9
+"]
+    [want : String
+      "    movq 16(%rsp), %r9
+    vmovdqu (%r13,%r9,8), %ymm7
+    vpaddq (%r15,%r9,8), %ymm7, %ymm7
+    vmovdqu %ymm7, (%rbx,%r9,8)
+    movq 16(%rsp), %r9
+    vpmovmskb %ymm7, %r9
+    movq 16(%rsp), %r9
+"]
+    [_carry-safe-reset : unit (compiler-backend-peephole-carry-safe-reset!)]
+    [got : String (compiler-backend-peephole-asm input)]
+    (string.eq got want)))
+
 (define (compiler-backend-deadstore-sweep-win64-rbp-frame-ok?) : bool
   (let
     [input : String
@@ -7195,6 +7221,7 @@
     (compiler-backend-win64-bounds-index-scratch-ok?)
     (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
+    (compiler-backend-peephole-vector-gp-owners-ok?)
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-chunked-peephole-equivalent?)
@@ -9593,7 +9620,31 @@
       (CompilerBackendMode.Avx512)
       (compiler-backend-avx512-i64-lane-id-label)
       "    .balign 64\n"
-      "    vmovdqa64")))
+      "    vmovdqa64")
+    (match (lower-compiler-source-with-mode
+      (compiler-backend-lane-id-rodata-source)
+      (CompilerLowerMode.Avx2))
+      [(ResultCompilerLower.Ok program spans)
+        (match (compiler-backend-emit-program-target-with-mode
+          program
+          (CompilerBackendTarget.Linux)
+          (CompilerBackendMode.Avx2)
+          spans
+          true)
+          [(ResultCompilerBackend.Ok asm)
+            (let
+              [body : String
+                (compiler-backend-asm-function-body asm "_tl_fill")]
+              [loop : String (compiler-backend-avx2-loop-body body)]
+              (and
+                (not (string.eq loop ""))
+                (=
+                  (compiler-backend-string-count
+                    loop
+                    (compiler-backend-avx2-i64-lane-id-label))
+                  0)))]
+          [(ResultCompilerBackend.Err _) false])]
+      [(ResultCompilerLower.Err _) false])))
 
 (define (compiler-backend-avx2-map-asm-contains?
   [elem : String]
@@ -9650,20 +9701,23 @@
         spans
         true)
         [(ResultCompilerBackend.Ok asm)
-          (and
-            (backend-and8
-              (compiler-backend-string-contains? asm "    vzeroupper\n")
-              (compiler-backend-string-contains? asm move)
-              (compiler-backend-string-contains? asm op)
-              (compiler-backend-string-contains? asm broadcast)
-              (compiler-backend-string-contains? asm "%ymm")
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  "vector/mask IR emission is not implemented"))
-              true
-              true)
-            true)]
+          (let
+            [body : String (compiler-backend-asm-function-body asm "_tl_fill")]
+            [loop : String (compiler-backend-avx2-loop-body body)]
+            (and
+              (backend-and8
+                (compiler-backend-string-contains? asm "    vzeroupper\n")
+                (compiler-backend-string-contains? asm move)
+                (compiler-backend-string-contains? asm op)
+                (compiler-backend-string-contains? asm broadcast)
+                (compiler-backend-string-contains? asm "%ymm")
+                (not
+                  (compiler-backend-string-contains?
+                    asm
+                    "vector/mask IR emission is not implemented"))
+                (= (compiler-backend-string-count loop broadcast) 0)
+                true)
+              true))]
         [(ResultCompilerBackend.Err _) false])]
     [(ResultCompilerLower.Err _) false]))
 
@@ -9681,9 +9735,7 @@
         [(ResultCompilerBackend.Ok asm)
           (and
             (backend-and8
-              (compiler-backend-string-contains?
-                asm
-                "    vpbroadcastq 48(%rsp), ")
+              (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "    vpmuludq ")
               (compiler-backend-string-contains? asm "    vpsllq $32, ")
               (compiler-backend-string-contains? asm "    vpaddq ")
@@ -9698,52 +9750,50 @@
         [(ResultCompilerBackend.Err _) false])]
     [(ResultCompilerLower.Err _) false]))
 
-;; FPO (M-G3) is applied at backend emission for ALL modes (incl. AVX2/512),
-;; so the spilled uniform-scalar broadcast source is rsp-relative now: the map
-;; fixture's INTEGER scalar spills to 40(%rsp), its FLOAT scalar (f64/f32, passed
-;; in xmm) to 48(%rsp), and the zip fixture's scalar to 48(%rsp).
+;; The uniform value may move when preheader caches change register pressure;
+;; these checks care that its broadcast is emitted, not which spill owns it.
 (define (compiler-backend-avx2-uniform-vector-map-ok?) : bool
   (and
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i64"
       "    vmovdqu "
       "    vpaddq "
-      "    vpbroadcastq 40(%rsp), ")
+      "    vpbroadcastq ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i32"
       "    vmovdqu "
       "    vpaddd "
-      "    vpbroadcastd 40(%rsp), ")
+      "    vpbroadcastd ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i16"
       "    vmovdqu "
       "    vpaddw "
-      "    vpbroadcastw 40(%rsp), ")
+      "    vpbroadcastw ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "u16"
       "    vmovdqu "
       "    vpaddw "
-      "    vpbroadcastw 40(%rsp), ")
+      "    vpbroadcastw ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "f64"
       "    vmovupd "
       "    vaddpd "
-      "    vbroadcastsd 48(%rsp), ")
+      "    vbroadcastsd ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "f32"
       "    vmovups "
       "    vaddps "
-      "    vbroadcastss 48(%rsp), ")
+      "    vbroadcastss ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "i8"
       "    vmovdqu "
       "    vpaddb "
-      "    vpbroadcastb 40(%rsp), ")
+      "    vpbroadcastb ")
     (compiler-backend-avx2-uniform-map-asm-contains?
       "u8"
       "    vmovdqu "
       "    vpaddb "
-      "    vpbroadcastb 40(%rsp), ")
+      "    vpbroadcastb ")
     (compiler-backend-avx2-uniform-zip-ok?)))
 
 (define (compiler-backend-stack-splat-dst-only-assignments) : CompilerRegAssignmentList
@@ -9969,7 +10019,7 @@
     [(ResultCompilerBackend.Ok asm)
       (string.eq
         asm
-        "    movq %rdi, %r8\n    vmovdqu (%r8), %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
+        "    vmovdqu (%rdi), %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-vector-binop-spill-ok?) : bool
@@ -10312,7 +10362,7 @@
     [(ResultCompilerBackend.Ok asm)
       (string.eq
         asm
-        "    movq %rdi, %r8\n    vmovdqu64 (%r8), %zmm14{%k1}{z}\n    vmovdqu64 %zmm14, -64(%rbp)\n")]
+        "    vmovdqu64 (%rdi), %zmm14{%k1}{z}\n    vmovdqu64 %zmm14, -64(%rbp)\n")]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-select-spill-ok?) : bool
@@ -10526,34 +10576,34 @@
     (compiler-backend-simd-indexed-address-emits?
       (CompilerIrValue.I64 0)
       (AstType.I64)
-      "    movq %rdi, %r8\n"
-      "(%r8)")
+      ""
+      "(%rdi)")
     (compiler-backend-simd-indexed-address-emits?
       (CompilerIrValue.I64 4)
       (AstType.I64)
-      "    movq %rdi, %r8\n"
-      "32(%r8)")
+      ""
+      "32(%rdi)")
     (compiler-backend-simd-indexed-address-emits?
       (CompilerIrValue.Var 1)
       (AstType.I32)
-      "    movq %rdi, %r8\n"
-      "(%r8,%r12,4)")
+      ""
+      "(%rdi,%r12,4)")
     (compiler-backend-simd-indexed-address-emits?
       (CompilerIrValue.Var 2)
       (AstType.I64)
-      "    movq %rdi, %r8\n"
-      "(%r8,%rax,8)")
+      ""
+      "(%rdi,%rax,8)")
     (compiler-backend-simd-indexed-address-with-base-emits?
       (CompilerIrValue.Var 6)
       (CompilerIrValue.Var 2)
       (AstType.I64)
-      "    movq %rcx, %r8\n"
-      "(%r8,%rax,8)")
+      ""
+      "(%rcx,%rax,8)")
     (compiler-backend-simd-indexed-address-emits?
       (CompilerIrValue.Var 7)
       (AstType.I64)
-      "    movq %rdi, %r8\n    movq -64(%rbp), %r9\n"
-      "(%r8,%r9,8)")))
+      "    movq -64(%rbp), %r9\n"
+      "(%rdi,%r9,8)")))
 
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
   (match (compiler-backend-emit-avx2-vector-load
@@ -10565,7 +10615,7 @@
     (AstType.I64)
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
-      (string.eq asm "    movq %rdi, %r8\n    vmovdqu 32(%r8), %ymm6\n")]
+      (string.eq asm "    vmovdqu 32(%rdi), %ymm6\n")]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx2-vector-store-address-ok?) : bool
@@ -10578,7 +10628,7 @@
     (AstType.I64)
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
-      (string.eq asm "    movq %rdi, %r8\n    vmovdqu %ymm7, (%r8,%r12,8)\n")]
+      (string.eq asm "    vmovdqu %ymm7, (%rdi,%r12,8)\n")]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-avx512-predicated-load-address-ok?) : bool
@@ -10592,9 +10642,7 @@
     (AstType.I64)
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
-      (string.eq
-        asm
-        "    movq %rdi, %r8\n    vmovdqu64 32(%r8), %zmm6{%k1}{z}\n")]
+      (string.eq asm "    vmovdqu64 32(%rdi), %zmm6{%k1}{z}\n")]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-simd-indexed-address-users-ok?) : bool
@@ -10730,10 +10778,9 @@
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
-        (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
         (compiler-backend-string-contains?
           asm
-          "    vmovdqu8 (%r8), %zmm6{%k2}{z}\n")
+          "    vmovdqu8 (%r12), %zmm6{%k2}{z}\n")
         (compiler-backend-string-contains?
           asm
           "    vpxord %zmm7, %zmm7, %zmm7\n")
@@ -10766,7 +10813,6 @@
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
-        (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
         (compiler-backend-string-contains?
           asm
           "    vpxord %zmm6, %zmm6, %zmm6\n")
@@ -10780,7 +10826,7 @@
           "    vmovdqu8 %zmm7, %zmm6{%k1}\n")
         (compiler-backend-string-contains?
           asm
-          "    vmovdqu8 %zmm6, (%r8){%k2}\n")
+          "    vmovdqu8 %zmm6, (%r12){%k2}\n")
         (not (compiler-backend-string-contains? asm "%edx"))
         (not (compiler-backend-string-contains? asm "%zmm14"))
         (not (compiler-backend-string-contains? asm "%zmm15")))]
@@ -11055,9 +11101,7 @@
         [(ResultCompilerBackend.Ok asm)
           (and
             (backend-and8
-              (compiler-backend-string-contains?
-                asm
-                "    vpbroadcastq 48(%rsp), ")
+              (compiler-backend-string-contains? asm "    vpbroadcastq ")
               (compiler-backend-string-contains? asm "    vpmullq ")
               (compiler-backend-string-contains? asm "    vpaddq ")
               (compiler-backend-string-contains? asm "    vmovdqu64 ")
@@ -11078,42 +11122,42 @@
       "i64"
       "    vmovdqu64 "
       "    vpaddq "
-      "    vpbroadcastq 40(%rsp), ")
+      "    vpbroadcastq ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "i32"
       "    vmovdqu32 "
       "    vpaddd "
-      "    vpbroadcastd 40(%rsp), ")
+      "    vpbroadcastd ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "i16"
       "    vmovdqu16 "
       "    vpaddw "
-      "    vpbroadcastw 40(%rsp), ")
+      "    vpbroadcastw ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "u16"
       "    vmovdqu16 "
       "    vpaddw "
-      "    vpbroadcastw 40(%rsp), ")
+      "    vpbroadcastw ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "f64"
       "    vmovupd "
       "    vaddpd "
-      "    vbroadcastsd 48(%rsp), ")
+      "    vbroadcastsd ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "f32"
       "    vmovups "
       "    vaddps "
-      "    vbroadcastss 48(%rsp), ")
+      "    vbroadcastss ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "i8"
       "    vmovdqu8 "
       "    vpaddb "
-      "    vpbroadcastb 40(%rsp), ")
+      "    vpbroadcastb ")
     (compiler-backend-avx512-uniform-map-asm-contains?
       "u8"
       "    vmovdqu8 "
       "    vpaddb "
-      "    vpbroadcastb 40(%rsp), ")
+      "    vpbroadcastb ")
     (compiler-backend-avx512-uniform-zip-ok?)))
 
 (define (compiler-backend-avx2-reduce-asm-contains?
@@ -12456,7 +12500,7 @@
                 (and
                   (backend-and8
                     (= (compiler-backend-string-count loop "    movq 0(") 0)
-                    (= (compiler-backend-string-count loop "    movq (%") 2)
+                    (= (compiler-backend-string-count loop "    movq (%") 0)
                     (= (compiler-backend-string-count loop "    vmovdqu (") 1)
                     (= (compiler-backend-string-count loop "    vpaddq (") 0)
                     (=

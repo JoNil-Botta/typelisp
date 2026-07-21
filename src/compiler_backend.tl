@@ -2184,10 +2184,13 @@
   [index : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackendSimdIndexedAddress
   (let
+    [base-home : String (compiler-backend-simd-base-home assignments base)]
     [addr-exclude : (Array String)
       (compiler-backend-scavenge-exclude-ops2 assignments base index)]
     [base-reg : String
-      (compiler-backend-scavenge-reg-here addr-exclude 7 "%r8")]
+      (if (string.eq base-home "")
+        (compiler-backend-scavenge-reg-here addr-exclude 7 "%r8")
+        base-home)]
     (match (compiler-backend-value-as-i64 index)
       [(option_i64.Some n)
         (match (compiler-backend-emit-simd-base-data-pointer
@@ -58412,6 +58415,60 @@ tl_comptime_host_invoke_set:
             (compiler-backend-peephole-token-reg-index-range data ts te)
             -1))))))
 
+;; AVX instructions with a vector-register destination do not change any GP
+;; register or memory slot tracked by the reload-elision owner map. Preserve
+;; those owners across the instruction so one spilled scalar address index can
+;; be loaded once and reused by an adjacent vector load/binop sequence. A GP
+;; destination (for example `vpmovmskb ..., %r8`) or a memory destination stays
+;; on the conservative clobber path.
+(define (compiler-backend-peephole-vector-preserves-gp-owners?
+  [data : (Ptr u8)]
+  [mnemonic-start : i64]
+  [mnemonic-len : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (if (or
+    (= mnemonic-len 0)
+    (not (= (compiler-backend-peephole-byte-at data mnemonic-start) 118)))
+    false
+    (let
+      [index : i64 start]
+      [last-comma : i64 -1]
+      [paren-depth : i64 0]
+      (begin
+        (while (< index end)
+          (let
+            [byte : i64 (compiler-backend-peephole-byte-at data index)]
+            (begin
+              (cond
+                [(= byte 40) (set! paren-depth (+ paren-depth 1))]
+                [(= byte 41) (set! paren-depth (- paren-depth 1))]
+                [(and (= byte 44) (= paren-depth 0)) (set! last-comma index)]
+                [else unit])
+              (set! index (+ index 1)))))
+        (let
+          [dest-start : i64
+            (if (< last-comma 0)
+              (+ mnemonic-start mnemonic-len)
+              (+ last-comma 1))]
+          [cursor : i64 dest-start]
+          [memory-dest : bool false]
+          (begin
+            (while (and (not memory-dest) (< cursor end))
+              (begin
+                (if (= (compiler-backend-peephole-byte-at data cursor) 40)
+                  (set! memory-dest true)
+                  unit)
+                (set! cursor (+ cursor 1))))
+            (and
+              (not memory-dest)
+              (<
+                (compiler-backend-peephole-last-operand-reg-index
+                  data
+                  start
+                  end)
+                0))))))))
+
 ;; True iff the mnemonic token [i,i+mlen) is an instruction whose ONLY written GP
 ;; register is its last operand (so invalidating just that register is sound):
 ;; the fixed q/l/w/b base set, the movabsq imm->reg load, any set<cc> (8-bit
@@ -58618,6 +58675,13 @@ tl_comptime_host_invoke_set:
                 [(= (compiler-backend-peephole-byte-at data ms) 46) false]
                 [(= (compiler-backend-peephole-byte-at data ms) 106) false]
                 [cmp-or-test? false]
+                [(compiler-backend-peephole-vector-preserves-gp-owners?
+                    data
+                    ms
+                    mlen
+                    start
+                    end)
+                  false]
                 [else true])]
             [call? : bool
               (compiler-backend-peephole-mnemonic-call? data ms mlen)]

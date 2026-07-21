@@ -9147,95 +9147,300 @@
           "    .seh_endprologue\n"))
       acc)))
 
-;; Cycle 21's frame-free guard must read the incoming ABI locations, not the
-;; allocator's eventual parameter homes.  In particular Win64's third GP
-;; argument is %r8, which is intentionally excluded from parameter pinning
-;; because it is the backend scratch.  The saving edge runs the ordinary
-;; prologue and parameter captures before the rewritten body uses those homes.
-(define (compiler-backend-shrinkwrap-guard-asm
-  [abi : CompilerRegTargetAbi]
+;; Build the incoming-ABI homes used only while re-emitting the frame-free
+;; prefix. Register parameters are recorded directly; stack parameters are left
+;; absent, so a prefix that actually references one fails closed during
+;; emission. Aggregate register groups are likewise left to the ordinary framed
+;; path until their full ABI classifier can be represented here.
+(define (compiler-backend-shrinkwrap-incoming-fill!
+  [target : CompilerBackendTarget]
+  [params : CompilerIrParamList]
+  [int-index : i64]
+  [float-index : i64]
+  [position : i64]
+  [program-index : CompilerBackendProgramIndex]
+  [table : CompilerRegAssignmentTable]) : bool
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) true]
+    [(CompilerIrParamList.Array seq)
+      (compiler-backend-shrinkwrap-incoming-fill!
+        target
+        (compiler-ir-param-seq-to-list seq)
+        int-index
+        float-index
+        position
+        program-index
+        table)]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param _ ty var)
+          (if (compiler-backend-group-type? program-index ty)
+            false
+            (let
+              [is-float : bool (compiler-backend-float-type? ty)]
+              [on-stack : bool
+                (compiler-backend-stack-call-arg-for-banks?
+                  target
+                  is-float
+                  int-index
+                  float-index
+                  position)]
+              [next-int : i64
+                (if is-float
+                  int-index
+                  (+ int-index 1))]
+              [next-float : i64
+                (if is-float
+                  (+ float-index 1)
+                  float-index)]
+              (if on-stack
+                (compiler-backend-shrinkwrap-incoming-fill!
+                  target
+                  (box-get rest)
+                  next-int
+                  next-float
+                  (+ position 1)
+                  program-index
+                  table)
+                (match (if is-float
+                  (compiler-backend-target-float-arg-reg-for-banks
+                    target
+                    float-index
+                    position)
+                  (compiler-backend-target-arg-reg-for-banks
+                    target
+                    int-index
+                    position))
+                  [(ResultBackendReg.Ok reg)
+                    (begin
+                      (compiler-reg-assignment-table-insert
+                        table
+                        var
+                        (CompilerRegLocation.Register reg))
+                      (compiler-backend-shrinkwrap-incoming-fill!
+                        target
+                        (box-get rest)
+                        next-int
+                        next-float
+                        (+ position 1)
+                        program-index
+                        table))]
+                  [(ResultBackendReg.Err _) false]))))])]))
+
+(define (compiler-backend-shrinkwrap-incoming-assignments
+  [target : CompilerBackendTarget]
+  [params : CompilerIrParamList]
+  [vars : i64]
+  [program-index : CompilerBackendProgramIndex]) : CompilerRegAssignmentList
+  (let
+    [table : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-make vars)]
+    (if (compiler-backend-shrinkwrap-incoming-fill!
+      target
+      params
+      0
+      0
+      0
+      program-index
+      table)
+      (compiler-reg-assignment-table-to-list table)
+      CompilerRegAssignmentList.Nil)))
+
+(define (compiler-backend-shrinkwrap-incoming-value-ready?
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var var)
+      (match (compiler-reg-assignment-lookup assignments var)
+        [(CompilerRegMaybeLocation.Some location)
+          (match location
+            [(CompilerRegLocation.Register _) true]
+            [(CompilerRegLocation.RegisterPair _ _) true]
+            [_ false])]
+        [(CompilerRegMaybeLocation.No) false])]
+    [_ true]))
+
+(define (compiler-backend-shrinkwrap-incoming-return-ready?
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrMaybeValue]) : bool
+  (match value
+    [(CompilerIrMaybeValue.No) true]
+    [(CompilerIrMaybeValue.Some some)
+      (compiler-backend-shrinkwrap-incoming-value-ready? assignments some)]))
+
+;; Emit exactly the rewritten prefix with either the allocator's planned homes
+;; (the textual splice needle) or incoming ABI homes (the replacement). The
+;; prefix count is supplied by the property rewrite and every block is proven to
+;; be compare+branch or a bare return. Any drift returns "" and triggers the
+;; existing unwrapped full-pipeline retry.
+(define (compiler-backend-shrinkwrap-prefix-asm
+  [target : CompilerBackendTarget]
   [params : CompilerIrParamList]
   [vars : i64]
   [assignments : CompilerRegAssignmentList]
   [function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
-  [bare-label : String]
+  [bare-prefix : String]
+  [prefix-count : i64]
+  [ret-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]
   [incoming? : bool]) : String
   (let
     [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
-    [incoming-assignments : CompilerRegAssignmentList
-      (if (not incoming?)
-        assignments
-        (match (compiler-ir-param-list-force-cons params)
-          [(CompilerIrParamList.Cons param0 rest0)
-            (match param0
-              [(CompilerIrParam.Param _ _ var0)
-                (match (compiler-ir-param-list-force-cons (box-get rest0))
-                  [(CompilerIrParamList.Cons param1 rest1)
-                    (match param1
-                      [(CompilerIrParam.Param _ _ var1)
-                        (match (compiler-ir-param-list-force-cons
-                          (box-get rest1))
-                          [(CompilerIrParamList.Cons param2 _)
-                            (match param2
-                              [(CompilerIrParam.Param _ _ var2)
-                                (compiler-reg-assignment-table-to-list
-                                  (compiler-reg-assignment-table-insert
-                                    (compiler-reg-assignment-table-insert
-                                      (compiler-reg-assignment-table-insert
-                                        (compiler-reg-assignment-table-make
-                                          vars)
-                                        var0
-                                        (CompilerRegLocation.Register
-                                          (compiler-abi-gp-arg-register abi 0)))
-                                      var1
-                                      (CompilerRegLocation.Register
-                                        (compiler-abi-gp-arg-register abi 1)))
-                                    var2
-                                    (CompilerRegLocation.Register
-                                      (compiler-abi-gp-arg-register abi 2))))])]
-                          [_ CompilerRegAssignmentList.Nil])])]
-                  [_ CompilerRegAssignmentList.Nil])])]
-          [_ CompilerRegAssignmentList.Nil]))]
-    [incoming-ready? : bool
-      (or
-        (not incoming?)
-        (match incoming-assignments
-          [(CompilerRegAssignmentList.Nil) false]
-          [_ true]))]
-    (if (or (not incoming-ready?) (= (compiler-ir-block-seq-count seq) 0))
-      ""
-      (match (compiler-ir-block-seq-ref seq 0)
-        [(CompilerIrBlock.Block label instrs)
-          (if (= (compiler-ir-instr-seq-count instrs) 2)
-            (match (compiler-ir-instr-seq-ref instrs 0)
-              [(CompilerIrInstr.BinOp dst op lhs rhs ty)
-                (match (compiler-ir-instr-seq-ref instrs 1)
-                  [(CompilerIrInstr.Branch cond on-true on-false)
-                    (match cond
-                      [(CompilerIrValue.Var cond-var)
-                        (if (= cond-var dst)
-                          (match (compiler-backend-emit-compare-branch
-                            incoming-assignments
-                            function
-                            op
-                            lhs
-                            rhs
-                            ty
-                            on-true
-                            on-false
-                            (CompilerBackendMaybeLabel.Some bare-label))
-                            [(ResultCompilerBackend.Ok asm)
-                              (str_cat.str-cat
-                                (compiler-backend-asm-label function label)
-                                ":\n"
-                                asm)]
-                            [(ResultCompilerBackend.Err _) ""])
-                          "")]
-                      [_ ""])]
-                  [_ ""])]
-              [_ ""])
-            "")]))))
+    [selected : CompilerRegAssignmentList
+      (if incoming?
+        (compiler-backend-shrinkwrap-incoming-assignments
+          target
+          params
+          vars
+          program-index)
+        assignments)]
+    [ready : bool
+      (and
+        (> prefix-count 0)
+        (<= prefix-count (compiler-ir-block-seq-count seq))
+        (or
+          (not incoming?)
+          (match selected
+            [(CompilerRegAssignmentList.Nil)
+              (= (compiler-ir-param-list-count params) 0)]
+            [_ true])))]
+    [old-bare : String compiler-backend-shrinkwrap-bare-label]
+    [old-current-block : String compiler-backend-current-block-label]
+    ;; The ordinary function emitter has a dense index for the allocator's
+    ;; post-prologue homes.  It deliberately ignores the list argument passed
+    ;; to emit-assignment-lookup.  That is correct for normal emission, but an
+    ;; incoming prefix must use the temporary ABI-home list above.  Isolate the
+    ;; prefix while it is rendered so a param allocated to (say) %r12 cannot be
+    ;; read before the saving edge.
+    [old-assignment-index-active : bool
+      compiler-backend-emit-assignment-index-active]
+    [acc : String ""]
+    [index : i64 0]
+    (begin
+      (set! compiler-backend-shrinkwrap-bare-label bare-prefix)
+      (if incoming?
+        (set! compiler-backend-emit-assignment-index-active false)
+        unit)
+      (while (and ready (< index prefix-count))
+        (match (compiler-ir-block-seq-ref seq index)
+          [(CompilerIrBlock.Block label instrs)
+            (let
+              [count : i64 (compiler-ir-instr-seq-count instrs)]
+              [fallthrough : CompilerBackendMaybeLabel
+                (if (< (+ index 1) (compiler-ir-block-seq-count seq))
+                  (match (compiler-ir-block-seq-ref seq (+ index 1))
+                    [(CompilerIrBlock.Block next-label _)
+                      (CompilerBackendMaybeLabel.Some next-label)])
+                  (CompilerBackendMaybeLabel.No))]
+              [_current-block : unit
+                (set!
+                  compiler-backend-current-block-label
+                  (string.copy (& label)))]
+              [piece : ResultCompilerBackend
+                (if (= count 2)
+                  (match (compiler-ir-instr-seq-ref instrs 0)
+                    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+                      (match (compiler-ir-instr-seq-ref instrs 1)
+                        [(CompilerIrInstr.Branch cond on-true on-false)
+                          (match cond
+                            [(CompilerIrValue.Var cond-var)
+                              (if (and
+                                (= cond-var dst)
+                                (or
+                                  (not incoming?)
+                                  (and
+                                    (compiler-backend-shrinkwrap-incoming-value-ready?
+                                      selected
+                                      lhs)
+                                    (compiler-backend-shrinkwrap-incoming-value-ready?
+                                      selected
+                                      rhs))))
+                                (compiler-backend-emit-compare-branch
+                                  selected
+                                  function
+                                  op
+                                  lhs
+                                  rhs
+                                  ty
+                                  on-true
+                                  on-false
+                                  fallthrough)
+                                (ResultCompilerBackend.Err
+                                  (box
+                                    (compiler-diagnostic-at-start
+                                      ""
+                                      "shrinkwrap guard drift"))))]
+                            [_
+                              (ResultCompilerBackend.Err
+                                (box
+                                  (compiler-diagnostic-at-start
+                                    ""
+                                    "shrinkwrap guard drift")))])]
+                        [_
+                          (ResultCompilerBackend.Err
+                            (box
+                              (compiler-diagnostic-at-start
+                                ""
+                                "shrinkwrap guard drift")))])]
+                    [_
+                      (ResultCompilerBackend.Err
+                        (box
+                          (compiler-diagnostic-at-start
+                            ""
+                            "shrinkwrap guard drift")))])
+                  (if (= count 1)
+                    (match (compiler-ir-instr-seq-ref instrs 0)
+                      [(CompilerIrInstr.Return maybe)
+                        (if (or
+                          (not incoming?)
+                          (compiler-backend-shrinkwrap-incoming-return-ready?
+                            selected
+                            maybe))
+                          (compiler-backend-emit-return
+                            source-function
+                            blocks
+                            maybe
+                            selected
+                            vars
+                            ret-ty
+                            program-index)
+                          (ResultCompilerBackend.Err
+                            (box
+                              (compiler-diagnostic-at-start
+                                ""
+                                "shrinkwrap incoming return unavailable"))))]
+                      [_
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler-diagnostic-at-start
+                              ""
+                              "shrinkwrap return drift")))])
+                    (ResultCompilerBackend.Err
+                      (box
+                        (compiler-diagnostic-at-start
+                          ""
+                          "shrinkwrap prefix drift")))))]
+              (match piece
+                [(ResultCompilerBackend.Ok asm)
+                  (set!
+                    acc
+                    (str_cat.str-cat
+                      acc
+                      (compiler-backend-asm-label function label)
+                      ":\n"
+                      asm))]
+                [(ResultCompilerBackend.Err _) (set! ready false)]))])
+        (set! index (+ index 1)))
+      (set! compiler-backend-shrinkwrap-bare-label old-bare)
+      (set! compiler-backend-current-block-label old-current-block)
+      (set!
+        compiler-backend-emit-assignment-index-active
+        old-assignment-index-active)
+      (if ready
+        acc
+        ""))))
 
 (define (compiler-backend-emit-store-var [var-id : i64] [reg : String]) : String
   (str_cat.str-cat "    movq " reg ", " (compiler-backend-slot var-id) "\n"))
@@ -29964,15 +30169,31 @@
           (set! index (+ index 1))))
       out)))
 
+(define (compiler-backend-shared-return-block-count
+  [label : String]
+  [instrs : CompilerIrInstrSeq]) : i64
+  ;; Bare shrink-wrap exits return before the frame exists and never target the
+  ;; framed epilogue. Excluding them keeps a function with one ordinary framed
+  ;; return on the inline-epilogue path instead of adding a useless jump merely
+  ;; because the entry return was cloned.
+  (if (and
+    (not (string.eq compiler-backend-shrinkwrap-bare-label ""))
+    (compiler-backend-string-prefix-at?
+      label
+      compiler-backend-shrinkwrap-bare-label
+      0))
+    0
+    (compiler-backend-instr-seq-return-count instrs)))
+
 (define (compiler-backend-block-list-return-count
   [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
     [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(CompilerIrBlock.Block _ instrs)
+        [(CompilerIrBlock.Block label instrs)
           (+
-            (compiler-backend-instr-seq-return-count instrs)
+            (compiler-backend-shared-return-block-count label instrs)
             (compiler-backend-block-list-return-count (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-block-seq-return-count seq 0)]))
@@ -29983,9 +30204,9 @@
   (if (>= index (compiler-ir-block-seq-count blocks))
     0
     (match (compiler-ir-block-seq-ref blocks index)
-      [(CompilerIrBlock.Block _ instrs)
+      [(CompilerIrBlock.Block label instrs)
         (+
-          (compiler-backend-instr-seq-return-count instrs)
+          (compiler-backend-shared-return-block-count label instrs)
           (compiler-backend-block-seq-return-count blocks (+ index 1)))])))
 
 ;; The shared-return tail is only reachable for plans that save callee
@@ -30019,9 +30240,10 @@
   [return-count : i64]) : String
   (if (and
     (not (string.eq compiler-backend-shrinkwrap-bare-label ""))
-    (string.eq
+    (compiler-backend-string-prefix-at?
       compiler-backend-current-block-label
-      compiler-backend-shrinkwrap-bare-label))
+      compiler-backend-shrinkwrap-bare-label
+      0))
     "    ret\n"
     (if (compiler-backend-use-shared-return-count? assignments return-count)
       (str_cat.str-cat
@@ -46248,10 +46470,9 @@
         ;; shared counter stays live; the offset adds vanish).
         [folded-blocks : CompilerIrBlockList
           (compiler-backend-gep-fold-blocks vars raw-blocks)]
-        ;; Cycle 21 form (a): split one dominating entry guard before regalloc,
-        ;; so incoming parameters die on the saving edge and may stay in their
-        ;; ABI registers until the guard.  The returned labels drive prologue
-        ;; placement and the bare first-entry return below.
+        ;; Cycle 26: split a property-proven frame-free entry region before
+        ;; regalloc. Incoming parameters stay in ABI locations until the saving
+        ;; edge, whose returned labels drive prologue placement and bare returns.
         [early-exit-func : CompilerIrFunction
           (let
             [folded-func : CompilerIrFunction
@@ -46269,6 +46490,7 @@
               (begin
                 (set! compiler-reg-early-exit-saving-label "")
                 (set! compiler-reg-early-exit-bare-label "")
+                (set! compiler-reg-early-exit-prefix-count 0)
                 folded-func)))]
         ;; Cycle 20: protect GP values only on one admitted cold call edge.  The
         ;; rewrite follows the early-exit split and still precedes regalloc, so
@@ -46651,31 +46873,44 @@
             program-index)]
         [shrinkwrap-saving-label : String compiler-reg-early-exit-saving-label]
         [shrinkwrap-bare-label : String compiler-reg-early-exit-bare-label]
+        [shrinkwrap-prefix-count : i64 compiler-reg-early-exit-prefix-count]
         [shrinkwrap-planned-guard : String
           (if (string.eq shrinkwrap-bare-label "")
             ""
-            (compiler-backend-shrinkwrap-guard-asm
-              fn-abi
+            (compiler-backend-shrinkwrap-prefix-asm
+              target
               params
               scratch-vars
               assignments
               label-scope
+              name
               emit-blocks-list
               shrinkwrap-bare-label
+              shrinkwrap-prefix-count
+              ret-ty
+              program-index
               false))]
-        [shrinkwrap-incoming-guard : String
+        [shrinkwrap-incoming-prefix : String
           (if (string.eq shrinkwrap-bare-label "")
             ""
+            (compiler-backend-shrinkwrap-prefix-asm
+              target
+              params
+              scratch-vars
+              assignments
+              label-scope
+              name
+              emit-blocks-list
+              shrinkwrap-bare-label
+              shrinkwrap-prefix-count
+              ret-ty
+              program-index
+              true))]
+        [shrinkwrap-incoming-guard : String
+          (if (string.eq shrinkwrap-incoming-prefix "")
+            ""
             (str_cat.str-cat
-              (compiler-backend-shrinkwrap-guard-asm
-                fn-abi
-                params
-                scratch-vars
-                assignments
-                label-scope
-                emit-blocks-list
-                shrinkwrap-bare-label
-                true)
+              shrinkwrap-incoming-prefix
               "    # shrinkwrap incoming guard\n"
               ""))]
         [shrinkwrap-candidate? : bool
@@ -46695,9 +46930,11 @@
             call-save-enabled
             (compiler-backend-target-linux? target)
             (not identity-tail-forwarder?)
-            ;; A before-label hoist would execute in the unframed guard and
-            ;; could itself claim a CSR. Keep the admitted prefix literal.
-            (not shrinkwrap-candidate?))
+            ;; Guard blocks contain comparisons only. Divmod hoists are placed
+            ;; at their loop/body region, which is necessarily beyond the
+            ;; saving frontier, so admitted functions retain the same general
+            ;; loop-constant optimization as the unwrapped pipeline.
+            true)
             (compiler-backend-const-hoist-build!
               emit-blocks-list
               assignments
@@ -46707,10 +46944,11 @@
                 slot-vars
                 has-group-vars))
             (compiler-backend-const-hoist-disable!))]
-        [shrinkwrap-active? : bool
-          (and
-            shrinkwrap-candidate?
-            (compiler-backend-plan-uses-callee-regs? assignments))]
+        ;; A stack frame alone is sufficient reason to wrap; limiting this to
+        ;; plans with callee-saved homes left frame-only functions rewritten but
+        ;; still prologued before their guard. Candidate proof plus the verified
+        ;; textual splices is the complete activation condition.
+        [shrinkwrap-active? : bool shrinkwrap-candidate?]
         [scavenge-base-vars : i64
           (compiler-backend-const-hoist-extend-vars
             const-hoist-synth
@@ -47104,24 +47342,34 @@
                                     ;; are rsp-relative here; keep-rbp functions
                                     ;; (audit failed) are NOT recorded and stay
                                     ;; untouched -- conservative by design.
-                                    (compiler-backend-sweep-record-fpo!
-                                      symbol
-                                      frame
-                                      push-count
-                                      slot-vars
-                                      compiler-backend-emergency-slot-offset
-                                      compiler-backend-emergency-used-count
-                                      outgoing-frame-space))
+                                    ;; The dead-store sweep's displacement model
+                                    ;; starts at a function-entry prologue. A
+                                    ;; shrink-wrapped prologue begins at an
+                                    ;; interior label, so leave that optional
+                                    ;; cleanup out rather than enqueue metadata
+                                    ;; that could block later function records.
+                                    (if shrinkwrap-active?
+                                      unit
+                                      (compiler-backend-sweep-record-fpo!
+                                        symbol
+                                        frame
+                                        push-count
+                                        slot-vars
+                                        compiler-backend-emergency-slot-offset
+                                        compiler-backend-emergency-used-count
+                                        outgoing-frame-space)))
                                   (if (and
                                     (compiler-backend-target-windows? target)
                                     rebase-ok)
-                                    (compiler-backend-sweep-record-win64!
-                                      symbol
-                                      frame
-                                      slot-vars
-                                      compiler-backend-emergency-slot-offset
-                                      compiler-backend-emergency-used-count
-                                      outgoing-frame-space)
+                                    (if shrinkwrap-active?
+                                      unit
+                                      (compiler-backend-sweep-record-win64!
+                                        symbol
+                                        frame
+                                        slot-vars
+                                        compiler-backend-emergency-slot-offset
+                                        compiler-backend-emergency-used-count
+                                        outgoing-frame-space))
                                     unit))]
                               [final-body : String
                                 (if fpo-ok
@@ -47178,7 +47426,7 @@
                                 final-body
                                 emitted-body)
                                 ;; A textual invariant drifted. Re-run the full
-                                ;; pre-C21 pipeline so the IR split, bare return,
+                                ;; unwrapped pipeline so the IR split, bare return,
                                 ;; register plan, and prologue placement are all
                                 ;; consistently disabled together.
                                 (compiler-backend-emit-function

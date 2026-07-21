@@ -37,6 +37,7 @@ fi
 
 WORKDIR="$ROOT/target/embedded-stdlib-tlci"
 MANIFEST="$WORKDIR/modules.txt"
+SURFACE="$WORKDIR/prelude-surface-$HOST_TARGET.rodata"
 mkdir -p "$WORKDIR" "$(dirname -- "$OUTPUT")"
 
 awk '
@@ -61,9 +62,24 @@ collecting {
 ' src/compiler_embedded_stdlib_payload.tl > "$MANIFEST"
 
 BUILD_HASH=$(git rev-parse --verify HEAD)
+SOURCE_HASH=$(
+    while IFS= read -r MODULE_PATH; do
+        SOURCE_PATH="$ROOT/stdlib/$MODULE_PATH"
+        [ -f "$SOURCE_PATH" ] || {
+            echo "embedded stdlib module is missing: $SOURCE_PATH" >&2
+            exit 1
+        }
+        SOURCE_SIZE=$(wc -c < "$SOURCE_PATH" | tr -d ' ')
+        printf '%s\000%s\000' "$MODULE_PATH" "$SOURCE_SIZE"
+        cat "$SOURCE_PATH"
+    done < "$MANIFEST" | git hash-object --stdin
+)
+"$COMPILER" run tools/embedded-stdlib-tlci/build-surface.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    stdlib "$SURFACE" "$HOST_TARGET" "$BUILD_HASH" "$SOURCE_HASH"
 "$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
     --stdlib-root stdlib --stdlib-root src -- \
-    "$MANIFEST" stdlib "$OUTPUT" "$HOST_TARGET" "$BUILD_HASH"
+    "$MANIFEST" stdlib "$OUTPUT" "$HOST_TARGET" "$BUILD_HASH" "$SURFACE"
 
 [ -s "$OUTPUT" ] || {
     echo "embedded stdlib tlci builder emitted no image: $OUTPUT" >&2

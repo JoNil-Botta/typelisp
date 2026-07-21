@@ -6,8 +6,8 @@
 ;; pointer, Box address, or producer-generation intern id is serialized.
 (import "compiler_ast_types.tl")
 (import compiler_surface_identity as identity)
+(import compiler_surface_binary as binary)
 (import stdlib.byte_buf_core)
-(import tlci_core as tlci)
 
 (defstruct SurfaceAstWriteContext
   (valid (Array bool))
@@ -42,7 +42,7 @@
 (define (surface-ast-write-i64!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : i64]) : unit
-  (tlci.tlci-push-u64! out value))
+  (binary.surface-binary-push-u64! out value))
 
 (define (surface-ast-write-bool!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -57,8 +57,8 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [text : String]) : unit
   (begin
-    (surface-ast-write-i64! out (tlci.tlci-string-length text))
-    (tlci.tlci-push-string-bytes! out text)))
+    (surface-ast-write-i64! out (binary.surface-binary-string-length text))
+    (binary.surface-binary-push-string! out text)))
 
 (define (surface-ast-write-name!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -128,7 +128,7 @@
         0)
       (begin
         (array-set! (struct-get reader offset) 0 (+ offset 8))
-        (tlci.tlci-read-u64 bytes offset)))))
+        (binary.surface-binary-read-u64 bytes offset)))))
 
 (define (surface-ast-read-bool! [reader : SurfaceAstReader]) : bool
   (let
@@ -167,7 +167,7 @@
         (surface-ast-reader-fail! reader "surface ast: truncated string")
         "")
       (let
-        [text : String (tlci.tlci-bytes->string bytes offset len)]
+        [text : String (binary.surface-binary-bytes->string bytes offset len)]
         (begin
           (array-set! (struct-get reader offset) 0 (+ offset len))
           text)))))

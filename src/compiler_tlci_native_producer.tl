@@ -736,6 +736,7 @@
   [metadata-text : String]
   [build-hash : String]
   [windows-target : bool]
+  [rodata : (Array u8)]
   [names : (Array String)]) : ResultProducerBytes
   (let
     [source : String (embedded-native-source names)]
@@ -781,6 +782,7 @@
                         (match (compiler-tlci-native-package
                           metadata-text
                           build-hash
+                          rodata
                           (struct-get layout bytes)
                           imports
                           (struct-get layout fixup-offsets)

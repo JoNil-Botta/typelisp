@@ -3803,6 +3803,7 @@
             (tlci-metadata-emit metadata)
             build-package-tlci-compiler-build-hash
             (cfg windows true false)
+            (tlci-empty-bytes)
             macro-names)
             [(ResultProducerBytes.Err message)
               (ResultBuildPackageTlciText.Err

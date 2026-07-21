@@ -818,6 +818,7 @@
 (define (compiler-tlci-native-package
   [metadata-text : String]
   [build-hash : String]
+  [rodata : (Array u8)]
   [code : (Array u8)]
   [imports : (Array u8)]
   [fixup-offsets : (Array i64)]
@@ -834,6 +835,7 @@
         metadata
         build-hash
         (TlciNativePackageInput
+          rodata
           code
           imports
           fixup-offsets

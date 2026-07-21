@@ -11,8 +11,8 @@
 ;; package name + canonical module set + source hash + compiler build + config
 ;; variant. Later per-package images use the same schema and hydration path.
 (import compiler_intern as ci)
+(import compiler_surface_binary as binary)
 (import stdlib.byte_buf_core)
-(import tlci_core as tlci)
 
 (defstruct SurfaceIdentityKey
   (package-name String)
@@ -76,23 +76,23 @@
 
 (define (surface-identity-string-eq? [left : String] [right : String]) : bool
   (let
-    [left-len : i64 (tlci.tlci-string-length left)]
-    [right-len : i64 (tlci.tlci-string-length right)]
+    [left-len : i64 (binary.surface-binary-string-length left)]
+    [right-len : i64 (binary.surface-binary-string-length right)]
     [index : i64 0]
     [equal : bool (= left-len right-len)]
     (begin
       (while (and equal (< index left-len))
         (if (=
-          (tlci.tlci-string-ref left index)
-          (tlci.tlci-string-ref right index))
+          (binary.surface-binary-string-ref left index)
+          (binary.surface-binary-string-ref right index))
           (set! index (+ index 1))
           (set! equal false)))
       equal)))
 
 (define (surface-identity-string-less? [left : String] [right : String]) : bool
   (let
-    [left-len : i64 (tlci.tlci-string-length left)]
-    [right-len : i64 (tlci.tlci-string-length right)]
+    [left-len : i64 (binary.surface-binary-string-length left)]
+    [right-len : i64 (binary.surface-binary-string-length right)]
     [limit : i64
       (if (< left-len right-len)
         left-len
@@ -103,8 +103,8 @@
     (begin
       (while (and (not decided) (< index limit))
         (let
-          [left-char : char (tlci.tlci-string-ref left index)]
-          [right-char : char (tlci.tlci-string-ref right index)]
+          [left-char : char (binary.surface-binary-string-ref left index)]
+          [right-char : char (binary.surface-binary-string-ref right index)]
           (cond
             [(< left-char right-char)
               (begin
@@ -125,7 +125,7 @@
         (let
           [module-name : String (array-ref modules index)]
           (if (and
-            (> (tlci.tlci-string-length module-name) 0)
+            (> (binary.surface-binary-string-length module-name) 0)
             (or
               (= index 0)
               (surface-identity-string-less?
@@ -137,9 +137,9 @@
 
 (define (surface-identity-key-valid? [key : SurfaceIdentityKey]) : bool
   (and
-    (> (tlci.tlci-string-length (struct-get key package-name)) 0)
-    (> (tlci.tlci-string-length (struct-get key source-hash)) 0)
-    (> (tlci.tlci-string-length (struct-get key compiler-build)) 0)
+    (> (binary.surface-binary-string-length (struct-get key package-name)) 0)
+    (> (binary.surface-binary-string-length (struct-get key source-hash)) 0)
+    (> (binary.surface-binary-string-length (struct-get key compiler-build)) 0)
     (surface-identity-module-set-canonical? (struct-get key modules))))
 
 (define (surface-identity-string-array-eq?
@@ -181,8 +181,10 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [text : String]) : unit
   (begin
-    (tlci.tlci-push-u64! out (tlci.tlci-string-length text))
-    (tlci.tlci-push-string-bytes! out text)))
+    (binary.surface-binary-push-u64!
+      out
+      (binary.surface-binary-string-length text))
+    (binary.surface-binary-push-string! out text)))
 
 (define (surface-identity-local-ref [id : i64] [source-count : i64]) : i64
   (cond
@@ -397,11 +399,15 @@
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
       [index : i64 0]
       (begin
-        (tlci.tlci-push-u64! (&mut out) surface-identity-magic)
-        (tlci.tlci-push-u64! (&mut out) surface-identity-schema-version)
-        (tlci.tlci-push-u64! (&mut out) (array-length (struct-get key modules)))
-        (tlci.tlci-push-u64! (&mut out) (array-length source-names))
-        (tlci.tlci-push-u64! (&mut out) (array-length generated))
+        (binary.surface-binary-push-u64! (&mut out) surface-identity-magic)
+        (binary.surface-binary-push-u64!
+          (&mut out)
+          surface-identity-schema-version)
+        (binary.surface-binary-push-u64!
+          (&mut out)
+          (array-length (struct-get key modules)))
+        (binary.surface-binary-push-u64! (&mut out) (array-length source-names))
+        (binary.surface-binary-push-u64! (&mut out) (array-length generated))
         (surface-identity-push-string! (&mut out) (struct-get key package-name))
         (surface-identity-push-string! (&mut out) (struct-get key source-hash))
         (surface-identity-push-string!
@@ -440,10 +446,16 @@
                     surface-identity-generated-dotted
                     0)))]
             (begin
-              (tlci.tlci-push-u64! (&mut out) flags)
-              (tlci.tlci-push-u64! (&mut out) (struct-get record ref0))
-              (tlci.tlci-push-u64! (&mut out) (struct-get record ref1))
-              (tlci.tlci-push-u64! (&mut out) (struct-get record ref2))
+              (binary.surface-binary-push-u64! (&mut out) flags)
+              (binary.surface-binary-push-u64!
+                (&mut out)
+                (struct-get record ref0))
+              (binary.surface-binary-push-u64!
+                (&mut out)
+                (struct-get record ref1))
+              (binary.surface-binary-push-u64!
+                (&mut out)
+                (struct-get record ref2))
               (surface-identity-push-string!
                 (&mut out)
                 (struct-get record name))
@@ -483,7 +495,7 @@
         -1)
       (begin
         (array-set! (struct-get reader offset) 0 (+ offset 8))
-        (tlci.tlci-read-u64 bytes offset)))))
+        (binary.surface-binary-read-u64 bytes offset)))))
 
 (define (surface-identity-reader-string! [reader : SurfaceIdentityReader]) : String
   (let
@@ -500,7 +512,7 @@
           "surface identity: truncated string")
         "")
       (let
-        [value : String (tlci.tlci-bytes->string bytes offset len)]
+        [value : String (binary.surface-binary-bytes->string bytes offset len)]
         (begin
           (array-set! (struct-get reader offset) 0 (+ offset len))
           value)))))
@@ -759,7 +771,7 @@
         [(ResultSurfaceIdentityBytes.Err _) false]
         [(ResultSurfaceIdentityBytes.Ok bytes)
           (let
-            [copy : (Array u8) (tlci.tlci-copy-bytes bytes)]
+            [copy : (Array u8) (binary.surface-binary-copy bytes)]
             (begin
               (ci.intern-reset!)
               (let

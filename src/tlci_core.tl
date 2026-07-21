@@ -677,6 +677,7 @@
   "tlci_macro_table")
 
 (defstruct TlciNativePackageInput
+  (rodata (Array u8))
   (code (Array u8))
   (imports (Array u8))
   (layout-fixup-offsets (Array i64))
@@ -863,7 +864,7 @@
       tlci-callback-abi-version
       compiler-build-hash
       metadata
-      (tlci-empty-bytes)
+      (struct-get input rodata)
       (tlci-native-package-extend-code input)
       (tlci-native-package-fixups input)
       (tlci-native-package-entries input)

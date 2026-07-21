@@ -1541,7 +1541,7 @@
                                         [_ false]))]
                                   [_ false]))]))])))])])))))
 
-(define (main) : i64
+(define (surface-ast-selftest-main) : i64
   (if (surface-ast-tests-ok?)
     42
     1))

@@ -1619,6 +1619,7 @@ assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(kind "bi
 assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(entry "src/main.tl")'
 assert_contains scaffold-new-bin-gitignore "$NEW_BIN_DIR/.gitignore" '/target/'
 assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" '(io.print-string "Hello, TypeLisp!\n")'
+assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" '(cfg test (import stdlib.test))'
 assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" '(test'
 assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" 'answer-is-42'
 
@@ -1677,6 +1678,7 @@ NEW_LIB_DIR="$SCAFFOLD_ROOT/cli_new_lib"
 assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(kind "staticlib")'
 assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(entry "src/lib.tl")'
 assert_contains scaffold-new-lib-gitignore "$NEW_LIB_DIR/.gitignore" '/target/'
+assert_contains scaffold-new-lib-source "$NEW_LIB_DIR/src/lib.tl" '(cfg test (import stdlib.test))'
 assert_contains scaffold-new-lib-source "$NEW_LIB_DIR/src/lib.tl" '(test'
 assert_contains scaffold-new-lib-source "$NEW_LIB_DIR/src/lib.tl" 'answer-is-42'
 
@@ -1717,6 +1719,7 @@ assert_contains scaffold-init-bin "$WORKDIR/scaffold-init-bin.out" "scaffold: cr
 assert_contains scaffold-init-bin-gitignore "$INIT_BIN_DIR/.gitignore" '/custom-cache/'
 assert_not_contains scaffold-init-bin-gitignore "$INIT_BIN_DIR/.gitignore" '/target/'
 assert_contains scaffold-init-bin-source "$INIT_BIN_DIR/src/main.tl" '(io.print-string "Hello, TypeLisp!\n")'
+assert_contains scaffold-init-bin-source "$INIT_BIN_DIR/src/main.tl" '(cfg test (import stdlib.test))'
 assert_contains scaffold-init-bin-source "$INIT_BIN_DIR/src/main.tl" 'answer-is-42'
 
 set +e
@@ -1750,6 +1753,7 @@ assert_contains scaffold-init-lib "$WORKDIR/scaffold-init-lib.out" "scaffold: cr
 assert_contains scaffold-init-lib-manifest "$INIT_LIB_DIR/typelisp.pkg" '(kind "staticlib")'
 assert_contains scaffold-init-lib-manifest "$INIT_LIB_DIR/typelisp.pkg" '(entry "src/lib.tl")'
 assert_contains scaffold-init-lib-gitignore "$INIT_LIB_DIR/.gitignore" '/target/'
+assert_contains scaffold-init-lib-source "$INIT_LIB_DIR/src/lib.tl" '(cfg test (import stdlib.test))'
 assert_contains scaffold-init-lib-source "$INIT_LIB_DIR/src/lib.tl" '(test'
 assert_contains scaffold-init-lib-source "$INIT_LIB_DIR/src/lib.tl" 'answer-is-42'
 

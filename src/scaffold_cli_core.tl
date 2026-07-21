@@ -43,10 +43,10 @@
           (string.append "\") (entry \"" (string.append entry "\"))\n")))))))
 
 (define (scaffold-bin-source) : String
-  "(import stdlib.io)\n(import stdlib.test)\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n\n(define (main) : i64\n  (begin\n    (io.print-string \"Hello, TypeLisp!\\n\")\n    0))\n")
+  "(import stdlib.io)\n(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n\n(define (main) : i64\n  (begin\n    (io.print-string \"Hello, TypeLisp!\\n\")\n    0))\n")
 
 (define (scaffold-lib-source) : String
-  "(import stdlib.test)\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n")
+  "(cfg test (import stdlib.test))\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n")
 
 (test
   scaffold-first-run-source-smoke
@@ -54,11 +54,14 @@
     [bin-source : String (scaffold-bin-source)]
     [lib-source : String (scaffold-lib-source)]
     [greeting : String "(io.print-string \"Hello, TypeLisp!\\n\")"]
+    [test-import : String "(cfg test (import stdlib.test))"]
     [test-item : String "(test\n  answer-is-42"]
     (unless
       (and
         (string.contains (& bin-source) (& greeting))
+        (string.contains (& bin-source) (& test-import))
         (string.contains (& bin-source) (& test-item))
+        (string.contains (& lib-source) (& test-import))
         (string.contains (& lib-source) (& test-item)))
       (io.panic "scaffold: first-run source smoke mismatch"))))
 

@@ -2257,6 +2257,89 @@
   (define compiler-tc-walk-splice-prescan-resets : i64
     0))
 
+;; Marker-path sub-probe: 0 = whole-program list copies + context build,
+;; 1 = macro-extend-top-env-with-module-marker, 2 = the env cache layer,
+;; 3 = tc-build-top-env-list-explicit-in-module. Array-indexed accumulators
+;; (plain globals, allocated at process init like the reinfer site arrays).
+(cfg
+  compile-profile
+  (define compiler-tc-walk-sp-probe-ns : (Array i64)
+    (array.make-array i64 4)))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-sp-probe-alloc : (Array i64)
+    (array.make-array i64 4)))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-sp-probe-live : (Array i64)
+    (array.make-array i64 4)))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-sp-probe-calls : (Array i64)
+    (array.make-array i64 4)))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-sp-probe-start-ns : (Array i64)
+    (array.make-array i64 4)))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-sp-probe-start-alloc : (Array i64)
+    (array.make-array i64 4)))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-sp-probe-start-live : (Array i64)
+    (array.make-array i64 4)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-sp-probe-start! [index : i64]) : unit
+    (begin
+      (array-set!
+        compiler-tc-walk-sp-probe-start-ns
+        index
+        (compiler-tc-walk-now-ns))
+      (array-set!
+        compiler-tc-walk-sp-probe-start-alloc
+        index
+        (profile.alloc-total))
+      (array-set!
+        compiler-tc-walk-sp-probe-start-live
+        index
+        (profile.alloc-live)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-sp-probe-finish! [index : i64]) : unit
+    (begin
+      (array-set!
+        compiler-tc-walk-sp-probe-ns
+        index
+        (+
+          (array-ref compiler-tc-walk-sp-probe-ns index)
+          (-
+            (compiler-tc-walk-now-ns)
+            (array-ref compiler-tc-walk-sp-probe-start-ns index))))
+      (array-set!
+        compiler-tc-walk-sp-probe-alloc
+        index
+        (+
+          (array-ref compiler-tc-walk-sp-probe-alloc index)
+          (-
+            (profile.alloc-total)
+            (array-ref compiler-tc-walk-sp-probe-start-alloc index))))
+      (array-set!
+        compiler-tc-walk-sp-probe-live
+        index
+        (+
+          (array-ref compiler-tc-walk-sp-probe-live index)
+          (-
+            (profile.alloc-live)
+            (array-ref compiler-tc-walk-sp-probe-start-live index))))
+      (array-set!
+        compiler-tc-walk-sp-probe-calls
+        index
+        (+ (array-ref compiler-tc-walk-sp-probe-calls index) 1)))))
+
 (cfg
   compile-profile
   (define (compiler-tc-walk-splice-flag-note! [flag : i64]) : unit
@@ -4467,6 +4550,54 @@
       (compiler-tc-macro-counter-profile-line
         "walk_splice_prescan_resets"
         compiler-tc-walk-splice-prescan-resets)
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_copy_us"
+        (/ (array-ref compiler-tc-walk-sp-probe-ns 0) 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_copy_alloc_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-alloc 0) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_copy_live_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-live 0) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_copy_calls"
+        (array-ref compiler-tc-walk-sp-probe-calls 0))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_extend_us"
+        (/ (array-ref compiler-tc-walk-sp-probe-ns 1) 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_extend_alloc_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-alloc 1) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_extend_live_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-live 1) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_extend_calls"
+        (array-ref compiler-tc-walk-sp-probe-calls 1))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_cache_us"
+        (/ (array-ref compiler-tc-walk-sp-probe-ns 2) 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_cache_alloc_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-alloc 2) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_cache_live_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-live 2) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_cache_calls"
+        (array-ref compiler-tc-walk-sp-probe-calls 2))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_envbuild_us"
+        (/ (array-ref compiler-tc-walk-sp-probe-ns 3) 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_envbuild_alloc_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-alloc 3) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_envbuild_live_kb"
+        (/ (array-ref compiler-tc-walk-sp-probe-live 3) 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_sp_envbuild_calls"
+        (array-ref compiler-tc-walk-sp-probe-calls 3))
       (compiler-tc-reinfer-profile-emit)
       (compiler-tc-body-fact-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
@@ -69668,6 +69799,11 @@
                                             (& expanded-paths)
                                             cur-materialize-seen
                                             cur-module-id))]
+                                      [_sp-probe-copy-start : unit
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-sp-probe-start! 0)
+                                          unit)]
                                       [marker-tail : AstDeclList
                                         (macro-scratch-decl-list-append
                                           expanded
@@ -69695,14 +69831,30 @@
                                       [defer-refresh? : bool
                                         (macro-decls-start-with-module-import-placeholder?
                                           rest)]
+                                      [_sp-probe-copy-finish : unit
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-sp-probe-finish! 0)
+                                          unit)]
                                       (begin
-                                        (match (macro-extend-top-env-with-module-marker
-                                          cur-ctx
-                                          cur-top-env
-                                          next-decls
-                                          expanded
-                                          cur-module
-                                          cur-module-id)
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-walk-sp-probe-start! 1))
+                                        (match (let
+                                          [extend-result : ResultTcEnv
+                                            (macro-extend-top-env-with-module-marker
+                                              cur-ctx
+                                              cur-top-env
+                                              next-decls
+                                              expanded
+                                              cur-module
+                                              cur-module-id)]
+                                          (begin
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-walk-sp-probe-finish!
+                                                1))
+                                            extend-result))
                                           [(ResultTcEnv.Ok next-top-env)
                                             (begin
                                               (tc-nominal-owner-cache-reset!)
@@ -69713,10 +69865,18 @@
                                                     compile-profile
                                                     (compiler-tc-walk-decl-sample-note!
                                                       4))
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-start!
+                                                      2))
                                                   (set!
                                                     cur-top-env
                                                     (tc-env-with-cache-layer-over-explicit
                                                       next-top-env))
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-finish!
+                                                      2))
                                                   (set!
                                                     cur-orig-decls
                                                     next-decls)
@@ -69733,51 +69893,72 @@
                                                       out-paths-rev))
                                                   (set! cur-decls rest)
                                                   (set! cur-paths rest-paths))
-                                                (match (tc-build-top-env-list-explicit-in-module
-                                                  next-ctx
-                                                  refresh-decls
-                                                  next-top-env
-                                                  cur-module
-                                                  cur-module-id)
-                                                  [(ResultTcEnv.Ok
-                                                      refreshed-top-env)
+                                                (begin
+                                                  (cfg
+                                                    compile-profile
+                                                    (compiler-tc-walk-sp-probe-start!
+                                                      3))
+                                                  (match (let
+                                                    [refresh-result : ResultTcEnv
+                                                      (tc-build-top-env-list-explicit-in-module
+                                                        next-ctx
+                                                        refresh-decls
+                                                        next-top-env
+                                                        cur-module
+                                                        cur-module-id)]
                                                     (begin
                                                       (cfg
                                                         compile-profile
-                                                        (compiler-tc-walk-decl-sample-note!
-                                                          5))
-                                                      (set!
-                                                        cur-top-env
-                                                        (tc-env-with-cache-layer-over-explicit
-                                                          refreshed-top-env))
-                                                      (set!
-                                                        cur-orig-decls
-                                                        next-decls)
-                                                      (set! cur-ctx next-ctx)
-                                                      (set!
-                                                        out-rev
-                                                        (macro-decl-list-reverse-into
-                                                          expanded
-                                                          out-rev))
-                                                      (set!
-                                                        out-paths-rev
-                                                        (macro-decl-path-list-reverse-into
-                                                          expanded-paths
-                                                          out-paths-rev))
-                                                      (set! cur-decls rest)
-                                                      (set!
-                                                        cur-paths
-                                                        rest-paths))]
-                                                  [(ResultTcEnv.Err
-                                                      refresh-message)
-                                                    (begin
-                                                      (set!
-                                                        result
-                                                        (ResultMacroDeclsWithPaths.Err
-                                                          (box
-                                                            (tc-diag-at-start
-                                                              refresh-message))))
-                                                      (set! done true))])))]
+                                                        (compiler-tc-walk-sp-probe-finish!
+                                                          3))
+                                                      refresh-result))
+                                                    [(ResultTcEnv.Ok
+                                                        refreshed-top-env)
+                                                      (begin
+                                                        (cfg
+                                                          compile-profile
+                                                          (compiler-tc-walk-decl-sample-note!
+                                                            5))
+                                                        (cfg
+                                                          compile-profile
+                                                          (compiler-tc-walk-sp-probe-start!
+                                                            2))
+                                                        (set!
+                                                          cur-top-env
+                                                          (tc-env-with-cache-layer-over-explicit
+                                                            refreshed-top-env))
+                                                        (cfg
+                                                          compile-profile
+                                                          (compiler-tc-walk-sp-probe-finish!
+                                                            2))
+                                                        (set!
+                                                          cur-orig-decls
+                                                          next-decls)
+                                                        (set! cur-ctx next-ctx)
+                                                        (set!
+                                                          out-rev
+                                                          (macro-decl-list-reverse-into
+                                                            expanded
+                                                            out-rev))
+                                                        (set!
+                                                          out-paths-rev
+                                                          (macro-decl-path-list-reverse-into
+                                                            expanded-paths
+                                                            out-paths-rev))
+                                                        (set! cur-decls rest)
+                                                        (set!
+                                                          cur-paths
+                                                          rest-paths))]
+                                                    [(ResultTcEnv.Err
+                                                        refresh-message)
+                                                      (begin
+                                                        (set!
+                                                          result
+                                                          (ResultMacroDeclsWithPaths.Err
+                                                            (box
+                                                              (tc-diag-at-start
+                                                                refresh-message))))
+                                                        (set! done true))]))))]
                                           [(ResultTcEnv.Err message)
                                             (begin
                                               (set!

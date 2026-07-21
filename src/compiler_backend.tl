@@ -54117,9 +54117,31 @@ tl_comptime_host_invoke_set:
           (+ 0xc0 (+ (* src-code 8) dst-code)))
         (compiler-backend-object-bytes-finish (& out))))))
 
-(define (compiler-backend-object-prologue-bytes [frame-size : i64]) : String
+(define (compiler-backend-object-push-sub-rsp!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [amount : i64]) : unit
+  (if (<= amount 127)
+    (begin
+      (compiler-backend-object-push-u8! out 0x48)
+      (compiler-backend-object-push-u8! out 0x83)
+      (compiler-backend-object-push-u8! out 0xec)
+      (compiler-backend-object-push-u8! out amount))
+    (begin
+      (compiler-backend-object-push-u8! out 0x48)
+      (compiler-backend-object-push-u8! out 0x81)
+      (compiler-backend-object-push-u8! out 0xec)
+      (compiler-backend-object-push-u32! out amount))))
+
+(define (compiler-backend-object-prologue-bytes
+  [target : CompilerBackendTarget]
+  [frame-size : i64]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    [probe : bool
+      (match target
+        [(CompilerBackendTarget.Windows) (>= frame-size 4096)]
+        [_ false])]
+    [remaining : i64 frame-size]
     (begin
       (compiler-backend-object-push-u8! (&mut out) 0x55)
       (compiler-backend-object-push-u8! (&mut out) 0x48)
@@ -54127,17 +54149,25 @@ tl_comptime_host_invoke_set:
       (compiler-backend-object-push-u8! (&mut out) 0xe5)
       (if (= frame-size 0)
         unit
-        (if (<= frame-size 127)
+        (if probe
+          ;; Windows guard-page discipline: a frame that skips past the
+          ;; single guard page faults, so large frames extend the stack one
+          ;; page at a time with a touch per page (the inline equivalent of
+          ;; the asm path's __chkstk call, which mapped images cannot make).
           (begin
-            (compiler-backend-object-push-u8! (&mut out) 0x48)
-            (compiler-backend-object-push-u8! (&mut out) 0x83)
-            (compiler-backend-object-push-u8! (&mut out) 0xec)
-            (compiler-backend-object-push-u8! (&mut out) frame-size))
-          (begin
-            (compiler-backend-object-push-u8! (&mut out) 0x48)
-            (compiler-backend-object-push-u8! (&mut out) 0x81)
-            (compiler-backend-object-push-u8! (&mut out) 0xec)
-            (compiler-backend-object-push-u32! (&mut out) frame-size))))
+            (while (> remaining 4096)
+              (begin
+                (compiler-backend-object-push-sub-rsp! (&mut out) 4096)
+                ;; orl $0, (%rsp)
+                (compiler-backend-object-push-u8! (&mut out) 0x83)
+                (compiler-backend-object-push-u8! (&mut out) 0x0c)
+                (compiler-backend-object-push-u8! (&mut out) 0x24)
+                (compiler-backend-object-push-u8! (&mut out) 0x00)
+                (set! remaining (- remaining 4096))))
+            (if (> remaining 0)
+              (compiler-backend-object-push-sub-rsp! (&mut out) remaining)
+              unit))
+          (compiler-backend-object-push-sub-rsp! (&mut out) frame-size)))
       (compiler-backend-object-bytes-finish (& out)))))
 
 (define (compiler-backend-object-leave-ret-bytes) : String
@@ -55481,6 +55511,7 @@ tl_comptime_host_invoke_set:
                         (cobj.CompilerObjectSymbolKind.Function))
                       (cobj.CompilerObjectX64Instr.Label symbol))
                     (compiler-backend-object-prologue-bytes
+                      target
                       (compiler-backend-frame-size
                         (if (> (compiler-live-set-count groups) 0)
                           (* vars 2)
@@ -55551,6 +55582,7 @@ tl_comptime_host_invoke_set:
                       (cobj.CompilerObjectSymbolKind.Function))
                     (cobj.CompilerObjectX64Instr.Label symbol))
                   (compiler-backend-object-prologue-bytes
+                    target
                     (compiler-backend-frame-size
                       (if (> (compiler-live-set-count groups) 0)
                         (* vars 2)

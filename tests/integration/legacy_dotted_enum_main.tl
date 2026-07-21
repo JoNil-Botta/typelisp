@@ -4,5 +4,10 @@
 (import "legacy_dotted_enum_bridge.tl")
 
 (define (main) : i64
-  (match (legacy-dotted-enum-roundtrip (LegacyDottedEnum.Value 42))
-    [(LegacyDottedEnum.Value value) value]))
+  (let
+    [item : LegacyDottedEnum (LegacyDottedEnum.Value 42)]
+    [struct-item : LegacyDottedStruct (LegacyDottedStruct 0)]
+    (+
+      (match (legacy-dotted-enum-roundtrip item)
+        [(LegacyDottedEnum.Value value) value])
+      (legacy-dotted-enum-countdown (& struct-item) 0))))

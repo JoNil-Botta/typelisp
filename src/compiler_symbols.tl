@@ -2567,13 +2567,16 @@
                           (if (and
                             ;; Functions from the same mixed path/dotted source
                             ;; must be checked in the logical module that owns
-                            ;; their canonical enum annotations. Keep generated
+                            ;; their canonical nominal annotations. Keep generated
                             ;; comptime declarations on their expansion owner.
                             (not (ast-decl-comptime-only? decl))
                             (match decl
                               [(AstDecl.DefFn decl-meta _ _ _ _ _) true]
                               [(AstDecl.DefEnum decl-meta _ _ _) true]
                               [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _)
+                                true]
+                              [(AstDecl.DefStruct decl-meta _ _ _ _) true]
+                              [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _)
                                 true]
                               [_ false]))
                             (let

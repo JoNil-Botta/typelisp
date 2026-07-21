@@ -70831,10 +70831,7 @@
                       (set! cur-summary (tc-summary-add-decl cur-summary decl)))
                     (let
                       [decl-module-id : i64
-                        (tc-check-decl-logical-module-id
-                          ctx
-                          cur-module-id
-                          decl)]
+                        (tc-check-decl-logical-module-id ctx cur-module-id decl)]
                       [decl-module : String
                         (if (compiler-symbol-root-module-id? decl-module-id)
                           ""

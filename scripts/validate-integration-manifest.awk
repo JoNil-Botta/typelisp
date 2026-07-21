@@ -86,7 +86,7 @@ FILENAME == catalog {
     if (extra == "expected-stderr:") {
         fail("manifest line " FNR " has empty expected stderr for " name)
     }
-    if (extra != "" && extra !~ /^expected-stderr:.+/) {
+    if (extra != "" && extra != "stage-stdlib" && extra !~ /^expected-stderr:.+/) {
         fail("manifest line " FNR " has invalid extra field for " name ": " extra)
     }
     if (!files[source]) {

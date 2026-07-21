@@ -2575,9 +2575,6 @@
                               [(AstDecl.DefEnum decl-meta _ _ _) true]
                               [(AstDecl.DefEnumLifetimes decl-meta _ _ _ _)
                                 true]
-                              [(AstDecl.DefStruct decl-meta _ _ _ _) true]
-                              [(AstDecl.DefStructLifetimes decl-meta _ _ _ _ _)
-                                true]
                               [_ false]))
                             (let
                               [exact-owner : i64

@@ -70677,6 +70677,39 @@
         lookup-module-id)
       lookup-module-id)))
 
+(define (tc-check-decl-in-logical-module
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [fallback-local-env : TcTypeEnv]
+  [fallback-global-env : TcTypeEnv]
+  [lookup-module : String]
+  [lookup-module-id : i64]
+  [decl : AstDecl]) : ResultTcUnit
+  (let
+    [module-id : i64
+      (tc-check-decl-logical-module-id ctx lookup-module-id decl)]
+    [module : String
+      (if (= module-id lookup-module-id)
+        lookup-module
+        (if (compiler-symbol-root-module-id? module-id)
+          ""
+          (intern-str module-id)))]
+    [decl-ctx : TcContext (tc-context-with-module-id ctx module module-id)]
+    (if (= module-id lookup-module-id)
+      (tc-check-decl-with-global-env
+        decl-ctx
+        fallback-local-env
+        fallback-global-env
+        decl)
+      (match (tc-module-local-env-id ctx top-env module module-id)
+        [(ResultTcEnv.Ok local-env)
+          (tc-check-decl-with-global-env
+            decl-ctx
+            local-env
+            (tc-hygiene-global-env local-env)
+            decl)]
+        [(ResultTcEnv.Err message) (ResultTcUnit.Err message)]))))
+
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -70830,28 +70863,20 @@
                       (set! cur-paths rest-paths)
                       (set! cur-summary (tc-summary-add-decl cur-summary decl)))
                     (let
-                      [decl-module-id : i64
-                        (tc-check-decl-logical-module-id ctx cur-module-id decl)]
-                      [decl-module : String
-                        (if (compiler-symbol-root-module-id? decl-module-id)
-                          ""
-                          (intern-str decl-module-id))]
-                      [decl-ctx : TcContext
-                        (tc-context-with-module-id
-                          ctx
-                          decl-module
-                          decl-module-id)]
                       [prev-path : String
                         (tc-unused-unsafe-set-current-path! decl-path)]
                       (begin
                         (cfg
                           compile-profile
                           (compiler-tc-decl-profile-start-section))
-                        (tc-context-capture-active-pools! decl-ctx)
-                        (match (tc-check-decl-with-global-env
-                          decl-ctx
+                        (tc-context-capture-active-pools! ctx)
+                        (match (tc-check-decl-in-logical-module
+                          ctx
+                          top-env
                           cur-local-env
                           cur-global-env
+                          cur-module
+                          cur-module-id
                           decl)
                           [(ResultTcUnit.Ok)
                             (begin

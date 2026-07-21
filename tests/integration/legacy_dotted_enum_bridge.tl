@@ -4,3 +4,8 @@
 
 (define (legacy-dotted-enum-roundtrip [value : provider.LegacyDottedEnum]) : provider.LegacyDottedEnum
   value)
+
+(define (legacy-dotted-struct-recursive-smoke) : i64
+  (let
+    [item : provider.LegacyDottedStruct (provider.LegacyDottedStruct 0)]
+    (provider.legacy-dotted-enum-countdown (& item) 0)))

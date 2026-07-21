@@ -6,8 +6,7 @@
 (define (main) : i64
   (let
     [item : LegacyDottedEnum (LegacyDottedEnum.Value 42)]
-    [struct-item : LegacyDottedStruct (LegacyDottedStruct 0)]
     (+
       (match (legacy-dotted-enum-roundtrip item)
         [(LegacyDottedEnum.Value value) value])
-      (legacy-dotted-enum-countdown (& struct-item) 0))))
+      (legacy-dotted-struct-recursive-smoke))))

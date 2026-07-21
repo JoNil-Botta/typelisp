@@ -447,8 +447,8 @@ payload_streams=$1
 compressed_payload_bytes=$2
 static_payload_bytes=$3
 encoded_payload_bytes=0
-[ "$payload_streams" -eq 42 ] || {
-    echo "expected 42 embedded stdlib payloads in binary, found $payload_streams" >&2
+[ "$payload_streams" -eq 45 ] || {
+    echo "expected 45 embedded stdlib payloads in binary, found $payload_streams" >&2
     exit 1
 }
 

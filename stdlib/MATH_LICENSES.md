@@ -12,6 +12,11 @@ table data derive from musl's `exp.c`, `expf.c`, `exp_data.c`, and
 >
 > SPDX-License-Identifier: MIT
 
+The `f64-log` and `f32-log` implementations, coefficient bit patterns, and
+table data derive from musl's `log.c`, `logf.c`, `log_data.c`, and
+`logf_data.c` at that revision. They carry the same Arm Limited copyright and
+MIT SPDX notice above. The binary64 port selects musl's non-FMA reduction.
+
 The `f64-sin`/`f64-cos`/`f64-tan` and binary32 counterparts also derive from
 musl's `sin.c`, `cos.c`, `tan.c`, float variants, `__sin.c`, `__cos.c`,
 `__tan.c`, float kernels, `__rem_pio2.c`, `__rem_pio2f.c`, and

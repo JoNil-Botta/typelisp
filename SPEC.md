@@ -5417,6 +5417,17 @@ maps to zero, positive infinity is unchanged, and NaNs remain NaN. The
 implementations allocate no storage and reference no runtime, libc, libm, CRT,
 x87 transcendental, or FMA facility.
 
+`stdlib.math.f64-log` and `stdlib.math.f32-log` provide natural logarithms
+through deterministic bit decomposition, table reduction, and polynomial
+evaluation. `stdlib.math.log` preserves an `f64` or `f32` operand type and
+evaluates its expression once. Under the default round-to-nearest,
+ties-to-even mode, finite positive results are within one ULP. Both signed
+zeros map to negative infinity; negative finite values and negative infinity
+map to NaN; one maps to positive zero; positive infinity is unchanged; and
+NaNs remain NaN. Floating exception flags and signaling-NaN payload behavior
+are outside the initial contract. The implementations allocate no storage and
+reference no runtime, libc, libm, CRT, x87 transcendental, or FMA facility.
+
 **Fixed-array element operations.** The public `Array` type is the fixed
 `(Array T N)` form. The core element operations are:
 

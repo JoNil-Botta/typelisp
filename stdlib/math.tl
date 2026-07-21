@@ -568,12 +568,14 @@
 ;; Constants remain exact IEEE-754 bit patterns. Binary64 deliberately uses
 ;; musl's non-FMA reduction, and the written operation order is part of the
 ;; round-to-nearest error bound.
+;: Hold one exact non-FMA binary64 log reduction-table entry as bit patterns.
 (defstruct MathLogF64TableEntry
   (invc-bits u64)
   (logc-bits u64)
   (chi-bits u64)
   (clo-bits u64))
 
+;: Hold one exact binary32 log reduction-table entry as bit patterns.
 (defstruct MathLogF32TableEntry
   (invc-bits u64)
   (logc-bits u64))

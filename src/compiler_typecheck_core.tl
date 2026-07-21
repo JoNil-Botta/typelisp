@@ -1512,6 +1512,161 @@
                     (- end-live compiler-tc-profile-start-live))
                   (string.append (compiler-tc-profile-field peak-delta) "\n"))))))))))
 
+;; Fine-grained walk-region accumulators. The ms clock cannot resolve the
+;; per-call regions inside the macro walk, so these use a nanosecond
+;; monotonic clock. Linux only: on Windows the reads return 0 and the rows
+;; report zeros, which the profile harness does not assert on.
+(cfg
+  compile-profile
+  (define compiler-tc-walk-clock-scratch : (Array i64)
+    (array.make-array i64 2)))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-now-ns) : i64
+    (cfg
+      windows
+      0
+      (let
+        [addr : i64
+          (unsafe
+            (cast
+              (ptr->int
+                (ptr-cast (array-data compiler-tc-walk-clock-scratch) : (Ptr u8)))
+              : i64))]
+        [status : i64
+          (unsafe
+            (syscall 228 1 addr))]
+        (if (< status 0)
+          0
+          (+
+            (* (array-ref compiler-tc-walk-clock-scratch 0) 1000000000)
+            (array-ref compiler-tc-walk-clock-scratch 1)))))))
+
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-scrut-tc-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-scrut-tc-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-scrut-tc-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-arm-bind-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-arm-bind-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-arm-bind-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-bind-params-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-bind-params-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-bind-params-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-native-dispatch-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-native-dispatch-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-native-dispatch-start-ns : i64
+    0))
+
+;; The four regions are non-reentrant leaves of the walk (none of them can
+;; re-enter itself through macro expansion), so a single global start slot
+;; per region is sufficient.
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-scrut-tc-start!) : unit
+    (set! compiler-tc-macro-walk-scrut-tc-start-ns (compiler-tc-walk-now-ns))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-scrut-tc-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-scrut-tc-ns
+        (+
+          compiler-tc-macro-walk-scrut-tc-ns
+          (- (compiler-tc-walk-now-ns) compiler-tc-macro-walk-scrut-tc-start-ns)))
+      (set!
+        compiler-tc-macro-walk-scrut-tc-calls
+        (+ compiler-tc-macro-walk-scrut-tc-calls 1)))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-arm-bind-start!) : unit
+    (set! compiler-tc-macro-walk-arm-bind-start-ns (compiler-tc-walk-now-ns))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-arm-bind-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-arm-bind-ns
+        (+
+          compiler-tc-macro-walk-arm-bind-ns
+          (- (compiler-tc-walk-now-ns) compiler-tc-macro-walk-arm-bind-start-ns)))
+      (set!
+        compiler-tc-macro-walk-arm-bind-calls
+        (+ compiler-tc-macro-walk-arm-bind-calls 1)))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-bind-params-start!) : unit
+    (set!
+      compiler-tc-macro-walk-bind-params-start-ns
+      (compiler-tc-walk-now-ns))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-bind-params-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-bind-params-ns
+        (+
+          compiler-tc-macro-walk-bind-params-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-macro-walk-bind-params-start-ns)))
+      (set!
+        compiler-tc-macro-walk-bind-params-calls
+        (+ compiler-tc-macro-walk-bind-params-calls 1)))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-native-dispatch-start!) : unit
+    (set!
+      compiler-tc-macro-walk-native-dispatch-start-ns
+      (compiler-tc-walk-now-ns))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-native-dispatch-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-native-dispatch-ns
+        (+
+          compiler-tc-macro-walk-native-dispatch-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-macro-walk-native-dispatch-start-ns)))
+      (set!
+        compiler-tc-macro-walk-native-dispatch-calls
+        (+ compiler-tc-macro-walk-native-dispatch-calls 1)))))
+
 (cfg
   compile-profile
   (define compiler-tc-macro-profile-start-ms : i64
@@ -3152,6 +3307,30 @@
       (compiler-tc-macro-counter-profile-line
         "walk_share_gate_open"
         compiler-tc-macro-walk-share-gate-open)
+      (compiler-tc-macro-counter-profile-line
+        "walk_scrut_tc_us"
+        (/ compiler-tc-macro-walk-scrut-tc-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_scrut_tc_calls"
+        compiler-tc-macro-walk-scrut-tc-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_arm_bind_us"
+        (/ compiler-tc-macro-walk-arm-bind-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_arm_bind_calls"
+        compiler-tc-macro-walk-arm-bind-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_bind_params_us"
+        (/ compiler-tc-macro-walk-bind-params-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_bind_params_calls"
+        compiler-tc-macro-walk-bind-params-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_native_dispatch_us"
+        (/ compiler-tc-macro-walk-native-dispatch-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_native_dispatch_calls"
+        compiler-tc-macro-walk-native-dispatch-calls)
       (compiler-tc-reinfer-profile-emit)
       (compiler-tc-body-fact-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
@@ -62871,61 +63050,78 @@
             (ast-node-pool-context-type-len active-pools)))
           (tc-context-install-pools! ctx)
           (tc-context-capture-active-pools! ctx))))
-    (match (macro-bind-params
-      ctx
-      decls
-      fallback-module
-      fallback-module-id
-      type-env
-      macro-name
-      params
-      expanded-args
-      (tc-ctfe-env ctx)
-      (tc-string-list-contains macro-expand-expr-type-macro-names macro-name)
-      call-expr)
-      [(ResultMacroEnv.Ok env)
-        (match (macro-try-stdlib-tlci-native
+    (cfg compile-profile (compiler-tc-walk-bind-params-start!))
+    (match (let
+      [bind-result : ResultMacroEnv
+        (macro-bind-params
           ctx
+          decls
           fallback-module
+          fallback-module-id
+          type-env
           macro-name
           params
-          env
-          call-expr)
-          [(MacroNativeStdlibTlciResult.Value value)
+          expanded-args
+          (tc-ctfe-env ctx)
+          (tc-string-list-contains
+            macro-expand-expr-type-macro-names
+            macro-name)
+          call-expr)]
+      (begin
+        (cfg compile-profile (compiler-tc-walk-bind-params-finish!))
+        bind-result))
+      [(ResultMacroEnv.Ok env)
+        (begin
+          (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
+          (match (let
+            [native-result : MacroNativeStdlibTlciResult
+              (macro-try-stdlib-tlci-native
+                ctx
+                fallback-module
+                macro-name
+                params
+                env
+                call-expr)]
             (begin
-              (tc-context-install-pools! ctx)
-              (ResultMacroValueEnv.Ok value env))]
-          [(MacroNativeStdlibTlciResult.Err diag)
-            (ResultMacroValueEnv.Err (box diag))]
-          [(MacroNativeStdlibTlciResult.No)
-            (begin
-              (macro-note-stdlib-tlci-route fallback-module macro-name)
-              (ctfe-result-hygiene-free-reset!)
-              (cfg compile-profile (compiler-tc-macro-profile-start))
-              (match (ctfe-eval-node
-                body
-                (ctfe-env-extend-id
-                  env
-                  (ctfe-hygiene-enabled-id)
-                  (CompilerCtfeValue.Bool true))
-                (ctfe-fuel-limit))
-                [(ResultCtfe.Ok value _)
-                  (begin
-                    (tc-context-install-pools! ctx)
-                    (cfg
-                      compile-profile
-                      (compiler-tc-macro-profile-finish
-                        macro-name
-                        expanded-args))
-                    (ResultMacroValueEnv.Ok value env))]
-                [(ResultCtfe.Err diag)
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-tc-macro-profile-finish
-                        macro-name
-                        expanded-args))
-                    (ResultMacroValueEnv.Err diag))]))])]
+              (cfg
+                compile-profile
+                (compiler-tc-walk-native-dispatch-finish!))
+              native-result))
+            [(MacroNativeStdlibTlciResult.Value value)
+              (begin
+                (tc-context-install-pools! ctx)
+                (ResultMacroValueEnv.Ok value env))]
+            [(MacroNativeStdlibTlciResult.Err diag)
+              (ResultMacroValueEnv.Err (box diag))]
+            [(MacroNativeStdlibTlciResult.No)
+              (begin
+                (macro-note-stdlib-tlci-route fallback-module macro-name)
+                (ctfe-result-hygiene-free-reset!)
+                (cfg compile-profile (compiler-tc-macro-profile-start))
+                (match (ctfe-eval-node
+                  body
+                  (ctfe-env-extend-id
+                    env
+                    (ctfe-hygiene-enabled-id)
+                    (CompilerCtfeValue.Bool true))
+                  (ctfe-fuel-limit))
+                  [(ResultCtfe.Ok value _)
+                    (begin
+                      (tc-context-install-pools! ctx)
+                      (cfg
+                        compile-profile
+                        (compiler-tc-macro-profile-finish
+                          macro-name
+                          expanded-args))
+                      (ResultMacroValueEnv.Ok value env))]
+                  [(ResultCtfe.Err diag)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-tc-macro-profile-finish
+                          macro-name
+                          expanded-args))
+                      (ResultMacroValueEnv.Err diag))]))]))]
       [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)])))
 
 ;; Run a macro transformer via CTFE. Callers decide how to interpret the
@@ -64385,24 +64581,34 @@
       [(AstMatchArm.Arm pattern body-box)
         (let
           [body : AstExpr (ast-node-get body-box)]
-          (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-            [(ResultTcEnv.Ok arm-env)
-              (match (macro-expand-expr ctx arm-env decls depth body)
-                [(ResultMacroExpr.Ok nbody)
-                  (begin
-                    (ast-match-arm-list-push out (ast-match-arm pattern nbody))
-                    (macro-expand-arms-into
-                      ctx
-                      env
-                      decls
-                      depth
-                      scrut-ty
-                      arms
-                      (+ index 1)
-                      out))]
-                [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])]
-            [(ResultTcEnv.Err message)
-              (ResultMacroCheck.Err (box (tc-expr-diag body message)))]))])))
+          (begin
+            (cfg compile-profile (compiler-tc-walk-arm-bind-start!))
+            (let
+              [arm-env-result : ResultTcEnv
+                (tc-bind-match-pattern ctx env scrut-ty pattern)]
+              (begin
+                (cfg compile-profile (compiler-tc-walk-arm-bind-finish!))
+                (match arm-env-result
+                  [(ResultTcEnv.Ok arm-env)
+                    (match (macro-expand-expr ctx arm-env decls depth body)
+                      [(ResultMacroExpr.Ok nbody)
+                        (begin
+                          (ast-match-arm-list-push
+                            out
+                            (ast-match-arm pattern nbody))
+                          (macro-expand-arms-into
+                            ctx
+                            env
+                            decls
+                            depth
+                            scrut-ty
+                            arms
+                            (+ index 1)
+                            out))]
+                      [(ResultMacroExpr.Err diag) (ResultMacroCheck.Err diag)])]
+                  [(ResultTcEnv.Err message)
+                    (ResultMacroCheck.Err
+                      (box (tc-expr-diag body message)))])))))])))
 
 (define (macro-expand-bindings
   [ctx : TcContext]
@@ -64825,21 +65031,35 @@
               [scrut : AstExpr (ast-node-get scrut-box)]
               (match (macro-expand-expr ctx env decls depth scrut)
                 [(ResultMacroExpr.Ok nscrut)
-                  (match (tc-expr ctx env (ast-node-get nscrut))
-                    [(ResultTcType.Ok scrut-ty)
-                      (match (macro-expand-arms
-                        ctx
-                        env
-                        decls
-                        depth
-                        scrut-ty
-                        arms)
-                        [(ResultMacroArms.Ok narms)
-                          (ResultMacroExpr.Ok (ast-expr-match nscrut narms))]
-                        [(ResultMacroArms.Err diag) (ResultMacroExpr.Err diag)])]
-                    [(ResultTcType.Err message)
-                      (ResultMacroExpr.Err
-                        (box (tc-expr-diag (ast-node-get nscrut) message)))])]
+                  (begin
+                    (cfg compile-profile (compiler-tc-walk-scrut-tc-start!))
+                    (let
+                      [scrut-ty-result : ResultTcType
+                        (tc-expr ctx env (ast-node-get nscrut))]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-tc-walk-scrut-tc-finish!))
+                        (match scrut-ty-result
+                          [(ResultTcType.Ok scrut-ty)
+                            (match (macro-expand-arms
+                              ctx
+                              env
+                              decls
+                              depth
+                              scrut-ty
+                              arms)
+                              [(ResultMacroArms.Ok narms)
+                                (ResultMacroExpr.Ok
+                                  (ast-expr-match nscrut narms))]
+                              [(ResultMacroArms.Err diag)
+                                (ResultMacroExpr.Err diag)])]
+                          [(ResultTcType.Err message)
+                            (ResultMacroExpr.Err
+                              (box
+                                (tc-expr-diag
+                                  (ast-node-get nscrut)
+                                  message)))]))))]
                 [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
       [(AstExpr.While cond-box body-box)
         (let

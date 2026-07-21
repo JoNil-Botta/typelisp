@@ -331,6 +331,7 @@ lint_driver_smoke|src/tests/lint_driver_smoke.tl|42|-|-|compiler_check_core.tl c
 package_cache_smoke|src/tests/package_cache_smoke.tl|42|-|-|package_cache_core.tl stdlib/fs.tl stdlib/env.tl stdlib/vector.tl stdlib/io.tl stdlib/string.tl
 array_push_aggregate|tests/integration/array_push_aggregate.tl|42|-|-|-
 nested_repr_c_aggregate|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-
+nested_tuple_array_projection|tests/integration/nested_tuple_array_projection.tl|0|7\n3\n|-|stdlib/io.tl
 lambda_capture_lifetime_aggregate|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|stdlib/string.tl
 register_resident_enum|tests/integration/register_resident_enum.tl|42|-|-|-
 register_pair_struct|tests/integration/register_pair_struct.tl|42|-|-|-

@@ -1104,6 +1104,24 @@
 ;; payload in this process. The tlci macro route consults this per defining
 ;; module: a stdlib module loaded from an explicit root must expand from its
 ;; own source even when the embedded catalog knows its identities.
+(define compiler-load-provenance-arena-handle : i64
+  0)
+
+;: Arena for the embedded-provenance set and the content-equivalence cache.
+;: These outlive every session floor reset (their contents are re-derived
+;: per session, but the bindings must never point into memory another reset
+;: can free), so they get their own arena that is created once and only
+;: grows.
+(define (compiler-load-provenance-arena) : i64
+  (begin
+    (if (= compiler-load-provenance-arena-handle 0)
+      (set!
+        compiler-load-provenance-arena-handle
+        (unsafe
+          (arena.tl_arena_make)))
+      unit)
+    compiler-load-provenance-arena-handle))
+
 (define compiler-load-embedded-module-ids : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
 
@@ -1115,10 +1133,10 @@
     [id : i64 (ci.intern (compiler-load-canonical-module-id-from-path path))]
     [previous-arena : i64 (arena.tl_arena_current)]
     (begin
-      ;; The set outlives every load-scoped scratch arena; bind its nodes in
-      ;; the interner's persistent arena like the parse dispatch state does.
+      ;; The set outlives every load-scoped scratch arena and every intern
+      ;; floor reset; bind its nodes in the dedicated provenance arena.
       (unsafe
-        (arena.tl_arena_set (ci.intern-persistent-arena-handle)))
+        (arena.tl_arena_set (compiler-load-provenance-arena)))
       (set!
         compiler-load-embedded-module-ids
         (sym_i64_env.sym-i64-bind-id compiler-load-embedded-module-ids id 1))
@@ -1167,7 +1185,7 @@
         [previous-arena : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
-            (arena.tl_arena_set (ci.intern-persistent-arena-handle)))
+            (arena.tl_arena_set (compiler-load-provenance-arena)))
           (set!
             compiler-load-embedded-equivalence-cache
             (sym_i64_env.sym-i64-bind-id

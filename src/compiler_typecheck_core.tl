@@ -62441,7 +62441,7 @@
       [previous-arena : i64 (arena.tl_arena_current)]
       (begin
         (unsafe
-          (arena.tl_arena_set (ci.intern-persistent-arena-handle)))
+          (arena.tl_arena_set (compiler-load-provenance-arena)))
         (set! macro-expand-stdlib-tlci-catalog-cache (tc_string_i64_map.new))
         (unsafe
           (arena.tl_arena_set previous-arena))))))
@@ -62458,7 +62458,7 @@
       [previous-arena : i64 (arena.tl_arena_current)]
       (begin
         (unsafe
-          (arena.tl_arena_set (ci.intern-persistent-arena-handle)))
+          (arena.tl_arena_set (compiler-load-provenance-arena)))
         (tc_string_i64_map.insert-ref!
           (&mut macro-expand-stdlib-tlci-catalog-cache)
           stable-name

@@ -7787,6 +7787,19 @@
     (expr-int 0)))
 (define (main) : i64 (needs-type missing))")
 
+(define (compiler-typecheck-macro-lazy-match-source) : String
+  "(defenum MaybeI64 (Some i64) (None))
+(defmacro (make-some [value : i64]) : MaybeI64 `(Some ,value))
+(defmacro (identity-expr [value : Expr]) : Expr value)
+(define (main) : i64
+  (+
+    (match (make-some 20)
+      [(Some value) value]
+      [(None) 0])
+    (match (make-some 22)
+      [(Some value) (identity-expr value)]
+      [(None) 0])))")
+
 (define (compiler-typecheck-macro-expand-depth-source) : String
   "(defmacro (again) : Expr `(again))
 (define (main) : i64 (again))")
@@ -8535,6 +8548,7 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-expr-type-untyped-source)
       "expr-type requires a typechecked Expr")
+    (compiler-typecheck-ok? (compiler-typecheck-macro-lazy-match-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-expand-depth-source)
       "macro expansion exceeded depth limit")

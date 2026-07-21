@@ -409,6 +409,7 @@ else
         scripts/check-opt2-cli-regression.sh
 fi
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-spmd-runtime-dispatch.sh
+run_with_compiler "$STAGE2_BIN" "stage2 SPMD package calls" scripts/verify-spmd-package-calls.sh
 run_with_compiler "$STAGE2_BIN" "ISPC perfbench loads corpus contract" scripts/verify-ispc-perfbench-loads.sh
 run_with_compiler "$STAGE2_BIN" "ISPC perfbench stores corpus contract" scripts/verify-ispc-perfbench-stores.sh
 run_with_compiler "$STAGE2_BIN" "ISPC Mandelbrot corpus contract" scripts/verify-ispc-mandelbrot.sh

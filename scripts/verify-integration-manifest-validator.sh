@@ -57,5 +57,13 @@ expect_failure unsafe-source 'unsafe source path for unsafe_source: ../good.tl' 
     'unsafe_source|../good.tl|0|-|-|-'
 expect_failure unsafe-dependency 'unsafe dependency path for unsafe_dep: ../helper.tl' \
     'unsafe_dep|tests/integration/good.tl|0|-|-|../helper.tl'
+expect_failure invalid-extra 'invalid extra field for bad_extra: stage-everything' \
+    'bad_extra|tests/integration/good.tl|0|-|-|-|stage-everything'
+
+printf '%s\n' 'staged|tests/integration/good.tl|0|-|-|stdlib/string.tl|stage-stdlib' > "$MANIFEST"
+: > "$KNOWN"
+awk -v catalog="$CATALOG" -v known_out="$KNOWN" \
+    -f "$VALIDATOR" "$CATALOG" "$MANIFEST"
+grep -Fx good "$KNOWN" >/dev/null
 
 echo "integration manifest validator self-tests passed"

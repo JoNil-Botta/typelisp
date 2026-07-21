@@ -275,6 +275,18 @@ copy_dep() {
     _dep=$1
     _source_dir=$2
     _case_dir=$3
+    _stage_stdlib=${4:-1}
+    # Stdlib modules resolve from the compiler's embedded payload by default,
+    # so their staged copies are never read. Cases that exercise on-disk
+    # stdlib layouts at runtime opt back in with the manifest `stage-stdlib`
+    # extra (which also restores the on-disk stdlib compile root).
+    case "$_dep" in
+        stdlib/*)
+            if [ "$_stage_stdlib" -eq 0 ]; then
+                return 0
+            fi
+            ;;
+    esac
     _src=$(dep_source_path "$_dep" "$_source_dir")
     # src/ sources import `../stdlib/...`; src/tests/ smoke drivers import
     # `../src_module.tl` and `../../stdlib/...` so they stay directly runnable
@@ -1044,7 +1056,7 @@ run_linux_program_fixture() {
 
     echo "[$_label] compile --opt-level $_opt_level -> run"
     run_build "$COMPILER" compile "$ROOT/$_source" \
-        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+        --stdlib-root "$ROOT/src" \
         --opt-level "$_opt_level" -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
     if [ "$build_rc" -ne 0 ]; then
         echo "FAIL: $_label compile failed" >&2
@@ -1362,7 +1374,7 @@ run_windows_program_fixture() {
     echo "[$_label] compile --opt-level $_opt_level -> run (windows)"
     run_build "$COMPILER" compile "$ROOT/$_source" \
         --target windows-x86_64 --cfg windows \
-        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+        --stdlib-root "$ROOT/src" \
         --opt-level "$_opt_level" -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
     if [ "$build_rc" -ne 0 ]; then
         echo "FAIL: $_label compile failed" >&2
@@ -1809,6 +1821,7 @@ windows_assert_queued_cases() {
         _expected_stderr_spec=-
         case "${_extra:-}" in
             "") ;;
+            stage-stdlib) ;;
             expected-stderr:*) _expected_stderr_spec=${_extra#expected-stderr:} ;;
         esac
         _case_dir="$WORKDIR/$_name"
@@ -1974,8 +1987,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     esac
 
     expected_stderr_spec=-
+    stage_stdlib=0
     case "${extra:-}" in
         "") ;;
+        stage-stdlib) stage_stdlib=1 ;;
         expected-stderr:*) expected_stderr_spec=${extra#expected-stderr:} ;;
     esac
 
@@ -1991,7 +2006,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     cp "$source_path" "$work_src"
 
     for dep in $(deps_or_empty "$deps"); do
-        copy_dep "$dep" "$source_dir" "$case_dir"
+        copy_dep "$dep" "$source_dir" "$case_dir" "$stage_stdlib"
     done
     if ci_timing_enabled; then
         ci_timing_set_now_ms
@@ -2023,9 +2038,17 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         case_dir_win="$WINDOWS_WORKDIR_WIN\\$name"
         obj_win="$case_dir_win\\$name.o"
         bin_win="$case_dir_win\\$name.exe"
-        windows_timed_compile "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
-            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
-            > "$build_stdout" 2> "$build_stderr"
+        # Stdlib comes from the embedded payload unless the case opted into
+        # the on-disk layout (stage-stdlib), matching the staged copies.
+        if [ "$stage_stdlib" -eq 1 ]; then
+            windows_timed_compile "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
+                --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
+                > "$build_stdout" 2> "$build_stderr"
+        else
+            windows_timed_compile "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
+                --stdlib-root "$ROOT/src" -o "$asm" \
+                > "$build_stdout" 2> "$build_stderr"
+        fi
         if [ "$build_rc" -ne 0 ]; then
             echo "FAIL: $name compile failed" >&2
             show_compile_failure_diagnostics \
@@ -2037,7 +2060,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
                 "$build_stdout" \
                 "$build_stderr" \
                 "$asm" \
-                "compile $work_src --target windows-x86_64 --cfg windows --stdlib-root $ROOT/stdlib --stdlib-root $ROOT/src -o $asm"
+                "compile $work_src --target windows-x86_64 --cfg windows --stdlib-root $ROOT/src -o $asm (stage-stdlib=$stage_stdlib)"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue
@@ -2072,9 +2095,17 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         continue
     else
         set +e
-        ci_timing_run "$name" compile "$COMPILER" compile "$work_src" \
-            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
-            > "$build_stdout" 2> "$build_stderr"
+        # Stdlib comes from the embedded payload unless the case opted into
+        # the on-disk layout (stage-stdlib), matching the staged copies.
+        if [ "$stage_stdlib" -eq 1 ]; then
+            ci_timing_run "$name" compile "$COMPILER" compile "$work_src" \
+                --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
+                > "$build_stdout" 2> "$build_stderr"
+        else
+            ci_timing_run "$name" compile "$COMPILER" compile "$work_src" \
+                --stdlib-root "$ROOT/src" -o "$asm" \
+                > "$build_stdout" 2> "$build_stderr"
+        fi
         build_rc=$?
         set -e
         if [ "$build_rc" -ne 0 ]; then
@@ -2088,7 +2119,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
                 "$build_stdout" \
                 "$build_stderr" \
                 "$asm" \
-                "compile $work_src --stdlib-root $ROOT/stdlib --stdlib-root $ROOT/src -o $asm"
+                "compile $work_src --stdlib-root $ROOT/src -o $asm (stage-stdlib=$stage_stdlib)"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue

@@ -711,19 +711,36 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_int
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_source_interpreted|"
 # The repo's own stdlib is content-identical to the embedded payload, so
 # the catalog dispatches here too; shell entries keep the counted
-# interpreted fallback (and their per-identity profile rows above).
-assert_profile_counter_at_least_in \
-    "$CHECK_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    1 \
-    "$CHECK_STDOUT" \
-    "$CHECK_STDERR"
-assert_profile_counter_at_least_in \
-    "$CHECK_STDERR" \
-    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
-    1 \
-    "$CHECK_STDOUT" \
-    "$CHECK_STDERR"
+# interpreted fallback (and their per-identity profile rows above). On
+# Windows the route is gated off until #5460 closes, so the stand-down
+# shape is asserted instead.
+if [ "$NL_HOST_OS" = windows ]; then
+    assert_profile_counter_eq_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_catalog_hits" \
+        0 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_source_interpreted" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+else
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_catalog_hits" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+fi
 # The multi-pass fixed-point loop and its follow-up worklist are deleted: macro
 # expansion is a single demand-driven pass, so the fixed_point_* counters no
 # longer exist.
@@ -735,6 +752,9 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_f
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.misses|"
 
+if [ "$NL_HOST_OS" = windows ]; then
+    echo "[compile-profile] skip routing differential on windows (route gated, #5460)"
+else
 echo "[compile-profile] verify embedded stdlib tlci routing and differential output"
 mkdir -p "$STDLIB_TLCI_DIR"
 if ! (
@@ -836,6 +856,7 @@ assert_profile_counter_at_least_in \
 if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM"; then
     diff -u "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM" >&2 || true
     fail "comment-modified stdlib root changed generated assembly"
+fi
 fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"

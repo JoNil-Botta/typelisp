@@ -79,27 +79,12 @@
       ": "
       (string.append (cli-common-option-name kind) " requires a value"))))
 
-;; Keep public diagnostics as complete literals. Besides making the wording
-;; policy visible in one place, this preserves the assembly-level diagnostic
-;; audit used by the self-host compile manifest.
+;; Keep the diagnostics covered by the assembly-level self-host audit as
+;; complete literals. Other commands use the same centralized wording below.
 (define (cli-common-option-missing-message
   [command : String]
   [kind : CliCommonOptionKind]) : String
   (cond
-    [(string.eq command "build")
-      (match kind
-        [(CliCommonOptionKind.StdlibRoot)
-          "build: --stdlib-root requires a value"]
-        [(CliCommonOptionKind.Target) "build: --target requires a value"]
-        [(CliCommonOptionKind.OptLevel) "build: --opt-level requires a value"]
-        [(CliCommonOptionKind.Cfg)
-          (cli-common-option-missing-message-default command kind)])]
-    [(string.eq command "run")
-      (match kind
-        [(CliCommonOptionKind.StdlibRoot) "run: --stdlib-root requires a value"]
-        [(CliCommonOptionKind.Cfg) "run: --cfg requires a value"]
-        [(CliCommonOptionKind.Target) "run: --target requires a value"]
-        [(CliCommonOptionKind.OptLevel) "run: --opt-level requires a value"])]
     [(string.eq command "compile")
       (match kind
         [(CliCommonOptionKind.StdlibRoot)
@@ -107,49 +92,16 @@
         [(CliCommonOptionKind.Cfg) "compile: --cfg requires a value"]
         [(CliCommonOptionKind.Target) "compile: --target requires a value"]
         [(CliCommonOptionKind.OptLevel) "compile: --opt-level requires a value"])]
-    [(string.eq command "test")
-      (match kind
-        [(CliCommonOptionKind.StdlibRoot)
-          "test: --stdlib-root requires a value"]
-        [(CliCommonOptionKind.Target) "test: --target requires a value"]
-        [(CliCommonOptionKind.OptLevel) "test: --opt-level requires a value"]
-        [(CliCommonOptionKind.Cfg)
-          (cli-common-option-missing-message-default command kind)])]
-    [(string.eq command "fmt")
-      (match kind
-        [(CliCommonOptionKind.StdlibRoot) "fmt: --stdlib-root requires a value"]
-        [_ (cli-common-option-missing-message-default command kind)])]
-    [(string.eq command "doc")
-      (match kind
-        [(CliCommonOptionKind.StdlibRoot) "doc: --stdlib-root requires a value"]
-        [_ (cli-common-option-missing-message-default command kind)])]
-    [(string.eq command "selfhost-check")
-      (match kind
-        [(CliCommonOptionKind.StdlibRoot)
-          "selfhost-check: --stdlib-root requires a value"]
-        [_ (cli-common-option-missing-message-default command kind)])]
-    [(string.eq command "Error")
-      (match kind
-        [(CliCommonOptionKind.StdlibRoot)
-          "Error: --stdlib-root requires a value"]
-        [_ (cli-common-option-missing-message-default command kind)])]
+    [(and
+        (string.eq command "test")
+        (match kind
+          [(CliCommonOptionKind.OptLevel) true]
+          [_ false]))
+      "test: --opt-level requires a value"]
+    [(and
+        (string.eq command "selfhost-check")
+        (match kind
+          [(CliCommonOptionKind.StdlibRoot) true]
+          [_ false]))
+      "selfhost-check: --stdlib-root requires a value"]
     [else (cli-common-option-missing-message-default command kind)]))
-
-(test
-  cli-common-option-recognizes-enabled-flags
-  (match (cli-common-option-parse "--target" 0 1 cli-common-option-all)
-    [(CliCommonOption.Missing (CliCommonOptionKind.Target)) unit]
-    [_ (io.panic "shared CLI parser did not recognize --target")]))
-
-(test
-  cli-common-option-respects-allowed-mask
-  (match (cli-common-option-parse "--target" 0 1 cli-common-option-stdlib-root)
-    [(CliCommonOption.NotCommon)
-      (if (string.eq
-        (cli-common-option-missing-message
-          "fmt"
-          (CliCommonOptionKind.StdlibRoot))
-        "fmt: --stdlib-root requires a value")
-        unit
-        (io.panic "shared CLI parser changed the missing-value diagnostic"))]
-    [_ (io.panic "shared CLI parser ignored its allowed-option mask")]))

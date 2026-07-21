@@ -859,6 +859,7 @@
 (defstruct LowerCleanupStack
   (hidden-name-ids (Array i64))
   (cleanup-name-ids (Array i64))
+  (live-name-ids (Array i64))
   (count i64))
 
 (defenum LowerResourceBindings
@@ -1262,7 +1263,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup)
+      [(AstResourceBinding.Binding _ init cleanup _)
         (match (lower-expr-id-first-span2 init cleanup)
           [(CompilerMaybeSourceSpan.Some span)
             (CompilerMaybeSourceSpan.Some span)]
@@ -6715,7 +6716,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+      [(AstResourceBinding.Binding _ acquire-box cleanup-box _)
         (let
           [acquire : AstExpr (ast-node-pool-context-expr-get pools acquire-box)]
           [cleanup : AstExpr (ast-node-pool-context-expr-get pools cleanup-box)]
@@ -9004,7 +9005,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+      [(AstResourceBinding.Binding _ acquire-box cleanup-box _)
         (lower-used-types-add-resource-bindings-at
           pools
           (lower-used-types-add-expr-id
@@ -15932,6 +15933,41 @@
           (CompilerIrValue.Global (lower-resolve-name-symbol-id state name-id))
           ty)))))
 
+(define (lower-disarm-move-aware-resource-name
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [name-id : i64]) : LowerState
+  (let
+    [local-id : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        name-id
+        (compiler-symbols-missing-handle))]
+    (if (not (compiler-symbols-handle-found? local-id))
+      state
+      (let
+        [live-id : i64
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            (lower-cleanup-live-name-id local-id)
+            (compiler-symbols-missing-handle))]
+        (if (compiler-symbols-handle-found? live-id)
+          (lower-state-emit
+            state
+            (CompilerIrInstr.Mov
+              live-id
+              (CompilerIrValue.Bool false)
+              (AstType.Bool)))
+          state)))))
+
+(define (lower-disarm-move-aware-resource-expr
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [expr : AstExpr]) : LowerState
+  (match (ast-expr-unspan expr)
+    [(AstExpr.Var name) (lower-disarm-move-aware-resource-name state env name)]
+    [_ state]))
+
 (define (lower-function-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstType.Func _ _) true]
@@ -17404,6 +17440,11 @@
 (define (lower-cleanup-hidden-name-id [var-id : i64]) : i64
   (lower-private-name-id 10 var-id))
 
+(define (lower-cleanup-live-name-id [var-id : i64]) : i64
+  ;; Kind 1 value 0 is the cleanup-stack marker. Positive values are its
+  ;; per-resource liveness bindings, disjoint from every allocated var id.
+  (lower-private-name-id 1 (+ var-id 1)))
+
 (define (lower-region-hidden-name-id [var-id : i64]) : i64
   (lower-private-name-id 11 var-id))
 
@@ -17453,6 +17494,21 @@
     (lower-cleanup-marker-id)
     (lower-cleanup-metadata-type hidden-name-id cleanup-name-id)))
 
+(define (lower-type-env-push-move-aware-cleanup
+  [type-env : TcTypeEnv]
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]
+  [live-name-id : i64]) : TcTypeEnv
+  (tc-bind-id
+    type-env
+    (lower-cleanup-marker-id)
+    (ast-ty-tuple
+      (ast-type-cons
+        (AstType.Var hidden-name-id)
+        (ast-type-cons
+          (AstType.Var cleanup-name-id)
+          (ast-type-cons (AstType.Var live-name-id) (ast-type-list-new)))))))
+
 (define (lower-type-env-push-region-reset
   [type-env : TcTypeEnv]
   [hidden-name-id : i64]) : TcTypeEnv
@@ -17500,6 +17556,50 @@
                 (AstType.Unit))))])
       (ResultLowerState.Err
         (box (lower-diagnostic "lower: missing resource cleanup binding"))))))
+
+(define (lower-emit-cleanup-call-if-live
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]
+  [live-name-id : i64]) : ResultLowerState
+  (let
+    [live-id : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        live-name-id
+        (compiler-symbols-missing-handle))]
+    (if (not (compiler-symbols-handle-found? live-id))
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: missing resource liveness binding")))
+      (match (lower-state-fresh-label state "cleanup_live")
+        [(LowerLabel.Label cleanup-label-state cleanup-label)
+          (match (lower-state-fresh-label cleanup-label-state "cleanup_done")
+            [(LowerLabel.Label labels-state done-label)
+              (let
+                [cleanup-state : LowerState
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      labels-state
+                      (CompilerIrInstr.Branch
+                        (CompilerIrValue.Var live-id)
+                        cleanup-label
+                        done-label))
+                    cleanup-label)]
+                (match (lower-emit-cleanup-call
+                  cleanup-state
+                  env
+                  hidden-name-id
+                  cleanup-name-id)
+                  [(ResultLowerState.Ok called-state)
+                    (ResultLowerState.Ok
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          called-state
+                          (CompilerIrInstr.Jump done-label))
+                        done-label))]
+                  [(ResultLowerState.Err message)
+                    (ResultLowerState.Err message)]))])]))))
 
 (define (lower-emit-region-reset
   [state : LowerState]
@@ -17550,7 +17650,7 @@
         (box (lower-diagnostic "lower: missing arena restore binding"))))))
 
 (define (lower-cleanup-stack-empty) : LowerCleanupStack
-  (LowerCleanupStack (make-array i64 0) (make-array i64 0) 0))
+  (LowerCleanupStack (make-array i64 0) (make-array i64 0) (make-array i64 0) 0))
 
 (define (lower-cleanup-stack-push
   [cleanups : LowerCleanupStack]
@@ -17559,11 +17659,37 @@
   (let
     [hidden-name-ids : (Array i64) (struct-get cleanups hidden-name-ids)]
     [cleanup-name-ids : (Array i64) (struct-get cleanups cleanup-name-ids)]
+    [live-name-ids : (Array i64) (struct-get cleanups live-name-ids)]
     [count : i64 (struct-get cleanups count)]
     (begin
       (array-push! hidden-name-ids hidden-name-id)
       (array-push! cleanup-name-ids cleanup-name-id)
-      (LowerCleanupStack hidden-name-ids cleanup-name-ids (+ count 1)))))
+      (array-push! live-name-ids 0)
+      (LowerCleanupStack
+        hidden-name-ids
+        cleanup-name-ids
+        live-name-ids
+        (+ count 1)))))
+
+(define (lower-cleanup-stack-push-move-aware
+  [cleanups : LowerCleanupStack]
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]
+  [live-name-id : i64]) : LowerCleanupStack
+  (let
+    [hidden-name-ids : (Array i64) (struct-get cleanups hidden-name-ids)]
+    [cleanup-name-ids : (Array i64) (struct-get cleanups cleanup-name-ids)]
+    [live-name-ids : (Array i64) (struct-get cleanups live-name-ids)]
+    [count : i64 (struct-get cleanups count)]
+    (begin
+      (array-push! hidden-name-ids hidden-name-id)
+      (array-push! cleanup-name-ids cleanup-name-id)
+      (array-push! live-name-ids live-name-id)
+      (LowerCleanupStack
+        hidden-name-ids
+        cleanup-name-ids
+        live-name-ids
+        (+ count 1)))))
 
 (define (lower-cleanup-stack-count [cleanups : LowerCleanupStack]) : i64
   (struct-get cleanups count))
@@ -17586,22 +17712,33 @@
   [env : sym_i64_env.SymI64Env]
   [hidden-name-ids : (Array i64)]
   [cleanup-name-ids : (Array i64)]
+  [live-name-ids : (Array i64)]
   [index : i64]) : ResultLowerState
   (if (< index 0)
     (ResultLowerState.Ok state)
-    (match (lower-emit-cleanup-call
-      state
-      env
-      (array-ref hidden-name-ids index)
-      (array-ref cleanup-name-ids index))
-      [(ResultLowerState.Ok next-state)
-        (lower-emit-cleanup-stack-at
-          next-state
+    (let
+      [live-name-id : i64 (array-ref live-name-ids index)]
+      (match (if (= live-name-id 0)
+        (lower-emit-cleanup-call
+          state
           env
-          hidden-name-ids
-          cleanup-name-ids
-          (- index 1))]
-      [(ResultLowerState.Err message) (ResultLowerState.Err message)])))
+          (array-ref hidden-name-ids index)
+          (array-ref cleanup-name-ids index))
+        (lower-emit-cleanup-call-if-live
+          state
+          env
+          (array-ref hidden-name-ids index)
+          (array-ref cleanup-name-ids index)
+          live-name-id))
+        [(ResultLowerState.Ok next-state)
+          (lower-emit-cleanup-stack-at
+            next-state
+            env
+            hidden-name-ids
+            cleanup-name-ids
+            live-name-ids
+            (- index 1))]
+        [(ResultLowerState.Err message) (ResultLowerState.Err message)]))))
 
 (define (lower-emit-cleanup-stack
   [state : LowerState]
@@ -17612,6 +17749,7 @@
     env
     (struct-get cleanups hidden-name-ids)
     (struct-get cleanups cleanup-name-ids)
+    (struct-get cleanups live-name-ids)
     (- (struct-get cleanups count) 1)))
 
 (define (lower-emit-cleanup-marker-tuple
@@ -17619,7 +17757,9 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [types : AstTypeList]) : ResultLowerState
-  (if (= (ast-type-list-len (& types)) 2)
+  (if (or
+    (= (ast-type-list-len (& types)) 2)
+    (= (ast-type-list-len (& types)) 3))
     (let
       [hidden-ty : AstType
         (tc-context-type-get
@@ -17633,7 +17773,19 @@
         [(AstType.Var hidden-name)
           (match cleanup-ty
             [(AstType.Var cleanup-name)
-              (lower-emit-cleanup-call state env hidden-name cleanup-name)]
+              (if (= (ast-type-list-len (& types)) 2)
+                (lower-emit-cleanup-call state env hidden-name cleanup-name)
+                (match (tc-context-type-get
+                  ctx
+                  (ast-type-list-get (& types) 2 (ast-type-id-fallback)))
+                  [(AstType.Var live-name)
+                    (lower-emit-cleanup-call-if-live
+                      state
+                      env
+                      hidden-name
+                      cleanup-name
+                      live-name)]
+                  [_ (ResultLowerState.Ok state)]))]
             [_ (ResultLowerState.Ok state)])]
         [_ (ResultLowerState.Ok state)]))
     (ResultLowerState.Ok state)))
@@ -19280,7 +19432,14 @@
   [arg : AstExpr]
   [effective-arg : AstExpr]
   [arg-ty : AstType]) : ResultLowerCallArg
-  (match (lower-expr-expected ctx state env type-env effective-arg arg-ty arg)
+  (match (lower-expr-expected
+    ctx
+    (lower-disarm-move-aware-resource-expr state env effective-arg)
+    env
+    type-env
+    effective-arg
+    arg-ty
+    arg)
     [(ResultLowerExpr.Ok lowered)
       (match lowered
         [(LowerExpr.Expr arg-state value _)
@@ -19571,7 +19730,7 @@
           [(ResultTcExpr.Ok effective-arg)
             (match (lower-expr-expected
               ctx
-              state
+              (lower-disarm-move-aware-resource-expr state env effective-arg)
               env
               type-env
               effective-arg
@@ -32488,7 +32647,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
           [init : AstExpr (lower-context-expr-get ctx init-box)]
           [cleanup : AstExpr (lower-context-expr-get ctx cleanup-box)]
@@ -32539,17 +32698,50 @@
                                       (tc-bind-id type-env name binding-ty)
                                       hidden-name-id
                                       cleanup-name-id)]
-                                  (lower-resource-bindings-at
-                                    ctx
-                                    bound-state
-                                    bound-env
-                                    bound-type-env
-                                    bindings
-                                    (lower-cleanup-stack-push
-                                      cleanups
-                                      hidden-name-id
-                                      cleanup-name-id)
-                                    (+ index 1)))]))]
+                                  (if move-aware?
+                                    (match (lower-state-alloc-var bound-state)
+                                      [(LowerAlloc.Alloc live-state live-var-id)
+                                        (let
+                                          [live-name-id : i64
+                                            (lower-cleanup-live-name-id var-id)]
+                                          (lower-resource-bindings-at
+                                            ctx
+                                            (lower-state-emit
+                                              live-state
+                                              (CompilerIrInstr.Mov
+                                                live-var-id
+                                                (CompilerIrValue.Bool true)
+                                                (AstType.Bool)))
+                                            (sym_i64_env.sym-i64-bind-id
+                                              bound-env
+                                              live-name-id
+                                              live-var-id)
+                                            (lower-type-env-push-move-aware-cleanup
+                                              (tc-bind-id
+                                                type-env
+                                                name
+                                                binding-ty)
+                                              hidden-name-id
+                                              cleanup-name-id
+                                              live-name-id)
+                                            bindings
+                                            (lower-cleanup-stack-push-move-aware
+                                              cleanups
+                                              hidden-name-id
+                                              cleanup-name-id
+                                              live-name-id)
+                                            (+ index 1)))])
+                                    (lower-resource-bindings-at
+                                      ctx
+                                      bound-state
+                                      bound-env
+                                      bound-type-env
+                                      bindings
+                                      (lower-cleanup-stack-push
+                                        cleanups
+                                        hidden-name-id
+                                        cleanup-name-id)
+                                      (+ index 1))))]))]
                         [(ResultTcExprId.Err message)
                           (ResultLowerResourceBindings.Err
                             (box (lower-diagnostic-at-expr cleanup message)))])])]
@@ -50770,7 +50962,7 @@
         bindings
         binding-index
         (ast-resource-binding-fallback))
-        [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+        [(AstResourceBinding.Binding _ acquire-box cleanup-box _)
           (or
             (lower-rvo-node-has-early-return? ctx acquire-box)
             (lower-rvo-node-has-early-return? ctx cleanup-box))])
@@ -56324,7 +56516,7 @@
         bindings
         binding-index
         (ast-resource-binding-fallback))
-        [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+        [(AstResourceBinding.Binding _ acquire-box cleanup-box _)
           (or
             (lower-source-node-has-import-call? pools acquire-box)
             (lower-source-node-has-import-call? pools cleanup-box))])

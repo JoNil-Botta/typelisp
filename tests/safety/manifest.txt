@@ -328,7 +328,6 @@ consume_parameter_duplicate_metadata_reject|check-fail|tests/safety/consume_para
 consume_parameter_function_metadata_arity_reject|check-fail|tests/safety/consume_parameter_function_metadata_arity_reject.tl|-|parse: (:consume T) expects exactly one type
 vector_into_iterator_source_reuse_reject|check-fail|tests/safety/vector_into_iterator_source_reuse_reject.tl|-|use of moved value `values`
 for_owned_source_reuse_reject|check-fail|tests/safety/for_owned_source_reuse_reject.tl|-|use of moved value `values`
-for_cleanup_owned_nonfinal_zip_reject|check-fail|tests/safety/for_cleanup_owned_nonfinal_zip_reject.tl|-|cleanup-owning for item binding must be final in a zipped loop
 vector_into_iterator_borrow_live_reject|check-fail|tests/safety/vector_into_iterator_borrow_live_reject.tl|-|cannot move borrowed place `values`
 vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_iterator_mutate_after_reject.tl|-|use of moved value `values`
 vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`

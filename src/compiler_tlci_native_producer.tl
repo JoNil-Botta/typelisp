@@ -338,28 +338,26 @@
         [(AstExpr.Var fold-head)
           (if (and
             (or
-              (string.eq (intern-str fold-head) "comptime.expr-list-fold-if")
-              (string.eq (intern-str fold-head) "expr-list-fold-if"))
-            (= (ast-expr-list-len (& fold-args)) 4))
+              (string.eq
+                (intern-str fold-head)
+                "comptime.expr-clause-list-fold-if")
+              (string.eq (intern-str fold-head) "expr-clause-list-fold-if"))
+            (= (ast-expr-list-len (& fold-args)) 3))
             (let
-              [items-index : i64
+              [clauses-index : i64
                 (embedded-native-var-param-index
                   (& params)
                   (ast-expr-list-get (& fold-args) 0 0))]
-              [when-true : i64
-                (embedded-native-expr-bool-flag
+              [missing-name : String
+                (embedded-native-expr-var-name
                   (ast-expr-list-get (& fold-args) 1 0))]
-              [when-false : i64
-                (embedded-native-expr-bool-flag
+              [else-not-final-name : String
+                (embedded-native-expr-var-name
                   (ast-expr-list-get (& fold-args) 2 0))]
-              [continue-flag : i64
-                (embedded-native-bool-literal-flag
-                  (ast-expr-list-get (& fold-args) 3 0))]
               (if (or
-                (< items-index 0)
-                (< when-true 0)
-                (< when-false 0)
-                (< continue-flag 0))
+                (< clauses-index 0)
+                (= (string.string-length missing-name) 0)
+                (= (string.string-length else-not-final-name) 0))
                 -1
                 (begin
                   (embedded-native-ops-push!
@@ -367,32 +365,109 @@
                     ops-count
                     (embedded-native-op-open
                       0
-                      187
-                      (string.int->string when-true)
-                      "0"
+                      103
+                      (embedded-native-name-arg missing-name)
+                      (string.int->string (string.string-length missing-name))
                       "0"))
                   (embedded-native-ops-push!
                     ops
                     ops-count
                     (embedded-native-op-open
                       1
-                      187
-                      (string.int->string when-false)
-                      "0"
+                      103
+                      (embedded-native-name-arg else-not-final-name)
+                      (string.int->string
+                        (string.string-length else-not-final-name))
                       "0"))
                   (embedded-native-ops-push!
                     ops
                     ops-count
                     (embedded-native-op-open
                       2
-                      189
-                      (string.int->string items-index)
-                      (string.int->string continue-flag)
+                      190
+                      (string.int->string clauses-index)
+                      "0"
                       "0"))
                   3)))
-            -1)]
+            (if (and
+              (or
+                (string.eq (intern-str fold-head) "comptime.expr-list-fold-if")
+                (string.eq (intern-str fold-head) "expr-list-fold-if"))
+              (= (ast-expr-list-len (& fold-args)) 4))
+              (let
+                [items-index : i64
+                  (embedded-native-var-param-index
+                    (& params)
+                    (ast-expr-list-get (& fold-args) 0 0))]
+                [when-true : i64
+                  (embedded-native-expr-bool-flag
+                    (ast-expr-list-get (& fold-args) 1 0))]
+                [when-false : i64
+                  (embedded-native-expr-bool-flag
+                    (ast-expr-list-get (& fold-args) 2 0))]
+                [continue-flag : i64
+                  (embedded-native-bool-literal-flag
+                    (ast-expr-list-get (& fold-args) 3 0))]
+                (if (or
+                  (< items-index 0)
+                  (< when-true 0)
+                  (< when-false 0)
+                  (< continue-flag 0))
+                  -1
+                  (begin
+                    (embedded-native-ops-push!
+                      ops
+                      ops-count
+                      (embedded-native-op-open
+                        0
+                        187
+                        (string.int->string when-true)
+                        "0"
+                        "0"))
+                    (embedded-native-ops-push!
+                      ops
+                      ops-count
+                      (embedded-native-op-open
+                        1
+                        187
+                        (string.int->string when-false)
+                        "0"
+                        "0"))
+                    (embedded-native-ops-push!
+                      ops
+                      ops-count
+                      (embedded-native-op-open
+                        2
+                        189
+                        (string.int->string items-index)
+                        (string.int->string continue-flag)
+                        "0"))
+                    3)))
+              -1))]
         [_ -1])]
     [_ -1]))
+
+;: The literal name of a (comptime.expr-var "name") argument; "" otherwise.
+(define (embedded-native-expr-var-name [node : i64]) : String
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Call var-func var-args)
+      (match (embedded-stdlib-tlci-unwrap-expr var-func)
+        [(AstExpr.Var var-head)
+          (if (and
+            (or
+              (string.eq (intern-str var-head) "comptime.expr-var")
+              (string.eq (intern-str var-head) "expr-var"))
+            (= (ast-expr-list-len (& var-args)) 1))
+            (match (embedded-stdlib-tlci-unwrap-expr
+              (ast-expr-list-get (& var-args) 0 0))
+              [(AstExpr.Literal lit)
+                (match lit
+                  [(AstLiteral.String text) (intern-str text)]
+                  [_ ""])]
+              [_ ""])
+            "")]
+        [_ ""])]
+    [_ ""]))
 
 ;: 1/0 for a (comptime.expr-bool <literal>) argument; -1 otherwise.
 (define (embedded-native-expr-bool-flag [node : i64]) : i64

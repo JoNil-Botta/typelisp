@@ -484,8 +484,10 @@
   188)
 (define tlci-host-callback-op-expr-list-fold-if : i64
   189)
+(define tlci-host-callback-op-expr-clause-list-fold-if : i64
+  190)
 (define tlci-host-callback-stdlib-op-count : i64
-  90)
+  91)
 (define tlci-header-size : i64
   176)
 (define tlci-page-align : i64
@@ -2693,7 +2695,8 @@
     (= tlci-host-callback-op-expr-bool-literal 187)
     (= tlci-host-callback-op-expr-int-literal 188)
     (= tlci-host-callback-op-expr-list-fold-if 189)
-    (= tlci-host-callback-stdlib-op-count 90)))
+    (= tlci-host-callback-op-expr-clause-list-fold-if 190)
+    (= tlci-host-callback-stdlib-op-count 91)))
 
 (define (tlci-test-host-abi-ok?) : bool
   (and

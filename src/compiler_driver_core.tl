@@ -1140,20 +1140,23 @@
 (cfg
   compile-profile
   (define (compiler-driver-profile-prelude-counters) : unit
-    (begin
-      (io.print-error
-        (string.append
-          "compile-profile-detail|prelude.source_pipeline_entries|"
+    (cfg
+      compile-profile-summary
+      unit
+      (begin
+        (io.print-error
           (string.append
-            (string.int->string
-              compiler-driver-profile-prelude-source-pipeline-entries)
-            "\n")))
-      (io.print-error
-        (string.append
-          "compile-profile-detail|prelude.hydrations|"
+            "compile-profile-detail|prelude.source_pipeline_entries|"
+            (string.append
+              (string.int->string
+                compiler-driver-profile-prelude-source-pipeline-entries)
+              "\n")))
+        (io.print-error
           (string.append
-            (string.int->string compiler-driver-profile-prelude-hydrations)
-            "\n"))))))
+            "compile-profile-detail|prelude.hydrations|"
+            (string.append
+              (string.int->string compiler-driver-profile-prelude-hydrations)
+              "\n")))))))
 
 (cfg
   compile-profile

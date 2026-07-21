@@ -1707,6 +1707,16 @@
               (set! suffix-id (intern-dotted-tail-id suffix-id)))))
         -1))))
 
+(define (compiler-symbols-dotted-path-owner-module-id
+  [modules : sym_i64_env.SymI64Env]
+  [path-owner-id : i64]) : i64
+  (let
+    [exact-owner : i64
+      (sym_i64_env.sym-i64-lookup-id-or modules path-owner-id -1)]
+    [suffix-owner : i64
+      (compiler-symbols-dotted-suffix-owner-module-id modules path-owner-id)]
+    (cond [(>= exact-owner 0) exact-owner] [else suffix-owner])))
+
 (defstruct CompilerSymbolsModuleSets
   (macro-modules sym_i64_env.SymI64Env)
   (dotted-modules sym_i64_env.SymI64Env))
@@ -2565,10 +2575,9 @@
                           decl
                           cur-index
                           (if (and
-                            ;; Generated enum metadata used to sit on an outer
-                            ;; wrapper, so only source enums participated in
-                            ;; dotted path-owner reassignment. Preserve that
-                            ;; ownership boundary now that metadata is inline.
+                            ;; Source nominal declarations loaded through a
+                            ;; legacy path retain their flat lookup aliases but
+                            ;; share the dotted import's canonical owner.
                             (not (ast-decl-comptime-only? decl))
                             (match decl
                               [(AstDecl.DefEnum decl-meta _ _ _) true]
@@ -2576,28 +2585,20 @@
                                 true]
                               [_ false]))
                             (let
-                              [exact-owner : i64
-                                (sym_i64_env.sym-i64-lookup-id-or
+                              [resolved-owner : i64
+                                (compiler-symbols-dotted-path-owner-module-id
                                   cur-dotted-modules
-                                  path-owner-id
-                                  -1)]
-                              (if (>= exact-owner 0)
-                                exact-owner
-                                (let
-                                  [suffix-owner : i64
-                                    (compiler-symbols-dotted-suffix-owner-module-id
+                                  path-owner-id)]
+                              (if (>= resolved-owner 0)
+                                (begin
+                                  (set!
+                                    cur-dotted-modules
+                                    (sym_i64_env.sym-i64-bind-id
                                       cur-dotted-modules
-                                      path-owner-id)]
-                                  (if (>= suffix-owner 0)
-                                    (begin
-                                      (set!
-                                        cur-dotted-modules
-                                        (sym_i64_env.sym-i64-bind-id
-                                          cur-dotted-modules
-                                          path-owner-id
-                                          suffix-owner))
-                                      suffix-owner)
-                                    cur-module-id))))
+                                      path-owner-id
+                                      resolved-owner))
+                                  resolved-owner)
+                                cur-module-id))
                             cur-module-id))
                         (match (compiler-symbols-add-decl-in-module
                           cur-symbols

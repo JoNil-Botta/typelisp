@@ -1683,6 +1683,22 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-walk-scrut-tc-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-scrut-tc-alloc-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-scrut-tc-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-scrut-tc-live-start : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-walk-arm-bind-ns : i64
     0))
 (cfg
@@ -1692,6 +1708,22 @@
 (cfg
   compile-profile
   (define compiler-tc-macro-walk-arm-bind-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-arm-bind-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-arm-bind-alloc-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-arm-bind-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-arm-bind-live-start : i64
     0))
 (cfg
   compile-profile
@@ -1707,6 +1739,22 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-walk-bind-params-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-bind-params-alloc-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-bind-params-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-bind-params-live-start : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-walk-native-dispatch-ns : i64
     0))
 (cfg
@@ -1717,6 +1765,22 @@
   compile-profile
   (define compiler-tc-macro-walk-native-dispatch-start-ns : i64
     0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-native-dispatch-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-native-dispatch-alloc-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-native-dispatch-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-native-dispatch-live-start : i64
+    0))
 
 ;; The four regions are non-reentrant leaves of the walk (none of them can
 ;; re-enter itself through macro expansion), so a single global start slot
@@ -1724,7 +1788,10 @@
 (cfg
   compile-profile
   (define (compiler-tc-walk-scrut-tc-start!) : unit
-    (set! compiler-tc-macro-walk-scrut-tc-start-ns (compiler-tc-walk-now-ns))))
+    (begin
+      (set! compiler-tc-macro-walk-scrut-tc-start-ns (compiler-tc-walk-now-ns))
+      (set! compiler-tc-macro-walk-scrut-tc-alloc-start (profile.alloc-total))
+      (set! compiler-tc-macro-walk-scrut-tc-live-start (profile.alloc-live)))))
 
 (cfg
   compile-profile
@@ -1736,13 +1803,26 @@
           compiler-tc-macro-walk-scrut-tc-ns
           (- (compiler-tc-walk-now-ns) compiler-tc-macro-walk-scrut-tc-start-ns)))
       (set!
+        compiler-tc-macro-walk-scrut-tc-alloc-bytes
+        (+
+          compiler-tc-macro-walk-scrut-tc-alloc-bytes
+          (- (profile.alloc-total) compiler-tc-macro-walk-scrut-tc-alloc-start)))
+      (set!
+        compiler-tc-macro-walk-scrut-tc-live-bytes
+        (+
+          compiler-tc-macro-walk-scrut-tc-live-bytes
+          (- (profile.alloc-live) compiler-tc-macro-walk-scrut-tc-live-start)))
+      (set!
         compiler-tc-macro-walk-scrut-tc-calls
         (+ compiler-tc-macro-walk-scrut-tc-calls 1)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-walk-arm-bind-start!) : unit
-    (set! compiler-tc-macro-walk-arm-bind-start-ns (compiler-tc-walk-now-ns))))
+    (begin
+      (set! compiler-tc-macro-walk-arm-bind-start-ns (compiler-tc-walk-now-ns))
+      (set! compiler-tc-macro-walk-arm-bind-alloc-start (profile.alloc-total))
+      (set! compiler-tc-macro-walk-arm-bind-live-start (profile.alloc-live)))))
 
 (cfg
   compile-profile
@@ -1754,13 +1834,30 @@
           compiler-tc-macro-walk-arm-bind-ns
           (- (compiler-tc-walk-now-ns) compiler-tc-macro-walk-arm-bind-start-ns)))
       (set!
+        compiler-tc-macro-walk-arm-bind-alloc-bytes
+        (+
+          compiler-tc-macro-walk-arm-bind-alloc-bytes
+          (- (profile.alloc-total) compiler-tc-macro-walk-arm-bind-alloc-start)))
+      (set!
+        compiler-tc-macro-walk-arm-bind-live-bytes
+        (+
+          compiler-tc-macro-walk-arm-bind-live-bytes
+          (- (profile.alloc-live) compiler-tc-macro-walk-arm-bind-live-start)))
+      (set!
         compiler-tc-macro-walk-arm-bind-calls
         (+ compiler-tc-macro-walk-arm-bind-calls 1)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-walk-bind-params-start!) : unit
-    (set! compiler-tc-macro-walk-bind-params-start-ns (compiler-tc-walk-now-ns))))
+    (begin
+      (set!
+        compiler-tc-macro-walk-bind-params-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-macro-walk-bind-params-alloc-start
+        (profile.alloc-total))
+      (set! compiler-tc-macro-walk-bind-params-live-start (profile.alloc-live)))))
 
 (cfg
   compile-profile
@@ -1774,15 +1871,34 @@
             (compiler-tc-walk-now-ns)
             compiler-tc-macro-walk-bind-params-start-ns)))
       (set!
+        compiler-tc-macro-walk-bind-params-alloc-bytes
+        (+
+          compiler-tc-macro-walk-bind-params-alloc-bytes
+          (-
+            (profile.alloc-total)
+            compiler-tc-macro-walk-bind-params-alloc-start)))
+      (set!
+        compiler-tc-macro-walk-bind-params-live-bytes
+        (+
+          compiler-tc-macro-walk-bind-params-live-bytes
+          (- (profile.alloc-live) compiler-tc-macro-walk-bind-params-live-start)))
+      (set!
         compiler-tc-macro-walk-bind-params-calls
         (+ compiler-tc-macro-walk-bind-params-calls 1)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-walk-native-dispatch-start!) : unit
-    (set!
-      compiler-tc-macro-walk-native-dispatch-start-ns
-      (compiler-tc-walk-now-ns))))
+    (begin
+      (set!
+        compiler-tc-macro-walk-native-dispatch-start-ns
+        (compiler-tc-walk-now-ns))
+      (set!
+        compiler-tc-macro-walk-native-dispatch-alloc-start
+        (profile.alloc-total))
+      (set!
+        compiler-tc-macro-walk-native-dispatch-live-start
+        (profile.alloc-live)))))
 
 (cfg
   compile-profile
@@ -1795,6 +1911,20 @@
           (-
             (compiler-tc-walk-now-ns)
             compiler-tc-macro-walk-native-dispatch-start-ns)))
+      (set!
+        compiler-tc-macro-walk-native-dispatch-alloc-bytes
+        (+
+          compiler-tc-macro-walk-native-dispatch-alloc-bytes
+          (-
+            (profile.alloc-total)
+            compiler-tc-macro-walk-native-dispatch-alloc-start)))
+      (set!
+        compiler-tc-macro-walk-native-dispatch-live-bytes
+        (+
+          compiler-tc-macro-walk-native-dispatch-live-bytes
+          (-
+            (profile.alloc-live)
+            compiler-tc-macro-walk-native-dispatch-live-start)))
       (set!
         compiler-tc-macro-walk-native-dispatch-calls
         (+ compiler-tc-macro-walk-native-dispatch-calls 1)))))
@@ -1813,6 +1943,22 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-walk-decl-gate-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-decl-gate-alloc-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-decl-gate-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-decl-gate-live-start : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-walk-let-bind-ns : i64
     0))
 (cfg
@@ -1822,6 +1968,22 @@
 (cfg
   compile-profile
   (define compiler-tc-macro-walk-let-bind-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-let-bind-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-let-bind-alloc-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-let-bind-live-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-let-bind-live-start : i64
     0))
 (cfg
   compile-profile
@@ -1835,7 +1997,10 @@
 (cfg
   compile-profile
   (define (compiler-tc-walk-decl-gate-start!) : unit
-    (set! compiler-tc-macro-walk-decl-gate-start-ns (compiler-tc-walk-now-ns))))
+    (begin
+      (set! compiler-tc-macro-walk-decl-gate-start-ns (compiler-tc-walk-now-ns))
+      (set! compiler-tc-macro-walk-decl-gate-alloc-start (profile.alloc-total))
+      (set! compiler-tc-macro-walk-decl-gate-live-start (profile.alloc-live)))))
 
 (cfg
   compile-profile
@@ -1849,13 +2014,26 @@
             (compiler-tc-walk-now-ns)
             compiler-tc-macro-walk-decl-gate-start-ns)))
       (set!
+        compiler-tc-macro-walk-decl-gate-alloc-bytes
+        (+
+          compiler-tc-macro-walk-decl-gate-alloc-bytes
+          (- (profile.alloc-total) compiler-tc-macro-walk-decl-gate-alloc-start)))
+      (set!
+        compiler-tc-macro-walk-decl-gate-live-bytes
+        (+
+          compiler-tc-macro-walk-decl-gate-live-bytes
+          (- (profile.alloc-live) compiler-tc-macro-walk-decl-gate-live-start)))
+      (set!
         compiler-tc-macro-walk-decl-gate-calls
         (+ compiler-tc-macro-walk-decl-gate-calls 1)))))
 
 (cfg
   compile-profile
   (define (compiler-tc-walk-let-bind-start!) : unit
-    (set! compiler-tc-macro-walk-let-bind-start-ns (compiler-tc-walk-now-ns))))
+    (begin
+      (set! compiler-tc-macro-walk-let-bind-start-ns (compiler-tc-walk-now-ns))
+      (set! compiler-tc-macro-walk-let-bind-alloc-start (profile.alloc-total))
+      (set! compiler-tc-macro-walk-let-bind-live-start (profile.alloc-live)))))
 
 (cfg
   compile-profile
@@ -1866,6 +2044,16 @@
         (+
           compiler-tc-macro-walk-let-bind-ns
           (- (compiler-tc-walk-now-ns) compiler-tc-macro-walk-let-bind-start-ns)))
+      (set!
+        compiler-tc-macro-walk-let-bind-alloc-bytes
+        (+
+          compiler-tc-macro-walk-let-bind-alloc-bytes
+          (- (profile.alloc-total) compiler-tc-macro-walk-let-bind-alloc-start)))
+      (set!
+        compiler-tc-macro-walk-let-bind-live-bytes
+        (+
+          compiler-tc-macro-walk-let-bind-live-bytes
+          (- (profile.alloc-live) compiler-tc-macro-walk-let-bind-live-start)))
       (set!
         compiler-tc-macro-walk-let-bind-calls
         (+ compiler-tc-macro-walk-let-bind-calls 1)))))
@@ -1887,6 +2075,22 @@
 (cfg
   compile-profile
   (define compiler-tc-macro-profile-start-ms : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-eval-alloc-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-eval-alloc-bytes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-eval-live-start : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-eval-live-bytes : i64
     0))
 (cfg
   compile-profile
@@ -1919,7 +2123,10 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-start) : unit
-    (set! compiler-tc-macro-profile-start-ms (profile.now-ms))))
+    (begin
+      (set! compiler-tc-macro-profile-start-ms (profile.now-ms))
+      (set! compiler-tc-macro-walk-eval-alloc-start (profile.alloc-total))
+      (set! compiler-tc-macro-walk-eval-live-start (profile.alloc-live)))))
 
 (cfg
   compile-profile
@@ -1972,15 +2179,26 @@
     [macro-name : String]
     [arity : i64]
     [elapsed-ms : i64]) : unit
-    (if compiler-tc-macro-profile-active
+    (begin
       (set!
-        compiler-tc-macro-profile-entries
-        (compiler-tc-macro-profile-record-in
+        compiler-tc-macro-walk-eval-alloc-bytes
+        (+
+          compiler-tc-macro-walk-eval-alloc-bytes
+          (- (profile.alloc-total) compiler-tc-macro-walk-eval-alloc-start)))
+      (set!
+        compiler-tc-macro-walk-eval-live-bytes
+        (+
+          compiler-tc-macro-walk-eval-live-bytes
+          (- (profile.alloc-live) compiler-tc-macro-walk-eval-live-start)))
+      (if compiler-tc-macro-profile-active
+        (set!
           compiler-tc-macro-profile-entries
-          macro-name
-          arity
-          elapsed-ms))
-      unit)))
+          (compiler-tc-macro-profile-record-in
+            compiler-tc-macro-profile-entries
+            macro-name
+            arity
+            elapsed-ms))
+        unit))))
 
 (cfg
   compile-profile
@@ -3566,6 +3784,48 @@
       (compiler-tc-macro-counter-profile-line
         "walk_expand_visits"
         compiler-tc-macro-walk-expand-visits)
+      (compiler-tc-macro-counter-profile-line
+        "walk_scrut_tc_alloc_kb"
+        (/ compiler-tc-macro-walk-scrut-tc-alloc-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_scrut_tc_live_kb"
+        (/ compiler-tc-macro-walk-scrut-tc-live-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_arm_bind_alloc_kb"
+        (/ compiler-tc-macro-walk-arm-bind-alloc-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_arm_bind_live_kb"
+        (/ compiler-tc-macro-walk-arm-bind-live-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_bind_params_alloc_kb"
+        (/ compiler-tc-macro-walk-bind-params-alloc-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_bind_params_live_kb"
+        (/ compiler-tc-macro-walk-bind-params-live-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_native_dispatch_alloc_kb"
+        (/ compiler-tc-macro-walk-native-dispatch-alloc-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_native_dispatch_live_kb"
+        (/ compiler-tc-macro-walk-native-dispatch-live-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_gate_alloc_kb"
+        (/ compiler-tc-macro-walk-decl-gate-alloc-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_gate_live_kb"
+        (/ compiler-tc-macro-walk-decl-gate-live-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_let_bind_alloc_kb"
+        (/ compiler-tc-macro-walk-let-bind-alloc-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_let_bind_live_kb"
+        (/ compiler-tc-macro-walk-let-bind-live-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_eval_alloc_kb"
+        (/ compiler-tc-macro-walk-eval-alloc-bytes 1024))
+      (compiler-tc-macro-counter-profile-line
+        "walk_eval_live_kb"
+        (/ compiler-tc-macro-walk-eval-live-bytes 1024))
       (compiler-tc-reinfer-profile-emit)
       (compiler-tc-body-fact-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)

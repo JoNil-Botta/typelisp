@@ -7,6 +7,7 @@
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as fmt_svec)
+(import cli_option_core as cli_option)
 (import "format_rules.tl")
 (import "package_source_core.tl")
 
@@ -122,43 +123,50 @@
     (fmt-config-finish check paths manifest-path has-manifest)
     (let
       [current : String (io.arg idx)]
-      (cond
-        [(string.eq current "--check")
-          (fmt-parse-args (+ idx 1) count true paths manifest-path has-manifest)]
-        [(string.eq current "--manifest-path")
-          (if (>= (+ idx 1) count)
-            (ResultFmtConfig.Err "fmt: --manifest-path requires a value")
-            (if has-manifest
-              (ResultFmtConfig.Err "fmt: duplicate --manifest-path")
+      (match (cli_option.cli-common-option-parse
+        current
+        idx
+        count
+        cli_option.cli-common-option-stdlib-root)
+        [(cli_option.CliCommonOption.Missing kind)
+          (ResultFmtConfig.Err
+            (cli_option.cli-common-option-missing-message "fmt" kind))]
+        [(cli_option.CliCommonOption.Value _ _ next-idx)
+          (fmt-parse-args next-idx count check paths manifest-path has-manifest)]
+        [(cli_option.CliCommonOption.NotCommon)
+          (cond
+            [(string.eq current "--check")
               (fmt-parse-args
-                (+ idx 2)
+                (+ idx 1)
                 count
-                check
+                true
                 paths
-                (io.arg (+ idx 1))
-                true)))]
-        [(string.eq current "--stdlib-root")
-          (if (>= (+ idx 1) count)
-            (ResultFmtConfig.Err "fmt: --stdlib-root requires a value")
-            (fmt-parse-args
-              (+ idx 2)
-              count
-              check
-              paths
-              manifest-path
-              has-manifest))]
-        [(fmt-flag? current)
-          (ResultFmtConfig.Err (string.append "fmt: unknown flag " current))]
-        [else
-          (begin
-            (fmt_svec.push (&mut paths) current)
-            (fmt-parse-args
-              (+ idx 1)
-              count
-              check
-              paths
-              manifest-path
-              has-manifest))]))))
+                manifest-path
+                has-manifest)]
+            [(string.eq current "--manifest-path")
+              (if (>= (+ idx 1) count)
+                (ResultFmtConfig.Err "fmt: --manifest-path requires a value")
+                (if has-manifest
+                  (ResultFmtConfig.Err "fmt: duplicate --manifest-path")
+                  (fmt-parse-args
+                    (+ idx 2)
+                    count
+                    check
+                    paths
+                    (io.arg (+ idx 1))
+                    true)))]
+            [(fmt-flag? current)
+              (ResultFmtConfig.Err (string.append "fmt: unknown flag " current))]
+            [else
+              (begin
+                (fmt_svec.push (&mut paths) current)
+                (fmt-parse-args
+                  (+ idx 1)
+                  count
+                  check
+                  paths
+                  manifest-path
+                  has-manifest))])]))))
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
   (fmt-parse-args start count false (fmt_svec.new) "" false))

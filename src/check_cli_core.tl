@@ -6,6 +6,7 @@
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
+(import cli_option_core as cli_option)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
@@ -58,53 +59,59 @@
       stdlib-roots)
     (let
       [current : String (io.arg idx)]
-      (cond
-        [(string.eq current "--stdlib-root")
-          (if (>= (+ idx 1) count)
-            (ResultSelfhostCheckConfig.Err
-              "selfhost-check: --stdlib-root requires a value")
-            (selfhost-check-parse-args
-              (+ idx 2)
-              count
-              input-path
-              has-input
-              manifest-path
-              has-manifest
-              (let
-                [next-roots : cli_svec.Vec stdlib-roots]
-                (begin
-                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
-                  next-roots))))]
-        [(string.eq current "--manifest-path")
-          (if (>= (+ idx 1) count)
-            (ResultSelfhostCheckConfig.Err
-              "selfhost-check: --manifest-path requires a value")
-            (if has-manifest
-              (ResultSelfhostCheckConfig.Err
-                "selfhost-check: duplicate --manifest-path")
-              (selfhost-check-parse-args
-                (+ idx 2)
-                count
-                input-path
-                has-input
-                (io.arg (+ idx 1))
-                true
-                stdlib-roots)))]
-        [(selfhost-check-flag? current)
+      (match (cli_option.cli-common-option-parse
+        current
+        idx
+        count
+        cli_option.cli-common-option-stdlib-root)
+        [(cli_option.CliCommonOption.Missing kind)
           (ResultSelfhostCheckConfig.Err
-            (string.append "selfhost-check: unknown flag " current))]
-        [has-input
-          (ResultSelfhostCheckConfig.Err
-            (string.append "selfhost-check: unexpected argument " current))]
-        [else
+            (cli_option.cli-common-option-missing-message "selfhost-check" kind))]
+        [(cli_option.CliCommonOption.Value _ value next-idx)
           (selfhost-check-parse-args
-            (+ idx 1)
+            next-idx
             count
-            current
-            true
+            input-path
+            has-input
             manifest-path
             has-manifest
-            stdlib-roots)]))))
+            (let
+              [next-roots : cli_svec.Vec stdlib-roots]
+              (begin
+                (cli_svec.push (&mut next-roots) value)
+                next-roots)))]
+        [(cli_option.CliCommonOption.NotCommon)
+          (cond
+            [(string.eq current "--manifest-path")
+              (if (>= (+ idx 1) count)
+                (ResultSelfhostCheckConfig.Err
+                  "selfhost-check: --manifest-path requires a value")
+                (if has-manifest
+                  (ResultSelfhostCheckConfig.Err
+                    "selfhost-check: duplicate --manifest-path")
+                  (selfhost-check-parse-args
+                    (+ idx 2)
+                    count
+                    input-path
+                    has-input
+                    (io.arg (+ idx 1))
+                    true
+                    stdlib-roots)))]
+            [(selfhost-check-flag? current)
+              (ResultSelfhostCheckConfig.Err
+                (string.append "selfhost-check: unknown flag " current))]
+            [has-input
+              (ResultSelfhostCheckConfig.Err
+                (string.append "selfhost-check: unexpected argument " current))]
+            [else
+              (selfhost-check-parse-args
+                (+ idx 1)
+                count
+                current
+                true
+                manifest-path
+                has-manifest
+                stdlib-roots)])]))))
 
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.

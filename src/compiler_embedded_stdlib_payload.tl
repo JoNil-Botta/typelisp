@@ -91,6 +91,16 @@
 
 (include-str-lzss payload-vector-slice "../stdlib/vector_slice.tl")
 
+(include-str-lzss payload-io-caller-result "../stdlib/io_caller_result.tl")
+
+(include-str-lzss payload-option "../stdlib/option.tl")
+
+(include-str-lzss payload-set "../stdlib/set.tl")
+
+(include-str-lzss
+  payload-string-caller-result
+  "../stdlib/string_caller_result.tl")
+
 (defenum CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone)
   (CompilerEmbeddedStdlibPayloadSome (Array u8)))
@@ -184,4 +194,12 @@
       (CompilerEmbeddedStdlibPayloadSome payload-vector)]
     [(string.eq suffix "vector_slice.tl")
       (CompilerEmbeddedStdlibPayloadSome payload-vector-slice)]
+    [(string.eq suffix "io_caller_result.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-io-caller-result)]
+    [(string.eq suffix "option.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-option)]
+    [(string.eq suffix "set.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-set)]
+    [(string.eq suffix "string_caller_result.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-string-caller-result)]
     [else (CompilerEmbeddedStdlibPayloadNone)]))

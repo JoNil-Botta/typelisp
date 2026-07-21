@@ -266,7 +266,7 @@ check_stage2_embedded_stdlib() {
         "$STAGE2_BIN" inspect embedded:stdlib.tlci
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
-        "embedded-loader-macro-count: 102"
+        "embedded-loader-macro-count: 104"
     assert_contains \
         "$WORKDIR/stage2-inspect-embedded-stdlib-tlci.stdout" \
         "package-name: stdlib"
@@ -383,7 +383,10 @@ scripts/build-embedded-stdlib-tlci.sh \
     "$STAGE2_BIN" target/embedded-stdlib-tlci/stdlib.tlci "$HOST_OS"
 
 echo "[bootstrap] stage2 -> stage3.s"
-run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root stdlib --stdlib-root src --opt-level 2
+# stage2+ compile with the embedded stdlib (no stdlib root): the byte-equal
+# fixpoint against stage2.s (built from the on-disk stdlib) is the parity
+# gate for the embedded source payload and the native macro route.
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root src --opt-level 2
 
 assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
 
@@ -391,11 +394,26 @@ bootstrap_build_stage4() {
     scripts/build-embedded-stdlib-tlci.sh \
         "$STAGE3_BIN" target/embedded-stdlib-tlci/stdlib.tlci "$HOST_OS"
     echo "[bootstrap] stage3 -> stage4.s"
-    run_with_heartbeat "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root stdlib --stdlib-root src --opt-level 2
+    run_with_heartbeat "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root src --opt-level 2
     assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
 }
 
 bootstrap_resolve_fixpoint
+
+# The stage2 -> stage3 compile runs from the repo root, where the loader's
+# cwd-relative fallback still reads ./stdlib from disk. Run one more stage2
+# self-compile from the workdir (which has no stdlib directory beneath it) so
+# every stdlib module genuinely loads from the embedded payload with the
+# native macro route active, and require byte parity with stage3.s.
+echo "[bootstrap] stage2 embedded-provenance parity"
+EMBEDDED_PARITY_ASM="$WORKDIR/stage3-embedded.s"
+run_with_heartbeat "stage2 embedded parity" env -C "$WORKDIR" "$STAGE2_BIN" compile "$ROOT/$BOOTSTRAP_SRC" -o "$EMBEDDED_PARITY_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root "$ROOT/src" --opt-level 2
+if ! cmp -s "$STAGE3_ASM" "$EMBEDDED_PARITY_ASM"; then
+    echo "embedded-provenance stage2 output differs from stage3.s" >&2
+    exit 1
+fi
+echo "[bootstrap] embedded-provenance output matches stage3.s"
+
 write_stage1_path
 write_bootstrap_compiler_path
 echo "bootstrap fixpoint check passed"

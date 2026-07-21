@@ -5495,6 +5495,7 @@
           (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-prologue-bytes
+              (CompilerBackendTarget.Linux)
               (compiler-backend-frame-size 8)))
           ;; Pack word1, copy it to the next pair, then extract it.
           (cobj.compiler-object-section-contains-bytes?
@@ -5547,6 +5548,23 @@
     (compiler-backend-descriptor-pair-target-ok? (CompilerBackendTarget.Linux))
     (compiler-backend-descriptor-pair-target-ok?
       (CompilerBackendTarget.Windows))))
+
+(define (compiler-backend-object-windows-stack-probe-ok?) : bool
+  (let
+    [linux : String
+      (compiler-backend-object-prologue-bytes
+        (CompilerBackendTarget.Linux)
+        8192)]
+    [windows : String
+      (compiler-backend-object-prologue-bytes
+        (CompilerBackendTarget.Windows)
+        8192)]
+    [direct : String
+      (compiler-backend-object-bytes-from-hex "554889e54881ec00200000")]
+    [probed : String
+      (compiler-backend-object-bytes-from-hex
+        "554889e54881ec00100000830c24004881ec00100000")]
+    (and (string.eq linux direct) (string.eq windows probed))))
 
 (define (compiler-backend-reg-part-entry-ok?
   [reg : String]
@@ -26755,7 +26773,8 @@
       (and
         (compiler-backend-aggregate-ok?)
         (compiler-backend-pack-immediate-word-shape-ok?)
-        (compiler-backend-descriptor-pair-ok?)))
+        (compiler-backend-descriptor-pair-ok?)
+        (compiler-backend-object-windows-stack-probe-ok?)))
     (backend-and8
       (compiler-backend-literal-payload-ok?)
       (and

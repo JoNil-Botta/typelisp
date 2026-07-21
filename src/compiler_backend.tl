@@ -9818,25 +9818,13 @@
 (define (compiler-backend-emergency-wrap [head : String]) : String
   (if compiler-backend-emergency-pending
     (let
-      ;; Omit a single ordinary GP save when the finished head cannot write it.
-      [count : i64
-        (if (= compiler-backend-emergency-pending-count 1)
-          (let
-            [reg : String (array-ref compiler-backend-emergency-regs 0)]
-            (if (and
-              (or
-                (string.eq reg "%r9")
-                (string.eq reg "%r10")
-                (string.eq reg "%r8")
-                (string.eq reg "%r12")
-                (string.eq reg "%r13")
-                (string.eq reg "%r14")
-                (string.eq reg "%r15"))
-              (not (compiler-backend-string-contains? head reg))
-              (not (compiler-backend-string-contains? head "call")))
-              0
-              1))
-          compiler-backend-emergency-pending-count)]
+      ;; NOTE: a demand-driven elision here (omit the save when the head
+      ;; text cannot write the register) was reverted: the decision keys on
+      ;; per-target register assignments, so the two targets elide
+      ;; differently and the codegen target parity gate rejects the
+      ;; structural divergence. A parity-compatible design must decide
+      ;; elision on normalized structure for both targets at once.
+      [count : i64 compiler-backend-emergency-pending-count]
       [save-asm : String (compiler-backend-emergency-save-asm 0 count)]
       [restore-asm : String
         (if compiler-backend-emergency-restore-suppressed

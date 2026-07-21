@@ -18603,6 +18603,25 @@
           canonical
           expected)))))
 
+(define (tc-nominal-name-id-canonical-eq?
+  [ctx : TcContext]
+  [actual : i64]
+  [expected : i64]) : bool
+  (let
+    [actual-base : i64 (tc-qualified-name-base-id actual)]
+    [expected-base : i64 (tc-qualified-name-base-id expected)]
+    (cond
+      [(not (tc-nominal-name-id-eq? actual-base expected-base)) false]
+      [else
+        (let
+          [canonical-actual : i64 (tc-source-owned-nominal-name-id ctx actual)]
+          (cond
+            [(tc-nominal-name-id-eq? canonical-actual expected) true]
+            [else
+              (tc-nominal-name-id-eq?
+                canonical-actual
+                (tc-source-owned-nominal-name-id ctx expected))]))])))
+
 (define (tc-merge-branch-type-raw [a : AstType] [b : AstType]) : ResultTcType
   (cond
     [(tc-never-type? a) (ResultTcType.Ok b)]
@@ -38761,7 +38780,11 @@
           (if (>= owner-id 0)
             (tc-nominal-name-id-display owner-id)
             "<unknown>")]
-        (if (and (>= owner-id 0) (tc-nominal-name-id-eq? owner-id enum-name-id))
+        (if (and
+          (>= owner-id 0)
+          (or
+            (tc-nominal-name-id-eq? owner-id enum-name-id)
+            (tc-nominal-name-id-canonical-eq? ctx owner-id enum-name-id)))
           (match (compiler-registries-variant-fields-indexed
             (tc-context-symbols ctx)
             handle)
@@ -39201,7 +39224,11 @@
           (if (>= owner-id 0)
             (tc-nominal-name-id-display owner-id)
             "<unknown>")]
-        (if (and (>= owner-id 0) (tc-nominal-name-id-eq? owner-id enum-name-id))
+        (if (and
+          (>= owner-id 0)
+          (or
+            (tc-nominal-name-id-eq? owner-id enum-name-id)
+            (tc-nominal-name-id-canonical-eq? ctx owner-id enum-name-id)))
           (match (compiler-registries-variant-fields-indexed
             (tc-context-symbols ctx)
             handle)
@@ -39837,9 +39864,11 @@
               (compiler-symbols-missing-handle))]
           (if (and
             (compiler-symbols-handle-found? handle)
-            (tc-nominal-name-id-eq?
-              (tc-variant-owner-id-or ctx handle -1)
-              enum-name-id))
+            (let
+              [owner-id : i64 (tc-variant-owner-id-or ctx handle -1)]
+              (or
+                (tc-nominal-name-id-eq? owner-id enum-name-id)
+                (tc-nominal-name-id-canonical-eq? ctx owner-id enum-name-id))))
             handle
             (compiler-registries-lookup-variant-key-id-or
               registries
@@ -40197,18 +40226,34 @@
           (or
             (= pattern-handle candidate-handle)
             (and
-              (=
-                (compiler-symbols-owner-id-at-index-or
-                  symbols
-                  (compiler-registry-handle-owner-index pattern-handle)
-                  -1)
-                (compiler-symbols-owner-id-at-index-or
-                  symbols
-                  (compiler-registry-handle-owner-index candidate-handle)
-                  -2))
+              (tc-variant-handle-owner-id-eq?
+                ctx
+                symbols
+                pattern-handle
+                candidate-handle)
               (=
                 (tc-variant-member-name-id pattern-id)
                 (tc-variant-member-name-id variant-id))))))]))
+
+(define (tc-variant-handle-owner-id-eq?
+  [ctx : TcContext]
+  [symbols : CompilerSymbols]
+  [left : i64]
+  [right : i64]) : bool
+  (let
+    [left-owner : i64
+      (compiler-symbols-owner-id-at-index-or
+        symbols
+        (compiler-registry-handle-owner-index left)
+        -1)]
+    [right-owner : i64
+      (compiler-symbols-owner-id-at-index-or
+        symbols
+        (compiler-registry-handle-owner-index right)
+        -2)]
+    (or
+      (tc-nominal-name-id-eq? left-owner right-owner)
+      (tc-nominal-name-id-canonical-eq? ctx left-owner right-owner))))
 
 (define (tc-expr-pattern-enum-id) : i64
   (tc-stdlib-comptime-type-key-id "Expr" cbi.compiler-builtin-id-fix-Expr))

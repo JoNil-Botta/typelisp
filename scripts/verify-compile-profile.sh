@@ -796,9 +796,11 @@ assert_profile_counter_eq_in \
     0 \
     "$STDLIB_TLCI_EMBEDDED_STDOUT" \
     "$STDLIB_TLCI_EMBEDDED_STDERR"
+# With the fold bodies native, every cataloged macro in this fixture now
+# commits natively; assert the dispatches instead of a fallback count.
 assert_profile_counter_at_least_in \
     "$STDLIB_TLCI_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+    "typecheck.macro.stdlib_tlci_native_dispatches" \
     1 \
     "$STDLIB_TLCI_EMBEDDED_STDOUT" \
     "$STDLIB_TLCI_EMBEDDED_STDERR"

@@ -273,8 +273,7 @@
 ;;     right child of the addition rather than `(2 + 3) * 4`.
 ;;   - eval recursively folds it to 2 + (3 * 4) = 14 (NOT (2 + 3) * 4 = 20),
 ;;     proving the parser honours precedence.
-;; `main` returns 14, an observable result an execution test can assert as the
-;; process exit code.
+;; `main` prints and returns 14.
 (define (main) : i64
   (let
     [tags : i64-vec.Vec (i64-vec.with-capacity 6)]
@@ -283,4 +282,9 @@
     (begin
       (build-sample-tags (&mut tags))
       (build-sample-vals (&mut vals))
-      (eval (parse-expr (& tags) (& vals) cur)))))
+      (let
+        [result : i64 (eval (parse-expr (& tags) (& vals) cur))]
+        (begin
+          (io.print-string "parser result: ")
+          (io.print result)
+          result)))))

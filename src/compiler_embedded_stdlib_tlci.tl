@@ -512,6 +512,129 @@
             (array-ref compiler-comptime-host-pools 0)
             (AstExpr.Literal (ast-lit-int arg-a)))
           (AstType.Expr)))]
+    [(= operation tlci-host-callback-op-expr-list-fold-if)
+      (if (or
+        (< compiler-comptime-host-stack-len 2)
+        (< arg-a 0)
+        (>= arg-a compiler-comptime-host-operand-count))
+        tlci-host-callback-status-bad-request
+        (let
+          [when-false-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [when-true-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          [when-false-node : i64
+            (compiler-comptime-host-value-node when-false-value)]
+          [when-true-node : i64
+            (compiler-comptime-host-value-node when-true-value)]
+          [continue-on-true : bool (not (= arg-b 0))]
+          (if (or (< when-false-node 0) (< when-true-node 0))
+            tlci-host-callback-status-bad-request
+            (match (array-ref compiler-comptime-host-operands arg-a)
+              [(CompilerCtfeValue.ExprList items)
+                (let
+                  [pools : AstNodePoolContext
+                    (array-ref compiler-comptime-host-pools 0)]
+                  [index : i64 (- (ctfe-expr-list-length items) 1)]
+                  [out-node : i64
+                    (if continue-on-true
+                      when-true-node
+                      when-false-node)]
+                  (begin
+                    ;; Mirrors ctfe-eval-expr-list-fold-if-plain-at exactly:
+                    ;; right-to-left, terminals from the two stack values.
+                    (while (>= index 0)
+                      (let
+                        [cond-node : i64 (ctfe-expr-list-nth items index)]
+                        (begin
+                          (set!
+                            out-node
+                            (ast-expr-if-with-pools
+                              pools
+                              cond-node
+                              (if continue-on-true
+                                out-node
+                                when-true-node)
+                              (if continue-on-true
+                                when-false-node
+                                out-node)))
+                          (set! index (- index 1)))))
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 2))
+                    (compiler-comptime-host-push!
+                      (CompilerCtfeValue.Expr out-node (AstType.Expr)))))]
+              [_ tlci-host-callback-status-bad-request]))))]
+    [(= operation tlci-host-callback-op-expr-clause-list-fold-if)
+      (if (or
+        (< compiler-comptime-host-stack-len 2)
+        (< arg-a 0)
+        (>= arg-a compiler-comptime-host-operand-count))
+        tlci-host-callback-status-bad-request
+        (let
+          [else-not-final-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [missing-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          [else-not-final-node : i64
+            (compiler-comptime-host-value-node else-not-final-value)]
+          [missing-node : i64 (compiler-comptime-host-value-node missing-value)]
+          (if (or (< else-not-final-node 0) (< missing-node 0))
+            tlci-host-callback-status-bad-request
+            (match (array-ref compiler-comptime-host-operands arg-a)
+              [(CompilerCtfeValue.ExprClauseList items)
+                (let
+                  [pools : AstNodePoolContext
+                    (array-ref compiler-comptime-host-pools 0)]
+                  [n : i64 (ctfe-expr-clause-list-length items)]
+                  [out-node : i64 missing-node]
+                  [index : i64 (- n 2)]
+                  (begin
+                    ;; Mirrors ctfe-eval-expr-clause-list-fold-if exactly:
+                    ;; the final clause seeds the accumulator (its result
+                    ;; when it is an else clause, the missing marker
+                    ;; otherwise), then right-to-left each clause wraps an
+                    ;; if, with a non-final else collapsing to the marker.
+                    (if (> n 0)
+                      (let
+                        [final-clause : AstExprClause
+                          (ctfe-expr-clause-list-nth items (- n 1))]
+                        (if (ctfe-expr-else-with-pools?
+                          pools
+                          (ctfe-expr-clause-first final-clause))
+                          (set! out-node (ctfe-expr-clause-second final-clause))
+                          unit))
+                      unit)
+                    (while (>= index 0)
+                      (let
+                        [clause : AstExprClause
+                          (ctfe-expr-clause-list-nth items index)]
+                        [test-node : i64 (ctfe-expr-clause-first clause)]
+                        (begin
+                          (set!
+                            out-node
+                            (if (ctfe-expr-else-with-pools? pools test-node)
+                              else-not-final-node
+                              (ast-expr-if-with-pools
+                                pools
+                                test-node
+                                (ctfe-expr-clause-second clause)
+                                out-node)))
+                          (set! index (- index 1)))))
+                    (set!
+                      compiler-comptime-host-stack-len
+                      (- compiler-comptime-host-stack-len 2))
+                    (compiler-comptime-host-push!
+                      (CompilerCtfeValue.Expr out-node (AstType.Expr)))))]
+              [_ tlci-host-callback-status-bad-request]))))]
     [(= operation tlci-host-callback-op-commit-result)
       (if (< compiler-comptime-host-stack-len 1)
         tlci-host-callback-status-bad-request

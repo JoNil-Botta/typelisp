@@ -178,10 +178,15 @@
 ;;     `Token.RParen` => 9 tokens.
 ;;   - Token 0 is read back out of the token vector as
 ;;     `(Token.Ident "foo")`, whose text length is 3.
-;; main returns 9 + 3 = 12, an observable result an execution test can check
-;; that depends on both the token count and the substring-sliced identifier.
+;; `main` prints and returns 9 + 3 = 12. The result depends on both the token
+;; count and the substring-sliced identifier.
 (define (main) : i64
   (let
     [toks : token-vec.Vec (token-vec.with-capacity 16)]
     [count : i64 (lex "foo - 3 * (12 / 4)" (&mut toks))]
-    (+ count (ident-text-length (token-vec.get (& toks) 0 Token.End)))))
+    [result : i64
+      (+ count (ident-text-length (token-vec.get (& toks) 0 Token.End)))]
+    (begin
+      (io.print-string "lexer score: ")
+      (io.print result)
+      result)))

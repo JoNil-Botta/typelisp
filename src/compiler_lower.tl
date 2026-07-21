@@ -194,7 +194,8 @@
 
 (defenum LowerSpmdInlineHelper
   (No)
-  (Some i64 AstParamList AstType AstExpr))
+  (Some i64 AstParamList AstType AstExpr)
+  (Imported i64 AstType (Box AstImportedSpmdCallableList)))
 
 (defenum LowerSpmdScalarCallContext
   (No)
@@ -460,6 +461,18 @@
 (defenum ResultLowerSpmdCallArgs
   (Ok LowerState CompilerIrSpmdCallArgList bool)
   (Err (Box CompilerDiagnostic)))
+
+(defenum ResultLowerImportedSpmdSpecialization
+  (Ok AstImportedSpmdSpecialization)
+  (Err (Box CompilerDiagnostic)))
+
+(defstruct LowerImportedSpmdSelectionScan
+  (signature-count i64)
+  (supported-abi-count i64)
+  (unsupported-abi-id i64)
+  (unsupported-key-abi-id i64)
+  (selected-count i64)
+  (selected AstImportedSpmdSpecialization))
 
 (defenum ResultLowerArgs
   (Ok LowerState CompilerIrValueList)
@@ -5229,6 +5242,13 @@
         [body : AstExpr (lower-context-expr-get ctx body-box)]
         (ResultLowerSpmdInlineHelper.Ok
           (LowerSpmdInlineHelper.Some handle params ret body)))]
+    [(AstDecl.Extern _ _ (AstExternKind.Function) metadata ty)
+      (match (ast-extern-metadata-imported-spmd (box-get metadata))
+        [(AstImportedSpmdMetadata.No)
+          (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))]
+        [(AstImportedSpmdMetadata.Package canonical-name callables)
+          (ResultLowerSpmdInlineHelper.Ok
+            (LowerSpmdInlineHelper.Imported canonical-name ty callables))])]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -5294,12 +5314,11 @@
           (cond
             [(not (compiler-symbols-handle-found? handle))
               (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))]
-            [(not
+            [(and
                 (=
                   (compiler-symbol-handle-kind handle)
-                  (compiler-symbol-kind-function-define)))
-              (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))]
-            [(lower-id-set-contains? lower-spmd-inline-helper-stack handle)
+                  (compiler-symbol-kind-function-define))
+                (lower-id-set-contains? lower-spmd-inline-helper-stack handle))
               (begin
                 (set! lower-spmd-inline-recursion-detected true)
                 (ResultLowerSpmdInlineHelper.Err
@@ -5307,7 +5326,13 @@
                     (lower-diagnostic-at-expr
                       func
                       (lower-spmd-inline-recursive-message)))))]
-            [else
+            [(or
+                (=
+                  (compiler-symbol-handle-kind handle)
+                  (compiler-symbol-kind-function-define))
+                (=
+                  (compiler-symbol-handle-kind handle)
+                  (compiler-symbol-kind-extern)))
               (match (compiler-symbols-decl-at-index
                 (tc-context-symbols ctx)
                 (compiler-symbol-handle-index handle))
@@ -5315,7 +5340,8 @@
                   (lower-spmd-inline-helper-from-decl ctx handle decl)]
                 [(ResultAstDecl.Err message)
                   (ResultLowerSpmdInlineHelper.Err
-                    (box (lower-diagnostic message)))])])))]
+                    (box (lower-diagnostic message)))])]
+            [else (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))])))]
     [(TcNameLookup.Err message)
       (if (string.eq message "")
         (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))
@@ -5699,6 +5725,8 @@
                   rewritten-args
                   body
                   origin))]
+            [(LowerSpmdInlineHelper.Imported _ _ _)
+              (lower-spmd-preserve-call ctx func rewritten-args)]
             [(LowerSpmdInlineHelper.No)
               (match (lower-spmd-inline-expr
                 ctx
@@ -28004,6 +28032,102 @@
                   (+ arg-index 1))))])]
       [(CompilerIrValueList.Nil) CompilerIrSpmdCallArgList.Nil])))
 
+(define (lower-imported-spmd-scalar-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [canonical-name : i64]
+  [fn-ty : AstType]
+  [callables : AstImportedSpmdCallableList]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : LowerMaybeSpmdCall
+  (match fn-ty
+    [(AstType.Func param-types ret-id)
+      (let
+        [params : AstParamList
+          (lower-imported-spmd-params ctx (box-get param-types))]
+        [ret : AstType (tc-context-type-get ctx ret-id)]
+        (if (<=
+          (lower-spmd-call-args-lanes
+            ctx
+            (CompilerLowerMode.Avx512)
+            env
+            type-env
+            index
+            (lower-masked-vector-empty-lane-locals)
+            args)
+          0)
+          (LowerMaybeSpmdCall.No)
+          (match (lower-call-args-as-needed
+            ctx
+            state
+            env
+            type-env
+            args
+            (tc-param-type-list ctx params))
+            [(ResultLowerCallArgs.Err message) (LowerMaybeSpmdCall.Err message)]
+            [(ResultLowerCallArgs.Ok args-state values writebacks)
+              (let
+                [call-args : CompilerIrSpmdCallArgList
+                  (lower-spmd-call-args-from-values
+                    ctx
+                    env
+                    type-env
+                    index
+                    args
+                    params
+                    values)]
+                [args-code : String
+                  (lower-imported-spmd-call-args-code call-args)]
+                [signature : String (lower-spmd-source-signature params ret)]
+                [requested-index-param : i64
+                  (lower-imported-spmd-index-param ctx index args)]
+                (match (lower-imported-spmd-select
+                  canonical-name
+                  (& callables)
+                  signature
+                  (CompilerIrSpmdBackend.Scalar)
+                  1
+                  args-code
+                  requested-index-param
+                  ret
+                  origin)
+                  [(ResultLowerImportedSpmdSpecialization.Err message)
+                    (LowerMaybeSpmdCall.Err message)]
+                  [(ResultLowerImportedSpmdSpecialization.Ok specialization)
+                    (match (lower-avx512-emit-spmd-call
+                      args-state
+                      (lower-imported-spmd-ir-symbol specialization)
+                      (CompilerIrSpmdBackend.Scalar)
+                      (CompilerIrValue.Bool true)
+                      1
+                      call-args
+                      result-ty
+                      (lower-imported-spmd-result-varying? specialization)
+                      origin)
+                      [(ResultLowerExpr.Err message)
+                        (LowerMaybeSpmdCall.Err message)]
+                      [(ResultLowerExpr.Ok lowered)
+                        (match lowered
+                          [(LowerExpr.Expr call-state value ty)
+                            (LowerMaybeSpmdCall.Some
+                              (LowerExpr.Expr
+                                (lower-apply-arg-writebacks
+                                  ctx
+                                  call-state
+                                  writebacks)
+                                value
+                                ty))])])]))])))]
+    [_
+      (LowerMaybeSpmdCall.Err
+        (box
+          (lower-diagnostic-at-expr
+            origin
+            "lower: imported SPMD helper does not have function type")))]))
+
 (define (lower-spmd-scalar-call-maybe
   [ctx : TcContext]
   [state : LowerState]
@@ -28064,6 +28188,7 @@
                             hidden-name
                             params
                             ret
+                            false
                             body
                             (CompilerIrSpmdBackend.Scalar)
                             call-args
@@ -28115,6 +28240,19 @@
                   [(ResultLowerCallArgs.Err message)
                     (LowerMaybeSpmdCall.Err message)])
                 (LowerMaybeSpmdCall.No))]
+            [(LowerSpmdInlineHelper.Imported canonical-name fn-ty callables)
+              (lower-imported-spmd-scalar-call
+                ctx
+                state
+                env
+                type-env
+                index
+                canonical-name
+                fn-ty
+                (box-get callables)
+                args
+                result-ty
+                origin)]
             [(LowerSpmdInlineHelper.No) (LowerMaybeSpmdCall.No)])]
         [(ResultLowerSpmdInlineHelper.Err message)
           (LowerMaybeSpmdCall.Err message)])]))
@@ -35494,6 +35632,112 @@
             (+ arg-index 1)
             (lower-masked-vector-lane-locals-bind-if-varying out name arg-lanes)))])))
 
+(define (lower-imported-spmd-source-args-code-at
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : lower_i64_i64_map.Map]
+  [args : (& args AstExprList)]
+  [arg-index : i64]) : String
+  (if (>= arg-index (struct-get args len))
+    ""
+    (let
+      [arg-lanes : i64
+        (lower-masked-vector-expr-lanes-with-locals
+          ctx
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (lower-context-expr-get ctx (ast-expr-list-get args arg-index 0)))]
+      (str_cat.str-cat
+        (cond [(> arg-lanes 0) "v"] [(= arg-lanes 0) "u"] [else "?"])
+        (lower-imported-spmd-source-args-code-at
+          ctx
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          args
+          (+ arg-index 1))))))
+
+(define (lower-imported-spmd-direct-call-result-lanes
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [lane-locals : lower_i64_i64_map.Map]
+  [func : AstExpr]
+  [args : AstExprList]
+  [canonical-name : i64]
+  [fn-ty : AstType]
+  [callables : AstImportedSpmdCallableList]) : i64
+  (match fn-ty
+    [(AstType.Func param-types ret-id)
+      (let
+        [params : AstParamList
+          (lower-imported-spmd-params ctx (box-get param-types))]
+        [ret : AstType (tc-context-type-get ctx ret-id)]
+        [arg-lanes : i64
+          (lower-spmd-call-args-lanes
+            ctx
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            args)]
+        [backend : CompilerIrSpmdBackend
+          (cond
+            [(lower-mode-avx512? mode) (CompilerIrSpmdBackend.Avx512)]
+            [(lower-mode-avx2? mode) (CompilerIrSpmdBackend.Avx2)]
+            [else (CompilerIrSpmdBackend.Scalar)])]
+        [lanes : i64
+          (match backend
+            [(CompilerIrSpmdBackend.Scalar) 1]
+            [_ arg-lanes])]
+        [args-code : String
+          (lower-imported-spmd-source-args-code-at
+            ctx
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            (& args)
+            0)]
+        [unknown-arg-code : String "?"]
+        (cond
+          [(= arg-lanes 0) 0]
+          [(or
+              (< arg-lanes 0)
+              (string.contains (& args-code) (& unknown-arg-code)))
+            -1]
+          [else
+            (match (lower-imported-spmd-select
+              canonical-name
+              (& callables)
+              (lower-spmd-source-signature params ret)
+              backend
+              lanes
+              args-code
+              (lower-imported-spmd-index-param ctx index args)
+              ret
+              func)
+              [(ResultLowerImportedSpmdSpecialization.Err _) -1]
+              [(ResultLowerImportedSpmdSpecialization.Ok specialization)
+                (if (or
+                  (tc-type-eq (tc-type-without-regions ret) (AstType.Unit))
+                  (lower-imported-spmd-result-varying? specialization))
+                  arg-lanes
+                  0)])]))]
+    [_ -1]))
+
 (define (lower-spmd-direct-call-result-lanes
   [ctx : TcContext]
   [mode : CompilerLowerMode]
@@ -35557,6 +35801,19 @@
                         (if (< result 0)
                           arg-lanes
                           result)))))]
+              [(LowerSpmdInlineHelper.Imported canonical-name fn-ty callables)
+                (lower-imported-spmd-direct-call-result-lanes
+                  ctx
+                  mode
+                  env
+                  type-env
+                  index
+                  lane-locals
+                  func
+                  args
+                  canonical-name
+                  fn-ty
+                  (box-get callables))]
               [(LowerSpmdInlineHelper.No) -1])]
           [(ResultLowerSpmdInlineHelper.Err _) -1]))]
     [_ -1]))
@@ -37831,6 +38088,7 @@
               (match helper
                 [(LowerSpmdInlineHelper.Some _ _ _ body)
                   (lower-spmd-helper-out-of-line? ctx body)]
+                [(LowerSpmdInlineHelper.Imported _ _ _) true]
                 [(LowerSpmdInlineHelper.No) false])]
             [(ResultLowerSpmdInlineHelper.Err _) false])
           (lower-spmd-expr-list-has-out-of-line-call? ctx env type-env args)))]
@@ -38669,6 +38927,7 @@
                   (lower-vector-body-has-atomic-call? ctx env type-env body))
                 (set! lower-spmd-inline-helper-stack previous)
                 result)))]
+        [(LowerSpmdInlineHelper.Imported _ _ _) false]
         [(LowerSpmdInlineHelper.No) false])]
     [(ResultLowerSpmdInlineHelper.Err _) false]))
 
@@ -46639,6 +46898,366 @@
       (lower-spmd-source-param-types-at (& params) 0 (&mut types))
       (tc-type-render (ast-ty-func types ret)))))
 
+(define (lower-imported-spmd-params-at
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [index : i64]
+  [out : (&mut out AstParamList)]) : unit
+  (if (>= index (ast-type-list-len types))
+    unit
+    (let
+      [ty : AstType
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback)))]
+      (begin
+        (match ty
+          [(AstType.Consume inner)
+            (ast-param-list-push
+              out
+              (AstParam.Param
+                cbi.compiler-builtin-id-fix-empty
+                (tc-context-type-get ctx inner)
+                false
+                true))]
+          [_
+            (ast-param-list-push
+              out
+              (AstParam.Param cbi.compiler-builtin-id-fix-empty ty false false))])
+        (lower-imported-spmd-params-at ctx types (+ index 1) out)))))
+
+(define (lower-imported-spmd-params [ctx : TcContext] [types : AstTypeList]) : AstParamList
+  (let
+    [out : AstParamList
+      (ast-param-list-with-capacity (ast-type-list-len (& types)))]
+    (begin
+      (lower-imported-spmd-params-at ctx (& types) 0 (&mut out))
+      out)))
+
+(define (lower-imported-spmd-call-arg-code [arg : CompilerIrSpmdCallArg]) : String
+  (match arg
+    [(CompilerIrSpmdCallArg.Arg class _ _)
+      (match class
+        [(CompilerIrSpmdValueClass.Uniform) "u"]
+        [_ "v"])]))
+
+(define (lower-imported-spmd-call-args-code-at
+  [args : CompilerIrSpmdCallArgList]
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (str_cat.str-cat
+      (lower-imported-spmd-call-arg-code (lower-spmd-call-arg-at args index))
+      (lower-imported-spmd-call-args-code-at args (+ index 1) count))))
+
+(define (lower-imported-spmd-call-args-code [args : CompilerIrSpmdCallArgList]) : String
+  (lower-imported-spmd-call-args-code-at
+    args
+    0
+    (compiler-ir-spmd-call-arg-count args)))
+
+;; TLCI records the final archive/link name, while existing `SpmdCall` IR
+;; carries a logical TypeLisp name that the backend decorates with `_tl_`.
+;; Private ABI v1 symbols are generated by that backend rule, so remove its
+;; prefix exactly once before reusing the established IR.
+(define (lower-imported-spmd-ir-symbol [item : AstImportedSpmdSpecialization]) : i64
+  (let
+    [link-symbol-id : i64 (struct-get item symbol)]
+    [link-symbol : String (intern-str link-symbol-id)]
+    [link-symbol-len : i64 (string.string-length link-symbol)]
+    (if (and
+      (> link-symbol-len 4)
+      (lower-string-prefix-at? link-symbol "_tl_" 0))
+      (ci.intern-generated-canonical-name
+        (string.substring link-symbol 4 (- link-symbol-len 4)))
+      link-symbol-id)))
+
+(define (lower-imported-spmd-backend-name [backend : CompilerIrSpmdBackend]) : String
+  (match backend
+    [(CompilerIrSpmdBackend.Scalar) "scalar"]
+    [(CompilerIrSpmdBackend.Avx2) "avx2"]
+    [(CompilerIrSpmdBackend.Avx512) "avx512"]))
+
+(define (lower-imported-spmd-specialization-key-matches?
+  [item : AstImportedSpmdSpecialization]
+  [backend : String]
+  [lanes : i64]
+  [args-code : String]
+  [index-param : i64]) : bool
+  (and
+    (string.eq (intern-str (struct-get item backend)) backend)
+    (= (struct-get item lanes) lanes)
+    (string.eq (intern-str (struct-get item args)) args-code)
+    (= (struct-get item index-param) index-param)))
+
+(define (lower-imported-spmd-result-compatible?
+  [item : AstImportedSpmdSpecialization]
+  [ret : AstType]) : bool
+  (let
+    [result : String (intern-str (struct-get item result))]
+    (if (tc-type-eq (tc-type-without-regions ret) (AstType.Unit))
+      (string.eq result "unit")
+      (or (string.eq result "u") (string.eq result "v")))))
+
+(define (lower-imported-spmd-selection-error
+  [origin : AstExpr]
+  [canonical-name : String]
+  [message : String]) : ResultLowerImportedSpmdSpecialization
+  (ResultLowerImportedSpmdSpecialization.Err
+    (box
+      (lower-diagnostic-at-expr
+        origin
+        (str_cat.str-cat
+          "lower: imported SPMD helper `"
+          canonical-name
+          "` "
+          message)))))
+
+(define (lower-imported-spmd-selection-scan-new) : LowerImportedSpmdSelectionScan
+  (LowerImportedSpmdSelectionScan
+    0
+    0
+    -1
+    -1
+    0
+    (ast-imported-spmd-specialization-fallback)))
+
+(define (lower-imported-spmd-selection-scan-specializations-at
+  [specializations : (& specializations AstImportedSpmdSpecializationList)]
+  [index : i64]
+  [backend-name : String]
+  [lanes : i64]
+  [args-code : String]
+  [requested-index-param : i64]
+  [ret : AstType]
+  [scan : LowerImportedSpmdSelectionScan]) : LowerImportedSpmdSelectionScan
+  (if (>= index (ast-imported-spmd-specialization-list-len specializations))
+    scan
+    (let
+      [item : AstImportedSpmdSpecialization
+        (ast-imported-spmd-specialization-list-get
+          specializations
+          index
+          (ast-imported-spmd-specialization-fallback))]
+      [abi-id : i64 (struct-get item abi)]
+      [abi : String (intern-str abi-id)]
+      [key-matches : bool
+        (and
+          (lower-imported-spmd-specialization-key-matches?
+            item
+            backend-name
+            lanes
+            args-code
+            requested-index-param)
+          (lower-imported-spmd-result-compatible? item ret))]
+      [next : LowerImportedSpmdSelectionScan
+        (if (string.eq abi "spmd-call-v1")
+          (LowerImportedSpmdSelectionScan
+            (struct-get scan signature-count)
+            (+ (struct-get scan supported-abi-count) 1)
+            (struct-get scan unsupported-abi-id)
+            (struct-get scan unsupported-key-abi-id)
+            (if key-matches
+              (+ (struct-get scan selected-count) 1)
+              (struct-get scan selected-count))
+            (if key-matches
+              item
+              (struct-get scan selected)))
+          (LowerImportedSpmdSelectionScan
+            (struct-get scan signature-count)
+            (struct-get scan supported-abi-count)
+            (if (< (struct-get scan unsupported-abi-id) 0)
+              abi-id
+              (struct-get scan unsupported-abi-id))
+            (if (and key-matches (< (struct-get scan unsupported-key-abi-id) 0))
+              abi-id
+              (struct-get scan unsupported-key-abi-id))
+            (struct-get scan selected-count)
+            (struct-get scan selected)))]
+      (lower-imported-spmd-selection-scan-specializations-at
+        specializations
+        (+ index 1)
+        backend-name
+        lanes
+        args-code
+        requested-index-param
+        ret
+        next))))
+
+(define (lower-imported-spmd-selection-scan-callables-at
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [index : i64]
+  [signature : String]
+  [backend-name : String]
+  [lanes : i64]
+  [args-code : String]
+  [requested-index-param : i64]
+  [ret : AstType]
+  [scan : LowerImportedSpmdSelectionScan]) : LowerImportedSpmdSelectionScan
+  (if (>= index (ast-imported-spmd-callable-list-len callables))
+    scan
+    (let
+      [callable : AstImportedSpmdCallable
+        (ast-imported-spmd-callable-list-get
+          callables
+          index
+          (ast-imported-spmd-callable-fallback))]
+      [matches-signature : bool
+        (string.eq (intern-str (struct-get callable signature)) signature)]
+      [signature-scan : LowerImportedSpmdSelectionScan
+        (if matches-signature
+          (LowerImportedSpmdSelectionScan
+            (+ (struct-get scan signature-count) 1)
+            (struct-get scan supported-abi-count)
+            (struct-get scan unsupported-abi-id)
+            (struct-get scan unsupported-key-abi-id)
+            (struct-get scan selected-count)
+            (struct-get scan selected))
+          scan)]
+      [specializations : AstImportedSpmdSpecializationList
+        (struct-get callable specializations)]
+      [next : LowerImportedSpmdSelectionScan
+        (if matches-signature
+          (lower-imported-spmd-selection-scan-specializations-at
+            (& specializations)
+            0
+            backend-name
+            lanes
+            args-code
+            requested-index-param
+            ret
+            signature-scan)
+          signature-scan)]
+      (lower-imported-spmd-selection-scan-callables-at
+        callables
+        (+ index 1)
+        signature
+        backend-name
+        lanes
+        args-code
+        requested-index-param
+        ret
+        next))))
+
+(define (lower-imported-spmd-select
+  [canonical-name-id : i64]
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [signature : String]
+  [backend : CompilerIrSpmdBackend]
+  [lanes : i64]
+  [args-code : String]
+  [requested-index-param : i64]
+  [ret : AstType]
+  [origin : AstExpr]) : ResultLowerImportedSpmdSpecialization
+  (let
+    [canonical-name : String (intern-str canonical-name-id)]
+    [backend-name : String (lower-imported-spmd-backend-name backend)]
+    [callable-count : i64 (ast-imported-spmd-callable-list-len callables)]
+    [scan : LowerImportedSpmdSelectionScan
+      (lower-imported-spmd-selection-scan-callables-at
+        callables
+        0
+        signature
+        backend-name
+        lanes
+        args-code
+        requested-index-param
+        ret
+        (lower-imported-spmd-selection-scan-new))]
+    (cond
+      [(= callable-count 0)
+        (lower-imported-spmd-selection-error
+          origin
+          canonical-name
+          "has no TLCI callable metadata")]
+      [(= (struct-get scan signature-count) 0)
+        (lower-imported-spmd-selection-error
+          origin
+          canonical-name
+          (str_cat.str-cat
+            "ordinary signature mismatch; consumer resolved "
+            signature))]
+      [(= (struct-get scan selected-count) 1)
+        (ResultLowerImportedSpmdSpecialization.Ok (struct-get scan selected))]
+      [(> (struct-get scan selected-count) 1)
+        (lower-imported-spmd-selection-error
+          origin
+          canonical-name
+          (str_cat.str-cat
+            "has duplicate TLCI specializations for the requested key (backend="
+            backend-name
+            ", lanes="
+            (string.int->string lanes)
+            ", args="
+            args-code
+            ", index-param="
+            (string.int->string requested-index-param)
+            ")"))]
+      [(>= (struct-get scan unsupported-key-abi-id) 0)
+        (lower-imported-spmd-selection-error
+          origin
+          canonical-name
+          (str_cat.str-cat
+            "uses unsupported private ABI `"
+            (intern-str (struct-get scan unsupported-key-abi-id))
+            "`"))]
+      [(and
+          (= (struct-get scan supported-abi-count) 0)
+          (>= (struct-get scan unsupported-abi-id) 0))
+        (lower-imported-spmd-selection-error
+          origin
+          canonical-name
+          (str_cat.str-cat
+            "has no supported private ABI; first advertised ABI is `"
+            (intern-str (struct-get scan unsupported-abi-id))
+            "`"))]
+      [(string.eq backend-name "avx2")
+        (lower-imported-spmd-selection-error
+          origin
+          canonical-name
+          "is not supported in AVX2 backend mode")]
+      [else
+        (lower-imported-spmd-selection-error
+          origin
+          canonical-name
+          (str_cat.str-cat
+            "has no requested specialization (backend="
+            backend-name
+            ", lanes="
+            (string.int->string lanes)
+            ", args="
+            args-code
+            ", index-param="
+            (string.int->string requested-index-param)
+            ")"))])))
+
+(define (lower-imported-spmd-result-varying?
+  [item : AstImportedSpmdSpecialization]) : bool
+  (string.eq (intern-str (struct-get item result)) "v"))
+
+(define (lower-imported-spmd-index-param-at
+  [ctx : TcContext]
+  [index-name : String]
+  [args : (& args AstExprList)]
+  [arg-index : i64]) : i64
+  (if (or
+    (= (string.string-length index-name) 0)
+    (>= arg-index (struct-get args len)))
+    -1
+    (let
+      [arg : AstExpr
+        (lower-context-expr-get ctx (ast-expr-list-get args arg-index 0))]
+      (if (= (lower-masked-vector-index-offset ctx index-name arg) 0)
+        arg-index
+        (lower-imported-spmd-index-param-at ctx index-name args (+ arg-index 1))))))
+
+(define (lower-imported-spmd-index-param
+  [ctx : TcContext]
+  [index-name : String]
+  [args : AstExprList]) : i64
+  (lower-imported-spmd-index-param-at ctx index-name (& args) 0))
+
 (define (lower-spmd-ast-param-class-code [class : AstSpmdParamClass]) : String
   (match class
     [(AstSpmdParamClass.Uniform) "u"]
@@ -47107,6 +47726,7 @@
   [hidden-name : i64]
   [params : AstParamList]
   [ret : AstType]
+  [result-varying : bool]
   [body : AstExpr]
   [call-args : CompilerIrSpmdCallArgList]
   [lanes : i64]
@@ -47169,13 +47789,39 @@
         (match lowered
           [(LowerExpr.Expr body-state value _)
             (let
+              [return-expr
+                : LowerExpr
+                ;; Masked lowering represents a uniform result as identical
+                ;; lanes; the private uniform ABI returns one scalar value.
+                (cond
+                  [(or result-varying (tc-type-eq ret-ty (AstType.Unit)))
+                    lowered]
+                  [(lower-type-bool? ret-ty)
+                    (lower-emit-mask-reduce
+                      body-state
+                      (CompilerIrMaskReduceOp.Any)
+                      value
+                      lanes)]
+                  [else
+                    (lower-emit-vector-reduce
+                      body-state
+                      (CompilerIrVectorReduceOp.Min)
+                      value
+                      lanes
+                      ret-ty)])]
+              [return-state : LowerState
+                (match return-expr
+                  [(LowerExpr.Expr next-state _ _) next-state])]
+              [return-value : CompilerIrValue
+                (match return-expr
+                  [(LowerExpr.Expr _ next-value _) next-value])]
               [final-state : LowerState
                 (lower-state-emit
-                  body-state
+                  return-state
                   (CompilerIrInstr.Return
                     (if (tc-type-eq ret-ty (AstType.Unit))
                       (CompilerIrMaybeValue.No)
-                      (CompilerIrMaybeValue.Some value))))]
+                      (CompilerIrMaybeValue.Some return-value))))]
               (ResultLowerFunction.Ok
                 (lower-state-build-functions-with
                   final-state
@@ -47265,6 +47911,7 @@
   [hidden-name : i64]
   [params : AstParamList]
   [ret : AstType]
+  [result-varying : bool]
   [body : AstExpr]
   [backend : CompilerIrSpmdBackend]
   [call-args : CompilerIrSpmdCallArgList]
@@ -47295,6 +47942,7 @@
         hidden-name
         params
         ret
+        result-varying
         body
         call-args
         lanes
@@ -47387,6 +48035,9 @@
               hidden-name
               params
               ret
+              (match (struct-get specialization result)
+                [(AstSpmdResultClass.Varying) true]
+                [_ false])
               body
               backend
               call-args
@@ -47636,6 +48287,116 @@
               (lower-emit-splat call-state call-value lanes call-ty)))])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
+(define (lower-imported-spmd-avx512-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [lane-locals : LowerIdSet]
+  [index : String]
+  [index-var : i64]
+  [active-mask : CompilerIrValue]
+  [lanes : i64]
+  [expr : AstExpr]
+  [func : AstExpr]
+  [args : AstExprList]
+  [canonical-name : i64]
+  [fn-ty : AstType]
+  [callables : AstImportedSpmdCallableList]) : ResultLowerExpr
+  (match fn-ty
+    [(AstType.Func param-types ret-id)
+      (match (lower-expr-result-type-or-check
+        ctx
+        env
+        type-env
+        (lower-state-type-cache state)
+        expr)
+        [(ResultTcType.Err message)
+          (ResultLowerExpr.Err (box (lower-diagnostic-at-expr expr message)))]
+        [(ResultTcType.Ok result-ty)
+          (let
+            [params : AstParamList
+              (lower-imported-spmd-params ctx (box-get param-types))]
+            [ret : AstType (tc-context-type-get ctx ret-id)]
+            [arg-lanes : i64
+              (lower-spmd-call-args-lanes
+                ctx
+                (lower-state-mode state)
+                env
+                type-env
+                index
+                (lower-masked-vector-lane-locals-from-set lane-locals lanes)
+                args)]
+            (if (= arg-lanes 0)
+              (lower-avx512-uniform-spmd-call
+                ctx
+                state
+                env
+                type-env
+                func
+                args
+                result-ty
+                lanes
+                expr)
+              (match (lower-avx512-spmd-call-args
+                ctx
+                state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                params
+                args)
+                [(ResultLowerSpmdCallArgs.Err message)
+                  (ResultLowerExpr.Err message)]
+                [(ResultLowerSpmdCallArgs.Ok args-state call-args any-varying)
+                  (if (not any-varying)
+                    (ResultLowerExpr.Err
+                      (box
+                        (lower-diagnostic-at-expr
+                          expr
+                          "lower: inconsistent imported SPMD helper argument classification")))
+                    (let
+                      [args-code : String
+                        (lower-imported-spmd-call-args-code call-args)]
+                      [signature : String
+                        (lower-spmd-source-signature params ret)]
+                      [requested-index-param : i64
+                        (lower-imported-spmd-index-param ctx index args)]
+                      (match (lower-imported-spmd-select
+                        canonical-name
+                        (& callables)
+                        signature
+                        (CompilerIrSpmdBackend.Avx512)
+                        lanes
+                        args-code
+                        requested-index-param
+                        ret
+                        expr)
+                        [(ResultLowerImportedSpmdSpecialization.Err message)
+                          (ResultLowerExpr.Err message)]
+                        [(ResultLowerImportedSpmdSpecialization.Ok
+                            specialization)
+                          (lower-avx512-emit-spmd-call
+                            args-state
+                            (lower-imported-spmd-ir-symbol specialization)
+                            (CompilerIrSpmdBackend.Avx512)
+                            active-mask
+                            lanes
+                            call-args
+                            result-ty
+                            (lower-imported-spmd-result-varying? specialization)
+                            expr)])))])))])]
+    [_
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic-at-expr
+            expr
+            "lower: imported SPMD helper does not have function type")))]))
+
 (define (lower-avx512-spmd-call
   [ctx : TcContext]
   [state : LowerState]
@@ -47747,6 +48508,7 @@
                                 private-name
                                 params
                                 ret
+                                result-varying
                                 body
                                 (CompilerIrSpmdBackend.Avx512)
                                 abi-call-args
@@ -47777,6 +48539,23 @@
             [(ResultTcType.Err message)
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr expr message)))])]
+        [(LowerSpmdInlineHelper.Imported canonical-name fn-ty callables)
+          (lower-imported-spmd-avx512-call
+            ctx
+            state
+            env
+            type-env
+            lane-locals
+            index
+            index-var
+            active-mask
+            lanes
+            expr
+            func
+            args
+            canonical-name
+            fn-ty
+            (box-get callables))]
         [(LowerSpmdInlineHelper.No)
           (lower-avx512-masked-unsupported expr "non-direct SPMD helper calls")])]
     [(ResultLowerSpmdInlineHelper.Err message) (ResultLowerExpr.Err message)]))
@@ -65961,21 +66740,206 @@
     ([i : i64 0 n])
     (array-set! out i (heavy (+ offset 1)))))")
 
+(define (compiler-lower-imported-spmd-selection-error-contains?
+  [result : ResultLowerImportedSpmdSpecialization]
+  [fragment : String]) : bool
+  (match result
+    [(ResultLowerImportedSpmdSpecialization.Ok _) false]
+    [(ResultLowerImportedSpmdSpecialization.Err diag)
+      (let
+        [message : String (compiler-diagnostic-message (box-get diag))]
+        (string.contains (& message) (& fragment)))]))
+
+(define (compiler-lower-imported-spmd-selection-smoke-ok?) : bool
+  (let
+    [canonical-name : i64 (ci.intern-generated-canonical-name "fixture/helper")]
+    [signature : String "(-> i64 i64)"]
+    [specializations : AstImportedSpmdSpecializationList
+      (ast-imported-spmd-specialization-list-new)]
+    [callables : AstImportedSpmdCallableList
+      (ast-imported-spmd-callable-list-new)]
+    [empty-callables : AstImportedSpmdCallableList
+      (ast-imported-spmd-callable-list-new)]
+    [duplicate-callables : AstImportedSpmdCallableList
+      (ast-imported-spmd-callable-list-new)]
+    [unsupported-specializations : AstImportedSpmdSpecializationList
+      (ast-imported-spmd-specialization-list-new)]
+    [unsupported-callables : AstImportedSpmdCallableList
+      (ast-imported-spmd-callable-list-new)]
+    [missing-message-fragment : String "has no TLCI callable metadata"]
+    [signature-message-fragment : String "ordinary signature mismatch"]
+    [specialization-message-fragment : String "has no requested specialization"]
+    [abi-message-fragment : String
+      "uses unsupported private ABI `spmd-call-v2`"]
+    [duplicate-message-fragment : String "has duplicate TLCI specializations"]
+    [avx2-message-fragment : String "is not supported in AVX2 backend mode"]
+    [origin : AstExpr (AstExpr.Literal (ast-lit-int 0))]
+    (begin
+      (ast-imported-spmd-specialization-list-push
+        (&mut specializations)
+        (AstImportedSpmdSpecialization
+          (ci.intern-generated-canonical-name "spmd-call-v1")
+          (ci.intern-generated-canonical-name "scalar")
+          1
+          (ci.intern-generated-canonical-name "v")
+          (ci.intern-generated-canonical-name "v")
+          0
+          (ci.intern-generated-canonical-name "_tl___fixture_helper_scalar")))
+      (ast-imported-spmd-callable-list-push
+        (&mut callables)
+        (AstImportedSpmdCallable
+          (ci.intern-generated-canonical-name signature)
+          specializations))
+      (ast-imported-spmd-callable-list-push
+        (&mut duplicate-callables)
+        (AstImportedSpmdCallable
+          (ci.intern-generated-canonical-name signature)
+          specializations))
+      (ast-imported-spmd-callable-list-push
+        (&mut duplicate-callables)
+        (AstImportedSpmdCallable
+          (ci.intern-generated-canonical-name signature)
+          specializations))
+      (ast-imported-spmd-specialization-list-push
+        (&mut unsupported-specializations)
+        (AstImportedSpmdSpecialization
+          (ci.intern-generated-canonical-name "spmd-call-v2")
+          (ci.intern-generated-canonical-name "scalar")
+          1
+          (ci.intern-generated-canonical-name "v")
+          (ci.intern-generated-canonical-name "v")
+          0
+          (ci.intern-generated-canonical-name "__fixture_helper_v2")))
+      (ast-imported-spmd-callable-list-push
+        (&mut unsupported-callables)
+        (AstImportedSpmdCallable
+          (ci.intern-generated-canonical-name signature)
+          unsupported-specializations))
+      (and
+        (match (lower-imported-spmd-select
+          canonical-name
+          (& callables)
+          signature
+          (CompilerIrSpmdBackend.Scalar)
+          1
+          "v"
+          0
+          (AstType.I64)
+          origin)
+          [(ResultLowerImportedSpmdSpecialization.Ok selected)
+            (and
+              (string.eq
+                (intern-str (struct-get selected symbol))
+                "_tl___fixture_helper_scalar")
+              (string.eq
+                (intern-str (lower-imported-spmd-ir-symbol selected))
+                "__fixture_helper_scalar"))]
+          [(ResultLowerImportedSpmdSpecialization.Err _) false])
+        (match (lower-imported-spmd-select
+          canonical-name
+          (& empty-callables)
+          signature
+          (CompilerIrSpmdBackend.Scalar)
+          1
+          "v"
+          0
+          (AstType.I64)
+          origin)
+          [(ResultLowerImportedSpmdSpecialization.Ok _) false]
+          [(ResultLowerImportedSpmdSpecialization.Err diag)
+            (let
+              [message : String (compiler-diagnostic-message (box-get diag))]
+              (string.contains (& message) (& missing-message-fragment)))])
+        (compiler-lower-imported-spmd-selection-error-contains?
+          (lower-imported-spmd-select
+            canonical-name
+            (& callables)
+            "(-> i64 u64)"
+            (CompilerIrSpmdBackend.Scalar)
+            1
+            "v"
+            0
+            (AstType.I64)
+            origin)
+          signature-message-fragment)
+        (compiler-lower-imported-spmd-selection-error-contains?
+          (lower-imported-spmd-select
+            canonical-name
+            (& callables)
+            signature
+            (CompilerIrSpmdBackend.Avx512)
+            8
+            "v"
+            0
+            (AstType.I64)
+            origin)
+          specialization-message-fragment)
+        (compiler-lower-imported-spmd-selection-error-contains?
+          (lower-imported-spmd-select
+            canonical-name
+            (& callables)
+            signature
+            (CompilerIrSpmdBackend.Scalar)
+            1
+            "v"
+            -1
+            (AstType.I64)
+            origin)
+          specialization-message-fragment)
+        (compiler-lower-imported-spmd-selection-error-contains?
+          (lower-imported-spmd-select
+            canonical-name
+            (& unsupported-callables)
+            signature
+            (CompilerIrSpmdBackend.Scalar)
+            1
+            "v"
+            0
+            (AstType.I64)
+            origin)
+          abi-message-fragment)
+        (compiler-lower-imported-spmd-selection-error-contains?
+          (lower-imported-spmd-select
+            canonical-name
+            (& duplicate-callables)
+            signature
+            (CompilerIrSpmdBackend.Scalar)
+            1
+            "v"
+            0
+            (AstType.I64)
+            origin)
+          duplicate-message-fragment)
+        (compiler-lower-imported-spmd-selection-error-contains?
+          (lower-imported-spmd-select
+            canonical-name
+            (& callables)
+            signature
+            (CompilerIrSpmdBackend.Avx2)
+            4
+            "v"
+            0
+            (AstType.I64)
+            origin)
+          avx2-message-fragment)))))
+
 (define (compiler-lower-spmd-scalar-call-shape-ok?) : bool
-  (match (lower-compiler-source-with-mode
-    (compiler-lower-spmd-scalar-call-shape-source)
-    (CompilerLowerMode.Scalar))
-    [(ResultCompilerLower.Ok program _)
-      (match program
-        [(CompilerIrProgram.Program _ functions _)
-          (and
-            (> (lower-test-function-spmd-call-count functions "fill-value") 0)
-            (> (lower-test-function-spmd-call-count functions "fill-unit") 0)
-            (> (compiler-ir-function-list-count functions) 4)
-            (match lower-spmd-scalar-call-context
-              [(LowerSpmdScalarCallContext.No) true]
-              [(LowerSpmdScalarCallContext.Some _) false]))])]
-    [(ResultCompilerLower.Err _) false]))
+  (and
+    (compiler-lower-imported-spmd-selection-smoke-ok?)
+    (match (lower-compiler-source-with-mode
+      (compiler-lower-spmd-scalar-call-shape-source)
+      (CompilerLowerMode.Scalar))
+      [(ResultCompilerLower.Ok program _)
+        (match program
+          [(CompilerIrProgram.Program _ functions _)
+            (and
+              (> (lower-test-function-spmd-call-count functions "fill-value") 0)
+              (> (lower-test-function-spmd-call-count functions "fill-unit") 0)
+              (> (compiler-ir-function-list-count functions) 4)
+              (match lower-spmd-scalar-call-context
+                [(LowerSpmdScalarCallContext.No) true]
+                [(LowerSpmdScalarCallContext.Some _) false]))])]
+      [(ResultCompilerLower.Err _) false])))
 
 (define (compiler-lower-spmd-varying-local-call-shape-ok?) : bool
   (>

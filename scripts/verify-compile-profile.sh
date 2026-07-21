@@ -330,6 +330,7 @@ if ! "$COMPILER" compile src/main.tl \
     --stdlib-root src \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
+    --cfg tlci-native-route \
     > "$BUILD_STDOUT" 2> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI compile failed"
@@ -708,18 +709,38 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_cat
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_load_failures|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_interpreted_fallbacks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_source_interpreted|"
-assert_profile_counter_eq_in \
-    "$CHECK_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$CHECK_STDOUT" \
-    "$CHECK_STDERR"
-assert_profile_counter_at_least_in \
-    "$CHECK_STDERR" \
-    "typecheck.macro.stdlib_source_interpreted" \
-    1 \
-    "$CHECK_STDOUT" \
-    "$CHECK_STDERR"
+# The repo's own stdlib is content-identical to the embedded payload, so
+# the catalog dispatches here too; shell entries keep the counted
+# interpreted fallback (and their per-identity profile rows above). On
+# Windows the route is gated off until #5460 closes, so the stand-down
+# shape is asserted instead.
+if [ "$NL_HOST_OS" = windows ]; then
+    assert_profile_counter_eq_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_catalog_hits" \
+        0 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_source_interpreted" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+else
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_catalog_hits" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_at_least_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+        1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+fi
 # The multi-pass fixed-point loop and its follow-up worklist are deleted: macro
 # expansion is a single demand-driven pass, so the fixed_point_* counters no
 # longer exist.
@@ -731,6 +752,9 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_f
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.misses|"
 
+if [ "$NL_HOST_OS" = windows ]; then
+    echo "[compile-profile] skip routing differential on windows (route gated, #5460)"
+else
 echo "[compile-profile] verify embedded stdlib tlci routing and differential output"
 mkdir -p "$STDLIB_TLCI_DIR"
 if ! (
@@ -772,27 +796,69 @@ assert_profile_counter_eq_in \
     0 \
     "$STDLIB_TLCI_EMBEDDED_STDOUT" \
     "$STDLIB_TLCI_EMBEDDED_STDERR"
+# With the fold bodies native, every cataloged macro in this fixture now
+# commits natively; assert the dispatches instead of a fallback count.
 assert_profile_counter_at_least_in \
     "$STDLIB_TLCI_EMBEDDED_STDERR" \
-    "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+    "typecheck.macro.stdlib_tlci_native_dispatches" \
     1 \
     "$STDLIB_TLCI_EMBEDDED_STDOUT" \
     "$STDLIB_TLCI_EMBEDDED_STDERR"
-assert_profile_counter_eq_in \
-    "$STDLIB_TLCI_SOURCE_STDERR" \
-    "typecheck.macro.stdlib_tlci_catalog_hits" \
-    0 \
-    "$STDLIB_TLCI_SOURCE_STDOUT" \
-    "$STDLIB_TLCI_SOURCE_STDERR"
+# A pristine stdlib root is content-identical to the embedded payload, so
+# the catalog dispatches for it too; the byte-parity requirement below is
+# the contract that matters.
 assert_profile_counter_at_least_in \
     "$STDLIB_TLCI_SOURCE_STDERR" \
-    "typecheck.macro.stdlib_source_interpreted" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
     1 \
     "$STDLIB_TLCI_SOURCE_STDOUT" \
     "$STDLIB_TLCI_SOURCE_STDERR"
 if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_SOURCE_ASM"; then
     diff -u "$STDLIB_TLCI_SOURCE_ASM" "$STDLIB_TLCI_EMBEDDED_ASM" >&2 || true
     fail "embedded and source stdlib routing changed generated assembly"
+fi
+
+# A modified stdlib root must keep every one of its modules on source
+# interpretation (the catalog may never shadow user stdlib), and a
+# comment-only modification must still produce byte-identical output.
+echo "[compile-profile] verify modified stdlib root stands the catalog down"
+STDLIB_TLCI_MODIFIED_DIR="$STDLIB_TLCI_DIR/modified-root"
+STDLIB_TLCI_MODIFIED_ASM="$STDLIB_TLCI_DIR/modified.s"
+STDLIB_TLCI_MODIFIED_STDOUT="$STDLIB_TLCI_DIR/modified.stdout"
+STDLIB_TLCI_MODIFIED_STDERR="$STDLIB_TLCI_DIR/modified.stderr"
+rm -rf "$STDLIB_TLCI_MODIFIED_DIR"
+mkdir -p "$STDLIB_TLCI_MODIFIED_DIR/stdlib"
+for f in "$ROOT"/stdlib/*.tl; do
+    { cat "$f"; echo ";; provenance-control-comment"; } \
+        > "$STDLIB_TLCI_MODIFIED_DIR/stdlib/$(basename "$f")"
+done
+if ! (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
+        -o "$STDLIB_TLCI_MODIFIED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib
+) > "$STDLIB_TLCI_MODIFIED_STDOUT" 2> "$STDLIB_TLCI_MODIFIED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_MODIFIED_STDOUT" "$STDLIB_TLCI_MODIFIED_STDERR"
+    fail "modified stdlib routing fixture compile failed"
+fi
+assert_profile_counter_eq_in \
+    "$STDLIB_TLCI_MODIFIED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$STDLIB_TLCI_MODIFIED_STDOUT" \
+    "$STDLIB_TLCI_MODIFIED_STDERR"
+assert_profile_counter_at_least_in \
+    "$STDLIB_TLCI_MODIFIED_STDERR" \
+    "typecheck.macro.stdlib_source_interpreted" \
+    1 \
+    "$STDLIB_TLCI_MODIFIED_STDOUT" \
+    "$STDLIB_TLCI_MODIFIED_STDERR"
+if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM"; then
+    diff -u "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM" >&2 || true
+    fail "comment-modified stdlib root changed generated assembly"
+fi
 fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"

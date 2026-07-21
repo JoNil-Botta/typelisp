@@ -104,6 +104,19 @@ $tl build                         # builds nearest typelisp.pkg
 $tl run                           # builds/runs nearest binary typelisp.pkg
 ```
 
+Running `examples/hello.tl` exits successfully and prints visible output:
+
+```text
+Hello, TypeLisp!
+factorial(5) = 120
+```
+
+To start a package instead, run `$tl new hello-app`, then
+`$tl run --manifest-path hello-app/typelisp.pkg`. The generated binary prints
+`Hello, TypeLisp!`; `$tl test --manifest-path hello-app/typelisp.pkg` runs its
+included `answer-is-42` inline test, and the generated `.gitignore` keeps
+`target/` build output out of version control.
+
 ## Example
 
 ```lisp
@@ -430,8 +443,10 @@ Public vector/mask value types are deferred by design. Numeric `spmd-shuffle`
 maps and reduction values have native AVX2/AVX-512 lowering.
 Non-inlined varying helper calls compile and run through the private
 scalar/AVX-512 ABI; AVX2 native emission remains tracked under
-[#5151](https://github.com/JoNil-Botta/typelisp/issues/5151). See SPEC.md
-sections 5.15 and 8.
+[#5151](https://github.com/JoNil-Botta/typelisp/issues/5151). Package imports
+can use the same ABI when the dependency's TLCI v2 metadata advertises an exact
+matching specialization in its runtime archive. See SPEC.md sections 5.15 and
+8.
 
 ## Packages
 

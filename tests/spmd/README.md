@@ -65,6 +65,10 @@ compile and run in `avx2` and `avx512`.
 - `private_helper_effects.tl` - scalar/AVX-512 private unit helper with a store
   and atomic update under composed branch/tail masks. SIMD atomic bodies use
   the specified scalar fallback; AVX2 still reports the private-call diagnostic.
+- `package_callable/` and `package_consumer/` - separately built producer and
+  consumer packages for TLCI-described private SPMD calls. The consumer covers
+  scalar and AVX-512 varying, mask, uniform, and unit results; i64/f64/f32
+  arguments; nested masks; index forwarding; and a non-full tail. Exit 42.
 - `masked_if_i64.tl` - AVX2/AVX-512 masked varying `if` over `n = 13` i64
   lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
 - `masked_if_offset_i64.tl` - AVX2/AVX-512 masked varying `if` over `n = 12`

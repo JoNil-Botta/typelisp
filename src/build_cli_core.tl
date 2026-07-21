@@ -2664,6 +2664,24 @@
     [(CompilerBackendMode.Scalar) true]
     [_ false]))
 
+(define (build-package-decl-has-spmd-callable? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.DefFn _ _ _ _ _ metadata)
+      (match (ast-fn-metadata-spmd-callable metadata)
+        [(AstSpmdCallable.No) false]
+        [(AstSpmdCallable.Callable _) true])]
+    [(AstDecl.Unsafe inner)
+      (build-package-decl-has-spmd-callable? (box-get inner))]
+    [_ false]))
+
+(define (build-package-decls-have-spmd-callable? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (or
+        (build-package-decl-has-spmd-callable? decl)
+        (build-package-decls-have-spmd-callable? rest))]))
+
 (define (build-package-direct-object-owned-path-budget) : i64
   ;; Large package direct-object emission duplicates enough object/ELF state to
   ;; exceed CI memory; keep it for small no-assembler package smokes.
@@ -2712,6 +2730,21 @@
   (define (build-package-direct-object-size-smoke-ok?) : bool
     (let
       [budget : i64 (build-package-direct-object-owned-path-budget)]
+      [ordinary-decl : AstDecl
+        (ast-decl-def-fn-id
+          (intern "direct-object-ordinary")
+          (ast-param-list-new)
+          (AstType.I64)
+          cbi.compiler-builtin-id-fix-empty)]
+      [spmd-decl : AstDecl
+        (ast-decl-def-fn-metadata-id
+          (intern "direct-object-spmd")
+          (ast-param-list-new)
+          (AstType.I64)
+          cbi.compiler-builtin-id-fix-empty
+          (ast-fn-metadata-full
+            AstFnExport.No
+            (AstSpmdCallable.Callable (ast-spmd-specialization-list-new))))]
       [within : AstDeclPathList
         (build-package-direct-object-test-paths
           budget
@@ -2727,6 +2760,10 @@
           ""
           (ast-decl-root-path-cons "pkg.tl" (ast-decl-path-list-new)))]
       (and
+        (not (build-package-decl-has-spmd-callable? ordinary-decl))
+        (build-package-decl-has-spmd-callable? spmd-decl)
+        (build-package-decls-have-spmd-callable?
+          (ast-decl-cons spmd-decl (ast-decl-list-new)))
         (= (build-package-direct-object-owned-path-count mixed) 1)
         (build-package-direct-object-within-budget? within)
         (not (build-package-direct-object-within-budget? over))))))
@@ -2751,6 +2788,10 @@
   (if (and
     (compiler-backend-target-linux? target)
     (build-package-direct-object-mode? mode)
+    ;; Direct object emission does not yet preserve scalar f32/f64 parameter
+    ;; and return registers for generated private SPMD helpers. Use the
+    ;; assembler path so package archives carry the same ABI as side assembly.
+    (not (build-package-decls-have-spmd-callable? decls))
     (build-package-direct-object-size-ok? paths))
     (match (compiler-driver-emit-package-loaded-object-image
       ""
@@ -3952,6 +3993,8 @@
       (compiler-load-join-root-path manifest-dir (struct-get manifest entry))]
     [name : String (struct-get manifest name)]
     [_spmd-package-name : unit (lower-spmd-set-package-name! name)]
+    [_package-artifact-profile : unit
+      (compiler-load-set-package-artifact-profile! (build-profile-name profile))]
     [kind : CompilerPkgKind (struct-get manifest kind)]
     [asm-path : String
       (build-package-asm-path-profile manifest-dir name profile)]

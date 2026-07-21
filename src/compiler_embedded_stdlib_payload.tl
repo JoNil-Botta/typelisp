@@ -51,6 +51,8 @@
 
 (include-str-lzss payload-process-borrowed "../stdlib/process_borrowed.tl")
 
+(include-str-lzss payload-process-runtime "../stdlib/process_runtime.tl")
+
 (include-str-lzss payload-profile "../stdlib/profile.tl")
 
 (include-str-lzss payload-queue "../stdlib/queue.tl")
@@ -69,6 +71,10 @@
 
 (include-str-lzss payload-string "../stdlib/string.tl")
 
+(include-str-lzss payload-str-cat "../stdlib/str_cat.tl")
+
+(include-str-lzss payload-str-cat-runtime "../stdlib/str_cat_runtime.tl")
+
 (include-str-lzss payload-test "../stdlib/test.tl")
 
 (include-str-lzss payload-thread "../stdlib/thread.tl")
@@ -84,6 +90,16 @@
 (include-str-lzss payload-vector "../stdlib/vector.tl")
 
 (include-str-lzss payload-vector-slice "../stdlib/vector_slice.tl")
+
+(include-str-lzss payload-io-caller-result "../stdlib/io_caller_result.tl")
+
+(include-str-lzss payload-option "../stdlib/option.tl")
+
+(include-str-lzss payload-set "../stdlib/set.tl")
+
+(include-str-lzss
+  payload-string-caller-result
+  "../stdlib/string_caller_result.tl")
 
 (defenum CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone)
@@ -138,6 +154,8 @@
       (CompilerEmbeddedStdlibPayloadSome payload-process)]
     [(string.eq suffix "process_borrowed.tl")
       (CompilerEmbeddedStdlibPayloadSome payload-process-borrowed)]
+    [(string.eq suffix "process_runtime.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-process-runtime)]
     [(string.eq suffix "profile.tl")
       (CompilerEmbeddedStdlibPayloadSome payload-profile)]
     [(string.eq suffix "queue.tl")
@@ -156,6 +174,10 @@
       (CompilerEmbeddedStdlibPayloadSome payload-sync)]
     [(string.eq suffix "string.tl")
       (CompilerEmbeddedStdlibPayloadSome payload-string)]
+    [(string.eq suffix "str_cat.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-str-cat)]
+    [(string.eq suffix "str_cat_runtime.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-str-cat-runtime)]
     [(string.eq suffix "test.tl")
       (CompilerEmbeddedStdlibPayloadSome payload-test)]
     [(string.eq suffix "thread.tl")
@@ -172,4 +194,12 @@
       (CompilerEmbeddedStdlibPayloadSome payload-vector)]
     [(string.eq suffix "vector_slice.tl")
       (CompilerEmbeddedStdlibPayloadSome payload-vector-slice)]
+    [(string.eq suffix "io_caller_result.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-io-caller-result)]
+    [(string.eq suffix "option.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-option)]
+    [(string.eq suffix "set.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-set)]
+    [(string.eq suffix "string_caller_result.tl")
+      (CompilerEmbeddedStdlibPayloadSome payload-string-caller-result)]
     [else (CompilerEmbeddedStdlibPayloadNone)]))

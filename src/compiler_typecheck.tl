@@ -1873,7 +1873,7 @@
                     [(ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
-                        (= (tc-layout-info-align info) 4))
+                        (= (tc-layout-info-align info) 8))
                         unit
                         (set! ok false))]
                     [(ResultTcLayoutInfo.Err _) (set! ok false)])
@@ -1885,7 +1885,7 @@
                     [(ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc-layout-info-size info) 16)
-                        (= (tc-layout-info-align info) 4))
+                        (= (tc-layout-info-align info) 8))
                         unit
                         (set! ok false))]
                     [(ResultTcLayoutInfo.Err _) (set! ok false)])

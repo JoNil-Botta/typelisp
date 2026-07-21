@@ -34886,51 +34886,6 @@
     0
     (* (tc-align-up elem-size elem-align) count)))
 
-(define (tc-inline-aggregate-type-list-layout-info
-  [ctx : TcContext]
-  [types : AstTypeList]
-  [cursor : i64]
-  [max-align : i64]
-  [stack : TcStringList]) : ResultTcLayoutInfo
-  (tc-inline-aggregate-type-list-layout-info-at
-    ctx
-    (& types)
-    0
-    cursor
-    max-align
-    stack))
-
-(define (tc-inline-aggregate-type-list-layout-info-at
-  [ctx : TcContext]
-  [types : (& types AstTypeList)]
-  [index : i64]
-  [cursor : i64]
-  [max-align : i64]
-  [stack : TcStringList]) : ResultTcLayoutInfo
-  (if (>= index (ast-type-list-len types))
-    (ResultTcLayoutInfo.Ok (tc-inline-aggregate-finish-layout cursor max-align))
-    (let
-      [ty : AstType
-        (tc-context-type-get
-          ctx
-          (ast-type-list-get types index (ast-type-id-fallback)))]
-      (match (tc-inline-aggregate-type-layout-with-stack ctx ty stack)
-        [(ResultTcLayoutInfo.Ok info)
-          (let
-            [field-align : i64 (tc-layout-info-align info)]
-            [field-size : i64 (tc-layout-info-size info)]
-            [offset : i64 (tc-align-up cursor field-align)]
-            [next-cursor : i64 (+ offset field-size)]
-            [next-align : i64 (tc-max-i64 max-align field-align)]
-            (tc-inline-aggregate-type-list-layout-info-at
-              ctx
-              types
-              (+ index 1)
-              next-cursor
-              next-align
-              stack))]
-        [(ResultTcLayoutInfo.Err message) (ResultTcLayoutInfo.Err message)]))))
-
 (define (tc-inline-aggregate-field-defs-layout
   [ctx : TcContext]
   [fields : AstFieldDefList]
@@ -35446,8 +35401,8 @@
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(AstType.VarArgs _ _)
       (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
-    [(AstType.Tuple elems)
-      (tc-inline-aggregate-type-list-layout-info ctx (box-get elems) 0 0 stack)]
+    [(AstType.Tuple _)
+      (ResultTcLayoutInfo.Ok (tc-inline-aggregate-pointer-layout-info))]
     [(AstType.Array elem count)
       (match (tc-inline-aggregate-type-layout-with-stack
         ctx

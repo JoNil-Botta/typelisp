@@ -1471,18 +1471,9 @@
 ;; home for the result. Comparisons produce a fresh boolean through cmp/setcc;
 ;; div/mod use fixed rax:rdx and are not ordinary operand ties.
 (define (compiler-reg-binop-destructive-tie? [op : CompilerIrBinOp]) : bool
-  (match op
-    [(CompilerIrBinOp.Div) false]
-    [(CompilerIrBinOp.Mod) false]
-    [(CompilerIrBinOp.SafeDiv) false]
-    [(CompilerIrBinOp.SafeMod) false]
-    [(CompilerIrBinOp.Eq) false]
-    [(CompilerIrBinOp.Ne) false]
-    [(CompilerIrBinOp.Lt) false]
-    [(CompilerIrBinOp.Le) false]
-    [(CompilerIrBinOp.Gt) false]
-    [(CompilerIrBinOp.Ge) false]
-    [_ true]))
+  (and
+    (not (compiler-reg-clobber-binop-div? op))
+    (not (compiler-ir-binop-compare? op))))
 
 (define (compiler-reg-binop-destructive-commutative? [op : CompilerIrBinOp]) : bool
   (match op
@@ -5080,8 +5071,10 @@
             [_ (compiler-live-set-insert set dst)])])]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
-          (compiler-live-set-insert set dst)])]
+        [(CompilerIrInstrSelectPayload.Payload dst _ _ _ lanes _)
+          (if (= lanes 0)
+            set
+            (compiler-live-set-insert set dst))])]
     [(CompilerIrInstr.VectorLoad dst _ _ _ _)
       (compiler-live-set-insert set dst)]
     [(CompilerIrInstr.PredicatedLoad payload-box)
@@ -20530,10 +20523,12 @@
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSelectPayload.Payload dst _ _ _ lanes elem-ty)
-          (match elem-ty
-            [(AstType.Bool)
-              (compiler-reg-vector-stack-words-set-mask! words dst)]
-            [_ (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])])]
+          (if (= lanes 0)
+            unit
+            (match elem-ty
+              [(AstType.Bool)
+                (compiler-reg-vector-stack-words-set-mask! words dst)]
+              [_ (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]))])]
     [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorComparePayload.Payload dst _ _ _ _ _)
@@ -23323,14 +23318,7 @@
     (compiler-reg-scratch-float-value? types rhs)))
 
 (define (compiler-reg-scratch-compare-op? [op : CompilerIrBinOp]) : bool
-  (match op
-    [(CompilerIrBinOp.Eq) true]
-    [(CompilerIrBinOp.Ne) true]
-    [(CompilerIrBinOp.Lt) true]
-    [(CompilerIrBinOp.Le) true]
-    [(CompilerIrBinOp.Gt) true]
-    [(CompilerIrBinOp.Ge) true]
-    [_ false]))
+  (compiler-ir-binop-compare? op))
 
 (define (compiler-reg-scratch-float-arithmetic-slot-count
   [assignments : CompilerRegAssignmentList]
@@ -23598,6 +23586,12 @@
           (if (compiler-reg-scratch-value-direct? _assignments condition)
             0
             1))]
+      [(CompilerIrInstr.Select payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrSelectPayload.Payload _ _ _ _ lanes _)
+            (if (= lanes 0)
+              3
+              0)])]
       ;; Division has two explicit fixed operands plus three simultaneously
       ;; live GP temporaries. Variable shifts have a fixed %rcx count plus one
       ;; result temporary. Other scalar binops reserve only the staging home
@@ -23621,90 +23615,60 @@
             5
             (if (compiler-reg-clobber-binop-shift? op rhs ty)
               2
-              (match op
+              (if (compiler-ir-binop-compare? op)
                 ;; Fused comparisons keep two distinct operand homes live
                 ;; through the following Branch.
-                [(CompilerIrBinOp.Eq)
-                  (if (or
-                    (compiler-reg-scratch-value-direct? _assignments lhs)
-                    (compiler-reg-scratch-value-direct? _assignments rhs))
-                    0
-                    2)]
-                [(CompilerIrBinOp.Ne)
-                  (if (or
-                    (compiler-reg-scratch-value-direct? _assignments lhs)
-                    (compiler-reg-scratch-value-direct? _assignments rhs))
-                    0
-                    2)]
-                [(CompilerIrBinOp.Lt)
-                  (if (or
-                    (compiler-reg-scratch-value-direct? _assignments lhs)
-                    (compiler-reg-scratch-value-direct? _assignments rhs))
-                    0
-                    2)]
-                [(CompilerIrBinOp.Le)
-                  (if (or
-                    (compiler-reg-scratch-value-direct? _assignments lhs)
-                    (compiler-reg-scratch-value-direct? _assignments rhs))
-                    0
-                    2)]
-                [(CompilerIrBinOp.Gt)
-                  (if (or
-                    (compiler-reg-scratch-value-direct? _assignments lhs)
-                    (compiler-reg-scratch-value-direct? _assignments rhs))
-                    0
-                    2)]
-                [(CompilerIrBinOp.Ge)
-                  (if (or
-                    (compiler-reg-scratch-value-direct? _assignments lhs)
-                    (compiler-reg-scratch-value-direct? _assignments rhs))
-                    0
-                    2)]
-                ;; Constant shifts accumulate directly in a register-homed
-                ;; destination; a spill needs one result staging home.
-                [(CompilerIrBinOp.Shl)
-                  (if (compiler-reg-scratch-var-register-homed?
-                    _assignments
-                    dst)
-                    0
-                    1)]
-                [(CompilerIrBinOp.Shr)
-                  (if (compiler-reg-scratch-var-register-homed?
-                    _assignments
-                    dst)
-                    0
-                    1)]
-                [_
-                  (if _binop-return
-                    (match rhs
-                      [(CompilerIrValue.Var _) 1]
-                      [_ 0])
-                    (match rhs
-                      [(CompilerIrValue.Var _)
-                        (if (compiler-reg-scratch-var-register-homed?
-                          _assignments
-                          dst)
-                          (if (compiler-reg-scratch-value-same-home?
+                (if (or
+                  (compiler-reg-scratch-value-direct? _assignments lhs)
+                  (compiler-reg-scratch-value-direct? _assignments rhs))
+                  0
+                  2)
+                (match op
+                  ;; Constant shifts accumulate directly in a register-homed
+                  ;; destination; a spill needs one result staging home.
+                  [(CompilerIrBinOp.Shl)
+                    (if (compiler-reg-scratch-var-register-homed?
+                      _assignments
+                      dst)
+                      0
+                      1)]
+                  [(CompilerIrBinOp.Shr)
+                    (if (compiler-reg-scratch-var-register-homed?
+                      _assignments
+                      dst)
+                      0
+                      1)]
+                  [_
+                    (if _binop-return
+                      (match rhs
+                        [(CompilerIrValue.Var _) 1]
+                        [_ 0])
+                      (match rhs
+                        [(CompilerIrValue.Var _)
+                          (if (compiler-reg-scratch-var-register-homed?
                             _assignments
-                            dst
-                            rhs)
-                            (if (and
-                              (compiler-reg-scratch-value-direct?
-                                _assignments
-                                lhs)
-                              (match op
-                                [(CompilerIrBinOp.Add) true]
-                                [(CompilerIrBinOp.And) true]
-                                [(CompilerIrBinOp.Or) true]
-                                [(CompilerIrBinOp.BitAnd) true]
-                                [(CompilerIrBinOp.BitOr) true]
-                                [(CompilerIrBinOp.BitXor) true]
-                                [_ false]))
-                              0
-                              1)
-                            0)
-                          0)]
-                      [_ 0]))]))))]
+                            dst)
+                            (if (compiler-reg-scratch-value-same-home?
+                              _assignments
+                              dst
+                              rhs)
+                              (if (and
+                                (compiler-reg-scratch-value-direct?
+                                  _assignments
+                                  lhs)
+                                (match op
+                                  [(CompilerIrBinOp.Add) true]
+                                  [(CompilerIrBinOp.And) true]
+                                  [(CompilerIrBinOp.Or) true]
+                                  [(CompilerIrBinOp.BitAnd) true]
+                                  [(CompilerIrBinOp.BitOr) true]
+                                  [(CompilerIrBinOp.BitXor) true]
+                                  [_ false]))
+                                0
+                                1)
+                              0)
+                            0)]
+                        [_ 0]))])))))]
       [(CompilerIrInstr.UnOp dst _ _ _)
         (if (compiler-reg-scratch-var-register-homed? _assignments dst)
           0
@@ -24218,6 +24182,16 @@
       (compiler-reg-string-list-append
         (compiler-reg-scratch-location-registers assignments dst)
         (compiler-reg-scratch-value-registers assignments src))]
+    [(CompilerIrInstr.Select payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload.Payload dst mask on-true on-false _ _)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-location-registers assignments dst)
+            (compiler-reg-string-list-append
+              (compiler-reg-scratch-value-registers assignments mask)
+              (compiler-reg-string-list-append
+                (compiler-reg-scratch-value-registers assignments on-true)
+                (compiler-reg-scratch-value-registers assignments on-false))))])]
     [_ CompilerRegStringList.Nil]))
 
 (define (compiler-reg-scratch-memory-constraint
@@ -24678,14 +24652,9 @@
             ;; that successor point and explicitly exclude those operands above.
             (if (compiler-reg-clobber-binop-div? op)
               (+ point 1)
-              (match op
-                [(CompilerIrBinOp.Eq) (+ point 3)]
-                [(CompilerIrBinOp.Ne) (+ point 3)]
-                [(CompilerIrBinOp.Lt) (+ point 3)]
-                [(CompilerIrBinOp.Le) (+ point 3)]
-                [(CompilerIrBinOp.Gt) (+ point 3)]
-                [(CompilerIrBinOp.Ge) (+ point 3)]
-                [_ (+ point 1)]))
+              (if (compiler-ir-binop-compare? op)
+                (+ point 3)
+                (+ point 1)))
             var)))]
     [(CompilerIrInstr.UnOp _ _ _ ty)
       (CompilerRegScratchRequirement
@@ -24950,6 +24919,20 @@
         point
         (+ point 1)
         var)]
+    [(CompilerIrInstr.Select payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSelectPayload.Payload _ _ _ _ lanes _)
+          (CompilerRegScratchRequirement
+            point
+            ordinal
+            (CompilerRegScratchRole.ScalarPrimary)
+            (compiler-reg-scratch-scalar-constraint
+              assignments
+              instr
+              CompilerRegStringList.Nil)
+            point
+            (+ point 1)
+            var)])]
     [_
       ;; Unreachable for a non-zero slot count, but keep a total constructor so
       ;; future role additions fail safely to an unassigned GP requirement.

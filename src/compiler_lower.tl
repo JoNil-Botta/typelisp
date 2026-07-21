@@ -60233,6 +60233,14 @@
       (match want
         [(CompilerIrBinOp.Ge) true]
         [_ false])]
+    [(CompilerIrBinOp.BitTestEq)
+      (match want
+        [(CompilerIrBinOp.BitTestEq) true]
+        [_ false])]
+    [(CompilerIrBinOp.BitTestNe)
+      (match want
+        [(CompilerIrBinOp.BitTestNe) true]
+        [_ false])]
     [(CompilerIrBinOp.And)
       (match want
         [(CompilerIrBinOp.And) true]

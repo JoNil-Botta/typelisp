@@ -2183,6 +2183,266 @@
       [(not (smoke-inline-phi-nonleaf-cost?)) 4]
       [else 42])))
 
+;; Cycle 27: keep if-conversion admission and masked-zero compare folding at
+;; the target-neutral IR boundary.  These fixtures intentionally exercise the
+;; positive existing-value diamond and the two most important refusal rules
+;; (arm-local computation and a multiply-used And result).
+(define (smoke-c27-params) : CompilerIrParamList
+  (compiler-ir-param-cons
+    (CompilerIrParam.Param "cond" (AstType.Bool) 0)
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "x" (AstType.I64) 1)
+      (CompilerIrParamList.Nil))))
+
+(define (smoke-c27-if-convert-function [computed-arm? : bool]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "c27_if_convert")
+    (smoke-c27-params)
+    (AstType.I64)
+    8
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "header")
+          (CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "header"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              2
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.I64 0)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 6)
+                  "merge"
+                  (CompilerIrPhiInputList.Nil)))
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                5
+                CompilerIrBinOp.Gt
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.I64 0)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch (CompilerIrValue.Var 5) "then" "else")
+                (CompilerIrInstrList.Nil)))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "then"
+            (if computed-arm?
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  3
+                  CompilerIrBinOp.Add
+                  (CompilerIrValue.Var 1)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Jump "merge")
+                  (CompilerIrInstrList.Nil)))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstrList.Nil))))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "else"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "merge")
+                (CompilerIrInstrList.Nil)))
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                "merge"
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    4
+                    (compiler-ir-phi-input-cons
+                      (if computed-arm?
+                        (CompilerIrValue.Var 3)
+                        (CompilerIrValue.Var 1))
+                      "then"
+                      (compiler-ir-phi-input-cons
+                        (CompilerIrValue.Var 1)
+                        "else"
+                        (CompilerIrPhiInputList.Nil)))
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.BinOp
+                      6
+                      CompilerIrBinOp.Add
+                      (CompilerIrValue.Var 2)
+                      (CompilerIrValue.I64 1)
+                      (AstType.I64))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.BinOp
+                        7
+                        CompilerIrBinOp.Lt
+                        (CompilerIrValue.Var 6)
+                        (CompilerIrValue.I64 2)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Branch
+                          (CompilerIrValue.Var 7)
+                          "header"
+                          "exit")
+                        (CompilerIrInstrList.Nil))))))
+              (compiler-ir-block-cons
+                (compiler-ir-block
+                  "exit"
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+                    (CompilerIrInstrList.Nil)))
+                (CompilerIrBlockList.Nil)))))))))
+
+(define (smoke-c27-count-scalar-selects-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    0
+    (+
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.Select payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrSelectPayload.Payload _ _ _ _ lanes _)
+              (if (= lanes 0)
+                1
+                0)])]
+        [_ 0])
+      (smoke-c27-count-scalar-selects-instrs instrs (+ index 1)))))
+
+(define (smoke-c27-count-scalar-selects [blocks : CompilerIrBlockList]) : i64
+  (match (compiler-ir-block-list-force-cons blocks)
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Array seq)
+      (smoke-c27-count-scalar-selects (compiler-ir-block-seq-to-list seq))]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (smoke-c27-count-scalar-selects-instrs instrs 0)
+            (smoke-c27-count-scalar-selects (box-get rest)))])]))
+
+(define (smoke-c27-count-binop-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [wanted : CompilerIrBinOp]) : i64
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    0
+    (+
+      (match (compiler-ir-instr-seq-ref instrs index)
+        [(CompilerIrInstr.BinOp _ op _ _ _)
+          (if (= (opt-binop-tag op) (opt-binop-tag wanted))
+            1
+            0)]
+        [_ 0])
+      (smoke-c27-count-binop-instrs instrs (+ index 1) wanted))))
+
+(define (smoke-c27-count-binop
+  [blocks : CompilerIrBlockList]
+  [wanted : CompilerIrBinOp]) : i64
+  (match (compiler-ir-block-list-force-cons blocks)
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Array seq)
+      (smoke-c27-count-binop (compiler-ir-block-seq-to-list seq) wanted)]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (smoke-c27-count-binop-instrs instrs 0 wanted)
+            (smoke-c27-count-binop (box-get rest) wanted))])]))
+
+(define (smoke-c27-compare-function [extra-use? : bool]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (opt-test-symbol "c27_bit_test")
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "x" (AstType.I64) 0)
+      (CompilerIrParamList.Nil))
+    (AstType.I64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            1
+            CompilerIrBinOp.BitAnd
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              2
+              CompilerIrBinOp.Gt
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.I64 0)
+              (AstType.I64))
+            (if extra-use?
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  3
+                  CompilerIrBinOp.Add
+                  (CompilerIrValue.Var 1)
+                  (CompilerIrValue.Var 2)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                  (CompilerIrInstrList.Nil)))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+                (CompilerIrInstrList.Nil))))))
+      (CompilerIrBlockList.Nil))))
+
+(define (smoke-c27-if-convert-compare-self-test) : i64
+  (let
+    [converted : CompilerIrFunction
+      (opt-if-convert-function (smoke-c27-if-convert-function false))]
+    [conditional : CompilerIrFunction
+      (opt-if-convert-function (smoke-c27-if-convert-function true))]
+    [single-use : CompilerIrFunction
+      (match (smoke-c27-compare-function false)
+        [(CompilerIrFunction.Function name params ret frame blocks)
+          (CompilerIrFunction.Function
+            name
+            params
+            ret
+            frame
+            (opt-dce-block-list-array
+              (opt-collect-blocks-uses-array frame blocks)
+              blocks))])]
+    [multi-use : CompilerIrFunction
+      (match (smoke-c27-compare-function true)
+        [(CompilerIrFunction.Function name params ret frame blocks)
+          (CompilerIrFunction.Function
+            name
+            params
+            ret
+            frame
+            (opt-dce-block-list-array
+              (opt-collect-blocks-uses-array frame blocks)
+              blocks))])]
+    [converted-blocks : CompilerIrBlockList (opt-function-blocks converted)]
+    [conditional-blocks : CompilerIrBlockList (opt-function-blocks conditional)]
+    [single-blocks : CompilerIrBlockList (opt-function-blocks single-use)]
+    [multi-blocks : CompilerIrBlockList (opt-function-blocks multi-use)]
+    (cond
+      [(not (= (smoke-c27-count-scalar-selects converted-blocks) 1)) 1]
+      [(not (= (compiler-ir-block-list-count converted-blocks) 4)) 2]
+      [(not (= (smoke-c27-count-scalar-selects conditional-blocks) 0)) 3]
+      [(not
+          (= (smoke-c27-count-binop single-blocks CompilerIrBinOp.BitTestNe) 1))
+        4]
+      [(not
+          (= (smoke-c27-count-binop multi-blocks CompilerIrBinOp.BitTestNe) 0))
+        5]
+      [(not (= (smoke-c27-count-binop multi-blocks CompilerIrBinOp.Gt) 1)) 6]
+      [else 42])))
+
 (define (smoke-optimizer-late-self-tests) : i64
   (begin
     (compiler-optimize-self-test-require-i64!
@@ -2296,6 +2556,10 @@
     (compiler-optimize-self-test-require-i64!
       "compiler-optimize-successor-sink-self-test"
       (compiler-optimize-successor-sink-self-test)
+      42)
+    (compiler-optimize-self-test-require-i64!
+      "smoke-c27-if-convert-compare-self-test"
+      (smoke-c27-if-convert-compare-self-test)
       42)
     42))
 
@@ -2441,6 +2705,13 @@
     (compiler-optimize-successor-sink-self-test)
     42
     "Successor sinking moves pure chains and rejects unsafe CFG/memory/trap cases"))
+
+(test
+  if-convert-and-compare-lowering
+  (test.assert-i64-eq
+    (smoke-c27-if-convert-compare-self-test)
+    42
+    "IR-only scalar if-conversion and single-use masked-zero lowering"))
 
 (test
   inline-multiblock-phi-predecessor

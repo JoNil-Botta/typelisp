@@ -7952,6 +7952,120 @@
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
+(define (compiler-backend-load-value-asm
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [reg : String]) : String
+  (match (compiler-backend-emit-load-value-with-plan assignments value reg)
+    [(ResultCompilerBackend.Ok asm) asm]
+    [(ResultCompilerBackend.Err _) ""]))
+
+(define (compiler-backend-emit-scalar-select
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [condition : CompilerIrValue]
+  [on-true : CompilerIrValue]
+  [on-false : CompilerIrValue]
+  [ty : AstType]
+  [planned-result : String]
+  [planned-value : String]
+  [planned-test : String]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (not (compiler-backend-intlike-scalar-type? ty))
+    (ResultCompilerBackend.Err
+      (box
+        (compiler-diagnostic-with-message
+          instr-diag
+          "backend: unsupported scalar select type")))
+    (let
+      [dst-home : String
+        (compiler-backend-value-scalar-register-home
+          assignments
+          (CompilerIrValue.Var dst))]
+      [mask-home : String
+        (compiler-backend-value-scalar-register-home assignments condition)]
+      [true-home : String
+        (compiler-backend-value-scalar-register-home assignments on-true)]
+      [false-home : String
+        (compiler-backend-value-scalar-register-home assignments on-false)]
+      ;; x86 conditional moves have no byte form.  Use the full GP home for
+      ;; byte and Bool selects; all typed consumers observe the low byte.
+      [cmov-ty : AstType
+        (if (= (compiler-backend-type-size ty) 1)
+          (AstType.U64)
+          ty)]
+      [result-reg : String
+        (if (and
+          (not (string.eq dst-home ""))
+          (not (string.eq dst-home mask-home))
+          (not (string.eq dst-home true-home)))
+          dst-home
+          (compiler-backend-planned-or-scavenge-reg
+            planned-result
+            dst
+            (compiler-backend-three-exclude mask-home true-home false-home)
+            3
+            "%rax"))]
+      [conditional-address : String
+        (compiler-backend-value-stack-address assignments on-true)]
+      [conditional-direct? : bool
+        (or
+          (not (string.eq true-home ""))
+          (not (string.eq conditional-address "")))]
+      [conditional-reg : String
+        (if conditional-direct?
+          true-home
+          (compiler-backend-planned-or-scavenge-reg
+            planned-value
+            dst
+            (compiler-backend-two-exclude result-reg mask-home)
+            2
+            "%r8"))]
+      [conditional-operand : String
+        (if (not (string.eq true-home ""))
+          (compiler-backend-sized-reg true-home cmov-ty)
+          (if (not (string.eq conditional-address ""))
+            conditional-address
+            (compiler-backend-sized-reg conditional-reg cmov-ty)))]
+      [base-asm : String
+        (compiler-backend-load-value-asm assignments on-false result-reg)]
+      [conditional-asm : String
+        (if conditional-direct?
+          ""
+          (compiler-backend-load-value-asm assignments on-true conditional-reg))]
+      [var-test : String
+        (match condition
+          [(CompilerIrValue.Var var)
+            (compiler-backend-branch-test-var-asm assignments var)]
+          [_ ""])]
+      [test-reg : String
+        (if (not (string.eq var-test ""))
+          ""
+          (compiler-backend-planned-or-scavenge-reg
+            planned-test
+            dst
+            (compiler-backend-two-exclude result-reg conditional-reg)
+            2
+            "%r10"))]
+      [test-load : String
+        (if (not (string.eq var-test ""))
+          ""
+          (compiler-backend-load-value-asm assignments condition test-reg))]
+      (ResultCompilerBackend.Ok
+        (str_cat.str-cat
+          base-asm
+          conditional-asm
+          test-load
+          (if (not (string.eq var-test ""))
+            var-test
+            (str_cat.str-cat "    testq " test-reg ", " test-reg "\n"))
+          "    cmovne "
+          conditional-operand
+          ", "
+          (compiler-backend-sized-reg result-reg cmov-ty)
+          "\n"
+          (compiler-backend-emit-store-var-with-plan assignments dst result-reg))))))
+
 (define (compiler-backend-emit-select
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -7960,26 +8074,41 @@
   [on-false : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-result : String]
+  [planned-value : String]
+  [planned-test : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (if (compiler-backend-current-mode-avx2?)
-    (compiler-backend-emit-avx2-select
+  (if (= lanes 0)
+    (compiler-backend-emit-scalar-select
       assignments
       dst
       mask
       on-true
       on-false
-      lanes
       elem-ty
+      planned-result
+      planned-value
+      planned-test
       instr-diag)
-    (compiler-backend-emit-avx512-select
-      assignments
-      dst
-      mask
-      on-true
-      on-false
-      lanes
-      elem-ty
-      instr-diag)))
+    (if (compiler-backend-current-mode-avx2?)
+      (compiler-backend-emit-avx2-select
+        assignments
+        dst
+        mask
+        on-true
+        on-false
+        lanes
+        elem-ty
+        instr-diag)
+      (compiler-backend-emit-avx512-select
+        assignments
+        dst
+        mask
+        on-true
+        on-false
+        lanes
+        elem-ty
+        instr-diag))))
 
 (define (compiler-backend-avx2-mask-label
   [function : String]
@@ -9535,12 +9664,10 @@
             ;; Rematerialise: recompute the value into `reg` instead of reloading
             ;; from a slot. remat-recompute-value? guarantees this load succeeds.
             [(CompilerRegLocation.Remat value)
-              (match (compiler-backend-emit-load-value-with-plan
+              (compiler-backend-load-value-asm
                 CompilerRegAssignmentList.Nil
                 value
-                reg)
-                [(ResultCompilerBackend.Ok asm) asm]
-                [(ResultCompilerBackend.Err _) ""])])]
+                reg)])]
         [(CompilerRegMaybeLocation.No)
           (str_cat.str-cat
             "    movq "
@@ -10364,6 +10491,13 @@
     [(CompilerIrValue.Char c) (option_i64.Some (compiler-backend-char-code c))]
     [(CompilerIrValue.Unit) (option_i64.Some 0)]
     [_ (option_i64.None)]))
+
+(define (compiler-backend-value-integer-zero? [value : CompilerIrValue]) : bool
+  ;; Compare lowering decisions stay on the IR value.  Assembly spelling is an
+  ;; output of this decision and must never be consulted to make it.
+  (match (compiler-backend-value-as-i64 value)
+    [(option_i64.Some value) (= value 0)]
+    [(option_i64.None) false]))
 
 (define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
   (cond
@@ -11327,12 +11461,10 @@
         ;; Rematerialise the value into `reg` (constants/addresses are i64-class,
         ;; so the immediate/leaq materialisation is width-correct for any use).
         [(CompilerRegLocation.Remat value)
-          (match (compiler-backend-emit-load-value-with-plan
+          (compiler-backend-load-value-asm
             CompilerRegAssignmentList.Nil
             value
-            reg)
-            [(ResultCompilerBackend.Ok asm) asm]
-            [(ResultCompilerBackend.Err _) ""])])]
+            reg)])]
     [(CompilerRegMaybeLocation.No)
       (compiler-backend-emit-load-memory-to-reg
         (compiler-backend-slot id)
@@ -13717,17 +13849,20 @@
   [lhs : String]
   [setcc : String]
   [result-reg : String]) : String
-  (string.append
-    (str_cat.str-cat
-      "    cmp"
-      (compiler-backend-int-instruction-suffix ty)
-      " "
-      rhs
-      ", ")
-    (string.append
-      lhs
+  (let
+    [flags : String
       (str_cat.str-cat
-        "\n    "
+        "    cmp"
+        (compiler-backend-int-instruction-suffix ty)
+        " "
+        rhs
+        ", "
+        lhs
+        "\n")]
+    (string.append
+      flags
+      (str_cat.str-cat
+        "    "
         setcc
         " "
         (compiler-backend-reg-part (string.copy result-reg) 1)
@@ -13748,6 +13883,40 @@
     (str-cat
       "    "
       setcc
+      " "
+      (compiler-backend-reg-part (string.copy dst-reg) 1)
+      "\n    movzbq "
+      (compiler-backend-reg-part (string.copy dst-reg) 1)
+      ", "
+      dst-reg
+      "\n")))
+
+(define (compiler-backend-bit-test-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.BitTestEq) true]
+    [(CompilerIrBinOp.BitTestNe) true]
+    [_ false]))
+
+(define (compiler-backend-binop-compare-flags-reg-asm
+  [op : CompilerIrBinOp]
+  [ty : AstType]
+  [rhs : String]
+  [lhs : String]) : String
+  (if (compiler-backend-bit-test-op? op)
+    (compiler-backend-binop-reg-asm "test" ty rhs lhs)
+    (compiler-backend-binop-cmp-reg-asm ty rhs lhs)))
+
+(define (compiler-backend-binop-compare-set-reg-asm
+  [op : CompilerIrBinOp]
+  [ty : AstType]
+  [rhs : String]
+  [lhs : String]
+  [dst-reg : String]) : String
+  (str_cat.str-cat
+    (compiler-backend-binop-compare-flags-reg-asm op ty rhs lhs)
+    (str-cat
+      "    "
+      (compiler-backend-compare-setcc op ty)
       " "
       (compiler-backend-reg-part (string.copy dst-reg) 1)
       "\n    movzbq "
@@ -13795,6 +13964,8 @@
       (if (compiler-backend-unsigned-rel-ty? ty)
         "setae"
         "setge")]
+    [(CompilerIrBinOp.BitTestEq) "sete"]
+    [(CompilerIrBinOp.BitTestNe) "setne"]
     [_ ""]))
 
 (define (compiler-backend-binop-cmp-reg-asm
@@ -16554,6 +16725,10 @@
             "setae"
             "setge")
           staging-reg)]
+      [(CompilerIrBinOp.BitTestEq)
+        (compiler-backend-binop-compare-set-reg-asm op ty rhs lhs staging-reg)]
+      [(CompilerIrBinOp.BitTestNe)
+        (compiler-backend-binop-compare-set-reg-asm op ty rhs lhs staging-reg)]
       [(CompilerIrBinOp.And) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
       [(CompilerIrBinOp.Or) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
       [(CompilerIrBinOp.BitAnd)
@@ -16604,13 +16779,31 @@
   [imm : String]
   [setcc : String]
   [staging-reg : String]
-  [result-reg : String]) : String
-  (compiler-backend-binop-cmp-set-asm
-    ty
-    imm
-    (compiler-backend-sized-reg staging-reg ty)
-    setcc
-    result-reg))
+  [result-reg : String]
+  [rhs-zero? : bool]) : String
+  (if rhs-zero?
+    (compiler-backend-binop-test-zero-asm ty setcc staging-reg result-reg)
+    (compiler-backend-binop-cmp-set-asm
+      ty
+      imm
+      (compiler-backend-sized-reg staging-reg ty)
+      setcc
+      result-reg)))
+
+(define (compiler-backend-binop-immediate-cmp-reg-asm
+  [ty : AstType]
+  [imm : String]
+  [setcc : String]
+  [dst-reg : String]
+  [rhs-zero? : bool]) : String
+  (if rhs-zero?
+    (compiler-backend-binop-test-zero-reg-asm ty dst-reg setcc)
+    (compiler-backend-binop-cmp-set-reg-asm
+      ty
+      imm
+      (compiler-backend-sized-reg dst-reg ty)
+      setcc
+      dst-reg)))
 
 (define (compiler-backend-binop-immediate-shift-asm
   [mnemonic : String]
@@ -16659,59 +16852,72 @@
   [op : CompilerIrBinOp]
   [ty : AstType]
   [imm : String]
-  [dst-reg : String]) : CompilerBackendMaybeAsm
+  [dst-reg : String]
+  [rhs-zero? : bool]) : CompilerBackendMaybeAsm
   (match op
     [(CompilerIrBinOp.Eq)
       (CompilerBackendMaybeAsm.Some
-        (if (string.eq imm "$0")
-          (compiler-backend-binop-test-zero-reg-asm ty dst-reg "sete")
-          (compiler-backend-binop-cmp-set-reg-asm
-            ty
-            imm
-            (compiler-backend-sized-reg dst-reg ty)
-            "sete"
-            dst-reg)))]
+        (compiler-backend-binop-immediate-cmp-reg-asm
+          ty
+          imm
+          "sete"
+          dst-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.Ne)
       (CompilerBackendMaybeAsm.Some
-        (if (string.eq imm "$0")
-          (compiler-backend-binop-test-zero-reg-asm ty dst-reg "setne")
-          (compiler-backend-binop-cmp-set-reg-asm
-            ty
-            imm
-            (compiler-backend-sized-reg dst-reg ty)
-            "setne"
-            dst-reg)))]
+        (compiler-backend-binop-immediate-cmp-reg-asm
+          ty
+          imm
+          "setne"
+          dst-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.Lt)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-cmp-set-reg-asm
+        (compiler-backend-binop-immediate-cmp-reg-asm
           ty
           imm
-          (compiler-backend-sized-reg dst-reg ty)
           (compiler-backend-compare-setcc op ty)
-          dst-reg))]
+          dst-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.Le)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-cmp-set-reg-asm
+        (compiler-backend-binop-immediate-cmp-reg-asm
           ty
           imm
-          (compiler-backend-sized-reg dst-reg ty)
           (compiler-backend-compare-setcc op ty)
-          dst-reg))]
+          dst-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.Gt)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-cmp-set-reg-asm
+        (compiler-backend-binop-immediate-cmp-reg-asm
           ty
           imm
-          (compiler-backend-sized-reg dst-reg ty)
           (compiler-backend-compare-setcc op ty)
-          dst-reg))]
+          dst-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.Ge)
       (CompilerBackendMaybeAsm.Some
-        (compiler-backend-binop-cmp-set-reg-asm
+        (compiler-backend-binop-immediate-cmp-reg-asm
+          ty
+          imm
+          (compiler-backend-compare-setcc op ty)
+          dst-reg
+          rhs-zero?))]
+    [(CompilerIrBinOp.BitTestEq)
+      (CompilerBackendMaybeAsm.Some
+        (compiler-backend-binop-compare-set-reg-asm
+          op
           ty
           imm
           (compiler-backend-sized-reg dst-reg ty)
-          (compiler-backend-compare-setcc op ty)
+          dst-reg))]
+    [(CompilerIrBinOp.BitTestNe)
+      (CompilerBackendMaybeAsm.Some
+        (compiler-backend-binop-compare-set-reg-asm
+          op
+          ty
+          imm
+          (compiler-backend-sized-reg dst-reg ty)
           dst-reg))]
     [(CompilerIrBinOp.Shl)
       (compiler-backend-binop-immediate-shift-reg-asm "shl" ty imm dst-reg)]
@@ -16807,11 +17013,11 @@
                 rhs-asm
                 (str_cat.str-cat
                   lhs-asm
-                  (compiler-backend-binop-cmp-set-reg-asm
+                  (compiler-backend-binop-compare-set-reg-asm
+                    op
                     ty
                     rhs-operand
                     (compiler-backend-sized-reg dst-home ty)
-                    (compiler-backend-compare-setcc op ty)
                     dst-home))))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
@@ -16940,7 +17146,8 @@
   [imm : String]
   [ty : AstType]
   [staging-reg : String]
-  [result-reg : String]) : CompilerBackendMaybeAsm
+  [result-reg : String]
+  [rhs-zero? : bool]) : CompilerBackendMaybeAsm
   (match op
     [(CompilerIrBinOp.Add)
       (CompilerBackendMaybeAsm.Some
@@ -16955,28 +17162,22 @@
           (compiler-backend-binop-immediate-reg-asm "imul" ty imm staging-reg)))]
     [(CompilerIrBinOp.Eq)
       (CompilerBackendMaybeAsm.Some
-        (if (string.eq imm "$0")
-          (compiler-backend-binop-test-zero-asm
-            ty
-            "sete"
-            staging-reg
-            result-reg)
-          (compiler-backend-binop-immediate-cmp-asm
-            ty
-            imm
-            "sete"
-            staging-reg
-            result-reg)))]
+        (compiler-backend-binop-immediate-cmp-asm
+          ty
+          imm
+          "sete"
+          staging-reg
+          result-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.Ne)
       (CompilerBackendMaybeAsm.Some
-        (if (string.eq imm "$0")
-          (compiler-backend-binop-test-zero-asm ty "setne" "%rax" "%rax")
-          (compiler-backend-binop-immediate-cmp-asm
-            ty
-            imm
-            "setne"
-            "%rax"
-            "%rax")))]
+        (compiler-backend-binop-immediate-cmp-asm
+          ty
+          imm
+          "setne"
+          "%rax"
+          "%rax"
+          rhs-zero?))]
     [(CompilerIrBinOp.Lt)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
@@ -16986,7 +17187,8 @@
             "setb"
             "setl")
           staging-reg
-          result-reg))]
+          result-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.Le)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
@@ -16996,7 +17198,8 @@
             "setbe"
             "setle")
           staging-reg
-          result-reg))]
+          result-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.Gt)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
@@ -17006,7 +17209,8 @@
             "seta"
             "setg")
           staging-reg
-          result-reg))]
+          result-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.Ge)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
@@ -17016,7 +17220,8 @@
             "setae"
             "setge")
           staging-reg
-          result-reg))]
+          result-reg
+          rhs-zero?))]
     [(CompilerIrBinOp.And)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-reg-asm "and" ty imm staging-reg))]
@@ -17698,6 +17903,22 @@
             "setae"
             "setge")
           staging-reg))]
+    [(CompilerIrBinOp.BitTestEq)
+      (CompilerBackendMaybeAsm.Some
+        (compiler-backend-binop-compare-set-reg-asm
+          op
+          ty
+          rhs
+          (compiler-backend-sized-reg staging-reg ty)
+          staging-reg))]
+    [(CompilerIrBinOp.BitTestNe)
+      (CompilerBackendMaybeAsm.Some
+        (compiler-backend-binop-compare-set-reg-asm
+          op
+          ty
+          rhs
+          (compiler-backend-sized-reg staging-reg ty)
+          staging-reg))]
     [(CompilerIrBinOp.And)
       (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
@@ -17829,7 +18050,8 @@
                   op
                   ty
                   imm
-                  dst-home)
+                  dst-home
+                  (compiler-backend-value-integer-zero? rhs))
                   [(CompilerBackendMaybeAsm.Some asm) asm]
                   [(CompilerBackendMaybeAsm.No) ""])]
               (ResultCompilerBackend.Ok (string.append lhs-asm op-asm)))]
@@ -17852,6 +18074,7 @@
   [mnem : String]
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
   [operand-ty : AstType]
   [result-ty : AstType]
   [imm : String]
@@ -17874,7 +18097,8 @@
           op
           operand-ty
           imm
-          result-reg)
+          result-reg
+          (compiler-backend-value-integer-zero? rhs))
           [(CompilerBackendMaybeAsm.Some op-asm)
             (ResultCompilerBackend.Ok
               (str-cat
@@ -17940,11 +18164,11 @@
         (let
           [op-asm : String
             (if (compiler-backend-compare-op? op)
-              (compiler-backend-binop-cmp-set-reg-asm
+              (compiler-backend-binop-compare-set-reg-asm
+                op
                 operand-ty
                 rhs-operand
                 (compiler-backend-sized-reg result-reg operand-ty)
-                (compiler-backend-compare-setcc op operand-ty)
                 result-reg)
               (compiler-backend-binop-reg-asm
                 mnem
@@ -18334,6 +18558,7 @@
                   mnem
                   op
                   lhs
+                  rhs
                   operand-ty
                   result-ty
                   imm
@@ -18587,7 +18812,8 @@
                             imm
                             operand-ty
                             staging
-                            staging)
+                            staging
+                            (compiler-backend-value-integer-zero? rhs))
                             [(CompilerBackendMaybeAsm.Some op-asm)
                               (ResultCompilerBackend.Ok
                                 (string.append
@@ -18959,7 +19185,8 @@
                 imm
                 operand-ty
                 "%rax"
-                "%rax")
+                "%rax"
+                (compiler-backend-value-integer-zero? rhs))
                 [(CompilerBackendMaybeAsm.Some op-asm)
                   (ResultCompilerBackend.Ok (string.append op-asm store))]
                 [(CompilerBackendMaybeAsm.No)
@@ -19451,7 +19678,8 @@
                         imm
                         operand-ty
                         "%rax"
-                        "%rax")
+                        "%rax"
+                        (compiler-backend-value-integer-zero? rhs))
                         [(CompilerBackendMaybeAsm.Some op-asm)
                           (ResultCompilerBackend.Ok
                             (string.append
@@ -19594,12 +19822,10 @@
           ;; normally folded away, so this is rare but must stay correct).
           [(CompilerRegLocation.Remat value)
             (str_cat.str-cat
-              (match (compiler-backend-emit-load-value-with-plan
+              (compiler-backend-load-value-asm
                 CompilerRegAssignmentList.Nil
                 value
                 "%rax")
-                [(ResultCompilerBackend.Ok asm) asm]
-                [(ResultCompilerBackend.Err _) ""])
               "    testq %rax, %rax\n")])]
       [(CompilerRegMaybeLocation.No)
         (str_cat.str-cat "    cmpq $0, " (compiler-backend-slot var-id) "\n")])))
@@ -19748,6 +19974,8 @@
     [(CompilerIrBinOp.Le) true]
     [(CompilerIrBinOp.Gt) true]
     [(CompilerIrBinOp.Ge) true]
+    [(CompilerIrBinOp.BitTestEq) true]
+    [(CompilerIrBinOp.BitTestNe) true]
     [_ false]))
 
 (define (compiler-backend-divmod-op? [op : CompilerIrBinOp]) : bool
@@ -19780,6 +20008,8 @@
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jae"
         "jge")]
+    [(CompilerIrBinOp.BitTestEq) "je"]
+    [(CompilerIrBinOp.BitTestNe) "jne"]
     [_ ""]))
 
 (define (compiler-backend-compare-false-jcc
@@ -19804,6 +20034,8 @@
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jb"
         "jl")]
+    [(CompilerIrBinOp.BitTestEq) "jne"]
+    [(CompilerIrBinOp.BitTestNe) "je"]
     [_ ""]))
 
 ;; x86 encodes an immediate only as the source of cmp.  When the IR puts the
@@ -19817,6 +20049,8 @@
     [(CompilerIrBinOp.Le) (CompilerIrBinOp.Ge)]
     [(CompilerIrBinOp.Gt) (CompilerIrBinOp.Lt)]
     [(CompilerIrBinOp.Ge) (CompilerIrBinOp.Le)]
+    [(CompilerIrBinOp.BitTestEq) (CompilerIrBinOp.BitTestEq)]
+    [(CompilerIrBinOp.BitTestNe) (CompilerIrBinOp.BitTestNe)]
     [_ op]))
 
 (define (compiler-backend-emit-jcc-label
@@ -19855,34 +20089,36 @@
     (string.append (compiler-backend-emergency-restore-before-jumps) jumps-asm)))
 
 (define (compiler-backend-compare-uses-zero-test? [op : CompilerIrBinOp]) : bool
-  (match op
-    [(CompilerIrBinOp.Eq) true]
-    [(CompilerIrBinOp.Ne) true]
-    [_ false]))
+  (and
+    (compiler-backend-compare-op? op)
+    (not (compiler-backend-bit-test-op? op))))
 
 (define (compiler-backend-emit-compare-operand-flags
   [op : CompilerIrBinOp]
   [rhs : String]
   [lhs : String]
   [ty : AstType]
+  [rhs-zero? : bool]
   [lhs-register? : bool]) : String
-  (if (and (string.eq rhs "$0") (compiler-backend-compare-uses-zero-test? op))
-    (if lhs-register?
-      (compiler-backend-binop-reg-asm "test" ty lhs lhs)
-      (str_cat.str-cat
-        "    cmp"
-        (compiler-backend-int-instruction-suffix ty)
-        " $0, "
-        lhs
-        "\n"))
-    (string.append
-      (str_cat.str-cat
-        "    cmp"
-        (compiler-backend-int-instruction-suffix ty)
-        " "
-        rhs
-        ", ")
-      (str_cat.str-cat lhs "\n" ""))))
+  (if (compiler-backend-bit-test-op? op)
+    (compiler-backend-binop-reg-asm "test" ty rhs lhs)
+    (if (and rhs-zero? (compiler-backend-compare-uses-zero-test? op))
+      (if lhs-register?
+        (compiler-backend-binop-reg-asm "test" ty lhs lhs)
+        (str_cat.str-cat
+          "    cmp"
+          (compiler-backend-int-instruction-suffix ty)
+          " $0, "
+          lhs
+          "\n"))
+      (string.append
+        (str_cat.str-cat
+          "    cmp"
+          (compiler-backend-int-instruction-suffix ty)
+          " "
+          rhs
+          ", ")
+        (str_cat.str-cat lhs "\n" "")))))
 
 ;; A scalar register-homed var IS its own cmp operand, so comparisons can emit
 ;; `cmp <rhs>, <home>` directly instead of staging either side through a fixed
@@ -19944,6 +20180,7 @@
               imm
               lhs-operand
               ty
+              (compiler-backend-value-integer-zero? rhs)
               lhs-register?)
             (compiler-backend-emit-compare-branch-jumps
               function
@@ -19966,6 +20203,7 @@
                   (compiler-backend-sized-reg rhs-home ty)
                   lhs-operand
                   ty
+                  false
                   lhs-register?)
                 (compiler-backend-emit-compare-branch-jumps
                   function
@@ -20002,6 +20240,7 @@
                           (compiler-backend-sized-reg rhs-reg ty)
                           lhs-operand
                           ty
+                          false
                           lhs-register?)
                         (compiler-backend-emit-compare-branch-jumps
                           function
@@ -34045,6 +34284,9 @@
               on-false
               lanes
               elem-ty
+              planned-scratch0
+              planned-scratch1
+              planned-scratch2
               instr-diag)])]
       [(CompilerIrInstr.VectorLoad dst base index lanes elem-ty)
         (compiler-backend-emit-vector-load
@@ -55067,11 +55309,31 @@ tl_comptime_host_invoke_set:
       (compiler-backend-object-bytes-from-hex "4c39c00f9fc0480fb6c0")]
     [(CompilerIrBinOp.Ge)
       (compiler-backend-object-bytes-from-hex "4c39c00f9dc0480fb6c0")]
+    [(CompilerIrBinOp.BitTestEq)
+      (compiler-backend-object-bytes-from-hex "4c85c00f94c0480fb6c0")]
+    [(CompilerIrBinOp.BitTestNe)
+      (compiler-backend-object-bytes-from-hex "4c85c00f95c0480fb6c0")]
     [(CompilerIrBinOp.And) (compiler-backend-object-bytes-from-hex "4c21c0")]
     [(CompilerIrBinOp.Or) (compiler-backend-object-bytes-from-hex "4c09c0")]
     [(CompilerIrBinOp.BitAnd) (compiler-backend-object-bytes-from-hex "4c21c0")]
     [(CompilerIrBinOp.BitOr) (compiler-backend-object-bytes-from-hex "4c09c0")]
     [(CompilerIrBinOp.BitXor) (compiler-backend-object-bytes-from-hex "4c31c0")]
+    [_ ""]))
+
+(define (compiler-backend-object-zero-compare-bytes [op : CompilerIrBinOp]) : String
+  (match op
+    [(CompilerIrBinOp.Eq)
+      (compiler-backend-object-bytes-from-hex "4c85c00f94c0480fb6c0")]
+    [(CompilerIrBinOp.Ne)
+      (compiler-backend-object-bytes-from-hex "4c85c00f95c0480fb6c0")]
+    [(CompilerIrBinOp.Lt)
+      (compiler-backend-object-bytes-from-hex "4c85c00f9cc0480fb6c0")]
+    [(CompilerIrBinOp.Le)
+      (compiler-backend-object-bytes-from-hex "4c85c00f9ec0480fb6c0")]
+    [(CompilerIrBinOp.Gt)
+      (compiler-backend-object-bytes-from-hex "4c85c00f9fc0480fb6c0")]
+    [(CompilerIrBinOp.Ge)
+      (compiler-backend-object-bytes-from-hex "4c85c00f9dc0480fb6c0")]
     [_ ""]))
 
 (define (compiler-backend-object-binop
@@ -55083,7 +55345,13 @@ tl_comptime_host_invoke_set:
   [rhs : CompilerIrValue]
   [ty : AstType]) : CompilerBackendObjectParts
   (let
-    [op-bytes : String (compiler-backend-object-binop-bytes op)]
+    [op-bytes : String
+      (if (match rhs
+        [(CompilerIrValue.I64 value)
+          (and (= value 0) (compiler-backend-compare-uses-zero-test? op))]
+        [_ false])
+        (compiler-backend-object-zero-compare-bytes op)
+        (compiler-backend-object-binop-bytes op))]
     (if (or
       (= (string.string-length op-bytes) 0)
       (compiler-backend-float-type? ty))
@@ -55102,6 +55370,30 @@ tl_comptime_host_invoke_set:
           op-bytes)
         dst
         "%rax"))))
+
+(define (compiler-backend-object-scalar-select
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [condition : CompilerIrValue]
+  [on-true : CompilerIrValue]
+  [on-false : CompilerIrValue]) : CompilerBackendObjectParts
+  ;; Object emission keeps scalar vars in frame homes, so fixed temporaries are
+  ;; safe here: false -> rax, true -> r8, condition -> r11, then cmovne.
+  (compiler-backend-object-store-reg-to-var
+    (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-load-value-to-reg
+        (compiler-backend-object-load-value-to-reg
+          (compiler-backend-object-load-value-to-reg parts site on-false "%rax")
+          site
+          on-true
+          "%r8")
+        site
+        condition
+        "%r11")
+      (compiler-backend-object-bytes-from-hex "4d85db490f45c0"))
+    dst
+    "%rax"))
 
 (define (compiler-backend-object-call-arg-reg
   [target : CompilerBackendTarget]
@@ -55528,16 +55820,30 @@ tl_comptime_host_invoke_set:
       (compiler-backend-object-value-ref parts function src)]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload _ mask on-true on-false _ ty)
-          (compiler-backend-object-value-ref-with-type
-            (compiler-backend-object-value-ref-with-type
-              (compiler-backend-object-value-ref parts function mask)
-              function
-              on-true
-              ty)
-            function
+        [(CompilerIrInstrSelectPayload.Payload
+            dst
+            mask
+            on-true
             on-false
-            ty)])]
+            lanes
+            ty)
+          (if (= lanes 0)
+            (compiler-backend-object-scalar-select
+              parts
+              function
+              dst
+              mask
+              on-true
+              on-false)
+            (compiler-backend-object-value-ref-with-type
+              (compiler-backend-object-value-ref-with-type
+                (compiler-backend-object-value-ref parts function mask)
+                function
+                on-true
+                ty)
+              function
+              on-false
+              ty))])]
     [(CompilerIrInstr.VectorLoad _ base index _ _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function base)

@@ -1062,6 +1062,12 @@
                 [(CompilerIrBinOp.Le) (opt-fold-compare op a b operand-ty)]
                 [(CompilerIrBinOp.Gt) (opt-fold-compare op a b operand-ty)]
                 [(CompilerIrBinOp.Ge) (opt-fold-compare op a b operand-ty)]
+                [(CompilerIrBinOp.BitTestEq)
+                  (CompilerIrMaybeValue.Some
+                    (CompilerIrValue.Bool (= (bit-and a b) 0)))]
+                [(CompilerIrBinOp.BitTestNe)
+                  (CompilerIrMaybeValue.Some
+                    (CompilerIrValue.Bool (!= (bit-and a b) 0)))]
                 [_ (CompilerIrMaybeValue.No)])]
             [(option_i64.None) (CompilerIrMaybeValue.No)])])]
     [(option_i64.None) (CompilerIrMaybeValue.No)]))
@@ -2539,10 +2545,62 @@
     [(CompilerIrInstr.Gep dst _ _ _) (not (opt-used-array-contains items dst))]
     [(CompilerIrInstr.Cast dst _ _ _) (not (opt-used-array-contains items dst))]
     [(CompilerIrInstr.Load dst _ _) (not (opt-used-array-contains items dst))]
-    [(CompilerIrInstr.BinOp dst op _ _ _)
-      (and
-        (not (opt-binop-traps? op))
-        (not (opt-used-array-contains items dst)))]
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (begin
+        ;; This DCE walk already owns the function-wide use counts and visits
+        ;; every instruction once. Rewrite an adjacent, single-use mask here
+        ;; so compare admission adds no second instruction scan or dispatch.
+        (if (and (> index 0) (opt-used-array-contains items dst))
+          (match lhs
+            [(CompilerIrValue.Var and-var)
+              (match rhs
+                [(CompilerIrValue.I64 zero)
+                  (if (= zero 0)
+                    (let
+                      [tag : i64 (opt-binop-tag op)]
+                      [safe : bool
+                        (or (= tag 7) (= tag 8) (= tag 10) (= tag 11))]
+                      (if (and safe (= (array-ref items and-var) 1))
+                        (match (compiler-ir-instr-scalar-fact
+                          (array-ref slots (- index 1)))
+                          [(CompilerIrInstrScalarFact.BinOp
+                              actual
+                              (CompilerIrBinOp.BitAnd)
+                              value
+                              mask
+                              _)
+                            (if (and
+                              (= actual and-var)
+                              (or
+                                (not (or (= tag 10) (= tag 11)))
+                                (match mask
+                                  [(CompilerIrValue.I64 n)
+                                    (and (>= n 0) (<= n 127))]
+                                  [_ false])))
+                              (let
+                                [next : CompilerIrInstr
+                                  (CompilerIrInstr.BinOp
+                                    dst
+                                    (if (or (= tag 7) (= tag 10))
+                                      (CompilerIrBinOp.BitTestEq)
+                                      (CompilerIrBinOp.BitTestNe))
+                                    value
+                                    mask
+                                    ty)]
+                                (begin
+                                  (array-set! slots index next)
+                                  (opt-used-array-dec items and-var)
+                                  (opt-collect-instr-uses-array items next)))
+                              unit)]
+                          [_ unit])
+                        unit))
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          unit)
+        (and
+          (not (opt-binop-traps? op))
+          (not (opt-used-array-contains items dst))))]
     [(CompilerIrInstr.UnOp dst _ _ _) (not (opt-used-array-contains items dst))]
     [(CompilerIrInstr.Phi dst _ _) (not (opt-used-array-contains items dst))]
     [(CompilerIrInstr.LaneId dst _ _) (not (opt-used-array-contains items dst))]
@@ -2595,10 +2653,8 @@
           (let
             [instr : CompilerIrInstr (array-ref slots index)]
             (if (opt-instr-dead-array? items slots count index instr)
-              ;; Deleting this instruction drops the uses it made, so a value it
-              ;; was the last reader of becomes dead for an earlier sweep step.
               (opt-uncount-instr-uses-array items instr)
-              (set! out (compiler-ir-instr-cons instr out))))
+              (set! out (compiler-ir-instr-cons (array-ref slots index) out))))
           (set! index (- index 1))))
       out)))
 
@@ -4089,7 +4145,9 @@
     [(CompilerIrBinOp.BitOr) 16]
     [(CompilerIrBinOp.BitXor) 17]
     [(CompilerIrBinOp.Shl) 18]
-    [(CompilerIrBinOp.Shr) 19]))
+    [(CompilerIrBinOp.Shr) 19]
+    [(CompilerIrBinOp.BitTestEq) 20]
+    [(CompilerIrBinOp.BitTestNe) 21]))
 
 (define (opt-binop-eq [a : CompilerIrBinOp] [b : CompilerIrBinOp]) : bool
   (= (opt-binop-tag a) (opt-binop-tag b)))
@@ -19503,14 +19561,7 @@
   (Result CompilerIrFunction bool))
 
 (define (opt-bool-branch-compare-op? [op : CompilerIrBinOp]) : bool
-  (match op
-    [(CompilerIrBinOp.Eq) true]
-    [(CompilerIrBinOp.Ne) true]
-    [(CompilerIrBinOp.Lt) true]
-    [(CompilerIrBinOp.Le) true]
-    [(CompilerIrBinOp.Gt) true]
-    [(CompilerIrBinOp.Ge) true]
-    [_ false]))
+  (compiler-ir-binop-compare? op))
 
 (define (opt-bool-branch-use-count [uses : (Array i64)] [var : i64]) : i64
   (if (or (< var 0) (>= var (array-length uses)))
@@ -37847,6 +37898,229 @@
               [(ResultCompilerOptimizeVerify.Ok) next]
               [(ResultCompilerOptimizeVerify.Err _) func]))])]))
 
+;; ---------------------------------------------------------------------------
+(defstruct OptIfConvertBlockFact
+  (label String)
+  (instrs CompilerIrInstrSeq)
+  (count i64)
+  (first CompilerIrInstrScalarFact)
+  (before-last CompilerIrInstrScalarFact)
+  (last CompilerIrInstrScalarFact))
+
+(define (opt-if-convert-block-fact [block : CompilerIrBlock]) : OptIfConvertBlockFact
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (let
+        [count : i64 (compiler-ir-instr-seq-count instrs)]
+        (OptIfConvertBlockFact
+          label
+          instrs
+          count
+          (if (> count 0)
+            (compiler-ir-instr-scalar-fact (compiler-ir-instr-seq-ref instrs 0))
+            (CompilerIrInstrScalarFact.Other))
+          (if (> count 1)
+            (compiler-ir-instr-scalar-fact
+              (compiler-ir-instr-seq-ref instrs (- count 2)))
+            (CompilerIrInstrScalarFact.Other))
+          (if (> count 0)
+            (compiler-ir-instr-scalar-fact
+              (compiler-ir-instr-seq-ref instrs (- count 1)))
+            (CompilerIrInstrScalarFact.Other))))]))
+
+(define (opt-if-convert-facts [blocks : CompilerIrBlockSeq]) : (Array
+    OptIfConvertBlockFact)
+  (let
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [facts : (Array OptIfConvertBlockFact)
+      (make-array OptIfConvertBlockFact count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            facts
+            index
+            (opt-if-convert-block-fact (compiler-ir-block-seq-ref blocks index)))
+          (set! index (+ index 1))))
+      facts)))
+
+(define (opt-if-convert-arm? [fact : OptIfConvertBlockFact] [merge : String]) : bool
+  (and
+    (= (struct-get fact count) 1)
+    (match (struct-get fact last)
+      [(CompilerIrInstrScalarFact.Jump target) (string.eq target merge)]
+      [_ false])))
+
+(define (opt-if-convert-live-values?
+  [first : CompilerIrValue]
+  [second : CompilerIrValue]) : bool
+  (match first
+    [(CompilerIrValue.Var _)
+      (match second
+        [(CompilerIrValue.Var _) true]
+        [_ false])]
+    [_ false]))
+
+(define (opt-if-convert-try!
+  [blocks : CompilerIrBlockSeq]
+  [facts : (Array OptIfConvertBlockFact)]
+  [id : i64]) : bool
+  (if (>= (+ id 3) (array-length facts))
+    false
+    (let
+      [source : OptIfConvertBlockFact (array-ref facts id)]
+      [a : OptIfConvertBlockFact (array-ref facts (+ id 1))]
+      [b : OptIfConvertBlockFact (array-ref facts (+ id 2))]
+      [merge : OptIfConvertBlockFact (array-ref facts (+ id 3))]
+      [source-label : String (struct-get source label)]
+      [a-label : String (struct-get a label)]
+      [b-label : String (struct-get b label)]
+      [merge-label : String (struct-get merge label)]
+      [source-instrs : CompilerIrInstrSeq (struct-get source instrs)]
+      [merge-instrs : CompilerIrInstrSeq (struct-get merge instrs)]
+      (begin
+        (when
+          (or
+            (< (struct-get source count) 2)
+            (< (struct-get merge count) 1)
+            (match (struct-get source first)
+              [(CompilerIrInstrScalarFact.Phi _ _ _) false]
+              [_ true])
+            (not (opt-if-convert-arm? a merge-label))
+            (not (opt-if-convert-arm? b merge-label)))
+          (return false))
+        (match (struct-get source last)
+          [(CompilerIrInstrScalarFact.Branch condition yes no)
+            (if (not
+              (or
+                (and (string.eq a-label yes) (string.eq b-label no))
+                (and (string.eq a-label no) (string.eq b-label yes))))
+              false
+              (match condition
+                [(CompilerIrValue.Var condition-var)
+                  (match (struct-get source before-last)
+                    [(CompilerIrInstrScalarFact.BinOp condition-dst op _ _ _)
+                      (if (not
+                        (and
+                          (= condition-dst condition-var)
+                          (compiler-ir-binop-compare? op)))
+                        false
+                        (match (struct-get merge first)
+                          [(CompilerIrInstrScalarFact.Phi dst inputs ty)
+                            (if (or
+                              (not
+                                (or
+                                  (opt-integer-type? ty)
+                                  (opt-type-eq ty (AstType.Bool))))
+                              (match (struct-get merge last)
+                                [(CompilerIrInstrScalarFact.Branch next _ _)
+                                  (opt-value-eq (clone condition) next)]
+                                [_ false]))
+                              false
+                              (match (opt-bool-branch-phi-inputs inputs)
+                                [(OptBoolBranchPhiInputs.No) false]
+                                [(OptBoolBranchPhiInputs.Two
+                                    first
+                                    first-label
+                                    second
+                                    second-label)
+                                  (if (or
+                                    (not
+                                      (or
+                                        (and
+                                          (string.eq first-label yes)
+                                          (string.eq second-label no))
+                                        (and
+                                          (string.eq first-label no)
+                                          (string.eq second-label yes))))
+                                    (not
+                                      (opt-if-convert-live-values? first second)))
+                                    false
+                                    (let
+                                      [tail : CompilerIrInstrList
+                                        (compiler-ir-instr-cons
+                                          (ir-instr-select
+                                            dst
+                                            condition
+                                            (if (string.eq first-label yes)
+                                              first
+                                              second)
+                                            (if (string.eq first-label yes)
+                                              second
+                                              first)
+                                            0
+                                            ty)
+                                          (compiler-ir-instr-cons
+                                            (CompilerIrInstr.Jump merge-label)
+                                            CompilerIrInstrList.Nil))]
+                                      (begin
+                                        (array-set!
+                                          (struct-get blocks slots)
+                                          id
+                                          (compiler-ir-block
+                                            source-label
+                                            (compiler-ir-instr-seq-to-list-rev
+                                              (struct-get source-instrs slots)
+                                              (- (struct-get source count) 2)
+                                              tail)))
+                                        (array-set!
+                                          (struct-get blocks slots)
+                                          (+ id 3)
+                                          (compiler-ir-block
+                                            merge-label
+                                            (opt-aggregate-instr-seq-append-from
+                                              merge-instrs
+                                              1
+                                              CompilerIrInstrList.Nil)))
+                                        (array-set!
+                                          facts
+                                          (+ id 3)
+                                          (opt-if-convert-block-fact
+                                            (array-ref
+                                              (struct-get blocks slots)
+                                              (+ id 3))))
+                                        true)))]))]
+                          [_ false]))]
+                    [_ false])]
+                [_ false]))]
+          [_ false])))))
+
+(define (opt-if-convert-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match func
+    [(CompilerIrFunction.Function name params ret-ty frame original)
+      (let
+        [blocks : CompilerIrBlockList
+          (compiler-ir-block-list-compact
+            (opt-bool-branch-clone-blocks original))]
+        (match blocks
+          [(CompilerIrBlockList.Array seq)
+            (let
+              [facts : (Array OptIfConvertBlockFact) (opt-if-convert-facts seq)]
+              [read : i64 0]
+              [changed : bool false]
+              (begin
+                (while (< read (array-length facts))
+                  (begin
+                    (if (opt-if-convert-try! seq facts read)
+                      (set! changed true)
+                      unit)
+                    (set! read (+ read 1))))
+                (if (not changed)
+                  func
+                  (let
+                    [next : CompilerIrFunction
+                      (CompilerIrFunction.Function
+                        name
+                        params
+                        ret-ty
+                        frame
+                        (opt-cfg-simplify-blocks blocks))]
+                    (match (opt-verify-function next)
+                      [(ResultCompilerOptimizeVerify.Ok) next]
+                      [(ResultCompilerOptimizeVerify.Err _) func])))))]
+          [_ func]))]))
+
 (define (optimize-function-once-with-summaries
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
@@ -38813,8 +39087,14 @@
     remaining
     (opt-loop-bce-empty-summaries)))
 
+(define (opt-if-convert-final [func : CompilerIrFunction]) : CompilerIrFunction
+  (compiler-opt-debug-observe-function
+    "if_convert"
+    (opt-if-convert-function func)))
+
 (define (optimize-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (optimize-function-fixed func (optimize-function-max-iterations)))
+  (opt-if-convert-final
+    (optimize-function-fixed func (optimize-function-max-iterations))))
 
 ;; Opt levels (0/1/2): 0 = none, 1 = cheap stack-only (the fast self-compile
 ;; path), 2 = the full optimizer + scalar register allocation + inlining (the
@@ -38828,11 +39108,16 @@
   (if (= level 0)
     func
     (if (= level 1)
+      ;; Keep the documented cheap self-compile path cheap.  The final
+      ;; if-conversion boundary performs CFG and natural-loop analysis and is
+      ;; reserved for the release-quality level below; compare/test lowering
+      ;; remains part of this single optimizer pass.
       (optimize-function-once-level2-with-summaries func summaries)
-      (optimize-function-fixed-with-summaries
-        func
-        (optimize-function-max-iterations)
-        summaries))))
+      (opt-if-convert-final
+        (optimize-function-fixed-with-summaries
+          func
+          (optimize-function-max-iterations)
+          summaries)))))
 
 (define (optimize-function-with-level [func : CompilerIrFunction] [level : i64]) : CompilerIrFunction
   (optimize-function-with-level-and-summaries

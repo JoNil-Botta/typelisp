@@ -4214,9 +4214,10 @@
         (CompilerBackendMaybeLabel.No))
         [(ResultCompilerBackend.Ok asm)
           (and
-            ;; `0 < %r9` is emitted as `%r9 > 0`; no scratch can alias the
-            ;; RHS between its definition and this compare.
-            (compiler-backend-string-contains? asm "    cmpq $0, %r9\n")
+            ;; `0 < %r9` is emitted as `%r9 > 0`; the zero compare now uses
+            ;; the register self-test form and needs no scratch at all.
+            (compiler-backend-string-contains? asm "    testq %r9, %r9\n")
+            (not (compiler-backend-string-contains? asm "    cmpq $0, %r9\n"))
             (not (compiler-backend-string-contains? asm "    cmpq %r9, %r9\n")))]
         [(ResultCompilerBackend.Err _) false])]
     [_linux : unit (compiler-backend-set-current-fn-linux!)]
@@ -7252,6 +7253,7 @@
     (compiler-backend-branch-fallthrough-ok?)
     (compiler-backend-zero-load-ok?)
     (compiler-backend-zero-compare-ok?)
+    (compiler-backend-scalar-select-ok?)
     (compiler-backend-call-return-ok?)
     (compiler-backend-global-immediate-store-ok?)
     (compiler-backend-scratch-staging-direct-shapes-ok?)))
@@ -7338,22 +7340,94 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-zero-compare-ok?) : bool
-  (match (compiler-backend-emit-binop
-    (CompilerRegVarTypeList.Nil)
-    (CompilerBackendGlobalTypeList.Nil)
-    (compiler-backend-peephole-assignments)
-    2
-    (CompilerIrBinOp.Eq)
-    (CompilerIrValue.Var 0)
-    (CompilerIrValue.I64 0)
-    (AstType.I64))
-    [(ResultCompilerBackend.Ok asm)
-      (and
-        (compiler-backend-string-contains?
-          asm
-          "    testq %r13, %r13\n    sete %r13b\n")
-        (not (compiler-backend-string-contains? asm "    cmpq $0, %rax\n")))]
-    [(ResultCompilerBackend.Err _) false]))
+  (and
+    (match (compiler-backend-emit-binop
+      (CompilerRegVarTypeList.Nil)
+      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-peephole-assignments)
+      2
+      (CompilerIrBinOp.Eq)
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    testq %r13, %r13\n    sete %r13b\n")
+          (not (compiler-backend-string-contains? asm "    cmpq $0")))]
+      [(ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-emit-binop
+      (CompilerRegVarTypeList.Nil)
+      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-peephole-assignments)
+      2
+      (CompilerIrBinOp.Gt)
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    testq %r13, %r13\n    setg %r13b\n")
+          (not (compiler-backend-string-contains? asm "    cmpq $0")))]
+      [(ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-emit-binop
+      (CompilerRegVarTypeList.Nil)
+      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-peephole-assignments)
+      2
+      (CompilerIrBinOp.BitTestNe)
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    testq $1, %r13\n    setne %r13b\n")
+          (not (compiler-backend-string-contains? asm "    andq $1")))]
+      [(ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-scalar-select-ok?) : bool
+  (and
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (ir-instr-select
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 7)
+          (CompilerIrValue.I64 9)
+          0
+          (AstType.I64))
+        (CompilerIrInstrList.Nil))
+      (compiler-backend-peephole-assignments)
+      3)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm "    testq %r12, %r12\n")
+          (compiler-backend-string-contains? asm "    cmovne ")
+          (not (compiler-backend-string-contains? asm "    cmove ")))]
+      [(ResultCompilerBackend.Err _) false])
+    ;; x86 has no byte cmov: Bool still uses a target-independent qword cmovne.
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (ir-instr-select
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Bool true)
+          (CompilerIrValue.Bool false)
+          0
+          (AstType.Bool))
+        (CompilerIrInstrList.Nil))
+      (compiler-backend-peephole-assignments)
+      3)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm "    cmovne %r8, %r13\n")
+          (not (compiler-backend-string-contains? asm "cmovne %r8b")))]
+      [(ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-global-immediate-store-ok?) : bool
   (compiler-backend-instr-contains?
@@ -18790,7 +18864,8 @@
         "$255"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    movzbq %al, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18799,7 +18874,8 @@
         "$65535"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    movzwq %ax, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18808,7 +18884,8 @@
         "$255"
         (AstType.U32)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    movzbl %al, %eax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18817,7 +18894,8 @@
         "$65535"
         (AstType.U32)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    movzwl %ax, %eax\n")]
         [(CompilerBackendMaybeAsm.No) false]))
@@ -18827,7 +18905,8 @@
         "$254"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    andq $254, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18836,7 +18915,8 @@
         "$256"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    andq $256, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18845,7 +18925,8 @@
         "$65280"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    andq $65280, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18854,7 +18935,8 @@
         "$255"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    orq $255, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false]))))
@@ -26609,6 +26691,91 @@
               [_ false])))])
     true))
 
+(define (compiler-backend-scratch-vreg-select-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (ir-instr-select
+          3
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          (CompilerIrValue.Var 2)
+          0
+          (AstType.I64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+;; The select result may reuse the dying true operand's ordinary home. In that
+;; shape emission must stage the result in a planned scratch register distinct
+;; from every select home; otherwise loading the false value destroys the true
+;; value before cmovne reads it.
+(define (compiler-backend-scratch-vreg-select-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%rdi"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%rax"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%rax"))
+          CompilerRegAssignmentList.Nil)))))
+
+(define (compiler-backend-scratch-vreg-select-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-select-assignments)]
+      (match (compiler-backend-scratch-test-result
+        "scratch_vreg_select"
+        (compiler-backend-scratch-vreg-select-blocks)
+        4
+        assignments)
+        [(CompilerRegScratchPlanResult.Result _ plan)
+          (let
+            [result : String (compiler-reg-scratch-plan-register plan 0 0)]
+            [value : String (compiler-reg-scratch-plan-register plan 0 1)]
+            [test : String (compiler-reg-scratch-plan-register plan 0 2)]
+            (match (compiler-backend-emit-scalar-select
+              assignments
+              3
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 2)
+              (AstType.I64)
+              result
+              value
+              test
+              (compiler-diagnostic-at-start "" ""))
+              [(ResultCompilerBackend.Ok asm)
+                (and
+                  (= (compiler-reg-scratch-plan-count plan) 3)
+                  (not (string.eq result ""))
+                  (not (string.eq value ""))
+                  (not (string.eq test ""))
+                  (not (string.eq result value))
+                  (not (string.eq result test))
+                  (not (string.eq value test))
+                  (not (string.eq result "%rax"))
+                  (not (string.eq result "%rdi"))
+                  (not (string.eq result "%r12"))
+                  (compiler-backend-string-contains?
+                    asm
+                    (str_cat.str-cat
+                      "    cmovne %rax, "
+                      (str_cat.str-cat result "\n")))
+                  (not
+                    (compiler-backend-string-contains?
+                      asm
+                      "    cmovne %rax, %rax\n")))]
+              [(ResultCompilerBackend.Err _) false]))]))
+    true))
+
 (define (compiler-backend-scratch-vreg-result-contains?
   [result : ResultCompilerBackend]
   [needle : String]) : bool
@@ -26920,6 +27087,7 @@
         (compiler-backend-scratch-vreg-scalar-shift-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-return-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-control-plan-ok?)
+        (compiler-backend-scratch-vreg-select-plan-ok?)
         (compiler-backend-scratch-vreg-scalar-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-incomplete-group-fallback-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)

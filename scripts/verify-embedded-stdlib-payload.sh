@@ -49,8 +49,8 @@ if [ ! -s "$NORMALIZED_MANIFEST" ]; then
     echo "embedded stdlib payload has no build inputs" >&2
     exit 1
 fi
-if [ "$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')" -ne 42 ]; then
-    echo "embedded stdlib payload must declare exactly 42 build inputs" >&2
+if [ "$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')" -ne 49 ]; then
+    echo "embedded stdlib payload must declare exactly 49 build inputs" >&2
     exit 1
 fi
 if grep -n -v '^[A-Za-z0-9_][A-Za-z0-9_]*\.tl$' "$NORMALIZED_MANIFEST" \
@@ -71,6 +71,26 @@ while IFS= read -r suffix; do
         exit 1
     fi
 done < "$NORMALIZED_MANIFEST"
+
+SORTED_MANIFEST="$WORKDIR/modules-sorted.txt"
+IMPORTED_MODULES="$WORKDIR/imported-modules.txt"
+MISSING_IMPORTS="$WORKDIR/missing-imports.txt"
+sort -u "$NORMALIZED_MANIFEST" > "$SORTED_MANIFEST"
+: > "$IMPORTED_MODULES"
+while IFS= read -r suffix; do
+    sed '/^[[:space:]]*;/d' "stdlib/$suffix" |
+        grep -oE '\(import[[:space:]]+stdlib\.[A-Za-z0-9_]+' \
+        >> "$IMPORTED_MODULES" || true
+done < "$NORMALIZED_MANIFEST"
+sed 's/.*stdlib\.//' "$IMPORTED_MODULES" |
+    sed 's/$/.tl/' |
+    sort -u > "$IMPORTED_MODULES.sorted"
+comm -23 "$IMPORTED_MODULES.sorted" "$SORTED_MANIFEST" > "$MISSING_IMPORTS"
+if [ -s "$MISSING_IMPORTS" ]; then
+    echo "embedded stdlib payload is missing imported modules:" >&2
+    sed 's/^/  stdlib\//' "$MISSING_IMPORTS" >&2
+    exit 1
+fi
 
 "$COMPILER" check src/compiler_embedded_stdlib_payload.tl \
     --stdlib-root stdlib --stdlib-root src

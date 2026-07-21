@@ -19,6 +19,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
+(import "tlci_core.tl")
 
 (defenum ResultCompilerLoad
   (Ok AstDeclList sym_i64_env.SymI64Env)
@@ -43,11 +44,29 @@
 (defstruct CompilerLoadPackageEntry
   (entry-path String)
   (manifest-dir String)
-  (owner String))
+  (owner String)
+  (version String))
 
 (defenum ResultCompilerLoadPackageEntry
   (Ok CompilerLoadPackageEntry)
   (Err String))
+
+(defenum CompilerLoadPackageSpmdInterface
+  (Unavailable)
+  (Available TlciSpmdCallableList))
+
+(defenum ResultCompilerLoadPackageSpmdInterface
+  (Ok CompilerLoadPackageSpmdInterface)
+  (Err String))
+
+;; Package dependency artifacts use the build profile selected by the package
+;; driver. Other compiler entry points retain the release default and can still
+;; typecheck source dependencies when no artifact has been built yet.
+(define compiler-load-package-artifact-profile : String
+  "release")
+
+(define (compiler-load-set-package-artifact-profile! [profile : String]) : unit
+  (set! compiler-load-package-artifact-profile profile))
 
 (defenum CompilerLoadMaybeModuleId
   (CompilerLoadNoModuleId)
@@ -1100,6 +1119,112 @@
   [state : CompilerLoadSessionState]) : unit
   (array-set! (struct-get state cache-enabled) 1 true))
 
+;; Canonical ids of modules whose source came from the embedded stdlib
+;; payload in this process. The tlci macro route consults this per defining
+;; module: a stdlib module loaded from an explicit root must expand from its
+;; own source even when the embedded catalog knows its identities.
+(define compiler-load-provenance-arena-handle : i64
+  0)
+
+;: Arena for the embedded-provenance set and the content-equivalence cache.
+;: These outlive every session floor reset (their contents are re-derived
+;: per session, but the bindings must never point into memory another reset
+;: can free), so they get their own arena that is created once and only
+;: grows.
+(define (compiler-load-provenance-arena) : i64
+  (begin
+    (if (= compiler-load-provenance-arena-handle 0)
+      (set!
+        compiler-load-provenance-arena-handle
+        (unsafe
+          (arena.tl_arena_make)))
+      unit)
+    compiler-load-provenance-arena-handle))
+
+(define compiler-load-embedded-module-ids : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+
+(define (compiler-load-embedded-module-ids-reset!) : unit
+  (set! compiler-load-embedded-module-ids (sym_i64_env.sym-i64-empty)))
+
+(define (compiler-load-note-embedded-module! [path : String]) : unit
+  (let
+    [id : i64 (ci.intern (compiler-load-canonical-module-id-from-path path))]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    (begin
+      ;; The set outlives every load-scoped scratch arena and every intern
+      ;; floor reset; bind its nodes in the dedicated provenance arena.
+      (unsafe
+        (arena.tl_arena_set (compiler-load-provenance-arena)))
+      (set!
+        compiler-load-embedded-module-ids
+        (sym_i64_env.sym-i64-bind-id compiler-load-embedded-module-ids id 1))
+      (unsafe
+        (arena.tl_arena_set previous-arena)))))
+
+(define compiler-load-embedded-equivalence-cache : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+(define compiler-load-embedded-provenance-noted : bool
+  false)
+
+(define (compiler-load-embedded-provenance-noted?) : bool
+  compiler-load-embedded-provenance-noted)
+
+;: A stdlib module resolved from a root (or the working directory) whose
+;: source is byte-identical to the embedded payload's copy carries embedded
+;: provenance for the macro route: the source-bound catalog is exact for it
+;: by construction, and any user modification breaks the equality and keeps
+;: that module on source interpretation. Cached per suffix; the compare runs
+;: once per module per session.
+(define (compiler-load-note-embedded-equivalent-if-matching!
+  [suffix : String]
+  [disk-path : String]) : unit
+  (let
+    [key : i64 (ci.intern suffix)]
+    (if (sym_i64_env.sym-i64-contains-id
+      compiler-load-embedded-equivalence-cache
+      key)
+      unit
+      (let
+        [outcome : i64
+          (match (compiler-load-embedded-stdlib-source suffix)
+            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+                embedded-text)
+              (let
+                [disk-text : String (io.read-file disk-path)]
+                (if (and
+                  (=
+                    (string.string-length disk-text)
+                    (string.string-length embedded-text))
+                  (string.eq disk-text embedded-text))
+                  1
+                  -1))]
+            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+              -1])]
+        [previous-arena : i64 (arena.tl_arena_current)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set (compiler-load-provenance-arena)))
+          (set!
+            compiler-load-embedded-equivalence-cache
+            (sym_i64_env.sym-i64-bind-id
+              compiler-load-embedded-equivalence-cache
+              key
+              outcome))
+          (unsafe
+            (arena.tl_arena_set previous-arena))
+          (if (= outcome 1)
+            (begin
+              (compiler-load-note-embedded-module!
+                (string.append "stdlib/" suffix))
+              (set! compiler-load-embedded-provenance-noted true))
+            unit))))))
+
+(define (compiler-load-embedded-stdlib-module-id? [module : String]) : bool
+  (sym_i64_env.sym-i64-contains-id
+    compiler-load-embedded-module-ids
+    (ci.intern module)))
+
 (define (compiler-load-session-note-embedded-stdlib-source!) : unit
   (compiler-load-session-state-note-embedded-stdlib-source!
     compiler-load-active-session-state))
@@ -1149,6 +1274,9 @@
 
 (define (compiler-load-session-reset-interns!) : unit
   (begin
+    (compiler-load-embedded-module-ids-reset!)
+    (set! compiler-load-embedded-equivalence-cache (sym_i64_env.sym-i64-empty))
+    (set! compiler-load-embedded-provenance-noted false)
     (compiler-load-surface-summaries-reset!)
     (compiler-load-lazy-qualified-observer-reset!)
     (array-set!
@@ -2067,10 +2195,17 @@
   (let
     [suffix : String (compiler-load-stdlib-suffix module-path)]
     (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
-      [(CompilerLoadSomePath root-path) root-path]
+      [(CompilerLoadSomePath root-path)
+        (begin
+          (compiler-load-note-embedded-equivalent-if-matching! suffix root-path)
+          root-path)]
       [(CompilerLoadNoPath)
         (if (io.file-exists? module-path)
-          module-path
+          (begin
+            (compiler-load-note-embedded-equivalent-if-matching!
+              suffix
+              module-path)
+            module-path)
           (match (compiler-load-embedded-stdlib-path suffix)
             [(CompilerLoadSomePath embedded-path) embedded-path]
             [(CompilerLoadNoPath) module-path]))])))
@@ -9030,16 +9165,18 @@
             (match (compiler-load-embedded-stdlib-source-for-path path)
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                   source)
-                (match (if cache-current
-                  (compiler-load-parse-embedded-source-diagnostic-session-id
-                    path
-                    source-path-id
-                    source
-                    parse-cfgs)
-                  (compiler-load-parse-source-diagnostic-escaping
-                    path
-                    source
-                    parse-cfgs))
+                (match (begin
+                  (compiler-load-note-embedded-module! path)
+                  (if cache-current
+                    (compiler-load-parse-embedded-source-diagnostic-session-id
+                      path
+                      source-path-id
+                      source
+                      parse-cfgs)
+                    (compiler-load-parse-source-diagnostic-escaping
+                      path
+                      source
+                      parse-cfgs)))
                   [(ResultAstProgramDiagnostic.Ok program)
                     (compiler-load-bind-path-dedup
                       (compiler-load-program-with-paths-and-roots-expect-cfg-root
@@ -9190,19 +9327,21 @@
             (match (compiler-load-embedded-stdlib-source-for-path path)
               [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                   source)
-                (match (if cache-current
-                  (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
-                    load-state
-                    path
-                    source-path-id
-                    source
-                    parse-cfgs
-                    pools)
-                  (compiler-load-parse-source-diagnostic-escaping-with-pools
-                    path
-                    source
-                    parse-cfgs
-                    pools))
+                (match (begin
+                  (compiler-load-note-embedded-module! path)
+                  (if cache-current
+                    (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+                      load-state
+                      path
+                      source-path-id
+                      source
+                      parse-cfgs
+                      pools)
+                    (compiler-load-parse-source-diagnostic-escaping-with-pools
+                      path
+                      source
+                      parse-cfgs
+                      pools)))
                   [(ResultAstProgramDiagnostic.Ok program)
                     (compiler-load-bind-path-dedup
                       (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
@@ -9599,6 +9738,150 @@
           (ast-type-list-push out (ast-node-pool-reader-type-push ty))])
       (compiler-load-param-type-list-into params (+ index 1) out))))
 
+(define (compiler-load-package-tlci-path
+  [manifest-dir : String]
+  [package-name : String]) : String
+  (compiler-load-join-root-path
+    (compiler-load-join-root-path
+      (compiler-load-join-root-path manifest-dir "target")
+      compiler-load-package-artifact-profile)
+    (str_cat.str-cat package-name ".tlci")))
+
+(define (compiler-load-package-spmd-interface
+  [manifest-dir : String]
+  [package-name : String]
+  [package-version : String]) : ResultCompilerLoadPackageSpmdInterface
+  (let
+    [path : String (compiler-load-package-tlci-path manifest-dir package-name)]
+    (if (not (io.file-exists? path))
+      (ResultCompilerLoadPackageSpmdInterface.Ok
+        CompilerLoadPackageSpmdInterface.Unavailable)
+      (match (io.try-read-file (& path))
+        [(io.ErrIoString error)
+          (ResultCompilerLoadPackageSpmdInterface.Err
+            (str_cat.str-cat
+              "compiler-load: cannot read dependency tlci '"
+              path
+              "': "
+              (io.error-message error)))]
+        [(io.OkIoString contents)
+          (match (tlci-parse-image (tlci-string->bytes contents))
+            [(ResultTlciImage.Err message)
+              (ResultCompilerLoadPackageSpmdInterface.Err
+                (str_cat.str-cat
+                  "compiler-load: invalid dependency tlci '"
+                  path
+                  "': "
+                  message))]
+            [(ResultTlciImage.Ok image)
+              (let
+                [metadata : TlciMetadata (struct-get image metadata)]
+                (if (or
+                  (not
+                    (string.eq (struct-get metadata package-name) package-name))
+                  (not
+                    (string.eq
+                      (struct-get metadata package-version)
+                      package-version)))
+                  (ResultCompilerLoadPackageSpmdInterface.Err
+                    (str_cat.str-cat
+                      "compiler-load: dependency tlci package identity mismatch for '"
+                      path
+                      "': expected "
+                      package-name
+                      "@"
+                      package-version
+                      ", found "
+                      (struct-get metadata package-name)
+                      "@"
+                      (struct-get metadata package-version)))
+                  (ResultCompilerLoadPackageSpmdInterface.Ok
+                    (CompilerLoadPackageSpmdInterface.Available
+                      (struct-get metadata spmd-callables)))))])]))))
+
+(define (compiler-load-imported-spmd-specializations-into
+  [items : TlciSpmdSpecializationList]
+  [out : (&mut out AstImportedSpmdSpecializationList)]) : unit
+  (match items
+    [(TlciSpmdSpecializationList.Nil) unit]
+    [(TlciSpmdSpecializationList.Cons item rest)
+      (begin
+        (ast-imported-spmd-specialization-list-push
+          out
+          (AstImportedSpmdSpecialization
+            (ci.intern-generated-canonical-name (struct-get item abi))
+            (ci.intern-generated-canonical-name (struct-get item backend))
+            (struct-get item lanes)
+            (ci.intern-generated-canonical-name (struct-get item args))
+            (ci.intern-generated-canonical-name (struct-get item result))
+            (struct-get item index-param)
+            (ci.intern-generated-canonical-name (struct-get item symbol))))
+        (compiler-load-imported-spmd-specializations-into (box-get rest) out))]))
+
+(define (compiler-load-imported-spmd-specializations
+  [items : TlciSpmdSpecializationList]) : AstImportedSpmdSpecializationList
+  (let
+    [out : AstImportedSpmdSpecializationList
+      (ast-imported-spmd-specialization-list-new)]
+    (begin
+      (compiler-load-imported-spmd-specializations-into items (&mut out))
+      out)))
+
+(define (compiler-load-imported-spmd-callables-for-into
+  [canonical-name : String]
+  [items : TlciSpmdCallableList]
+  [out : (&mut out AstImportedSpmdCallableList)]) : unit
+  (match items
+    [(TlciSpmdCallableList.Nil) unit]
+    [(TlciSpmdCallableList.Cons item rest)
+      (begin
+        (if (string.eq (struct-get item name) canonical-name)
+          (ast-imported-spmd-callable-list-push
+            out
+            (AstImportedSpmdCallable
+              (ci.intern-generated-canonical-name (struct-get item signature))
+              (compiler-load-imported-spmd-specializations
+                (struct-get item specializations))))
+          unit)
+        (compiler-load-imported-spmd-callables-for-into
+          canonical-name
+          (box-get rest)
+          out))]))
+
+(define (compiler-load-imported-spmd-callables-for
+  [canonical-name : String]
+  [items : TlciSpmdCallableList]) : AstImportedSpmdCallableList
+  (let
+    [out : AstImportedSpmdCallableList (ast-imported-spmd-callable-list-new)]
+    (begin
+      (compiler-load-imported-spmd-callables-for-into
+        canonical-name
+        items
+        (&mut out))
+      out)))
+
+(define (compiler-load-imported-spmd-metadata
+  [package-owner : String]
+  [module : String]
+  [name : i64]
+  [interface : CompilerLoadPackageSpmdInterface]) : AstImportedSpmdMetadata
+  (let
+    [canonical-name : String
+      (compiler-load-package-module-key
+        (if (= (string.string-length module) 0)
+          package-owner
+          module)
+        (intern-str name))]
+    [callables : AstImportedSpmdCallableList
+      (match interface
+        [(CompilerLoadPackageSpmdInterface.Unavailable)
+          (ast-imported-spmd-callable-list-new)]
+        [(CompilerLoadPackageSpmdInterface.Available items)
+          (compiler-load-imported-spmd-callables-for canonical-name items)])]
+    (AstImportedSpmdMetadata.Package
+      (ci.intern-generated-canonical-name canonical-name)
+      (box callables))))
+
 (define (compiler-load-package-def-fn-extern
   [package-owner : String]
   [package-root : String]
@@ -9607,7 +9890,8 @@
   [module : String]
   [name : i64]
   [params : AstParamList]
-  [ret : AstType]) : AstDecl
+  [ret : AstType]
+  [spmd-interface : CompilerLoadPackageSpmdInterface]) : AstDecl
   (let
     [name-str : String (intern-str name)]
     [logical-path : String
@@ -9628,7 +9912,12 @@
           (AstExternAbi.C)
           (ci.intern-generated-canonical-name link-name)
           (ast-extern-link-input-list-new)
-          (ast-extern-metadata-flags false (string.eq link-name logical))))
+          (ast-extern-metadata-flags false (string.eq link-name logical))
+          (compiler-load-imported-spmd-metadata
+            package-owner
+            module
+            name
+            spmd-interface)))
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl
@@ -9637,6 +9926,7 @@
   [stdlib-roots : svec.Vec]
   [decl-path : String]
   [module : String]
+  [spmd-interface : CompilerLoadPackageSpmdInterface]
   [decl : AstDecl]) : CompilerLoadMaybeDecl
   (match decl
     [(AstDecl.DefFn decl-meta name params ret _ _)
@@ -9651,7 +9941,8 @@
             module
             name
             params
-            ret)))]
+            ret
+            spmd-interface)))]
     [(AstDecl.DefStruct decl-meta _ _ _ _) (CompilerLoadSomeDecl decl)]
     [(AstDecl.Module _) (CompilerLoadSomeDecl decl)]
     [(AstDecl.Unsafe inner-box)
@@ -9663,6 +9954,7 @@
           stdlib-roots
           decl-path
           module
+          spmd-interface
           inner)
           [(CompilerLoadSomeDecl transformed)
             (CompilerLoadSomeDecl (ast-decl-unsafe transformed))]
@@ -9790,7 +10082,8 @@
   [paths : AstDeclPathList]
   [seen : sym_i64_env.SymI64Env]
   [module : String]
-  [module-id : i64]) : ResultCompilerLoadWithPaths
+  [module-id : i64]
+  [spmd-interface : CompilerLoadPackageSpmdInterface]) : ResultCompilerLoadWithPaths
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil)
       (ResultCompilerLoadWithPaths.Ok
@@ -9831,7 +10124,8 @@
           rest-paths
           seen
           next-module
-          next-module-id)
+          next-module-id
+          spmd-interface)
           [(ResultCompilerLoadWithPaths.Ok
               rest-decls
               rest-decl-paths
@@ -9843,6 +10137,7 @@
               stdlib-roots
               decl-path
               module
+              spmd-interface
               decl)
               [(CompilerLoadSomeDecl transformed)
                 (ResultCompilerLoadWithPaths.Ok
@@ -9897,7 +10192,8 @@
                     manifest-dir
                     (struct-get manifest entry)))
                 manifest-dir
-                (struct-get manifest name))))])]))
+                (struct-get manifest name)
+                (struct-get manifest version))))])]))
 
 (define (compiler-load-package-externs-from-import
   [resolved : String]
@@ -9912,30 +10208,39 @@
       (ResultCompilerLoadWithPaths.Err
         (box (compiler-diagnostic-at-start resolved message)))]
     [(ResultCompilerLoadPackageEntry.Ok entry)
-      (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
-        resolved
-        seen
-        stdlib-roots
-        expected-module
-        cfgs
-        module-id-fallback
-        source-module-fallback)
-        [(ResultCompilerLoadWithPaths.Ok
-            imported-decls
-            imported-paths
-            _
-            import-seen)
-          (compiler-load-package-extern-decls
-            (struct-get entry owner)
-            (struct-get entry manifest-dir)
+      (match (compiler-load-package-spmd-interface
+        (struct-get entry manifest-dir)
+        (struct-get entry owner)
+        (struct-get entry version))
+        [(ResultCompilerLoadPackageSpmdInterface.Err message)
+          (ResultCompilerLoadWithPaths.Err
+            (box (compiler-diagnostic-at-start resolved message)))]
+        [(ResultCompilerLoadPackageSpmdInterface.Ok spmd-interface)
+          (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
+            resolved
+            seen
             stdlib-roots
-            imported-decls
-            imported-paths
-            import-seen
-            ""
-            cbi.compiler-builtin-id-fix-empty)]
-        [(ResultCompilerLoadWithPaths.Err diag)
-          (ResultCompilerLoadWithPaths.Err diag)])]))
+            expected-module
+            cfgs
+            module-id-fallback
+            source-module-fallback)
+            [(ResultCompilerLoadWithPaths.Ok
+                imported-decls
+                imported-paths
+                _
+                import-seen)
+              (compiler-load-package-extern-decls
+                (struct-get entry owner)
+                (struct-get entry manifest-dir)
+                stdlib-roots
+                imported-decls
+                imported-paths
+                import-seen
+                ""
+                cbi.compiler-builtin-id-fix-empty
+                spmd-interface)]
+            [(ResultCompilerLoadWithPaths.Err diag)
+              (ResultCompilerLoadWithPaths.Err diag)])])]))
 
 (define (compiler-load-package-expand-include-str
   [importer-path : String]
@@ -12588,6 +12893,7 @@
       (svec.new)
       "src/main.tl"
       "main"
+      CompilerLoadPackageSpmdInterface.Unavailable
       decl)
       [(CompilerLoadSomeDecl transformed)
         (and
@@ -15072,13 +15378,71 @@
         ""
         (intern "helper")
         (ast-param-list-new)
-        (AstType.I64))]
+        (AstType.I64)
+        CompilerLoadPackageSpmdInterface.Unavailable)]
     (match decl
       [(AstDecl.Extern decl-meta _ _ metadata _)
         (string.eq
           (ast-extern-metadata-symbol (box-get metadata))
           "_tl_dep_src_lib_helper")]
       [_ false])))
+
+(define (compiler-load-package-imported-spmd-metadata-ok?) : bool
+  (let
+    [specialization : TlciSpmdSpecialization
+      (tlci-make-spmd-specialization
+        "spmd-call-v1"
+        "avx512"
+        8
+        "vu"
+        "v"
+        0
+        "_tl___tl_spmd_fixture_helper")]
+    [callable : TlciSpmdCallable
+      (tlci-make-spmd-callable
+        "spmd_fixture/helper"
+        "(-> i64 i64 i64)"
+        (tlci-spmd-specialization-list-cons
+          specialization
+          (tlci-spmd-specialization-list-empty)))]
+    [metadata : AstImportedSpmdMetadata
+      (compiler-load-imported-spmd-metadata
+        "spmd_fixture"
+        "spmd_fixture"
+        (intern "helper")
+        (CompilerLoadPackageSpmdInterface.Available
+          (tlci-spmd-callable-list-cons
+            callable
+            (tlci-spmd-callable-list-empty))))]
+    (match metadata
+      [(AstImportedSpmdMetadata.No) false]
+      [(AstImportedSpmdMetadata.Package canonical-name callables-box)
+        (let
+          [callables : AstImportedSpmdCallableList (box-get callables-box)]
+          [copied-callable : AstImportedSpmdCallable
+            (ast-imported-spmd-callable-list-get
+              (& callables)
+              0
+              (ast-imported-spmd-callable-fallback))]
+          [specializations : AstImportedSpmdSpecializationList
+            (struct-get copied-callable specializations)]
+          [copied-specialization : AstImportedSpmdSpecialization
+            (ast-imported-spmd-specialization-list-get
+              (& specializations)
+              0
+              (ast-imported-spmd-specialization-fallback))]
+          (and
+            (string.eq (intern-str canonical-name) "spmd_fixture/helper")
+            (= (ast-imported-spmd-callable-list-len (& callables)) 1)
+            (string.eq
+              (intern-str (struct-get copied-callable signature))
+              "(-> i64 i64 i64)")
+            (=
+              (ast-imported-spmd-specialization-list-len (& specializations))
+              1)
+            (string.eq
+              (intern-str (struct-get copied-specialization symbol))
+              "_tl___tl_spmd_fixture_helper")))])))
 
 (define (compiler-load-module-list-slots-address [items : AstDeclModuleList]) : i64
   (unsafe
@@ -15454,6 +15818,11 @@
       (compiler-load-package-owner-extern-symbol-ok?)
       (return
         (io.panic "compiler-load: package owner extern symbol smoke mismatch")))
+    (unless
+      (compiler-load-package-imported-spmd-metadata-ok?)
+      (return
+        (io.panic
+          "compiler-load: package imported SPMD metadata smoke mismatch")))
     (unless
       (compiler-load-source-provenance-ok?)
       (return (io.panic "compiler-load: source provenance smoke mismatch")))

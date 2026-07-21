@@ -11,7 +11,8 @@
     (AstExternAbi.C)
     link-id
     (ast-extern-link-input-list-new)
-    (ast-extern-metadata-flags false matches-source)))
+    (ast-extern-metadata-flags false matches-source)
+    AstImportedSpmdMetadata.No))
 
 (define (lower-symbol-smoke-parsed-extern-match?
   [source : String]

@@ -763,6 +763,7 @@
 
 (defenum TcSpmdInlineHelper
   (No)
+  (Imported AstType (Box AstImportedSpmdCallableList))
   (Some i64 i64 AstParamList AstType AstExpr))
 
 (defenum ResultTcSpmdInlineHelper
@@ -28917,6 +28918,13 @@
         [body : AstExpr (ast-node-get body-box)]
         (ResultTcSpmdInlineHelper.Ok
           (TcSpmdInlineHelper.Some name-id module-id params ret body)))]
+    [(AstDecl.Extern _ _ (AstExternKind.Function) metadata ty)
+      (match (ast-extern-metadata-imported-spmd (box-get metadata))
+        [(AstImportedSpmdMetadata.No)
+          (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No))]
+        [(AstImportedSpmdMetadata.Package _ callables)
+          (ResultTcSpmdInlineHelper.Ok
+            (TcSpmdInlineHelper.Imported ty callables))])]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -28939,9 +28947,13 @@
               lookup-id
               (compiler-symbols-missing-handle))]
           (if (compiler-symbols-handle-found? handle)
-            (if (=
-              (compiler-symbol-handle-kind handle)
-              (compiler-symbol-kind-function-define))
+            (if (or
+              (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-function-define))
+              (=
+                (compiler-symbol-handle-kind handle)
+                (compiler-symbol-kind-extern)))
               (let
                 [declaration-id : i64 (compiler-symbol-handle-index handle)]
                 [module-id : i64
@@ -29124,6 +29136,126 @@
                       (tc-spmd-finish expr-ty TcSpmdClass.Uniform args-env)]
                     [(ResultTcUnit.Err message)
                       (ResultTcSpmdExprInfo.Err message)])])]
+            [(ResultTcSpmdExprListInfo.Err message)
+              (ResultTcSpmdExprInfo.Err message)])])]
+    [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
+
+(define (tc-spmd-imported-callable-has-specialization-at?
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [signature : String]
+  [index : i64]) : bool
+  (if (>= index (ast-imported-spmd-callable-list-len callables))
+    false
+    (let
+      [callable : AstImportedSpmdCallable
+        (ast-imported-spmd-callable-list-get
+          callables
+          index
+          (ast-imported-spmd-callable-fallback))]
+      [specializations : AstImportedSpmdSpecializationList
+        (struct-get callable specializations)]
+      (or
+        (and
+          (string.eq (intern-str (struct-get callable signature)) signature)
+          (> (ast-imported-spmd-specialization-list-len (& specializations)) 0))
+        (tc-spmd-imported-callable-has-specialization-at?
+          callables
+          signature
+          (+ index 1))))))
+
+(define (tc-spmd-imported-specializations-have-varying-result-at?
+  [specializations : (& specializations AstImportedSpmdSpecializationList)]
+  [index : i64]) : bool
+  (if (>= index (ast-imported-spmd-specialization-list-len specializations))
+    false
+    (let
+      [item : AstImportedSpmdSpecialization
+        (ast-imported-spmd-specialization-list-get
+          specializations
+          index
+          (ast-imported-spmd-specialization-fallback))]
+      (or
+        (string.eq (intern-str (struct-get item result)) "v")
+        (tc-spmd-imported-specializations-have-varying-result-at?
+          specializations
+          (+ index 1))))))
+
+(define (tc-spmd-imported-callable-has-varying-result-at?
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [signature : String]
+  [index : i64]) : bool
+  (if (>= index (ast-imported-spmd-callable-list-len callables))
+    false
+    (let
+      [callable : AstImportedSpmdCallable
+        (ast-imported-spmd-callable-list-get
+          callables
+          index
+          (ast-imported-spmd-callable-fallback))]
+      [specializations : AstImportedSpmdSpecializationList
+        (struct-get callable specializations)]
+      (or
+        (and
+          (string.eq (intern-str (struct-get callable signature)) signature)
+          (tc-spmd-imported-specializations-have-varying-result-at?
+            (& specializations)
+            0))
+        (tc-spmd-imported-callable-has-varying-result-at?
+          callables
+          signature
+          (+ index 1))))))
+
+(define (tc-spmd-imported-call-result-class
+  [expr-ty : AstType]
+  [fn-ty : AstType]
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [args-class : TcSpmdClass]) : TcSpmdClass
+  (cond
+    [(not (tc-spmd-varying? args-class)) TcSpmdClass.Uniform]
+    [(tc-type-eq (tc-type-without-regions expr-ty) (AstType.Unit))
+      TcSpmdClass.Uniform]
+    [else
+      (let
+        [signature : String (tc-type-render (tc-type-without-regions fn-ty))]
+        (cond
+          [(tc-spmd-imported-callable-has-varying-result-at?
+              callables
+              signature
+              0)
+            TcSpmdClass.Varying]
+          [(tc-spmd-imported-callable-has-specialization-at?
+              callables
+              signature
+              0)
+            TcSpmdClass.Uniform]
+          [else TcSpmdClass.Varying]))]))
+
+(define (tc-spmd-imported-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr-ty : AstType]
+  [fn-ty : AstType]
+  [callables : (& callables AstImportedSpmdCallableList)]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcSpmdExprInfo
+  (match (tc-spmd-expr ctx env spmd-env func)
+    [(ResultTcSpmdExprInfo.Ok func-info)
+      (match func-info
+        [(TcSpmdExprInfo _ _ func-env)
+          (match (tc-spmd-expr-list ctx env func-env args)
+            [(ResultTcSpmdExprListInfo.Ok args-info)
+              (match args-info
+                [(TcSpmdExprListInfo args-class args-env)
+                  (tc-spmd-finish-ctx
+                    ctx
+                    expr-ty
+                    (tc-spmd-imported-call-result-class
+                      expr-ty
+                      fn-ty
+                      callables
+                      args-class)
+                    args-env)])]
             [(ResultTcSpmdExprListInfo.Err message)
               (ResultTcSpmdExprInfo.Err message)])])]
     [(ResultTcSpmdExprInfo.Err message) (ResultTcSpmdExprInfo.Err message)]))
@@ -29381,6 +29513,18 @@
                       (tc-spmd-finish expr-ty TcSpmdClass.Uniform caller-next))])]
               [(ResultTcSpmdInlineCallState.Err message)
                 (ResultTcSpmdExprInfo.Err message)]))]
+        [(TcSpmdInlineHelper.Imported fn-ty callables)
+          (let
+            [callable-items : AstImportedSpmdCallableList (box-get callables)]
+            (tc-spmd-imported-call
+              ctx
+              env
+              spmd-env
+              expr-ty
+              fn-ty
+              (& callable-items)
+              func
+              args))]
         [(TcSpmdInlineHelper.No)
           (tc-spmd-call-uniform-only ctx env spmd-env expr-ty func args)])]
     [(ResultTcSpmdInlineHelper.Err message) (ResultTcSpmdExprInfo.Err message)]))
@@ -29458,6 +29602,8 @@
                       body)])]
               [(ResultTcSpmdInlineCallState.Err message)
                 (ResultTcUnit.Err message)]))]
+        [(TcSpmdInlineHelper.Imported _ _)
+          (tc-spmd-masked-if-expr-list ctx env spmd-env args)]
         [(TcSpmdInlineHelper.No)
           (tc-spmd-masked-if-unsupported "varying calls inside masked branches")])]
     [(ResultTcSpmdInlineHelper.Err message) (ResultTcUnit.Err message)]))
@@ -41777,7 +41923,7 @@
   [metadata : AstExternMetadata]
   [ty : AstType]) : ResultTcUnit
   (match metadata
-    [(AstExternMetadata.Metadata abi _ _ _)
+    [(AstExternMetadata.Metadata abi _ _ _ _)
       (let
         [explicit-abi : bool (ast-extern-metadata-explicit-abi? metadata)]
         [resolved : AstType (tc-resolve-type ctx ty)]
@@ -62448,6 +62594,41 @@
   (define macro-expand-stdlib-tlci-catalog-cache : tc_string_i64_map.Map
     (tc_string_i64_map.new)))
 
+;; The catalog cache outlives every expansion-scoped scratch arena and its
+;; buckets regrow on insert; keep all of its allocations in the interner's
+;; persistent arena so sustained self-compiles cannot leave dangling buckets.
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-expand-stdlib-tlci-catalog-cache-reset!) : unit
+    (let
+      [previous-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set (compiler-load-provenance-arena)))
+        (set! macro-expand-stdlib-tlci-catalog-cache (tc_string_i64_map.new))
+        (unsafe
+          (arena.tl_arena_set previous-arena))))))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (macro-expand-stdlib-tlci-catalog-cache-insert!
+    [name : String]
+    [outcome : i64]) : unit
+    (let
+      ;; Intern the key: identity strings are built in expansion scratch
+      ;; arenas, and the map stores the key by value.
+      [stable-name : String (ci.intern-str (ci.intern name))]
+      [previous-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set (compiler-load-provenance-arena)))
+        (tc_string_i64_map.insert-ref!
+          (&mut macro-expand-stdlib-tlci-catalog-cache)
+          stable-name
+          outcome)
+        (unsafe
+          (arena.tl_arena_set previous-arena))))))
+
 (cfg
   embedded-stdlib-tlci
   (define (macro-expand-stdlib-tlci-catalog-lookup-cached [name : String]) : CompilerEmbeddedStdlibTlciLookup
@@ -62466,8 +62647,7 @@
           [lookup : CompilerEmbeddedStdlibTlciLookup
             (compiler-embedded-stdlib-tlci-catalog-lookup name)]
           (begin
-            (tc_string_i64_map.insert-ref!
-              (&mut macro-expand-stdlib-tlci-catalog-cache)
+            (macro-expand-stdlib-tlci-catalog-cache-insert!
               name
               (match lookup
                 [(CompilerEmbeddedStdlibTlciLookup.Cataloged) 1]
@@ -62482,7 +62662,9 @@
   (if (or
     (ctfe-string-prefix? definition-module "stdlib.")
     (ctfe-string-prefix? macro-name "stdlib."))
-    (if macro-expand-stdlib-tlci-route-active
+    (if (and
+      macro-expand-stdlib-tlci-route-active
+      (compiler-load-embedded-stdlib-module-id? definition-module))
       (begin
         (cfg
           embedded-stdlib-tlci
@@ -62561,6 +62743,7 @@
           (str_cat.str-cat definition-module "/" macro-name))]
       (if (or
         (not macro-expand-stdlib-tlci-route-active)
+        (not (compiler-load-embedded-stdlib-module-id? definition-module))
         (not
           (match (macro-expand-stdlib-tlci-catalog-lookup-cached identity)
             [(CompilerEmbeddedStdlibTlciLookup.Cataloged) true]
@@ -68833,15 +69016,38 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
+    ;; The embedded-source flag is only set when stdlib modules actually load
+    ;; from the embedded payload; a compile with an explicit stdlib root never
+    ;; sets it. Extra roots (the compiler's own src root during self-compiles)
+    ;; therefore must not disable the route -- the catalog identity check
+    ;; still gates every dispatch to embedded-stdlib-defined macros.
+    ;; Windows: a scale-dependent memory corruption in sustained native
+    ;; dispatch is still open (three fixed layers deep: provenance arenas,
+    ;; mapping lifetime, guard-page probes; the residual fault surfaces at
+    ;; unrelated allocations after ~13k dispatches). Until it is pinned,
+    ;; Windows keeps the interpreted route -- identical behavior to main.
+    ;; Native dispatch is opt-in (--cfg tlci-native-route) until its
+    ;; environmental sensitivity is closed out: parity holds everywhere it
+    ;; runs, but sustained dispatch has shown machine-dependent instability
+    ;; (#5460 on Windows; CI-runner-only failures on Linux) that local
+    ;; batteries cannot reproduce. The routing contracts build with the cfg
+    ;; so the machinery stays continuously verified.
     (set!
       macro-expand-stdlib-tlci-route-active
-      (and
-        (= (svec.len (& stdlib-roots)) 0)
-        (compiler-load-session-state-embedded-stdlib-source-used? load-state)))
+      (cfg
+        tlci-native-route
+        (cfg
+          windows
+          false
+          (or
+            (compiler-load-session-state-embedded-stdlib-source-used?
+              load-state)
+            (compiler-load-embedded-provenance-noted?)))
+        false))
     (cfg
       embedded-stdlib-tlci
       (if macro-expand-stdlib-tlci-route-active
-        (set! macro-expand-stdlib-tlci-catalog-cache (tc_string_i64_map.new))
+        (macro-expand-stdlib-tlci-catalog-cache-reset!)
         unit))
     (cfg embedded-stdlib-tlci (compiler-embedded-stdlib-tlci-session-close!))
     (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
@@ -69512,21 +69718,74 @@
     ;; Validate payload cleanup requirements without looking for a user body.
     (tc-check-cleanup-enum-variants ctx env enum-name name-id cleanup variants)))
 
-;: Check one function declaration's body against its signature.
+(define (tc-check-fn-params-from-types-at
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [types : (& types AstTypeList)]
+  [index : i64]
+  [out : (&mut out AstParamList)]) : unit
+  (if (>= index (ast-param-list-len params))
+    unit
+    (begin
+      (match (ast-param-list-get params index (ast-param-fallback))
+        [(AstParam.Param name _ mutable? consume?)
+          (ast-param-list-push
+            out
+            (AstParam.Param
+              name
+              (ast-type-strip-consuming-param
+                (tc-context-type-get
+                  ctx
+                  (ast-type-list-get types index (ast-type-id-fallback))))
+              mutable?
+              consume?))])
+      (tc-check-fn-params-from-types-at ctx params types (+ index 1) out))))
+
+(define (tc-check-fn-params-from-types
+  [ctx : TcContext]
+  [params : AstParamList]
+  [types : AstTypeList]) : AstParamList
+  (let
+    [out : AstParamList
+      (ast-param-list-with-capacity (ast-param-list-len (& params)))]
+    (begin
+      (tc-check-fn-params-from-types-at ctx (& params) (& types) 0 (&mut out))
+      out)))
+
+(define (tc-check-fn-registered-params
+  [ctx : TcContext]
+  [global-env : TcTypeEnv]
+  [name : i64]
+  [params : AstParamList]) : AstParamList
+  (match (tc-lookup-persistent-id global-env name)
+    [(ResultTcType.Ok (AstType.Func types _))
+      (let
+        [registered : AstTypeList (box-get types)]
+        (if (=
+          (ast-type-list-len (& registered))
+          (ast-param-list-len (& params)))
+          (tc-check-fn-params-from-types ctx params registered)
+          params))]
+    [_ params]))
+
+;: Check one function declaration's body against its registered signature.
 (define (tc-check-fn-decl-body
   [ctx : TcContext]
   [global-env : TcTypeEnv]
+  [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body-box : i64]) : ResultTcUnit
   (let
     [body : AstExpr (ast-node-get body-box)]
+    [registered-params : AstParamList
+      (tc-check-fn-registered-params ctx global-env name params)]
     [carrier : TcTypeEnvScopedCarrier
       (tc-type-env-scoped-carrier-bind-return-type
         (tc-type-env-scoped-carrier-bind-params
           ctx
           (tc-type-env-scoped-carrier-from-env global-env)
-          params)
+          registered-params)
         (tc-resolve-type ctx ret))]
     [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
     [scoped-save : TcTypeEnvScopedRuntimeSave
@@ -69538,12 +69797,12 @@
           (let
             [persistent : TcTypeEnv
               (tc-bind-return-type
-                (tc-bind-params ctx global-env params)
+                (tc-bind-params ctx global-env registered-params)
                 (tc-resolve-type ctx ret))]
             (if (tc-type-env-scoped-carrier-fn-entry-matches-persistent?
               carrier
               persistent
-              params)
+              registered-params)
               unit
               (io.panic
                 "typecheck: scoped carrier diverged from persistent function env")))
@@ -69572,14 +69831,18 @@
                   got
                   "return value")
                   [(ResultTcUnit.Ok)
-                    (match (tc-move-check-body-id ctx env params body-box)
+                    (match (tc-move-check-body-id
+                      ctx
+                      env
+                      registered-params
+                      body-box)
                       [(ResultTcUnit.Ok)
                         (let
                           [result : ResultTcUnit
                             (tc-borrow-check-body-id-with-ret
                               ctx
                               env
-                              params
+                              registered-params
                               ret
                               body-box)]
                           (begin
@@ -69664,6 +69927,7 @@
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
   [global-env : TcTypeEnv]
+  [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body-box : i64]) : ResultTcUnit
@@ -69676,7 +69940,7 @@
       (let
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultTcUnit
-          (tc-check-fn-decl-body ctx global-env params ret body-box)]
+          (tc-check-fn-decl-body ctx global-env name params ret body-box)]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
@@ -69819,12 +70083,13 @@
     ;; walk, so keep cache entries scoped to one checked declaration.
     (tc-nominal-owner-cache-reset!)
     (match decl
-      [(AstDecl.DefFn decl-meta _ params ret body-box _)
+      [(AstDecl.DefFn decl-meta name params ret body-box _)
         (match (tc-elide-function-signature params ret)
           [(ResultTcElidedSignature.Ok signature)
             (tc-check-fn-decl-scoped
               ctx
               global-env
+              name
               (struct-get signature params)
               (struct-get signature ret)
               body-box)]
@@ -69862,7 +70127,7 @@
           (match (tc-expr-id ctx global-env expr-box)
             [(ResultTcType.Ok _) ResultTcUnit.Ok]
             [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
-    [(AstDecl.DefFn decl-meta _ params ret body-box _)
+    [(AstDecl.DefFn decl-meta name params ret body-box _)
       ;; Unreachable via the dispatcher above; kept so a direct call can never
       ;; silently skip a function body check.
       (match (tc-elide-function-signature params ret)
@@ -69870,6 +70135,7 @@
           (tc-check-fn-decl-scoped
             ctx
             global-env
+            name
             (struct-get signature params)
             (struct-get signature ret)
             body-box)]

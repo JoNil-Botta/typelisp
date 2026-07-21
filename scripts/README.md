@@ -44,7 +44,7 @@ rg -n 'scripts/<script-name>' .
 | Check public CLI behavior | `verify-public-tools.sh`, `check-stage1-wrapper.sh` |
 | Check native behavior | `verify-integration.sh`, `verify-native-link-linux.sh`, `verify-native-link-windows.sh` |
 | Check codegen shape and parity | `verify-asm-shape-gates.sh`, `check-codegen-target-parity.sh`, `check-backend-target-asm-parity.sh` |
-| Check SPMD behavior | `verify-spmd-simd.sh`, `verify-spmd-runtime-dispatch.sh`, `verify-spmd-broadcast.sh`, `verify-spmd-lane-identity.sh` |
+| Check SPMD behavior | `verify-spmd-simd.sh`, `verify-spmd-runtime-dispatch.sh`, `verify-spmd-package-calls.sh`, `verify-spmd-broadcast.sh`, `verify-spmd-lane-identity.sh` |
 | Check docs and stdlib | `verify-doc-site.sh`, `verify-doc-tests.sh`, `verify-stdlib.sh`, `verify-stdlib-selfhost.sh`, `verify-stdlib-docs.sh` |
 | Check performance policy | `check-instruction-counts.sh`, `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `bench.sh`, `run-optimization-benchmarks.sh` |
 

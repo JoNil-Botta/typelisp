@@ -5495,6 +5495,7 @@
           (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-prologue-bytes
+              (CompilerBackendTarget.Linux)
               (compiler-backend-frame-size 8)))
           ;; Pack word1, copy it to the next pair, then extract it.
           (cobj.compiler-object-section-contains-bytes?
@@ -5547,6 +5548,23 @@
     (compiler-backend-descriptor-pair-target-ok? (CompilerBackendTarget.Linux))
     (compiler-backend-descriptor-pair-target-ok?
       (CompilerBackendTarget.Windows))))
+
+(define (compiler-backend-object-windows-stack-probe-ok?) : bool
+  (let
+    [linux : String
+      (compiler-backend-object-prologue-bytes
+        (CompilerBackendTarget.Linux)
+        8192)]
+    [windows : String
+      (compiler-backend-object-prologue-bytes
+        (CompilerBackendTarget.Windows)
+        8192)]
+    [direct : String
+      (compiler-backend-object-bytes-from-hex "554889e54881ec00200000")]
+    [probed : String
+      (compiler-backend-object-bytes-from-hex
+        "554889e54881ec00100000830c24004881ec00100000")]
+    (and (string.eq linux direct) (string.eq windows probed))))
 
 (define (compiler-backend-reg-part-entry-ok?
   [reg : String]
@@ -26108,6 +26126,33 @@
                               [_ false])]
                           [_ false]))])))]))))))
 
+;; Win64 passes the third integer argument in %r8. A non-imm32 guard used to
+;; scavenge %r8 before the prologue and then return that clobbered register on
+;; the bare path. Scratch-requiring prefixes must fail closed to the ordinary
+;; always-framed function until prefix emission has a dedicated live-in-aware
+;; scratch plan.
+(define compiler-backend-shrinkwrap-large-guard-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define (guard-large [x : i64] [unused : i64] [bare-result : i64]) : i64
+  (if (= x 4294967296)
+    bare-result
+    (guard-large (opaque x) unused bare-result)))
+(define (main) : i64 (guard-large (opaque 1) 7 42))")
+
+(define (compiler-backend-shrinkwrap-large-guard-win64-ok?) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    compiler-backend-shrinkwrap-large-guard-source
+    (CompilerBackendTarget.Windows))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_guard_large")]
+        (and
+          (not (string.eq body ""))
+          (compiler-backend-string-contains? body "4294967296")
+          (not (compiler-backend-string-contains? body "__shrinkwrap"))))]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-scavenge-occupancy-cache-ok?) : bool
   (let
     [starts : (Array i64) (make-array i64 5)]
@@ -26881,6 +26926,7 @@
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-emit-current-count-gate-ok?)
         (compiler-backend-shrinkwrap-admission-state-ok?)
+        (compiler-backend-shrinkwrap-large-guard-win64-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
@@ -26899,7 +26945,8 @@
       (and
         (compiler-backend-aggregate-ok?)
         (compiler-backend-pack-immediate-word-shape-ok?)
-        (compiler-backend-descriptor-pair-ok?)))
+        (compiler-backend-descriptor-pair-ok?)
+        (compiler-backend-object-windows-stack-probe-ok?)))
     (backend-and8
       (compiler-backend-literal-payload-ok?)
       (and

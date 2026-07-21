@@ -13,6 +13,7 @@
 (import "compiler_diagnostic.tl")
 (import compiler_intern as ci)
 (import "compiler_load.tl")
+(cfg embedded-stdlib-tlci (import "compiler_surface_hydrate.tl"))
 (import "compiler_optimize.tl")
 (import stdlib.text_buf)
 (import sym_i64_env)
@@ -58,7 +59,8 @@
   (builtin-ids (Array cbi.CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
-  (pool-arena (Array i64)))
+  (pool-arena (Array i64))
+  (surface-arena i64))
 
 (define (compiler-driver-state-new-from-pools-and-arena
   [expr-pool : AstExprNodePoolState]
@@ -76,6 +78,7 @@
     [lower-cell : (Array CompilerLowerArenaState)
       (array.make-array CompilerLowerArenaState 1)]
     [pool-arena-cell : (Array i64) (array.make-array i64 1)]
+    [surface-arena : i64 (arena.tl_arena_make)]
     (begin
       (array-set! expr-cell 0 expr-pool)
       (array-set! type-cell 0 type-pool)
@@ -91,7 +94,8 @@
         builtin-cell
         lower-cell
         (compiler-load-session-state-new)
-        pool-arena-cell))))
+        pool-arena-cell
+        surface-arena))))
 
 (define (compiler-driver-state-new-from-pools
   [expr-pool : AstExprNodePoolState]
@@ -264,6 +268,9 @@
 
 (define (compiler-driver-state-owned-pool-arena [state : CompilerDriverState]) : i64
   (array-ref (struct-get state pool-arena) 0))
+
+(define (compiler-driver-state-surface-arena [state : CompilerDriverState]) : i64
+  (struct-get state surface-arena))
 
 (define (compiler-driver-state-has-owned-pool-arena?
   [state : CompilerDriverState]) : bool
@@ -798,6 +805,14 @@
     0))
 (cfg
   compile-profile
+  (define compiler-driver-profile-prelude-source-pipeline-entries : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-prelude-hydrations : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-driver-profile-best-peak : i64
     0))
 (cfg
@@ -1100,6 +1115,8 @@
   compile-profile
   (define (compiler-driver-profile-start-total) : unit
     (begin
+      (set! compiler-driver-profile-prelude-source-pipeline-entries 0)
+      (set! compiler-driver-profile-prelude-hydrations 0)
       (set! compiler-driver-profile-total-start-ms (profile.now-ms))
       (set! compiler-driver-profile-total-start-total (profile.alloc-total))
       (set! compiler-driver-profile-total-start-live (profile.alloc-live))
@@ -1119,6 +1136,24 @@
           "compile-profile-summary|scope|kind|rank|name|elapsed_ms|calls\n")
         unit)
       (compiler-driver-profile-start-phase))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-prelude-counters) : unit
+    (begin
+      (io.print-error
+        (string.append
+          "compile-profile-detail|prelude.source_pipeline_entries|"
+          (string.append
+            (string.int->string
+              compiler-driver-profile-prelude-source-pipeline-entries)
+            "\n")))
+      (io.print-error
+        (string.append
+          "compile-profile-detail|prelude.hydrations|"
+          (string.append
+            (string.int->string compiler-driver-profile-prelude-hydrations)
+            "\n"))))))
 
 (cfg
   compile-profile
@@ -1948,39 +1983,179 @@
 ;;     that declaration macro by its hygienic canonical identity.
 ;; Loading the prelude first lets the entry's own (possibly transitive) imports
 ;; dedup against it before the decls/paths/modules are concatenated.
+(cfg
+  embedded-stdlib-tlci
+  (defenum CompilerDriverPreludeSurface
+    (Missing)
+    (Ok AstDeclList AstDeclPathList AstDeclModuleList sym_i64_env.SymI64Env)))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (compiler-driver-cfg-bindings-match?
+    [left : sym_i64_env.SymI64Env]
+    [right : sym_i64_env.SymI64Env]) : bool
+    (let
+      [cursor : sym_i64_env.SymI64Env left]
+      (begin
+        (while true
+          (match cursor
+            [(sym_i64_env.SymI64Nil) (return true)]
+            [(sym_i64_env.SymI64Bind key value rest)
+              (if (= key compiler-parse-state-marker-id)
+                (set! cursor (box-get rest))
+                (if (and
+                  (sym_i64_env.sym-i64-contains-id right key)
+                  (= value (sym_i64_env.sym-i64-lookup-id-or right key -1)))
+                  (set! cursor (box-get rest))
+                  (return false)))]))
+        false))))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (compiler-driver-cfgs-match-default?
+    [actual : sym_i64_env.SymI64Env]
+    [target : CompilerBackendTarget]) : bool
+    (let
+      [expected : sym_i64_env.SymI64Env
+        (compiler-driver-target-cfgs target (compiler-cfg-empty))]
+      (and
+        (compiler-driver-cfg-bindings-match? actual expected)
+        (compiler-driver-cfg-bindings-match? expected actual)))))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (compiler-driver-prelude-surface-configuration
+    [cfgs : sym_i64_env.SymI64Env]) : String
+    (cond
+      [(compiler-driver-cfgs-match-default? cfgs (CompilerBackendTarget.Linux))
+        "linux-default"]
+      [(compiler-driver-cfgs-match-default?
+          cfgs
+          (CompilerBackendTarget.Windows))
+        "windows-default"]
+      [else ""])))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (compiler-driver-prelude-surface-key-valid?
+    [key : surface_identity.SurfaceIdentityKey]
+    [outer-build : String]
+    [configuration : String]) : bool
+    (and
+      (string.eq (struct-get key package-name) "stdlib.prelude")
+      (string.eq (struct-get key compiler-build) outer-build)
+      (string.eq (struct-get key configuration) configuration)
+      (> (string.string-length (struct-get key source-hash)) 0))))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (compiler-driver-hydrate-prelude-rodata
+    [outer-build : String]
+    [rodata : (Array u8)]
+    [configuration : String]
+    [pools : AstNodePoolContext]) : CompilerDriverPreludeSurface
+    (match (compiler-surface-key rodata)
+      [(ResultCompilerSurfaceKey.Missing) CompilerDriverPreludeSurface.Missing]
+      [(ResultCompilerSurfaceKey.Err _) CompilerDriverPreludeSurface.Missing]
+      [(ResultCompilerSurfaceKey.Ok key)
+        (if (not
+          (compiler-driver-prelude-surface-key-valid?
+            key
+            outer-build
+            configuration))
+          CompilerDriverPreludeSurface.Missing
+          (match (compiler-surface-hydrate rodata key pools)
+            [(ResultCompilerSurfaceHydration.Missing)
+              CompilerDriverPreludeSurface.Missing]
+            [(ResultCompilerSurfaceHydration.KeyMismatch _)
+              CompilerDriverPreludeSurface.Missing]
+            [(ResultCompilerSurfaceHydration.Err _)
+              CompilerDriverPreludeSurface.Missing]
+            [(ResultCompilerSurfaceHydration.Ok hydration)
+              (CompilerDriverPreludeSurface.Ok
+                (struct-get hydration decls)
+                (struct-get hydration paths)
+                (struct-get hydration modules)
+                (struct-get hydration seen))]))])))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (compiler-driver-try-hydrate-runtime-prelude
+    [stdlib-roots : svec.Vec]
+    [cfgs : sym_i64_env.SymI64Env]
+    [pools : AstNodePoolContext]
+    [surface-arena : i64]) : CompilerDriverPreludeSurface
+    (let
+      [configuration : String
+        (compiler-driver-prelude-surface-configuration cfgs)]
+      (if (or
+        (= surface-arena 0)
+        (> (svec.len (& stdlib-roots)) 0)
+        (= (string.string-length configuration) 0))
+        CompilerDriverPreludeSurface.Missing
+        (let
+          [previous-arena : i64 (arena.tl_arena_current)]
+          [_set-surface-arena : unit
+            (unsafe
+              (arena.tl_arena_set surface-arena))]
+          [result : CompilerDriverPreludeSurface
+            (match (compiler-embedded-stdlib-tlci-surface)
+              [(CompilerEmbeddedStdlibTlciSurface.Unavailable _)
+                CompilerDriverPreludeSurface.Missing]
+              [(CompilerEmbeddedStdlibTlciSurface.Ok outer-build rodata)
+                (compiler-driver-hydrate-prelude-rodata
+                  outer-build
+                  rodata
+                  configuration
+                  pools)])]
+          (begin
+            (unsafe
+              (arena.tl_arena_set previous-arena))
+            result))))))
+
+(define (compiler-driver-note-prelude-source-pipeline!) : unit
+  (cfg
+    compile-profile
+    (set!
+      compiler-driver-profile-prelude-source-pipeline-entries
+      (+ compiler-driver-profile-prelude-source-pipeline-entries 1))
+    unit))
+
 (define (compiler-driver-load-runtime-prelude-cold
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-file-with-paths-and-roots-cfg
-    "stdlib/runtime.tl"
-    (sym_i64_env.sym-i64-empty)
-    stdlib-roots
-    cfgs)
-    [(ResultCompilerLoadWithPaths.Ok
-        runtime-decls
-        runtime-paths
-        runtime-modules
-        runtime-seen)
-      (match (compiler-load-core-macro-prelude-with-roots-cfg
-        runtime-seen
-        stdlib-roots
-        cfgs)
-        [(ResultCompilerLoadWithPaths.Ok
-            macro-decls
-            macro-paths
-            macro-modules
-            macro-seen)
-          (ResultCompilerLoadWithPaths.Ok
-            (compiler-load-decl-list-append runtime-decls macro-decls)
-            (compiler-load-decl-path-list-append runtime-paths macro-paths)
-            (compiler-load-decl-module-list-append
-              runtime-modules
-              macro-modules)
-            macro-seen)]
-        [(ResultCompilerLoadWithPaths.Err diag)
-          (ResultCompilerLoadWithPaths.Err diag)])]
-    [(ResultCompilerLoadWithPaths.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
+  (begin
+    (compiler-driver-note-prelude-source-pipeline!)
+    (match (compiler-load-file-with-paths-and-roots-cfg
+      "stdlib/runtime.tl"
+      (sym_i64_env.sym-i64-empty)
+      stdlib-roots
+      cfgs)
+      [(ResultCompilerLoadWithPaths.Ok
+          runtime-decls
+          runtime-paths
+          runtime-modules
+          runtime-seen)
+        (match (compiler-load-core-macro-prelude-with-roots-cfg
+          runtime-seen
+          stdlib-roots
+          cfgs)
+          [(ResultCompilerLoadWithPaths.Ok
+              macro-decls
+              macro-paths
+              macro-modules
+              macro-seen)
+            (ResultCompilerLoadWithPaths.Ok
+              (compiler-load-decl-list-append runtime-decls macro-decls)
+              (compiler-load-decl-path-list-append runtime-paths macro-paths)
+              (compiler-load-decl-module-list-append
+                runtime-modules
+                macro-modules)
+              macro-seen)]
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])]
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (compiler-driver-load-runtime-prelude-cache-miss
   [key : CompilerLoadPreludeCacheKey]
@@ -2102,40 +2277,42 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-file-with-paths-and-roots-cfg-with-pools
-    load-state
-    "stdlib/runtime.tl"
-    (sym_i64_env.sym-i64-empty)
-    stdlib-roots
-    cfgs
-    pools)
-    [(ResultCompilerLoadWithPaths.Ok
-        runtime-decls
-        runtime-paths
-        runtime-modules
-        runtime-seen)
-      (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
-        load-state
-        runtime-seen
-        stdlib-roots
-        cfgs
-        pools)
-        [(ResultCompilerLoadWithPaths.Ok
-            macro-decls
-            macro-paths
-            macro-modules
-            macro-seen)
-          (ResultCompilerLoadWithPaths.Ok
-            (compiler-load-decl-list-append runtime-decls macro-decls)
-            (compiler-load-decl-path-list-append runtime-paths macro-paths)
-            (compiler-load-decl-module-list-append
-              runtime-modules
-              macro-modules)
-            macro-seen)]
-        [(ResultCompilerLoadWithPaths.Err diag)
-          (ResultCompilerLoadWithPaths.Err diag)])]
-    [(ResultCompilerLoadWithPaths.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
+  (begin
+    (compiler-driver-note-prelude-source-pipeline!)
+    (match (compiler-load-file-with-paths-and-roots-cfg-with-pools
+      load-state
+      "stdlib/runtime.tl"
+      (sym_i64_env.sym-i64-empty)
+      stdlib-roots
+      cfgs
+      pools)
+      [(ResultCompilerLoadWithPaths.Ok
+          runtime-decls
+          runtime-paths
+          runtime-modules
+          runtime-seen)
+        (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+          load-state
+          runtime-seen
+          stdlib-roots
+          cfgs
+          pools)
+          [(ResultCompilerLoadWithPaths.Ok
+              macro-decls
+              macro-paths
+              macro-modules
+              macro-seen)
+            (ResultCompilerLoadWithPaths.Ok
+              (compiler-load-decl-list-append runtime-decls macro-decls)
+              (compiler-load-decl-path-list-append runtime-paths macro-paths)
+              (compiler-load-decl-module-list-append
+                runtime-modules
+                macro-modules)
+              macro-seen)]
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])]
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (compiler-driver-load-runtime-prelude-cache-miss-with-state-and-pools
   [load-state : CompilerLoadSessionState]
@@ -2187,7 +2364,7 @@
     cfgs
     pools))
 
-(define (compiler-driver-load-runtime-prelude-with-state-and-pools
+(define (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
   [load-state : CompilerLoadSessionState]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
@@ -2217,6 +2394,53 @@
       cfgs
       pools)))
 
+(define (compiler-driver-load-runtime-prelude-with-state-pools-and-surface
+  [load-state : CompilerLoadSessionState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  ;; lint-allow: unused-variable -- used by embedded-stdlib-tlci builds.
+  [surface-arena : i64]) : ResultCompilerLoadWithPaths
+  (cfg
+    embedded-stdlib-tlci
+    (match (compiler-driver-try-hydrate-runtime-prelude
+      stdlib-roots
+      cfgs
+      pools
+      surface-arena)
+      [(CompilerDriverPreludeSurface.Missing)
+        (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
+          load-state
+          stdlib-roots
+          cfgs
+          pools)]
+      [(CompilerDriverPreludeSurface.Ok decls paths modules seen)
+        (begin
+          (cfg
+            compile-profile
+            (set!
+              compiler-driver-profile-prelude-hydrations
+              (+ compiler-driver-profile-prelude-hydrations 1))
+            unit)
+          (ResultCompilerLoadWithPaths.Ok decls paths modules seen))])
+    (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
+      load-state
+      stdlib-roots
+      cfgs
+      pools)))
+
+(define (compiler-driver-load-runtime-prelude-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-driver-load-runtime-prelude-with-state-pools-and-surface
+    load-state
+    stdlib-roots
+    cfgs
+    pools
+    0))
+
 (define (compiler-driver-load-runtime-prelude-with-pools
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
@@ -2227,17 +2451,19 @@
     cfgs
     pools))
 
-(define (compiler-driver-load-file-with-runtime-with-state-and-pools
+(define (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
   [load-state : CompilerLoadSessionState]
   [input-path : String]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match (compiler-driver-load-runtime-prelude-with-state-and-pools
+  [pools : AstNodePoolContext]
+  [surface-arena : i64]) : ResultCompilerLoadWithPaths
+  (match (compiler-driver-load-runtime-prelude-with-state-pools-and-surface
     load-state
     stdlib-roots
     cfgs
-    pools)
+    pools
+    surface-arena)
     [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
@@ -2266,6 +2492,20 @@
           (ResultCompilerLoadWithPaths.Err diag)])]
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
+
+(define (compiler-driver-load-file-with-runtime-with-state-and-pools
+  [load-state : CompilerLoadSessionState]
+  [input-path : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
+    load-state
+    input-path
+    stdlib-roots
+    cfgs
+    pools
+    0))
 
 (define (compiler-driver-load-file-with-runtime-with-pools
   [input-path : String]
@@ -2496,15 +2736,17 @@
       (compiler-parse-state-type-literal-reset! parser-state)]
     [parse-cfgs : sym_i64_env.SymI64Env
       (compiler-parse-state-cfgs parser-state cfgs)]
-    (match (compiler-driver-load-file-with-runtime-with-state-and-pools
+    (match (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
       (struct-get state load-session)
       input-path
       stdlib-roots
       parse-cfgs
-      pools)
+      pools
+      (compiler-driver-state-surface-arena state))
       [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (cfg compile-profile (compiler-driver-profile-prelude-counters))
           (compiler-driver-allocation-profile-snapshot! "load")
           (cfg compile-profile (compiler-driver-profile-start-phase))
           ;; Parsing initialized builtin IDs for this state's active intern

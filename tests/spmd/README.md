@@ -147,6 +147,10 @@ compile and run in `avx2` and `avx512`.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
   i64/i32/f64, f32 `sum`, plus `all`/`any` bool reductions across empty,
   sub-lane, exact-lane, tail, signed-zero, and finite-overflow cases. Exit 42.
+- `map_fused_reduce_i64.tl` - i64 `sum` over `values[i] + uniform`, including
+  empty, sub-gang, exact-gang, and tail ranges plus a neutral lane-index term.
+  All modes exit 42; SIMD assembly gates require a vectorized map feeding one
+  vector-resident accumulator and a single post-loop horizontal reduction.
 - `../integration/spmd_scan_scalar.tl` - `spmd-scan` inclusive prefixes for
   i64 sum/min/max, i32 sum/min/max, and bool all/any across empty, sub-lane,
   exact-lane, multiple-gang, and tail lengths. Scalar and AVX2 execute the
@@ -218,9 +222,11 @@ Coverage map:
   varying calls remain rejected by the safety fixtures.
 - `spmd-reduce` and `spmd-scan` coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
-  `../integration/spmd_scan_scalar.tl`. The former also executes f32 sums; the
-  latter requires native AVX2 prefixes for canonical contiguous shapes and
-  scalar reference lowering elsewhere through `scripts/verify-spmd-simd.sh`.
+  `../integration/spmd_scan_scalar.tl`. `map_fused_reduce_i64.tl` covers
+  contiguous array reads combined with uniform and lane terms. The former also
+  executes f32 sums; the latter requires native AVX2 prefixes for canonical
+  contiguous shapes and scalar reference lowering elsewhere through
+  `scripts/verify-spmd-simd.sh`.
 - `spmd-broadcast` executable coverage lives in the `broadcast_lane*_{i64,u64,u32}.tl`
   fixtures, with mode-specific expectations in `scripts/verify-spmd-broadcast.sh`.
 - `spmd-shuffle` scalar and native AVX2/AVX-512 coverage lives in

@@ -580,11 +580,10 @@
       (not (compiler-ir-instr-seq-bounds-check? seq 0))
       (compiler-ir-instr-seq-bounds-check? seq 1)
       (compiler-ir-instr-seq-return? seq 3)
-      (= (compiler-ir-instr-seq-binop-lhs-var-for-dst-or seq 2 8 (- 0 1)) 7)
-      (=
-        (compiler-ir-instr-seq-binop-lhs-var-for-dst-or seq 2 9 (- 0 2))
-        (- 0 2))
-      (= (compiler-ir-instr-array-binop-lhs-var-for-dst-or slots 2 8 (- 0 1)) 7))))
+      (match (compiler-ir-instr-seq-ref seq 2)
+        [(CompilerIrInstr.BinOp dst _ (CompilerIrValue.Var lhs) _ _)
+          (and (= dst 8) (= lhs 7))]
+        [_ false]))))
 
 (define (main) : i64
   (begin

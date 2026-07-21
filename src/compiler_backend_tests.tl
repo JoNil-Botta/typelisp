@@ -4214,9 +4214,10 @@
         (CompilerBackendMaybeLabel.No))
         [(ResultCompilerBackend.Ok asm)
           (and
-            ;; `0 < %r9` is emitted as `%r9 > 0`; no scratch can alias the
-            ;; RHS between its definition and this compare.
-            (compiler-backend-string-contains? asm "    cmpq $0, %r9\n")
+            ;; `0 < %r9` is emitted as `%r9 > 0`; the zero compare now uses
+            ;; the register self-test form and needs no scratch at all.
+            (compiler-backend-string-contains? asm "    testq %r9, %r9\n")
+            (not (compiler-backend-string-contains? asm "    cmpq $0, %r9\n"))
             (not (compiler-backend-string-contains? asm "    cmpq %r9, %r9\n")))]
         [(ResultCompilerBackend.Err _) false])]
     [_linux : unit (compiler-backend-set-current-fn-linux!)]
@@ -7252,6 +7253,7 @@
     (compiler-backend-branch-fallthrough-ok?)
     (compiler-backend-zero-load-ok?)
     (compiler-backend-zero-compare-ok?)
+    (compiler-backend-scalar-select-ok?)
     (compiler-backend-call-return-ok?)
     (compiler-backend-global-immediate-store-ok?)
     (compiler-backend-scratch-staging-direct-shapes-ok?)))
@@ -7338,22 +7340,94 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-zero-compare-ok?) : bool
-  (match (compiler-backend-emit-binop
-    (CompilerRegVarTypeList.Nil)
-    (CompilerBackendGlobalTypeList.Nil)
-    (compiler-backend-peephole-assignments)
-    2
-    (CompilerIrBinOp.Eq)
-    (CompilerIrValue.Var 0)
-    (CompilerIrValue.I64 0)
-    (AstType.I64))
-    [(ResultCompilerBackend.Ok asm)
-      (and
-        (compiler-backend-string-contains?
-          asm
-          "    testq %r13, %r13\n    sete %r13b\n")
-        (not (compiler-backend-string-contains? asm "    cmpq $0, %rax\n")))]
-    [(ResultCompilerBackend.Err _) false]))
+  (and
+    (match (compiler-backend-emit-binop
+      (CompilerRegVarTypeList.Nil)
+      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-peephole-assignments)
+      2
+      (CompilerIrBinOp.Eq)
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    testq %r13, %r13\n    sete %r13b\n")
+          (not (compiler-backend-string-contains? asm "    cmpq $0")))]
+      [(ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-emit-binop
+      (CompilerRegVarTypeList.Nil)
+      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-peephole-assignments)
+      2
+      (CompilerIrBinOp.Gt)
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    testq %r13, %r13\n    setg %r13b\n")
+          (not (compiler-backend-string-contains? asm "    cmpq $0")))]
+      [(ResultCompilerBackend.Err _) false])
+    (match (compiler-backend-emit-binop
+      (CompilerRegVarTypeList.Nil)
+      (CompilerBackendGlobalTypeList.Nil)
+      (compiler-backend-peephole-assignments)
+      2
+      (CompilerIrBinOp.BitTestNe)
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    testq $1, %r13\n    setne %r13b\n")
+          (not (compiler-backend-string-contains? asm "    andq $1")))]
+      [(ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-scalar-select-ok?) : bool
+  (and
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (ir-instr-select
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 7)
+          (CompilerIrValue.I64 9)
+          0
+          (AstType.I64))
+        (CompilerIrInstrList.Nil))
+      (compiler-backend-peephole-assignments)
+      3)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm "    testq %r12, %r12\n")
+          (compiler-backend-string-contains? asm "    cmovne ")
+          (not (compiler-backend-string-contains? asm "    cmove ")))]
+      [(ResultCompilerBackend.Err _) false])
+    ;; x86 has no byte cmov: Bool still uses a target-independent qword cmovne.
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (ir-instr-select
+          2
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Bool true)
+          (CompilerIrValue.Bool false)
+          0
+          (AstType.Bool))
+        (CompilerIrInstrList.Nil))
+      (compiler-backend-peephole-assignments)
+      3)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm "    cmovne %r8, %r13\n")
+          (not (compiler-backend-string-contains? asm "cmovne %r8b")))]
+      [(ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-global-immediate-store-ok?) : bool
   (compiler-backend-instr-contains?
@@ -18790,7 +18864,8 @@
         "$255"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    movzbq %al, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18799,7 +18874,8 @@
         "$65535"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    movzwq %ax, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18808,7 +18884,8 @@
         "$255"
         (AstType.U32)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    movzbl %al, %eax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18817,7 +18894,8 @@
         "$65535"
         (AstType.U32)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    movzwl %ax, %eax\n")]
         [(CompilerBackendMaybeAsm.No) false]))
@@ -18827,7 +18905,8 @@
         "$254"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    andq $254, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18836,7 +18915,8 @@
         "$256"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    andq $256, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18845,7 +18925,8 @@
         "$65280"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    andq $65280, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false])
@@ -18854,7 +18935,8 @@
         "$255"
         (AstType.I64)
         "%rax"
-        "%rax")
+        "%rax"
+        false)
         [(CompilerBackendMaybeAsm.Some asm)
           (string.eq asm "    orq $255, %rax\n")]
         [(CompilerBackendMaybeAsm.No) false]))))

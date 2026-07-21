@@ -5168,16 +5168,14 @@
   [dst : i64]) : i64
   (if (>= index count)
     (- 0 1)
-    (let
-      [found : i64
-        (compiler-ir-instr-array-binop-lhs-var-for-dst-or
-          slots
-          index
-          dst
-          (- 0 2))]
-      (if (= found (- 0 2))
-        (opt-copy-binop-lhs-var-instr-seq-from slots (+ index 1) count dst)
-        found))))
+    (match (array-ref slots index)
+      [(CompilerIrInstr.BinOp actual _ lhs _ _)
+        (if (= actual dst)
+          (match lhs
+            [(CompilerIrValue.Var id) id]
+            [_ (- 0 1)])
+          (opt-copy-binop-lhs-var-instr-seq-from slots (+ index 1) count dst))]
+      [_ (opt-copy-binop-lhs-var-instr-seq-from slots (+ index 1) count dst)])))
 
 (define (opt-copy-binop-lhs-var-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -17561,6 +17559,8 @@
       [(not (opt-verify-ok? (opt-verify-function optimized))) 1]
       [(not (opt-block-list-has-label? blocks "body__bce_fast__unroll2_guard"))
         2]
+      ;; Arm-local swap/update work is deliberately not if-converted: both
+      ;; four-block unrolled diamonds remain intact.
       [(not (= (opt-bce-mb-test-matching-blocks blocks "__unroll2_0" 0) 4)) 3]
       [(not (= (opt-bce-mb-test-matching-blocks blocks "__unroll2_1" 0) 4)) 4]
       ;; The original fast peel and both pair copies remain check-free; the

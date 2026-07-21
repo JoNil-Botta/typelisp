@@ -24,6 +24,12 @@
   (Le)
   (Gt)
   (Ge)
+  ;; IR-only masked-zero comparisons. These are introduced after use-count
+  ;; analysis proves that an integer BitAnd feeds only a zero comparison, so
+  ;; the backend can lower the operation directly with `test` without
+  ;; materializing the BitAnd result.
+  (BitTestEq)
+  (BitTestNe)
   (And)
   (Or)
   (BitAnd)
@@ -43,6 +49,8 @@
     [(CompilerIrBinOp.Le) true]
     [(CompilerIrBinOp.Gt) true]
     [(CompilerIrBinOp.Ge) true]
+    [(CompilerIrBinOp.BitTestEq) true]
+    [(CompilerIrBinOp.BitTestNe) true]
     [_ false]))
 
 (define (compiler-ir-binop-result-type
@@ -1115,38 +1123,23 @@
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ false]))
 
-(define (compiler-ir-instr-binop-lhs-var-for-dst-or
-  [instr : CompilerIrInstr]
-  [dst : i64]
-  [fallback : i64]) : i64
+(defenum CompilerIrInstrScalarFact
+  (Other)
+  (BinOp i64 CompilerIrBinOp CompilerIrValue CompilerIrValue AstType)
+  (Jump String)
+  (Branch CompilerIrValue String String)
+  (Phi i64 CompilerIrPhiInputList AstType))
+
+(define (compiler-ir-instr-scalar-fact [instr : CompilerIrInstr]) : CompilerIrInstrScalarFact
   (match instr
-    [(CompilerIrInstr.BinOp actual-dst _ lhs _ _)
-      (if (= actual-dst dst)
-        (match lhs
-          [(CompilerIrValue.Var id) id]
-          [_ (- 0 1)])
-        fallback)]
-    [_ fallback]))
-
-(define (compiler-ir-instr-seq-binop-lhs-var-for-dst-or
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]
-  [dst : i64]
-  [fallback : i64]) : i64
-  (compiler-ir-instr-binop-lhs-var-for-dst-or
-    (compiler-ir-instr-seq-ref instrs index)
-    dst
-    fallback))
-
-(define (compiler-ir-instr-array-binop-lhs-var-for-dst-or
-  [slots : (Array CompilerIrInstr)]
-  [index : i64]
-  [dst : i64]
-  [fallback : i64]) : i64
-  (compiler-ir-instr-binop-lhs-var-for-dst-or
-    (array-ref slots index)
-    dst
-    fallback))
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (CompilerIrInstrScalarFact.BinOp dst op lhs rhs ty)]
+    [(CompilerIrInstr.Jump target) (CompilerIrInstrScalarFact.Jump target)]
+    [(CompilerIrInstr.Branch cond yes no)
+      (CompilerIrInstrScalarFact.Branch cond yes no)]
+    [(CompilerIrInstr.Phi dst inputs ty)
+      (CompilerIrInstrScalarFact.Phi dst inputs ty)]
+    [_ (CompilerIrInstrScalarFact.Other)]))
 
 (define (compiler-ir-instr-seq-set!
   [instrs : CompilerIrInstrSeq]
@@ -3388,26 +3381,10 @@
 
 (define (compiler-ir-bin-op-render [op : CompilerIrBinOp]) : String
   (match op
-    [(CompilerIrBinOp.Add) "add"]
-    [(CompilerIrBinOp.Sub) "sub"]
-    [(CompilerIrBinOp.Mul) "mul"]
-    [(CompilerIrBinOp.Div) "div"]
-    [(CompilerIrBinOp.Mod) "mod"]
-    [(CompilerIrBinOp.SafeDiv) "safe_div"]
-    [(CompilerIrBinOp.SafeMod) "safe_mod"]
-    [(CompilerIrBinOp.Eq) "eq"]
-    [(CompilerIrBinOp.Ne) "ne"]
-    [(CompilerIrBinOp.Lt) "lt"]
-    [(CompilerIrBinOp.Le) "le"]
-    [(CompilerIrBinOp.Gt) "gt"]
-    [(CompilerIrBinOp.Ge) "ge"]
-    [(CompilerIrBinOp.And) "and"]
-    [(CompilerIrBinOp.Or) "or"]
     [(CompilerIrBinOp.BitAnd) "bit_and"]
     [(CompilerIrBinOp.BitOr) "bit_or"]
     [(CompilerIrBinOp.BitXor) "bit_xor"]
-    [(CompilerIrBinOp.Shl) "shl"]
-    [(CompilerIrBinOp.Shr) "shr"]))
+    [_ (compiler-ir-binop-name op)]))
 
 (define (compiler-ir-un-op-render [op : CompilerIrUnOp]) : String
   (match op
@@ -5916,6 +5893,8 @@
     [(CompilerIrBinOp.Le) "le"]
     [(CompilerIrBinOp.Gt) "gt"]
     [(CompilerIrBinOp.Ge) "ge"]
+    [(CompilerIrBinOp.BitTestEq) "bit_test_eq"]
+    [(CompilerIrBinOp.BitTestNe) "bit_test_ne"]
     [(CompilerIrBinOp.And) "and"]
     [(CompilerIrBinOp.Or) "or"]
     [(CompilerIrBinOp.BitAnd) "bitand"]

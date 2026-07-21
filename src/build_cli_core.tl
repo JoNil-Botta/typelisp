@@ -13,7 +13,7 @@
 (import stdlib.hashmap)
 (import stdlib.vector)
 (import compiler_builtin_ids as cbi)
-(import (hashmap String i64) as build_string_i64_map)
+(import (hashmap.hashmap String i64) as build_string_i64_map)
 (import (vector.vector String) as cli_svec)
 (import "host_plan.tl")
 (import "build_run_core.tl")

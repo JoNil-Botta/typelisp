@@ -1,5 +1,5 @@
 (import stdlib.hashmap)
-(import (hashmap String String) as map_string_string)
+(import (hashmap.hashmap String String) as map_string_string)
 
 ; Must fail: the returned lookup is tied to the inner map, not `outer`.
 (define (main [outer : map_string_string.Map] [key : String]) : (map_string_string.BorrowedValueLookup

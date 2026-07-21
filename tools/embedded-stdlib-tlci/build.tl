@@ -10,7 +10,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 
 (define embedded-stdlib-tlci-build-error : String
   "")

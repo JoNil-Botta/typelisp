@@ -1,0 +1,32 @@
+# Bare generated-family imports that are intentionally retained.
+#
+# stdlib/hashmap.tl, stdlib/option.tl, and stdlib/set.tl call macros declared
+# in their current module. compiler_typecheck_smoke.tl embeds focused local
+# macro fixtures. The three tests named "bare" cover the temporary imported
+# self-name fallback until #5266 removes it.
+stdlib/hashmap.tl:(cfg test (import (hashmap HashNestedKey i64) as hashmap_nested_i64))
+stdlib/hashmap.tl:(cfg test (import (hashmap i64 HashState) as hashmap_i64_state))
+stdlib/hashmap.tl:(cfg test (import (hashmap i64 i64) as hashmap_i64_i64))
+stdlib/hashmap.tl:(cfg test (import (hashmap i64 String) as hashmap_i64_string))
+stdlib/hashmap.tl:(cfg test (import (hashmap String HashPayload) as hashmap_string_payload))
+stdlib/hashmap.tl:(cfg test (import (hashmap String i64) as hashmap_string_i64))
+stdlib/hashmap.tl:(cfg test (import (hashmap String String) as hashmap_string_string))
+stdlib/option.tl:(cfg test (import (option i64) as option_i64_again))
+stdlib/option.tl:(cfg test (import (option i64) as option_i64))
+stdlib/option.tl:(cfg test (import (option OptApiPoint) as option_point))
+stdlib/option.tl:(cfg test (import (option OptApiTag) as option_tag))
+stdlib/option.tl:(cfg test (import (option String) as option_string))
+stdlib/set.tl:(cfg test (import (set i64) as i64set_again))
+stdlib/set.tl:(cfg test (import (set i64) as i64set))
+stdlib/set.tl:(cfg test (import (set String) as strset))
+src/tests/compiler_typecheck_smoke.tl:      (import (vector ,T) as vec)
+src/tests/compiler_typecheck_smoke.tl:    (import (vector i64) as v)
+src/tests/compiler_typecheck_smoke.tl:(import (result i64 String) as unused-result)
+src/tests/compiler_typecheck_smoke.tl:(import (vector i64) as vec)
+src/tests/compiler_typecheck_smoke.tl:(import (vector Pair) as pvec)
+tests/inline/module_macro_generated_stdlib_vector_alias_bare_import.tl:      (import (vector ,T) as vec)
+tests/inline/module_macro_generated_stdlib_vector_alias_bare_import.tl:;; expose their self-named module macro for bare `(import (vector T) ...)` calls.
+tests/inline/module_macro_generated_stdlib_vector_alias_bare_import.tl:(import (vector i64) as direct)
+tests/inline/module_macro_generated_stdlib_vector_bare_import.tl:      (import (vector ,T))
+tests/inline/module_macro_generated_stdlib_vector_bare_import.tl:;; can use the bare `(import (vector T))` module-macro import surface.
+tests/inline/module_macro_stdlib_vector_bare_provider.tl:      (import (vector ,T))

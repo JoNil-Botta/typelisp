@@ -3,7 +3,7 @@
 (import stdlib.arena)
 (import stdlib.string)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (import "compiler_check_core.tl")
 
 ;; Tool-facing semantic data is copied into an explicitly owned arena. None of

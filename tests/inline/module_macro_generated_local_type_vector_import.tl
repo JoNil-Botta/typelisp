@@ -1,5 +1,5 @@
 ;; module_macro_generated_local_type_vector_import.tl - generated module bodies
-;; can use a locally generated type in a later `(vector T)` import.
+;; can use a locally generated type in a later `(vector.vector T)` import.
 (import stdlib.test)
 (import stdlib.vector)
 
@@ -8,7 +8,7 @@
     (module generated.local_type_vector_user)
     (defstruct T
       (value i64))
-    (import (vector T) as vec)
+    (import (vector.vector T) as vec)
     (define (make [value : i64]) : T
       (T value))
     (define (score [value : T]) : i64

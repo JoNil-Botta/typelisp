@@ -35,7 +35,7 @@
   (message String)
   (span FormatSourceSpan))
 
-(import (result i64 FormatSourceError) as result_fmt_i64)
+(import (result.result i64 FormatSourceError) as result_fmt_i64)
 
 (defstruct FormatTokenStream
   (source String)

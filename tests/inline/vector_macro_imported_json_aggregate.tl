@@ -3,8 +3,8 @@
 (import stdlib.test)
 (import stdlib.json)
 (import stdlib.vector)
-(import (vector json.Json core) as jvec)
-(import (vector json.JsonMember core) as mvec)
+(import (vector.vector json.Json core) as jvec)
+(import (vector.vector json.JsonMember core) as mvec)
 
 (test
   vector-macro-imported-json-aggregate

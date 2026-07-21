@@ -1,6 +1,6 @@
 ;; module_macro_generated_stdlib_vector_alias_import_exported.tl - exported
-;; module macros keep their defining-module dotted import context for bare
-;; generated body imports of `(vector T)`.
+;; module macros keep their defining-module dotted import context for
+;; provider-qualified generated body imports of `(vector.vector T)`.
 (import stdlib.test)
 
 ;; Retained for #2454 path-import compatibility: the provider module name does

@@ -5,7 +5,7 @@
 ;#
 ;# ```typelisp
 ;# (import stdlib.set)
-;# (import (set i64) as iset)
+;# (import (set.set i64) as iset)
 ;#
 ;# (define (main) : i64
 ;#   (let

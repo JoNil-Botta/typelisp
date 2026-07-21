@@ -29,6 +29,8 @@ case "$#" in
         ;;
 esac
 
+scripts/verify-qualified-module-macro-imports.sh
+
 # Linux verifies through the GNU `as`/`ld` pipeline with libc linked for stdlib
 # host FFI bindings; Windows (Git Bash / MSYS / Cygwin on the CI runner)
 # verifies through the host-default native toolchain (`typelisp build` ->

@@ -1,7 +1,7 @@
 ;; compiler_load_lazy_smoke.tl - Lazy dotted import loader smokes.
 (import stdlib.io)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (import "../compiler_load.tl")
 (import compiler_builtin_ids as cbi)
 (import sym_i64_env)
@@ -132,7 +132,7 @@
       "target/cl_lazy_stdlib_result/entry.tl"
       "(module lazy.stdlib.result.entry)
 (import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (main) : i64 42)")
     (match (compiler-load-file-with-paths
       "target/cl_lazy_stdlib_result/entry.tl"
@@ -155,7 +155,7 @@
       "target/cl_lazy_module_macro/entry.tl"
       "(module lazy.module.macro.entry)
 (import stdlib.option)
-(import (option i64) as option_i64)
+(import (option.option i64) as option_i64)
 (define (main) : i64 42)")
     (match (compiler-load-file-with-paths
       "target/cl_lazy_module_macro/entry.tl"

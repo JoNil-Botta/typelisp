@@ -3,7 +3,7 @@
 ;; lint-allow: unused-import
 (import stdlib.string)
 (import stdlib.option)
-(import (option i64) as option_i64)
+(import (option.option i64) as option_i64)
 
 (defstruct Pair
   (x i64)

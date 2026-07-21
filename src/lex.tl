@@ -40,7 +40,7 @@
 (import stdlib.text_buf)
 (import stdlib.string)
 (import stdlib.result)
-(import (result i64 String) as result_lex_i64)
+(import (result.result i64 String) as result_lex_i64)
 
 (defenum ResultTokens
   (Ok (Array token.Token))

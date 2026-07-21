@@ -20,7 +20,7 @@
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import stdlib.hashmap)
-(import (hashmap String i64) as doc_path_map)
+(import (hashmap.hashmap String i64) as doc_path_map)
 (import stdlib.string)
 (import sym_i64_env)
 

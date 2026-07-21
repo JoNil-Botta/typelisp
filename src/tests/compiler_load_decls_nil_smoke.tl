@@ -1,7 +1,7 @@
 ;; compiler_load_decls_nil_smoke.tl - Regression: loading with an empty
 ;; starting decl list must succeed.
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (import "../compiler_load.tl")
 (import compiler_builtin_ids as cbi)
 (import sym_i64_env)

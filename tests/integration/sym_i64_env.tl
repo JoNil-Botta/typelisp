@@ -5,7 +5,7 @@
 ; import them by implicit module identity so copied source modules deduplicate.
 (import sym_i64_env_core as env)
 (import stdlib.option)
-(import (option i64) as option_i64)
+(import (option.option i64) as option_i64)
 
 (define (check-equal [got : i64] [want : i64] [msg : String]) : unit
   (begin

@@ -11,7 +11,7 @@
 (import sym_i64_env)
 (import stdlib.string)
 (import stdlib.option)
-(import (option i64) as option_i64)
+(import (option.option i64) as option_i64)
 
 ;; Top-level and registry symbol keys are non-negative intern/composite ids.
 ;; Store key+1 so a zero-filled scalar key array is immediately a valid empty

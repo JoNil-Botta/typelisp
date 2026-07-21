@@ -1,8 +1,8 @@
-;; vector_macro_i64.tl - runnable scalar coverage for stdlib `(vector T)`.
+;; vector_macro_i64.tl - runnable scalar coverage for stdlib `(vector.vector T)`.
 (import stdlib.test)
 (import stdlib.vector)
-(import (vector i64) as ivec)
-(import (vector String) as svec)
+(import (vector.vector i64) as ivec)
+(import (vector.vector String) as svec)
 
 (define (vector-macro-i64-triple [x : i64]) : i64
   (* x 3))

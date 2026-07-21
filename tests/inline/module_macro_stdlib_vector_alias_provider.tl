@@ -15,7 +15,7 @@
           (type-key T)))]
     `(begin
       (module ,module-name)
-      (import (vector ,T) as vec)
+      (import (vector.vector ,T) as vec)
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let
           [items : vec.Vec (vec.new)]

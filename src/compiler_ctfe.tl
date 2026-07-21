@@ -9,7 +9,7 @@
 ;; threaded through recursion, and the step budget ("fuel") is threaded through
 ;; results so the evaluator stays deterministic without a mutable counter.
 (cfg (any test selfhost-compile-manifest) (import stdlib.hashmap))
-(import (hashmap i64 i64) as ctfe_key_map)
+(import (hashmap.hashmap i64 i64) as ctfe_key_map)
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 (import "compiler_ast_types.tl")
@@ -2662,7 +2662,7 @@
   (value i64)
   (fuel i64))
 
-(import (result CtfeI64Arg (Box CompilerDiagnostic)) as result_ctfe_i64_arg)
+(import (result.result CtfeI64Arg (Box CompilerDiagnostic)) as result_ctfe_i64_arg)
 
 (defenum ResultCtfeStringArg
   (Ok String i64 i64)

@@ -1,6 +1,6 @@
 ;; module_macro_generated_chained_vector_import.tl - generated module bodies can
 ;; pass captured tuple type operands through another module macro that imports
-;; stdlib `(vector T)`.
+;; stdlib `(vector.vector T)`.
 (import stdlib.test)
 (import stdlib.vector)
 
@@ -11,7 +11,7 @@
         (string-append "generated.chained_tuple_vector_box." (type-key T)))]
     `(begin
       (module ,module-name)
-      (import (vector T) as vec)
+      (import (vector.vector ,T) as vec)
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let
           [items : vec.Vec (vec.new)]

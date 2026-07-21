@@ -1,5 +1,5 @@
 (import stdlib.hashmap)
-(import (hashmap String i64) as map_string_i64)
+(import (hashmap.hashmap String i64) as map_string_i64)
 
 ; Must fail: two mutable entry handles would alias the same backing table.
 (define (main) : i64

@@ -6,9 +6,9 @@ set -eu
 # This is a diagnostic harness, not a CI gate. It measures one compiler binary
 # compiling scratch copies of the selfhost CLI source:
 #   base:          src/*.tl unchanged
-#   format_tokens: src/format_tokens.tl imports unused (result i64 FormatSourceError)
-#   lex:           src/lex.tl imports unused (result i64 String)
-#   compiler_ctfe: src/compiler_ctfe.tl imports unused (result (Tuple i64 i64) (Box CompilerDiagnostic))
+#   format_tokens: src/format_tokens.tl imports unused (result.result i64 FormatSourceError)
+#   lex:           src/lex.tl imports unused (result.result i64 String)
+#   compiler_ctfe: src/compiler_ctfe.tl imports unused (result.result (Tuple i64 i64) (Box CompilerDiagnostic))
 #
 # The scratch sources live under target/ by default and tracked src/*.tl files
 # are never edited. Use this before and after generated-result import
@@ -270,19 +270,19 @@ prepare_variant() {
             insert_after_exact_line \
                 "$file" \
                 "  (span FormatSourceSpan))" \
-                "(import (result i64 FormatSourceError) as result_fmt_i64_unused)"
+                "(import (result.result i64 FormatSourceError) as result_fmt_i64_unused)"
             ;;
         lex)
             file="$dst/lex.tl"
             ensure_import_after_last_import "$file" "(import stdlib.result)"
-            insert_after_last_import "$file" "(import (result i64 String) as result_lex_i64_unused)"
+            insert_after_last_import "$file" "(import (result.result i64 String) as result_lex_i64_unused)"
             ;;
         compiler_ctfe)
             file="$dst/compiler_ctfe.tl"
             ensure_import_after_last_import "$file" "(import stdlib.result)"
             insert_after_last_import \
                 "$file" \
-                "(import (result (Tuple i64 i64) (Box CompilerDiagnostic)) as result_ctfe_i64_arg_unused)"
+                "(import (result.result (Tuple i64 i64) (Box CompilerDiagnostic)) as result_ctfe_i64_arg_unused)"
             ;;
         *)
             fail "unknown variant: $name"
@@ -301,9 +301,9 @@ variant_source() {
 
 variant_import() {
     case "$1" in
-        format_tokens) printf '%s\n' "(result i64 FormatSourceError)" ;;
-        lex) printf '%s\n' "(result i64 String)" ;;
-        compiler_ctfe) printf '%s\n' "(result (Tuple i64 i64) (Box CompilerDiagnostic))" ;;
+        format_tokens) printf '%s\n' "(result.result i64 FormatSourceError)" ;;
+        lex) printf '%s\n' "(result.result i64 String)" ;;
+        compiler_ctfe) printf '%s\n' "(result.result (Tuple i64 i64) (Box CompilerDiagnostic))" ;;
         *) fail "unknown variant: $1" ;;
     esac
 }
@@ -311,13 +311,13 @@ variant_import() {
 variant_import_line() {
     case "$1" in
         format_tokens)
-            printf '%s\n' "(import (result i64 FormatSourceError) as result_fmt_i64_unused)"
+            printf '%s\n' "(import (result.result i64 FormatSourceError) as result_fmt_i64_unused)"
             ;;
         lex)
-            printf '%s\n' "(import (result i64 String) as result_lex_i64_unused)"
+            printf '%s\n' "(import (result.result i64 String) as result_lex_i64_unused)"
             ;;
         compiler_ctfe)
-            printf '%s\n' "(import (result (Tuple i64 i64) (Box CompilerDiagnostic)) as result_ctfe_i64_arg_unused)"
+            printf '%s\n' "(import (result.result (Tuple i64 i64) (Box CompilerDiagnostic)) as result_ctfe_i64_arg_unused)"
             ;;
         *) fail "unknown variant: $1" ;;
     esac
@@ -399,7 +399,7 @@ verify_compiler_ctfe_import_order() {
     base_file=$1
     variant_file=$2
     ctfe_import=$(awk '
-        /^\(import \(result .* as result_ctfe_i64_arg\)$/ {
+        /^\(import \(result[.]result .* as result_ctfe_i64_arg\)$/ {
             print
             exit
         }

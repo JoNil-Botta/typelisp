@@ -1,7 +1,7 @@
 ;; hashmap_macro_string_i64.tl - module-emitting hashmap macro surface (#3201).
 (import stdlib.test)
 (import stdlib.hashmap)
-(import (hashmap String i64) as map_string_i64)
+(import (hashmap.hashmap String i64) as map_string_i64)
 
 (test
   hashmap-macro-string-i64-basic-operations

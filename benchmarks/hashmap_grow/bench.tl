@@ -11,7 +11,7 @@
 ;# preventing whole-loop constant folding.
 (import stdlib.io)
 (import stdlib.hashmap)
-(import (hashmap i64 i64) as map_i64_i64)
+(import (hashmap.hashmap i64 i64) as map_i64_i64)
 
 (define base-entries : i64
   24000)

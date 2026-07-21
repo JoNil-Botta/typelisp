@@ -682,7 +682,7 @@
 
 (define (compiler-typecheck-foreach-try-source) : String
   "(import stdlib.result)
-(import (result i64 i64) as result_i64_i64)
+(import (result.result i64 i64) as result_i64_i64)
 (define (main [out : (Array i64)] [flag : bool] [n : i64]) : result_i64_i64.Result
   (begin
     (foreach
@@ -2790,7 +2790,7 @@
 
 (define (compiler-typecheck-result-try-source) : String
   "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (read [flag : bool]) : result_i64_string.Result
   (if flag (result_i64_string.ok 41) (result_i64_string.err \"read failed\")))
 (define (step [flag : bool]) : result_i64_string.Result
@@ -2813,20 +2813,20 @@
 
 (define (compiler-typecheck-result-try-non-result-source) : String
   "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (main) : result_i64_string.Result
   (result_i64_string.ok (try 1)))")
 
 (define (compiler-typecheck-result-try-non-result-return-source) : String
   "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (read) : result_i64_string.Result (result_i64_string.ok 1))
 (define (main) : i64
   (try (read)))")
 
 (define (compiler-typecheck-result-try-incompatible-error-source) : String
   "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (defenum OtherResult (OkOther i64) (ErrOther i64))
 (define (read) : OtherResult (ErrOther 7))
 (define (main) : result_i64_string.Result
@@ -2835,7 +2835,7 @@
 (define (compiler-typecheck-option-try-carrier-mismatch-source) : String
   "(defenum TryCount (SomeCount i64) (NoneCount))
 (import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (read) : TryCount (SomeCount 1))
 (define (main) : result_i64_string.Result
   (result_i64_string.ok (try (read))))")
@@ -2855,7 +2855,7 @@
 (define (compiler-typecheck-result-try-panic-source) : String
   (compiler-typecheck-with-io-source
     "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (main [flag : bool]) : result_i64_string.Result
   (if flag (io.panic \"stop\") (result_i64_string.ok 1)))"))
 
@@ -5390,7 +5390,7 @@
 
 (define (compiler-typecheck-match-bad-result-exhaustive-source) : String
   "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (main [r : result_i64_string.Result]) : i64
   (match r [(result_i64_string.Ok v) v]))")
 

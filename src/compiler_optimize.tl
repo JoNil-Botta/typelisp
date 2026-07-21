@@ -31,13 +31,13 @@
 (import stdlib.arena)
 (import stdlib.hash)
 (import stdlib.hashmap)
-(import (hashmap String i64) as opt_string_i64_map)
-(import (hashmap i64 i64) as opt_i64_i64_map)
+(import (hashmap.hashmap String i64) as opt_string_i64_map)
+(import (hashmap.hashmap i64 i64) as opt_i64_i64_map)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (cfg compile-profile-summary (import compiler_profile_summary as cps))
 (import stdlib.option)
-(import (option i64) as option_i64)
+(import (option.option i64) as option_i64)
 
 (defenum ResultCompilerOptimizeLevel
   (Ok i64)

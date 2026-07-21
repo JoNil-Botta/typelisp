@@ -1,9 +1,9 @@
 ;; hashmap_macro_aggregate_modules.tl - aggregate generated-module hashmap surfaces (#3761).
 (import stdlib.test)
 (import stdlib.hashmap)
-(import (hashmap String hashmap.HashPayload) as map_string_payload)
-(import (hashmap i64 hashmap.HashState) as map_i64_state)
-(import (hashmap hashmap.HashNestedKey i64) as map_nested_i64)
+(import (hashmap.hashmap String hashmap.HashPayload) as map_string_payload)
+(import (hashmap.hashmap i64 hashmap.HashState) as map_i64_state)
+(import (hashmap.hashmap hashmap.HashNestedKey i64) as map_nested_i64)
 
 (test
   hashmap-macro-aggregate-key-basic-operations

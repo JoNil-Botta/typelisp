@@ -1,5 +1,5 @@
 ;; module_macro_generated_imported_type_vector_import.tl - generated module
-;; bodies can use a flat-imported generated type in a later `(vector T)` import.
+;; bodies can use a flat-imported generated type in a later `(vector.vector T)` import.
 (import stdlib.test)
 (import stdlib.vector)
 
@@ -13,7 +13,7 @@
   `(begin
     (module generated.imported_type_vector_user)
     (import (type-provider))
-    (import (vector T) as vec)
+    (import (vector.vector T) as vec)
     (define (make [value : i64]) : T
       (T value))
     (define (score [value : T]) : i64

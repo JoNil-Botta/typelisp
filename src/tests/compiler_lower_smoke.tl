@@ -3,7 +3,7 @@
 (import stdlib.string)
 (import stdlib.text_buf)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (import compiler_builtin_ids as cbi)
 (import "../compiler_driver_core.tl")
 (import sym_i64_env)
@@ -237,7 +237,7 @@
 (import (vector.vector String) as svec)
     (defstruct T
       (value i64))
-    (import (vector T) as vec)
+    (import (vector.vector T) as vec)
     (define (make [value : i64]) : T
       (T value))
     (define (score [first : T] [fallback : T]) : i64
@@ -324,7 +324,7 @@
 (define (compiler-lower-smoke-c43-vector-push-only-source) : String
   "(import stdlib.vector)
 (defstruct C43Point (x i64) (y i64))
-(import (vector C43Point) as pvec)
+(import (vector.vector C43Point) as pvec)
 (define (main) : i64
   (let
     [v : pvec.Vec (pvec.new)]
@@ -335,7 +335,7 @@
 (define (compiler-lower-smoke-c43-vector-push-map-source) : String
   "(import stdlib.vector)
 (defstruct C43Point (x i64) (y i64))
-(import (vector C43Point) as pvec)
+(import (vector.vector C43Point) as pvec)
 (define (c43-bump [p : C43Point]) : C43Point
   (C43Point (+ (struct-get p x) 1) (struct-get p y)))
 (define (main) : i64
@@ -354,7 +354,7 @@
 (define (compiler-lower-smoke-c43-unreachable-error-source) : String
   "(import stdlib.vector)
 (defstruct C43Point (x i64) (y i64))
-(import (vector C43Point) as pvec)
+(import (vector.vector C43Point) as pvec)
 (define (main) : i64
   (let
     [v : pvec.Vec (pvec.new)]

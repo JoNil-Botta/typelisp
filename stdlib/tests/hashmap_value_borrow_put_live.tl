@@ -1,5 +1,5 @@
 (import stdlib.hashmap)
-(import (hashmap String String) as map_string_string)
+(import (hashmap.hashmap String String) as map_string_string)
 
 ;; lint-allow: unused-import
 (import stdlib.string)

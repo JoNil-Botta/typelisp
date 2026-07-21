@@ -1,7 +1,7 @@
 ; refs #4286: generated hashmap globals must borrow the loaded aggregate value,
 ; not the global storage slot that holds the aggregate pointer.
 (import stdlib.hashmap)
-(import (hashmap String i64) as string_i64_map)
+(import (hashmap.hashmap String i64) as string_i64_map)
 
 (define generated-hashmap-global : string_i64_map.Map
   (string_i64_map.with-capacity 1))

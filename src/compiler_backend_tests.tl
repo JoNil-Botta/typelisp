@@ -1,7 +1,7 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
 (import stdlib.array)
 (import stdlib.hashmap)
-(import (hashmap String i64) as backend_test_string_i64_map)
+(import (hashmap.hashmap String i64) as backend_test_string_i64_map)
 (import compiler_object as cobj)
 (import compiler_object_coff as coff)
 (import compiler_object_elf as elf)

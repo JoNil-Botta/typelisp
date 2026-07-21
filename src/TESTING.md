@@ -463,7 +463,7 @@ The completed #3803 unused-import experiment is preserved as
 historical ownership.
 
 `scripts/measure-result-import-cost.sh` is the paired #3903/#3215 diagnostic
-harness for generated `(result T E)` imports in hot selfhost modules. It copies
+harness for generated `(result.result T E)` imports in hot selfhost modules. It copies
 `src/*.tl` into scratch trees under `target/` and injects one unused generated
 result import into each variant source (`format_tokens.tl`, `lex.tl`, or
 `compiler_ctfe.tl`) without editing tracked sources. Linux/cachegrind mode

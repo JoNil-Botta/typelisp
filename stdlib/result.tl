@@ -1,7 +1,7 @@
 ;# Generic recoverable-error result module macro.
 ;#
 ;# Import with `(import stdlib.result)`, then instantiate a concrete module
-;# with `(import (result i64 String) as result_i64_string)`.
+;# with `(import (result.result i64 String) as result_i64_string)`.
 (import stdlib.comptime)
 
 ;: Emit a generated recoverable-error result module for success type `T` and

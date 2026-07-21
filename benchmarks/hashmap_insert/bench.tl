@@ -5,7 +5,7 @@
 ;# then samples a lookup so the inserted contents stay observable.
 (import stdlib.io)
 (import stdlib.hashmap)
-(import (hashmap i64 i64) as map_i64_i64)
+(import (hashmap.hashmap i64 i64) as map_i64_i64)
 
 (define hashmap-insert-base-rounds : i64
   640)

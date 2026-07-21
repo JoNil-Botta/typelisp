@@ -1,6 +1,6 @@
 ;; module_macro_generated_vector_slice_alias_import.tl - generated module bodies
 ;; can import generated slice modules through an alias while the slice body
-;; imports the matching `(vector T)` module.
+;; imports the matching `(vector.vector T)` module.
 (import stdlib.test)
 (import stdlib.vector)
 (import stdlib.vector_slice as vs)
@@ -14,7 +14,7 @@
       (expr-var (string-append "generated.slice_alias_user." (type-key T)))]
     `(begin
       (module ,module-name)
-      (import (vector ,T) as vec)
+      (import (vector.vector ,T) as vec)
       (import (vs.slice ,T) as slice)
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let

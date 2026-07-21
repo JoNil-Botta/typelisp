@@ -25965,6 +25965,149 @@
     ;; homes or const-hoist sites.
     (compiler-backend-emit-needs-current-count? 0 0 (CompilerBackendMode.Avx2))))
 
+;; Reduced from integration_spmd_gather_read/fill-lane-offset-gather at opt2:
+;; the entry compares two incoming parameters, the saving frontier is a
+;; non-phi preheader, and the loop phi carries the guard's start parameter.
+(define (compiler-backend-shrinkwrap-param-phi-fixture) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (compiler-ir-test-symbol "early_exit_param_phi")
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "start" (AstType.I64) 0)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "end" (AstType.I64) 1)
+        CompilerIrParamList.Nil))
+    (AstType.Unit)
+    6
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BinOp
+            2
+            (CompilerIrBinOp.Lt)
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "preheader" "exit")
+            CompilerIrInstrList.Nil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "preheader"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Jump "loop")
+            CompilerIrInstrList.Nil))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "loop"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                3
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 0)
+                  "preheader"
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.Var 4)
+                    "loop"
+                    CompilerIrPhiInputList.Nil))
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.BinOp
+                  4
+                  (CompilerIrBinOp.Add)
+                  (CompilerIrValue.Var 3)
+                  (CompilerIrValue.I64 1)
+                  (AstType.I64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.BinOp
+                    5
+                    (CompilerIrBinOp.Lt)
+                    (CompilerIrValue.Var 4)
+                    (CompilerIrValue.Var 1)
+                    (AstType.I64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Branch
+                      (CompilerIrValue.Var 5)
+                      "loop"
+                      "exit")
+                    CompilerIrInstrList.Nil)))))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "exit"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return (CompilerIrMaybeValue.No))
+                CompilerIrInstrList.Nil))
+            CompilerIrBlockList.Nil))))))
+
+;; Regression for the opt1-built compiler crash exposed by
+;; integration_spmd_gather_read/fill-lane-offset-gather. The reduced IR keeps
+;; its entry guard -> non-phi preheader -> parameter-fed loop phi shape. A
+;; previous scratch-arena function may leave a nonzero const-hoist count backed
+;; by retired storage; shrink-wrap admission must reject that state until the
+;; per-function preparation has established an empty table.
+(define (compiler-backend-shrinkwrap-admission-state-ok?) : bool
+  (let
+    [stale-regs : (Array String) (make-array String 1)]
+    (begin
+      (set! compiler-backend-const-hoist-site-count 1)
+      (set! compiler-backend-const-hoist-site-regs stale-regs)
+      (set! compiler-backend-const-hoist-inject-count 1)
+      (set! compiler-backend-const-hoist-frame-rbx true)
+      (set! compiler-backend-const-hoist-frame-count 1)
+      (let
+        [dirty-rejected? : bool
+          (not (compiler-backend-shrinkwrap-admission-state-clean?))]
+        [prepared? : bool (compiler-backend-prepare-shrinkwrap-admission!)]
+        [rewritten : CompilerIrFunction
+          (compiler-reg-early-exit-shrinkwrap-function
+            (compiler-backend-shrinkwrap-param-phi-fixture))]
+        (and
+          dirty-rejected?
+          prepared?
+          (compiler-backend-shrinkwrap-admission-state-clean?)
+          (not
+            (compiler-backend-callee-needs-save?
+              CompilerRegAssignmentList.Nil
+              "%rbx"))
+          (= compiler-reg-early-exit-prefix-count 2)
+          (match rewritten
+            [(CompilerIrFunction.Function _ _ _ _ blocks)
+              (let
+                [seq : CompilerIrBlockSeq
+                  (compiler-live-ir-block-list-to-seq blocks)]
+                (and
+                  (= (compiler-ir-block-seq-count seq) 6)
+                  (match (compiler-ir-block-seq-ref seq 0)
+                    [(CompilerIrBlock.Block _ instrs)
+                      (match (compiler-ir-instr-seq-ref instrs 1)
+                        [(CompilerIrInstr.Branch _ yes no)
+                          (and
+                            (string.eq yes "entry__shrinkwrap_save")
+                            (string.eq no "entry__shrinkwrap_bare0"))]
+                        [_ false])])
+                  (match (compiler-ir-block-seq-ref seq 4)
+                    [(CompilerIrBlock.Block label instrs)
+                      (and
+                        (string.eq label "loop")
+                        (match (compiler-ir-instr-seq-ref instrs 0)
+                          [(CompilerIrInstr.Phi _ inputs _)
+                            (match (compiler-ir-phi-input-list-force-cons
+                              inputs)
+                              [(CompilerIrPhiInputList.Cons value input-label _)
+                                (and
+                                  (string.eq input-label "preheader")
+                                  (match value
+                                    [(CompilerIrValue.Var id) (= id 0)]
+                                    [_ false]))]
+                              [(CompilerIrPhiInputList.Array seq)
+                                (compiler-ir-phi-input-seq-entry-var-label?
+                                  seq
+                                  0
+                                  0
+                                  "preheader")]
+                              [_ false])]
+                          [_ false]))])))]))))))
+
 (define (compiler-backend-scavenge-occupancy-cache-ok?) : bool
   (let
     [starts : (Array i64) (make-array i64 5)]
@@ -26737,6 +26880,7 @@
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-emit-current-count-gate-ok?)
+        (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)

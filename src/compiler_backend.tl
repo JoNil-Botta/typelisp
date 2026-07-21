@@ -14241,6 +14241,23 @@
       (make-array i64 1)
       (make-array i64 1))))
 
+;; The shrink-wrap prefix is dry-emitted before this function's const-hoist
+;; plan is built.  A preceding scratch-arena function may have left nonzero
+;; site counts whose arrays were retired with that arena; consulting those
+;; sites while rendering a bare return would dereference stale storage.
+;; Admission therefore starts from a proven empty per-function hoist state.
+(define (compiler-backend-shrinkwrap-admission-state-clean?) : bool
+  (and
+    (= compiler-backend-const-hoist-site-count 0)
+    (= compiler-backend-const-hoist-inject-count 0)
+    (not compiler-backend-const-hoist-frame-rbx)
+    (= compiler-backend-const-hoist-frame-count 0)))
+
+(define (compiler-backend-prepare-shrinkwrap-admission!) : bool
+  (begin
+    (compiler-backend-const-hoist-disable!)
+    (compiler-backend-shrinkwrap-admission-state-clean?)))
+
 ;; Registers eligible to carry a hoisted magic across a leaf loop region.
 ;;
 ;; %rbx is the revertible M-F extension for register-saturated leaf loops. The
@@ -46465,6 +46482,11 @@
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
       (let
+        ;; Prefix dry-emission is part of shrink-wrap admission and precedes
+        ;; this function's const-hoist build. Fail closed unless its scratch
+        ;; state was reset successfully for this function.
+        [shrinkwrap-state-admissible? : bool
+          (compiler-backend-prepare-shrinkwrap-admission!)]
         ;; GAP9: fold constant gep index offsets into addressing displacements
         ;; BEFORE the register plan, so liveness sees the folded program (the
         ;; shared counter stays live; the offset adds vanish).
@@ -46875,7 +46897,9 @@
         [shrinkwrap-bare-label : String compiler-reg-early-exit-bare-label]
         [shrinkwrap-prefix-count : i64 compiler-reg-early-exit-prefix-count]
         [shrinkwrap-planned-guard : String
-          (if (string.eq shrinkwrap-bare-label "")
+          (if (or
+            (not shrinkwrap-state-admissible?)
+            (string.eq shrinkwrap-bare-label ""))
             ""
             (compiler-backend-shrinkwrap-prefix-asm
               target
@@ -46891,7 +46915,9 @@
               program-index
               false))]
         [shrinkwrap-incoming-prefix : String
-          (if (string.eq shrinkwrap-bare-label "")
+          (if (or
+            (not shrinkwrap-state-admissible?)
+            (string.eq shrinkwrap-bare-label ""))
             ""
             (compiler-backend-shrinkwrap-prefix-asm
               target
@@ -46915,6 +46941,7 @@
               ""))]
         [shrinkwrap-candidate? : bool
           (and
+            shrinkwrap-state-admissible?
             (not (string.eq shrinkwrap-saving-label ""))
             (not (string.eq shrinkwrap-bare-label ""))
             (not (string.eq shrinkwrap-planned-guard ""))

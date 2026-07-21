@@ -12663,9 +12663,13 @@
       (and
         (= (compiler-ir-instr-seq-count instrs) 2)
         (match (compiler-ir-instr-seq-ref instrs 0)
-          [(CompilerIrInstr.BinOp dst op lhs rhs _)
+          [(CompilerIrInstr.BinOp dst op lhs rhs ty)
             (and
               (compiler-reg-scratch-compare-op? op)
+              ;; The shrink-wrap prefix renderer currently uses the integer
+              ;; compare emitter.  XMM-homed operands would reach its GP-only
+              ;; register sizing path, so floating guards are not admissible.
+              (not (compiler-reg-float-type? ty))
               (compiler-reg-early-exit-value-safe? params lhs)
               (compiler-reg-early-exit-value-safe? params rhs)
               (match (compiler-ir-instr-seq-ref instrs 1)
@@ -20159,6 +20163,66 @@
             (match (compiler-ir-block-seq-ref seq 7)
               [(CompilerIrBlock.Block label _)
                 (string.eq label "guard_limit__shrinkwrap_framed")])))])))
+
+(cfg
+  test
+  (define (compiler-reg-early-exit-float-guard-test-function) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      (compiler-ir-test-symbol "early_exit_float_guard")
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "actual" (AstType.F64) 0)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "expected" (AstType.F64) 1)
+          CompilerIrParamList.Nil))
+      (AstType.Unit)
+      4
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              2
+              (CompilerIrBinOp.Eq)
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.Var 1)
+              (AstType.F64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Branch (CompilerIrValue.Var 2) "equal" "failure")
+              CompilerIrInstrList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "equal"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+              CompilerIrInstrList.Nil))
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "failure"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Call
+                  3
+                  (compiler-ir-test-symbol "report_float_failure")
+                  CompilerIrCallArgs.Nil
+                  (AstType.Unit))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil)))
+            CompilerIrBlockList.Nil))))))
+
+(cfg
+  test
+  (define (compiler-reg-early-exit-float-guard-refused-ok?) : bool
+    (match (compiler-reg-early-exit-shrinkwrap-function
+      (compiler-reg-early-exit-float-guard-test-function))
+      [(CompilerIrFunction.Function _ _ _ _ blocks)
+        (and
+          (=
+            (compiler-ir-block-seq-count
+              (compiler-live-ir-block-list-to-seq blocks))
+            3)
+          (= compiler-reg-early-exit-prefix-count 0)
+          (string.eq compiler-reg-early-exit-saving-label "")
+          (string.eq compiler-reg-early-exit-bare-label ""))])))
 
 (cfg
   test
@@ -36259,6 +36323,9 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-early-exit-general-ok?"
       (cfg test (compiler-reg-early-exit-general-ok?) true))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-early-exit-float-guard-refused-ok?"
+      (cfg test (compiler-reg-early-exit-float-guard-refused-ok?) true))
     (compiler-regalloc-self-test-require!
       "compiler-reg-cold-call-split-ok?"
       (cfg test (compiler-reg-cold-call-split-ok?) true))

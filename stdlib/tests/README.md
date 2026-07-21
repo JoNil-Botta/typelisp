@@ -138,15 +138,17 @@ Inline stdlib coverage:
   bounds, explicit signed-min fallback behavior for integer abs, exact float
   bit round trips (including NaN payloads and both zeros), classification,
   copy-sign, `scalbn` normal/subnormal/tie-to-even/overflow behavior, typed and
-  generic square root and natural exponential, single evaluation, exact
-  correctly-rounded f64/f32 vectors, subnormal boundaries, shared
-  trigonometric argument reduction, sin/cos/tan special values, signed zero,
-  infinities, and NaN behavior.
-  `math_sqrt_non_float_reject.tl` and `math_exp_non_float_reject.tl` keep the
-  generic macros restricted to f64/f32.
+  generic square root, natural exponential, and natural logarithm; single
+  evaluation; exact correctly-rounded f64/f32 vectors; subnormal boundaries;
+  shared trigonometric argument reduction; sin/cos/tan special values; signed
+  zero, infinities, and NaN behavior.
+  `math_sqrt_non_float_reject.tl`, `math_exp_non_float_reject.tl`, and
+  `math_log_non_float_reject.tl` keep the generic macros restricted to f64/f32.
   `tests/integration/stdlib_math_ieee.tl` runs the foundation and square-root
   surface natively on both Linux and Windows; the assembly-shape gate proves
   public f64/f32 probes contain `sqrtsd`/`sqrtss` with no call.
+  `tests/integration/stdlib_math_log.tl` checks MPFR-256 curated and sampled
+  vectors plus the complete logarithm special-value contract on both targets.
   `tests/integration/stdlib_math_trig.tl` checks all six
   f64/f32 trigonometric entry points against MPFR-rounded vectors, including
   CORE-MATH hard-to-round inputs, quadrant neighbors, reducer boundaries,

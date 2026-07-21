@@ -26,6 +26,7 @@ implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 core_macros_headerless_prelude_import|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-
 implicit_scratch_loop|tests/integration/implicit_scratch_loop.tl|42|-|-|-
 macro_forward_order|tests/integration/macro_forward_order.tl|42|-|-|-
+compile_profile_macro_detach_unchanged|tests/integration/compile_profile_macro_detach_unchanged.tl|42|-|-|compile_profile_macro_detach_unchanged_dep.tl
 compile_profile_macro_detail|tests/integration/compile_profile_macro_detail.tl|42|-|-|stdlib/string.tl stdlib/core_macros.tl stdlib/str_cat.tl
 compile_profile_generated_replay_lazy|tests/integration/compile_profile_generated_replay_lazy.tl|42|-|-|-
 compile_profile_generated_import|tests/integration/compile_profile_generated_import.tl|42|-|-|stdlib/string.tl

@@ -1669,6 +1669,88 @@
 
 (cfg
   compile-profile
+  (define compiler-tc-macro-walk-decl-gate-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-decl-gate-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-decl-gate-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-let-bind-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-let-bind-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-let-bind-start-ns : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-fire-touches : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-walk-expand-visits : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-gate-start!) : unit
+    (set! compiler-tc-macro-walk-decl-gate-start-ns (compiler-tc-walk-now-ns))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-decl-gate-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-decl-gate-ns
+        (+
+          compiler-tc-macro-walk-decl-gate-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-macro-walk-decl-gate-start-ns)))
+      (set!
+        compiler-tc-macro-walk-decl-gate-calls
+        (+ compiler-tc-macro-walk-decl-gate-calls 1)))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-let-bind-start!) : unit
+    (set! compiler-tc-macro-walk-let-bind-start-ns (compiler-tc-walk-now-ns))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-let-bind-finish!) : unit
+    (begin
+      (set!
+        compiler-tc-macro-walk-let-bind-ns
+        (+
+          compiler-tc-macro-walk-let-bind-ns
+          (-
+            (compiler-tc-walk-now-ns)
+            compiler-tc-macro-walk-let-bind-start-ns)))
+      (set!
+        compiler-tc-macro-walk-let-bind-calls
+        (+ compiler-tc-macro-walk-let-bind-calls 1)))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-note-fire-touch!) : unit
+    (set!
+      compiler-tc-macro-walk-fire-touches
+      (+ compiler-tc-macro-walk-fire-touches 1))))
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-note-expand-visit!) : unit
+    (set!
+      compiler-tc-macro-walk-expand-visits
+      (+ compiler-tc-macro-walk-expand-visits 1))))
+
+(cfg
+  compile-profile
   (define compiler-tc-macro-profile-start-ms : i64
     0))
 (cfg
@@ -3331,6 +3413,24 @@
       (compiler-tc-macro-counter-profile-line
         "walk_native_dispatch_calls"
         compiler-tc-macro-walk-native-dispatch-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_gate_us"
+        (/ compiler-tc-macro-walk-decl-gate-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_decl_gate_calls"
+        compiler-tc-macro-walk-decl-gate-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_let_bind_us"
+        (/ compiler-tc-macro-walk-let-bind-ns 1000))
+      (compiler-tc-macro-counter-profile-line
+        "walk_let_bind_calls"
+        compiler-tc-macro-walk-let-bind-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_fire_scan_touches"
+        compiler-tc-macro-walk-fire-touches)
+      (compiler-tc-macro-counter-profile-line
+        "walk_expand_visits"
+        compiler-tc-macro-walk-expand-visits)
       (compiler-tc-reinfer-profile-emit)
       (compiler-tc-body-fact-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
@@ -64648,12 +64748,19 @@
           [init : AstExpr (ast-node-get init-box)]
           (match (macro-expand-expr ctx env decls depth init)
             [(ResultMacroExpr.Ok ninit)
-              (match (tc-let-bindings
-                ctx
-                env
-                (ast-let-binding-cons
-                  (ast-let-binding-id name maybe-ty ninit)
-                  (ast-let-binding-list-new)))
+              (match (begin
+                (cfg compile-profile (compiler-tc-walk-let-bind-start!))
+                (let
+                  [let-bind-result : ResultTcEnv
+                    (tc-let-bindings
+                      ctx
+                      env
+                      (ast-let-binding-cons
+                        (ast-let-binding-id name maybe-ty ninit)
+                        (ast-let-binding-list-new)))]
+                  (begin
+                    (cfg compile-profile (compiler-tc-walk-let-bind-finish!))
+                    let-bind-result)))
                 [(ResultTcEnv.Ok next-env)
                   (begin
                     (ast-let-binding-list-push
@@ -64855,6 +64962,16 @@
     [(TcMaybeString.No) (ResultMacroCompatCall.No)]))
 
 (define (macro-expand-expr
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [expr : AstExpr]) : ResultMacroExpr
+  (begin
+    (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
+    (macro-expand-expr-counted ctx env decls depth expr)))
+
+(define (macro-expand-expr-counted
   [ctx : TcContext]
   [env : TcTypeEnv]
   [decls : AstDeclList]
@@ -67283,6 +67400,11 @@
             (macro-resource-binding-list-might-fire-at? bindings (+ index 1))))])))
 
 (define (macro-expr-might-fire? [expr : AstExpr]) : bool
+  (begin
+    (cfg compile-profile (compiler-tc-walk-note-fire-touch!))
+    (macro-expr-might-fire-uncounted? expr)))
+
+(define (macro-expr-might-fire-uncounted? [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
       (let
@@ -67619,6 +67741,17 @@
         (not (macro-expr-might-fire? (ast-node-get body-box)))]
       [(AstDecl.Test _ _ _) false]
       [_ false])))
+
+;; Profile-instrumented wrapper for the per-decl share gate; non-profile
+;; builds see a plain call.
+(define (macro-decl-cannot-fire-gate? [decl : AstDecl]) : bool
+  (begin
+    (cfg compile-profile (compiler-tc-walk-decl-gate-start!))
+    (let
+      [result : bool (macro-decl-cannot-fire? decl)]
+      (begin
+        (cfg compile-profile (compiler-tc-walk-decl-gate-finish!))
+        result))))
 
 ;; Whether the program contains any `(type T)` literal (AstExpr.TypeLiteral). ALL
 ;; CTFE reflection/layout queries (ctfe-reflect-resolve-type for a `(type T)`,
@@ -68654,7 +68787,7 @@
                             (begin
                               (set! result (ResultMacroDeclsWithPaths.Err diag))
                               (set! done true))]))]
-                    [(and cur-can-share (macro-decl-cannot-fire? decl))
+                    [(and cur-can-share (macro-decl-cannot-fire-gate? decl))
                       ;; Predict-skip: a macro-free value decl can never fire a
                       ;; macro, so share it unchanged (like the AstDecl.Module
                       ;; arm) instead of copying it through the expander. This

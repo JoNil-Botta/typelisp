@@ -51,6 +51,15 @@
                   (ast-ty-array (AstType.Enum qualified-id) 1)]
                 [different : AstType
                   (ast-ty-array (AstType.Enum other-qualified-id) 1)]
+                [lifetime-id : i64 (intern "out")]
+                [type-module-ctx : TcContext
+                  (tc-context-with-type-module-id ctx module-id)]
+                [actual-ref : AstType
+                  (ast-ty-mut-ref lifetime-id (AstType.Enum flat-id))]
+                [expected-ref : AstType
+                  (ast-ty-mut-ref lifetime-id (AstType.Enum qualified-id))]
+                [different-ref : AstType
+                  (ast-ty-mut-ref lifetime-id (AstType.Enum other-qualified-id))]
                 (and
                   (tc-nominal-name-id-canonical-eq? ctx flat-id qualified-id)
                   (tc-nominal-name-id-canonical-eq? ctx qualified-id flat-id)
@@ -76,7 +85,35 @@
                     actual
                     different)
                     [(TcInferredTypeMatch.Compatible _) false]
-                    [(TcInferredTypeMatch.Mismatch _) true])))]
+                    [(TcInferredTypeMatch.Mismatch _) true])
+                  (match (tc-match-inferred-type-for-expected
+                    type-module-ctx
+                    actual-ref
+                    expected-ref)
+                    [(TcInferredTypeMatch.Compatible _) true]
+                    [(TcInferredTypeMatch.Mismatch _) false])
+                  (match (tc-match-inferred-type-for-expected
+                    type-module-ctx
+                    actual-ref
+                    different-ref)
+                    [(TcInferredTypeMatch.Compatible _) false]
+                    [(TcInferredTypeMatch.Mismatch _) true])
+                  (match (tc-infer-lifetime-subst-from-mixed-source-type
+                    type-module-ctx
+                    (ast-lifetime-list-new)
+                    TcLifetimeSubst.Nil
+                    actual-ref
+                    expected-ref)
+                    [(ResultTcLifetimeSubst.Ok _) true]
+                    [(ResultTcLifetimeSubst.Err _) false])
+                  (match (tc-infer-lifetime-subst-from-mixed-source-type
+                    type-module-ctx
+                    (ast-lifetime-list-new)
+                    TcLifetimeSubst.Nil
+                    actual-ref
+                    different-ref)
+                    [(ResultTcLifetimeSubst.Ok _) false]
+                    [(ResultTcLifetimeSubst.Err _) true])))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))

@@ -25771,6 +25771,41 @@
     lifetimes
     subst))
 
+(define (tc-infer-lifetime-subst-from-mixed-source-type
+  [ctx : TcContext]
+  [lifetimes : AstLifetimeList]
+  [subst : TcLifetimeSubst]
+  [want : AstType]
+  [got : AstType]) : ResultTcLifetimeSubst
+  (let
+    [canonical-got : AstType (tc-canonicalize-inferred-type ctx got)]
+    (match (tc-infer-lifetime-subst-from-type
+      ctx
+      lifetimes
+      subst
+      want
+      canonical-got)
+      [(ResultTcLifetimeSubst.Ok next-subst)
+        (ResultTcLifetimeSubst.Ok next-subst)]
+      [(ResultTcLifetimeSubst.Err _)
+        (let
+          [canonical-want : AstType (tc-canonicalize-inferred-type ctx want)]
+          (match (tc-infer-lifetime-subst-from-type
+            ctx
+            lifetimes
+            subst
+            canonical-want
+            got)
+            [(ResultTcLifetimeSubst.Ok next-subst)
+              (ResultTcLifetimeSubst.Ok next-subst)]
+            [(ResultTcLifetimeSubst.Err _)
+              (tc-infer-lifetime-subst-from-type
+                ctx
+                lifetimes
+                subst
+                canonical-want
+                canonical-got)]))])))
+
 (define (tc-infer-call-lifetime-subst-at
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -25829,30 +25864,30 @@
                     lifetimes
                     next-subst)]
                 [(ResultTcLifetimeSubst.Err _message)
-                  (let
-                    [canonical-want : AstType
-                      (tc-canonicalize-inferred-type ctx want)]
-                    [canonical-got : AstType
-                      (tc-canonicalize-inferred-type ctx got)]
-                    (match (tc-infer-lifetime-subst-from-type
-                      ctx
-                      lifetimes
-                      subst
-                      canonical-want
-                      canonical-got)
-                      [(ResultTcLifetimeSubst.Ok next-subst)
-                        (tc-infer-call-lifetime-subst-at
-                          ctx
-                          env
-                          func
-                          all-args
-                          all-params
-                          args
-                          params
-                          (+ index 1)
-                          lifetimes
-                          next-subst)]
-                      [(ResultTcLifetimeSubst.Err _)
+                  (match (tc-infer-lifetime-subst-from-mixed-source-type
+                    ctx
+                    lifetimes
+                    subst
+                    want
+                    got)
+                    [(ResultTcLifetimeSubst.Ok next-subst)
+                      (tc-infer-call-lifetime-subst-at
+                        ctx
+                        env
+                        func
+                        all-args
+                        all-params
+                        args
+                        params
+                        (+ index 1)
+                        lifetimes
+                        next-subst)]
+                    [(ResultTcLifetimeSubst.Err _)
+                      (let
+                        [canonical-want : AstType
+                          (tc-canonicalize-inferred-type ctx want)]
+                        [canonical-got : AstType
+                          (tc-canonicalize-inferred-type ctx got)]
                         (ResultTcLifetimeSubst.Err
                           (tc-locate-error-at-expr
                             arg
@@ -25861,7 +25896,7 @@
                               func
                               index
                               canonical-got
-                              canonical-want)))]))])]
+                              canonical-want))))])])]
             [(ResultTcType.Err message)
               (ResultTcLifetimeSubst.Err (tc-locate-error-at-expr arg message))]))))))
 

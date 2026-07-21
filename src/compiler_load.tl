@@ -3130,8 +3130,10 @@
             ;; dotted module id (the import kinds cannot merge), and
             ;; dot-free so name resolution in moduleless files never takes
             ;; the qualified-name path per lookup.
-            (compiler-load-strip-tl-extension
-              (compiler-load-root-relative-path import-root resolved-path))]))]
+            (string.append
+              "/"
+              (compiler-load-strip-tl-extension
+                (compiler-load-root-relative-path import-root resolved-path)))]))]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
 
 (define (compiler-load-canonical-module-id-from-import
@@ -11797,7 +11799,7 @@
         ;; the absolute path is no longer an identity.
         (and
           (= (compiler-load-decl-list-count decls) 2)
-          (compiler-load-test-seen-contains? seen "compiler_load_legacy_dep")
+          (compiler-load-test-seen-contains? seen "/compiler_load_legacy_dep")
           (not
             (compiler-load-test-seen-contains?
               seen

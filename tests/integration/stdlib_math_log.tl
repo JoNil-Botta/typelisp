@@ -910,26 +910,26 @@
     0xc2b21529))
 
 (define (log-u64-within-one-ulp? [actual : u64] [expected : u64]) : bool
-  (if (= (bit-and expected 0x7fffffffffffffff) (cast 0 : u64))
-    (= actual expected)
-    (if (!=
-      (bit-and actual 0x8000000000000000)
-      (bit-and expected 0x8000000000000000))
-      false
-      (if (> actual expected)
-        (<= (- actual expected) (cast 1 : u64))
-        (<= (- expected actual) (cast 1 : u64))))))
+  (cond
+    [(= (bit-and expected 0x7fffffffffffffff) (cast 0 : u64))
+      (= actual expected)]
+    [(!=
+        (bit-and actual 0x8000000000000000)
+        (bit-and expected 0x8000000000000000))
+      false]
+    [(> actual expected) (<= (- actual expected) (cast 1 : u64))]
+    [else (<= (- expected actual) (cast 1 : u64))]))
 
 (define (log-u32-within-one-ulp? [actual : u32] [expected : u32]) : bool
-  (if (= (bit-and expected (cast 0x7fffffff : u32)) (cast 0 : u32))
-    (= actual expected)
-    (if (!=
-      (bit-and actual (cast 0x80000000 : u32))
-      (bit-and expected (cast 0x80000000 : u32)))
-      false
-      (if (> actual expected)
-        (<= (- actual expected) (cast 1 : u32))
-        (<= (- expected actual) (cast 1 : u32))))))
+  (cond
+    [(= (bit-and expected (cast 0x7fffffff : u32)) (cast 0 : u32))
+      (= actual expected)]
+    [(!=
+        (bit-and actual (cast 0x80000000 : u32))
+        (bit-and expected (cast 0x80000000 : u32)))
+      false]
+    [(> actual expected) (<= (- actual expected) (cast 1 : u32))]
+    [else (<= (- expected actual) (cast 1 : u32))]))
 
 (define (log-check-f64 [index : i64]) : bool
   (log-u64-within-one-ulp?

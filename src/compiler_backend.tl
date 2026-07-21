@@ -650,6 +650,7 @@
 
 (define compiler-backend-current-mode : CompilerBackendMode
   (CompilerBackendMode.Scalar))
+
 (define (compiler-backend-set-current-mode! [mode : CompilerBackendMode]) : unit
   (set! compiler-backend-current-mode mode))
 
@@ -59507,19 +59508,17 @@ tl_comptime_host_invoke_set:
   (when
     compiler-backend-assembly-stream-active
     (begin
-        (set!
-          compiler-backend-assembly-stream-batch
-          (text_buf.append
-            compiler-backend-assembly-stream-batch
-            raw-asm))
-        (set!
+      (set!
+        compiler-backend-assembly-stream-batch
+        (text_buf.append compiler-backend-assembly-stream-batch raw-asm))
+      (set!
+        compiler-backend-assembly-stream-batch-count
+        (+ compiler-backend-assembly-stream-batch-count 1))
+      (when
+        (>=
           compiler-backend-assembly-stream-batch-count
-          (+ compiler-backend-assembly-stream-batch-count 1))
-        (when
-          (>=
-            compiler-backend-assembly-stream-batch-count
-            compiler-backend-assembly-stream-batch-function-limit)
-          (compiler-backend-assembly-stream-flush-batch!)))))
+          compiler-backend-assembly-stream-batch-function-limit)
+        (compiler-backend-assembly-stream-flush-batch!)))))
 
 (define (compiler-backend-assembly-stream-process-buffer!
   [raw : text_buf.TextBuf]) : unit

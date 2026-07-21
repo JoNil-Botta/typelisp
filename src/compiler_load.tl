@@ -2999,27 +2999,13 @@
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
 
-;: The prelude file itself must honor explicit stdlib roots the way a dotted
-;: `stdlib.core_macros` import would; the fixed relative path is only the
-;: rootless spelling (whose load falls back to the embedded payload when the
-;: file is not reachable from the working directory).
-(define (compiler-load-core-macro-prelude-path-with-roots
-  [stdlib-roots : svec.Vec]) : String
-  (match (compiler-load-resolve-module-import-with-roots
-    ""
-    ""
-    "stdlib.core_macros"
-    stdlib-roots)
-    [(ResultPkgResolve.Ok path) path]
-    [(ResultPkgResolve.Err _) compiler-load-core-macro-prelude-path]))
-
 (define (compiler-load-core-macro-prelude-with-roots-cfg
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-file-with-paths-and-roots-cfg
-      (compiler-load-core-macro-prelude-path-with-roots stdlib-roots)
+      compiler-load-core-macro-prelude-path
       seen
       stdlib-roots
       cfgs)))
@@ -3033,7 +3019,7 @@
   (compiler-load-append-root-module-marker
     (compiler-load-file-with-paths-and-roots-cfg-with-pools
       load-state
-      (compiler-load-core-macro-prelude-path-with-roots stdlib-roots)
+      compiler-load-core-macro-prelude-path
       seen
       stdlib-roots
       cfgs

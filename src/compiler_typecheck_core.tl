@@ -29210,23 +29210,25 @@
   [fn-ty : AstType]
   [callables : (& callables AstImportedSpmdCallableList)]
   [args-class : TcSpmdClass]) : TcSpmdClass
-  (if (not (tc-spmd-varying? args-class))
-    TcSpmdClass.Uniform
-    (if (tc-type-eq (tc-type-without-regions expr-ty) (AstType.Unit))
-      TcSpmdClass.Uniform
+  (cond
+    [(not (tc-spmd-varying? args-class)) TcSpmdClass.Uniform]
+    [(tc-type-eq (tc-type-without-regions expr-ty) (AstType.Unit))
+      TcSpmdClass.Uniform]
+    [else
       (let
         [signature : String (tc-type-render (tc-type-without-regions fn-ty))]
-        (if (tc-spmd-imported-callable-has-varying-result-at?
-          callables
-          signature
-          0)
-          TcSpmdClass.Varying
-          (if (tc-spmd-imported-callable-has-specialization-at?
-            callables
-            signature
-            0)
-            TcSpmdClass.Uniform
-            TcSpmdClass.Varying))))))
+        (cond
+          [(tc-spmd-imported-callable-has-varying-result-at?
+              callables
+              signature
+              0)
+            TcSpmdClass.Varying]
+          [(tc-spmd-imported-callable-has-specialization-at?
+              callables
+              signature
+              0)
+            TcSpmdClass.Uniform]
+          [else TcSpmdClass.Varying]))]))
 
 (define (tc-spmd-imported-call
   [ctx : TcContext]

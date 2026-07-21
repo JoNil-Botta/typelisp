@@ -35654,11 +35654,7 @@
           lane-locals
           (lower-context-expr-get ctx (ast-expr-list-get args arg-index 0)))]
       (str_cat.str-cat
-        (if (> arg-lanes 0)
-          "v"
-          (if (= arg-lanes 0)
-            "u"
-            "?"))
+        (cond [(> arg-lanes 0) "v"] [(= arg-lanes 0) "u"] [else "?"])
         (lower-imported-spmd-source-args-code-at
           ctx
           mode
@@ -35697,11 +35693,10 @@
             lane-locals
             args)]
         [backend : CompilerIrSpmdBackend
-          (if (lower-mode-avx512? mode)
-            (CompilerIrSpmdBackend.Avx512)
-            (if (lower-mode-avx2? mode)
-              (CompilerIrSpmdBackend.Avx2)
-              (CompilerIrSpmdBackend.Scalar)))]
+          (cond
+            [(lower-mode-avx512? mode) (CompilerIrSpmdBackend.Avx512)]
+            [(lower-mode-avx2? mode) (CompilerIrSpmdBackend.Avx2)]
+            [else (CompilerIrSpmdBackend.Scalar)])]
         [lanes : i64
           (match backend
             [(CompilerIrSpmdBackend.Scalar) 1]
@@ -47794,23 +47789,26 @@
         (match lowered
           [(LowerExpr.Expr body-state value _)
             (let
-              [return-expr : LowerExpr
-                (if (or result-varying (tc-type-eq ret-ty (AstType.Unit)))
-                  lowered
-                  ;; Masked lowering represents a uniform result as identical
-                  ;; lanes; the private uniform ABI returns one scalar value.
-                  (if (lower-type-bool? ret-ty)
+              [return-expr
+                : LowerExpr
+                ;; Masked lowering represents a uniform result as identical
+                ;; lanes; the private uniform ABI returns one scalar value.
+                (cond
+                  [(or result-varying (tc-type-eq ret-ty (AstType.Unit)))
+                    lowered]
+                  [(lower-type-bool? ret-ty)
                     (lower-emit-mask-reduce
                       body-state
                       (CompilerIrMaskReduceOp.Any)
                       value
-                      lanes)
+                      lanes)]
+                  [else
                     (lower-emit-vector-reduce
                       body-state
                       (CompilerIrVectorReduceOp.Min)
                       value
                       lanes
-                      ret-ty)))]
+                      ret-ty)])]
               [return-state : LowerState
                 (match return-expr
                   [(LowerExpr.Expr next-state _ _) next-state])]

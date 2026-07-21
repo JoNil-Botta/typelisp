@@ -1,4 +1,5 @@
 (import stdlib.arena)
+(import stdlib.io)
 (import stdlib.str_cat as str-cat)
 (import stdlib.string)
 (import stdlib.thread)
@@ -36,7 +37,7 @@
       [(not text-ok) 3]
       [else 42])))
 
-(define (main) : i64
+(define (run-safe-threading) : i64
   (let
     [base : i64 20]
     [owner : arena.Arena (arena.make-atomic)]
@@ -56,3 +57,11 @@
               [(ThreadStringSpawnErr _) 6]
               [(ThreadStringSpawnOk text)
                 (safe-threading-finish number cell text)])])])))
+
+(define (main) : i64
+  (let
+    [result : i64 (run-safe-threading)]
+    (begin
+      (io.print-string "safe threading score: ")
+      (io.print result)
+      result)))

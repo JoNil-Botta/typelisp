@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-examples.sh — Compile every .tl file in examples/ and verify exit codes.
+# verify-examples.sh — Compile every .tl file in examples/ and verify its exit
+# code plus exact user-visible stdout.
 # refs #208
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -34,12 +35,34 @@ expected_exit() {
         arena_lifetimes) echo 42 ;;
         calc) echo 14 ;;
         char_literals) echo 64 ;;
-        hello) echo 120 ;;   # main returns factorial(5)
+        hello) echo 0 ;;
         lexer) echo 12 ;;
         nested_eval) echo 7 ;;
         parser) echo 14 ;;
         safe_threading) echo 42 ;;
         token) echo 0 ;;
+        *) echo "unknown example: $1" >&2; exit 1 ;;
+    esac
+}
+
+# Exact user-visible output for each runnable example. Keeping these transcripts
+# checked makes the examples useful from a terminal instead of relying only on
+# otherwise invisible process exit codes.
+expected_stdout() {
+    case "$1" in
+        arena_lifetimes) printf '%s\n' 'arena lifetime score: 42' ;;
+        calc) printf '%s\n' 'calculator result: 14' ;;
+        char_literals) printf '%s\n' 'character literal code sum: 64' ;;
+        hello)
+            printf '%s\n' \
+                'Hello, TypeLisp!' \
+                'factorial(5) = 120'
+            ;;
+        lexer) printf '%s\n' 'lexer score: 12' ;;
+        nested_eval) printf '%s\n' 'nested evaluator result: 7' ;;
+        parser) printf '%s\n' 'parser result: 14' ;;
+        safe_threading) printf '%s\n' 'safe threading score: 42' ;;
+        token) : ;;
         *) echo "unknown example: $1" >&2; exit 1 ;;
     esac
 }
@@ -63,6 +86,10 @@ for source in "$ROOT/examples/"*.tl; do
     asm="$WORKDIR/$name.s"
     obj="$WORKDIR/$name.$NL_OBJ_EXT"
     bin="$WORKDIR/$name$NL_BIN_EXT"
+    stdout="$WORKDIR/$name.stdout"
+    stderr="$WORKDIR/$name.stderr"
+    want_stdout="$WORKDIR/$name.expected.stdout"
+    expected_stdout "$name" > "$want_stdout"
 
     echo "[$name] checking format and source conventions"
     "$COMPILER" fmt --check "$source"
@@ -79,7 +106,7 @@ for source in "$ROOT/examples/"*.tl; do
 
         echo "[$name] running -> expect exit $want"
         set +e
-        "$bin"
+        "$bin" > "$stdout" 2> "$stderr"
         got=$?
         set -e
     else
@@ -89,16 +116,32 @@ for source in "$ROOT/examples/"*.tl; do
 
         echo "[$name] running -> expect exit $want"
         set +e
-        "$bin"
+        "$bin" > "$stdout" 2> "$stderr"
         got=$?
         set -e
     fi
 
+    cat "$stdout"
     if [ "$got" -ne "$want" ]; then
         echo "FAIL: $name expected exit $want, got $got" >&2
         failed=$((failed + 1))
     else
         echo "PASS: $name exit $got"
+    fi
+    if [ -s "$stderr" ]; then
+        echo "FAIL: $name wrote unexpected stderr" >&2
+        sed 's/^/  /' "$stderr" >&2 || true
+        failed=$((failed + 1))
+    fi
+    if ! cmp -s "$want_stdout" "$stdout"; then
+        echo "FAIL: $name stdout mismatch" >&2
+        echo "expected:" >&2
+        sed 's/^/  /' "$want_stdout" >&2 || true
+        echo "actual:" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        failed=$((failed + 1))
+    else
+        echo "PASS: $name stdout"
     fi
 done
 
@@ -107,4 +150,4 @@ if [ "$failed" -gt 0 ]; then
     exit 1
 fi
 
-echo "All examples compiled, linked, and ran with expected exit codes."
+echo "All examples compiled, linked, and ran with expected exit codes and stdout."

@@ -104,6 +104,19 @@ $tl build                         # builds nearest typelisp.pkg
 $tl run                           # builds/runs nearest binary typelisp.pkg
 ```
 
+Running `examples/hello.tl` exits successfully and prints visible output:
+
+```text
+Hello, TypeLisp!
+factorial(5) = 120
+```
+
+To start a package instead, run `$tl new hello-app`, then
+`$tl run --manifest-path hello-app/typelisp.pkg`. The generated binary prints
+`Hello, TypeLisp!`; `$tl test --manifest-path hello-app/typelisp.pkg` runs its
+included `answer-is-42` inline test, and the generated `.gitignore` keeps
+`target/` build output out of version control.
+
 ## Example
 
 ```lisp

@@ -6911,14 +6911,22 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 
 ### Hello world (factorial)
 
-```lisp test=run name=factorial exit=120 stdout=""
+```lisp test=run name=factorial exit=0 stdout="Hello, TypeLisp!\nfactorial(5) = 120\n"
+(import stdlib.io)
+
 (define (factorial [n : i64]) : i64
   (if (= n 0)
       1
       (* n (factorial (- n 1)))))
 
 (define (main) : i64
-  (factorial 5))  ; returns 120
+  (let
+    [result : i64 (factorial 5)]
+    (begin
+      (io.print-string "Hello, TypeLisp!\n")
+      (io.print-string "factorial(5) = ")
+      (io.print result)
+      0)))  ; prints the greeting/result and exits successfully
 ```
 
 ### Enum with match

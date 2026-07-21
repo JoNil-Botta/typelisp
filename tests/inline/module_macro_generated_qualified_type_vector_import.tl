@@ -1,5 +1,5 @@
 ;; module_macro_generated_qualified_type_vector_import.tl - generated module
-;; bodies can use an alias-qualified generated type in a later `(vector T)`
+;; bodies can use an alias-qualified generated type in a later `(vector.vector T)`
 ;; import.
 (import stdlib.test)
 (import stdlib.vector)
@@ -14,7 +14,7 @@
   `(begin
     (module generated.qualified_type_vector_user)
     (import (type-provider) as provider)
-    (import (vector provider.T) as vec)
+    (import (vector.vector provider.T) as vec)
     (define (make [value : i64]) : provider.T
       (provider.T value))
     (define (score [value : provider.T]) : i64

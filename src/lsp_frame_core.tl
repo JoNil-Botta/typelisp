@@ -9,7 +9,7 @@
 (import stdlib.byte_buf)
 (import stdlib.json)
 (import stdlib.vector)
-(import (vector String) as lsp_svec)
+(import (vector.vector String) as lsp_svec)
 (import lex as lexer)
 (import read as reader)
 (import compiler_builtin_ids as cbi)

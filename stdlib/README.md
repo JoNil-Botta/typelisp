@@ -176,7 +176,7 @@ use.
   open-addressed linear-probing slot arrays. Every specialization emits its
   complete slot, probe, map, lookup, mutation, and iteration implementation;
   there are no manually maintained concrete backing families. Import a
-  specialization such as `(import (hashmap String i64) as map)` and use its
+  specialization such as `(import (hashmap.hashmap String i64) as map)` and use its
   `Map`, `with-capacity`, `get`, `contains?`, `len`, `capacity`, bucket-order
   cursor helpers, and place-taking `insert!`, `insert-or-update!`, `remove!`,
   and `entry-or-insert!` mutators. String-key modules also expose borrowed-key
@@ -208,7 +208,7 @@ use.
   explicit `&mut` `*-ref!` helpers. Use a set
   when only key membership matters; use a map when each key carries a meaningful
   value rather than modeling membership with dummy map values. Import it with
-  `(import stdlib.set)` and instantiate with `(import (set i64) as iset)`.
+  `(import stdlib.set)` and instantiate with `(import (set.set i64) as iset)`.
 - `sort.tl`: generated stable deterministic hybrid merge-sort helpers for
   `(vector T)` modules. `(vec T)` extends the matching generated vector module
   with `sort!`; scalar element types use built-in `<`, while String and
@@ -260,14 +260,14 @@ use.
   See `MATH_LICENSES.md` for derived-code notices.
 - `option.tl`: module-emitting `(option T)` macro for absence-only results.
   Import it with `(import stdlib.option)` and instantiate with a module
-  alias such as `(import (option i64) as option_i64)`. Each generated module
+  alias such as `(import (option.option i64) as option_i64)`. Each generated module
   exposes `Option`, `some`, `none`, borrowed predicates `is-some?` /
   `is-none?`, consuming `value-or`, and same-payload `map`; duplicate imports
   for the same payload type share the generated module/type.
 - `result.tl`: module-emitting `(result T E)` macro for recoverable-error
   results with success payload `T` and error payload `E`. Import it with
   `(import stdlib.result)` and instantiate with a module alias such as
-  `(import (result i64 String) as result_i64_string)`. Each generated module
+  `(import (result.result i64 String) as result_i64_string)`. Each generated module
   exposes `Result`, `ok`, `err`, borrowed predicates `is-ok?` / `is-err?`,
   consuming `value-or`, and same-payload `map`; duplicate imports for the same
   success/error pair share the generated module/type.
@@ -379,8 +379,8 @@ use.
   caller-site compatibility macros or inline tests in the shell.
 - `vector.tl`: generated concrete vector family (collections v1, #835/#1989)
   over `(Array T)`. Its module-emitting `(vector T)` macro creates
-  import-time instantiations such as `(import (vector i64))` or
-  `(import (vector String) as svec)`. Each instantiation provides a generated
+  import-time instantiations such as `(import (vector.vector i64))` or
+  `(import (vector.vector String) as svec)`. Each instantiation provides a generated
   module namespace with `Vec`, `Pop`, `new`, `with-capacity`, immutable-ref
   reads, shared `Iter` / `IterNext` traversal, consuming `IntoIter` /
   `IntoNext` traversal with owned items and exactly-once checked slot moves,
@@ -413,7 +413,7 @@ use.
   `(slice T)` module macro over the matching `(vector T)` module and explicit
   `(Array T)` live prefixes. Import the module with
   `(import stdlib.vector_slice)`, then instantiate concrete modules such as
-  `(import (slice i64) as i64s)`. Each generated module provides immutable
+  `(import (vector_slice.slice i64) as i64s)`. Each generated module provides immutable
   `Slice`, mutable `MutSlice`, `from-vec`, `from-array`, `all-vec`,
   `from-vec-mut`, `from-array-mut`, `all-vec-mut`, `get`, `set`, `len`,
   `mut-len`, `is-empty?`, `mut-is-empty?`, `sub-slice`, `to-array`, `to-vec`,

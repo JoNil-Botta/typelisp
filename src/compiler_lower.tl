@@ -4,7 +4,7 @@
 ;; CompilerIrProgram.
 (import stdlib.arena)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (import "compiler_typecheck_api.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
@@ -14,7 +14,7 @@
 (import "compiler_float.tl")
 (import stdlib.hashmap)
 (import stdlib.hash)
-(import (hashmap i64 i64) as lower_i64_i64_map)
+(import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
 (import stdlib.string)
 (import stdlib.text_buf)
 (import stdlib.str_cat_runtime as str_cat)
@@ -59596,7 +59596,7 @@
 
 (define (compiler-lower-result-try-source) : String
   "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (read [flag : bool] [n : i64]) : result_i64_string.Result
   (if flag (result_i64_string.Ok n) (result_i64_string.Err \"read failed\")))
 (define (sum [a : bool] [b : bool]) : result_i64_string.Result
@@ -59612,7 +59612,7 @@
 
 (define (compiler-lower-option-try-source) : String
   "(import stdlib.option)
-(import (option i64) as option_i64)
+(import (option.option i64) as option_i64)
 (define (read [flag : bool] [n : i64]) : option_i64.Option
   (if flag (option_i64.Some n) option_i64.None))
 (define (main [a : bool] [b : bool]) : option_i64.Option
@@ -59634,7 +59634,7 @@
 
 (define (compiler-lower-resource-with-source) : String
   "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (open-a [ok : bool]) : result_i64_string.Result
   (if ok (result_i64_string.Ok 10) (result_i64_string.Err \"open a\")))
 (define (open-b [ok : bool]) : result_i64_string.Result
@@ -59650,7 +59650,7 @@
 
 (define (compiler-lower-resource-with-nested-source) : String
   "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (close-a [h : i64]) : unit unit)
 (define (close-b [h : i64]) : unit unit)
 (define (main) : result_i64_string.Result
@@ -59660,7 +59660,7 @@
 
 (define (compiler-lower-cleanup-struct-source) : String
   "(import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (close-fd [fd : i64]) : unit unit)
 (define (use-fd [ok : bool] [fd : i64]) : result_i64_string.Result
   (if ok (result_i64_string.Ok fd) (result_i64_string.Err \"use fd\")))
@@ -62711,7 +62711,7 @@
     (module generated.lower_vector_user)
     (defstruct T
       (value i64))
-    (import (vector T) as vec)
+    (import (vector.vector T) as vec)
     (define (make [value : i64]) : T
       (T value))
     (define (score [first : T] [fallback : T]) : i64

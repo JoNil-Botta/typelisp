@@ -10,7 +10,7 @@
 (import stdlib.arena)
 (import stdlib.process)
 (import stdlib.hashmap)
-(import (hashmap i64 i64) as tltest_name_map)
+(import (hashmap.hashmap i64 i64) as tltest_name_map)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import "build_run_core.tl")
@@ -3099,7 +3099,7 @@
       (expr-var (string-append \"generated.slice_user.\" (type-key T)))]
     `(begin
       (module ,module-name)
-      (import (vector ,T) as vec)
+      (import (vector.vector ,T) as vec)
       (import (stdlib.vector_slice.slice ,T) as slice)
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let
@@ -3278,11 +3278,12 @@
         (comptime.expr-var \"generated.result_user\")]
       `(begin
         (module ,module-name)
-        (import (result ,T ,E) as local_result)
+        (import stdlib.result)
+        (import (result.result ,T ,E) as local_result)
         (define (value-or [value : local_result.Result] [fallback : ,T]) : ,T
           (local_result.value-or value fallback))))))
 
-(cfg test (import (result i64 String) as result_i64_string))
+(cfg test (import (result.result i64 String) as result_i64_string))
 (cfg test (import (result-user i64 String) as user))
 
 (cfg

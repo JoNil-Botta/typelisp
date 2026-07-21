@@ -1,5 +1,5 @@
 (import stdlib.hashmap)
-(import (hashmap String i64) as map_string_i64)
+(import (hashmap.hashmap String i64) as map_string_i64)
 
 ; Must fail: put may overwrite, insert, resize, or move buckets while a mutable
 ; entry into the table is still live.

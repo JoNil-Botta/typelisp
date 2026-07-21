@@ -17,7 +17,7 @@
 ;#
 ;# ```typelisp
 ;# (import stdlib.hashmap)
-;# (import (hashmap String i64) as map)
+;# (import (hashmap.hashmap String i64) as map)
 ;# (define (main) : i64
 ;#   (let
 ;#     [m : map.Map (map.new)]

@@ -1,8 +1,8 @@
 ;# Generic absence-only option module macro.
 ;#
 ;# Import with `(import stdlib.option)`, then instantiate a concrete module
-;# with `(import (option i64) as option_i64)` or
-;# `(import (option String) as option_string)`.
+;# with `(import (option.option i64) as option_i64)` or
+;# `(import (option.option String) as option_string)`.
 (import stdlib.comptime)
 
 ;: Emit a generated absence-only option module for payload type `T`.
@@ -66,7 +66,8 @@
             (type-key T)))]
       `(begin
         (module ,module-name)
-        (import (option ,T) as local_option)
+        (import stdlib.option)
+        (import (option.option ,T) as local_option)
         (define (value-or [value : local_option.Option] [fallback : ,T]) : ,T
           (local_option.value-or value fallback))))))
 

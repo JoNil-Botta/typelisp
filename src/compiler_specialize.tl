@@ -7,7 +7,7 @@
 (import stdlib.string)
 (import stdlib.text_buf)
 (import stdlib.hashmap)
-(import (hashmap i64 i64) as spec_id_i64_map)
+(import (hashmap.hashmap i64 i64) as spec_id_i64_map)
 (import compiler_intern as spec_ci)
 (import compiler_builtin_ids as cbi)
 

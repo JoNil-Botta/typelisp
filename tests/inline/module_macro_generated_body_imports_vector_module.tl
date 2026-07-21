@@ -1,5 +1,5 @@
 ;; module_macro_generated_body_imports_vector_module.tl - generated module
-;; bodies can import stdlib.vector and then instantiate `(vector T)`.
+;; bodies can import stdlib.vector and then instantiate `(vector.vector T)`.
 (import stdlib.test)
 
 (defmacro (vector-user) : Module
@@ -8,7 +8,7 @@
     (import stdlib.vector)
     (defstruct T
       (value i64))
-    (import (vector T) as vec)
+    (import (vector.vector T) as vec)
     (define (make [value : i64]) : T
       (T value))
     (define (score [value : T]) : i64

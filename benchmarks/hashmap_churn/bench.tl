@@ -6,7 +6,7 @@
 ;# insert/put path and makes grow-vs-rehash policy visible.
 (import stdlib.io)
 (import stdlib.hashmap)
-(import (hashmap i64 i64) as map_i64_i64)
+(import (hashmap.hashmap i64 i64) as map_i64_i64)
 
 (define churn-base-rounds : i64
   320)

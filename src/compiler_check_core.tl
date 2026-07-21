@@ -2,7 +2,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_load.tl")
 (import "compiler_typecheck_api.tl")

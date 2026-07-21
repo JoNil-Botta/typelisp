@@ -5,7 +5,7 @@
 (module cross_single_a)
 
 (import stdlib.vector)
-(import (vector i64) as vec_a)
+(import (vector.vector i64) as vec_a)
 
 (define (count) : i64
   (let

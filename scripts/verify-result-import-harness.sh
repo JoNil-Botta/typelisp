@@ -138,8 +138,8 @@ rewrite_for_ordinary_module() {
                         print "(import generic_result)"
                         next
                     }
-                    /^\(import \(result / {
-                        sub(/^\(import \(result /, "(import (generic_result.generic-result ")
+                    /^\(import \(result[.]result / {
+                        sub(/^\(import \(result[.]result /, "(import (generic_result.generic-result ")
                     }
                     { print }
                 ' "$source_file" > "$destination_dir/$source_name"
@@ -150,7 +150,7 @@ rewrite_for_ordinary_module() {
 
     for measured_source in format_tokens.tl lex.tl compiler_ctfe.tl; do
         measured_file="$destination_dir/$measured_source"
-        if grep -E '^\(import stdlib\.result\)$|^\(import \(result ' "$measured_file" >/dev/null 2>&1; then
+        if grep -E '^\(import stdlib\.result\)$|^\(import \(result[.]result ' "$measured_file" >/dev/null 2>&1; then
             fail "$measured_source still contains a stdlib.result import"
         fi
         if ! grep -E '^\(import generic_result\)$' "$measured_file" >/dev/null 2>&1; then

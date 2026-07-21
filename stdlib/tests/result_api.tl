@@ -1,9 +1,9 @@
 (import stdlib.result)
 (import stdlib.comptime)
 (import stdlib.test)
-(import (result i64 String) as result_i64_string)
-(import (result i64 String) as result_i64_string_again)
-(import (result String i64) as result_string_i64)
+(import (result.result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string_again)
+(import (result.result String i64) as result_string_i64)
 
 (define (result-test-inc [value : i64]) : i64
   (+ value 1))
@@ -23,7 +23,8 @@
           (comptime.string-append "." (type-key E))))]
     `(begin
       (module ,module-name)
-      (import (result ,T ,E) as local_result)
+      (import stdlib.result)
+      (import (result.result ,T ,E) as local_result)
       (define (value-or [value : local_result.Result] [fallback : ,T]) : ,T
         (match value
           [(local_result.Ok inner) inner]
@@ -42,7 +43,7 @@
   (ResApiTagA i64)
   (ResApiTagB i64))
 
-(import (result ResApiPoint ResApiTag) as result_struct_enum)
+(import (result.result ResApiPoint ResApiTag) as result_struct_enum)
 
 (define (assert-result-macro-struct-and-enum-element-kinds) : unit
   (let

@@ -1,6 +1,6 @@
 ;: A live generated hashmap value borrow blocks a bang mutation of the map.
 (import stdlib.hashmap)
-(import (hashmap i64 i64) as map_i64_i64)
+(import (hashmap.hashmap i64 i64) as map_i64_i64)
 
 (define (main) : unit
   (let

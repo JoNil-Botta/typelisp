@@ -5,7 +5,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (cfg compile-profile (import stdlib.profile))
 (import compiler_allocation_profile as allocation_profile)
 (import "compiler_backend.tl")

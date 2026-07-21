@@ -1,7 +1,7 @@
 ; sym_i64_env module - Immutable scoped interned-symbol -> i64 table.
 ; Functional binding, head-first lookup, shadowing.
 (import stdlib.option)
-(import (option i64) as option_i64)
+(import (option.option i64) as option_i64)
 
 (defenum SymI64Env
   (SymI64Nil)

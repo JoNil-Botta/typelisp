@@ -1,7 +1,7 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl.
 (import stdlib.io)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (import "../compiler_typecheck.tl")
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
@@ -1306,7 +1306,7 @@
     (module generated.local_type_vector_user)
     (defstruct T
       (value i64))
-    (import (vector T) as vec)
+    (import (stdlib.vector.vector T) as vec)
     (define (make [value : i64]) : T
       (T value))
     (define (score [value : T]) : i64
@@ -1330,7 +1330,7 @@
   `(begin
     (module generated.qualified_type_vector_user)
     (import (type-provider) as provider)
-    (import (vector provider.T) as vec)
+    (import (stdlib.vector.vector provider.T) as vec)
     (define (make [value : i64]) : provider.T
       (provider.T value))
     (define (score [value : provider.T]) : i64
@@ -1350,7 +1350,7 @@
 (defmacro (vector-user [T : type]) : Module
   `(begin
     (module generated.param_type_vector_user)
-    (import (vector T) as vec)
+    (import (stdlib.vector.vector ,T) as vec)
     (define (score [value : ,T]) : i64
       (let
         [items : vec.Vec (vec.new)]
@@ -1369,7 +1369,7 @@
     (module generated.local_import_param_vector_user)
     (import stdlib.vector)
 (import (vector.vector String) as svec)
-    (import (vector T) as vec)
+    (import (vector.vector ,T) as vec)
     (define (score [value : ,T]) : i64
       (let
         [items : vec.Vec (vec.new)]
@@ -1386,7 +1386,7 @@
 (defmacro (json-vector-user) : Module
   `(begin
     (module generated.json_vector_user)
-    (import (vector json.Json core) as jvec)
+    (import (vector.vector json.Json core) as jvec)
     (define (score) : i64
       (let
         [items : jvec.Vec (jvec.new)]
@@ -2214,7 +2214,7 @@
       (io.write-file
         root-provider
         "(import \"stdlib/option.tl\")
-(import (option i64) as option_i64)
+(import (stdlib.option.option i64) as option_i64)
 
 (define (root-score) : i64
   (option_i64.value-or (option_i64.some 1) 0))")
@@ -2222,7 +2222,7 @@
         named-provider
         "(module tc4004named)
 (import \"stdlib/option.tl\")
-(import (option i64) as option_i64)
+(import (stdlib.option.option i64) as option_i64)
 
 (define (named-score) : i64
   (option_i64.value-or (option_i64.some 2) 0))")
@@ -3368,7 +3368,7 @@
 (define (compiler-typecheck-smoke-lazy-import-stdlib-result-source) : String
   "(module main)
 (import stdlib.result)
-(import (result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string)
 (define (main) : i64 42)")
 
 (define (compiler-typecheck-smoke-unused-result-import-local-type-source) : String
@@ -3378,15 +3378,15 @@
 (defstruct LocalError
   (message String))
 
-(import (result i64 LocalError) as local_result_unused)
+(import (result.result i64 LocalError) as local_result_unused)
 
 (define (main) : i64 42)")
 
 (define (compiler-typecheck-smoke-result-enum-then-helper-source) : String
   "(module main)
 (import stdlib.result)
-(import (result i64 String) as r_enum)
-(import (result i64 String) as r_helper)
+(import (result.result i64 String) as r_enum)
+(import (result.result i64 String) as r_helper)
 
 (define (score [value : r_enum.Result]) : i64
   (match value

@@ -22,7 +22,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.option)
-(import (option i64) as option_i64)
+(import (option.option i64) as option_i64)
 (import compiler_builtin_ids as cbi)
 (import sym_i64_env)
 

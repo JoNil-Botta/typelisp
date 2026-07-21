@@ -13,7 +13,7 @@
 (import stdlib.string)
 (import stdlib.vector)
 (import stdlib.str_cat_runtime as str_cat)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 
 (defenum MdTableRow
   (Row svec.Vec))

@@ -6,8 +6,8 @@
 (import stdlib.string)
 (import serialize_toy_format as toy)
 (import serialize_enum_fixture as enum_fixture)
-(import (option i64) as option_i64)
-(import (result i64 String) as result_i64_string)
+(import (option.option i64) as option_i64)
+(import (result.result i64 String) as result_i64_string)
 
 (defmacro (enum-type-info [T : type]) : Module
   (let

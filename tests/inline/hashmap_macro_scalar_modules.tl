@@ -2,9 +2,9 @@
 (import stdlib.test)
 (import stdlib.hashmap)
 (import stdlib.string)
-(import (hashmap String String) as map_string_string)
-(import (hashmap i64 i64) as map_i64_i64)
-(import (hashmap i64 String) as map_i64_string)
+(import (hashmap.hashmap String String) as map_string_string)
+(import (hashmap.hashmap i64 i64) as map_i64_i64)
+(import (hashmap.hashmap i64 String) as map_i64_string)
 
 (define (assert-owned-string-eq
   [actual : String]

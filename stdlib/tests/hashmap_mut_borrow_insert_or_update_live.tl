@@ -1,5 +1,5 @@
 (import stdlib.hashmap)
-(import (hashmap String i64) as map_string_i64)
+(import (hashmap.hashmap String i64) as map_string_i64)
 
 (define (use-map-borrow [_borrowed : (&mut map map_string_i64.Map)]) : unit
   unit)

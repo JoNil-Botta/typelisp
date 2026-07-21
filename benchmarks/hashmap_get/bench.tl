@@ -5,7 +5,7 @@
 ;# the generated read probe path dominates the runtime.
 (import stdlib.io)
 (import stdlib.hashmap)
-(import (hashmap i64 i64) as map_i64_i64)
+(import (hashmap.hashmap i64 i64) as map_i64_i64)
 
 (define hashmap-get-base-rounds : i64
   1200)

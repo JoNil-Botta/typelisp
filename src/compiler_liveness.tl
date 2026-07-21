@@ -9,7 +9,7 @@
 (import stdlib.string)
 (import "compiler_ir_types.tl")
 (import stdlib.hashmap)
-(import (hashmap String i64) as live_label_map)
+(import (hashmap.hashmap String i64) as live_label_map)
 
 (defstruct CompilerLiveI64Set
   (words (Array i64)))

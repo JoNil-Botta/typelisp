@@ -19,7 +19,7 @@
       (comptime.expr-var (comptime.string-append vec-module-name ".Vec"))]
     `(begin
       (module ,module-name)
-      (import (vector ,T) as vec)
+      (import (vector.vector ,T) as vec)
       (defenum Source
         (:lifetimes source)
         (FromVec (& source ,vec-type-name))

@@ -1,4 +1,4 @@
-;; vector_macro_struct.tl - runnable aggregate coverage for stdlib `(vector T)`.
+;; vector_macro_struct.tl - runnable aggregate coverage for stdlib `(vector.vector T)`.
 (import stdlib.test)
 (import stdlib.vector)
 
@@ -10,8 +10,8 @@
   (start Pair)
   (finish Pair))
 
-(import (vector Pair) as pvec)
-(import (vector Segment) as svec)
+(import (vector.vector Pair) as pvec)
+(import (vector.vector Segment) as svec)
 
 (define (pair-score [p : Pair]) : i64
   (+ (* (struct-get p left) 10) (struct-get p right)))

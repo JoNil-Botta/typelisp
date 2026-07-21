@@ -16,7 +16,7 @@
 (import stdlib.option)
 (import stdlib.arena)
 (import token)
-(import (option i64) as option_i64)
+(import (option.option i64) as option_i64)
 
 (defenum CompilerParseMaybeDeclSpan
   (Some AstSourceSpan)
@@ -10756,7 +10756,7 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-macro-import-ok?) : bool
-  (match (parse-ast-source "(import (vector i64) as svec)")
+  (match (parse-ast-source "(import (vector.vector i64) as svec)")
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
@@ -10778,7 +10778,10 @@
                   (and
                     (string.eq path "")
                     (string.eq (ci.intern-str alias) "svec")
-                    (compiler-parse-macro-call-node-ok? call-expr "vector" 1))]
+                    (compiler-parse-macro-call-node-ok?
+                      call-expr
+                      "vector.vector"
+                      1))]
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))

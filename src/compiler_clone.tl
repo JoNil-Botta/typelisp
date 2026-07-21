@@ -16,7 +16,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import stdlib.hashmap)
-(import (hashmap i64 i64) as clone_id_map)
+(import (hashmap.hashmap i64 i64) as clone_id_map)
 (import stdlib.string)
 
 (defstruct CloneNameSet

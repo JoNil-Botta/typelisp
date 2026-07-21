@@ -3,11 +3,11 @@
 (import stdlib.string)
 (import stdlib.option)
 (import stdlib.result)
-(import (option String) as option_string)
-(import (option i64) as option_i64)
-(import (option i64) as option_i64_again)
-(import (result i64 String) as result_i64_string)
-(import (result i64 String) as result_i64_string_again)
+(import (option.option String) as option_string)
+(import (option.option i64) as option_i64)
+(import (option.option i64) as option_i64_again)
+(import (result.result i64 String) as result_i64_string)
+(import (result.result i64 String) as result_i64_string_again)
 
 (defstruct Payload
   (value i64))
@@ -28,10 +28,10 @@
   (StatusOk)
   (StatusBad i64))
 
-(import (result Payload Status) as result_payload_status)
-(import (result RichPayload Status) as result_rich_payload_status)
-(import (result i64 RichError) as result_i64_rich_error)
-(import (result result_i64_string.Result String) as result_nested)
+(import (result.result Payload Status) as result_payload_status)
+(import (result.result RichPayload Status) as result_rich_payload_status)
+(import (result.result i64 RichError) as result_i64_rich_error)
+(import (result.result result_i64_string.Result String) as result_nested)
 
 (define (read-i64 [ok : bool]) : result_i64_string.Result
   (if ok

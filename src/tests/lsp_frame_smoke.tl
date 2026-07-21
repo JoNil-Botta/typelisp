@@ -5,7 +5,7 @@
 (import stdlib.json)
 (import stdlib.string)
 (import stdlib.vector)
-(import (vector String) as lsp_svec)
+(import (vector.vector String) as lsp_svec)
 (import "../lsp_frame_core.tl")
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector LspDocument core) as lsp_document_vec)

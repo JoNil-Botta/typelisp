@@ -1,5 +1,5 @@
 (import stdlib.hashmap)
-(import (hashmap i64 String) as map_i64_string)
+(import (hashmap.hashmap i64 String) as map_i64_string)
 
 (define (borrowed-value-found?
   [lookup : (map_i64_string.BorrowedValueLookup map)]) : bool

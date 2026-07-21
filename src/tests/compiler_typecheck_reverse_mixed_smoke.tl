@@ -3,11 +3,11 @@
 
 (define (tc-reverse-mixed-source-nominal-match-smoke?) : bool
   (match (parse-ast-source
-    "(defstruct ReverseMixedItem (value i64))
+    "(defenum ReverseMixedItem (Value i64))
 (import \"reverse_mixed.tl\" module reverse.mixed :as reverse)
 (module reverse.mixed)
-(defstruct ReverseMixedItem (value i64))
-(defstruct ReverseMixedOther (value i64))")
+(defenum ReverseMixedItem (Value i64))
+(defenum ReverseMixedOther (Value i64))")
     [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
@@ -46,12 +46,19 @@
                   (compiler-symbol-module-key-id-by-id
                     module-id
                     (intern "ReverseMixedOther"))]
-                [actual : AstType (ast-ty-array (AstType.Struct flat-id) 1)]
+                [actual : AstType (ast-ty-array (AstType.Enum flat-id) 1)]
                 [expected : AstType
-                  (ast-ty-array (AstType.Struct qualified-id) 1)]
+                  (ast-ty-array (AstType.Enum qualified-id) 1)]
                 [different : AstType
-                  (ast-ty-array (AstType.Struct other-qualified-id) 1)]
+                  (ast-ty-array (AstType.Enum other-qualified-id) 1)]
                 (and
+                  (tc-nominal-name-id-canonical-eq? ctx flat-id qualified-id)
+                  (tc-nominal-name-id-canonical-eq? ctx qualified-id flat-id)
+                  (not
+                    (tc-nominal-name-id-canonical-eq?
+                      ctx
+                      flat-id
+                      other-qualified-id))
                   (match (tc-match-inferred-type-for-expected
                     ctx
                     actual

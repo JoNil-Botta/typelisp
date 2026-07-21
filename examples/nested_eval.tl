@@ -16,7 +16,7 @@
 ;; mismatch - the same soundness as before, now without the helper.
 ;;
 ;; The tree is built inline (no reader dependency) so this example is
-;; self-contained. `main` evaluates `(+ 1 (* 2 3))` and returns 7: the inner
+;; self-contained. `main` evaluates `(+ 1 (* 2 3))`, prints, and returns 7: the inner
 ;; `(* 2 3)` is the nested argument, so it is evaluated first (to 6), then the
 ;; outer `(+ 1 6)` to 7 - the result depends on the whole nested shape.
 (import stdlib.io)
@@ -99,4 +99,8 @@
           (Sexpr.Cons
             (SexprAtom.Int 1)
             (box (Sexpr.Cons (SexprAtom.List (box inner)) (box Sexpr.Nil))))))]
-    (eval-sexpr prog)))
+    [result : i64 (eval-sexpr prog)]
+    (begin
+      (io.print-string "nested evaluator result: ")
+      (io.print result)
+      result)))

@@ -7,6 +7,7 @@
 ;; refuse to clobber an existing manifest or entry source.
 (import stdlib.io)
 (import stdlib.fs)
+(import stdlib.str_cat)
 (import stdlib.string)
 
 ;; A package name must be non-empty and contain only name-safe characters
@@ -42,10 +43,24 @@
           (string.append "\") (entry \"" (string.append entry "\"))\n")))))))
 
 (define (scaffold-bin-source) : String
-  "(define (main) : i64\n  0)\n")
+  "(import stdlib.io)\n(import stdlib.test)\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n\n(define (main) : i64\n  (begin\n    (io.print-string \"Hello, TypeLisp!\\n\")\n    0))\n")
 
 (define (scaffold-lib-source) : String
-  "(define (answer) : i64\n  42)\n")
+  "(import stdlib.test)\n\n(define (answer) : i64\n  42)\n\n(test\n  answer-is-42\n  (test.assert-i64-eq (answer) 42 \"answer should be 42\"))\n")
+
+(test
+  scaffold-first-run-source-smoke
+  (let
+    [bin-source : String (scaffold-bin-source)]
+    [lib-source : String (scaffold-lib-source)]
+    [greeting : String "(io.print-string \"Hello, TypeLisp!\\n\")"]
+    [test-item : String "(test\n  answer-is-42"]
+    (unless
+      (and
+        (string.contains (& bin-source) (& greeting))
+        (string.contains (& bin-source) (& test-item))
+        (string.contains (& lib-source) (& test-item)))
+      (io.panic "scaffold: first-run source smoke mismatch"))))
 
 (define (scaffold-try-mkdir [path : String]) : io.ResultIoUnit
   (fs.try-mkdir (& path)))
@@ -82,7 +97,15 @@
               (string.append path "\n")))
           1)])))
 
-;; Create `root/src/`, then write the manifest and entry source.
+;; Create the package-local build-output ignore without changing an existing
+;; repository policy during `typelisp init`.
+(define (scaffold-write-gitignore [path : String]) : i64
+  (if (io.file-exists? path)
+    0
+    (scaffold-write-new path "/target/\n")))
+
+;; Create `root/src/`, then write the manifest, entry source, and build-output
+;; ignore.
 (define (scaffold-emit [root : String] [name : String] [is-lib : bool]) : i64
   (let
     [kind : String
@@ -96,6 +119,7 @@
     [src-dir : String (string.append root "/src")]
     [pkg-path : String (string.append root "/typelisp.pkg")]
     [src-path : String (string.append root (string.append "/" entry))]
+    [gitignore-path : String (str_cat.str-cat root "/.gitignore")]
     [source : String
       (if is-lib
         (scaffold-lib-source)
@@ -116,14 +140,20 @@
             (let
               [src-code : i64 (scaffold-write-new src-path source)]
               (if (= src-code 0)
-                (begin
-                  (io.print-string
-                    (string.append
-                      "scaffold: created "
-                      (string.append
-                        kind
-                        (string.append " package " (string.append name "\n")))))
-                  0)
+                (let
+                  [gitignore-code : i64
+                    (scaffold-write-gitignore gitignore-path)]
+                  (if (= gitignore-code 0)
+                    (begin
+                      (io.print-string
+                        (str_cat.str-cat
+                          "scaffold: created "
+                          kind
+                          " package "
+                          name
+                          "\n"))
+                      0)
+                    gitignore-code))
                 src-code))
             pkg-code))])))
 

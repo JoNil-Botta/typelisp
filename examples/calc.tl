@@ -266,11 +266,16 @@
 ;;     addition rather than `(2 + 3) * 4`.
 ;;   - eval recursively folds it to 2 + (3 * 4) = 14 (NOT (2 + 3) * 4 = 20),
 ;;     proving the composed pipeline honours precedence.
-;; `main` returns 14: lexing, parsing, and evaluation composed in TypeLisp, an
-;; observable result an execution test can assert as the process exit code.
+;; `main` prints and returns 14: lexing, parsing, and evaluation composed in
+;; TypeLisp.
 (define (main) : i64
   (let
     [toks : token-vec.Vec (token-vec.with-capacity 16)]
     (begin
       (lex "2 + 3 * 4" (&mut toks))
-      (eval (parse (& toks))))))
+      (let
+        [result : i64 (eval (parse (& toks)))]
+        (begin
+          (io.print-string "calculator result: ")
+          (io.print result)
+          result)))))

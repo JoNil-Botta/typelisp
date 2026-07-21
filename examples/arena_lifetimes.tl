@@ -6,6 +6,7 @@
 ; - double-buffered frame arenas are reused only after phase-local values die
 ; - event-driven unload destroys an atomic level arena only after users join
 (import stdlib.arena)
+(import stdlib.io)
 (import stdlib.profile)
 (import stdlib.str_cat as str-cat)
 (import stdlib.thread)
@@ -186,6 +187,11 @@
     [lexical : i64 (run-game)]
     [double-buffered : i64 (run-double-buffered-frames)]
     [unloaded : i64 (run-event-driven-unload)]
-    (if (and (= lexical 42) (= double-buffered 28) (= unloaded 42))
-      42
-      1)))
+    [result : i64
+      (if (and (= lexical 42) (= double-buffered 28) (= unloaded 42))
+        42
+        1)]
+    (begin
+      (io.print-string "arena lifetime score: ")
+      (io.print result)
+      result)))

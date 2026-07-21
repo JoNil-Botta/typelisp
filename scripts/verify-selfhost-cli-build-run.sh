@@ -1614,8 +1614,13 @@ assert_contains scaffold-new-bin "$WORKDIR/scaffold-new-bin.out" "scaffold: crea
 NEW_BIN_DIR="$SCAFFOLD_ROOT/cli_new_bin"
 [ -f "$NEW_BIN_DIR/typelisp.pkg" ] || fail "new did not write bin manifest"
 [ -f "$NEW_BIN_DIR/src/main.tl" ] || fail "new did not write bin main source"
+[ -f "$NEW_BIN_DIR/.gitignore" ] || fail "new did not write .gitignore"
 assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(kind "bin")'
 assert_contains scaffold-new-bin-manifest "$NEW_BIN_DIR/typelisp.pkg" '(entry "src/main.tl")'
+assert_contains scaffold-new-bin-gitignore "$NEW_BIN_DIR/.gitignore" '/target/'
+assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" '(io.print-string "Hello, TypeLisp!\n")'
+assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" '(test'
+assert_contains scaffold-new-bin-source "$NEW_BIN_DIR/src/main.tl" 'answer-is-42'
 
 NEW_BIN_EXE="$NEW_BIN_DIR/target/release/cli_new_bin"
 if [ "$HOST_OS" = windows ]; then
@@ -1639,8 +1644,20 @@ set +e
 status=$?
 set -e
 assert_status scaffold-new-bin-program "$status" 0
-assert_empty scaffold-new-bin-program "$WORKDIR/scaffold-new-bin-program.out"
+assert_contains scaffold-new-bin-program "$WORKDIR/scaffold-new-bin-program.out" "Hello, TypeLisp!"
 assert_empty scaffold-new-bin-program "$WORKDIR/scaffold-new-bin-program.err"
+
+set +e
+(
+    cd "$NEW_BIN_DIR"
+    # The scaffold gate also proves the generated inline test type-checks.
+    "$COMPILER" test --check --target "$BUILD_TARGET" > "$WORKDIR/scaffold-new-bin-test.out" 2> "$WORKDIR/scaffold-new-bin-test.err"
+)
+status=$?
+set -e
+assert_status scaffold-new-bin-test "$status" 0
+assert_empty scaffold-new-bin-test "$WORKDIR/scaffold-new-bin-test.err"
+assert_contains scaffold-new-bin-test "$WORKDIR/scaffold-new-bin-test.out" "1 test(s)"
 
 set +e
 (
@@ -1656,8 +1673,12 @@ assert_contains scaffold-new-lib "$WORKDIR/scaffold-new-lib.out" "scaffold: crea
 NEW_LIB_DIR="$SCAFFOLD_ROOT/cli_new_lib"
 [ -f "$NEW_LIB_DIR/typelisp.pkg" ] || fail "new --lib did not write manifest"
 [ -f "$NEW_LIB_DIR/src/lib.tl" ] || fail "new --lib did not write lib source"
+[ -f "$NEW_LIB_DIR/.gitignore" ] || fail "new --lib did not write .gitignore"
 assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(kind "staticlib")'
 assert_contains scaffold-new-lib-manifest "$NEW_LIB_DIR/typelisp.pkg" '(entry "src/lib.tl")'
+assert_contains scaffold-new-lib-gitignore "$NEW_LIB_DIR/.gitignore" '/target/'
+assert_contains scaffold-new-lib-source "$NEW_LIB_DIR/src/lib.tl" '(test'
+assert_contains scaffold-new-lib-source "$NEW_LIB_DIR/src/lib.tl" 'answer-is-42'
 
 NEW_LIB_ARCHIVE="$NEW_LIB_DIR/target/release/libcli_new_lib.a"
 if [ "$HOST_OS" = windows ]; then
@@ -1678,6 +1699,7 @@ assert_contains scaffold-new-lib-build "$WORKDIR/scaffold-new-lib-build.out" "Bu
 
 INIT_BIN_DIR="$SCAFFOLD_ROOT/init-bin"
 mkdir -p "$INIT_BIN_DIR"
+printf '%s\n' '/custom-cache/' > "$INIT_BIN_DIR/.gitignore"
 set +e
 (
     cd "$INIT_BIN_DIR"
@@ -1691,6 +1713,11 @@ assert_empty scaffold-init-bin "$WORKDIR/scaffold-init-bin.err"
 assert_contains scaffold-init-bin "$WORKDIR/scaffold-init-bin.out" "scaffold: created bin package cli_init_bin"
 [ -f "$INIT_BIN_DIR/typelisp.pkg" ] || fail "init did not write manifest"
 [ -f "$INIT_BIN_DIR/src/main.tl" ] || fail "init did not write main source"
+[ -f "$INIT_BIN_DIR/.gitignore" ] || fail "init did not write .gitignore"
+assert_contains scaffold-init-bin-gitignore "$INIT_BIN_DIR/.gitignore" '/custom-cache/'
+assert_not_contains scaffold-init-bin-gitignore "$INIT_BIN_DIR/.gitignore" '/target/'
+assert_contains scaffold-init-bin-source "$INIT_BIN_DIR/src/main.tl" '(io.print-string "Hello, TypeLisp!\n")'
+assert_contains scaffold-init-bin-source "$INIT_BIN_DIR/src/main.tl" 'answer-is-42'
 
 set +e
 (
@@ -1719,8 +1746,12 @@ assert_empty scaffold-init-lib "$WORKDIR/scaffold-init-lib.err"
 assert_contains scaffold-init-lib "$WORKDIR/scaffold-init-lib.out" "scaffold: created staticlib package cli_init_lib"
 [ -f "$INIT_LIB_DIR/typelisp.pkg" ] || fail "init --lib did not write manifest"
 [ -f "$INIT_LIB_DIR/src/lib.tl" ] || fail "init --lib did not write lib source"
+[ -f "$INIT_LIB_DIR/.gitignore" ] || fail "init --lib did not write .gitignore"
 assert_contains scaffold-init-lib-manifest "$INIT_LIB_DIR/typelisp.pkg" '(kind "staticlib")'
 assert_contains scaffold-init-lib-manifest "$INIT_LIB_DIR/typelisp.pkg" '(entry "src/lib.tl")'
+assert_contains scaffold-init-lib-gitignore "$INIT_LIB_DIR/.gitignore" '/target/'
+assert_contains scaffold-init-lib-source "$INIT_LIB_DIR/src/lib.tl" '(test'
+assert_contains scaffold-init-lib-source "$INIT_LIB_DIR/src/lib.tl" 'answer-is-42'
 
 RUN_SRC="$WORKDIR/run-main.tl"
 cat > "$RUN_SRC" <<'EOF'

@@ -5131,7 +5131,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init cleanup)
+      [(AstResourceBinding.Binding name init cleanup _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-expr-demand
             state
@@ -5185,7 +5185,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name _ _)
+      [(AstResourceBinding.Binding name _ _ _)
         (compiler-load-session-state-lazy-resource-bindings-locals-at
           state
           bindings

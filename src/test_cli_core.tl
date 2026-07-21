@@ -1272,7 +1272,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init-box cleanup-box)
+      [(AstResourceBinding.Binding _ init-box cleanup-box _)
         (let
           [init : AstExpr (ast-node-get init-box)]
           [cleanup : AstExpr (ast-node-get cleanup-box)]

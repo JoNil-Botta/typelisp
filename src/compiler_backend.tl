@@ -2184,10 +2184,13 @@
   [index : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackendSimdIndexedAddress
   (let
+    [base-home : String (compiler-backend-simd-base-home assignments base)]
     [addr-exclude : (Array String)
       (compiler-backend-scavenge-exclude-ops2 assignments base index)]
     [base-reg : String
-      (compiler-backend-scavenge-reg-here addr-exclude 7 "%r8")]
+      (if (string.eq base-home "")
+        (compiler-backend-scavenge-reg-here addr-exclude 7 "%r8")
+        base-home)]
     (match (compiler-backend-value-as-i64 index)
       [(option_i64.Some n)
         (match (compiler-backend-emit-simd-base-data-pointer
@@ -38999,6 +39002,332 @@
             buf)])]
     [_ (CompilerBackendMaybeDivmodPolish.No)]))
 
+(define (compiler-backend-emit-load-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : CompilerIrInstr]
+  [load-dst : i64]
+  [ptr : CompilerIrValue]
+  [load-ty : AstType]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (if (and
+    (compiler-backend-load-compare-type? load-ty)
+    (compiler-backend-var-single-use? ctx.use-counts load-dst))
+    (match rest
+      [(CompilerIrInstrList.Cons next after-cmp)
+        (match next
+          [(CompilerIrInstr.Load second-dst second-src second-ty)
+            (if (compiler-backend-branch-uses-var? second-src load-dst)
+              (compiler-backend-emit-fused-result-rest
+                ctx
+                fallthrough
+                (compiler-backend-emit-load-load
+                  ctx.assignments
+                  load-dst
+                  ptr
+                  load-ty
+                  second-dst
+                  second-ty
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    0
+                    0)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    0
+                    1)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    1
+                    0)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch ctx.plan)
+                    1
+                    1))
+                (box-get after-cmp)
+                buf)
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                rest
+                buf))]
+          [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
+            (if (and
+              (compiler-backend-compare-op? op)
+              (compiler-backend-branch-uses-var? lhs load-dst)
+              (compiler-backend-var-single-use? ctx.use-counts cmp-dst)
+              (not
+                (compiler-backend-binop-f64?
+                  ctx.types
+                  ctx.global-types
+                  lhs
+                  rhs
+                  cmp-ty)))
+              (match (box-get after-cmp)
+                [(CompilerIrInstrList.Cons branch after-branch)
+                  (match branch
+                    [(CompilerIrInstr.Branch cond true-label false-label)
+                      (if (compiler-backend-branch-uses-var? cond cmp-dst)
+                        (compiler-backend-emit-fused-load-compare-branch-rest
+                          ctx
+                          fallthrough
+                          load-dst
+                          ptr
+                          load-ty
+                          cmp-dst
+                          op
+                          rhs
+                          cmp-ty
+                          true-label
+                          false-label
+                          (box-get after-branch)
+                          buf)
+                        (compiler-backend-emit-instrs-normal
+                          ctx
+                          fallthrough
+                          instr
+                          rest
+                          buf))]
+                    [_
+                      (compiler-backend-emit-instrs-normal
+                        ctx
+                        fallthrough
+                        instr
+                        rest
+                        buf)])]
+                [_
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf)])
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                rest
+                buf))]
+          [_
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+      [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])
+    (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)))
+
+(define (compiler-backend-emit-store-ptr-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : CompilerIrInstr]
+  [ptr : CompilerIrValue]
+  [value0 : CompilerIrValue]
+  [ty0 : AstType]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (match rest
+    [(CompilerIrInstrList.Cons maybe-gep after-gep)
+      (match maybe-gep
+        [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
+          (if (and
+            (opt-value-eq base ptr)
+            (compiler-backend-var-single-use? ctx.use-counts gep-dst))
+            (match (compiler-backend-value-as-i64 offset)
+              [(option_i64.Some n)
+                (let
+                  [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+                  (if (compiler-backend-imm32? disp)
+                    (match (box-get after-gep)
+                      [(CompilerIrInstrList.Cons maybe-store after-store)
+                        (match maybe-store
+                          [(CompilerIrInstr.StorePtr dst value1 ty1)
+                            (if (compiler-backend-branch-uses-var? dst gep-dst)
+                              (compiler-backend-emit-fused-result-rest
+                                ctx
+                                fallthrough
+                                (compiler-backend-emit-store-ptr-pair
+                                  ctx.assignments
+                                  ptr
+                                  value0
+                                  ty0
+                                  disp
+                                  value1
+                                  ty1
+                                  ctx.program-index
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
+                                    1
+                                    0)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
+                                    0
+                                    1)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch
+                                      ctx.plan)
+                                    2
+                                    1))
+                                (box-get after-store)
+                                buf)
+                              (compiler-backend-emit-instrs-normal
+                                ctx
+                                fallthrough
+                                instr
+                                rest
+                                buf))]
+                          [_
+                            (compiler-backend-emit-instrs-normal
+                              ctx
+                              fallthrough
+                              instr
+                              rest
+                              buf)])]
+                      [_
+                        (compiler-backend-emit-instrs-normal
+                          ctx
+                          fallthrough
+                          instr
+                          rest
+                          buf)])
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      rest
+                      buf)))]
+              [(option_i64.None)
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  rest
+                  buf)])
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf))]
+        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)]))
+
+(define (compiler-backend-emit-vector-load-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : CompilerIrInstr]
+  [load-dst : i64]
+  [base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (match rest
+    [(CompilerIrInstrList.Cons next after-binop)
+      (match next
+        [(CompilerIrInstr.VectorBinOp payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrVectorBinOpPayload.Payload
+                bin-dst
+                op
+                lhs
+                rhs
+                bin-lanes
+                bin-elem-ty)
+              (if (compiler-backend-vector-load-binop-foldable?
+                ctx.use-counts
+                load-dst
+                lanes
+                elem-ty
+                op
+                lhs
+                rhs
+                bin-lanes
+                bin-elem-ty)
+                (match (compiler-backend-vector-load-binop-fold-value
+                  load-dst
+                  op
+                  lhs
+                  rhs)
+                  [(CompilerBackendVectorMemFold.Some reg-value)
+                    (compiler-backend-emit-fused-result-rest
+                      ctx
+                      fallthrough
+                      (compiler-backend-emit-vector-binop-memory-source
+                        ctx.assignments
+                        bin-dst
+                        op
+                        reg-value
+                        base
+                        index
+                        bin-lanes
+                        bin-elem-ty
+                        (compiler-backend-instr-diagnostic
+                          ctx.spans
+                          ctx.source-function
+                          next
+                          ctx.func-diag
+                          ""))
+                      (box-get after-binop)
+                      buf)]
+                  [(CompilerBackendVectorMemFold.No)
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      rest
+                      buf)])
+                (compiler-backend-emit-instrs-normal
+                  ctx
+                  fallthrough
+                  instr
+                  rest
+                  buf))])]
+        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)]))
+
+(define (compiler-backend-emit-copy-bytes-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [dst : CompilerIrValue]
+  [src : CompilerIrValue]
+  [size : i64]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (let
+    [protect-n : i64
+      (compiler-backend-copy-run-protect-count ctx.assignments rest)]
+    [protect : (Array String)
+      (compiler-backend-copy-run-protect-exclude ctx.assignments rest)]
+    (compiler-backend-emit-fused-result-rest
+      ctx
+      fallthrough
+      (compiler-backend-emit-copy-bytes-avoid
+        ctx.assignments
+        dst
+        src
+        size
+        protect
+        protect-n
+        (compiler-backend-scratch-plan-register-ahead
+          (compiler-backend-runtime-plan-scratch ctx.plan)
+          0
+          0)
+        (compiler-backend-scratch-plan-register-ahead
+          (compiler-backend-runtime-plan-scratch ctx.plan)
+          0
+          1)
+        (compiler-backend-scratch-plan-register-ahead
+          (compiler-backend-runtime-plan-scratch ctx.plan)
+          0
+          (if (>= size 16)
+            3
+            2))
+        (if (>= size 16)
+          (compiler-backend-scratch-plan-register-ahead
+            (compiler-backend-runtime-plan-scratch ctx.plan)
+            0
+            2)
+          ""))
+      rest
+      buf)))
+
 (define (compiler-backend-emit-instrs-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -39259,110 +39588,15 @@
                 (box-get rest)
                 buf)])]
         [(CompilerIrInstr.StorePtr ptr value0 ty0)
-          (match (box-get rest)
-            [(CompilerIrInstrList.Cons maybe-gep after-gep)
-              (match maybe-gep
-                [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
-                  (if (and
-                    (opt-value-eq base ptr)
-                    (compiler-backend-var-single-use? ctx.use-counts gep-dst))
-                    (match (compiler-backend-value-as-i64 offset)
-                      [(option_i64.Some n)
-                        (let
-                          [disp : i64
-                            (* n (compiler-backend-type-size elem-ty))]
-                          (if (compiler-backend-imm32? disp)
-                            (match (box-get after-gep)
-                              [(CompilerIrInstrList.Cons
-                                  maybe-store
-                                  after-store)
-                                (match maybe-store
-                                  [(CompilerIrInstr.StorePtr dst value1 ty1)
-                                    (if (compiler-backend-branch-uses-var?
-                                      dst
-                                      gep-dst)
-                                      (compiler-backend-emit-fused-result-rest
-                                        ctx
-                                        fallthrough
-                                        (compiler-backend-emit-store-ptr-pair
-                                          ctx.assignments
-                                          ptr
-                                          value0
-                                          ty0
-                                          disp
-                                          value1
-                                          ty1
-                                          ctx.program-index
-                                          (compiler-backend-scratch-plan-register-ahead
-                                            (compiler-backend-runtime-plan-scratch
-                                              ctx.plan)
-                                            1
-                                            0)
-                                          (compiler-backend-scratch-plan-register-ahead
-                                            (compiler-backend-runtime-plan-scratch
-                                              ctx.plan)
-                                            0
-                                            1)
-                                          (compiler-backend-scratch-plan-register-ahead
-                                            (compiler-backend-runtime-plan-scratch
-                                              ctx.plan)
-                                            2
-                                            1))
-                                        (box-get after-store)
-                                        buf)
-                                      (compiler-backend-emit-instrs-normal
-                                        ctx
-                                        fallthrough
-                                        instr
-                                        (box-get rest)
-                                        buf))]
-                                  [_
-                                    (compiler-backend-emit-instrs-normal
-                                      ctx
-                                      fallthrough
-                                      instr
-                                      (box-get rest)
-                                      buf)])]
-                              [_
-                                (compiler-backend-emit-instrs-normal
-                                  ctx
-                                  fallthrough
-                                  instr
-                                  (box-get rest)
-                                  buf)])
-                            (compiler-backend-emit-instrs-normal
-                              ctx
-                              fallthrough
-                              instr
-                              (box-get rest)
-                              buf)))]
-                      [(option_i64.None)
-                        (compiler-backend-emit-instrs-normal
-                          ctx
-                          fallthrough
-                          instr
-                          (box-get rest)
-                          buf)])
-                    (compiler-backend-emit-instrs-normal
-                      ctx
-                      fallthrough
-                      instr
-                      (box-get rest)
-                      buf))]
-                [_
-                  (compiler-backend-emit-instrs-normal
-                    ctx
-                    fallthrough
-                    instr
-                    (box-get rest)
-                    buf)])]
-            [_
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                (box-get rest)
-                buf)])]
+          (compiler-backend-emit-store-ptr-step
+            ctx
+            fallthrough
+            instr
+            ptr
+            value0
+            ty0
+            (box-get rest)
+            buf)]
         [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
           (if (compiler-backend-var-single-use? ctx.use-counts gep-dst)
             (match (compiler-backend-value-as-i64 offset)
@@ -39861,248 +40095,36 @@
               (box-get rest)
               buf))]
         [(CompilerIrInstr.CopyBytes dst src size)
-          (let
-            [protect-n : i64
-              (compiler-backend-copy-run-protect-count
-                ctx.assignments
-                (box-get rest))]
-            [protect : (Array String)
-              (compiler-backend-copy-run-protect-exclude
-                ctx.assignments
-                (box-get rest))]
-            (compiler-backend-emit-fused-result-rest
-              ctx
-              fallthrough
-              (compiler-backend-emit-copy-bytes-avoid
-                ctx.assignments
-                dst
-                src
-                size
-                protect
-                protect-n
-                (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch ctx.plan)
-                  0
-                  0)
-                (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch ctx.plan)
-                  0
-                  1)
-                (compiler-backend-scratch-plan-register-ahead
-                  (compiler-backend-runtime-plan-scratch ctx.plan)
-                  0
-                  (if (>= size 16)
-                    3
-                    2))
-                (if (>= size 16)
-                  (compiler-backend-scratch-plan-register-ahead
-                    (compiler-backend-runtime-plan-scratch ctx.plan)
-                    0
-                    2)
-                  ""))
-              (box-get rest)
-              buf))]
+          (compiler-backend-emit-copy-bytes-step
+            ctx
+            fallthrough
+            dst
+            src
+            size
+            (box-get rest)
+            buf)]
         [(CompilerIrInstr.VectorLoad load-dst base index lanes elem-ty)
-          (match (box-get rest)
-            [(CompilerIrInstrList.Cons next after-binop)
-              (match next
-                [(CompilerIrInstr.VectorBinOp payload-box)
-                  (match (box-get payload-box)
-                    [(CompilerIrInstrVectorBinOpPayload.Payload
-                        bin-dst
-                        op
-                        lhs
-                        rhs
-                        bin-lanes
-                        bin-elem-ty)
-                      (if (compiler-backend-vector-load-binop-foldable?
-                        ctx.use-counts
-                        load-dst
-                        lanes
-                        elem-ty
-                        op
-                        lhs
-                        rhs
-                        bin-lanes
-                        bin-elem-ty)
-                        (match (compiler-backend-vector-load-binop-fold-value
-                          load-dst
-                          op
-                          lhs
-                          rhs)
-                          [(CompilerBackendVectorMemFold.Some reg-value)
-                            (compiler-backend-emit-fused-result-rest
-                              ctx
-                              fallthrough
-                              (compiler-backend-emit-vector-binop-memory-source
-                                ctx.assignments
-                                bin-dst
-                                op
-                                reg-value
-                                base
-                                index
-                                bin-lanes
-                                bin-elem-ty
-                                (compiler-backend-instr-diagnostic
-                                  ctx.spans
-                                  ctx.source-function
-                                  next
-                                  ctx.func-diag
-                                  ""))
-                              (box-get after-binop)
-                              buf)]
-                          [(CompilerBackendVectorMemFold.No)
-                            (compiler-backend-emit-instrs-normal
-                              ctx
-                              fallthrough
-                              instr
-                              (box-get rest)
-                              buf)])
-                        (compiler-backend-emit-instrs-normal
-                          ctx
-                          fallthrough
-                          instr
-                          (box-get rest)
-                          buf))])]
-                [_
-                  (compiler-backend-emit-instrs-normal
-                    ctx
-                    fallthrough
-                    instr
-                    (box-get rest)
-                    buf)])]
-            [_
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                (box-get rest)
-                buf)])]
+          (compiler-backend-emit-vector-load-step
+            ctx
+            fallthrough
+            instr
+            load-dst
+            base
+            index
+            lanes
+            elem-ty
+            (box-get rest)
+            buf)]
         [(CompilerIrInstr.Load load-dst ptr load-ty)
-          (if (and
-            (compiler-backend-load-compare-type? load-ty)
-            (compiler-backend-var-single-use? ctx.use-counts load-dst))
-            (match (box-get rest)
-              [(CompilerIrInstrList.Cons next after-cmp)
-                (match next
-                  [(CompilerIrInstr.Load second-dst second-src second-ty)
-                    (if (compiler-backend-branch-uses-var? second-src load-dst)
-                      (compiler-backend-emit-fused-result-rest
-                        ctx
-                        fallthrough
-                        (compiler-backend-emit-load-load
-                          ctx.assignments
-                          load-dst
-                          ptr
-                          load-ty
-                          second-dst
-                          second-ty
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch ctx.plan)
-                            0
-                            0)
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch ctx.plan)
-                            0
-                            1)
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch ctx.plan)
-                            1
-                            0)
-                          (compiler-backend-scratch-plan-register-ahead
-                            (compiler-backend-runtime-plan-scratch ctx.plan)
-                            1
-                            1))
-                        (box-get after-cmp)
-                        buf)
-                      (compiler-backend-emit-instrs-normal
-                        ctx
-                        fallthrough
-                        instr
-                        (box-get rest)
-                        buf))]
-                  [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
-                    (if (and
-                      (compiler-backend-compare-op? op)
-                      (compiler-backend-branch-uses-var? lhs load-dst)
-                      (compiler-backend-var-single-use? ctx.use-counts cmp-dst)
-                      (not
-                        (compiler-backend-binop-f64?
-                          ctx.types
-                          ctx.global-types
-                          lhs
-                          rhs
-                          cmp-ty)))
-                      (match (box-get after-cmp)
-                        [(CompilerIrInstrList.Cons branch after-branch)
-                          (match branch
-                            [(CompilerIrInstr.Branch
-                                cond
-                                true-label
-                                false-label)
-                              (if (compiler-backend-branch-uses-var?
-                                cond
-                                cmp-dst)
-                                (compiler-backend-emit-fused-load-compare-branch-rest
-                                  ctx
-                                  fallthrough
-                                  load-dst
-                                  ptr
-                                  load-ty
-                                  cmp-dst
-                                  op
-                                  rhs
-                                  cmp-ty
-                                  true-label
-                                  false-label
-                                  (box-get after-branch)
-                                  buf)
-                                (compiler-backend-emit-instrs-normal
-                                  ctx
-                                  fallthrough
-                                  instr
-                                  (box-get rest)
-                                  buf))]
-                            [_
-                              (compiler-backend-emit-instrs-normal
-                                ctx
-                                fallthrough
-                                instr
-                                (box-get rest)
-                                buf)])]
-                        [_
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf)])
-                      (compiler-backend-emit-instrs-normal
-                        ctx
-                        fallthrough
-                        instr
-                        (box-get rest)
-                        buf))]
-                  [_
-                    (compiler-backend-emit-instrs-normal
-                      ctx
-                      fallthrough
-                      instr
-                      (box-get rest)
-                      buf)])]
-              [_
-                (compiler-backend-emit-instrs-normal
-                  ctx
-                  fallthrough
-                  instr
-                  (box-get rest)
-                  buf)])
-            (compiler-backend-emit-instrs-normal
-              ctx
-              fallthrough
-              instr
-              (box-get rest)
-              buf))]
+          (compiler-backend-emit-load-step
+            ctx
+            fallthrough
+            instr
+            load-dst
+            ptr
+            load-ty
+            (box-get rest)
+            buf)]
         [(CompilerIrInstr.BinOp dst op lhs rhs ty)
           (if (and
             (compiler-backend-var-single-use? ctx.use-counts dst)
@@ -58412,6 +58434,60 @@ tl_comptime_host_invoke_set:
             (compiler-backend-peephole-token-reg-index-range data ts te)
             -1))))))
 
+;; AVX instructions with a vector-register destination do not change any GP
+;; register or memory slot tracked by the reload-elision owner map. Preserve
+;; those owners across the instruction so one spilled scalar address index can
+;; be loaded once and reused by an adjacent vector load/binop sequence. A GP
+;; destination (for example `vpmovmskb ..., %r8`) or a memory destination stays
+;; on the conservative clobber path.
+(define (compiler-backend-peephole-vector-preserves-gp-owners?
+  [data : (Ptr u8)]
+  [mnemonic-start : i64]
+  [mnemonic-len : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (if (or
+    (= mnemonic-len 0)
+    (not (= (compiler-backend-peephole-byte-at data mnemonic-start) 118)))
+    false
+    (let
+      [index : i64 start]
+      [last-comma : i64 -1]
+      [paren-depth : i64 0]
+      (begin
+        (while (< index end)
+          (let
+            [byte : i64 (compiler-backend-peephole-byte-at data index)]
+            (begin
+              (cond
+                [(= byte 40) (set! paren-depth (+ paren-depth 1))]
+                [(= byte 41) (set! paren-depth (- paren-depth 1))]
+                [(and (= byte 44) (= paren-depth 0)) (set! last-comma index)]
+                [else unit])
+              (set! index (+ index 1)))))
+        (let
+          [dest-start : i64
+            (if (< last-comma 0)
+              (+ mnemonic-start mnemonic-len)
+              (+ last-comma 1))]
+          [cursor : i64 dest-start]
+          [memory-dest : bool false]
+          (begin
+            (while (and (not memory-dest) (< cursor end))
+              (begin
+                (if (= (compiler-backend-peephole-byte-at data cursor) 40)
+                  (set! memory-dest true)
+                  unit)
+                (set! cursor (+ cursor 1))))
+            (and
+              (not memory-dest)
+              (<
+                (compiler-backend-peephole-last-operand-reg-index
+                  data
+                  start
+                  end)
+                0))))))))
+
 ;; True iff the mnemonic token [i,i+mlen) is an instruction whose ONLY written GP
 ;; register is its last operand (so invalidating just that register is sound):
 ;; the fixed q/l/w/b base set, the movabsq imm->reg load, any set<cc> (8-bit
@@ -58618,6 +58694,13 @@ tl_comptime_host_invoke_set:
                 [(= (compiler-backend-peephole-byte-at data ms) 46) false]
                 [(= (compiler-backend-peephole-byte-at data ms) 106) false]
                 [cmp-or-test? false]
+                [(compiler-backend-peephole-vector-preserves-gp-owners?
+                    data
+                    ms
+                    mlen
+                    start
+                    end)
+                  false]
                 [else true])]
             [call? : bool
               (compiler-backend-peephole-mnemonic-call? data ms mlen)]

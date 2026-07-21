@@ -9780,7 +9780,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
           [init : AstExpr (ctfe-ast-get env init-box)]
           [cleanup : AstExpr (ctfe-ast-get env cleanup-box)]
@@ -9791,10 +9791,11 @@
                   (begin
                     (ast-resource-binding-list-push
                       out
-                      (ast-resource-binding-id
+                      (AstResourceBinding.Binding
                         (ctfe-quote-name-id env name)
                         quoted-init
-                        quoted-cleanup))
+                        quoted-cleanup
+                        move-aware?))
                     (ctfe-quote-resource-binding-list-into
                       bindings
                       (+ index 1)
@@ -11186,17 +11187,22 @@
   [a : AstResourceBinding]
   [b : AstResourceBinding]) : bool
   (match a
-    [(AstResourceBinding.Binding a-name a-init-box a-cleanup-box)
+    [(AstResourceBinding.Binding a-name a-init-box a-cleanup-box a-move-aware?)
       (let
         [a-init : AstExpr (ctfe-ast-get env a-init-box)]
         [a-cleanup : AstExpr (ctfe-ast-get env a-cleanup-box)]
         (match b
-          [(AstResourceBinding.Binding b-name b-init-box b-cleanup-box)
+          [(AstResourceBinding.Binding
+              b-name
+              b-init-box
+              b-cleanup-box
+              b-move-aware?)
             (let
               [b-init : AstExpr (ctfe-ast-get env b-init-box)]
               [b-cleanup : AstExpr (ctfe-ast-get env b-cleanup-box)]
               (and
                 (= a-name b-name)
+                (= a-move-aware? b-move-aware?)
                 (ctfe-expr-eq-in-env env a-init b-init)
                 (ctfe-expr-eq-in-env env a-cleanup b-cleanup)))]
           [_ false]))]))

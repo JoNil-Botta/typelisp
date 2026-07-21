@@ -496,7 +496,7 @@
   (len i64))
 
 (defenum AstResourceBinding
-  (Binding i64 i64 i64))
+  (Binding i64 i64 i64 bool))
 
 (defstruct AstResourceBindingList
   (slots (Array AstResourceBinding))
@@ -3801,10 +3801,16 @@
       out)))
 
 (define (ast-resource-binding-id [name : i64] [init : i64] [cleanup : i64]) : AstResourceBinding
-  (AstResourceBinding.Binding name init cleanup))
+  (AstResourceBinding.Binding name init cleanup false))
+
+(define (ast-move-aware-resource-binding-id
+  [name : i64]
+  [init : i64]
+  [cleanup : i64]) : AstResourceBinding
+  (AstResourceBinding.Binding name init cleanup true))
 
 (define (ast-resource-binding-fallback) : AstResourceBinding
-  (AstResourceBinding.Binding 0 0 0))
+  (AstResourceBinding.Binding 0 0 0 false))
 
 (define (ast-resource-binding-list-with-capacity [capacity : i64]) : AstResourceBindingList
   (let
@@ -6334,11 +6340,12 @@
   [remap : AstProgramCompactionRemap]
   [binding : AstResourceBinding]) : AstResourceBinding
   (match binding
-    [(AstResourceBinding.Binding name init cleanup)
+    [(AstResourceBinding.Binding name init cleanup move-aware?)
       (AstResourceBinding.Binding
         name
         (ast-compaction-remap-expr-id remap init)
-        (ast-compaction-remap-expr-id remap cleanup))]))
+        (ast-compaction-remap-expr-id remap cleanup)
+        move-aware?)]))
 
 (define (ast-compaction-remap-resource-binding-list
   [remap : AstProgramCompactionRemap]

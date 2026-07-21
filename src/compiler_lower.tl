@@ -318,6 +318,10 @@
 
 (defenum LowerVectorMapValueKey
   (Array i64)
+  ;; Loop-invariant dynamic-array header slot 0. Unlike `Array`, which caches
+  ;; the varying vector loaded at the current gang index, this value dominates
+  ;; every full-gang body reached from the SIMD preheader.
+  (ArrayData i64)
   (Gather i64 i64)
   (GatherLaneOffset i64 i64)
   (LaneArray i64)
@@ -868,6 +872,7 @@
 (defstruct LowerCleanupStack
   (hidden-name-ids (Array i64))
   (cleanup-name-ids (Array i64))
+  (live-name-ids (Array i64))
   (count i64))
 
 (defenum LowerResourceBindings
@@ -1271,7 +1276,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ init cleanup)
+      [(AstResourceBinding.Binding _ init cleanup _)
         (match (lower-expr-id-first-span2 init cleanup)
           [(CompilerMaybeSourceSpan.Some span)
             (CompilerMaybeSourceSpan.Some span)]
@@ -6739,7 +6744,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+      [(AstResourceBinding.Binding _ acquire-box cleanup-box _)
         (let
           [acquire : AstExpr (ast-node-pool-context-expr-get pools acquire-box)]
           [cleanup : AstExpr (ast-node-pool-context-expr-get pools cleanup-box)]
@@ -9028,7 +9033,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+      [(AstResourceBinding.Binding _ acquire-box cleanup-box _)
         (lower-used-types-add-resource-bindings-at
           pools
           (lower-used-types-add-expr-id
@@ -15956,6 +15961,41 @@
           (CompilerIrValue.Global (lower-resolve-name-symbol-id state name-id))
           ty)))))
 
+(define (lower-disarm-move-aware-resource-name
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [name-id : i64]) : LowerState
+  (let
+    [local-id : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        name-id
+        (compiler-symbols-missing-handle))]
+    (if (not (compiler-symbols-handle-found? local-id))
+      state
+      (let
+        [live-id : i64
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            (lower-cleanup-live-name-id local-id)
+            (compiler-symbols-missing-handle))]
+        (if (compiler-symbols-handle-found? live-id)
+          (lower-state-emit
+            state
+            (CompilerIrInstr.Mov
+              live-id
+              (CompilerIrValue.Bool false)
+              (AstType.Bool)))
+          state)))))
+
+(define (lower-disarm-move-aware-resource-expr
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [expr : AstExpr]) : LowerState
+  (match (ast-expr-unspan expr)
+    [(AstExpr.Var name) (lower-disarm-move-aware-resource-name state env name)]
+    [_ state]))
+
 (define (lower-function-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstType.Func _ _) true]
@@ -17428,6 +17468,11 @@
 (define (lower-cleanup-hidden-name-id [var-id : i64]) : i64
   (lower-private-name-id 10 var-id))
 
+(define (lower-cleanup-live-name-id [var-id : i64]) : i64
+  ;; Kind 1 value 0 is the cleanup-stack marker. Positive values are its
+  ;; per-resource liveness bindings, disjoint from every allocated var id.
+  (lower-private-name-id 1 (+ var-id 1)))
+
 (define (lower-region-hidden-name-id [var-id : i64]) : i64
   (lower-private-name-id 11 var-id))
 
@@ -17477,6 +17522,21 @@
     (lower-cleanup-marker-id)
     (lower-cleanup-metadata-type hidden-name-id cleanup-name-id)))
 
+(define (lower-type-env-push-move-aware-cleanup
+  [type-env : TcTypeEnv]
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]
+  [live-name-id : i64]) : TcTypeEnv
+  (tc-bind-id
+    type-env
+    (lower-cleanup-marker-id)
+    (ast-ty-tuple
+      (ast-type-cons
+        (AstType.Var hidden-name-id)
+        (ast-type-cons
+          (AstType.Var cleanup-name-id)
+          (ast-type-cons (AstType.Var live-name-id) (ast-type-list-new)))))))
+
 (define (lower-type-env-push-region-reset
   [type-env : TcTypeEnv]
   [hidden-name-id : i64]) : TcTypeEnv
@@ -17524,6 +17584,50 @@
                 (AstType.Unit))))])
       (ResultLowerState.Err
         (box (lower-diagnostic "lower: missing resource cleanup binding"))))))
+
+(define (lower-emit-cleanup-call-if-live
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]
+  [live-name-id : i64]) : ResultLowerState
+  (let
+    [live-id : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        live-name-id
+        (compiler-symbols-missing-handle))]
+    (if (not (compiler-symbols-handle-found? live-id))
+      (ResultLowerState.Err
+        (box (lower-diagnostic "lower: missing resource liveness binding")))
+      (match (lower-state-fresh-label state "cleanup_live")
+        [(LowerLabel.Label cleanup-label-state cleanup-label)
+          (match (lower-state-fresh-label cleanup-label-state "cleanup_done")
+            [(LowerLabel.Label labels-state done-label)
+              (let
+                [cleanup-state : LowerState
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      labels-state
+                      (CompilerIrInstr.Branch
+                        (CompilerIrValue.Var live-id)
+                        cleanup-label
+                        done-label))
+                    cleanup-label)]
+                (match (lower-emit-cleanup-call
+                  cleanup-state
+                  env
+                  hidden-name-id
+                  cleanup-name-id)
+                  [(ResultLowerState.Ok called-state)
+                    (ResultLowerState.Ok
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          called-state
+                          (CompilerIrInstr.Jump done-label))
+                        done-label))]
+                  [(ResultLowerState.Err message)
+                    (ResultLowerState.Err message)]))])]))))
 
 (define (lower-emit-region-reset
   [state : LowerState]
@@ -17574,7 +17678,7 @@
         (box (lower-diagnostic "lower: missing arena restore binding"))))))
 
 (define (lower-cleanup-stack-empty) : LowerCleanupStack
-  (LowerCleanupStack (make-array i64 0) (make-array i64 0) 0))
+  (LowerCleanupStack (make-array i64 0) (make-array i64 0) (make-array i64 0) 0))
 
 (define (lower-cleanup-stack-push
   [cleanups : LowerCleanupStack]
@@ -17583,11 +17687,37 @@
   (let
     [hidden-name-ids : (Array i64) (struct-get cleanups hidden-name-ids)]
     [cleanup-name-ids : (Array i64) (struct-get cleanups cleanup-name-ids)]
+    [live-name-ids : (Array i64) (struct-get cleanups live-name-ids)]
     [count : i64 (struct-get cleanups count)]
     (begin
       (array-push! hidden-name-ids hidden-name-id)
       (array-push! cleanup-name-ids cleanup-name-id)
-      (LowerCleanupStack hidden-name-ids cleanup-name-ids (+ count 1)))))
+      (array-push! live-name-ids 0)
+      (LowerCleanupStack
+        hidden-name-ids
+        cleanup-name-ids
+        live-name-ids
+        (+ count 1)))))
+
+(define (lower-cleanup-stack-push-move-aware
+  [cleanups : LowerCleanupStack]
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]
+  [live-name-id : i64]) : LowerCleanupStack
+  (let
+    [hidden-name-ids : (Array i64) (struct-get cleanups hidden-name-ids)]
+    [cleanup-name-ids : (Array i64) (struct-get cleanups cleanup-name-ids)]
+    [live-name-ids : (Array i64) (struct-get cleanups live-name-ids)]
+    [count : i64 (struct-get cleanups count)]
+    (begin
+      (array-push! hidden-name-ids hidden-name-id)
+      (array-push! cleanup-name-ids cleanup-name-id)
+      (array-push! live-name-ids live-name-id)
+      (LowerCleanupStack
+        hidden-name-ids
+        cleanup-name-ids
+        live-name-ids
+        (+ count 1)))))
 
 (define (lower-cleanup-stack-count [cleanups : LowerCleanupStack]) : i64
   (struct-get cleanups count))
@@ -17610,22 +17740,33 @@
   [env : sym_i64_env.SymI64Env]
   [hidden-name-ids : (Array i64)]
   [cleanup-name-ids : (Array i64)]
+  [live-name-ids : (Array i64)]
   [index : i64]) : ResultLowerState
   (if (< index 0)
     (ResultLowerState.Ok state)
-    (match (lower-emit-cleanup-call
-      state
-      env
-      (array-ref hidden-name-ids index)
-      (array-ref cleanup-name-ids index))
-      [(ResultLowerState.Ok next-state)
-        (lower-emit-cleanup-stack-at
-          next-state
+    (let
+      [live-name-id : i64 (array-ref live-name-ids index)]
+      (match (if (= live-name-id 0)
+        (lower-emit-cleanup-call
+          state
           env
-          hidden-name-ids
-          cleanup-name-ids
-          (- index 1))]
-      [(ResultLowerState.Err message) (ResultLowerState.Err message)])))
+          (array-ref hidden-name-ids index)
+          (array-ref cleanup-name-ids index))
+        (lower-emit-cleanup-call-if-live
+          state
+          env
+          (array-ref hidden-name-ids index)
+          (array-ref cleanup-name-ids index)
+          live-name-id))
+        [(ResultLowerState.Ok next-state)
+          (lower-emit-cleanup-stack-at
+            next-state
+            env
+            hidden-name-ids
+            cleanup-name-ids
+            live-name-ids
+            (- index 1))]
+        [(ResultLowerState.Err message) (ResultLowerState.Err message)]))))
 
 (define (lower-emit-cleanup-stack
   [state : LowerState]
@@ -17636,6 +17777,7 @@
     env
     (struct-get cleanups hidden-name-ids)
     (struct-get cleanups cleanup-name-ids)
+    (struct-get cleanups live-name-ids)
     (- (struct-get cleanups count) 1)))
 
 (define (lower-emit-cleanup-marker-tuple
@@ -17643,7 +17785,9 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [types : AstTypeList]) : ResultLowerState
-  (if (= (ast-type-list-len (& types)) 2)
+  (if (or
+    (= (ast-type-list-len (& types)) 2)
+    (= (ast-type-list-len (& types)) 3))
     (let
       [hidden-ty : AstType
         (tc-context-type-get
@@ -17657,7 +17801,19 @@
         [(AstType.Var hidden-name)
           (match cleanup-ty
             [(AstType.Var cleanup-name)
-              (lower-emit-cleanup-call state env hidden-name cleanup-name)]
+              (if (= (ast-type-list-len (& types)) 2)
+                (lower-emit-cleanup-call state env hidden-name cleanup-name)
+                (match (tc-context-type-get
+                  ctx
+                  (ast-type-list-get (& types) 2 (ast-type-id-fallback)))
+                  [(AstType.Var live-name)
+                    (lower-emit-cleanup-call-if-live
+                      state
+                      env
+                      hidden-name
+                      cleanup-name
+                      live-name)]
+                  [_ (ResultLowerState.Ok state)]))]
             [_ (ResultLowerState.Ok state)])]
         [_ (ResultLowerState.Ok state)]))
     (ResultLowerState.Ok state)))
@@ -19304,7 +19460,14 @@
   [arg : AstExpr]
   [effective-arg : AstExpr]
   [arg-ty : AstType]) : ResultLowerCallArg
-  (match (lower-expr-expected ctx state env type-env effective-arg arg-ty arg)
+  (match (lower-expr-expected
+    ctx
+    (lower-disarm-move-aware-resource-expr state env effective-arg)
+    env
+    type-env
+    effective-arg
+    arg-ty
+    arg)
     [(ResultLowerExpr.Ok lowered)
       (match lowered
         [(LowerExpr.Expr arg-state value _)
@@ -19595,7 +19758,7 @@
           [(ResultTcExpr.Ok effective-arg)
             (match (lower-expr-expected
               ctx
-              state
+              (lower-disarm-move-aware-resource-expr state env effective-arg)
               env
               type-env
               effective-arg
@@ -32622,7 +32785,7 @@
       bindings
       index
       (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding name init-box cleanup-box)
+      [(AstResourceBinding.Binding name init-box cleanup-box move-aware?)
         (let
           [init : AstExpr (lower-context-expr-get ctx init-box)]
           [cleanup : AstExpr (lower-context-expr-get ctx cleanup-box)]
@@ -32673,17 +32836,50 @@
                                       (tc-bind-id type-env name binding-ty)
                                       hidden-name-id
                                       cleanup-name-id)]
-                                  (lower-resource-bindings-at
-                                    ctx
-                                    bound-state
-                                    bound-env
-                                    bound-type-env
-                                    bindings
-                                    (lower-cleanup-stack-push
-                                      cleanups
-                                      hidden-name-id
-                                      cleanup-name-id)
-                                    (+ index 1)))]))]
+                                  (if move-aware?
+                                    (match (lower-state-alloc-var bound-state)
+                                      [(LowerAlloc.Alloc live-state live-var-id)
+                                        (let
+                                          [live-name-id : i64
+                                            (lower-cleanup-live-name-id var-id)]
+                                          (lower-resource-bindings-at
+                                            ctx
+                                            (lower-state-emit
+                                              live-state
+                                              (CompilerIrInstr.Mov
+                                                live-var-id
+                                                (CompilerIrValue.Bool true)
+                                                (AstType.Bool)))
+                                            (sym_i64_env.sym-i64-bind-id
+                                              bound-env
+                                              live-name-id
+                                              live-var-id)
+                                            (lower-type-env-push-move-aware-cleanup
+                                              (tc-bind-id
+                                                type-env
+                                                name
+                                                binding-ty)
+                                              hidden-name-id
+                                              cleanup-name-id
+                                              live-name-id)
+                                            bindings
+                                            (lower-cleanup-stack-push-move-aware
+                                              cleanups
+                                              hidden-name-id
+                                              cleanup-name-id
+                                              live-name-id)
+                                            (+ index 1)))])
+                                    (lower-resource-bindings-at
+                                      ctx
+                                      bound-state
+                                      bound-env
+                                      bound-type-env
+                                      bindings
+                                      (lower-cleanup-stack-push
+                                        cleanups
+                                        hidden-name-id
+                                        cleanup-name-id)
+                                      (+ index 1))))]))]
                         [(ResultTcExprId.Err message)
                           (ResultLowerResourceBindings.Err
                             (box (lower-diagnostic-at-expr cleanup message)))])])]
@@ -39775,6 +39971,21 @@
   ;; repeated SIMD accesses to the same base.
   (lower-emit-load state arr-value (AstType.U64)))
 
+(define (lower-emit-vector-load-data
+  [state : LowerState]
+  [data-ptr : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc s v)
+      (LowerExpr.Expr
+        (lower-state-emit
+          s
+          (CompilerIrInstr.VectorLoad v data-ptr index lanes elem-ty))
+        (CompilerIrValue.Var v)
+        elem-ty)]))
+
 (define (lower-emit-vector-load
   [state : LowerState]
   [base : CompilerIrValue]
@@ -39783,14 +39994,7 @@
   [elem-ty : AstType]) : LowerExpr
   (match (lower-array-data-pointer-value state base)
     [(LowerExpr.Expr data-state data-ptr _)
-      (match (lower-state-alloc-var data-state)
-        [(LowerAlloc.Alloc s v)
-          (LowerExpr.Expr
-            (lower-state-emit
-              s
-              (CompilerIrInstr.VectorLoad v data-ptr index lanes elem-ty))
-            (CompilerIrValue.Var v)
-            elem-ty)])]))
+      (lower-emit-vector-load-data data-state data-ptr index lanes elem-ty)]))
 
 (define (lower-emit-gather-load
   [state : LowerState]
@@ -39935,9 +40139,24 @@
   [elem-ty : AstType]) : LowerState
   (match (lower-array-data-pointer-value state base)
     [(LowerExpr.Expr data-state data-ptr _)
-      (lower-state-emit
+      (lower-emit-vector-store-data
         data-state
-        (ir-instr-vector-store data-ptr index value lanes elem-ty))]))
+        data-ptr
+        index
+        value
+        lanes
+        elem-ty)]))
+
+(define (lower-emit-vector-store-data
+  [state : LowerState]
+  [data-ptr : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerState
+  (lower-state-emit
+    state
+    (ir-instr-vector-store data-ptr index value lanes elem-ty)))
 
 (define (lower-emit-vector-binop
   [state : LowerState]
@@ -40455,13 +40674,13 @@
   [next-index : CompilerIrValue]
   [acc-var : i64]
   [vector-acc-var : i64]
-  [array-var : i64]
+  [data-ptr : CompilerIrValue]
   [vector-op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]
   [lanes : i64]) : ResultLowerExpr
-  (match (lower-emit-vector-load
+  (match (lower-emit-vector-load-data
     state
-    (CompilerIrValue.Var array-var)
+    data-ptr
     (CompilerIrValue.Var index-var)
     lanes
     elem-ty)
@@ -40527,17 +40746,20 @@
   [acc-var : i64]
   [vector-acc-var : i64]
   [value-plan : LowerVectorMapValue]
+  [preheader-cache : LowerVectorMapValueCache]
   [vector-op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]
   [lanes : i64]) : ResultLowerExpr
-  (match (lower-emit-vector-map-value
+  (match (lower-emit-vector-map-value-cached
     ctx
     state
     index-var
     lanes
     elem-ty
-    value-plan)
-    [(LowerExpr.Expr value-state chunk-vec _)
+    value-plan
+    (LowerVectorMapEmitMode.Full)
+    preheader-cache)
+    [(LowerVectorMapCachedEmit.Emit value-state chunk-vec _)
       (if (lower-spmd-reduce-vector-accumulator? elem-ty)
         (ResultLowerExpr.Ok
           (LowerExpr.Expr
@@ -41230,6 +41452,7 @@
             [vector-ok : CompilerIrValue CompilerIrValue.Unit]
             [tail-cond : CompilerIrValue CompilerIrValue.Unit]
             [vector-acc-var : i64 0]
+            [data-ptr : CompilerIrValue CompilerIrValue.Unit]
             (begin
               (if (lower-spmd-reduce-vector-accumulator? elem-ty)
                 (match (lower-state-alloc-var s)
@@ -41290,6 +41513,13 @@
                   (begin
                     (set! s next-s)
                     (set! vector-start-ok value))])
+              (match (lower-array-data-pointer-value
+                s
+                (CompilerIrValue.Var array-var))
+                [(LowerExpr.Expr next-s value _)
+                  (begin
+                    (set! s next-s)
+                    (set! data-ptr value))])
               (if (lower-spmd-reduce-vector-accumulator? elem-ty)
                 (set!
                   s
@@ -41357,7 +41587,7 @@
                 next-index
                 acc-var
                 vector-acc-var
-                array-var
+                data-ptr
                 vector-op
                 elem-ty
                 lanes)
@@ -41490,6 +41720,8 @@
                 [active-lanes : CompilerIrValue CompilerIrValue.Unit]
                 [tail-cond : CompilerIrValue CompilerIrValue.Unit]
                 [vector-acc-var : i64 0]
+                [preheader-cache : LowerVectorMapValueCache
+                  (lower-vector-map-value-cache-empty)]
                 (begin
                   (if (lower-spmd-reduce-vector-accumulator? elem-ty)
                     (match (lower-state-alloc-var s)
@@ -41554,6 +41786,16 @@
                       (begin
                         (set! s next-s)
                         (set! vector-start-ok value))])
+                  (match (lower-vector-map-preheader-cache-plan
+                    s
+                    arrays
+                    lanes
+                    elem-ty
+                    value-plan)
+                    [(LowerVectorMapCachedEmit.Emit next-s _ next-cache)
+                      (begin
+                        (set! s next-s)
+                        (set! preheader-cache next-cache))])
                   (set!
                     s
                     (lower-state-finish-block
@@ -41600,6 +41842,7 @@
                     acc-var
                     vector-acc-var
                     value-plan
+                    preheader-cache
                     vector-op
                     elem-ty
                     lanes)
@@ -41802,14 +42045,29 @@
   [elem-ty : AstType]) : LowerExpr
   (match (lower-array-data-pointer-value state base)
     [(LowerExpr.Expr data-state data-ptr _)
-      (match (lower-state-alloc-var data-state)
-        [(LowerAlloc.Alloc s v)
-          (LowerExpr.Expr
-            (lower-state-emit
-              s
-              (ir-instr-predicated-load v data-ptr index mask lanes elem-ty))
-            (CompilerIrValue.Var v)
-            elem-ty)])]))
+      (lower-emit-predicated-load-data
+        data-state
+        data-ptr
+        index
+        mask
+        lanes
+        elem-ty)]))
+
+(define (lower-emit-predicated-load-data
+  [state : LowerState]
+  [data-ptr : CompilerIrValue]
+  [index : CompilerIrValue]
+  [mask : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc s v)
+      (LowerExpr.Expr
+        (lower-state-emit
+          s
+          (ir-instr-predicated-load v data-ptr index mask lanes elem-ty))
+        (CompilerIrValue.Var v)
+        elem-ty)]))
 
 (define (lower-emit-predicated-store
   [state : LowerState]
@@ -41821,9 +42079,26 @@
   [elem-ty : AstType]) : LowerState
   (match (lower-array-data-pointer-value state base)
     [(LowerExpr.Expr data-state data-ptr _)
-      (lower-state-emit
+      (lower-emit-predicated-store-data
         data-state
-        (ir-instr-predicated-store data-ptr index value mask lanes elem-ty))]))
+        data-ptr
+        index
+        value
+        mask
+        lanes
+        elem-ty)]))
+
+(define (lower-emit-predicated-store-data
+  [state : LowerState]
+  [data-ptr : CompilerIrValue]
+  [index : CompilerIrValue]
+  [value : CompilerIrValue]
+  [mask : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerState
+  (lower-state-emit
+    state
+    (ir-instr-predicated-store data-ptr index value mask lanes elem-ty)))
 
 (define (lower-emit-spmd-broadcast-lane-check
   [state : LowerState]
@@ -41911,6 +42186,11 @@
       (match right
         [(LowerVectorMapValueKey.Array right-array) (= left-array right-array)]
         [_ false])]
+    [(LowerVectorMapValueKey.ArrayData left-array)
+      (match right
+        [(LowerVectorMapValueKey.ArrayData right-array)
+          (= left-array right-array)]
+        [_ false])]
     [(LowerVectorMapValueKey.Gather left-source left-indexes)
       (match right
         [(LowerVectorMapValueKey.Gather right-source right-indexes)
@@ -41994,6 +42274,150 @@
       (array-push! keys key)
       (array-push! values value)
       (LowerVectorMapValueCache keys values (+ count 1)))))
+
+;; Populate the vector-map cache in the entry block with values whose source
+;; operands cannot change between gangs. The simple-map planner accepts only
+;; literals and already-bound scalar vars for `Uniform`; safe SPMD rejects
+;; mutation of bindings declared outside the body, so these materializations
+;; dominate both the full vector loop and its masked AVX-512 tail.
+(define (lower-vector-map-preheader-cache-leaves
+  [state : LowerState]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [plan : LowerVectorMapValue]
+  [cache : LowerVectorMapValueCache]) : LowerVectorMapCachedEmit
+  (match plan
+    [(LowerVectorMapValue.Uniform value)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.Uniform value))
+        [(LowerMaybeIrValue.Some cached)
+          (LowerVectorMapCachedEmit.Emit state cached cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-splat state value lanes elem-ty)
+            (LowerVectorMapValueKey.Uniform value)
+            cache)])]
+    [(LowerVectorMapValue.LaneIndex)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.LaneIndex))
+        [(LowerMaybeIrValue.Some cached)
+          (LowerVectorMapCachedEmit.Emit state cached cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-lane-id state lanes elem-ty)
+            (LowerVectorMapValueKey.LaneIndex)
+            cache)])]
+    [(LowerVectorMapValue.LaneCount)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.LaneCount))
+        [(LowerMaybeIrValue.Some cached)
+          (LowerVectorMapCachedEmit.Emit state cached cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-splat state (CompilerIrValue.I64 lanes) lanes elem-ty)
+            (LowerVectorMapValueKey.LaneCount)
+            cache)])]
+    ;; Shuffle selectors may span two i64 vectors when the element lane count
+    ;; exceeds the selector lane count. Its emitter owns that split, so a
+    ;; generic leaf cache would materialize an unused, incorrectly shaped ID.
+    [(LowerVectorMapValue.Shuffle _ _)
+      (LowerVectorMapCachedEmit.Emit state CompilerIrValue.Unit cache)]
+    [(LowerVectorMapValue.BinOp _ lhs rhs)
+      (match (lower-vector-map-preheader-cache-leaves
+        state
+        lanes
+        elem-ty
+        (box-get lhs)
+        cache)
+        [(LowerVectorMapCachedEmit.Emit lhs-state _ lhs-cache)
+          (lower-vector-map-preheader-cache-leaves
+            lhs-state
+            lanes
+            elem-ty
+            (box-get rhs)
+            lhs-cache)])]
+    [_ (LowerVectorMapCachedEmit.Emit state CompilerIrValue.Unit cache)]))
+
+(define (lower-vector-map-preheader-cache-array-data
+  [state : LowerState]
+  [arrays : LowerArrayVarSet]
+  [cache : LowerVectorMapValueCache]) : LowerVectorMapCachedEmit
+  (let
+    [s : LowerState state]
+    [next-cache : LowerVectorMapValueCache cache]
+    [index : i64 0]
+    (begin
+      (while (< index (struct-get arrays count))
+        (let
+          [array-var : i64 (array-ref (struct-get arrays vars) index)]
+          (begin
+            (match (lower-array-data-pointer-value
+              s
+              (CompilerIrValue.Var array-var))
+              [(LowerExpr.Expr next-s data-ptr _)
+                (begin
+                  (set! s next-s)
+                  (set!
+                    next-cache
+                    (lower-vector-map-value-cache-add
+                      next-cache
+                      (LowerVectorMapValueKey.ArrayData array-var)
+                      data-ptr)))])
+            (set! index (+ index 1)))))
+      (LowerVectorMapCachedEmit.Emit s CompilerIrValue.Unit next-cache))))
+
+(define (lower-vector-map-preheader-cache-plan
+  [state : LowerState]
+  [arrays : LowerArrayVarSet]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [plan : LowerVectorMapValue]) : LowerVectorMapCachedEmit
+  (match (lower-vector-map-preheader-cache-array-data
+    state
+    arrays
+    (lower-vector-map-value-cache-empty))
+    [(LowerVectorMapCachedEmit.Emit data-state _ data-cache)
+      (lower-vector-map-preheader-cache-leaves
+        data-state
+        lanes
+        elem-ty
+        plan
+        data-cache)]))
+
+(define (lower-vector-map-preheader-cache-stores
+  [state : LowerState]
+  [arrays : LowerArrayVarSet]
+  [stores : LowerVectorMapStoreList]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerVectorMapCachedEmit
+  (match (lower-vector-map-preheader-cache-array-data
+    state
+    arrays
+    (lower-vector-map-value-cache-empty))
+    [(LowerVectorMapCachedEmit.Emit data-state _ data-cache)
+      (let
+        [s : LowerState data-state]
+        [cache : LowerVectorMapValueCache data-cache]
+        [index : i64 0]
+        (begin
+          (while (< index (struct-get stores count))
+            (match (lower-vector-map-store-list-ref stores index)
+              [(LowerVectorMapStore _ value-plan)
+                (match (lower-vector-map-preheader-cache-leaves
+                  s
+                  lanes
+                  elem-ty
+                  value-plan
+                  cache)
+                  [(LowerVectorMapCachedEmit.Emit next-s _ next-cache)
+                    (begin
+                      (set! s next-s)
+                      (set! cache next-cache))])])
+            (set! index (+ index 1)))
+          (LowerVectorMapCachedEmit.Emit s CompilerIrValue.Unit cache)))]))
 
 (define (lower-emit-shuffle-selector-plan
   [state : LowerState]
@@ -42398,6 +42822,30 @@
         elem-ty
         plan)]))
 
+(define (lower-emit-vector-array-data-for-mode
+  [state : LowerState]
+  [data-ptr : CompilerIrValue]
+  [index-var : i64]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  (match emit-mode
+    [(LowerVectorMapEmitMode.Full)
+      (lower-emit-vector-load-data
+        state
+        data-ptr
+        (CompilerIrValue.Var index-var)
+        lanes
+        elem-ty)]
+    [(LowerVectorMapEmitMode.Predicated _ mask)
+      (lower-emit-predicated-load-data
+        state
+        data-ptr
+        (CompilerIrValue.Var index-var)
+        mask
+        lanes
+        elem-ty)]))
+
 (define (lower-emit-vector-map-value-cached
   [ctx : TcContext]
   [state : LowerState]
@@ -42415,17 +42863,32 @@
         [(LowerMaybeIrValue.Some value)
           (LowerVectorMapCachedEmit.Emit state value cache)]
         [(LowerMaybeIrValue.No)
-          (lower-vector-map-cache-emitted
-            (lower-emit-vector-map-value-for-mode
-              ctx
-              state
-              index-var
-              lanes
-              elem-ty
-              (LowerVectorMapValue.Array array-var)
-              emit-mode)
-            (LowerVectorMapValueKey.Array array-var)
-            cache)])]
+          (match (lower-vector-map-value-cache-lookup
+            cache
+            (LowerVectorMapValueKey.ArrayData array-var))
+            [(LowerMaybeIrValue.Some data-ptr)
+              (lower-vector-map-cache-emitted
+                (lower-emit-vector-array-data-for-mode
+                  state
+                  data-ptr
+                  index-var
+                  lanes
+                  elem-ty
+                  emit-mode)
+                (LowerVectorMapValueKey.Array array-var)
+                cache)]
+            [(LowerMaybeIrValue.No)
+              (lower-vector-map-cache-emitted
+                (lower-emit-vector-map-value-for-mode
+                  ctx
+                  state
+                  index-var
+                  lanes
+                  elem-ty
+                  (LowerVectorMapValue.Array array-var)
+                  emit-mode)
+                (LowerVectorMapValueKey.Array array-var)
+                cache)])])]
     [(LowerVectorMapValue.Gather source-var indexes-var)
       (match (lower-vector-map-value-cache-lookup
         cache
@@ -43152,7 +43615,8 @@
   [state : LowerState]
   [index-var : i64]
   [next-index : CompilerIrValue]
-  [plan : LowerMaybeVectorMap]) : LowerState
+  [plan : LowerMaybeVectorMap]
+  [preheader-cache : LowerVectorMapValueCache]) : LowerState
   (match plan
     [(LowerMaybeVectorMap.Some stores elem-ty lanes)
       (let
@@ -43160,7 +43624,7 @@
         [count : i64 (struct-get stores count)]
         [results : (Array CompilerIrValue) (make-array CompilerIrValue count)]
         [store-index : i64 0]
-        [cache : LowerVectorMapValueCache (lower-vector-map-value-cache-empty)]
+        [cache : LowerVectorMapValueCache preheader-cache]
         [result-vec : CompilerIrValue CompilerIrValue.Unit]
         (begin
           ;; Evaluate all values before the first store so common loads and
@@ -43190,15 +43654,29 @@
             (match (lower-vector-map-store-list-ref stores store-index)
               [(LowerVectorMapStore dst-array _)
                 (begin
-                  (set!
-                    s
-                    (lower-emit-vector-store
-                      s
-                      (CompilerIrValue.Var dst-array)
-                      (CompilerIrValue.Var index-var)
-                      (array-ref results store-index)
-                      lanes
-                      elem-ty))
+                  (match (lower-vector-map-value-cache-lookup
+                    cache
+                    (LowerVectorMapValueKey.ArrayData dst-array))
+                    [(LowerMaybeIrValue.Some data-ptr)
+                      (set!
+                        s
+                        (lower-emit-vector-store-data
+                          s
+                          data-ptr
+                          (CompilerIrValue.Var index-var)
+                          (array-ref results store-index)
+                          lanes
+                          elem-ty))]
+                    [(LowerMaybeIrValue.No)
+                      (set!
+                        s
+                        (lower-emit-vector-store
+                          s
+                          (CompilerIrValue.Var dst-array)
+                          (CompilerIrValue.Var index-var)
+                          (array-ref results store-index)
+                          lanes
+                          elem-ty))])
                   (set! store-index (+ store-index 1)))]))
           (lower-state-emit
             s
@@ -48933,7 +49411,7 @@
   [body : AstExpr]
   [plan : LowerMaybeVectorMap]) : ResultLowerExpr
   (match plan
-    [(LowerMaybeVectorMap.Some stores _ lanes)
+    [(LowerMaybeVectorMap.Some stores elem-ty lanes)
       (match (lower-state-alloc-var state)
         [(LowerAlloc.Alloc index-alloc index-var)
           (let
@@ -48956,6 +49434,8 @@
             [vector-ok : CompilerIrValue CompilerIrValue.Unit]
             [tail-cond : CompilerIrValue CompilerIrValue.Unit]
             [tail-safe : CompilerIrValue CompilerIrValue.Unit]
+            [preheader-cache : LowerVectorMapValueCache
+              (lower-vector-map-value-cache-empty)]
             (begin
               (match (lower-state-fresh-label s "foreach_avx2_header")
                 [(LowerLabel.Label next-s label)
@@ -49002,6 +49482,16 @@
                   (begin
                     (set! s next-s)
                     (set! vector-start-ok value))])
+              (match (lower-vector-map-preheader-cache-stores
+                s
+                arrays
+                stores
+                lanes
+                elem-ty)
+                [(LowerVectorMapCachedEmit.Emit next-s _ next-cache)
+                  (begin
+                    (set! s next-s)
+                    (set! preheader-cache next-cache))])
               (set!
                 s
                 (lower-state-finish-block
@@ -49039,7 +49529,13 @@
                   body-label))
               (set!
                 s
-                (lower-avx2-vector-map-body ctx s index-var next-index plan))
+                (lower-avx2-vector-map-body
+                  ctx
+                  s
+                  index-var
+                  next-index
+                  plan
+                  preheader-cache))
               (set!
                 s
                 (lower-state-finish-block
@@ -51247,7 +51743,7 @@
         bindings
         binding-index
         (ast-resource-binding-fallback))
-        [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+        [(AstResourceBinding.Binding _ acquire-box cleanup-box _)
           (or
             (lower-rvo-node-has-early-return? ctx acquire-box)
             (lower-rvo-node-has-early-return? ctx cleanup-box))])
@@ -56801,7 +57297,7 @@
         bindings
         binding-index
         (ast-resource-binding-fallback))
-        [(AstResourceBinding.Binding _ acquire-box cleanup-box)
+        [(AstResourceBinding.Binding _ acquire-box cleanup-box _)
           (or
             (lower-source-node-has-import-call? pools acquire-box)
             (lower-source-node-has-import-call? pools cleanup-box))])

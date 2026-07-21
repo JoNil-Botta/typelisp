@@ -1,11 +1,11 @@
 benchmark	mode	implementation	status	ir_count
 spmd_map	scalar	typelisp	supported	17206598614
 spmd_map	scalar	clang	supported	6760959198
-spmd_map	avx2	typelisp	supported	7093001768
+spmd_map	avx2	typelisp	supported	4636293574
 spmd_map	avx2	clang	supported	1155125174
 spmd_zip	scalar	typelisp	supported	22124527364
 spmd_zip	scalar	clang	supported	9218575586
-spmd_zip	avx2	typelisp	supported	11090264309
+spmd_zip	avx2	typelisp	supported	7712857139
 spmd_zip	avx2	clang	supported	4227137467
 spmd_reduce	scalar	typelisp	supported	1488029719
 spmd_reduce	scalar	clang	supported	3381437704
@@ -21,7 +21,7 @@ spmd_shuffle	avx2	typelisp	supported	19999332431
 spmd_shuffle	avx2	clang	supported	847922611
 spmd_short_tail	scalar	typelisp	supported	14020024319
 spmd_short_tail	scalar	clang	supported	5513126707
-spmd_short_tail	avx2	typelisp	supported	5851025152
+spmd_short_tail	avx2	typelisp	supported	3852023148
 spmd_short_tail	avx2	clang	supported	975118488
 spmd_mask	scalar	typelisp	supported	14752278094
 spmd_mask	scalar	clang	supported	9833559214

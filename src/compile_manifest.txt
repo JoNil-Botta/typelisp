@@ -374,6 +374,11 @@ contains|_tl_compiler_check_source_with_roots:
 contains|_tl_compiler_check_package_source_with_roots:
 end
 
+case|selfhost_compiler_semantic_index|src/compiler_semantic_index.tl|assembly|skip|direct
+contains|_tl_compiler_semantic_index_compiler_check_source_index_with_roots:
+contains|_tl_compiler_semantic_index_compiler_semantic_source_index_release_bang:
+end
+
 case|selfhost_compiler_ctfe|src/compiler_ctfe.tl|assembly|skip|direct
 contains|_tl_compiler_ctfe_eval:
 contains|_tl_ctfe_eval_node:

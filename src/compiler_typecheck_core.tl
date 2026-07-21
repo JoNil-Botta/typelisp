@@ -944,7 +944,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerTypecheckChecked
-  (Ok CompilerTypecheckSummary TcContext TcTypeEnv)
+  (Ok CompilerTypecheckSummary TcContext TcTypeEnv AstDeclPathList)
   (Err (Box CompilerDiagnostic)))
 
 (defenum TcPrefixSnapshotLookup
@@ -70707,7 +70707,8 @@
                                         (ResultCompilerTypecheckChecked.Ok
                                           summary
                                           ctx
-                                          top-env))]
+                                          top-env
+                                          paths))]
                                     [(ResultCompilerTypecheck.Err diag)
                                       (ResultCompilerTypecheckChecked.Err diag)])))])]
                         [(ResultTcEnv.Err message)
@@ -70810,7 +70811,7 @@
     paths
     stdlib-roots
     cache-scope)
-    [(ResultCompilerTypecheckChecked.Ok summary _ _)
+    [(ResultCompilerTypecheckChecked.Ok summary _ _ _)
       (ResultCompilerTypecheck.Ok summary)]
     [(ResultCompilerTypecheckChecked.Err diag)
       (ResultCompilerTypecheck.Err diag)]))
@@ -70827,7 +70828,7 @@
     stdlib-roots
     cache-scope
     pools)
-    [(ResultCompilerTypecheckChecked.Ok summary _ _)
+    [(ResultCompilerTypecheckChecked.Ok summary _ _ _)
       (ResultCompilerTypecheck.Ok summary)]
     [(ResultCompilerTypecheckChecked.Err diag)
       (ResultCompilerTypecheck.Err diag)]))

@@ -480,7 +480,7 @@ validate_manifest() {
 
     find benchmarks examples src stdlib tests/integration -type f -print |
         sed 's#^\./##' > "$_catalog"
-    awk -v catalog="$_catalog" -v known_out="$_known" \
+    awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \
         "$_catalog" "$NORMALIZED_MANIFEST"
 
@@ -1811,7 +1811,7 @@ windows_run_manifest_queue() {
 }
 
 windows_assert_queued_cases() {
-    while IFS='|' read -r _name _source _want _stdout_spec _runtime_args _deps _extra || [ -n "$_name" ]; do
+    while IFS='|' read -r _name _source _want _stdout_spec _runtime_args _deps _extra _suite_members || [ -n "$_name" ]; do
         case "$_name" in
             "" | \#*) continue ;;
         esac
@@ -1981,7 +1981,7 @@ fi
 failed=0
 ran=0
 
-while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ -n "$name" ]; do
+while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite_members || [ -n "$name" ]; do
     case "$name" in
         "" | \#*) continue ;;
     esac

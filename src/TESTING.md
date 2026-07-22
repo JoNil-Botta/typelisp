@@ -84,6 +84,15 @@ so the driver also runs from the repository root with `typelisp run`.
 Use a smoke driver when the module is main-less or when CI needs to compile and
 run the module through the TypeLisp executable boundary.
 
+Heavy smoke wrappers may be listed in a native manifest suite's eighth
+`suite-members:` field. A suite compiles shared compiler modules once, then
+launches its own binary with one named child argument per member so mutable
+compiler globals retain the fresh-process behavior of standalone drivers. Keep
+the original driver as a thin runnable wrapper and place shared test bodies in
+a main-less `src/*_tests.tl` helper. Manifest validation requires every suite
+member to remain an executable `src/tests/*_smoke.tl`, be named by the suite
+source, and not also appear as a standalone manifest source.
+
 ## Intern ID provenance
 
 Parser tokens enter the source interner once through `intern-source-slice` and
@@ -116,13 +125,12 @@ identity.
 
 The package follows the standard layout: `typelisp build` resolves the default
 `src/main.tl` entry (no explicit `entry` in `typelisp.pkg`), and every top-level
-`src/*.tl` is reachable from `main.tl` except four deliberate exceptions:
+`src/*.tl` is reachable from `main.tl` except deliberate test/staging modules:
 `tlci_core.tl`, `tlci_pages.tl`, and `tlci_loader.tl` (staged tlci feature
-modules with dedicated smokes, #2651/#2671/#2657) and
-`compiler_backend_tests.tl` (the backend smoke helper, kept in `src/` so it
-stages for the native
-`compiler_backend_smoke` case and the `verify-integration.sh` fixture drivers).
-These carry `decision` rows in the compile manifest.
+modules with dedicated smokes, #2651/#2671/#2657), plus
+`compiler_backend_tests.tl`, `compiler_driver_smoke_tests.tl`, and
+`compiler_lower_package_tests.tl` (main-less native smoke helpers). These carry
+`decision` rows in the compile manifest.
 
 ### Inline tests
 

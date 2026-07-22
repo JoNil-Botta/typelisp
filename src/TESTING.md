@@ -274,6 +274,40 @@ helper-body difference is treated as a regression unless the script is
 deliberately updated with a tightly scoped, stale-entry-checked expected
 mismatch.
 
+### One-shot compile startup profiling
+
+`compile-startup-profile` is a build cfg for attributing one fresh `typelisp
+compile` process from the earliest source global through the start of user-entry
+loading. It records raw monotonic ticks in memory and prints them only after the
+compile finishes, keeping marker formatting and stderr I/O outside the measured
+preamble. The required cross-platform verifier builds an instrumented compiler,
+checks marker presence/order, and requires its generated assembly to match the
+normal compiler:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/verify-compile-startup-profile.sh
+```
+
+For native Windows distributions, use
+[`../scripts/measure-compile-startup.ps1`](../scripts/measure-compile-startup.ps1)
+with a compiler built using `--cfg compile-startup-profile` and, for embedded
+surface-hydration attribution, `--cfg embedded-stdlib-tlci`. A normal compiler
+from the same source revision can be supplied as `-BaselineCompiler`; the
+harness alternates process order and writes raw `markers.tsv`, per-run
+`samples.tsv`, percentile `summary.tsv`, and environment/compiler hashes in
+`metadata.tsv`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\measure-compile-startup.ps1 `
+  -Compiler target\compile-startup\typelisp-profile.exe `
+  -BaselineCompiler target\compile-startup\typelisp-control.exe `
+  -Source target\compile-startup\empty.tl
+```
+
+These wall-clock distributions are diagnostic local measurements rather than
+committed performance baselines. Keep the source, compiler revisions, cfgs,
+warmups, iteration count, and Defender state with any reported comparison.
+
 ### Assembly size reports
 
 Use [`../scripts/analyze-selfhost-build-asm-size.sh`](../scripts/analyze-selfhost-build-asm-size.sh)

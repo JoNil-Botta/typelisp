@@ -11,7 +11,7 @@
 
 (defmacro (stdlib-comptime-match-int-or-zero [x : comptime.Expr]) : i64
   (match x
-    [(comptime.ExprInt _) x]
+    [(comptime.Expr.Int _) x]
     [_ (comptime.expr-int 0)]))
 
 (defmacro (stdlib-comptime-arg-count [args : comptime.Expr ...]) : i64
@@ -61,7 +61,7 @@
   (match arm
     [(ExprClause test result)
       (match test
-        [(ExprVar name)
+        [(Expr.Var name)
           (if (string.eq name "else")
             result
             (comptime.expr-int 0))]
@@ -69,7 +69,7 @@
 
 (defmacro (stdlib-comptime-quoted-dense-second) : i64
   (match (quote (stdlib-comptime-quoted-dense-source 5 37))
-    [(comptime.ExprCall _ args)
+    [(comptime.Expr.Call _ args)
       (if (= (struct-get args len) 2)
         (__tl_array-ref (struct-get args items) 1)
         (comptime.expr-int 0))]
@@ -77,7 +77,7 @@
 
 (defmacro (stdlib-comptime-spliced-dense-second [args : comptime.Expr ...]) : i64
   (match `(stdlib-comptime-spliced-dense-source ,@args)
-    [(comptime.ExprCall _ operands)
+    [(comptime.Expr.Call _ operands)
       (if (= (struct-get operands len) 2)
         (__tl_array-ref (struct-get operands items) 1)
         (comptime.expr-int 0))]
@@ -98,7 +98,7 @@
 
 (defmacro (stdlib-comptime-derived-name [prefix : comptime.Expr]) : i64
   (match prefix
-    [(comptime.ExprVar base)
+    [(comptime.Expr.Var base)
       (comptime.expr-var
         (comptime.string-concat
           (comptime.string-append base (comptime.int->string 0))
@@ -107,7 +107,7 @@
 
 (defmacro (stdlib-comptime-derived-string [prefix : comptime.Expr]) : String
   (match prefix
-    [(comptime.ExprVar base)
+    [(comptime.Expr.Var base)
       (comptime.expr-string (comptime.string-append base "-literal"))]
     [_ (comptime.expr-string "")]))
 
@@ -124,7 +124,7 @@
 
 (defmacro (stdlib-comptime-string-helper-total [prefix : comptime.Expr]) : i64
   (match prefix
-    [(ExprVar base)
+    [(Expr.Var base)
       (comptime.expr-int
         (+
           (string-length base)

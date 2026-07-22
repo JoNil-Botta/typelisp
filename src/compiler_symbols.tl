@@ -4672,9 +4672,9 @@
   `(all-from (__all-args ,@args) 0))
 (defmacro (all-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool true)
             `(if ,(expr-list-nth elems i)
@@ -4792,13 +4792,13 @@
 
 (define (compiler-symbols-comptime-root-helper-alias-source) : String
   "(module stdlib.comptime)
-(defenum Expr (ExprBool bool))
+(defenum Expr (Bool bool))
 (define (string.int->string [value : i64]) : String \"\")
 (define (string.append [left : String] [right : String]) : String left)
 (define (string.concat [left : String] [right : String]) : String left)
-(define (expr-bool [value : bool]) : Expr (ExprBool value))
+(define (expr-bool [value : bool]) : Expr (Expr.Bool value))
 (module main)
-(defenum Expr (ExprBool i64))
+(defenum Expr (Bool i64))
 (define (expr-bool [value : i64]) : i64 value)")
 
 (define (compiler-symbols-comptime-root-helper-alias-ok?) : bool

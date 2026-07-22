@@ -165,7 +165,18 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 configure_toolchain
 
-SEED_CTFE_COMPAT_STDLIB=$(bootstrap_seed_ctfe_macro_builders_legacy_stdlib "$ROOT" "$COMPILER" "$WORKDIR")
+SEED_COMPTIME_VARIANT_BRIDGE_ROOT=$(
+    bootstrap_seed_comptime_short_variant_bridge_root \
+        "$ROOT" "$COMPILER" "$WORKDIR"
+)
+SEED_CAPABILITY_ROOT=$ROOT
+if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
+    SEED_CAPABILITY_ROOT=$SEED_COMPTIME_VARIANT_BRIDGE_ROOT
+fi
+SEED_CTFE_COMPAT_STDLIB=$(
+    bootstrap_seed_ctfe_macro_builders_legacy_stdlib \
+        "$SEED_CAPABILITY_ROOT" "$COMPILER" "$WORKDIR"
+)
 if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
     echo "[bootstrap] seed lacks current CTFE macro builders; using the legacy prelude for stage0 -> stage1"
 else
@@ -345,6 +356,59 @@ EOF
 # the branch-built equivalent of a published stage0 and CI can run every
 # downstream gate on it.
 BOOTSTRAP_SRC=src/main.tl
+
+# The published seed immediately predating the short stdlib.comptime variant
+# ABI cannot typecheck the new declarations. Build one compiler from an
+# old-spelling source mirror while retaining the new ABI resolver strings, then
+# use that compiler for the real stage1. Once a published seed accepts the
+# short declarations, the capability probe skips this boundary automatically.
+if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
+    echo "[bootstrap] seed pins prefixed comptime variants; building a short-variant bridge"
+    BRIDGE_DIR="$WORKDIR/comptime-short-variant-seed-bridge"
+    BRIDGE_ASM="$BRIDGE_DIR/bridge.s"
+    BRIDGE_OBJ="$BRIDGE_DIR/bridge.$OBJ_EXT"
+    BRIDGE_BIN="$BRIDGE_DIR/bridge$BIN_EXT"
+    BRIDGE_CWD="$BRIDGE_DIR/cwd"
+    mkdir -p "$BRIDGE_CWD"
+    if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
+        BRIDGE_LEGACY_STDLIB="$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/bootstrap/stdlib"
+        (
+            cd "$BRIDGE_CWD"
+            run_with_heartbeat \
+                "published seed -> comptime short-variant bridge" \
+                "$COMPILER" compile \
+                "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/$BOOTSTRAP_SRC" \
+                -o "$BRIDGE_ASM" \
+                --target "$BOOTSTRAP_TARGET" \
+                $(native_target_cfg_args) \
+                $(bootstrap_extra_cfg_args) \
+                --cfg stage0-seed-bootstrap \
+                --stdlib-root "$BRIDGE_LEGACY_STDLIB" \
+                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
+                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
+                --opt-level 2
+        )
+    else
+        run_with_heartbeat \
+            "published seed -> comptime short-variant bridge" \
+            "$COMPILER" compile \
+            "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/$BOOTSTRAP_SRC" \
+            -o "$BRIDGE_ASM" \
+            --target "$BOOTSTRAP_TARGET" \
+            $(native_target_cfg_args) \
+            $(bootstrap_extra_cfg_args) \
+            --cfg stage0-seed-bootstrap \
+            --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
+            --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
+            --opt-level 2
+    fi
+    assemble_and_link \
+        "comptime short-variant bridge" \
+        "$BRIDGE_ASM" "$BRIDGE_OBJ" "$BRIDGE_BIN"
+    COMPILER=$BRIDGE_BIN
+    SEED_CTFE_COMPAT_STDLIB=
+    echo "[bootstrap] short-variant bridge ready; building stage1 from current sources"
+fi
 
 # opt2 bootstrap. First test the common stage2.s == stage3.s fixpoint. A backend
 # codegen fix can take another self-host round to propagate from an unconverged

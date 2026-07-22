@@ -1208,7 +1208,7 @@
   "(import stdlib.comptime)
 (defmacro (gen [key : Expr]) : Module
   (match key
-    [(ExprCall _ _)
+    [(Expr.Call _ _)
       `(begin
       (module generated.module)
       (define (answer) : i64 99))]
@@ -1448,7 +1448,7 @@
       (init : ,T))))
 (defmacro (replay-nested [T : type] [index-expr : Expr]) : Decls
   (match index-expr
-    [(ExprInt index)
+    [(Expr.Int index)
       (if (>= index (struct-field-count T))
         `(begin)
         (let
@@ -1573,7 +1573,7 @@
     (define (answer) : i64 40)))
 (defmacro (extra [key : Expr]) : Module
   (match key
-    [(ExprCall _ _)
+    [(Expr.Call _ _)
       `(begin
         (module generated.shared)
         (define (bonus) : i64 2))]
@@ -1869,7 +1869,7 @@
   "(import stdlib.comptime)
 (defmacro (bundle [key : Expr]) : Decls
   (match key
-    [(ExprCall _ _)
+    [(Expr.Call _ _)
       `(defstruct BundleBox (value i64))]
     [_
       `(defstruct BundleBox (value String))]))

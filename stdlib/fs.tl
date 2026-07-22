@@ -1226,9 +1226,9 @@
   [acc : String]
   [idx : comptime.Expr]) : String
   (match idx
-    [(comptime.ExprInt i)
+    [(comptime.Expr.Int i)
       (match carrier
-        [(comptime.ExprCall _ elems)
+        [(comptime.Expr.Call _ elems)
           (if (>= i (comptime.expr-list-length elems))
             acc
             `(path-join-fold

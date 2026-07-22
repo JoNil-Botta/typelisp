@@ -84,7 +84,7 @@
               (let
                 [out : comptime.Expr
                   (match final-test
-                    [(comptime.ExprVar name)
+                    [(comptime.Expr.Var name)
                       (if (string-eq name "else")
                         final-result
                         (comptime.expr-var "core-cond-missing-else"))]
@@ -96,7 +96,7 @@
                       (match (comptime.expr-clause-list-nth arms index)
                         [(ExprClause test result)
                           (match test
-                            [(comptime.ExprVar name)
+                            [(comptime.Expr.Var name)
                               (if (string-eq name "else")
                                 (set!
                                   out

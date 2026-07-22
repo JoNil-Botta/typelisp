@@ -13,17 +13,17 @@
 ;# public field and array access without growing the bridge surface.
 ;: Syntax value passed to and returned from expression macros.
 (defenum Expr
-  (ExprBool bool)
-  (ExprInt i64)
-  (ExprVar String)
-  (ExprSplice (Box Expr))
-  (ExprIf (Box Expr) (Box Expr) (Box Expr))
-  (ExprCall (Box Expr) ExprList)
-  (ExprBegin ExprList)
-  (ExprQuote (Box Expr))
-  (ExprQuasiquote (Box Expr))
-  (ExprUnquote (Box Expr))
-  (ExprUnquoteSplicing (Box Expr)))
+  (Bool bool)
+  (Int i64)
+  (Var String)
+  (Splice (Box Expr))
+  (If (Box Expr) (Box Expr) (Box Expr))
+  (Call (Box Expr) ExprList)
+  (Begin ExprList)
+  (Quote (Box Expr))
+  (Quasiquote (Box Expr))
+  (Unquote (Box Expr))
+  (UnquoteSplicing (Box Expr)))
 
 ;: Dense ordered sequence of syntax expressions.
 (defstruct ExprList
@@ -54,9 +54,9 @@
 
 ;: Match pattern syntax value built during macro CTFE.
 (defenum Pattern
-  (PatternWildcard)
-  (PatternBinding String)
-  (PatternVariant String PatternList))
+  (Wildcard)
+  (Binding String)
+  (Variant String PatternList))
 
 ;: Dense ordered sequence of match pattern syntax values.
 (defstruct PatternList
@@ -119,14 +119,14 @@
 
 ;: Compile-time reflection descriptor for a TypeLisp type.
 (defenum TypeInfo
-  (TypeInfoBuiltin String)
-  (TypeInfoArray (Box TypeInfo) i64)
-  (TypeInfoDynArray (Box TypeInfo))
-  (TypeInfoFunction TypeInfoList (Box TypeInfo))
-  (TypeInfoTuple TypeInfoList)
-  (TypeInfoStruct String TypeFieldList)
-  (TypeInfoEnum String TypeVariantList)
-  (TypeInfoOpaque String))
+  (Builtin String)
+  (Array (Box TypeInfo) i64)
+  (DynArray (Box TypeInfo))
+  (Function TypeInfoList (Box TypeInfo))
+  (Tuple TypeInfoList)
+  (Struct String TypeFieldList)
+  (Enum String TypeVariantList)
+  (Opaque String))
 
 ;: Build a bool literal expression during macro CTFE.
 (define (expr-bool [value : bool]) : Expr
@@ -363,37 +363,37 @@
 ;: Return true when an expression is a bool literal.
 (define (expr-bool? [value : Expr]) : bool
   (match value
-    [(ExprBool _) true]
+    [(Expr.Bool _) true]
     [_ false]))
 
 ;: Extract the bool literal payload from an expression.
 (define (expr-bool-value [value : Expr]) : bool
   (match value
-    [(ExprBool found) found]
+    [(Expr.Bool found) found]
     [_ false]))
 
 ;: Return true when an expression is an if expression.
 (define (expr-if? [value : Expr]) : bool
   (match value
-    [(ExprIf _ _ _) true]
+    [(Expr.If _ _ _) true]
     [_ false]))
 
 ;: Extract an if expression's condition.
 (define (expr-if-cond [value : Expr]) : Expr
   (match value
-    [(ExprIf cond _ _) cond]
+    [(Expr.If cond _ _) cond]
     [_ value]))
 
 ;: Extract an if expression's then branch.
 (define (expr-if-then [value : Expr]) : Expr
   (match value
-    [(ExprIf _ then-expr _) then-expr]
+    [(Expr.If _ then-expr _) then-expr]
     [_ value]))
 
 ;: Extract an if expression's else branch.
 (define (expr-if-else [value : Expr]) : Expr
   (match value
-    [(ExprIf _ _ else-expr) else-expr]
+    [(Expr.If _ _ else-expr) else-expr]
     [_ value]))
 
 ;: Return the number of items in an expression list.

@@ -15,7 +15,7 @@
       (comptime.expr-var
         (comptime.string-append "generated.enum_type_info." (type-key T)))]
     (match (type-info T)
-      [(comptime.TypeInfoEnum _ _)
+      [(comptime.TypeInfo.Enum _ _)
         `(begin
           (module ,module-name)
           (define (score) : i64

@@ -559,13 +559,13 @@
 ;: mutable compiler syntax list API.
 (defmacro (format-push [carrier : comptime.Expr] [piece : comptime.Expr]) : comptime.Expr
   (match carrier
-    [(comptime.ExprCall callee pieces) `(,callee ,@pieces ,piece)]
+    [(comptime.Expr.Call callee pieces) `(,callee ,@pieces ,piece)]
     [_ carrier]))
 
 ;: Turn the completed internal carrier into the public single-allocation concat.
 (defmacro (format-finish [carrier : comptime.Expr]) : String
   (match carrier
-    [(comptime.ExprCall _ pieces) `(str_cat.str-cat ,@pieces)]
+    [(comptime.Expr.Call _ pieces) `(str_cat.str-cat ,@pieces)]
     [_ `""]))
 
 ;: Parse one byte of a literal format template and extend the output carrier.
@@ -577,9 +577,9 @@
   [arg-index : comptime.Expr]
   [args : comptime.Expr ...]) : String
   (match offset
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (match arg-index
-        [(comptime.ExprInt next-arg)
+        [(comptime.Expr.Int next-arg)
           (let
             [text : String (comptime.expr-string-value template)]
             [template-len : i64 (string.string-length text)]

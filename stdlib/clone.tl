@@ -134,13 +134,13 @@
                                 [nil-pattern : comptime.Pattern
                                   (comptime.pattern-variant
                                     (match nil-name
-                                      [(comptime.ExprVar name) name]
+                                      [(comptime.Expr.Var name) name]
                                       [_ ""])
                                     (comptime.pattern-list-empty))]
                                 [cons-pattern : comptime.Pattern
                                   (comptime.pattern-variant
                                     (match cons-name
-                                      [(comptime.ExprVar name) name]
+                                      [(comptime.Expr.Var name) name]
                                       [_ ""])
                                     (comptime.pattern-list-cons
                                       (comptime.pattern-binding "head")

@@ -49,7 +49,18 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 mkdir -p "$(dirname -- "$OUT")"
 
-SEED_CTFE_COMPAT_STDLIB=$(bootstrap_seed_ctfe_macro_builders_legacy_stdlib "$ROOT" "$SEED" "$WORKDIR")
+SEED_COMPTIME_VARIANT_BRIDGE_ROOT=$(
+    bootstrap_seed_comptime_short_variant_bridge_root \
+        "$ROOT" "$SEED" "$WORKDIR"
+)
+SEED_CAPABILITY_ROOT=$ROOT
+if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
+    SEED_CAPABILITY_ROOT=$SEED_COMPTIME_VARIANT_BRIDGE_ROOT
+fi
+SEED_CTFE_COMPAT_STDLIB=$(
+    bootstrap_seed_ctfe_macro_builders_legacy_stdlib \
+        "$SEED_CAPABILITY_ROOT" "$SEED" "$WORKDIR"
+)
 if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
     echo "[build-stage0] seed lacks current CTFE macro builders; using the legacy prelude for stage1"
 else
@@ -86,6 +97,65 @@ stage_seed_bootstrap_cfg_args() {
 # so it never ships the seed's unconverged codegen. Built at --opt-level 2.
 STAGES=4
 PREV="$SEED"
+
+if [ -n "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT" ]; then
+    echo "[build-stage0] seed pins prefixed comptime variants; building a short-variant bridge"
+    BRIDGE_DIR="$WORKDIR/comptime-short-variant-seed-bridge"
+    BRIDGE_ASM="$BRIDGE_DIR/bridge.s"
+    BRIDGE_OBJ="$BRIDGE_DIR/bridge.$NL_OBJ_EXT"
+    BRIDGE_BIN="$BRIDGE_DIR/bridge$NL_BIN_EXT"
+    BRIDGE_CWD="$BRIDGE_DIR/cwd"
+    mkdir -p "$BRIDGE_CWD"
+    bridge_compile_failed=0
+    if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
+        if ! (
+            cd "$BRIDGE_CWD"
+            run_with_heartbeat_capture \
+                "compile short-variant bridge" \
+                "$COMPILE_STDOUT" "$COMPILE_STDERR" \
+                "$SEED" compile \
+                "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src/main.tl" \
+                -o "$BRIDGE_ASM" \
+                --target "$NL_BOOTSTRAP_TARGET" \
+                $(native_target_cfg_args) \
+                --cfg stage0-seed-bootstrap \
+                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/bootstrap/stdlib" \
+                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
+                --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
+                --opt-level 2
+        ); then
+            bridge_compile_failed=1
+        fi
+    else
+        if ! run_with_heartbeat_capture \
+            "compile short-variant bridge" \
+            "$COMPILE_STDOUT" "$COMPILE_STDERR" \
+            "$SEED" compile \
+            "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src/main.tl" \
+            -o "$BRIDGE_ASM" \
+            --target "$NL_BOOTSTRAP_TARGET" \
+            $(native_target_cfg_args) \
+            --cfg stage0-seed-bootstrap \
+            --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/stdlib" \
+            --stdlib-root "$SEED_COMPTIME_VARIANT_BRIDGE_ROOT/src" \
+            --opt-level 2; then
+            bridge_compile_failed=1
+        fi
+    fi
+    if [ "$bridge_compile_failed" -ne 0 ]; then
+        echo "[build-stage0] seed failed while compiling the short-variant bridge" >&2
+        sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
+        sed 's/^/  /' "$COMPILE_STDERR" >&2 || true
+        exit 1
+    fi
+    assemble_and_link \
+        "comptime short-variant bridge" \
+        "$BRIDGE_ASM" "$BRIDGE_OBJ" "$BRIDGE_BIN"
+    PREV=$BRIDGE_BIN
+    SEED_CTFE_COMPAT_STDLIB=
+    echo "[build-stage0] short-variant bridge ready; building stage1 from current sources"
+fi
+
 i=1
 while [ "$i" -le "$STAGES" ]; do
     STAGE_ASM="$WORKDIR/stage$i.s"

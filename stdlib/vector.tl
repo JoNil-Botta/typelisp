@@ -91,7 +91,7 @@
         [0 false]
         [1
           (match (expr-list-nth capabilities 0)
-            [(ExprVar capability)
+            [(Expr.Var capability)
               (match capability
                 ["core" true]
                 [_
@@ -194,7 +194,7 @@
                     (if (tuple-ref taken 0)
                       (IntoNext.Item (tuple-ref taken 1))
                       (IntoNext.Done))))))))
-          [(ExprBegin decls) decls]
+          [(Expr.Begin decls) decls]
           [_ (expr-list-empty)]))]
     [cleanup-module-decls : Expr
       `(begin
@@ -354,7 +354,7 @@
     (if cleanup-owning
       cleanup-module-decls
       (match core-decls
-        [(ExprBegin core)
+        [(Expr.Begin core)
           (if core-only
             `(begin
               (module ,module-name)

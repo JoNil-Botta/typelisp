@@ -117,14 +117,14 @@
   [index-expr : comptime.Expr]
   [items : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (if (< index 0)
         items
         (let
           [element-type : comptime.Expr (tuple-element-type tuple-type index)]
           [element-alias : comptime.Expr
             (match nested-alias
-              [(comptime.ExprVar nested-alias-text)
+              [(comptime.Expr.Var nested-alias-text)
                 (comptime.expr-var
                   (comptime.string-append
                     (comptime.string-append nested-alias-text "_tuple_")
@@ -166,14 +166,14 @@
   [index-expr : comptime.Expr]
   [items : comptime.Expr ...]) : comptime.Expr
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (if (>= index (tuple-element-count tuple-type))
         `(tuple ,@items)
         (let
           [element-type : comptime.Expr (tuple-element-type tuple-type index)]
           [element-alias : comptime.Expr
             (match nested-alias
-              [(comptime.ExprVar nested-alias-text)
+              [(comptime.Expr.Var nested-alias-text)
                 (comptime.expr-var
                   (comptime.string-append
                     (comptime.string-append nested-alias-text "_tuple_")
@@ -215,9 +215,9 @@
   [payload-index-expr : comptime.Expr]
   [items : comptime.Expr]) : comptime.Expr
   (match variant-index-expr
-    [(comptime.ExprInt variant-index)
+    [(comptime.Expr.Int variant-index)
       (match payload-index-expr
-        [(comptime.ExprInt payload-index)
+        [(comptime.Expr.Int payload-index)
           (if (< payload-index 0)
             items
             (let
@@ -237,7 +237,7 @@
                   payload-index)]
               [payload-alias : comptime.Expr
                 (match nested-alias
-                  [(comptime.ExprVar nested-alias-text)
+                  [(comptime.Expr.Var nested-alias-text)
                     (comptime.expr-var
                       (comptime.string-append
                         (comptime.string-append
@@ -286,7 +286,7 @@
   [value : comptime.Expr]
   [variant-index-expr : comptime.Expr]) : comptime.Expr
   (match variant-index-expr
-    [(comptime.ExprInt variant-index)
+    [(comptime.Expr.Int variant-index)
       (if (>= variant-index (enum-variant-count enum-type))
         (let
           [empty-object-hook : comptime.Expr
@@ -372,9 +372,9 @@
   [payload-index-expr : comptime.Expr]
   [items : comptime.Expr ...]) : comptime.Expr
   (match variant-index-expr
-    [(comptime.ExprInt variant-index)
+    [(comptime.Expr.Int variant-index)
       (match payload-index-expr
-        [(comptime.ExprInt payload-index)
+        [(comptime.Expr.Int payload-index)
           (if (>=
             payload-index
             (enum-variant-payload-count enum-type variant-index))
@@ -389,7 +389,7 @@
                   (comptime.string-append "." variant-name))]
               [enum-source-alias : String
                 (match nested-alias
-                  [(comptime.ExprVar nested-alias-text)
+                  [(comptime.Expr.Var nested-alias-text)
                     (comptime.string-append nested-alias-text "_enum_source")]
                   [_
                     (comptime.comptime-error
@@ -411,7 +411,7 @@
                   payload-index)]
               [payload-alias : comptime.Expr
                 (match nested-alias
-                  [(comptime.ExprVar nested-alias-text)
+                  [(comptime.Expr.Var nested-alias-text)
                     (comptime.expr-var
                       (comptime.string-append
                         (comptime.string-append
@@ -465,7 +465,7 @@
   [tag : comptime.Expr]
   [variant-index-expr : comptime.Expr]) : comptime.Expr
   (match variant-index-expr
-    [(comptime.ExprInt variant-index)
+    [(comptime.Expr.Int variant-index)
       (if (>= variant-index (enum-variant-count enum-type))
         `(return (,err-ctor "serialize: unknown enum tag"))
         (let
@@ -516,7 +516,7 @@
   (let
     [nested-alias-text : String
       (match nested-alias
-        [(comptime.ExprVar found) found]
+        [(comptime.Expr.Var found) found]
         [_ (comptime.comptime-error "serialize: nested alias must be a name")])]
     [value-key : String (type-key value-type)]
     [value-kind : String (type-kind value-type)]
@@ -676,7 +676,7 @@
   (let
     [nested-alias-text : String
       (match nested-alias
-        [(comptime.ExprVar found) found]
+        [(comptime.Expr.Var found) found]
         [_ (comptime.comptime-error "serialize: nested alias must be a name")])]
     [value-key : String (type-key value-type)]
     [value-kind : String (type-kind value-type)]
@@ -872,7 +872,7 @@
   [index-expr : comptime.Expr]
   [value : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (let
         [field-name : String (struct-field-name T index)]
         [field-type : comptime.Expr (struct-field-type T index)]
@@ -900,7 +900,7 @@
   [index-expr : comptime.Expr]
   [value : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (if (>= index (struct-field-count T))
         (let
           [empty-hook : comptime.Expr
@@ -935,7 +935,7 @@
   [out : comptime.Expr]
   [err-ctor : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (let
         [field-name : String (struct-field-name T index)]
         [field-type : comptime.Expr (struct-field-type T index)]
@@ -974,7 +974,7 @@
   [out : comptime.Expr]
   [err-ctor : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (if (>= index (struct-field-count T))
         `unit
         (let
@@ -1006,7 +1006,7 @@
     [enum-module : String (type-nominal-module enum-type)]
     [source-alias : comptime.Expr
       (match nested-alias
-        [(comptime.ExprVar nested-alias-text)
+        [(comptime.Expr.Var nested-alias-text)
           (comptime.expr-var
             (comptime.string-append nested-alias-text "_enum_source"))]
         [_ (comptime.comptime-error "serialize: nested alias must be a name")])]
@@ -1022,7 +1022,7 @@
   (let
     [nested-alias-text : String
       (match nested-alias
-        [(comptime.ExprVar found) found]
+        [(comptime.Expr.Var found) found]
         [_ (comptime.comptime-error "serialize: nested alias must be a name")])]
     [value-kind : String (type-kind value-type)]
     [format-expr : comptime.Expr
@@ -1071,14 +1071,14 @@
   [nested-alias : comptime.Expr]
   [index-expr : comptime.Expr]) : Decls
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (if (>= index (tuple-element-count tuple-type))
         `(begin)
         (let
           [element-type : comptime.Expr (tuple-element-type tuple-type index)]
           [element-alias : comptime.Expr
             (match nested-alias
-              [(comptime.ExprVar nested-alias-text)
+              [(comptime.Expr.Var nested-alias-text)
                 (comptime.expr-var
                   (comptime.string-append
                     (comptime.string-append nested-alias-text "_tuple_")
@@ -1111,9 +1111,9 @@
   [variant-index-expr : comptime.Expr]
   [payload-index-expr : comptime.Expr]) : Decls
   (match variant-index-expr
-    [(comptime.ExprInt variant-index)
+    [(comptime.Expr.Int variant-index)
       (match payload-index-expr
-        [(comptime.ExprInt payload-index)
+        [(comptime.Expr.Int payload-index)
           (if (>=
             payload-index
             (enum-variant-payload-count enum-type variant-index))
@@ -1126,7 +1126,7 @@
                   payload-index)]
               [payload-alias : comptime.Expr
                 (match nested-alias
-                  [(comptime.ExprVar nested-alias-text)
+                  [(comptime.Expr.Var nested-alias-text)
                     (comptime.expr-var
                       (comptime.string-append
                         (comptime.string-append
@@ -1169,7 +1169,7 @@
   [nested-alias : comptime.Expr]
   [variant-index-expr : comptime.Expr]) : Decls
   (match variant-index-expr
-    [(comptime.ExprInt variant-index)
+    [(comptime.Expr.Int variant-index)
       (if (>= variant-index (enum-variant-count enum-type))
         `(begin)
         (let
@@ -1198,7 +1198,7 @@
   [T : type]
   [index-expr : comptime.Expr]) : Decls
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (if (>= index (struct-field-count T))
         `(begin)
         (let

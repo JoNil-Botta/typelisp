@@ -18580,9 +18580,9 @@
   `(and-from (__and-args ,@args) 0))
 (defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool true)
             `(if ,(expr-list-nth elems i)
@@ -18597,9 +18597,9 @@
   `(or-from (__or-args ,@args) 0))
 (defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool false)
             `(if ,(expr-list-nth elems i)

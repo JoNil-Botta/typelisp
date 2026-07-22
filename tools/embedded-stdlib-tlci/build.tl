@@ -183,11 +183,13 @@
   [output : String]
   [build-hash : String]
   [windows-target : bool]
+  [rodata : (Array u8)]
   [names : (Array String)]) : i64
   (match (embedded-native-emit-package
     (tlci-metadata-emit (tlci-make-metadata "v1" "stdlib" "0.1.0"))
     build-hash
     windows-target
+    rodata
     names)
     [(ResultProducerBytes.Err message)
       (begin
@@ -209,10 +211,10 @@
         0)]))
 
 (define (main) : i64
-  (if (not (= (io.arg-count) 6))
+  (if (not (= (io.arg-count) 7))
     (begin
       (io.print-error
-        "usage: build <module-manifest> <stdlib-root> <output.tlci> <linux|windows> <build-hash>\n")
+        "usage: build <module-manifest> <stdlib-root> <output.tlci> <linux|windows> <build-hash> <surface-rodata>\n")
       2)
     (let
       [manifest-path : String (io.arg 1)]
@@ -220,30 +222,32 @@
       [output : String (io.arg 3)]
       [target : String (io.arg 4)]
       [build-hash : String (io.arg 5)]
+      [rodata-path : String (io.arg 6)]
       [names : svec.Vec (svec.new)]
-      (begin
-        (if (or (string.eq target "linux") (string.eq target "windows"))
-          (embedded-stdlib-tlci-collect-manifest!
-            (io.read-file manifest-path)
-            root
-            0
-            (&mut names))
-          (set!
-            embedded-stdlib-tlci-build-error
-            (str-cat "invalid host target: " target)))
-        (if (> (string.string-length embedded-stdlib-tlci-build-error) 0)
+      (if (or (string.eq target "linux") (string.eq target "windows"))
+        (let
+          [rodata : (Array u8) (tlci-string->bytes (io.read-file rodata-path))]
           (begin
-            (io.print-error
-              (str-cat
-                "embedded stdlib tlci: "
-                embedded-stdlib-tlci-build-error
-                "\n"))
-            1)
-          (embedded-native-write
-            output
-            (str-cat
-              build-hash
-              "-stdlib-"
-              (string.int->string embedded-stdlib-tlci-source-hash))
-            (string.eq target "windows")
-            (svec.to-array (& names))))))))
+            (embedded-stdlib-tlci-collect-manifest!
+              (io.read-file manifest-path)
+              root
+              0
+              (&mut names))
+            (if (> (string.string-length embedded-stdlib-tlci-build-error) 0)
+              (begin
+                (io.print-error
+                  (str-cat
+                    "embedded stdlib tlci: "
+                    embedded-stdlib-tlci-build-error
+                    "\n"))
+                1)
+              (embedded-native-write
+                output
+                build-hash
+                (string.eq target "windows")
+                rodata
+                (svec.to-array (& names))))))
+        (begin
+          (io.print-error
+            (str-cat "embedded stdlib tlci: invalid host target: " target "\n"))
+          1)))))

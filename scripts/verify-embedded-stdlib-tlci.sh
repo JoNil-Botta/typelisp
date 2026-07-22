@@ -29,6 +29,7 @@ IMAGE_A=$WORKDIR/stdlib-a.tlci
 IMAGE_B=$WORKDIR/stdlib-b.tlci
 MUTATED_ROOT=$WORKDIR/stdlib-mutated
 MUTATED_IMAGE=$WORKDIR/stdlib-mutated.tlci
+MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
 MANIFEST=target/embedded-stdlib-tlci/modules.txt
 mkdir -p "$WORKDIR"
 
@@ -69,10 +70,23 @@ done < "$MANIFEST"
 printf '\n;; embedded stdlib tlci source binding probe\n' \
     >> "$MUTATED_ROOT/array.tl"
 BUILD_HASH=$(git rev-parse --verify HEAD)
+MUTATED_SOURCE_HASH=$(
+    while IFS= read -r module_path; do
+        source_path="$MUTATED_ROOT/$module_path"
+        source_size=$(wc -c < "$source_path" | tr -d ' ')
+        printf '%s\000%s\000' "$module_path" "$source_size"
+        cat "$source_path"
+    done < "$MANIFEST" | git hash-object --stdin
+)
+"$COMPILER" run tools/embedded-stdlib-tlci/build-surface.tl \
+    --stdlib-root stdlib --stdlib-root src \
+    --cfg compiler-surface-producer -- \
+    "$MUTATED_ROOT" "$MUTATED_SURFACE" "$HOST_TARGET" \
+    "$BUILD_HASH" "$MUTATED_SOURCE_HASH"
 "$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
     --stdlib-root stdlib --stdlib-root src -- \
     "$MANIFEST" "$MUTATED_ROOT" "$MUTATED_IMAGE" \
-    "$HOST_TARGET" "$BUILD_HASH"
+    "$HOST_TARGET" "$BUILD_HASH" "$MUTATED_SURFACE"
 if cmp -s "$IMAGE_A" "$MUTATED_IMAGE"; then
     echo "embedded stdlib source mutation did not change the tlci image" >&2
     exit 1

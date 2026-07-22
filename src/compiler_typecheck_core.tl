@@ -13,6 +13,7 @@
 (import "compiler_specialize.tl")
 (import "compiler_clone.tl")
 (import compiler_allocation_profile as allocation_profile)
+(import compiler_surface_facts as surface_facts)
 (import (hashmap.hashmap i64 i64) as tc_i64_i64_map)
 (import (hashmap.hashmap String i64) as tc_string_i64_map)
 (import "compiler_parse_core.tl")
@@ -322,6 +323,8 @@
   -1)
 (define tc-body-early-exit-facts : (Array i64)
   (array.make-array i64 1))
+(define tc-body-early-exit-known : (Array i64)
+  (array.make-array i64 1))
 
 (define (tc-body-early-exit-facts-start! [pools : AstNodePoolContext]) : unit
   (let
@@ -329,6 +332,9 @@
     (begin
       (set!
         tc-body-early-exit-facts
+        (array.make-array i64 (/ (+ expr-limit 63) 64)))
+      (set!
+        tc-body-early-exit-known
         (array.make-array i64 (/ (+ expr-limit 63) 64)))
       (set! tc-body-early-exit-current false)
       (set! tc-body-early-exit-suppress-depth 0)
@@ -362,17 +368,23 @@
 (define (tc-body-early-exit-function-finish! [body-id : i64]) : unit
   (if (and
     tc-body-early-exit-facts-collecting
-    tc-body-early-exit-current
     (>= body-id 0)
     (< body-id tc-body-early-exit-source-expr-limit))
     (let
       [word-index : i64 (/ body-id 64)]
       [bit-index : i64 (% body-id 64)]
-      [old-bits : i64 (array.ref tc-body-early-exit-facts word-index)]
-      (array-set!
-        tc-body-early-exit-facts
-        word-index
-        (bit-or old-bits (shl 1 bit-index))))
+      [bit : i64 (shl 1 bit-index)]
+      (begin
+        (array-set!
+          tc-body-early-exit-known
+          word-index
+          (bit-or (array.ref tc-body-early-exit-known word-index) bit))
+        (if tc-body-early-exit-current
+          (array-set!
+            tc-body-early-exit-facts
+            word-index
+            (bit-or (array.ref tc-body-early-exit-facts word-index) bit))
+          unit)))
     unit))
 
 (define (tc-body-early-exit-note!) : unit
@@ -404,8 +416,13 @@
     (let
       [word-index : i64 (/ body-id 64)]
       [bit-index : i64 (% body-id 64)]
-      [bits : i64 (array.ref tc-body-early-exit-facts word-index)]
-      (TcBodyEarlyExitFact.Known (not (= (bit-and bits (shl 1 bit-index)) 0))))
+      [bit : i64 (shl 1 bit-index)]
+      [known : i64 (array.ref tc-body-early-exit-known word-index)]
+      (if (= (bit-and known bit) 0)
+        (TcBodyEarlyExitFact.Unknown)
+        (let
+          [bits : i64 (array.ref tc-body-early-exit-facts word-index)]
+          (TcBodyEarlyExitFact.Known (not (= (bit-and bits bit) 0))))))
     (TcBodyEarlyExitFact.Unknown)))
 
 (define (tc-body-type-fact-initial-capacity) : i64
@@ -29159,8 +29176,28 @@
         (and
           (>= key 0)
           (tc_i64_i64_map.contains? (& tc-clone-root-collection-selected) key))]
-      (set! tc-clone-root-collection-current-decl selected))
+      (begin
+        (set! tc-clone-root-collection-current-decl selected)
+        (cfg
+          compiler-surface-producer
+          (surface_facts.surface-typecheck-facts-recording-select-decl! key)
+          unit)))
     unit))
+
+(define (tc-clone-root-collection-record-surface-roots! [roots : CloneNameList]) : unit
+  (let
+    [cur : CloneNameList roots]
+    [done : bool false]
+    (begin
+      (surface_facts.surface-typecheck-facts-recording-start-clone-call!)
+      (while (not done)
+        (match cur
+          [(CloneNameList.Nil) (set! done true)]
+          [(CloneNameList.ConsId root-key _ rest)
+            (begin
+              (surface_facts.surface-typecheck-facts-recording-note-clone-root!
+                root-key)
+              (set! cur (box-get rest)))])))))
 
 (define (tc-clone-root-collection-note! [ctx : TcContext] [ty : AstType]) : unit
   (if (and
@@ -29176,6 +29213,19 @@
           [resolved : AstType
             (tc-type-without-regions (tc-resolve-type ctx ty))]
           (begin
+            (cfg
+              compiler-surface-producer
+              (tc-clone-root-collection-record-surface-roots!
+                (if (surface_facts.surface-typecheck-facts-recording?)
+                  (clone-root-add-type
+                    (tc-context-pools ctx)
+                    (box-get decls-box)
+                    (tc-clone-able-set ctx)
+                    (CloneNameList.Nil)
+                    resolved
+                    cbi.compiler-builtin-id-fix-empty)
+                  (CloneNameList.Nil)))
+              unit)
             ;; Resolve the nominal closure while `ty` and all nested type-pool
             ;; ids are still live in this function's semantic scratch scope.
             ;; Retaining the shallow AstType until the declaration walk ends
@@ -29232,6 +29282,58 @@
         (set! tc-clone-root-collection-arena 0)
         (unsafe
           (arena.tl_arena_destroy arena-handle))))
+    unit))
+
+(define (tc-clone-root-collection-apply-surface-facts!) : unit
+  (if (and
+    tc-clone-root-collection-active
+    (surface_facts.surface-typecheck-facts-active?))
+    (let
+      [facts : surface_facts.SurfaceTypecheckFacts
+        (surface_facts.surface-typecheck-facts-current)]
+      [decl-keys : (Array i64) (struct-get facts clone-decl-keys)]
+      [root-keys : (Array i64) (struct-get facts clone-root-keys)]
+      [call-indices : (Array i64) (struct-get facts clone-call-indices)]
+      [count : i64 (array-length decl-keys)]
+      [index : i64 0]
+      [previous-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set tc-clone-root-collection-arena))
+        (while (< index count)
+          (let
+            [call-index : i64 (array-ref call-indices index)]
+            [decl-key : i64 (array-ref decl-keys index)]
+            [end : i64 (+ index 1)]
+            (begin
+              (while (and
+                (< end count)
+                (= (array-ref call-indices end) call-index))
+                (set! end (+ end 1)))
+              (if (tc_i64_i64_map.contains?
+                (& tc-clone-root-collection-selected)
+                decl-key)
+                (let
+                  [cursor : i64 (- end 1)]
+                  (while (>= cursor index)
+                    (let
+                      [root-key : i64 (array-ref root-keys cursor)]
+                      (begin
+                        (if (clone-name-list-contains-id?
+                          tc-clone-root-collection-roots
+                          root-key)
+                          unit
+                          (set!
+                            tc-clone-root-collection-roots
+                            (clone-name-list-cons-id
+                              root-key
+                              tc-clone-root-collection-roots)))
+                        (set! cursor (- cursor 1))))))
+                unit)
+              (set! index end))))
+        (set! tc-clone-root-collection-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set previous-arena))))
     unit))
 
 (define (tc-clone-able-cache-reset!) : unit
@@ -70197,30 +70299,29 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [module : String]
+  [module-id : i64]
   [can-share : bool]
   [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroDeclsWithPaths
+  [cfgs : sym_i64_env.SymI64Env]
+  [initial-materialize-seen : sym_i64_env.SymI64Env]
+  [initial-out-rev : AstDeclList]
+  [initial-out-paths-rev : AstDeclPathList]) : ResultMacroDeclsWithPaths
   (let
     ;; Generated file imports need the loader's duplicate-path/module set.
     ;; Seed it once, then extend it with each macro splice and loader result;
     ;; rebuilding it from the whole expanded program per import retained tens
     ;; of megabytes of obsolete persistent-env bindings.
-    [cur-materialize-seen : sym_i64_env.SymI64Env
-      (macro-materialize-seen-from
-        (& decls)
-        (& paths)
-        (sym_i64_env.sym-i64-empty)
-        cbi.compiler-builtin-id-fix-empty)]
+    [cur-materialize-seen : sym_i64_env.SymI64Env initial-materialize-seen]
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-module : String module]
-    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [cur-module-id : i64 module-id]
     [cur-orig-decls : AstDeclList orig-decls]
     [cur-ctx : TcContext ctx]
     [cur-top-env : TcTypeEnv top-env]
     [cur-can-share : bool can-share]
-    [out-rev : AstDeclList (ast-decl-list-new)]
-    [out-paths-rev : AstDeclPathList (ast-decl-path-list-new)]
+    [out-rev : AstDeclList initial-out-rev]
+    [out-paths-rev : AstDeclPathList initial-out-paths-rev]
     [result : ResultMacroDeclsWithPaths
       (ResultMacroDeclsWithPaths.Err
         (box (tc-diag-at-start "macro: internal decl expansion walk")))]
@@ -71007,6 +71108,145 @@
         (macro-decl-has-summary-macro-import? decl)
         (macro-program-has-summary-macro-import? rest))]))
 
+(defstruct MacroSurfacePrefixModule
+  (name String)
+  (name-id i64))
+
+(defenum MacroSurfacePrefixPlan
+  (Cold)
+  (Hydrated
+    AstDeclList
+    AstDeclPathList
+    String
+    i64
+    sym_i64_env.SymI64Env
+    AstDeclList
+    AstDeclPathList
+    i64))
+
+(define (macro-surface-prefix-module [decls : AstDeclList]) : MacroSurfacePrefixModule
+  (let
+    [cur : AstDeclList decls]
+    [module : String ""]
+    [module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (begin
+              (match decl
+                [(AstDecl.Module next-module)
+                  (begin
+                    (set! module (intern-str next-module))
+                    (set! module-id next-module))]
+                [_ unit])
+              (set! cur rest))]))
+      (MacroSurfacePrefixModule module module-id))))
+
+(cfg
+  compile-profile
+  (define (macro-profile-surface-prefix-hit [count : i64]) : unit
+    (cfg
+      compile-profile-summary
+      unit
+      (begin
+        (io.print-error
+          "compile-profile-detail|prelude.macro_walk_decl_visits|0\n")
+        (io.print-error
+          (string.append
+            "compile-profile-detail|prelude.macro_walk_skipped_decls|"
+            (string.append (string.int->string count) "\n")))))))
+
+(define (macro-surface-prefix-plan
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : MacroSurfacePrefixPlan
+  (if (surface_facts.surface-typecheck-facts-active?)
+    (let
+      [facts : surface_facts.SurfaceTypecheckFacts
+        (surface_facts.surface-typecheck-facts-current)]
+      [count : i64 (struct-get facts macro-prefix-decl-count)]
+      [decl-count : i64 (ast-decl-list-len (& decls))]
+      [path-count : i64 (ast-decl-path-list-len (& paths))]
+      (if (and (> count 0) (< count decl-count) (<= count path-count))
+        (let
+          [prefix-decls : AstDeclList (tc-decl-list-take decls count)]
+          [prefix-paths : AstDeclPathList (tc-decl-path-list-take paths count)]
+          [module : MacroSurfacePrefixModule
+            (macro-surface-prefix-module prefix-decls)]
+          (begin
+            (cfg compile-profile (macro-profile-surface-prefix-hit count))
+            (MacroSurfacePrefixPlan.Hydrated
+              (tc-decl-list-drop decls count)
+              (tc-decl-path-list-drop paths count)
+              (struct-get module name)
+              (struct-get module name-id)
+              (macro-materialize-seen-from
+                (& decls)
+                (& paths)
+                (sym_i64_env.sym-i64-empty)
+                cbi.compiler-builtin-id-fix-empty)
+              (macro-decl-list-reverse prefix-decls)
+              (macro-decl-path-list-reverse prefix-paths)
+              count)))
+        (MacroSurfacePrefixPlan.Cold)))
+    (MacroSurfacePrefixPlan.Cold)))
+
+(define (macro-expand-decls-with-surface-prefix
+  [load-state : CompilerLoadSessionState]
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroDeclsWithPaths
+  (match (macro-surface-prefix-plan decls paths)
+    [(MacroSurfacePrefixPlan.Cold)
+      (macro-expand-decls
+        load-state
+        ctx
+        top-env
+        decls
+        decls
+        paths
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        true
+        stdlib-roots
+        cfgs
+        (macro-materialize-seen-from
+          (& decls)
+          (& paths)
+          (sym_i64_env.sym-i64-empty)
+          cbi.compiler-builtin-id-fix-empty)
+        (ast-decl-list-new)
+        (ast-decl-path-list-new))]
+    [(MacroSurfacePrefixPlan.Hydrated
+        suffix-decls
+        suffix-paths
+        module
+        module-id
+        materialize-seen
+        prefix-rev
+        prefix-paths-rev
+        _)
+      (macro-expand-decls
+        load-state
+        ctx
+        top-env
+        decls
+        suffix-decls
+        suffix-paths
+        module
+        module-id
+        true
+        stdlib-roots
+        cfgs
+        materialize-seen
+        prefix-rev
+        prefix-paths-rev)]))
+
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
@@ -71146,15 +71386,12 @@
                                         compile-profile
                                         (compiler-tc-macro-profile-note-walk-share-gate
                                           true))
-                                      (match (macro-expand-decls
+                                      (match (macro-expand-decls-with-surface-prefix
                                         load-state
                                         ctx
                                         top-env
                                         active-decls
-                                        active-decls
                                         active-paths
-                                        ""
-                                        true
                                         stdlib-roots
                                         cfgs)
                                         [(ResultMacroDeclsWithPaths.Ok
@@ -73109,6 +73346,46 @@
             (TcModuleLocalEnvCache.Nil)))]
       [(ResultCompilerTypecheck.Err diag) (ResultCompilerTypecheck.Err diag)])))
 
+(cfg
+  compile-profile
+  (define (tc-profile-surface-prefix-hit [count : i64]) : unit
+    (cfg
+      compile-profile-summary
+      unit
+      (begin
+        (io.print-error
+          "compile-profile-detail|prelude.typecheck_decl_checks|0\n")
+        (io.print-error
+          (string.append
+            "compile-profile-detail|prelude.typecheck_skipped_decls|"
+            (string.append (string.int->string count) "\n")))))))
+
+(define (tc-check-decls-with-surface-prefix-hit
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [count : i64]
+  [module : String]
+  [module-id : i64]
+  [facts : surface_facts.SurfaceTypecheckFacts]) : ResultCompilerTypecheck
+  (begin
+    (tc-clone-root-collection-apply-surface-facts!)
+    (cfg compile-profile (tc-profile-surface-prefix-hit count))
+    (cfg compile-profile (compiler-tc-decl-profile-reset))
+    (tc-check-decls-with-paths-in-module
+      ctx
+      top-env
+      (tc-decl-list-drop decls count)
+      (tc-decl-path-list-drop paths count)
+      (CompilerTypecheckSummary
+        (struct-get facts summary-values)
+        (struct-get facts summary-functions)
+        (struct-get facts summary-externs))
+      module
+      module-id
+      (TcModuleLocalEnvCache.Nil))))
+
 (define (tc-check-decls-with-paths
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -73120,39 +73397,62 @@
   ;; A cached prefix contains only its summary, not semantic observations from
   ;; the declarations it skipped. Clone-root collection therefore takes the
   ;; ordinary declaration walk even when the interactive prefix cache is on.
-  (if (and
-    (tc-prefix-snapshot-cache-active?)
-    (not tc-clone-root-collection-active))
-    (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
-      [(TcPrefixCandidate.Some key count module module-id)
-        (match (tc-prefix-snapshot-cache-lookup key)
-          [(TcPrefixSnapshotLookup.Hit
-              cached-count
-              cached-module
-              cached-module-id
-              cached-summary)
-            (tc-check-decls-with-prefix-hit
+  (if (surface_facts.surface-typecheck-facts-active?)
+    (let
+      [facts : surface_facts.SurfaceTypecheckFacts
+        (surface_facts.surface-typecheck-facts-current)]
+      (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
+        [(TcPrefixCandidate.Some _ count module module-id)
+          (if (= count (struct-get facts prefix-decl-count))
+            (tc-check-decls-with-surface-prefix-hit
               ctx
               top-env
               decls
               paths
-              cached-count
-              cached-module
-              cached-module-id
-              cached-summary)]
-          [(TcPrefixSnapshotLookup.Miss)
-            (tc-check-decls-with-prefix-miss
-              ctx
-              top-env
-              decls
-              paths
-              key
               count
               module
-              module-id)])]
-      [(TcPrefixCandidate.No)
-        (tc-check-decls-with-paths-cold ctx top-env decls paths summary)])
-    (tc-check-decls-with-paths-cold ctx top-env decls paths summary)))
+              module-id
+              facts)
+            (begin
+              (surface_facts.surface-typecheck-facts-clear!)
+              (tc-check-decls-with-paths-cold ctx top-env decls paths summary)))]
+        [(TcPrefixCandidate.No)
+          (begin
+            (surface_facts.surface-typecheck-facts-clear!)
+            (tc-check-decls-with-paths-cold ctx top-env decls paths summary))]))
+    (if (and
+      (tc-prefix-snapshot-cache-active?)
+      (not tc-clone-root-collection-active))
+      (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
+        [(TcPrefixCandidate.Some key count module module-id)
+          (match (tc-prefix-snapshot-cache-lookup key)
+            [(TcPrefixSnapshotLookup.Hit
+                cached-count
+                cached-module
+                cached-module-id
+                cached-summary)
+              (tc-check-decls-with-prefix-hit
+                ctx
+                top-env
+                decls
+                paths
+                cached-count
+                cached-module
+                cached-module-id
+                cached-summary)]
+            [(TcPrefixSnapshotLookup.Miss)
+              (tc-check-decls-with-prefix-miss
+                ctx
+                top-env
+                decls
+                paths
+                key
+                count
+                module
+                module-id)])]
+        [(TcPrefixCandidate.No)
+          (tc-check-decls-with-paths-cold ctx top-env decls paths summary)])
+      (tc-check-decls-with-paths-cold ctx top-env decls paths summary))))
 
 (define (tc-generated-clone-name? [name : String]) : bool
   (if (>= (string.string-length name) 6)
@@ -73678,6 +73978,11 @@
 
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin
+    (surface_facts.surface-typecheck-facts-clear!)
+    (cfg
+      compiler-surface-producer
+      (surface_facts.surface-typecheck-facts-recording-abort!)
+      unit)
     (tc-unbound-suggestion-snapshot-reset!)
     (tc-fn-scratch-arena-release!)
     (tc-decl-scratch-arena-release!)

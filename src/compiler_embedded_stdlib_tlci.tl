@@ -28,6 +28,10 @@
   (Missing)
   (Unavailable String))
 
+(defenum CompilerEmbeddedStdlibTlciSurface
+  (Ok String String (Array u8))
+  (Unavailable String))
+
 ;; The compiler maps the image lazily on the first embedded-stdlib macro call
 ;; and keeps it mapped through that macro-expansion pass. State values are
 ;; 0 = closed, 1 = loaded, and -1 = load failed. The separate cells avoid
@@ -56,6 +60,19 @@
             (array-ref payload.embedded-stdlib-tlci-bytes index))
           (set! index (+ index 1))))
       out)))
+
+(define (compiler-embedded-stdlib-tlci-surface) : CompilerEmbeddedStdlibTlciSurface
+  (if (= (compiler-embedded-stdlib-tlci-length) 0)
+    (CompilerEmbeddedStdlibTlciSurface.Unavailable
+      "embedded stdlib tlci is unavailable in the seed/test build")
+    (match (tlci-parse-image (compiler-embedded-stdlib-tlci-copy))
+      [(ResultTlciImage.Err message)
+        (CompilerEmbeddedStdlibTlciSurface.Unavailable message)]
+      [(ResultTlciImage.Ok image)
+        (CompilerEmbeddedStdlibTlciSurface.Ok
+          (struct-get image compiler-build-hash)
+          payload.embedded-stdlib-tlci-source-hash
+          (struct-get image rodata))])))
 
 (define (compiler-embedded-stdlib-tlci-host-table) : TlciHostCallbackTable
   (TlciHostCallbackTable

@@ -4,6 +4,7 @@
 ;; images, and this module also assembles the focused dispatch proof used by
 ;; the loader smoke.
 (import stdlib.byte_buf_core)
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -165,6 +166,36 @@
 
 (defenum ResultTlciBytes
   (Ok (Array u8))
+  (Err String))
+
+;; Additive package payloads live in the v2 rodata section behind a small
+;; directory/trailer envelope. Native-only v2 images keep their byte layout:
+;; no envelope is emitted when there are no auxiliary sections. Keeping this
+;; directory independent of any one package lets frontend surfaces, macro
+;; catalogs, and future package facts share the same container contract.
+(defstruct TlciAuxSection
+  (kind i64)
+  (schema-version i64)
+  (payload (Array u8)))
+
+(defstruct TlciAuxDirectory
+  (base-len i64)
+  (directory-offset i64)
+  (count i64)
+  (trailer-offset i64))
+
+(defenum ResultTlciAuxDirectory
+  (Missing)
+  (Ok TlciAuxDirectory)
+  (Err String))
+
+(defenum ResultTlciAuxBytes
+  (Ok (Array u8))
+  (Err String))
+
+(defenum ResultTlciAuxLookup
+  (Missing)
+  (Ok i64 (Array u8))
   (Err String))
 
 (defstruct TlciHostCallbackTable
@@ -511,6 +542,30 @@
 (define tlci-host-import-invoke : i64
   0)
 
+;; Little-endian ASCII `TLCIAUX1`. The trailer is:
+;;   magic, version, base-rodata-len, directory-offset, count, rodata-len.
+;; Directory records are:
+;;   kind, schema-version, payload-offset, payload-len, payload-hash.
+(define tlci-aux-magic : i64
+  0x3158554149434c54)
+(define tlci-aux-format-version : i64
+  1)
+(define tlci-aux-record-size : i64
+  40)
+(define tlci-aux-trailer-size : i64
+  48)
+
+;; Stable section identities. They describe package surfaces, not the embedded
+;; stdlib deployment that first consumes them (refs #5519, #5522).
+(define tlci-aux-kind-package-identity : i64
+  1)
+(define tlci-aux-kind-frontend-ast : i64
+  2)
+(define tlci-aux-kind-frontend-types : i64
+  3)
+(define tlci-aux-kind-frontend-facts : i64
+  4)
+
 (define (tlci-host-abi-version-error [actual : i64]) : String
   (str_cat.str-cat
     "tlci host ABI: unsupported callback ABI version "
@@ -622,6 +677,7 @@
   "tlci_macro_table")
 
 (defstruct TlciNativePackageInput
+  (rodata (Array u8))
   (code (Array u8))
   (imports (Array u8))
   (layout-fixup-offsets (Array i64))
@@ -808,7 +864,7 @@
       tlci-callback-abi-version
       compiler-build-hash
       metadata
-      (tlci-empty-bytes)
+      (struct-get input rodata)
       (tlci-native-package-extend-code input)
       (tlci-native-package-fixups input)
       (tlci-native-package-entries input)
@@ -972,6 +1028,216 @@
             (set! hash (% (+ (* hash 131) b) 2147483647))
             (set! i (+ i 1)))))
       hash)))
+
+(define (tlci-range-hash [bytes : (Array u8)] [offset : i64] [len : i64]) : i64
+  (let
+    [i : i64 0]
+    [hash : i64 1]
+    (begin
+      (while (< i len)
+        (begin
+          (set!
+            hash
+            (% (+ (* hash 131) (tlci-byte-at bytes (+ offset i))) 2147483647))
+          (set! i (+ i 1))))
+      hash)))
+
+(define (tlci-aux-pack-rodata
+  [base : (Array u8)]
+  [sections : (Array TlciAuxSection)]) : ResultTlciAuxBytes
+  (let
+    [count : i64 (array-length sections)]
+    (if (= count 0)
+      (ResultTlciAuxBytes.Ok (tlci-copy-bytes base))
+      (let
+        [offsets : (Array i64) (array.make-array i64 count)]
+        [lengths : (Array i64) (array.make-array i64 count)]
+        [hashes : (Array i64) (array.make-array i64 count)]
+        [out : byte_buf_core.ByteBufBuilder
+          (byte_buf_core.byte-buf-builder-new)]
+        [index : i64 0]
+        [previous-kind : i64 0]
+        [ok : bool true]
+        [message : String ""]
+        (begin
+          (tlci-append-bytes! (&mut out) base)
+          (while (and ok (< index count))
+            (let
+              [section : TlciAuxSection (array-ref sections index)]
+              [kind : i64 (struct-get section kind)]
+              [schema-version : i64 (struct-get section schema-version)]
+              [payload : (Array u8) (struct-get section payload)]
+              (cond
+                [(<= kind previous-kind)
+                  (begin
+                    (set! ok false)
+                    (set!
+                      message
+                      "tlci: auxiliary section kinds must be positive and strictly ordered"))]
+                [(<= schema-version 0)
+                  (begin
+                    (set! ok false)
+                    (set!
+                      message
+                      "tlci: auxiliary section schema version must be positive"))]
+                [else
+                  (let
+                    [offset : i64 (tlci-align-offset (struct-get out len) 8)]
+                    [len : i64 (array-length payload)]
+                    (begin
+                      (tlci-pad-to! (&mut out) offset)
+                      (array-set! offsets index offset)
+                      (array-set! lengths index len)
+                      (tlci-append-bytes! (&mut out) payload)
+                      (array-set! hashes index (tlci-range-hash payload 0 len))
+                      (set! previous-kind kind)
+                      (set! index (+ index 1))))]))))
+        (if (not ok)
+          (ResultTlciAuxBytes.Err message)
+          (let
+            [directory-offset : i64 (tlci-align-offset (struct-get out len) 8)]
+            (begin
+              (tlci-pad-to! (&mut out) directory-offset)
+              (set! index 0)
+              (while (< index count)
+                (let
+                  [section : TlciAuxSection (array-ref sections index)]
+                  (begin
+                    (tlci-push-u64! (&mut out) (struct-get section kind))
+                    (tlci-push-u64!
+                      (&mut out)
+                      (struct-get section schema-version))
+                    (tlci-push-u64! (&mut out) (array-ref offsets index))
+                    (tlci-push-u64! (&mut out) (array-ref lengths index))
+                    (tlci-push-u64! (&mut out) (array-ref hashes index))
+                    (set! index (+ index 1)))))
+              (let
+                [trailer-offset : i64 (struct-get out len)]
+                [total-len : i64 (+ trailer-offset tlci-aux-trailer-size)]
+                (begin
+                  (tlci-push-u64! (&mut out) tlci-aux-magic)
+                  (tlci-push-u64! (&mut out) tlci-aux-format-version)
+                  (tlci-push-u64! (&mut out) (array-length base))
+                  (tlci-push-u64! (&mut out) directory-offset)
+                  (tlci-push-u64! (&mut out) count)
+                  (tlci-push-u64! (&mut out) total-len)
+                  (ResultTlciAuxBytes.Ok
+                    (byte_buf_core.byte-buf-builder-finish-array (& out))))))))))))
+
+(define (tlci-aux-directory [rodata : (Array u8)]) : ResultTlciAuxDirectory
+  (let
+    [rodata-len : i64 (array-length rodata)]
+    (if (< rodata-len tlci-aux-trailer-size)
+      (ResultTlciAuxDirectory.Missing)
+      (let
+        [trailer-offset : i64 (- rodata-len tlci-aux-trailer-size)]
+        [magic : i64 (tlci-read-u64 rodata trailer-offset)]
+        (if (not (= magic tlci-aux-magic))
+          (ResultTlciAuxDirectory.Missing)
+          (let
+            [version : i64 (tlci-read-u64 rodata (+ trailer-offset 8))]
+            [base-len : i64 (tlci-read-u64 rodata (+ trailer-offset 16))]
+            [directory-offset : i64
+              (tlci-read-u64 rodata (+ trailer-offset 24))]
+            [count : i64 (tlci-read-u64 rodata (+ trailer-offset 32))]
+            [declared-len : i64 (tlci-read-u64 rodata (+ trailer-offset 40))]
+            (cond
+              [(not (= version tlci-aux-format-version))
+                (ResultTlciAuxDirectory.Err
+                  "tlci: unsupported auxiliary section format version")]
+              [(not (= declared-len rodata-len))
+                (ResultTlciAuxDirectory.Err
+                  "tlci: auxiliary section length does not match rodata")]
+              [(or
+                  (<= count 0)
+                  (> count (/ trailer-offset tlci-aux-record-size)))
+                (ResultTlciAuxDirectory.Err
+                  "tlci: malformed auxiliary section count")]
+              [(or
+                  (< base-len 0)
+                  (> base-len directory-offset)
+                  (> directory-offset trailer-offset)
+                  (not (= (% directory-offset 8) 0)))
+                (ResultTlciAuxDirectory.Err
+                  "tlci: malformed auxiliary section directory offset")]
+              [(not
+                  (=
+                    (+ directory-offset (* count tlci-aux-record-size))
+                    trailer-offset))
+                (ResultTlciAuxDirectory.Err
+                  "tlci: malformed auxiliary section directory length")]
+              [else
+                (ResultTlciAuxDirectory.Ok
+                  (TlciAuxDirectory
+                    base-len
+                    directory-offset
+                    count
+                    trailer-offset))])))))))
+
+(define (tlci-aux-records-valid?
+  [rodata : (Array u8)]
+  [directory : TlciAuxDirectory]) : bool
+  (let
+    [index : i64 0]
+    [previous-kind : i64 0]
+    [previous-end : i64 (tlci-align-offset (struct-get directory base-len) 8)]
+    [ok : bool true]
+    (begin
+      (while (and ok (< index (struct-get directory count)))
+        (let
+          [record : i64
+            (+
+              (struct-get directory directory-offset)
+              (* index tlci-aux-record-size))]
+          [kind : i64 (tlci-read-u64 rodata record)]
+          [schema-version : i64 (tlci-read-u64 rodata (+ record 8))]
+          [offset : i64 (tlci-read-u64 rodata (+ record 16))]
+          [len : i64 (tlci-read-u64 rodata (+ record 24))]
+          [expected-hash : i64 (tlci-read-u64 rodata (+ record 32))]
+          (if (and
+            (> kind previous-kind)
+            (> schema-version 0)
+            (>= offset previous-end)
+            (= (% offset 8) 0)
+            (>= len 0)
+            (<= offset (struct-get directory directory-offset))
+            (<= len (- (struct-get directory directory-offset) offset))
+            (= expected-hash (tlci-range-hash rodata offset len)))
+            (begin
+              (set! previous-kind kind)
+              (set! previous-end (+ offset len))
+              (set! index (+ index 1)))
+            (set! ok false))))
+      ok)))
+
+(define (tlci-aux-find [rodata : (Array u8)] [wanted-kind : i64]) : ResultTlciAuxLookup
+  (match (tlci-aux-directory rodata)
+    [(ResultTlciAuxDirectory.Missing) (ResultTlciAuxLookup.Missing)]
+    [(ResultTlciAuxDirectory.Err message) (ResultTlciAuxLookup.Err message)]
+    [(ResultTlciAuxDirectory.Ok directory)
+      (if (not (tlci-aux-records-valid? rodata directory))
+        (ResultTlciAuxLookup.Err
+          "tlci: malformed or corrupt auxiliary section directory")
+        (let
+          [index : i64 0]
+          (begin
+            (while (< index (struct-get directory count))
+              (let
+                [record : i64
+                  (+
+                    (struct-get directory directory-offset)
+                    (* index tlci-aux-record-size))]
+                [kind : i64 (tlci-read-u64 rodata record)]
+                (if (= kind wanted-kind)
+                  (return
+                    (ResultTlciAuxLookup.Ok
+                      (tlci-read-u64 rodata (+ record 8))
+                      (tlci-slice-bytes
+                        rodata
+                        (tlci-read-u64 rodata (+ record 16))
+                        (tlci-read-u64 rodata (+ record 24)))))
+                  (set! index (+ index 1)))))
+            (ResultTlciAuxLookup.Missing))))]))
 
 (define (tlci-char-code-at [text : String] [idx : i64]) : i64
   (cast (tlci-string-ref text idx) : i64))
@@ -3248,6 +3514,68 @@
     (tlci-test-malformed-fixups-image)
     "tlci: malformed fixup table length"))
 
+(define (tlci-test-aux-sections-ok?) : bool
+  (let
+    [base : (Array u8) (tlci-string->bytes "native")]
+    [identity : (Array u8) (tlci-string->bytes "identity")]
+    [ast : (Array u8) (tlci-string->bytes "ast")]
+    [sections : (Array TlciAuxSection) (array.make-array TlciAuxSection 2)]
+    (begin
+      (array-set!
+        sections
+        0
+        (TlciAuxSection tlci-aux-kind-package-identity 1 identity))
+      (array-set! sections 1 (TlciAuxSection tlci-aux-kind-frontend-ast 3 ast))
+      (match (tlci-aux-pack-rodata base sections)
+        [(ResultTlciAuxBytes.Err _) false]
+        [(ResultTlciAuxBytes.Ok packed)
+          (and
+            (match (tlci-aux-directory packed)
+              [(ResultTlciAuxDirectory.Ok directory)
+                (= (struct-get directory base-len) (array-length base))]
+              [_ false])
+            (match (tlci-aux-find packed tlci-aux-kind-package-identity)
+              [(ResultTlciAuxLookup.Ok version payload)
+                (and (= version 1) (tlci-bytes-eq? payload identity))]
+              [_ false])
+            (match (tlci-aux-find packed tlci-aux-kind-frontend-ast)
+              [(ResultTlciAuxLookup.Ok version payload)
+                (and (= version 3) (tlci-bytes-eq? payload ast))]
+              [_ false])
+            (match (tlci-aux-find packed tlci-aux-kind-frontend-facts)
+              [(ResultTlciAuxLookup.Missing) true]
+              [_ false])
+            (match (tlci-aux-pack-rodata base sections)
+              [(ResultTlciAuxBytes.Ok again) (tlci-bytes-eq? packed again)]
+              [(ResultTlciAuxBytes.Err _) false]))]))))
+
+(define (tlci-test-aux-corruption-rejected?) : bool
+  (let
+    [sections : (Array TlciAuxSection) (array.make-array TlciAuxSection 1)]
+    (begin
+      (array-set!
+        sections
+        0
+        (TlciAuxSection
+          tlci-aux-kind-package-identity
+          1
+          (tlci-string->bytes "identity")))
+      (match (tlci-aux-pack-rodata (tlci-empty-bytes) sections)
+        [(ResultTlciAuxBytes.Err _) false]
+        [(ResultTlciAuxBytes.Ok packed)
+          (match (tlci-aux-directory packed)
+            [(ResultTlciAuxDirectory.Ok directory)
+              (let
+                [corrupt : (Array u8) (tlci-copy-bytes packed)]
+                [record : i64 (struct-get directory directory-offset)]
+                [payload-offset : i64 (tlci-read-u64 corrupt (+ record 16))]
+                (begin
+                  (array-set! corrupt payload-offset 0)
+                  (match (tlci-aux-find corrupt tlci-aux-kind-package-identity)
+                    [(ResultTlciAuxLookup.Err _) true]
+                    [_ false])))]
+            [_ false])]))))
+
 (define (tlci-core-self-test-status) : i64
   (cond
     [(not (tlci-test-metadata-emit-parse?)) 1]
@@ -3262,6 +3590,8 @@
     [(not (tlci-test-parse-round-trip? (tlci-test-v2-metadata-only-image))) 11]
     [(not (tlci-test-v2-metadata-rejections-ok?)) 12]
     [(not (tlci-test-parse-round-trip? (tlci-test-imports-image))) 13]
+    [(not (tlci-test-aux-sections-ok?)) 14]
+    [(not (tlci-test-aux-corruption-rejected?)) 15]
     [else 0]))
 
 (define (tlci-core-self-test-ok?) : bool

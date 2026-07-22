@@ -1344,6 +1344,34 @@
     (> id intern-generated-next-id)
     (< id (intern-capacity))))
 
+;; Snapshot producers enumerate generated identities in allocation order. The
+;; high-end numeric representation is deliberately kept behind these helpers:
+;; serialized consumers must rebuild process-local identities instead of
+;; treating an id from the producing generation as portable.
+(define (intern-generated-count) : i64
+  (- (- (intern-capacity) 1) intern-generated-next-id))
+
+(define (intern-generated-id-at-allocation-index [index : i64]) : i64
+  (if (or (< index 0) (>= index (intern-generated-count)))
+    -1
+    (- (- (intern-capacity) 1) index)))
+
+(define (intern-generated-canonical-id-at? [id : i64] [index : i64]) : bool
+  (if (>= index intern-generated-map-capacity)
+    false
+    (let
+      [stored : InternId (array-ref intern-generated-map-id-slots index)]
+      (if (and
+        (not (intern-id-slot-empty? stored))
+        (= (intern-id-slot-decode stored) id))
+        true
+        (intern-generated-canonical-id-at? id (+ index 1))))))
+
+(define (intern-generated-canonical-id? [id : i64]) : bool
+  (and
+    (intern-generated-id-active? id)
+    (intern-generated-canonical-id-at? id 0)))
+
 (define (intern-private-last-slash [name : String]) : i64
   (let
     [i : i64 0]

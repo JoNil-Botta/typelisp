@@ -678,11 +678,11 @@ must be a valid binding clause and otherwise produces the focused
 `ExprBindingClause` diagnostic. Other non-final variadic kinds are rejected
 at the macro declaration because their split point would be ambiguous.
 
-The implicit-prelude `for` macro is the one mixed-shape core exception. Its
-bootstrap-compatible signature is `Expr ...`, while the compiler validates a
-non-empty prefix of let-like binding clauses followed by one or more ordinary
-body expressions. This exception does not make bracket clauses ordinary
-`Expr` operands for user-defined macros.
+The implicit-prelude `for` macro uses the ordinary mixed-shape signature
+`[bindings : ExprBindingClause ...] [body : Expr ...]`. It validates a
+non-empty binding prefix and body in checked-in stdlib source. There is no
+macro-name or declaration-identity exception in parser, expansion, or
+typechecking; a renamed copy of the declaration has the same semantics.
 
 Macro bodies can build expression literals with `expr-bool`, `expr-int`,
 `expr-string`, and `expr-var`. `expr-binary-data` builds an opaque `(Array u8)`
@@ -716,6 +716,14 @@ argument is evaluated once in source order.
 `pattern-list-empty`, `pattern-list-cons`, `pattern-list-bindings`, `match-arm`,
 `match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build
 generated match expressions from computed pattern names and payload bindings.
+`pattern-binding-typed` adds captured type syntax to a binding pattern.
+`expr-resource-scope`, `expr-let-scope`, and `expr-set-var` build scopes and
+assignments whose binding identity is supplied at macro time.
+`expr-begin-unit`, `expr-not`, and `expr-while` provide the remaining generic
+statement-loop composition used by source macros. `syntax-name-fresh` gives
+computed text a reusable fresh syntax identity: builders that bind or refer to
+that returned value preserve the identity even if caller source uses the same
+spelling.
 `pattern-list-bindings(prefix, count)` builds a dense ascending list of binding
 patterns named `prefix0` through `prefix<count - 1>`; a negative count is a
 compile-time diagnostic.
@@ -1599,6 +1607,13 @@ acquisition order. The same item scopes unwind on `break`, `continue`, and
 `return`; moving an item in the body transfers that responsibility and suppresses
 its loop cleanup. This scalar construct is unrelated to SPMD `foreach` (section
 5.15).
+
+The scalar expansion is the ordinary checked-in `defmacro` in
+`stdlib/core_macros.tl`. It uses only the public `stdlib.comptime` syntax and
+reflection operations described in section 3.7.1. Compiler passes have no
+native `for` planner, name predicate, declaration-identity dispatch, or hidden
+AST-construction hook. Bare and explicitly qualified imports therefore execute
+the same transformer body, as does a renamed copy.
 
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference
 lifetime from the owner:
@@ -2636,14 +2651,14 @@ ordinary imports (sections 4.4 and 4.4.1); there is no separate macro search
 path.
 
 The compile driver loads `stdlib.core_macros` as an implicit macro prelude.
-Bare `when`, `unless`, `and`, `or`, and bracket-arm `cond` resolve to the
-prelude macros of `stdlib.core_macros` unless a local or imported macro with
-the same name takes precedence. The core `cond` surface is
+Bare `when`, `unless`, `and`, `or`, scalar `for`, and bracket-arm `cond`
+resolve to the prelude macros of `stdlib.core_macros` unless a local or
+imported macro with the same name takes precedence. The core `cond` surface is
 `(cond [test expr] ... [else fallback])`; flat
 `(cond test expr ... fallback)` calls are rejected. The module can also be
 imported explicitly, for example `(import stdlib.core_macros as core)`, and its
 macros called through the alias: `core.when`, `core.unless`, `core.and`,
-`core.or`, and `core.cond`.
+`core.or`, `core.cond`, and `core.for`.
 
 Before expanding a module's non-import forms, the loader collects its import
 declarations, recursively loads imported modules, and builds the imported macro

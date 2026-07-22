@@ -773,10 +773,13 @@ if [ "$NL_HOST_OS" = windows ]; then
         1638400 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    # The ordinary scalar `for` macro retains each source binding's produced
+    # type for expr-type inspection, so its macro-walk type footprint is part
+    # of the intentional exact selfhost allocation boundary.
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_type_pool.macro_expand.capacity" \
-        5120 \
+        20480 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \

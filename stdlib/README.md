@@ -59,7 +59,10 @@ use.
   `expr-list-nth`, `expr-list-type-nth`, `expr-list-fold-if`,
   `expr-clause-list-fold-if`,
   `expr-clause-list->expr-list`, `pattern-variant`,
-  `pattern-list-bindings`, `match-arm`, and `expr-match`. Reflection intrinsics
+  `pattern-binding-typed`, `pattern-list-bindings`, `match-arm`, and
+  `expr-match`; scope/loop builders `expr-resource-scope`, `expr-let-scope`,
+  `expr-set-var`, `expr-begin-unit`, `expr-not`, and `expr-while`; and
+  `syntax-name-fresh` for hygienic computed bindings. Reflection intrinsics
   include `type-cleanup-owning?` and `type-cleanup-function` for generated
   ownership-safe families. `module-value?` and `module-value-type` query public
   signatures by canonical module identity, while `reference-element-type`

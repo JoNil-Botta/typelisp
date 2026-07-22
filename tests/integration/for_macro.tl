@@ -132,6 +132,7 @@
       (for
         [item (iterator.range 2 2)]
         (set! empty-visits (+ empty-visits (+ item 1))))
+      (for [item (iterator.range 0 1)] (set! total (+ total item)))
       (for
         [item (iterator.range 0 1)]
         (set!

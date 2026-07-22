@@ -64,9 +64,10 @@ code should use the end-state forms and not imitate the leftovers:
 - **Stdlib names**: qualified short names such as `string.append` are the end
   state; module-name-prefixed flat names (`string-append`, `read-dir`, ...)
   are transitional.
-- **Core macros**: bare prelude spellings `when`, `unless`, `and`, `or`, and
-  bracket-arm `cond` — `(cond [test expr] ... [else fallback])` — are
-  canonical. The flat `cond` call shape is rejected.
+- **Core macros**: bare prelude spellings `when`, `unless`, `and`, `or`,
+  scalar `for`, and bracket-arm `cond` —
+  `(cond [test expr] ... [else fallback])` — are canonical. The flat `cond`
+  call shape is rejected.
 - **Strings**: `str-cat` (single-allocation variadic concat) and `text_buf`
   builders are the blessed forms; `string-append`/`string-concat` chains are
   deprecated compatibility primitives.
@@ -270,10 +271,11 @@ named compatibility fixtures until final removal; new code should use dotted
 module identities.
 
 The compile driver prepends the stdlib runtime and the core macro module as
-an implicit prelude, so bare `when`, `unless`, `and`, `or`, and bracket-arm
-`cond` resolve without imports. Stdlib modules otherwise resolve local-first,
-then from `--stdlib-root <dir>` (or the `TYPELISP_STDLIB_ROOT` fallback),
-then from the compiler's embedded copy of the checked-in stdlib. Prefer
+an implicit prelude, so bare `when`, `unless`, `and`, `or`, scalar `for`, and
+bracket-arm `cond` resolve without imports. Stdlib modules otherwise resolve
+local-first, then from `--stdlib-root <dir>` (or the
+`TYPELISP_STDLIB_ROOT` fallback), then from the compiler's embedded copy of
+the checked-in stdlib. Prefer
 `--stdlib-root` for CI and reproducible scripts; see
 [stdlib/README.md](stdlib/README.md) for the stdlib layout.
 

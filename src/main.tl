@@ -20,7 +20,6 @@
 (cfg
   compile-startup-profile
   (import compiler_startup_profile as startup_profile))
-(import "compiler_tlci_native_producer.tl")
 (import stdlib.io)
 
 ;; Keep legacy root aliases for reader enum variants while stage0 expands the

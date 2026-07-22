@@ -2889,6 +2889,154 @@
 (define (lint-program-has-unused-unsafe-candidate? [program : AstProgram]) : bool
   (lint-unsafe-program-has-candidate? program))
 
+(defstruct LintUnusedUnsafeExactName
+  (name String)
+  (requires-unsafe bool))
+
+(defenum LintUnusedUnsafeExactNames
+  (Nil)
+  (Cons LintUnusedUnsafeExactName (Box LintUnusedUnsafeExactNames)))
+
+(defenum LintUnusedUnsafeExactLookup
+  (Unknown)
+  (Safe)
+  (RequiresUnsafe))
+
+(defenum LintUnusedUnsafeUnknownRoots
+  (Nil)
+  (Cons String (Box LintUnusedUnsafeUnknownRoots)))
+
+(define lint-unused-unsafe-exact-names : LintUnusedUnsafeExactNames
+  (LintUnusedUnsafeExactNames.Nil))
+(define lint-unused-unsafe-unknown-roots : LintUnusedUnsafeUnknownRoots
+  (LintUnusedUnsafeUnknownRoots.Nil))
+(define lint-unused-unsafe-classifier-enabled : bool
+  false)
+(define lint-unused-unsafe-classified-required-count : i64
+  0)
+(define lint-unused-unsafe-classified-unused-count : i64
+  0)
+(define lint-unused-unsafe-classified-unknown-count : i64
+  0)
+
+(defstruct LintUnusedUnsafeBlock
+  (span AstSourceSpan)
+  (required bool)
+  (unknown bool))
+
+(defenum LintUnusedUnsafeBlockStack
+  (Nil)
+  (Cons LintUnusedUnsafeBlock (Box LintUnusedUnsafeBlockStack)))
+
+(define lint-unused-unsafe-block-stack : LintUnusedUnsafeBlockStack
+  (LintUnusedUnsafeBlockStack.Nil))
+
+(define (lint-unused-unsafe-classifier-reset!) : unit
+  (begin
+    (set! lint-unused-unsafe-exact-names (LintUnusedUnsafeExactNames.Nil))
+    (set! lint-unused-unsafe-unknown-roots (LintUnusedUnsafeUnknownRoots.Nil))
+    (set! lint-unused-unsafe-classified-required-count 0)
+    (set! lint-unused-unsafe-classified-unused-count 0)
+    (set! lint-unused-unsafe-classified-unknown-count 0)
+    (set! lint-unused-unsafe-block-stack (LintUnusedUnsafeBlockStack.Nil))
+    (set! lint-unused-unsafe-classifier-enabled false)))
+
+(define (lint-unused-unsafe-classifier-enable!) : unit
+  (set! lint-unused-unsafe-classifier-enabled true))
+
+(define (lint-unused-unsafe-classifier-disable!) : unit
+  (set! lint-unused-unsafe-classifier-enabled false))
+
+(define (lint-unused-unsafe-classifier-add-exact-name!
+  [name : String]
+  [requires-unsafe : bool]) : unit
+  (set!
+    lint-unused-unsafe-exact-names
+    (LintUnusedUnsafeExactNames.Cons
+      (LintUnusedUnsafeExactName name requires-unsafe)
+      (box lint-unused-unsafe-exact-names))))
+
+(define (lint-unused-unsafe-classifier-add-unknown-root! [name : String]) : unit
+  (set!
+    lint-unused-unsafe-unknown-roots
+    (LintUnusedUnsafeUnknownRoots.Cons
+      name
+      (box lint-unused-unsafe-unknown-roots))))
+
+(define (lint-unused-unsafe-classifier-unknown-count) : i64
+  lint-unused-unsafe-classified-unknown-count)
+
+(define (lint-unused-unsafe-classifier-required-count) : i64
+  lint-unused-unsafe-classified-required-count)
+
+(define (lint-unused-unsafe-classifier-unused-count) : i64
+  lint-unused-unsafe-classified-unused-count)
+
+(define (lint-unused-unsafe-block-push!
+  [span : AstSourceSpan]
+  [required : bool]) : unit
+  (if lint-unused-unsafe-classifier-enabled
+    (set!
+      lint-unused-unsafe-block-stack
+      (LintUnusedUnsafeBlockStack.Cons
+        (LintUnusedUnsafeBlock span required false)
+        (box lint-unused-unsafe-block-stack)))
+    unit))
+
+(define (lint-unused-unsafe-block-mark-required!) : unit
+  (if lint-unused-unsafe-classifier-enabled
+    (match lint-unused-unsafe-block-stack
+      [(LintUnusedUnsafeBlockStack.Nil) unit]
+      [(LintUnusedUnsafeBlockStack.Cons block rest)
+        (set!
+          lint-unused-unsafe-block-stack
+          (LintUnusedUnsafeBlockStack.Cons
+            (LintUnusedUnsafeBlock (struct-get block span) true false)
+            rest))])
+    unit))
+
+(define (lint-unused-unsafe-block-mark-unknown!) : unit
+  (if lint-unused-unsafe-classifier-enabled
+    (match lint-unused-unsafe-block-stack
+      [(LintUnusedUnsafeBlockStack.Nil) unit]
+      [(LintUnusedUnsafeBlockStack.Cons block rest)
+        (if (struct-get block required)
+          unit
+          (set!
+            lint-unused-unsafe-block-stack
+            (LintUnusedUnsafeBlockStack.Cons
+              (LintUnusedUnsafeBlock (struct-get block span) false true)
+              rest)))])
+    unit))
+
+(define (lint-unused-unsafe-block-pop-findings [findings : LintFindings]) : LintFindings
+  (if (not lint-unused-unsafe-classifier-enabled)
+    findings
+    (match lint-unused-unsafe-block-stack
+      [(LintUnusedUnsafeBlockStack.Nil) findings]
+      [(LintUnusedUnsafeBlockStack.Cons block rest)
+        (begin
+          (set! lint-unused-unsafe-block-stack (box-get rest))
+          (if (struct-get block required)
+            (begin
+              (set!
+                lint-unused-unsafe-classified-required-count
+                (+ lint-unused-unsafe-classified-required-count 1))
+              findings)
+            (if (struct-get block unknown)
+              (begin
+                (set!
+                  lint-unused-unsafe-classified-unknown-count
+                  (+ lint-unused-unsafe-classified-unknown-count 1))
+                findings)
+              (begin
+                (set!
+                  lint-unused-unsafe-classified-unused-count
+                  (+ lint-unused-unsafe-classified-unused-count 1))
+                (lint-findings-add
+                  (lint-unused-unsafe-finding (struct-get block span))
+                  findings)))))])))
+
 (define (lint-underscore-prefixed? [name : String]) : bool
   (let
     [n : i64 (string.string-length name)]
@@ -7113,6 +7261,150 @@
   (name-case bool)
   (report-unused bool))
 
+(define (lint-unused-unsafe-binding-list-contains?
+  [bindings : LintUnusedVariableBindingList]
+  [name : String]) : bool
+  (match bindings
+    [(LintUnusedVariableBindingList.Nil) false]
+    [(LintUnusedVariableBindingList.Cons binding rest)
+      (or
+        (string.eq (struct-get binding name) name)
+        (lint-unused-unsafe-binding-list-contains? (box-get rest) name))]))
+
+(define (lint-unused-unsafe-frame-list-contains?
+  [frames : LintUnusedVariableFrameList]
+  [name : String]) : bool
+  (match frames
+    [(LintUnusedVariableFrameList.Nil) false]
+    [(LintUnusedVariableFrameList.Cons bindings rest)
+      (or
+        (lint-unused-unsafe-binding-list-contains? bindings name)
+        (lint-unused-unsafe-frame-list-contains? (box-get rest) name))]))
+
+(define (lint-unused-unsafe-first-separator [name : String]) : i64
+  (let
+    [len : i64 (string.string-length name)]
+    [index : i64 0]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (< index len))
+        (let
+          [ch : char (string.string-ref name index)]
+          (if (or (= ch '.') (= ch '/'))
+            (set! found index)
+            (set! index (+ index 1)))))
+      found)))
+
+(define (lint-unused-unsafe-name-root [name : String]) : String
+  (let
+    [separator : i64 (lint-unused-unsafe-first-separator name)]
+    (if (> separator 0)
+      (string.substring name 0 separator)
+      name)))
+
+(define (lint-unused-unsafe-unknown-root?
+  [name : String]
+  [roots : LintUnusedUnsafeUnknownRoots]) : bool
+  (match roots
+    [(LintUnusedUnsafeUnknownRoots.Nil) false]
+    [(LintUnusedUnsafeUnknownRoots.Cons root rest)
+      (or
+        (string.eq root name)
+        (lint-unused-unsafe-unknown-root? name (box-get rest)))]))
+
+(define (lint-unused-unsafe-exact-name-lookup-from
+  [name : String]
+  [facts : LintUnusedUnsafeExactNames]
+  [found : bool]
+  [requires-unsafe : bool]) : LintUnusedUnsafeExactLookup
+  (match facts
+    [(LintUnusedUnsafeExactNames.Nil)
+      (if found
+        (if requires-unsafe
+          (LintUnusedUnsafeExactLookup.RequiresUnsafe)
+          (LintUnusedUnsafeExactLookup.Safe))
+        (LintUnusedUnsafeExactLookup.Unknown))]
+    [(LintUnusedUnsafeExactNames.Cons fact rest)
+      (if (string.eq (struct-get fact name) name)
+        ;; A second declaration with the same visible name is conservatively
+        ;; ambiguous even when both surfaces happen to have the same safety.
+        (if found
+          (LintUnusedUnsafeExactLookup.Unknown)
+          (lint-unused-unsafe-exact-name-lookup-from
+            name
+            (box-get rest)
+            true
+            (struct-get fact requires-unsafe)))
+        (lint-unused-unsafe-exact-name-lookup-from
+          name
+          (box-get rest)
+          found
+          requires-unsafe))]))
+
+(define (lint-unused-unsafe-exact-name-lookup
+  [state : LintUnusedVariableState]
+  [name : String]
+  [facts : LintUnusedUnsafeExactNames]) : LintUnusedUnsafeExactLookup
+  (let
+    [root : String (lint-unused-unsafe-name-root name)]
+    [qualified : bool (not (string.eq root name))]
+    (if (or
+      (lint-unused-unsafe-frame-list-contains? (struct-get state frames) root)
+      (and
+        qualified
+        (lint-unused-unsafe-unknown-root? root lint-unused-unsafe-unknown-roots)))
+      (LintUnusedUnsafeExactLookup.Unknown)
+      (lint-unused-unsafe-exact-name-lookup-from name facts false false))))
+
+(define (lint-unused-unsafe-note-value-name!
+  [state : LintUnusedVariableState]
+  [name : String]) : unit
+  (match (lint-unused-unsafe-exact-name-lookup
+    state
+    name
+    lint-unused-unsafe-exact-names)
+    [(LintUnusedUnsafeExactLookup.Unknown)
+      (let
+        [root : String (lint-unused-unsafe-name-root name)]
+        (if (and
+          (string.eq root name)
+          (lint-unused-unsafe-frame-list-contains?
+            (struct-get state frames)
+            root))
+          ;; Reading a lexical value cannot itself require unsafe. Calls through
+          ;; lexical values are handled separately because their function type
+          ;; is not represented in the compact declaration surface.
+          unit
+          (lint-unused-unsafe-block-mark-unknown!)))]
+    [(LintUnusedUnsafeExactLookup.Safe) unit]
+    [(LintUnusedUnsafeExactLookup.RequiresUnsafe)
+      (lint-unused-unsafe-block-mark-required!)]))
+
+(define (lint-unused-unsafe-note-call-target!
+  [state : LintUnusedVariableState]
+  [expr : AstExpr]) : unit
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lint-unused-unsafe-note-call-target! state (ast-node-get inner-box))]
+    [(AstExpr.Var name-id)
+      (let
+        [name : String (intern-str name-id)]
+        [root : String (lint-unused-unsafe-name-root name)]
+        (if (and
+          (string.eq root name)
+          (lint-unused-unsafe-frame-list-contains?
+            (struct-get state frames)
+            root))
+          (lint-unused-unsafe-block-mark-unknown!)
+          unit))]
+    [_ unit]))
+
+(define (lint-unused-unsafe-finish-state [state : LintUnusedVariableState]) : LintUnusedVariableState
+  (lint-unused-variable-state-with
+    state
+    (struct-get state frames)
+    (lint-unused-unsafe-block-pop-findings (struct-get state findings))))
+
 (define (lint-source-prefix-at?
   [source : String]
   [start : i64]
@@ -9096,7 +9388,10 @@
     [(AstExpr.Spanned inner-box inner-span)
       (lint-unused-variable-expr (ast-node-get inner-box) state inner-span)]
     [(AstExpr.Literal _) state]
-    [(AstExpr.Var name) (lint-unused-variable-read-var-id state name)]
+    [(AstExpr.Var name)
+      (begin
+        (lint-unused-unsafe-note-value-name! state (intern-str name))
+        (lint-unused-variable-read-var-id state name))]
     [(AstExpr.Binary _ left right)
       (lint-unused-variable-expr
         (ast-node-get right)
@@ -9105,9 +9400,11 @@
     [(AstExpr.Unary _ inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
     [(AstExpr.Call func args)
-      (lint-unused-variable-expr-list
-        args
-        (lint-unused-variable-expr (ast-node-get func) state span))]
+      (begin
+        (lint-unused-unsafe-note-call-target! state (ast-node-get func))
+        (lint-unused-variable-expr-list
+          args
+          (lint-unused-variable-expr (ast-node-get func) state span)))]
     [(AstExpr.If cond then-branch else-branch)
       (lint-unused-variable-expr
         (ast-node-get else-branch)
@@ -9176,7 +9473,13 @@
         (lint-unused-variable-expr (ast-node-get cond) state span)
         span)]
     [(AstExpr.Begin exprs) (lint-unused-variable-expr-list exprs state)]
-    [(AstExpr.Unsafe exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExpr.Unsafe exprs)
+      (begin
+        (lint-unused-unsafe-block-push!
+          span
+          (lint-expr-list-requires-enclosing-unsafe? exprs))
+        (lint-unused-unsafe-finish-state
+          (lint-unused-variable-expr-list exprs state)))]
     [(AstExpr.Set _ value)
       (lint-unused-variable-expr (ast-node-get value) state span)]
     [(AstExpr.Ann inner ty)
@@ -9184,9 +9487,11 @@
         ty
         (lint-unused-variable-expr (ast-node-get inner) state span))]
     [(AstExpr.Cast inner ty)
-      (lint-unused-variable-type
-        ty
-        (lint-unused-variable-expr (ast-node-get inner) state span))]
+      (begin
+        (lint-unused-unsafe-block-mark-unknown!)
+        (lint-unused-variable-type
+          ty
+          (lint-unused-variable-expr (ast-node-get inner) state span)))]
     [(AstExpr.Borrow _ lifetime place)
       (lint-unused-variable-expr
         (ast-node-get place)
@@ -9423,8 +9728,14 @@
     [(AstExpr.SpmdProgramIndex) state]
     [(AstExpr.SpmdProgramCount) state]
     [(AstExpr.ProgramArgc) state]
-    [(AstExpr.ProgramArgv) state]
-    [(AstExpr.ProgramEnvp) state]
+    [(AstExpr.ProgramArgv)
+      (begin
+        (lint-unused-unsafe-block-mark-unknown!)
+        state)]
+    [(AstExpr.ProgramEnvp)
+      (begin
+        (lint-unused-unsafe-block-mark-unknown!)
+        state)]
     [(AstExpr.CpuIdEax leaf subleaf)
       (lint-unused-variable-expr
         (ast-node-get subleaf)

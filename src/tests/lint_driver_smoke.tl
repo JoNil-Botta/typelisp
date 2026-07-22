@@ -332,6 +332,60 @@
   ;; lint-allow: unused-unsafe
   (unsafe (+ 1 2)))")
 
+(define (lint-driver-smoke-unsafe-surface-dep-source) : String
+  "(module lint.smoke.unsafe.surface.dep)
+(unsafe
+  (define (danger [value : i64]) : i64 value))
+(define (safe [value : i64]) : i64 value)")
+
+(define (lint-driver-smoke-unsafe-surface-required-source) : String
+  "(import \"dep.tl\" module lint.smoke.unsafe.surface.dep as dep)
+(define (main) : i64
+  (unsafe (dep.danger 42)))")
+
+(define (lint-driver-smoke-unsafe-surface-required-slash-source) : String
+  "(import \"dep.tl\" module lint.smoke.unsafe.surface.dep as dep)
+(define (main) : i64
+  (unsafe (dep/danger 42)))")
+
+(define (lint-driver-smoke-unsafe-surface-safe-source) : String
+  "(import \"dep.tl\" module lint.smoke.unsafe.surface.dep as dep)
+(define (main) : i64
+  (unsafe (dep.safe 42)))")
+
+(define (lint-driver-smoke-unsafe-surface-shadow-source) : String
+  "(import \"dep.tl\" module lint.smoke.unsafe.surface.dep as dep)
+(defstruct Holder
+  (danger i64))
+(define (read [dep : Holder]) : i64
+  (unsafe dep.danger))
+(define (main) : i64
+  (read (Holder 42)))")
+
+(define (lint-driver-smoke-unsafe-surface-macro-source) : String
+  "(defmacro (identity [value : Expr]) : Expr value)
+(define (main) : i64
+  (unsafe (identity 42)))")
+
+(define (lint-driver-smoke-unsafe-surface-local-value-source) : String
+  "(define (main [value : i64]) : i64
+  (unsafe (+ value 1)))")
+
+(define (lint-driver-smoke-unsafe-surface-callable-value-source) : String
+  "(define (main) : i64
+  (let
+    [callable (lambda ([value : i64]) : i64 value)]
+    (unsafe (callable 42))))")
+
+(define (lint-driver-smoke-unsafe-surface-legacy-dep-source) : String
+  "(unsafe
+  (define (legacy-danger [value : i64]) : i64 value))")
+
+(define (lint-driver-smoke-unsafe-surface-legacy-source) : String
+  "(import \"legacy_dep.tl\")
+(define (main) : i64
+  (unsafe (legacy-danger 42)))")
+
 (define (lint-driver-smoke-copy-on-update-struct-source) : String
   "(defstruct Point
   (x i64)
@@ -1071,6 +1125,175 @@
         177]
       [else 42])))
 
+(define (lint-driver-smoke-unsafe-surface-paths) : lint_svec.Vec
+  (let
+    [paths : lint_svec.Vec (lint_svec.new)]
+    (begin
+      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/required_a.tl")
+      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/required_b.tl")
+      paths)))
+
+(define (lint-driver-smoke-unsafe-surface-request-count
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]) : i64
+  (with-arena
+    request
+    (let
+      [findings : LintFindings
+        (selfhost-lint-source-with-roots-and-options
+          "target/lint_unsafe_surface/direct_safe.tl"
+          source
+          stdlib-roots
+          false)]
+      (struct-get findings len))))
+
+(define (lint-driver-smoke-unsafe-surface-self-test) : i64
+  (begin
+    (compiler-load-test-mkdir "target/lint_unsafe_surface")
+    (io.write-file
+      "target/lint_unsafe_surface/dep.tl"
+      (lint-driver-smoke-unsafe-surface-dep-source))
+    (io.write-file
+      "target/lint_unsafe_surface/legacy_dep.tl"
+      (lint-driver-smoke-unsafe-surface-legacy-dep-source))
+    (io.write-file
+      "target/lint_unsafe_surface/required_a.tl"
+      (lint-driver-smoke-unsafe-surface-required-source))
+    (io.write-file
+      "target/lint_unsafe_surface/required_b.tl"
+      (lint-driver-smoke-unsafe-surface-required-slash-source))
+    (io.write-file
+      "target/lint_unsafe_surface/safe.tl"
+      (lint-driver-smoke-unsafe-surface-safe-source))
+    (io.write-file
+      "target/lint_unsafe_surface/shadow.tl"
+      (lint-driver-smoke-unsafe-surface-shadow-source))
+    (io.write-file
+      "target/lint_unsafe_surface/macro.tl"
+      (lint-driver-smoke-unsafe-surface-macro-source))
+    (io.write-file
+      "target/lint_unsafe_surface/local_value.tl"
+      (lint-driver-smoke-unsafe-surface-local-value-source))
+    (io.write-file
+      "target/lint_unsafe_surface/callable_value.tl"
+      (lint-driver-smoke-unsafe-surface-callable-value-source))
+    (io.write-file
+      "target/lint_unsafe_surface/legacy.tl"
+      (lint-driver-smoke-unsafe-surface-legacy-source))
+    (let
+      [_reset-direct : unit (selfhost-lint-unsafe-surface-cache-reset!)]
+      [direct-count : i64
+        (lint-driver-smoke-unsafe-surface-request-count
+          (lint-driver-smoke-unsafe-surface-safe-source)
+          (lint_svec.new))]
+      [direct-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
+      [second-direct-count : i64
+        (lint-driver-smoke-unsafe-surface-request-count
+          (lint-driver-smoke-unsafe-surface-safe-source)
+          (lint_svec.new))]
+      [second-direct-fallbacks : i64
+        (selfhost-lint-unused-unsafe-fallback-count)]
+      [_reset-safe : unit (selfhost-lint-unsafe-surface-cache-reset!)]
+      [safe-status : i64
+        (selfhost-lint-run-file-in-scratch
+          "target/lint_unsafe_surface/safe.tl"
+          (lint_svec.new)
+          true
+          false
+          false
+          false
+          false)]
+      [safe-parses : i64 (selfhost-lint-unsafe-surface-cache-parse-count)]
+      [safe-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
+      [_reset-shadow : unit (selfhost-lint-unsafe-surface-cache-reset!)]
+      [_shadow-status : i64
+        (selfhost-lint-run-file-in-scratch
+          "target/lint_unsafe_surface/shadow.tl"
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false)]
+      [shadow-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
+      [_reset-macro : unit (selfhost-lint-unsafe-surface-cache-reset!)]
+      [_macro-status : i64
+        (selfhost-lint-run-file-in-scratch
+          "target/lint_unsafe_surface/macro.tl"
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false)]
+      [macro-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
+      [_reset-local-value : unit (selfhost-lint-unsafe-surface-cache-reset!)]
+      [local-value-status : i64
+        (selfhost-lint-run-file-in-scratch
+          "target/lint_unsafe_surface/local_value.tl"
+          (lint_svec.new)
+          true
+          false
+          false
+          false
+          false)]
+      [local-value-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
+      [_reset-callable-value : unit (selfhost-lint-unsafe-surface-cache-reset!)]
+      [_callable-value-status : i64
+        (selfhost-lint-run-file-in-scratch
+          "target/lint_unsafe_surface/callable_value.tl"
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false)]
+      [callable-value-fallbacks : i64
+        (selfhost-lint-unused-unsafe-fallback-count)]
+      [_reset-legacy : unit (selfhost-lint-unsafe-surface-cache-reset!)]
+      [_legacy-status : i64
+        (selfhost-lint-run-file-in-scratch
+          "target/lint_unsafe_surface/legacy.tl"
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false)]
+      [legacy-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
+      [batch-status : i64
+        (selfhost-lint-files
+          (lint-driver-smoke-unsafe-surface-paths)
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false
+          false
+          0)]
+      (cond
+        [(not (= direct-count 1)) 115]
+        [(not (= direct-fallbacks 1)) 116]
+        [(not (= second-direct-count 1)) 117]
+        [(not (= second-direct-fallbacks 1)) 118]
+        [(not (= safe-status 1)) 100]
+        [(not (= safe-parses 1)) 101]
+        [(not (= safe-fallbacks 0)) 102]
+        [(not (= shadow-fallbacks 1)) 103]
+        [(not (= macro-fallbacks 1)) 104]
+        [(not (= legacy-fallbacks 1)) 105]
+        [(not (= batch-status 0)) 106]
+        [(not (= (selfhost-lint-unsafe-surface-cache-parse-count) 1)) 107]
+        [(not (= (selfhost-lint-unsafe-surface-cache-hit-count) 1)) 108]
+        [(not (= (selfhost-lint-unused-unsafe-fallback-count) 0)) 109]
+        [(not (= (selfhost-lint-unused-unsafe-surface-required-total) 2)) 110]
+        [(not (= (selfhost-lint-unused-unsafe-surface-classified-total) 2)) 114]
+        [(not (= local-value-status 1)) 111]
+        [(not (= local-value-fallbacks 0)) 112]
+        [(not (= callable-value-fallbacks 1)) 113]
+        [else 42]))))
+
 (define (lint-driver-smoke-copy-on-update-struct-self-test) : i64
   (let
     [rule : String (lint-rule-copy-on-update-struct-id)]
@@ -1484,6 +1707,7 @@
       [unused-variable-result : i64
         (lint-driver-smoke-unused-variable-self-test)]
       [unused-unsafe-result : i64 (lint-driver-smoke-unused-unsafe-self-test)]
+      [unsafe-surface-result : i64 (lint-driver-smoke-unsafe-surface-self-test)]
       [copy-result : i64 (lint-driver-smoke-copy-on-update-struct-self-test)]
       [dotted-result : i64 (lint-driver-smoke-prefer-dotted-field-self-test)]
       [name-case-result : i64 (lint-driver-smoke-name-case-self-test)]
@@ -1503,6 +1727,7 @@
         [(not (= divergence-result 42)) divergence-result]
         [(not (= unused-variable-result 42)) unused-variable-result]
         [(not (= unused-unsafe-result 42)) unused-unsafe-result]
+        [(not (= unsafe-surface-result 42)) unsafe-surface-result]
         [(not (= copy-result 42)) copy-result]
         [(not (= dotted-result 42)) dotted-result]
         [else name-case-result]))))

@@ -1134,10 +1134,7 @@
 (define (compiler-load-provenance-arena) : i64
   (begin
     (if (= compiler-load-provenance-arena-handle 0)
-      (set!
-        compiler-load-provenance-arena-handle
-        (unsafe
-          (arena.tl_arena_make)))
+      (set! compiler-load-provenance-arena-handle (arena.tl_arena_make))
       unit)
     compiler-load-provenance-arena-handle))
 

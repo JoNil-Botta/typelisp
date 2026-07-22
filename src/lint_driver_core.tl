@@ -720,6 +720,13 @@
     (set! selfhost-lint-unused-unsafe-surface-unused-count 0)
     (set! selfhost-lint-unused-unsafe-surface-unknown-count 0)))
 
+(define (selfhost-lint-unsafe-surface-cache-release!) : unit
+  (begin
+    (set!
+      selfhost-lint-unsafe-surface-cache
+      (SelfhostLintUnsafeSurfaceCache.Nil))
+    (set! selfhost-lint-unsafe-surface-cache-arena 0)))
+
 (define (selfhost-lint-unsafe-surface-cache-ensure!) : unit
   (if (= selfhost-lint-unsafe-surface-cache-arena 0)
     (selfhost-lint-unsafe-surface-cache-reset!)
@@ -1125,18 +1132,30 @@
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : LintFindings
-  (match (parse-ast-source-diagnostic path source)
-    [(ResultAstProgramDiagnostic.Ok program)
-      (selfhost-lint-program-and-typed-findings
-        path
-        source
-        program
-        stdlib-roots
-        deprecated-string-concat
-        redundant-function-name
-        prefer-dotted-field
-        name-case)]
-    [(ResultAstProgramDiagnostic.Err _) (lint-findings-empty)]))
+  (begin
+    ;; LSP/source-mode callers commonly run in a destroyable request arena.
+    ;; Never let a prior request's compact cache survive into the next one;
+    ;; explicit file/package batches reset once in their outer batch arena.
+    (selfhost-lint-unsafe-surface-cache-reset!)
+    (let
+      [findings : LintFindings
+        (match (parse-ast-source-diagnostic path source)
+          [(ResultAstProgramDiagnostic.Ok program)
+            (selfhost-lint-program-and-typed-findings
+              path
+              source
+              program
+              stdlib-roots
+              deprecated-string-concat
+              redundant-function-name
+              prefer-dotted-field
+              name-case)]
+          [(ResultAstProgramDiagnostic.Err _) (lint-findings-empty)])]
+      (begin
+        ;; Preserve diagnostic counters, but leave no global pointer into the
+        ;; caller's request arena after returning its findings.
+        (selfhost-lint-unsafe-surface-cache-release!)
+        findings))))
 
 (define (selfhost-lint-source-with-roots-and-staged-options
   [path : String]

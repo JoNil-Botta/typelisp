@@ -1133,6 +1133,20 @@
       (lint_svec.push (&mut paths) "target/lint_unsafe_surface/required_b.tl")
       paths)))
 
+(define (lint-driver-smoke-unsafe-surface-request-count
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]) : i64
+  (with-arena
+    request
+    (let
+      [findings : LintFindings
+        (selfhost-lint-source-with-roots-and-options
+          "target/lint_unsafe_surface/direct_safe.tl"
+          source
+          stdlib-roots
+          false)]
+      (struct-get findings len))))
+
 (define (lint-driver-smoke-unsafe-surface-self-test) : i64
   (begin
     (compiler-load-test-mkdir "target/lint_unsafe_surface")
@@ -1168,14 +1182,17 @@
       (lint-driver-smoke-unsafe-surface-legacy-source))
     (let
       [_reset-direct : unit (selfhost-lint-unsafe-surface-cache-reset!)]
-      [direct-findings : LintFindings
-        (selfhost-lint-source-with-roots-and-options
-          "target/lint_unsafe_surface/direct_safe.tl"
+      [direct-count : i64
+        (lint-driver-smoke-unsafe-surface-request-count
           (lint-driver-smoke-unsafe-surface-safe-source)
-          (lint_svec.new)
-          false)]
-      [direct-count : i64 (lint-findings-count direct-findings)]
+          (lint_svec.new))]
       [direct-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
+      [second-direct-count : i64
+        (lint-driver-smoke-unsafe-surface-request-count
+          (lint-driver-smoke-unsafe-surface-safe-source)
+          (lint_svec.new))]
+      [second-direct-fallbacks : i64
+        (selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-safe : unit (selfhost-lint-unsafe-surface-cache-reset!)]
       [safe-status : i64
         (selfhost-lint-run-file-in-scratch
@@ -1258,6 +1275,8 @@
       (cond
         [(not (= direct-count 1)) 115]
         [(not (= direct-fallbacks 1)) 116]
+        [(not (= second-direct-count 1)) 117]
+        [(not (= second-direct-fallbacks 1)) 118]
         [(not (= safe-status 1)) 100]
         [(not (= safe-parses 1)) 101]
         [(not (= safe-fallbacks 0)) 102]

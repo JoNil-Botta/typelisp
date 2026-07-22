@@ -4406,6 +4406,13 @@
 (define (main) : i64 0)"
     true))
 
+(define (compiler-typecheck-smoke-macro-module-import-change-signal-ok?) : bool
+  ;; Module macro imports replace the placeholder import and may materialize a
+  ;; generated module, so they must always miss the retain-source fast path.
+  (compiler-typecheck-smoke-macro-change-signal-source-ok?
+    (compiler-typecheck-smoke-module-macro-import-evaluated-key-source)
+    true))
+
 (define (compiler-typecheck-core-and-body-source) : String
   "(module stdlib.core_macros)
 (defmacro (and [_args : bool ...]) : bool
@@ -4541,6 +4548,9 @@
     (unless
       (compiler-typecheck-smoke-macro-decl-change-signal-ok?)
       (io.panic "typecheck: declaration macro change signal smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-macro-module-import-change-signal-ok?)
+      (io.panic "typecheck: module import macro change signal smoke failed"))
     (unless
       (compiler-typecheck-smoke-module-macro-identity-tests-ok?)
       (io.panic "typecheck: module macro identity smoke failed"))

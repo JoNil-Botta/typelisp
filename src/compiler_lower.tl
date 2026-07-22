@@ -57629,7 +57629,7 @@
   `(pick-first-from 0 ,@(expr-clause-list->expr-list arms)))
 (defmacro (pick-first-from [idx : Expr] [arms : ExprClause ...]) : i64
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (if (>= i (expr-clause-list-length arms))
         (expr-int 0)
         (let
@@ -67396,9 +67396,9 @@
   `(and-from (__and-args ,@args) 0))
 (defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool true)
             `(if ,(expr-list-nth elems i)
@@ -67413,9 +67413,9 @@
   `(or-from (__or-args ,@args) 0))
 (defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool false)
             `(if ,(expr-list-nth elems i)
@@ -68041,7 +68041,7 @@
           (not
             (lower-test-global-list-has-name?
               globals
-              "__enum_obj_stdlib.comptime/Pattern_PatternWildcard"))])]
+              "__enum_obj_stdlib.comptime/Pattern_Wildcard"))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-unsafe-ast-dce-source) : String

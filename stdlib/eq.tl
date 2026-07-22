@@ -9,7 +9,7 @@
   [left : comptime.Expr]
   [right : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (if (>= index (struct-field-count T))
         `true
         (let
@@ -34,7 +34,7 @@
   [left : comptime.Expr]
   [right : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(comptime.ExprInt index)
+    [(comptime.Expr.Int index)
       (if (>= index (tuple-element-count T))
         `true
         (let
@@ -114,9 +114,9 @@
   [variant-index-expr : comptime.Expr]
   [payload-index-expr : comptime.Expr]) : comptime.Expr
   (match variant-index-expr
-    [(comptime.ExprInt variant-index)
+    [(comptime.Expr.Int variant-index)
       (match payload-index-expr
-        [(comptime.ExprInt payload-index)
+        [(comptime.Expr.Int payload-index)
           (if (>= payload-index (enum-variant-payload-count T variant-index))
             `true
             (let
@@ -159,7 +159,7 @@
   [right : comptime.Expr]
   [variant-index-expr : comptime.Expr]) : comptime.Expr
   (match variant-index-expr
-    [(comptime.ExprInt variant-index)
+    [(comptime.Expr.Int variant-index)
       (if (>= variant-index (enum-variant-count T))
         `false
         (let

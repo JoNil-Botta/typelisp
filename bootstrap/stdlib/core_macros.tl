@@ -74,9 +74,9 @@
 ;: Compatibility entry for the old indexed `and` expansion helper.
 (defmacro (core-and-from [carrier : comptime.Expr] [idx : comptime.Expr]) : bool
   (match idx
-    [(comptime.ExprInt i)
+    [(comptime.Expr.Int i)
       (match carrier
-        [(comptime.ExprCall _ elems)
+        [(comptime.Expr.Call _ elems)
           (if (>= i (comptime.expr-list-length elems))
             (comptime.expr-bool true)
             `(if ,(comptime.expr-list-nth elems i)
@@ -137,9 +137,9 @@
 ;: Compatibility entry for the old indexed `or` expansion helper.
 (defmacro (core-or-from [carrier : comptime.Expr] [idx : comptime.Expr]) : bool
   (match idx
-    [(comptime.ExprInt i)
+    [(comptime.Expr.Int i)
       (match carrier
-        [(comptime.ExprCall _ elems)
+        [(comptime.Expr.Call _ elems)
           (if (>= i (comptime.expr-list-length elems))
             (comptime.expr-bool false)
             `(if ,(comptime.expr-list-nth elems i)
@@ -183,7 +183,7 @@
       (match (comptime.expr-clause-list-nth arms 0)
         [(ExprClause test result)
           (match test
-            [(comptime.ExprVar name)
+            [(comptime.Expr.Var name)
               (if (string-eq name "else")
                 result
                 (comptime.expr-var "core-cond-missing-else"))]
@@ -194,7 +194,7 @@
           (match (comptime.expr-clause-list-nth arms 1)
             [(ExprClause test result)
               (match test
-                [(comptime.ExprVar name)
+                [(comptime.Expr.Var name)
                   (if (string-eq name "else")
                     result
                     (comptime.expr-var "core-cond-missing-else"))]
@@ -202,7 +202,7 @@
         (match (comptime.expr-clause-list-nth arms 0)
           [(ExprClause test result)
             (match test
-              [(comptime.ExprVar name)
+              [(comptime.Expr.Var name)
                 (if (string-eq name "else")
                   (comptime.expr-var "core-cond-else-must-be-final")
                   `(if ,test
@@ -217,7 +217,7 @@
 ;: Compatibility entry for the old indexed `cond` expansion helper.
 (defmacro (core-cond-from [idx : comptime.Expr] [arms : ExprClause ...]) : Expr
   (match idx
-    [(comptime.ExprInt i)
+    [(comptime.Expr.Int i)
       (let
         [n : i64 (comptime.expr-clause-list-length arms)]
         (if (>= i n)
@@ -225,7 +225,7 @@
           (match (comptime.expr-clause-list-nth arms i)
             [(ExprClause test result)
               (match test
-                [(comptime.ExprVar name)
+                [(comptime.Expr.Var name)
                   (if (string-eq name "else")
                     (if (= (+ i 1) n)
                       result

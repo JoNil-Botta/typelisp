@@ -19,9 +19,9 @@
   [parts : (Array String)]
   [idx : comptime.Expr]) : (Array String)
   (match idx
-    [(comptime.ExprInt i)
+    [(comptime.Expr.Int i)
       (match carrier
-        [(comptime.ExprCall _ elems)
+        [(comptime.Expr.Call _ elems)
           (if (>= i (comptime.expr-list-length elems))
             parts
             `(str-cat-pack
@@ -96,13 +96,13 @@
           (if (comptime.expr-string? arg0)
             true
             (match arg0
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg1-borrowable : bool
           (if (comptime.expr-string? arg1)
             true
             (match arg1
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [all-borrowable : bool true]
         (begin
@@ -124,19 +124,19 @@
           (if (comptime.expr-string? arg0)
             true
             (match arg0
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg1-borrowable : bool
           (if (comptime.expr-string? arg1)
             true
             (match arg1
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg2-borrowable : bool
           (if (comptime.expr-string? arg2)
             true
             (match arg2
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [all-borrowable : bool true]
         (begin
@@ -162,25 +162,25 @@
           (if (comptime.expr-string? arg0)
             true
             (match arg0
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg1-borrowable : bool
           (if (comptime.expr-string? arg1)
             true
             (match arg1
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg2-borrowable : bool
           (if (comptime.expr-string? arg2)
             true
             (match arg2
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg3-borrowable : bool
           (if (comptime.expr-string? arg3)
             true
             (match arg3
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [all-borrowable : bool true]
         (begin
@@ -210,31 +210,31 @@
           (if (comptime.expr-string? arg0)
             true
             (match arg0
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg1-borrowable : bool
           (if (comptime.expr-string? arg1)
             true
             (match arg1
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg2-borrowable : bool
           (if (comptime.expr-string? arg2)
             true
             (match arg2
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg3-borrowable : bool
           (if (comptime.expr-string? arg3)
             true
             (match arg3
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [arg4-borrowable : bool
           (if (comptime.expr-string? arg4)
             true
             (match arg4
-              [(comptime.ExprVar _) true]
+              [(comptime.Expr.Var _) true]
               [_ false]))]
         [all-borrowable : bool true]
         (begin

@@ -187,7 +187,7 @@
     [path : String (comptime.expr-string-value path-expr)]
     [value-type (comptime.expr-type value)]
     (match index-expr
-      [(comptime.ExprInt index)
+      [(comptime.Expr.Int index)
         (if (>= index (struct-field-count value-type))
           seed
           (let
@@ -225,7 +225,7 @@
     [path : String (comptime.expr-string-value path-expr)]
     [value-type (comptime.expr-type value)]
     (match index-expr
-      [(comptime.ExprInt index)
+      [(comptime.Expr.Int index)
         (if (>= index (tuple-element-count value-type))
           seed
           (let
@@ -287,9 +287,9 @@
     [path : String (comptime.expr-string-value path-expr)]
     [enum-type (comptime.expr-type enum-value)]
     (match variant-index-expr
-      [(comptime.ExprInt variant-index)
+      [(comptime.Expr.Int variant-index)
         (match payload-index-expr
-          [(comptime.ExprInt payload-index)
+          [(comptime.Expr.Int payload-index)
             (if (>=
               payload-index
               (enum-variant-payload-count enum-type variant-index))
@@ -349,7 +349,7 @@
   (let
     [value-type (comptime.expr-type value)]
     (match variant-index-expr
-      [(comptime.ExprInt variant-index)
+      [(comptime.Expr.Int variant-index)
         (if (>= variant-index (enum-variant-count value-type))
           `0
           (let

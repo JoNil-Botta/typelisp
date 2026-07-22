@@ -9307,49 +9307,49 @@
 
 (define (tc-stdlib-expr-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
-    cbi.compiler-builtin-id-fix-ExprBool
+    cbi.compiler-builtin-id-comptime-expr-bool-variant
     (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.Bool))
     (tc-stdlib-variant-spec-cons
-      cbi.compiler-builtin-id-fix-ExprInt
+      cbi.compiler-builtin-id-comptime-expr-int-variant
       (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.I64))
       (tc-stdlib-variant-spec-cons
-        cbi.compiler-builtin-id-fix-ExprVar
+        cbi.compiler-builtin-id-comptime-expr-var-variant
         (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
         (tc-stdlib-variant-spec-cons
-          cbi.compiler-builtin-id-fix-ExprSplice
+          cbi.compiler-builtin-id-comptime-expr-splice-variant
           (tc-stdlib-type-spec-list1
             (TcStdlibTypeSpec.BoxName cbi.compiler-builtin-id-fix-Expr))
           (tc-stdlib-variant-spec-cons
-            cbi.compiler-builtin-id-fix-ExprIf
+            cbi.compiler-builtin-id-comptime-expr-if-variant
             (tc-stdlib-type-spec-list3
               (TcStdlibTypeSpec.BoxName cbi.compiler-builtin-id-fix-Expr)
               (TcStdlibTypeSpec.BoxName cbi.compiler-builtin-id-fix-Expr)
               (TcStdlibTypeSpec.BoxName cbi.compiler-builtin-id-fix-Expr))
             (tc-stdlib-variant-spec-cons
-              cbi.compiler-builtin-id-fix-ExprCall
+              cbi.compiler-builtin-id-comptime-expr-call-variant
               (tc-stdlib-type-spec-list2
                 (TcStdlibTypeSpec.BoxName cbi.compiler-builtin-id-fix-Expr)
                 (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-ExprList))
               (tc-stdlib-variant-spec-cons
-                cbi.compiler-builtin-id-fix-ExprBegin
+                cbi.compiler-builtin-id-comptime-expr-begin-variant
                 (tc-stdlib-type-spec-list1
                   (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-ExprList))
                 (tc-stdlib-variant-spec-cons
-                  cbi.compiler-builtin-id-fix-ExprQuote
+                  cbi.compiler-builtin-id-comptime-expr-quote-variant
                   (tc-stdlib-type-spec-list1
                     (TcStdlibTypeSpec.BoxName cbi.compiler-builtin-id-fix-Expr))
                   (tc-stdlib-variant-spec-cons
-                    cbi.compiler-builtin-id-fix-ExprQuasiquote
+                    cbi.compiler-builtin-id-comptime-expr-quasiquote-variant
                     (tc-stdlib-type-spec-list1
                       (TcStdlibTypeSpec.BoxName
                         cbi.compiler-builtin-id-fix-Expr))
                     (tc-stdlib-variant-spec-cons
-                      cbi.compiler-builtin-id-fix-ExprUnquote
+                      cbi.compiler-builtin-id-comptime-expr-unquote-variant
                       (tc-stdlib-type-spec-list1
                         (TcStdlibTypeSpec.BoxName
                           cbi.compiler-builtin-id-fix-Expr))
                       (tc-stdlib-variant-spec-cons
-                        cbi.compiler-builtin-id-fix-ExprUnquoteSplicing
+                        cbi.compiler-builtin-id-comptime-expr-unquote-splicing-variant
                         (tc-stdlib-type-spec-list1
                           (TcStdlibTypeSpec.BoxName
                             cbi.compiler-builtin-id-fix-Expr))
@@ -9366,13 +9366,13 @@
 
 (define (tc-stdlib-pattern-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
-    cbi.compiler-builtin-id-fix-PatternWildcard
+    cbi.compiler-builtin-id-comptime-pattern-wildcard-variant
     (TcStdlibTypeSpecList.Nil)
     (tc-stdlib-variant-spec-cons
-      cbi.compiler-builtin-id-fix-PatternBinding
+      cbi.compiler-builtin-id-comptime-pattern-binding-variant
       (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
       (tc-stdlib-variant-spec-cons
-        cbi.compiler-builtin-id-fix-PatternVariant
+        cbi.compiler-builtin-id-comptime-pattern-variant-variant
         (tc-stdlib-type-spec-list2
           (TcStdlibTypeSpec.String)
           (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-PatternList))
@@ -9389,40 +9389,40 @@
 
 (define (tc-stdlib-type-info-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
-    cbi.compiler-builtin-id-fix-TypeInfoBuiltin
+    cbi.compiler-builtin-id-comptime-type-info-builtin-variant
     (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
     (tc-stdlib-variant-spec-cons
-      cbi.compiler-builtin-id-fix-TypeInfoArray
+      cbi.compiler-builtin-id-comptime-type-info-array-variant
       (tc-stdlib-type-spec-list2
         (TcStdlibTypeSpec.BoxName cbi.compiler-builtin-id-fix-TypeInfo)
         (TcStdlibTypeSpec.I64))
       (tc-stdlib-variant-spec-cons
-        cbi.compiler-builtin-id-fix-TypeInfoDynArray
+        cbi.compiler-builtin-id-comptime-type-info-dyn-array-variant
         (tc-stdlib-type-spec-list1
           (TcStdlibTypeSpec.BoxName cbi.compiler-builtin-id-fix-TypeInfo))
         (tc-stdlib-variant-spec-cons
-          cbi.compiler-builtin-id-fix-TypeInfoFunction
+          cbi.compiler-builtin-id-comptime-type-info-function-variant
           (tc-stdlib-type-spec-list2
             (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-TypeInfoList)
             (TcStdlibTypeSpec.BoxName cbi.compiler-builtin-id-fix-TypeInfo))
           (tc-stdlib-variant-spec-cons
-            cbi.compiler-builtin-id-fix-TypeInfoTuple
+            cbi.compiler-builtin-id-comptime-type-info-tuple-variant
             (tc-stdlib-type-spec-list1
               (TcStdlibTypeSpec.Name cbi.compiler-builtin-id-fix-TypeInfoList))
             (tc-stdlib-variant-spec-cons
-              cbi.compiler-builtin-id-fix-TypeInfoStruct
+              cbi.compiler-builtin-id-comptime-type-info-struct-variant
               (tc-stdlib-type-spec-list2
                 (TcStdlibTypeSpec.String)
                 (TcStdlibTypeSpec.Name
                   cbi.compiler-builtin-id-fix-TypeFieldList))
               (tc-stdlib-variant-spec-cons
-                cbi.compiler-builtin-id-fix-TypeInfoEnum
+                cbi.compiler-builtin-id-comptime-type-info-enum-variant
                 (tc-stdlib-type-spec-list2
                   (TcStdlibTypeSpec.String)
                   (TcStdlibTypeSpec.Name
                     cbi.compiler-builtin-id-fix-TypeVariantList))
                 (tc-stdlib-variant-spec-cons
-                  cbi.compiler-builtin-id-fix-TypeInfoOpaque
+                  cbi.compiler-builtin-id-comptime-type-info-opaque-variant
                   (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
                   (TcStdlibVariantSpecList.Nil))))))))))
 
@@ -9701,7 +9701,7 @@
     [prev : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [_install : unit (tc-context-install-pools! ctx)]
     ;; The well-known spec builder pushes fresh type nodes (e.g. the
-    ;; `(Box Expr)` payload of ExprSplice) into this context's type-node pool.
+    ;; `(Box Expr)` payload of Expr.Splice) into this context's type-node pool.
     ;; In a long-lived `test --check --batch` process the captured pool snapshot
     ;; inherits a dedup index whose entries can point at slot ids that a later
     ;; batch entry's nodes now occupy, so a deduped spec push would resolve to a
@@ -40297,69 +40297,84 @@
   [ctx : TcContext]
   [pattern-id : i64]
   [variant-id : i64]) : bool
-  (tc-variant-name-matches-id?
-    ctx
-    (tc-expr-pattern-enum-id)
-    pattern-id
-    variant-id))
+  (or
+    (tc-variant-name-matches-id?
+      ctx
+      (tc-expr-pattern-enum-id)
+      pattern-id
+      variant-id)
+    ;; `Expr` is represented by the compiler-owned syntax type after the
+    ;; verified stdlib declaration is loaded.  Its ordinary registry owner is
+    ;; therefore not always available to the generic qualified-variant lookup.
+    ;; Preserve the public `Expr.Var` spelling by checking both the short member
+    ;; identity and the immediately preceding enum qualifier.  A different
+    ;; owner such as `Other.Var` remains rejected.
+    (and
+      (>= pattern-id 0)
+      (< pattern-id (intern-capacity))
+      (>= (tc-name-first-dot-id pattern-id) 0)
+      (= (intern-dotted-final-id pattern-id) variant-id)
+      (tc-nominal-name-id-eq?
+        (intern-dotted-prefix-id pattern-id)
+        cbi.compiler-builtin-id-fix-Expr))))
 
 (define (tc-expr-variant-payload-types [ctx : TcContext] [variant-id : i64]) : ResultTcTypeList
   (cond
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprBool)
+        cbi.compiler-builtin-id-comptime-expr-bool-variant)
       (ResultTcTypeList.Ok (tc-type-list1 (AstType.Bool)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprInt)
+        cbi.compiler-builtin-id-comptime-expr-int-variant)
       (ResultTcTypeList.Ok (tc-type-list1 (AstType.I64)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprVar)
+        cbi.compiler-builtin-id-comptime-expr-var-variant)
       (ResultTcTypeList.Ok (tc-type-list1 (AstType.String)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprSplice)
+        cbi.compiler-builtin-id-comptime-expr-splice-variant)
       (ResultTcTypeList.Ok (tc-type-list1 (AstType.Expr)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprIf)
+        cbi.compiler-builtin-id-comptime-expr-if-variant)
       (ResultTcTypeList.Ok
         (tc-type-list3 (AstType.Expr) (AstType.Expr) (AstType.Expr)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprCall)
+        cbi.compiler-builtin-id-comptime-expr-call-variant)
       (ResultTcTypeList.Ok (tc-type-list2 (AstType.Expr) (AstType.ExprList)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprBegin)
+        cbi.compiler-builtin-id-comptime-expr-begin-variant)
       (ResultTcTypeList.Ok (tc-type-list1 (AstType.ExprList)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprQuote)
+        cbi.compiler-builtin-id-comptime-expr-quote-variant)
       (ResultTcTypeList.Ok (tc-type-list1 (AstType.Expr)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprQuasiquote)
+        cbi.compiler-builtin-id-comptime-expr-quasiquote-variant)
       (ResultTcTypeList.Ok (tc-type-list1 (AstType.Expr)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprUnquote)
+        cbi.compiler-builtin-id-comptime-expr-unquote-variant)
       (ResultTcTypeList.Ok (tc-type-list1 (AstType.Expr)))]
     [(tc-expr-variant-pattern-id?
         ctx
         variant-id
-        cbi.compiler-builtin-id-fix-ExprUnquoteSplicing)
+        cbi.compiler-builtin-id-comptime-expr-unquote-splicing-variant)
       (ResultTcTypeList.Ok (tc-type-list1 (AstType.Expr)))]
     [else
       (ResultTcTypeList.Err

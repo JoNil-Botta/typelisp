@@ -3272,7 +3272,7 @@
   [args : AstPatternList]
   [ty : AstType]
   [env : CtfeEnv]) : CtfePatternMatch
-  (if (ctfe-pattern-variant-name? variant "TypeInfoOpaque")
+  (if (ctfe-pattern-variant-name? variant "Opaque")
     (ctfe-match-pattern-list
       args
       (ctfe-value-list1
@@ -3293,7 +3293,7 @@
         (match info
           [(CtfeReflectInfo.Struct _ _ _ _ _ fields)
             (if want-struct
-              (if (ctfe-pattern-variant-name? variant "TypeInfoStruct")
+              (if (ctfe-pattern-variant-name? variant "Struct")
                 (ctfe-match-pattern-list
                   args
                   (ctfe-value-list2
@@ -3306,7 +3306,7 @@
           [(CtfeReflectInfo.Enum _ _ _ _ _ variants)
             (if want-struct
               (CtfePatternMatch.No)
-              (if (ctfe-pattern-variant-name? variant "TypeInfoEnum")
+              (if (ctfe-pattern-variant-name? variant "Enum")
                 (ctfe-match-pattern-list
                   args
                   (ctfe-value-list2
@@ -3331,7 +3331,7 @@
       (ctfe-type-kind-with-reflections-and-pools pools infos resolved)]
     (match resolved
       [(AstType.Array elem count)
-        (if (ctfe-pattern-variant-name? variant "TypeInfoArray")
+        (if (ctfe-pattern-variant-name? variant "Array")
           (ctfe-match-pattern-list
             args
             (ctfe-value-list2
@@ -3341,7 +3341,7 @@
             env)
           (CtfePatternMatch.No))]
       [(AstType.DynArray elem)
-        (if (ctfe-pattern-variant-name? variant "TypeInfoDynArray")
+        (if (ctfe-pattern-variant-name? variant "DynArray")
           (ctfe-match-pattern-list
             args
             (ctfe-value-list1
@@ -3350,7 +3350,7 @@
             env)
           (CtfePatternMatch.No))]
       [(AstType.Func params ret)
-        (if (ctfe-pattern-variant-name? variant "TypeInfoFunction")
+        (if (ctfe-pattern-variant-name? variant "Function")
           (ctfe-match-pattern-list
             args
             (ctfe-value-list2
@@ -3360,7 +3360,7 @@
             env)
           (CtfePatternMatch.No))]
       [(AstType.Tuple elems)
-        (if (ctfe-pattern-variant-name? variant "TypeInfoTuple")
+        (if (ctfe-pattern-variant-name? variant "Tuple")
           (ctfe-match-pattern-list
             args
             (ctfe-value-list1 (CompilerCtfeValue.TypeInfoList (box-get elems)))
@@ -3376,7 +3376,7 @@
         (ctfe-match-type-info-nominal variant args resolved env false)]
       [_
         (if (ctfe-type-info-builtin-kind? kind)
-          (if (ctfe-pattern-variant-name? variant "TypeInfoBuiltin")
+          (if (ctfe-pattern-variant-name? variant "Builtin")
             (ctfe-match-pattern-list
               args
               (ctfe-value-list1 (ctfe-generated-string-value kind))
@@ -7260,14 +7260,14 @@
     (ast-match-arm-cons (ast-match-arm pattern body) (ast-match-arm-list-new))))
 
 (define (ctfe-source-helper-expr-bool-pattern [arg : AstPattern]) : AstPattern
-  (ctfe-pat-variant "ExprBool" (ast-pattern-cons arg (ast-pattern-list-new))))
+  (ctfe-pat-variant "Bool" (ast-pattern-cons arg (ast-pattern-list-new))))
 
 (define (ctfe-source-helper-expr-if-pattern
   [cond : AstPattern]
   [then-expr : AstPattern]
   [else-expr : AstPattern]) : AstPattern
   (ctfe-pat-variant
-    "ExprIf"
+    "If"
     (ast-pattern-cons
       cond
       (ast-pattern-cons
@@ -8485,14 +8485,14 @@
     [(AstExpr.Literal lit)
       (match lit
         [(AstLiteral.Bool b)
-          (if (ctfe-pattern-variant-name? variant "ExprBool")
+          (if (ctfe-pattern-variant-name? variant "Bool")
             (ctfe-match-pattern-list
               args
               (ctfe-value-list1 (CompilerCtfeValue.Bool b))
               env)
             (CtfePatternMatch.No))]
         [(AstLiteral.Int n _)
-          (if (ctfe-pattern-variant-name? variant "ExprInt")
+          (if (ctfe-pattern-variant-name? variant "Int")
             (ctfe-match-pattern-list
               args
               (ctfe-value-list1 (CompilerCtfeValue.I64 n))
@@ -8500,14 +8500,14 @@
             (CtfePatternMatch.No))]
         [_ (CtfePatternMatch.No)])]
     [(AstExpr.Var name)
-      (if (ctfe-pattern-variant-name? variant "ExprVar")
+      (if (ctfe-pattern-variant-name? variant "Var")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list1 (ctfe-name-value name))
           env)
         (CtfePatternMatch.No))]
     [(AstExpr.If cond then-branch else-branch)
-      (if (ctfe-pattern-variant-name? variant "ExprIf")
+      (if (ctfe-pattern-variant-name? variant "If")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list3
@@ -8517,7 +8517,7 @@
           env)
         (CtfePatternMatch.No))]
     [(AstExpr.Call callee args-list)
-      (if (ctfe-pattern-variant-name? variant "ExprCall")
+      (if (ctfe-pattern-variant-name? variant "Call")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list2
@@ -8526,14 +8526,14 @@
           env)
         (CtfePatternMatch.No))]
     [(AstExpr.Begin exprs)
-      (if (ctfe-pattern-variant-name? variant "ExprBegin")
+      (if (ctfe-pattern-variant-name? variant "Begin")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list1 (CompilerCtfeValue.ExprList exprs))
           env)
         (CtfePatternMatch.No))]
     [(AstExpr.Quote inner)
-      (if (ctfe-pattern-variant-name? variant "ExprQuote")
+      (if (ctfe-pattern-variant-name? variant "Quote")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list1
@@ -8541,7 +8541,7 @@
           env)
         (CtfePatternMatch.No))]
     [(AstExpr.Quasiquote inner)
-      (if (ctfe-pattern-variant-name? variant "ExprQuasiquote")
+      (if (ctfe-pattern-variant-name? variant "Quasiquote")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list1
@@ -8549,7 +8549,7 @@
           env)
         (CtfePatternMatch.No))]
     [(AstExpr.Unquote inner)
-      (if (ctfe-pattern-variant-name? variant "ExprUnquote")
+      (if (ctfe-pattern-variant-name? variant "Unquote")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list1
@@ -8557,7 +8557,7 @@
           env)
         (CtfePatternMatch.No))]
     [(AstExpr.UnquoteSplicing inner)
-      (if (ctfe-pattern-variant-name? variant "ExprUnquoteSplicing")
+      (if (ctfe-pattern-variant-name? variant "UnquoteSplicing")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list1
@@ -13824,7 +13824,7 @@
   (let
     [kind-id : i64 (ctfe-materialize-generated-name-id "kind")]
     (match (ctfe-match-type-info-variant
-      cbi.compiler-builtin-id-fix-TypeInfoBuiltin
+      cbi.compiler-builtin-id-comptime-type-info-builtin-variant
       (ast-pattern-cons (ast-pat-binding-id kind-id) (ast-pattern-list-new))
       ty
       env)
@@ -13930,7 +13930,7 @@
     [builtin-arm : AstMatchArm
       (ast-match-arm
         (ast-pat-variant-id
-          cbi.compiler-builtin-id-fix-TypeInfoBuiltin
+          cbi.compiler-builtin-id-comptime-type-info-builtin-variant
           (ast-pattern-cons AstPattern.Wildcard (ast-pattern-list-new)))
         true-lit)]
     [fallback-arm : AstMatchArm (ast-match-arm AstPattern.Wildcard false-lit)]
@@ -14020,7 +14020,7 @@
           (match value
             [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-fix-TypeInfoArray
+                cbi.compiler-builtin-id-comptime-type-info-array-variant
                 (ast-pattern-cons
                   (ast-pat-binding-id elem-id)
                   (ast-pattern-cons
@@ -14053,7 +14053,7 @@
           (match value
             [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-fix-TypeInfoDynArray
+                cbi.compiler-builtin-id-comptime-type-info-dyn-array-variant
                 (ast-pattern-cons
                   (ast-pat-binding-id elem-id)
                   (ast-pattern-list-new))
@@ -14079,7 +14079,7 @@
           (match value
             [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-fix-TypeInfoTuple
+                cbi.compiler-builtin-id-comptime-type-info-tuple-variant
                 (ast-pattern-cons
                   (ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
                   (ast-pattern-list-new))
@@ -14106,7 +14106,7 @@
           (match value
             [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-fix-TypeInfoFunction
+                cbi.compiler-builtin-id-comptime-type-info-function-variant
                 (ast-pattern-cons
                   (ast-pat-binding-id params-id)
                   (ast-pattern-cons
@@ -14140,7 +14140,7 @@
           (match value
             [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-fix-TypeInfoStruct
+                cbi.compiler-builtin-id-comptime-type-info-struct-variant
                 (ast-pattern-cons
                   (ast-pat-binding-id key-id)
                   (ast-pattern-cons
@@ -14175,7 +14175,7 @@
           (match value
             [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
-                cbi.compiler-builtin-id-fix-TypeInfoEnum
+                cbi.compiler-builtin-id-comptime-type-info-enum-variant
                 (ast-pattern-cons
                   (ast-pat-binding-id key-id)
                   (ast-pattern-cons
@@ -14903,7 +14903,7 @@
       (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-subject))]
     [int-pattern : AstPattern
       (ast-pat-variant-id
-        cbi.compiler-builtin-id-fix-ExprInt
+        cbi.compiler-builtin-id-comptime-expr-int-variant
         (ast-pattern-cons
           (ast-pat-binding-id cbi.compiler-builtin-id-fix-n)
           (ast-pattern-list-new)))]
@@ -14943,7 +14943,7 @@
       (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-subject))]
     [if-pattern : AstPattern
       (ast-pat-variant-id
-        cbi.compiler-builtin-id-fix-ExprIf
+        cbi.compiler-builtin-id-comptime-expr-if-variant
         (ast-pattern-cons
           (ast-pat-binding-id cbi.compiler-builtin-id-fix-c)
           (ast-pattern-cons

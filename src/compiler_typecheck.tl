@@ -6269,22 +6269,22 @@
 
 (define (compiler-typecheck-stdlib-comptime-expr-decl-source) : String
   "(defenum Expr
-  (ExprBool bool)
-  (ExprInt i64)
-  (ExprVar String)
-  (ExprSplice (Box Expr))
-  (ExprIf (Box Expr) (Box Expr) (Box Expr))
-  (ExprCall (Box Expr) ExprList)
-  (ExprBegin ExprList)
-  (ExprQuote (Box Expr))
-  (ExprQuasiquote (Box Expr))
-  (ExprUnquote (Box Expr))
-  (ExprUnquoteSplicing (Box Expr)))")
+  (Bool bool)
+  (Int i64)
+  (Var String)
+  (Splice (Box Expr))
+  (If (Box Expr) (Box Expr) (Box Expr))
+  (Call (Box Expr) ExprList)
+  (Begin ExprList)
+  (Quote (Box Expr))
+  (Quasiquote (Box Expr))
+  (Unquote (Box Expr))
+  (UnquoteSplicing (Box Expr)))")
 
 (define (compiler-typecheck-stdlib-comptime-bad-expr-source) : String
   "(module stdlib.comptime)
 (defenum Expr
-  (ExprInt i64))")
+  (Int i64))")
 
 (define (compiler-typecheck-stdlib-comptime-bad-expr-list-source) : String
   (string.concat3
@@ -6298,7 +6298,7 @@
   (and
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stdlib-comptime-bad-expr-source)
-      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected variant ExprBool at index 0")
+      "typecheck: stdlib well-known type mismatch for stdlib.comptime.Expr: expected variant Bool at index 0")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stdlib-comptime-bad-expr-list-source)
       "typecheck: stdlib well-known type mismatch for stdlib.comptime.ExprList: expected defstruct")))
@@ -7408,9 +7408,9 @@
   `(all-from (__all-args ,@args) 0))
 (defmacro (all-from [carrier : comptime.Expr] [idx : comptime.Expr]) : bool
   (match idx
-    [(comptime.ExprInt i)
+    [(comptime.Expr.Int i)
       (match carrier
-        [(comptime.ExprCall _ elems)
+        [(comptime.Expr.Call _ elems)
           (if (>= i (comptime.expr-list-length elems))
             (comptime.expr-bool true)
             `(if ,(comptime.expr-list-nth elems i)
@@ -7422,7 +7422,7 @@
   `(pick-from 0 ,@(comptime.expr-clause-list->expr-list arms)))
 (defmacro (pick-from [idx : comptime.Expr] [arms : ExprClause ...]) : i64
   (match idx
-    [(comptime.ExprInt i)
+    [(comptime.Expr.Int i)
       (if (>= i (comptime.expr-clause-list-length arms))
         (comptime.expr-int 0)
         (let
@@ -7443,7 +7443,7 @@
 (defmacro (pick-if [value : bool]) : i64
   (let [expr : Expr (expr-if value (expr-int 7) (expr-int 9))]
     (match expr
-      [(ExprIf _ _ _)
+      [(Expr.If _ _ _)
         (if (comptime.expr-if? expr)
           (if (comptime.expr-bool? (comptime.expr-if-cond expr))
             (if (comptime.expr-bool-value (comptime.expr-if-cond expr))
@@ -7463,6 +7463,16 @@
      (+ (pick-if false)
         (+ (pick-clause [1 25] true)
            (pick-clause [99 25] false)))))")
+
+(define (compiler-typecheck-defmacro-wrong-qualified-expr-variant-source) : String
+  "(import stdlib.comptime)
+(defenum Other
+  (Var String))
+(defmacro (bad [value : comptime.Expr]) : bool
+  (match value
+    [(Other.Var _) true]
+    [_ false]))
+(define (main) : i64 0)")
 
 (define (compiler-typecheck-defmacro-unsafe-source) : String
   "(defmacro (bad) : bool (unsafe (expr-bool true)))
@@ -7512,6 +7522,9 @@
       (compiler-typecheck-defmacro-comptime-qualified-helper-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-defmacro-comptime-qualified-source-inspectors-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-defmacro-wrong-qualified-expr-variant-source)
+      "typecheck: unknown Expr variant Other.Var")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-produced-mismatch-source)
       "typecheck: macro body produced type does not match declaration")
@@ -8022,9 +8035,9 @@
   `(and-from (__and-args ,@args) 0))
 (defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool true)
             `(if ,(expr-list-nth elems i)
@@ -8036,9 +8049,9 @@
   `(or-from (__or-args ,@args) 0))
 (defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool false)
             `(if ,(expr-list-nth elems i)
@@ -8064,9 +8077,9 @@
   `(and-from (__and-args ,@args) 0))
 (defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool true)
             `(if ,(expr-list-nth elems i)
@@ -8078,9 +8091,9 @@
   `(or-from (__or-args ,@args) 0))
 (defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool false)
             `(if ,(expr-list-nth elems i)
@@ -8349,9 +8362,9 @@
   `(and-from (__and-args ,@args) 0))
 (defmacro (and-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool true)
             `(if ,(expr-list-nth elems i)
@@ -8371,9 +8384,9 @@
   `(or-from (__or-args ,@args) 0))
 (defmacro (or-from [carrier : Expr] [idx : Expr]) : bool
   (match idx
-    [(ExprInt i)
+    [(Expr.Int i)
       (match carrier
-        [(ExprCall _ elems)
+        [(Expr.Call _ elems)
           (if (>= i (expr-list-length elems))
             (expr-bool false)
             `(if ,(expr-list-nth elems i)

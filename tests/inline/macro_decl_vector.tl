@@ -79,7 +79,7 @@
 
 (defmacro (derived-name-family [prefix : Expr]) : Decls
   (match prefix
-    [(ExprVar base)
+    [(Expr.Var base)
       (let
         [seed-name : Expr
           (expr-var

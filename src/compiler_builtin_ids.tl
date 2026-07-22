@@ -423,19 +423,19 @@
   -1)
 (define compiler-builtin-id-fix-TypeInfoList : i64
   -1)
-(define compiler-builtin-id-fix-TypeInfoArray : i64
+(define compiler-builtin-id-comptime-type-info-array-variant : i64
   -1)
-(define compiler-builtin-id-fix-TypeInfoBuiltin : i64
+(define compiler-builtin-id-comptime-type-info-builtin-variant : i64
   -1)
-(define compiler-builtin-id-fix-TypeInfoDynArray : i64
+(define compiler-builtin-id-comptime-type-info-dyn-array-variant : i64
   -1)
-(define compiler-builtin-id-fix-TypeInfoEnum : i64
+(define compiler-builtin-id-comptime-type-info-enum-variant : i64
   -1)
-(define compiler-builtin-id-fix-TypeInfoFunction : i64
+(define compiler-builtin-id-comptime-type-info-function-variant : i64
   -1)
-(define compiler-builtin-id-fix-TypeInfoStruct : i64
+(define compiler-builtin-id-comptime-type-info-struct-variant : i64
   -1)
-(define compiler-builtin-id-fix-TypeInfoTuple : i64
+(define compiler-builtin-id-comptime-type-info-tuple-variant : i64
   -1)
 (define compiler-builtin-id-fix-TypeParam : i64
   -1)
@@ -553,27 +553,27 @@
   -1)
 (define compiler-builtin-id-fix-body : i64
   -1)
-(define compiler-builtin-id-fix-ExprBegin : i64
+(define compiler-builtin-id-comptime-expr-begin-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprBool : i64
+(define compiler-builtin-id-comptime-expr-bool-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprCall : i64
+(define compiler-builtin-id-comptime-expr-call-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprIf : i64
+(define compiler-builtin-id-comptime-expr-if-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprInt : i64
+(define compiler-builtin-id-comptime-expr-int-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprQuasiquote : i64
+(define compiler-builtin-id-comptime-expr-quasiquote-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprQuote : i64
+(define compiler-builtin-id-comptime-expr-quote-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprSplice : i64
+(define compiler-builtin-id-comptime-expr-splice-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprUnquote : i64
+(define compiler-builtin-id-comptime-expr-unquote-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprUnquoteSplicing : i64
+(define compiler-builtin-id-comptime-expr-unquote-splicing-variant : i64
   -1)
-(define compiler-builtin-id-fix-ExprVar : i64
+(define compiler-builtin-id-comptime-expr-var-variant : i64
   -1)
 (define compiler-builtin-id-fix-first : i64
   -1)
@@ -583,15 +583,15 @@
   -1)
 (define compiler-builtin-id-fix-len : i64
   -1)
-(define compiler-builtin-id-fix-PatternBinding : i64
+(define compiler-builtin-id-comptime-pattern-binding-variant : i64
   -1)
-(define compiler-builtin-id-fix-PatternVariant : i64
+(define compiler-builtin-id-comptime-pattern-variant-variant : i64
   -1)
-(define compiler-builtin-id-fix-PatternWildcard : i64
+(define compiler-builtin-id-comptime-pattern-wildcard-variant : i64
   -1)
 (define compiler-builtin-id-fix-payloads : i64
   -1)
-(define compiler-builtin-id-fix-TypeInfoOpaque : i64
+(define compiler-builtin-id-comptime-type-info-opaque-variant : i64
   -1)
 (define compiler-builtin-id-fix-name : i64
   -1)
@@ -951,13 +951,22 @@
     (state-set! state 168 compiler-builtin-id-fix-target)
     (state-set! state 169 compiler-builtin-id-fix-ThreadBox)
     (state-set! state 170 compiler-builtin-id-fix-type)
-    (state-set! state 171 compiler-builtin-id-fix-TypeInfoArray)
-    (state-set! state 172 compiler-builtin-id-fix-TypeInfoBuiltin)
-    (state-set! state 173 compiler-builtin-id-fix-TypeInfoDynArray)
-    (state-set! state 174 compiler-builtin-id-fix-TypeInfoEnum)
-    (state-set! state 175 compiler-builtin-id-fix-TypeInfoFunction)
-    (state-set! state 176 compiler-builtin-id-fix-TypeInfoStruct)
-    (state-set! state 177 compiler-builtin-id-fix-TypeInfoTuple)
+    (state-set! state 171 compiler-builtin-id-comptime-type-info-array-variant)
+    (state-set!
+      state
+      172
+      compiler-builtin-id-comptime-type-info-builtin-variant)
+    (state-set!
+      state
+      173
+      compiler-builtin-id-comptime-type-info-dyn-array-variant)
+    (state-set! state 174 compiler-builtin-id-comptime-type-info-enum-variant)
+    (state-set!
+      state
+      175
+      compiler-builtin-id-comptime-type-info-function-variant)
+    (state-set! state 176 compiler-builtin-id-comptime-type-info-struct-variant)
+    (state-set! state 177 compiler-builtin-id-comptime-type-info-tuple-variant)
     (state-set! state 178 compiler-builtin-id-fix-U)
     (state-set! state 179 compiler-builtin-id-fix-unquote)
     (state-set! state 180 compiler-builtin-id-fix-UsedBox)
@@ -1030,26 +1039,29 @@
     (state-set! state 241 compiler-builtin-id-tc-hygiene-global-boundary)
     (state-set! state 242 compiler-builtin-id-tc-unsafe-context)
     (state-set! state 243 compiler-builtin-id-fix-body)
-    (state-set! state 244 compiler-builtin-id-fix-ExprBegin)
-    (state-set! state 245 compiler-builtin-id-fix-ExprBool)
-    (state-set! state 246 compiler-builtin-id-fix-ExprCall)
-    (state-set! state 247 compiler-builtin-id-fix-ExprIf)
-    (state-set! state 248 compiler-builtin-id-fix-ExprInt)
-    (state-set! state 249 compiler-builtin-id-fix-ExprQuasiquote)
-    (state-set! state 250 compiler-builtin-id-fix-ExprQuote)
-    (state-set! state 251 compiler-builtin-id-fix-ExprSplice)
-    (state-set! state 252 compiler-builtin-id-fix-ExprUnquote)
-    (state-set! state 253 compiler-builtin-id-fix-ExprUnquoteSplicing)
-    (state-set! state 254 compiler-builtin-id-fix-ExprVar)
+    (state-set! state 244 compiler-builtin-id-comptime-expr-begin-variant)
+    (state-set! state 245 compiler-builtin-id-comptime-expr-bool-variant)
+    (state-set! state 246 compiler-builtin-id-comptime-expr-call-variant)
+    (state-set! state 247 compiler-builtin-id-comptime-expr-if-variant)
+    (state-set! state 248 compiler-builtin-id-comptime-expr-int-variant)
+    (state-set! state 249 compiler-builtin-id-comptime-expr-quasiquote-variant)
+    (state-set! state 250 compiler-builtin-id-comptime-expr-quote-variant)
+    (state-set! state 251 compiler-builtin-id-comptime-expr-splice-variant)
+    (state-set! state 252 compiler-builtin-id-comptime-expr-unquote-variant)
+    (state-set!
+      state
+      253
+      compiler-builtin-id-comptime-expr-unquote-splicing-variant)
+    (state-set! state 254 compiler-builtin-id-comptime-expr-var-variant)
     (state-set! state 255 compiler-builtin-id-fix-first)
     (state-set! state 256 compiler-builtin-id-fix-has_type)
     (state-set! state 257 compiler-builtin-id-fix-init)
     (state-set! state 258 compiler-builtin-id-fix-len)
-    (state-set! state 259 compiler-builtin-id-fix-PatternBinding)
-    (state-set! state 260 compiler-builtin-id-fix-PatternVariant)
-    (state-set! state 261 compiler-builtin-id-fix-PatternWildcard)
+    (state-set! state 259 compiler-builtin-id-comptime-pattern-binding-variant)
+    (state-set! state 260 compiler-builtin-id-comptime-pattern-variant-variant)
+    (state-set! state 261 compiler-builtin-id-comptime-pattern-wildcard-variant)
     (state-set! state 262 compiler-builtin-id-fix-payloads)
-    (state-set! state 263 compiler-builtin-id-fix-TypeInfoOpaque)
+    (state-set! state 263 compiler-builtin-id-comptime-type-info-opaque-variant)
     (state-set! state 264 compiler-builtin-id-fix-name)
     (state-set! state 265 compiler-builtin-id-fix-pattern)
     (state-set! state 266 compiler-builtin-id-fix-ty)
@@ -1340,13 +1352,27 @@
     (set! compiler-builtin-id-fix-target (state-ref state 168))
     (set! compiler-builtin-id-fix-ThreadBox (state-ref state 169))
     (set! compiler-builtin-id-fix-type (state-ref state 170))
-    (set! compiler-builtin-id-fix-TypeInfoArray (state-ref state 171))
-    (set! compiler-builtin-id-fix-TypeInfoBuiltin (state-ref state 172))
-    (set! compiler-builtin-id-fix-TypeInfoDynArray (state-ref state 173))
-    (set! compiler-builtin-id-fix-TypeInfoEnum (state-ref state 174))
-    (set! compiler-builtin-id-fix-TypeInfoFunction (state-ref state 175))
-    (set! compiler-builtin-id-fix-TypeInfoStruct (state-ref state 176))
-    (set! compiler-builtin-id-fix-TypeInfoTuple (state-ref state 177))
+    (set!
+      compiler-builtin-id-comptime-type-info-array-variant
+      (state-ref state 171))
+    (set!
+      compiler-builtin-id-comptime-type-info-builtin-variant
+      (state-ref state 172))
+    (set!
+      compiler-builtin-id-comptime-type-info-dyn-array-variant
+      (state-ref state 173))
+    (set!
+      compiler-builtin-id-comptime-type-info-enum-variant
+      (state-ref state 174))
+    (set!
+      compiler-builtin-id-comptime-type-info-function-variant
+      (state-ref state 175))
+    (set!
+      compiler-builtin-id-comptime-type-info-struct-variant
+      (state-ref state 176))
+    (set!
+      compiler-builtin-id-comptime-type-info-tuple-variant
+      (state-ref state 177))
     (set! compiler-builtin-id-fix-U (state-ref state 178))
     (set! compiler-builtin-id-fix-unquote (state-ref state 179))
     (set! compiler-builtin-id-fix-UsedBox (state-ref state 180))
@@ -1433,26 +1459,42 @@
     (set! compiler-builtin-id-tc-hygiene-global-boundary (state-ref state 241))
     (set! compiler-builtin-id-tc-unsafe-context (state-ref state 242))
     (set! compiler-builtin-id-fix-body (state-ref state 243))
-    (set! compiler-builtin-id-fix-ExprBegin (state-ref state 244))
-    (set! compiler-builtin-id-fix-ExprBool (state-ref state 245))
-    (set! compiler-builtin-id-fix-ExprCall (state-ref state 246))
-    (set! compiler-builtin-id-fix-ExprIf (state-ref state 247))
-    (set! compiler-builtin-id-fix-ExprInt (state-ref state 248))
-    (set! compiler-builtin-id-fix-ExprQuasiquote (state-ref state 249))
-    (set! compiler-builtin-id-fix-ExprQuote (state-ref state 250))
-    (set! compiler-builtin-id-fix-ExprSplice (state-ref state 251))
-    (set! compiler-builtin-id-fix-ExprUnquote (state-ref state 252))
-    (set! compiler-builtin-id-fix-ExprUnquoteSplicing (state-ref state 253))
-    (set! compiler-builtin-id-fix-ExprVar (state-ref state 254))
+    (set! compiler-builtin-id-comptime-expr-begin-variant (state-ref state 244))
+    (set! compiler-builtin-id-comptime-expr-bool-variant (state-ref state 245))
+    (set! compiler-builtin-id-comptime-expr-call-variant (state-ref state 246))
+    (set! compiler-builtin-id-comptime-expr-if-variant (state-ref state 247))
+    (set! compiler-builtin-id-comptime-expr-int-variant (state-ref state 248))
+    (set!
+      compiler-builtin-id-comptime-expr-quasiquote-variant
+      (state-ref state 249))
+    (set! compiler-builtin-id-comptime-expr-quote-variant (state-ref state 250))
+    (set!
+      compiler-builtin-id-comptime-expr-splice-variant
+      (state-ref state 251))
+    (set!
+      compiler-builtin-id-comptime-expr-unquote-variant
+      (state-ref state 252))
+    (set!
+      compiler-builtin-id-comptime-expr-unquote-splicing-variant
+      (state-ref state 253))
+    (set! compiler-builtin-id-comptime-expr-var-variant (state-ref state 254))
     (set! compiler-builtin-id-fix-first (state-ref state 255))
     (set! compiler-builtin-id-fix-has_type (state-ref state 256))
     (set! compiler-builtin-id-fix-init (state-ref state 257))
     (set! compiler-builtin-id-fix-len (state-ref state 258))
-    (set! compiler-builtin-id-fix-PatternBinding (state-ref state 259))
-    (set! compiler-builtin-id-fix-PatternVariant (state-ref state 260))
-    (set! compiler-builtin-id-fix-PatternWildcard (state-ref state 261))
+    (set!
+      compiler-builtin-id-comptime-pattern-binding-variant
+      (state-ref state 259))
+    (set!
+      compiler-builtin-id-comptime-pattern-variant-variant
+      (state-ref state 260))
+    (set!
+      compiler-builtin-id-comptime-pattern-wildcard-variant
+      (state-ref state 261))
     (set! compiler-builtin-id-fix-payloads (state-ref state 262))
-    (set! compiler-builtin-id-fix-TypeInfoOpaque (state-ref state 263))
+    (set!
+      compiler-builtin-id-comptime-type-info-opaque-variant
+      (state-ref state 263))
     (set! compiler-builtin-id-fix-name (state-ref state 264))
     (set! compiler-builtin-id-fix-pattern (state-ref state 265))
     (set! compiler-builtin-id-fix-ty (state-ref state 266))
@@ -2452,26 +2494,26 @@
       compiler-builtin-id-fix-TypeInfoList
       (compiler-builtin-resolve-name insert-missing "TypeInfoList"))
     (set!
-      compiler-builtin-id-fix-TypeInfoArray
-      (compiler-builtin-resolve-name insert-missing "TypeInfoArray"))
+      compiler-builtin-id-comptime-type-info-array-variant
+      (compiler-builtin-resolve-name insert-missing "Array"))
     (set!
-      compiler-builtin-id-fix-TypeInfoBuiltin
-      (compiler-builtin-resolve-name insert-missing "TypeInfoBuiltin"))
+      compiler-builtin-id-comptime-type-info-builtin-variant
+      (compiler-builtin-resolve-name insert-missing "Builtin"))
     (set!
-      compiler-builtin-id-fix-TypeInfoDynArray
-      (compiler-builtin-resolve-name insert-missing "TypeInfoDynArray"))
+      compiler-builtin-id-comptime-type-info-dyn-array-variant
+      (compiler-builtin-resolve-name insert-missing "DynArray"))
     (set!
-      compiler-builtin-id-fix-TypeInfoEnum
-      (compiler-builtin-resolve-name insert-missing "TypeInfoEnum"))
+      compiler-builtin-id-comptime-type-info-enum-variant
+      (compiler-builtin-resolve-name insert-missing "Enum"))
     (set!
-      compiler-builtin-id-fix-TypeInfoFunction
-      (compiler-builtin-resolve-name insert-missing "TypeInfoFunction"))
+      compiler-builtin-id-comptime-type-info-function-variant
+      (compiler-builtin-resolve-name insert-missing "Function"))
     (set!
-      compiler-builtin-id-fix-TypeInfoStruct
-      (compiler-builtin-resolve-name insert-missing "TypeInfoStruct"))
+      compiler-builtin-id-comptime-type-info-struct-variant
+      (compiler-builtin-resolve-name insert-missing "Struct"))
     (set!
-      compiler-builtin-id-fix-TypeInfoTuple
-      (compiler-builtin-resolve-name insert-missing "TypeInfoTuple"))
+      compiler-builtin-id-comptime-type-info-tuple-variant
+      (compiler-builtin-resolve-name insert-missing "Tuple"))
     (set!
       compiler-builtin-id-fix-TypeParam
       (compiler-builtin-resolve-name insert-missing "TypeParam"))
@@ -2663,38 +2705,38 @@
       compiler-builtin-id-fix-body
       (compiler-builtin-resolve-name insert-missing "body"))
     (set!
-      compiler-builtin-id-fix-ExprBegin
-      (compiler-builtin-resolve-name insert-missing "ExprBegin"))
+      compiler-builtin-id-comptime-expr-begin-variant
+      (compiler-builtin-resolve-name insert-missing "Begin"))
     (set!
-      compiler-builtin-id-fix-ExprBool
-      (compiler-builtin-resolve-name insert-missing "ExprBool"))
+      compiler-builtin-id-comptime-expr-bool-variant
+      (compiler-builtin-resolve-name insert-missing "Bool"))
     (set!
-      compiler-builtin-id-fix-ExprCall
-      (compiler-builtin-resolve-name insert-missing "ExprCall"))
+      compiler-builtin-id-comptime-expr-call-variant
+      (compiler-builtin-resolve-name insert-missing "Call"))
     (set!
-      compiler-builtin-id-fix-ExprIf
-      (compiler-builtin-resolve-name insert-missing "ExprIf"))
+      compiler-builtin-id-comptime-expr-if-variant
+      (compiler-builtin-resolve-name insert-missing "If"))
     (set!
-      compiler-builtin-id-fix-ExprInt
-      (compiler-builtin-resolve-name insert-missing "ExprInt"))
+      compiler-builtin-id-comptime-expr-int-variant
+      (compiler-builtin-resolve-name insert-missing "Int"))
     (set!
-      compiler-builtin-id-fix-ExprQuasiquote
-      (compiler-builtin-resolve-name insert-missing "ExprQuasiquote"))
+      compiler-builtin-id-comptime-expr-quasiquote-variant
+      (compiler-builtin-resolve-name insert-missing "Quasiquote"))
     (set!
-      compiler-builtin-id-fix-ExprQuote
-      (compiler-builtin-resolve-name insert-missing "ExprQuote"))
+      compiler-builtin-id-comptime-expr-quote-variant
+      (compiler-builtin-resolve-name insert-missing "Quote"))
     (set!
-      compiler-builtin-id-fix-ExprSplice
-      (compiler-builtin-resolve-name insert-missing "ExprSplice"))
+      compiler-builtin-id-comptime-expr-splice-variant
+      (compiler-builtin-resolve-name insert-missing "Splice"))
     (set!
-      compiler-builtin-id-fix-ExprUnquote
-      (compiler-builtin-resolve-name insert-missing "ExprUnquote"))
+      compiler-builtin-id-comptime-expr-unquote-variant
+      (compiler-builtin-resolve-name insert-missing "Unquote"))
     (set!
-      compiler-builtin-id-fix-ExprUnquoteSplicing
-      (compiler-builtin-resolve-name insert-missing "ExprUnquoteSplicing"))
+      compiler-builtin-id-comptime-expr-unquote-splicing-variant
+      (compiler-builtin-resolve-name insert-missing "UnquoteSplicing"))
     (set!
-      compiler-builtin-id-fix-ExprVar
-      (compiler-builtin-resolve-name insert-missing "ExprVar"))
+      compiler-builtin-id-comptime-expr-var-variant
+      (compiler-builtin-resolve-name insert-missing "Var"))
     (set!
       compiler-builtin-id-fix-first
       (compiler-builtin-resolve-name insert-missing "first"))
@@ -2708,20 +2750,20 @@
       compiler-builtin-id-fix-len
       (compiler-builtin-resolve-name insert-missing "len"))
     (set!
-      compiler-builtin-id-fix-PatternBinding
-      (compiler-builtin-resolve-name insert-missing "PatternBinding"))
+      compiler-builtin-id-comptime-pattern-binding-variant
+      (compiler-builtin-resolve-name insert-missing "Binding"))
     (set!
-      compiler-builtin-id-fix-PatternVariant
-      (compiler-builtin-resolve-name insert-missing "PatternVariant"))
+      compiler-builtin-id-comptime-pattern-variant-variant
+      (compiler-builtin-resolve-name insert-missing "Variant"))
     (set!
-      compiler-builtin-id-fix-PatternWildcard
-      (compiler-builtin-resolve-name insert-missing "PatternWildcard"))
+      compiler-builtin-id-comptime-pattern-wildcard-variant
+      (compiler-builtin-resolve-name insert-missing "Wildcard"))
     (set!
       compiler-builtin-id-fix-payloads
       (compiler-builtin-resolve-name insert-missing "payloads"))
     (set!
-      compiler-builtin-id-fix-TypeInfoOpaque
-      (compiler-builtin-resolve-name insert-missing "TypeInfoOpaque"))
+      compiler-builtin-id-comptime-type-info-opaque-variant
+      (compiler-builtin-resolve-name insert-missing "Opaque"))
     (set!
       compiler-builtin-id-fix-name
       (compiler-builtin-resolve-name insert-missing "name"))

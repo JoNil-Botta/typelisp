@@ -52,3 +52,40 @@ bootstrap_seed_ctfe_macro_builders_legacy_stdlib() {
     sed 's/^/  /' "$stderr" >&2 || true
     return 1
 }
+
+# Print a temporary source-mirror path when the published seed still pins the
+# prefixed stdlib.comptime variants.  An empty result means the seed already
+# accepts the short qualified surface.  Unexpected probe failures stay fatal;
+# only the exact old well-known-contract diagnostic enables the bridge.
+bootstrap_seed_comptime_short_variant_bridge_root() {
+    root=$1
+    compiler=$2
+    workdir=$3
+    stdout="$workdir/seed-comptime-short-variant-probe.stdout"
+    stderr="$workdir/seed-comptime-short-variant-probe.stderr"
+    probe_cwd="$workdir/seed-comptime-short-variant-probe-cwd"
+    mkdir -p "$probe_cwd"
+
+    if (
+        cd "$probe_cwd"
+        "$compiler" check "$root/tests/bootstrap_comptime_short_variants_probe.tl" \
+            --stdlib-root "$root/stdlib" \
+            --stdlib-root "$root/src"
+    ) > "$stdout" 2> "$stderr"; then
+        return 0
+    fi
+
+    if ! grep -qF \
+        'expected variant ExprBool at index 0' \
+        "$stderr"; then
+        echo "published-seed short comptime variant probe failed unexpectedly" >&2
+        sed 's/^/  /' "$stdout" >&2 || true
+        sed 's/^/  /' "$stderr" >&2 || true
+        return 1
+    fi
+
+    bridge_root="$workdir/comptime-short-variant-seed-bridge/source"
+    "$root/scripts/prepare-comptime-short-variant-seed-bridge.sh" \
+        "$bridge_root" >&2
+    printf '%s\n' "$bridge_root"
+}

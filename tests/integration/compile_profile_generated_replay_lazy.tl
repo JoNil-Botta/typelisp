@@ -18,7 +18,7 @@
 
 (defmacro (profile-replay-nested [T : type] [index-expr : Expr]) : Decls
   (match index-expr
-    [(ExprInt index)
+    [(Expr.Int index)
       (if (>= index (struct-field-count T))
         `(begin)
         (let

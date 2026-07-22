@@ -45,6 +45,12 @@ SUMMARY_OUTPUT_ASM="$WORKDIR/summary-output.s"
 NORMAL_CHECK_STDOUT="$WORKDIR/normal-check.stdout"
 NORMAL_CHECK_STDERR="$WORKDIR/normal-check.stderr"
 NORMAL_OUTPUT_ASM="$WORKDIR/normal-output.s"
+DETACH_NOCHANGE_ASM="$WORKDIR/macro-detach-nochange.s"
+DETACH_NOCHANGE_STDOUT="$WORKDIR/macro-detach-nochange.stdout"
+DETACH_NOCHANGE_STDERR="$WORKDIR/macro-detach-nochange.stderr"
+DETACH_CHANGED_ASM="$WORKDIR/macro-detach-changed.s"
+DETACH_CHANGED_STDOUT="$WORKDIR/macro-detach-changed.stdout"
+DETACH_CHANGED_STDERR="$WORKDIR/macro-detach-changed.stderr"
 PEAK_RESET_STDOUT="$WORKDIR/profile-peak-reset.stdout"
 PEAK_RESET_STDERR="$WORKDIR/profile-peak-reset.stderr"
 BUILD_STDOUT="$WORKDIR/profile-build.stdout"
@@ -418,6 +424,63 @@ if ! "$COMPILER" compile tests/integration/arithmetic.tl \
 fi
 assert_not_contains_in "$NORMAL_CHECK_STDERR" "compile-profile" \
     "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR"
+
+echo "[compile-profile] verify macro detach structural-change decision"
+if ! "$PROFILE_BIN" compile tests/integration/compile_profile_macro_detach_unchanged.tl \
+    -o "$DETACH_NOCHANGE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$DETACH_NOCHANGE_STDOUT" 2> "$DETACH_NOCHANGE_STDERR"; then
+    show_failure_logs "$DETACH_NOCHANGE_STDOUT" "$DETACH_NOCHANGE_STDERR"
+    fail "macro detach no-change fixture compile failed"
+fi
+assert_profile_live_counter_eq_in \
+    "$DETACH_NOCHANGE_STDERR" \
+    "lower.macro_detach.fast_path_hits" \
+    1 \
+    "$DETACH_NOCHANGE_STDOUT" \
+    "$DETACH_NOCHANGE_STDERR"
+assert_profile_live_counter_eq_in \
+    "$DETACH_NOCHANGE_STDERR" \
+    "lower.macro_detach.fast_path_misses" \
+    0 \
+    "$DETACH_NOCHANGE_STDOUT" \
+    "$DETACH_NOCHANGE_STDERR"
+assert_profile_live_counter_eq_in \
+    "$DETACH_NOCHANGE_STDERR" \
+    "lower.macro_detach.change_reasons" \
+    0 \
+    "$DETACH_NOCHANGE_STDOUT" \
+    "$DETACH_NOCHANGE_STDERR"
+
+if ! "$PROFILE_BIN" compile tests/integration/compile_profile_macro_detail.tl \
+    -o "$DETACH_CHANGED_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$DETACH_CHANGED_STDOUT" 2> "$DETACH_CHANGED_STDERR"; then
+    show_failure_logs "$DETACH_CHANGED_STDOUT" "$DETACH_CHANGED_STDERR"
+    fail "macro detach changed fixture compile failed"
+fi
+assert_profile_live_counter_eq_in \
+    "$DETACH_CHANGED_STDERR" \
+    "lower.macro_detach.fast_path_hits" \
+    0 \
+    "$DETACH_CHANGED_STDOUT" \
+    "$DETACH_CHANGED_STDERR"
+assert_profile_live_counter_eq_in \
+    "$DETACH_CHANGED_STDERR" \
+    "lower.macro_detach.fast_path_misses" \
+    1 \
+    "$DETACH_CHANGED_STDOUT" \
+    "$DETACH_CHANGED_STDERR"
+assert_profile_live_counter_at_least_in \
+    "$DETACH_CHANGED_STDERR" \
+    "lower.macro_detach.change_reasons" \
+    1 \
+    "$DETACH_CHANGED_STDOUT" \
+    "$DETACH_CHANGED_STDERR"
 
 echo "[compile-profile] verify compile-wide peak survives nested reset"
 if ! "$PROFILE_BIN" run tests/integration/compile_profile_nested_peak_reset.tl \

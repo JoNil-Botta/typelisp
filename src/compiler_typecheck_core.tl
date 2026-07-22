@@ -55379,6 +55379,43 @@
 (define macro-expand-scratch-arena : i64
   0)
 
+;; The checked-lowering pipeline compacts its parsed program before macro
+;; expansion.  Keep an explicit proof of whether expansion changed the program
+;; so lowering can retain that first compact generation when the walk only
+;; shared declarations.  This is deliberately independent of dispatch counts:
+;; declaration/import splices, generated-file loads, compatibility rewrites,
+;; and post-walk generated-declaration normalization all note the same signal.
+(define macro-expand-program-structurally-changed : bool
+  false)
+(cfg
+  compile-profile
+  (define macro-expand-program-structural-change-reasons : i64
+    0))
+
+(define (macro-expand-program-structural-change-reset!) : unit
+  (begin
+    (set! macro-expand-program-structurally-changed false)
+    (cfg
+      compile-profile
+      (set! macro-expand-program-structural-change-reasons 0))))
+
+(define (macro-expand-program-structural-change-note! [_reason : i64]) : unit
+  (begin
+    (set! macro-expand-program-structurally-changed true)
+    (cfg
+      compile-profile
+      (set!
+        macro-expand-program-structural-change-reasons
+        (bit-or macro-expand-program-structural-change-reasons _reason)))))
+
+(define (macro-expand-program-structurally-changed?) : bool
+  macro-expand-program-structurally-changed)
+
+(cfg
+  compile-profile
+  (define (macro-expand-program-structural-change-reasons-value) : i64
+    macro-expand-program-structural-change-reasons))
+
 (define (macro-expand-scratch-begin!) : unit
   (set! macro-expand-scratch-enabled true))
 
@@ -68403,27 +68440,31 @@
     [(AstDecl.Import decl-meta (AstImportSpec.Spec kind _ _ alias span))
       (match kind
         [(AstImportKind.Macro call-id context)
-          (macro-expand-module-import
-            ctx
-            top-env
-            orig-decls
-            module
-            module-id
-            call-id
-            context
-            alias
-            (box-get span)
-            decl-path)]
+          (begin
+            (macro-expand-program-structural-change-note! 2)
+            (macro-expand-module-import
+              ctx
+              top-env
+              orig-decls
+              module
+              module-id
+              call-id
+              context
+              alias
+              (box-get span)
+              decl-path))]
         [(AstImportKind.MacroDecls call-id context)
-          (macro-expand-decls-splice
-            ctx
-            top-env
-            orig-decls
-            module
-            module-id
-            call-id
-            context
-            decl-path)]
+          (begin
+            (macro-expand-program-structural-change-note! 2)
+            (macro-expand-decls-splice
+              ctx
+              top-env
+              orig-decls
+              module
+              module-id
+              call-id
+              context
+              decl-path))]
         [_ (macro-single-decl-expansion decl decl-path)])]
     [_
       (let
@@ -68433,16 +68474,25 @@
           (macro-decl-uses-macro? decl-ctx orig-decls template)]
         (if (not uses-macro)
           (macro-single-decl-expansion decl decl-path)
-          (match (macro-env-for-module ctx top-env module module-id)
-            [(ResultTcEnv.Ok local-env)
-              (match (macro-expand-decl decl-ctx local-env orig-decls template)
-                [(ResultMacroDecl.Ok expanded)
-                  (macro-single-decl-expansion
-                    (ast-decl-with-meta (ast-decl-meta decl) expanded)
-                    decl-path)]
-                [(ResultMacroDecl.Err diag) (ResultMacroDeclExpansion.Err diag)])]
-            [(ResultTcEnv.Err message)
-              (ResultMacroDeclExpansion.Err (box (tc-decl-diag decl message)))])))]))
+          (begin
+            (if (macro-decl-expansion-can-change-program? decl)
+              (macro-expand-program-structural-change-note! 1)
+              unit)
+            (match (macro-env-for-module ctx top-env module module-id)
+              [(ResultTcEnv.Ok local-env)
+                (match (macro-expand-decl
+                  decl-ctx
+                  local-env
+                  orig-decls
+                  template)
+                  [(ResultMacroDecl.Ok expanded)
+                    (macro-single-decl-expansion
+                      (ast-decl-with-meta (ast-decl-meta decl) expanded)
+                      decl-path)]
+                  [(ResultMacroDecl.Err diag)
+                    (ResultMacroDeclExpansion.Err diag)])]
+              [(ResultTcEnv.Err message)
+                (ResultMacroDeclExpansion.Err (box (tc-decl-diag decl message)))]))))]))
 
 (define (macro-module-generated-key? [key : String]) : bool
   (and
@@ -68984,6 +69034,24 @@
         [_ false])]
     [(AstDecl.Unsafe inner-box)
       (macro-decl-uses-macro? ctx decls (box-get inner-box))]
+    [_ false]))
+
+;; `macro-decl-uses-macro?` is also a conservative inspection gate: tests take
+;; that path even though production macro expansion shares them verbatim.  Keep
+;; the structural-change proof narrower than the inspection decision so an
+;; unchanged Test (including one wrapped in Unsafe) cannot force a whole-program
+;; detach.
+(define (macro-decl-expansion-can-change-program? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Def _ _ _ _) true]
+    [(AstDecl.DefFn _ _ _ _ _ _) true]
+    [(AstDecl.Import _ (AstImportSpec.Spec kind _ _ _ _))
+      (match kind
+        [(AstImportKind.Macro _ _) true]
+        [(AstImportKind.MacroDecls _ _) true]
+        [_ false])]
+    [(AstDecl.Unsafe inner-box)
+      (macro-decl-expansion-can-change-program? (box-get inner-box))]
     [_ false]))
 
 ;; Cheap, ctx-free, allocation-free over-approximation of "could the expander
@@ -70478,6 +70546,7 @@
                         ;; additive and can use the same refresh path as a macro
                         ;; splice instead of retaining another whole-program env.
                         (begin
+                          (macro-expand-program-structural-change-note! 4)
                           (cfg
                             compile-profile
                             (compiler-tc-walk-decl-sample-note! 7))
@@ -71184,6 +71253,7 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
+    (macro-expand-program-structural-change-reset!)
     ;; The embedded-source flag is only set when stdlib modules actually load
     ;; from the embedded payload; a compile with an explicit stdlib root never
     ;; sets it. Extra roots (the compiler's own src root during self-compiles)
@@ -71254,15 +71324,17 @@
               (macro-expand-allocation-profile-snapshot! 0)]
             [_release-scratch : unit (macro-expand-scratch-release!)]
             (if (compiler-specialize-needed? expanded)
-              (match (gen-normalize-program-with-paths-and-pools
-                expanded
-                expanded-paths
-                (tc-decl-path-list-last expanded-paths "")
-                pools)
-                [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
-                  (ResultMacroExpand.Ok normalized normalized-paths)]
-                [(ResultGenProgramWithPaths.Err diag)
-                  (ResultMacroExpand.Err diag)])
+              (begin
+                (macro-expand-program-structural-change-note! 8)
+                (match (gen-normalize-program-with-paths-and-pools
+                  expanded
+                  expanded-paths
+                  (tc-decl-path-list-last expanded-paths "")
+                  pools)
+                  [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
+                    (ResultMacroExpand.Ok normalized normalized-paths)]
+                  [(ResultGenProgramWithPaths.Err diag)
+                    (ResultMacroExpand.Err diag)]))
               (ResultMacroExpand.Ok expanded expanded-paths))))]
       [(ResultMacroExpand.Err diag)
         (begin

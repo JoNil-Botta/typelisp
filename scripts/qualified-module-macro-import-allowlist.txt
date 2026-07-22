@@ -2,8 +2,8 @@
 #
 # stdlib/hashmap.tl, stdlib/option.tl, and stdlib/set.tl call macros declared
 # in their current module. compiler_typecheck_smoke.tl embeds focused local
-# macro fixtures. The three tests named "bare" cover the temporary imported
-# self-name fallback until #5266 removes it.
+# macro fixtures. The safety fixture is negative coverage for rejecting an
+# imported self-named macro without its provider qualifier.
 stdlib/hashmap.tl:(cfg test (import (hashmap HashNestedKey i64) as hashmap_nested_i64))
 stdlib/hashmap.tl:(cfg test (import (hashmap i64 HashState) as hashmap_i64_state))
 stdlib/hashmap.tl:(cfg test (import (hashmap i64 i64) as hashmap_i64_i64))
@@ -21,12 +21,6 @@ stdlib/set.tl:(cfg test (import (set i64) as i64set))
 stdlib/set.tl:(cfg test (import (set String) as strset))
 src/tests/compiler_typecheck_smoke.tl:      (import (vector ,T) as vec)
 src/tests/compiler_typecheck_smoke.tl:    (import (vector i64) as v)
-src/tests/compiler_typecheck_smoke.tl:(import (result i64 String) as unused-result)
 src/tests/compiler_typecheck_smoke.tl:(import (vector i64) as vec)
 src/tests/compiler_typecheck_smoke.tl:(import (vector Pair) as pvec)
-tests/inline/module_macro_generated_stdlib_vector_alias_bare_import.tl:      (import (vector ,T) as vec)
-tests/inline/module_macro_generated_stdlib_vector_alias_bare_import.tl:;; expose their self-named module macro for bare `(import (vector T) ...)` calls.
-tests/inline/module_macro_generated_stdlib_vector_alias_bare_import.tl:(import (vector i64) as direct)
-tests/inline/module_macro_generated_stdlib_vector_bare_import.tl:      (import (vector ,T))
-tests/inline/module_macro_generated_stdlib_vector_bare_import.tl:;; can use the bare `(import (vector T))` module-macro import surface.
-tests/inline/module_macro_stdlib_vector_bare_provider.tl:      (import (vector ,T))
+tests/safety/imported_module_macro_bare_name_reject.tl:(import (vector i64) as vec)

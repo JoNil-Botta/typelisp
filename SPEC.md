@@ -881,8 +881,13 @@ Module-scope expansion runs before ordinary typechecking:
 4. Recurse into generated modules, then typecheck the fully expanded module.
 
 The macro must be visible in the ordinary macro namespace: a local macro in
-the same module regardless of source order, an imported macro, or a qualified
-macro name such as `(stdlib.vector.vector i64)`. A macro with `: Module` used
+the same module regardless of source order, an imported macro referenced
+through its provider qualifier, or a qualified macro name such as
+`(stdlib.vector.vector i64)`. Bare macro names resolve only to local
+declarations or the implicit core macro prelude. In particular, importing
+`stdlib.vector` does not make bare `(vector i64)` call `vector.vector`; callers
+must write `(vector.vector i64)` (or use the explicitly bound provider alias).
+A macro with `: Module` used
 outside `import`, a macro with `: Decls` used in expression position or
 import syntax, and an expression macro used at module scope are diagnostics.
 

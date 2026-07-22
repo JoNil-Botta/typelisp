@@ -2,8 +2,7 @@
 set -eu
 
 # Keep cross-module generated-family calls provider-qualified. The allowlist
-# contains only current-module calls and the focused compatibility coverage
-# that #5266 will remove with the imported self-name fallback.
+# contains only current-module calls and focused negative rejection coverage.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

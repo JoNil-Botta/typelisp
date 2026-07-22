@@ -22,6 +22,21 @@
           (set! i (+ i 1))))
       (string.string-length out))))")
 
+(define (lint-driver-smoke-bare-self-named-import-macro-source) : String
+  "(import pkg.vector)
+(vector i64)")
+
+(define (lint-driver-smoke-bare-self-named-import-macro-unused-test) : i64
+  (let
+    [findings : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_smoke_test.tl"
+        (lint-driver-smoke-bare-self-named-import-macro-source)
+        (lint_svec.new))]
+    (if (selfhost-lint-unused-import-finding-ok? findings)
+      42
+      39)))
+
 (define (lint-driver-smoke-nested-string-concat-source) : String
   "(define (main) : i64
   (string.string-length (string.append \"a\" (string.append \"b\" \"c\"))))")
@@ -1296,88 +1311,47 @@
     (io.print-string "")
     (let
       [core-result : i64 (compiler-lint-driver-self-test)]
-      (if (= core-result 42)
-        (let
-          [unused-import-result : i64 (selfhost-lint-unused-imports-self-test)]
-          (if (= unused-import-result 42)
-            (let
-              [redundant-import-result : i64
-                (lint-driver-smoke-redundant-import-alias-self-test)]
-              (if (= redundant-import-result 42)
-                (let
-                  [redundant-name-result : i64
-                    (lint-driver-smoke-redundant-function-name-self-test)]
-                  (if (= redundant-name-result 42)
-                    (let
-                      [dead-code-result : i64
-                        (selfhost-lint-package-dead-code-self-test)]
-                      (if (= dead-code-result 42)
-                        (let
-                          [unused-assignment-result : i64
-                            (selfhost-lint-unused-assignment-self-test)]
-                          (if (= unused-assignment-result 42)
-                            (let
-                              [single-cell-result : i64
-                                (selfhost-lint-single-element-array-cell-self-test)]
-                              (if (= single-cell-result 42)
-                                (let
-                                  [dynamic-array-literal-result : i64
-                                    (selfhost-lint-dynamic-array-literal-self-test)]
-                                  (if (= dynamic-array-literal-result 42)
-                                    (let
-                                      [concat-result : i64
-                                        (lint-driver-smoke-deprecated-string-concat-self-test)]
-                                      (if (= concat-result 42)
-                                        (let
-                                          [no-effect-result : i64
-                                            (lint-driver-smoke-no-effect-self-test)]
-                                          (if (= no-effect-result 42)
-                                            (let
-                                              [unreachable-result : i64
-                                                (lint-driver-smoke-unreachable-self-test)]
-                                              (if (= unreachable-result 42)
-                                                (let
-                                                  [divergence-result : i64
-                                                    (lint-driver-smoke-divergence-padding-self-test)]
-                                                  (if (= divergence-result 42)
-                                                    (let
-                                                      [unused-variable-result : i64
-                                                        (lint-driver-smoke-unused-variable-self-test)]
-                                                      (if (=
-                                                        unused-variable-result
-                                                        42)
-                                                        (let
-                                                          [unused-unsafe-result : i64
-                                                            (lint-driver-smoke-unused-unsafe-self-test)]
-                                                          (if (=
-                                                            unused-unsafe-result
-                                                            42)
-                                                            (let
-                                                              [copy-result : i64
-                                                                (lint-driver-smoke-copy-on-update-struct-self-test)]
-                                                              (if (=
-                                                                copy-result
-                                                                42)
-                                                                (let
-                                                                  [dotted-result : i64
-                                                                    (lint-driver-smoke-prefer-dotted-field-self-test)]
-                                                                  (if (=
-                                                                    dotted-result
-                                                                    42)
-                                                                    (lint-driver-smoke-name-case-self-test)
-                                                                    dotted-result))
-                                                                copy-result))
-                                                            unused-unsafe-result))
-                                                        unused-variable-result))
-                                                    divergence-result))
-                                                unreachable-result))
-                                            no-effect-result))
-                                        concat-result))
-                                    dynamic-array-literal-result))
-                                single-cell-result))
-                            unused-assignment-result))
-                        dead-code-result))
-                    redundant-name-result))
-                redundant-import-result))
-            unused-import-result))
-        core-result))))
+      [unused-import-result : i64 (selfhost-lint-unused-imports-self-test)]
+      [bare-import-result : i64
+        (lint-driver-smoke-bare-self-named-import-macro-unused-test)]
+      [redundant-import-result : i64
+        (lint-driver-smoke-redundant-import-alias-self-test)]
+      [redundant-name-result : i64
+        (lint-driver-smoke-redundant-function-name-self-test)]
+      [dead-code-result : i64 (selfhost-lint-package-dead-code-self-test)]
+      [unused-assignment-result : i64
+        (selfhost-lint-unused-assignment-self-test)]
+      [single-cell-result : i64
+        (selfhost-lint-single-element-array-cell-self-test)]
+      [dynamic-array-literal-result : i64
+        (selfhost-lint-dynamic-array-literal-self-test)]
+      [concat-result : i64
+        (lint-driver-smoke-deprecated-string-concat-self-test)]
+      [no-effect-result : i64 (lint-driver-smoke-no-effect-self-test)]
+      [unreachable-result : i64 (lint-driver-smoke-unreachable-self-test)]
+      [divergence-result : i64 (lint-driver-smoke-divergence-padding-self-test)]
+      [unused-variable-result : i64
+        (lint-driver-smoke-unused-variable-self-test)]
+      [unused-unsafe-result : i64 (lint-driver-smoke-unused-unsafe-self-test)]
+      [copy-result : i64 (lint-driver-smoke-copy-on-update-struct-self-test)]
+      [dotted-result : i64 (lint-driver-smoke-prefer-dotted-field-self-test)]
+      [name-case-result : i64 (lint-driver-smoke-name-case-self-test)]
+      (cond
+        [(not (= core-result 42)) core-result]
+        [(not (= unused-import-result 42)) unused-import-result]
+        [(not (= bare-import-result 42)) bare-import-result]
+        [(not (= redundant-import-result 42)) redundant-import-result]
+        [(not (= redundant-name-result 42)) redundant-name-result]
+        [(not (= dead-code-result 42)) dead-code-result]
+        [(not (= unused-assignment-result 42)) unused-assignment-result]
+        [(not (= single-cell-result 42)) single-cell-result]
+        [(not (= dynamic-array-literal-result 42)) dynamic-array-literal-result]
+        [(not (= concat-result 42)) concat-result]
+        [(not (= no-effect-result 42)) no-effect-result]
+        [(not (= unreachable-result 42)) unreachable-result]
+        [(not (= divergence-result 42)) divergence-result]
+        [(not (= unused-variable-result 42)) unused-variable-result]
+        [(not (= unused-unsafe-result 42)) unused-unsafe-result]
+        [(not (= copy-result 42)) copy-result]
+        [(not (= dotted-result 42)) dotted-result]
+        [else name-case-result]))))

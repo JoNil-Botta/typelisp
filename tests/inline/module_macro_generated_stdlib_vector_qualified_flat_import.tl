@@ -1,5 +1,5 @@
-;; module_macro_generated_stdlib_vector_bare_import.tl - generated module bodies
-;; can use the bare `(import (vector T))` module-macro import surface.
+;; module_macro_generated_stdlib_vector_qualified_flat_import.tl - generated
+;; module bodies can flat-import a provider-qualified Module macro result.
 (import stdlib.test)
 (import stdlib.vector)
 
@@ -13,7 +13,7 @@
         (string-append "generated.stdlib_vector_bare_user." (type-key T)))]
     `(begin
       (module ,module-name)
-      (import (vector ,T))
+      (import (vector.vector ,T))
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let
           [items : Vec (new)]
@@ -32,22 +32,22 @@
 (import (vector-user Pair) as pair-user)
 
 (test
-  generated-module-body-bare-imports-stdlib-vector-module-macro
+  generated-module-body-flat-imports-qualified-stdlib-vector-module-macro
   (test.assert-i64-eq
     (user.score 7 0)
     42
-    "generated module bare-imported stdlib vector macro"))
+    "generated module flat-imported qualified stdlib vector macro"))
 
 (test
-  generated-module-body-bare-imports-stdlib-string-vector-module-macro
+  generated-module-body-flat-imports-qualified-stdlib-string-vector-module-macro
   (test.assert-i64-eq
     (string-user.score "alpha" "fallback")
     42
-    "generated module bare-imported stdlib string vector macro"))
+    "generated module flat-imported qualified stdlib string vector macro"))
 
 (test
-  generated-module-body-bare-imports-stdlib-struct-vector-module-macro
+  generated-module-body-flat-imports-qualified-stdlib-struct-vector-module-macro
   (test.assert-i64-eq
     (pair-user.score (Pair 7) (Pair 0))
     42
-    "generated module bare-imported stdlib struct vector macro"))
+    "generated module flat-imported qualified stdlib struct vector macro"))

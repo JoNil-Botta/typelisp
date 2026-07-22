@@ -20399,14 +20399,15 @@
 ;; One frame slot per raw IR variable wastes most of the frame once register
 ;; allocation has moved many values into registers. The scalar pass renumbers
 ;; stack-resident scalar variables into a dense frame-slot prefix after regalloc,
-;; preserving parameter ids for the prologue spill contract. A second pass colors
-;; contiguous inline-storage ranges, sharing those range slots when their
+;; preserving parameter ids for the prologue spill contract. A second pass
+;; colors contiguous inline-storage ranges, sharing those range slots when their
 ;; AddrOf/Gep-derived pointer lifetimes are disjoint. Variables that already
-;; have a register home receive free non-slot ids, and stack-homed register
-;; groups are remapped by their word0 id; the backend places word1 in the
-;; matching second var-region. Plans with no intervals (the stack-only opt0/opt1
-;; path skips liveness) pass through unchanged. The result's slot count replaces
-;; the raw var count in the backend's frame layout.
+;; have a register home, dead raw-id holes, and register-only scratch pseudo-vars
+;; receive free non-slot ids, and stack-homed register groups are remapped by
+;; their word0 id; the backend places word1 in the matching second var-region.
+;; Plans with no intervals (the stack-only opt0/opt1 path skips liveness) pass
+;; through unchanged. The result's slot count replaces the raw var count in the
+;; backend's frame layout.
 (defenum CompilerRegColoring
   (None)
   (Remap (Array i64) i64))
@@ -20434,6 +20435,23 @@
                   (compiler-reg-handle-type? ty)))
               unit)
             (compiler-reg-color-flags (box-get rest) flags))])]))
+
+;; Mark every variable with a final liveness interval. Combined with direct IR
+;; uses/defs below, this distinguishes real values (including dead emitted defs)
+;; from gaps in the monotonic variable-id watermark.
+(define (compiler-reg-color-reference-intervals!
+  [intervals : CompilerRegIntervalList]
+  [references : (Array i64)]) : unit
+  (match intervals
+    [(CompilerRegIntervalList.Nil) unit]
+    [(CompilerRegIntervalList.Cons interval rest)
+      (begin
+        (match interval
+          [(CompilerRegInterval.Interval var _ _)
+            (if (and (>= var 0) (< var (array-length references)))
+              (array-set! references var 1)
+              unit)])
+        (compiler-reg-color-reference-intervals! (box-get rest) references))]))
 
 ;; Per-var AstType array for the coloring walk's same-type sharing guard.
 ;; Every colorable var has a types-list entry (compiler-reg-color-flags only
@@ -22181,7 +22199,8 @@
   [group-vars : CompilerLiveI64Set]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]
-  [vars : i64]) : CompilerRegColoring
+  [vars : i64]
+  [slot-candidate-vars : i64]) : CompilerRegColoring
   (let
     [intervals : CompilerRegIntervalList (compiler-reg-plan-intervals plan)]
     (match intervals
@@ -22204,6 +22223,7 @@
             (compiler-reg-assignment-index-build assignments vars)]
           [ineligible : CompilerLiveI64Set (compiler-reg-plan-ineligible plan)]
           [colorable : (Array bool) (array.make-array bool vars)]
+          [references : (Array i64) (array.make-array i64 vars)]
           [remap : (Array i64) (array.make-array i64 vars)]
           [_cleared : unit
             (let
@@ -22214,13 +22234,32 @@
                     (array-set! slot-ends i (- 0 1))
                     (set! i (+ i 1))))
                 (set! i 0)
+                (compiler-reg-fill-i64-array references 0)
                 (while (< i vars)
                   (begin
                     (array-set! colorable i false)
                     (array-set! remap i (- 0 1))
                     (set! i (+ i 1))))))]
           [_flagged : unit
-            (compiler-reg-color-flags (compiler-reg-plan-types plan) colorable)]
+            (begin
+              (compiler-reg-color-flags
+                (compiler-reg-plan-types plan)
+                colorable)
+              ;; Scratch pseudo-vars are consumed through planned registers or
+              ;; the legacy scavenger, never through formula stack slots.
+              (let
+                [i : i64 slot-candidate-vars]
+                (while (< i vars)
+                  (begin
+                    (array-set! colorable i false)
+                    (set! i (+ i 1))))))]
+          ;; Count direct IR uses and defs, not type-table membership: dead defs
+          ;; still emit a write, while raw-id holes and register-only scratch
+          ;; pseudo-vars have no instruction reference and need no formula slot.
+          [_referenced : unit
+            (begin
+              (compiler-reg-color-reference-intervals! intervals references)
+              (compiler-reg-ref-counts-blocks! references blocks))]
           [var-tys : (Array AstType) (array.make-array AstType vars)]
           [slot-tys : (Array AstType) (array.make-array AstType slots)]
           [_typed : unit
@@ -22286,18 +22325,20 @@
                 alias))]
           [slot-count
             : i64
-            ;; Private dense slots for everything slot-resident that the scalar
-            ;; and inline-storage walks skipped, one slot each. Fresh ids skip
-            ;; param pins, so the slot region is the dense prefix [0,
-            ;; watermark) with params in place. Group-mov-aliased dsts share
-            ;; their root's slot pair (word1 formula slots follow the id).
+            ;; Private dense slots for final, real IR variables that the scalar
+            ;; and inline-storage walks skipped, one slot each. Raw-id holes and
+            ;; register-only scratch pseudo-vars have no frame demand. Group-
+            ;; mov-aliased dsts share their root's slot pair (word1 formula
+            ;; slots follow the id).
             (let
               [next : i64 storage-prefix]
               [i : i64 0]
               (begin
-                (while (< i vars)
+                (while (and (< i vars) (< i slot-candidate-vars))
                   (begin
-                    (if (>= (array-ref remap i) 0)
+                    (if (or
+                      (= (array-ref references i) 0)
+                      (>= (array-ref remap i) 0))
                       unit
                       (let
                         [root : i64
@@ -22354,6 +22395,16 @@
                                 (begin
                                   (array-set! remap i (+ slot (- words 1)))
                                   (set! next (+ slot words))))]))))
+                    (set! i (+ i 1))))
+                ;; Scratch pseudo-vars live above the real-IR watermark and are
+                ;; register-only. Preserve those already-disjoint ids instead
+                ;; of letting the generic free-id pass alias them onto a frame
+                ;; slot that belongs to a real value.
+                (while (< i vars)
+                  (begin
+                    (if (< (array-ref remap i) 0)
+                      (array-set! remap i i)
+                      unit)
                     (set! i (+ i 1))))
                 next))]
           [_renumbered
@@ -35575,6 +35626,7 @@
     (compiler-live-set-empty)
     CompilerIrParamList.Nil
     CompilerIrBlockList.Nil
+    3
     3)
     [(CompilerRegColoring.Remap share-remap share-slots)
       (match (compiler-reg-color-stack-slots
@@ -35588,6 +35640,7 @@
         (compiler-live-set-empty)
         CompilerIrParamList.Nil
         CompilerIrBlockList.Nil
+        2
         2)
         [(CompilerRegColoring.Remap split-remap split-slots)
           (and
@@ -35613,6 +35666,7 @@
       (CompilerIrParam.Param "pinned" (AstType.I64) 1)
       CompilerIrParamList.Nil)
     CompilerIrBlockList.Nil
+    3
     3)
     [(CompilerRegColoring.Remap remap slots)
       (and
@@ -35621,6 +35675,56 @@
         (= (array-ref remap 0) (array-ref remap 2))
         (not (= (array-ref remap 0) 1)))]
     [(CompilerRegColoring.None) false]))
+
+(define (compiler-reg-color-spill-hole-demand-ok?) : bool
+  (match (compiler-reg-color-stack-slots
+    (CompilerRegPlan.Plan
+      (compiler-reg-color-spill-sharing-assignments 1)
+      (compiler-live-set-empty)
+      (compiler-reg-interval-cons
+        (CompilerRegInterval.Interval 0 0 1)
+        CompilerRegIntervalList.Nil)
+      (compiler-reg-color-spill-sharing-types 1)
+      (compiler-reg-call-split-empty)
+      (compiler-reg-split-plan-empty))
+    (compiler-live-set-empty)
+    CompilerIrParamList.Nil
+    CompilerIrBlockList.Nil
+    10
+    10)
+    [(CompilerRegColoring.Remap remap slots)
+      (and
+        (= slots 1)
+        (= (array-ref remap 0) 0)
+        (not (= (array-ref remap 9) 0)))]
+    [(CompilerRegColoring.None) false]))
+
+(define (compiler-reg-color-spill-scratch-demand-ok?) : bool
+  (let
+    [params : CompilerIrParamList
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "real" (AstType.I64) 0)
+        CompilerIrParamList.Nil)]
+    (match (compiler-reg-color-stack-slots
+      (CompilerRegPlan.Plan
+        (compiler-reg-color-spill-sharing-assignments 2)
+        (compiler-live-set-empty)
+        (compiler-reg-interval-cons
+          (CompilerRegInterval.Interval 0 0 1)
+          (compiler-reg-interval-cons
+            (CompilerRegInterval.Interval 1 0 1)
+            CompilerRegIntervalList.Nil))
+        (compiler-reg-color-spill-sharing-types 2)
+        (compiler-reg-call-split-empty)
+        (compiler-reg-split-plan-empty))
+      (compiler-live-set-empty)
+      params
+      CompilerIrBlockList.Nil
+      2
+      1)
+      [(CompilerRegColoring.Remap remap slots)
+        (and (= slots 1) (= (array-ref remap 0) 0) (= (array-ref remap 1) 1))]
+      [(CompilerRegColoring.None) false])))
 
 (define (compiler-reg-color-vector-stack-function) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -35676,6 +35780,7 @@
         (compiler-live-set-empty)
         params
         blocks
+        vars
         vars)
         [(CompilerRegColoring.Remap remap slots)
           (and
@@ -35756,6 +35861,7 @@
         (compiler-live-set-empty)
         params
         blocks
+        vars
         vars)
         [(CompilerRegColoring.Remap remap slots)
           (and
@@ -35787,6 +35893,7 @@
         (compiler-live-set1 group-var)
         CompilerIrParamList.Nil
         CompilerIrBlockList.Nil
+        (+ group-var 1)
         (+ group-var 1))]
     (match coloring
       [(CompilerRegColoring.Remap remap slots)
@@ -36529,6 +36636,12 @@
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-spill-param-pins-ok?"
       (compiler-reg-color-spill-param-pins-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-color-spill-hole-demand-ok?"
+      (compiler-reg-color-spill-hole-demand-ok?))
+    (compiler-regalloc-self-test-require!
+      "compiler-reg-color-spill-scratch-demand-ok?"
+      (compiler-reg-color-spill-scratch-demand-ok?))
     (compiler-regalloc-self-test-require!
       "compiler-reg-color-vector-stack-slots-ok?"
       (compiler-reg-color-vector-stack-slots-ok?))

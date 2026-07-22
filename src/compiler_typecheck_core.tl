@@ -63533,23 +63533,6 @@
     lookup-name-id
     call-expr))
 
-(define (macro-alias-self-call-decl
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [module-id : i64]
-  [lookup-name-id : i64]
-  [call-expr : AstExpr]) : ResultMacroCallDecl
-  ;; `(import stdlib.vector)` binds alias `vector`; module-scope `(vector T)`
-  ;; should resolve to macro `vector` in that aliased module.
-  (match (tc-source-dotted-alias-target-id decls module-id lookup-name-id)
-    [(TcMaybeNameId.Some target-module-id)
-      (macro-unqualified-imported-target-call-decl
-        ctx
-        target-module-id
-        lookup-name-id
-        call-expr)]
-    [(TcMaybeNameId.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))
-
 (define (macro-unqualified-call-decl-in-module
   [ctx : TcContext]
   [decls : AstDeclList]
@@ -63803,46 +63786,6 @@
             call-expr)))]
     [_ (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))
 
-(define (macro-call-decl-with-self-alias
-  [ctx : TcContext]
-  [func : AstExpr]
-  [decls : AstDeclList]
-  [module : String]
-  [module-id : i64]
-  [call-expr : AstExpr]) : ResultMacroCallDecl
-  (match (macro-call-decl
-    (tc-context-with-module-id ctx module module-id)
-    func
-    decls
-    call-expr)
-    [(ResultMacroCallDecl.Ok maybe-decl)
-      (match maybe-decl
-        [(MacroMaybeDecl.No)
-          (match (ast-expr-unspan func)
-            [(AstExpr.Var name)
-              (if (or
-                (macro-hygiene-global-id? name)
-                (tc-structural-local-name-id? name)
-                (compiler-composite-pair-key-id? name)
-                (compiler-composite-triple-key-id? name)
-                (tc-name-qualified-id? name))
-                (ResultMacroCallDecl.Ok maybe-decl)
-                (let
-                  [lookup-name : String (tc-env-key-name-text name)]
-                  (if (or
-                    (tc-hygiene-global-name? lookup-name)
-                    (>= (tc-name-first-dot-id name) 0))
-                    (ResultMacroCallDecl.Ok maybe-decl)
-                    (macro-alias-self-call-decl
-                      ctx
-                      decls
-                      module-id
-                      name
-                      call-expr))))]
-            [_ (ResultMacroCallDecl.Ok maybe-decl)])]
-        [_ (ResultMacroCallDecl.Ok maybe-decl)])]
-    [(ResultMacroCallDecl.Err diag) (ResultMacroCallDecl.Err diag)]))
-
 (define (macro-call-decl-with-context
   [ctx : TcContext]
   [func : AstExpr]
@@ -63851,12 +63794,10 @@
   [module-id : i64]
   [context : AstMaybeModuleName]
   [call-expr : AstExpr]) : ResultMacroCallDeclModule
-  (match (macro-call-decl-with-self-alias
-    ctx
+  (match (macro-call-decl
+    (tc-context-with-module-id ctx module module-id)
     func
     decls
-    module
-    module-id
     call-expr)
     [(ResultMacroCallDecl.Ok maybe-decl)
       (match maybe-decl
@@ -63867,12 +63808,13 @@
                 [context-module : String (intern-str context-module-id)]
                 (if (= context-module-id module-id)
                   (ResultMacroCallDeclModule.Ok maybe-decl module module-id)
-                  (match (macro-call-decl-with-self-alias
-                    ctx
+                  (match (macro-call-decl
+                    (tc-context-with-module-id
+                      ctx
+                      context-module
+                      context-module-id)
                     func
                     decls
-                    context-module
-                    context-module-id
                     call-expr)
                     [(ResultMacroCallDecl.Ok context-decl)
                       (match context-decl
@@ -63898,12 +63840,10 @@
             [context-module : String (intern-str context-module-id)]
             (if (= context-module-id module-id)
               (ResultMacroCallDeclModule.Err primary-diag)
-              (match (macro-call-decl-with-self-alias
-                ctx
+              (match (macro-call-decl
+                (tc-context-with-module-id ctx context-module context-module-id)
                 func
                 decls
-                context-module
-                context-module-id
                 call-expr)
                 [(ResultMacroCallDecl.Ok context-decl)
                   (match context-decl
@@ -68025,20 +67965,45 @@
     [(ResultMacroDeclExpansion.Ok collapsed _) collapsed]
     [(ResultMacroDeclExpansion.Err _) decls]))
 
-(define (macro-call-not-macro-head-name [call-expr : AstExpr]) : String
-  (match (ast-expr-unspan call-expr)
-    [(AstExpr.Call head-id _)
-      (match (ast-expr-unspan (ast-node-get head-id))
-        [(AstExpr.Var name-id) (intern-str name-id)]
-        [_ "<non-symbol-head>"])]
-    [_ "<non-call>"]))
+(define (macro-call-not-macro-message
+  [decls : AstDeclList]
+  [module-id : i64]
+  [name-id : i64]) : String
+  (let
+    [name : String (intern-str name-id)]
+    [default-message : String
+      (str_cat.str-cat
+        "typecheck: module-scope macro call does not name a macro: "
+        name)]
+    (match (tc-source-dotted-alias-target-id decls module-id name-id)
+      [(TcMaybeNameId.Some target-module-id)
+        (let
+          [macro-name : String
+            (parse-ast-dotted-import-default-alias
+              (intern-str target-module-id))]
+          (str_cat.str-cat
+            "typecheck: imported macro `"
+            macro-name
+            "` requires provider qualification; use `"
+            name
+            "."
+            macro-name
+            "`"))]
+      [(TcMaybeNameId.No) default-message])))
 
-(define (macro-call-not-macro-diag [call-expr : AstExpr]) : CompilerDiagnostic
+(define (macro-call-not-macro-diag
+  [decls : AstDeclList]
+  [module-id : i64]
+  [call-expr : AstExpr]) : CompilerDiagnostic
   (ctfe-diagnostic-at-expr
     call-expr
-    (str_cat.str-cat
-      "typecheck: module-scope macro call does not name a macro: "
-      (macro-call-not-macro-head-name call-expr))))
+    (match (ast-expr-unspan call-expr)
+      [(AstExpr.Call head-id _)
+        (match (ast-expr-unspan (ast-node-get head-id))
+          [(AstExpr.Var name-id)
+            (macro-call-not-macro-message decls module-id name-id)]
+          [_ "typecheck: module-scope macro call has a non-symbol head"])]
+      [_ "typecheck: module-scope macro placeholder is not a call"])))
 
 (define (macro-module-existing-collision-diag
   [call-expr : AstExpr]
@@ -68599,7 +68564,11 @@
                               "typecheck: expression macro cannot be used at module scope")))))]
                   [(MacroMaybeDecl.No)
                     (ResultMacroDeclExpansion.Err
-                      (box (macro-call-not-macro-diag call-expr)))]))]
+                      (box
+                        (macro-call-not-macro-diag
+                          orig-decls
+                          module-id
+                          call-expr)))]))]
             [(ResultMacroCallDeclModule.Err diag)
               (ResultMacroDeclExpansion.Err diag)]))]
       [_
@@ -68811,7 +68780,11 @@
                               "typecheck: expression macro cannot be used as module import")))))]
                   [(MacroMaybeDecl.No)
                     (ResultMacroDeclExpansion.Err
-                      (box (macro-call-not-macro-diag call-expr)))]))]
+                      (box
+                        (macro-call-not-macro-diag
+                          orig-decls
+                          module-id
+                          call-expr)))]))]
             [(ResultMacroCallDeclModule.Err diag)
               (ResultMacroDeclExpansion.Err diag)]))]
       [_

@@ -2,7 +2,10 @@
 ;; import stdlib `(vector T)` through a module hook macro value.
 (import stdlib.test)
 (import stdlib.comptime)
-(import stdlib.vector)
+
+;; The source-only unused-import lint cannot resolve Module-typed macro
+;; arguments. Keep this deliberate module-value use explicit and suppressed.
+(import stdlib.vector as _vector-provider)
 
 (defstruct Pair
   (value i64))
@@ -27,8 +30,8 @@
                 42)
               0)))))))
 
-(import (vector-user vector i64) as user)
-(import (vector-user vector Pair) as pair-user)
+(import (vector-user _vector-provider i64) as user)
+(import (vector-user _vector-provider Pair) as pair-user)
 
 (test
   generated-module-body-imports-hooked-vector-module-macro-i64

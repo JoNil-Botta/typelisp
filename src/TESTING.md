@@ -931,6 +931,23 @@ and per-file work, and CLI helper cases. Timestamps come from a monotonic clock,
 and labels never include command lines, absolute credentials, or source text.
 Local runs remain uninstrumented unless the same environment variable is set.
 
+The Linux timing-budget gate requires exactly one successful
+`TypeLisp source lint / all / gate` row and caps it at 60,000 ms. The cap is
+deliberately well above the post-#5548 hosted Linux runtime so ordinary runner
+noise does not fail healthy changes, while still catching a multi-fold
+regression toward the former minute-scale quadratic source scans. The budget
+consumes the row already recorded by `ci-verify.sh`; it does not run the
+compiler or change the lint corpus and its 32-file batches. To diagnose a lint
+regression locally with the same gate and a chosen compiler, time:
+
+```sh
+time env TYPELISP_BIN="$tl" scripts/check-tl-lint.sh
+```
+
+When a local or downloaded CI timing artifact is available, replay the exact
+budget validation with
+`scripts/check-ci-timing-budgets.sh target/ci-timing/linux.tsv`.
+
 For a selfhost compiler change, a typical local check (after
 `scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:
 

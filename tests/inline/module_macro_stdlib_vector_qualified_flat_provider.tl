@@ -1,8 +1,8 @@
-;; module_macro_stdlib_vector_bare_provider.tl - helper module for exported
+;; module_macro_stdlib_vector_qualified_flat_provider.tl - helper for exported
 ;; module macros whose generated bodies flat-import generated stdlib vectors.
 ;; Its explicit dotted identity is intentional: generated bodies refer to this
 ;; provider through that legacy-compatible module path.
-(module tests.module_macro_stdlib_vector_bare_provider)
+(module tests.module_macro_stdlib_vector_qualified_flat_provider)
 
 (import stdlib.vector)
 
@@ -15,7 +15,7 @@
           (type-key T)))]
     `(begin
       (module ,module-name)
-      (import (vector ,T))
+      (import (vector.vector ,T))
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let
           [items : Vec (new)]

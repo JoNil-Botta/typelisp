@@ -8726,36 +8726,13 @@
 (define (ctfe-node-pools-share-storage?
   [left : AstNodePoolContext]
   [right : AstNodePoolContext]) : bool
-  (let
-    [left-expr : AstExprNodePoolState (array-ref (struct-get left expr-pool) 0)]
-    [right-expr : AstExprNodePoolState
-      (array-ref (struct-get right expr-pool) 0)]
-    [left-type : AstTypeNodePoolState (array-ref (struct-get left type-pool) 0)]
-    [right-type : AstTypeNodePoolState
-      (array-ref (struct-get right type-pool) 0)]
-    [left-expr-slots : (Array AstExpr) (struct-get left-expr slots)]
-    [right-expr-slots : (Array AstExpr) (struct-get right-expr slots)]
-    [left-type-slots : (Array AstType) (struct-get left-type slots)]
-    [right-type-slots : (Array AstType) (struct-get right-type slots)]
-    (and
-      (=
-        (cast
-          (unsafe
-            (ptr->int (array-data left-expr-slots)))
-          : i64)
-        (cast
-          (unsafe
-            (ptr->int (array-data right-expr-slots)))
-          : i64))
-      (=
-        (cast
-          (unsafe
-            (ptr->int (array-data left-type-slots)))
-          : i64)
-        (cast
-          (unsafe
-            (ptr->int (array-data right-type-slots)))
-          : i64)))))
+  (and
+    (=
+      (ast-node-pool-context-expr-storage-arena left)
+      (ast-node-pool-context-expr-storage-arena right))
+    (=
+      (ast-node-pool-context-type-storage-arena left)
+      (ast-node-pool-context-type-storage-arena right))))
 
 (define (ctfe-eval-unquote-expr
   [inner : AstExpr]

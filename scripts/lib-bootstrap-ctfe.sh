@@ -89,3 +89,22 @@ bootstrap_seed_comptime_short_variant_bridge_root() {
         "$bridge_root" >&2
     printf '%s\n' "$bridge_root"
 }
+
+# A seed compiler's backend runtime is baked into the seed binary. When source
+# introduces a new runtime entry point, the first generated compiler therefore
+# needs a one-generation compatibility definition. Newer compilers emit the
+# real small-root implementation themselves, so the shim is appended only when
+# generated assembly has a reference but no definition.
+bootstrap_seed_runtime_small_arena_compat() {
+    assembly=$1
+    if grep -q '^tl_arena_make_small:' "$assembly"; then
+        return 0
+    fi
+    echo "[bootstrap] seed runtime lacks tl_arena_make_small; adding stage1 compatibility trampoline"
+    printf '%s\n' \
+        '' \
+        '    .text' \
+        '    .globl tl_arena_make_small' \
+        'tl_arena_make_small:' \
+        '    jmp tl_arena_make' >> "$assembly"
+}

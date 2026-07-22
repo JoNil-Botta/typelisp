@@ -103,6 +103,9 @@
 ;: Runtime hook backing `make`.
 (extern (tl_arena_make) : i64)
 
+;: Runtime hook for compiler-owned small-reservation arenas.
+(extern (tl_arena_make_small) : i64)
+
 ;: Runtime hook backing `make-atomic`.
 (extern (tl_arena_make_atomic) : i64)
 

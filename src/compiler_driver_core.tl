@@ -40,6 +40,10 @@
 
 (define compiler-driver-pending-retired-source-arena : i64
   0)
+(define compiler-driver-pending-retired-source-expr-storage-arena : i64
+  0)
+(define compiler-driver-pending-retired-source-type-storage-arena : i64
+  0)
 
 ;; Uncached opt1/2 loads run parse/typecheck/list scratch in a separate arena.
 ;; Its surviving program shells escape at the same outer boundary as the
@@ -107,36 +111,32 @@
     (ast-expr-node-pool-state-create 1)
     (ast-type-node-pool-state-create 1)))
 
-;; A selfhost CLI reaches roughly 3.572M nodes after macro-free expression
-;; subtrees are shared. Starting the load pool below that forces a grow; bump
-;; arenas retain the superseded backing array until macro expansion is detached.
-;; Keep the reserve at 56 64K-node pages, one full page above the rounded-up
-;; observed source, so embedded stdlib and lowerer growth do not turn that
-;; transient double allocation into a Windows selfhost headroom failure.
+;; State-owned pools allocate fixed-size segments on demand. One expression
+;; segment covers tiny programs while self-host-sized compiles append segments
+;; without relocating earlier nodes or retaining an eager multi-million-slot
+;; reserve.
 (define compiler-driver-compile-load-expr-pool-initial-capacity : i64
-  3670016)
+  1)
 
-;; Reachability compaction retains about 1.641M nodes for the selfhost CLI,
-;; including clone augmentation and core `for` expansion. A quarter-page
-;; reserve leaves about 13K slots of headroom while avoiding an eager full
-;; page; larger programs still grow the pool normally.
+;; The checked generation uses the same single-segment starting point and grows
+;; independently from the source generation.
 (define compiler-driver-checked-lower-expr-pool-initial-capacity : i64
-  1654784)
+  1)
 
-;; Type nodes are hash-consed. The selfhost CLI retains roughly 5K unique type
-;; nodes even after macro expansion, so the former 262K-node reserve and its
-;; equally large dedup table were mostly dead allocation in both overlapping
-;; pool arenas. The pool grows safely when an unusually type-heavy program
-;; needs more room.
+;; Type nodes are hash-consed and use smaller on-demand segments. The dedup
+;; index retains enough slots for the measured selfhost unique-type set.
 (define compiler-driver-compile-type-pool-initial-capacity : i64
-  32768)
+  1)
 
 ;; A process-lifetime one-slot compatibility target used only to detach legacy
 ;; globals before an explicitly owned pool arena is destroyed. Production jobs
 ;; do not read or write through this context; their next load receives its
 ;; `AstNodePoolContext` directly.
 (define compiler-driver-detached-compat-pools : AstNodePoolContext
-  (ast-node-pool-context-new-with-capacities 1 1))
+  ;; This sentinel is never read or written. Snapshot the process-global
+  ;; compatibility fallback instead of allocating a duplicate 64K expression
+  ;; segment into the process-lifetime default arena.
+  (ast-node-pool-context-capture-active))
 
 (define (compiler-driver-state-detach-active-pools-if-owned!
   [pools : AstNodePoolContext]) : unit
@@ -148,7 +148,7 @@
 
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
-    [pool-arena : i64 (arena.tl_arena_make)]
+    [pool-arena : i64 (ast-node-pool-arena-make)]
     [pools : AstNodePoolContext
       (ast-node-pool-context-new-with-capacities-in-arena
         compiler-driver-compile-load-expr-pool-initial-capacity
@@ -247,6 +247,16 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
+        "expr-pool-storage"
+        (ast-node-pool-expr-storage-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "type-pool-storage"
+        (ast-node-pool-type-storage-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
         "intern-persistent"
         (ci.intern-persistent-arena-handle))
       (allocation_profile.compiler-allocation-profile-control!
@@ -259,6 +269,24 @@
         phase
         "lower-ir"
         lower-ir-arena)
+      unit)))
+
+(define (compiler-driver-allocation-profile-pool-storage-snapshot!
+  [phase : String]
+  [pools : AstNodePoolContext]) : unit
+  (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
+    unit
+    (begin
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "expr-pool-storage"
+        (ast-node-pool-context-expr-storage-arena pools))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "type-pool-storage"
+        (ast-node-pool-context-type-storage-arena pools))
       unit)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
@@ -306,7 +334,7 @@
 (define (compiler-driver-state-new-checked-lower-pools) : AstNodePoolContext
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
-    [pool-arena : i64 (arena.tl_arena_make)]
+    [pool-arena : i64 (ast-node-pool-arena-make)]
     [_set-pool-arena : unit
       (unsafe
         (arena.tl_arena_set pool-arena))]
@@ -325,8 +353,10 @@
 
 (define (compiler-driver-state-destroy-uncommitted-pools!
   [pools : AstNodePoolContext]) : unit
-  (unsafe
-    (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools))))
+  (begin
+    (ast-node-pool-context-destroy-storage! pools)
+    (unsafe
+      (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools)))))
 
 (define (compiler-driver-state-retain-lowered-types!
   [state : CompilerDriverState]
@@ -335,6 +365,10 @@
   [pools : AstNodePoolContext]) : ResultCompilerDriverLowered
   (let
     [old-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [old-expr-storage-arena : i64
+      (ast-node-pool-context-expr-storage-arena pools)]
+    [old-type-storage-arena : i64
+      (ast-node-pool-context-type-storage-arena pools)]
     [retained : AstNodePoolContext
       (ast-node-pool-context-clone-types-only pools)]
     (begin
@@ -352,7 +386,20 @@
           (arena.tl_arena_set (ast-node-pool-context-base-arena retained)))
         unit)
       (ast-node-pool-reader-use! retained)
+      (compiler-driver-allocation-profile-pool-storage-snapshot!
+        "retained-reader"
+        retained)
+      (cfg
+        compile-profile
+        (compiler-lower-profile-pools "retained_reader" retained)
+        unit)
       (set! compiler-driver-pending-retired-source-arena old-arena)
+      (set!
+        compiler-driver-pending-retired-source-expr-storage-arena
+        old-expr-storage-arena)
+      (set!
+        compiler-driver-pending-retired-source-type-storage-arena
+        old-type-storage-arena)
       (compiler-driver-lowered-from-pools program spans retained))))
 
 (define (compiler-driver-state-clear-pool-backed-caches-for-state!
@@ -386,13 +433,13 @@
     (compiler-driver-state-session-cache-enabled? state))
     unit
     (let
-      ;; The pool arena may grow past its first 64 MiB segment during a compile.
+      ;; The pool payload arena may grow past its root during a compile.
       ;; Destroy the installed head we just retired; the runtime root also tracks
       ;; that newest live segment so either head or root handle reclaims the chain.
       [old-newest : i64
         (ast-node-pool-context-base-arena
           (compiler-driver-state-pool-context state))]
-      [new-arena : i64 (arena.tl_arena_make)]
+      [new-arena : i64 (ast-node-pool-arena-make)]
       (begin
         (compiler-driver-state-clear-pool-backed-caches-for-state! state)
         ;; Do not materialize the replacement backing arrays while the retired
@@ -404,6 +451,12 @@
           unit)
         (compiler-driver-state-detach-active-pools-if-owned!
           (compiler-driver-state-pool-context state))
+        (ast-node-pool-context-destroy-storage!
+          (compiler-driver-state-pool-context state))
+        (if (= (arena.tl_arena_current) old-newest)
+          (unsafe
+            (arena.tl_arena_set new-arena))
+          unit)
         (unsafe
           (arena.tl_arena_destroy old-newest))
         (let
@@ -1737,6 +1790,10 @@
     (let
       [retained-arena : i64 (arena.tl_arena_current)]
       [retire-arena : i64 compiler-driver-pending-retired-source-arena]
+      [retire-expr-storage-arena : i64
+        compiler-driver-pending-retired-source-expr-storage-arena]
+      [retire-type-storage-arena : i64
+        compiler-driver-pending-retired-source-type-storage-arena]
       (begin
         ;; Clear globals at the outer emit boundary, after the load/lower call
         ;; has returned and no active frame can still hold their arena values.
@@ -1745,6 +1802,12 @@
         (unsafe
           (begin
             (set! compiler-driver-pending-retired-source-arena 0)
+            (set! compiler-driver-pending-retired-source-expr-storage-arena 0)
+            (set! compiler-driver-pending-retired-source-type-storage-arena 0)
+            (ast-node-pool-storage-arenas-destroy!
+              retire-expr-storage-arena
+              retire-type-storage-arena
+              retire-arena)
             (arena.tl_arena_destroy retire-arena)
             (arena.tl_arena_set retained-arena)))))))
 
@@ -2761,6 +2824,13 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-prelude-counters))
           (compiler-driver-allocation-profile-snapshot! "load")
+          (compiler-driver-allocation-profile-pool-storage-snapshot!
+            "source-load"
+            pools)
+          (cfg
+            compile-profile
+            (compiler-lower-profile-pools "source_load" pools)
+            unit)
           (cfg compile-profile (compiler-driver-profile-start-phase))
           ;; Parsing initialized builtin IDs for this state's active intern
           ;; table. Preserve that snapshot instead of reinstalling the stale
@@ -2783,12 +2853,29 @@
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
                 pools)]
+            [_profile-checked-storage : unit
+              (begin
+                (compiler-driver-allocation-profile-pool-storage-snapshot!
+                  "checked-pool"
+                  dest-pools)
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-pools "checked_pool" dest-pools)
+                  unit))]
             [entry-arena : i64 (arena.tl_arena_current)]
             ;; Release the source pools from the newest segment of their arena
             ;; chain, not the make() root handle: the chain is reachable only from
             ;; its head, so destroying the root leaks every overflow segment (the
             ;; whole-program parsed AST), which accumulates across batch entries.
             [source-pools-arena : i64 (compiler-driver-node-pool-base-arena)]
+            ;; `compiler-driver-state-adopt-pools!` mutates the state's shared
+            ;; cells. Preserve the retiring storage handles before adoption so
+            ;; the type-literal deferred path cannot mistake the new pool for
+            ;; its source and unmap live segments.
+            [source-expr-storage-arena : i64
+              (ast-node-pool-context-expr-storage-arena pools)]
+            [source-type-storage-arena : i64
+              (ast-node-pool-context-type-storage-arena pools)]
             [_clear-source-floors : unit
               (if release-source-pools?
                 (compiler-load-session-state-floors-set!
@@ -2804,6 +2891,12 @@
                   (if defer-source-destroy?
                     0
                     source-pools-arena)
+                  (if defer-source-destroy?
+                    0
+                    (ast-node-pool-context-expr-storage-arena pools))
+                  (if defer-source-destroy?
+                    0
+                    (ast-node-pool-context-type-storage-arena pools))
                   (if (and
                     route-source-allocations?
                     (not defer-source-destroy?))
@@ -2846,6 +2939,10 @@
               (if (and defer-source-destroy? dest-committed?)
                 (begin
                   (compiler-typecheck-ctfe-env-cache-clear!)
+                  (ast-node-pool-storage-arenas-destroy!
+                    source-expr-storage-arena
+                    source-type-storage-arena
+                    source-pools-arena)
                   (unsafe
                     (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
@@ -2868,6 +2965,13 @@
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
+                  (compiler-driver-allocation-profile-pool-storage-snapshot!
+                    "macro-detach"
+                    result-pools)
+                  (cfg
+                    compile-profile
+                    (compiler-lower-profile-pools "macro_detach" result-pools)
+                    unit)
                   (compiler-driver-allocation-profile-snapshot! "lower")
                   (if (ast-node-pool-reader-type-exhausted?)
                     (ResultCompilerDriverLowered.Err
@@ -2956,6 +3060,13 @@
       [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (compiler-driver-allocation-profile-pool-storage-snapshot!
+            "source-load"
+            pools)
+          (cfg
+            compile-profile
+            (compiler-lower-profile-pools "source_load" pools)
+            unit)
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (compiler-driver-state-capture-active-builtins! state)
           (compiler-driver-state-install-lower-arenas! state)
@@ -2978,12 +3089,27 @@
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
                 pools)]
+            [_profile-checked-storage : unit
+              (begin
+                (compiler-driver-allocation-profile-pool-storage-snapshot!
+                  "checked-pool"
+                  dest-pools)
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-pools "checked_pool" dest-pools)
+                  unit))]
             [entry-arena : i64 (arena.tl_arena_current)]
             ;; Release the source pools from the newest segment of their arena
             ;; chain, not the make() root handle: the chain is reachable only from
             ;; its head, so destroying the root leaks every overflow segment (the
             ;; whole-program parsed AST), which accumulates across batch entries.
             [source-pools-arena : i64 (compiler-driver-node-pool-base-arena)]
+            ;; These must remain source identities after the state cells adopt
+            ;; the compacted destination below.
+            [source-expr-storage-arena : i64
+              (ast-node-pool-context-expr-storage-arena pools)]
+            [source-type-storage-arena : i64
+              (ast-node-pool-context-type-storage-arena pools)]
             [_clear-source-floors : unit
               (if release-source-pools?
                 (compiler-load-session-state-floors-set!
@@ -2999,6 +3125,12 @@
                   (if defer-source-destroy?
                     0
                     source-pools-arena)
+                  (if defer-source-destroy?
+                    0
+                    (ast-node-pool-context-expr-storage-arena pools))
+                  (if defer-source-destroy?
+                    0
+                    (ast-node-pool-context-type-storage-arena pools))
                   0)
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
@@ -3035,6 +3167,10 @@
               (if (and defer-source-destroy? dest-committed?)
                 (begin
                   (compiler-typecheck-ctfe-env-cache-clear!)
+                  (ast-node-pool-storage-arenas-destroy!
+                    source-expr-storage-arena
+                    source-type-storage-arena
+                    source-pools-arena)
                   (unsafe
                     (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
@@ -3053,6 +3189,13 @@
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
+                  (compiler-driver-allocation-profile-pool-storage-snapshot!
+                    "macro-detach"
+                    result-pools)
+                  (cfg
+                    compile-profile
+                    (compiler-lower-profile-pools "macro_detach" result-pools)
+                    unit)
                   (if (ast-node-pool-reader-type-exhausted?)
                     (ResultCompilerDriverLowered.Err
                       (box

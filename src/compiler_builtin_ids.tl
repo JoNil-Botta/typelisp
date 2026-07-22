@@ -19,6 +19,8 @@
   -1)
 (define compiler-builtin-id-tl-arena-make : i64
   -1)
+(define compiler-builtin-id-tl-arena-make-small : i64
+  -1)
 (define compiler-builtin-id-tl-arena-make-atomic : i64
   -1)
 (define compiler-builtin-id-tl-arena-current : i64
@@ -643,7 +645,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 310)]
+    [ids : (Array i64) (make-array i64 311)]
     [ctfe-ids : (Array i64) (make-array i64 234)]
     [i : i64 0]
     (begin
@@ -651,7 +653,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 310)
+      (while (< i 311)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -1132,6 +1134,7 @@
     (state-set! state 307 compiler-builtin-id-arena-destroy-safe-base)
     (state-set! state 308 compiler-builtin-id-tl-stdin-eof-label)
     (state-set! state 309 compiler-builtin-id-tl-flush-stdout-label)
+    (state-set! state 310 compiler-builtin-id-tl-arena-make-small)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1557,6 +1560,7 @@
     (set! compiler-builtin-id-arena-destroy-safe-base (state-ref state 307))
     (set! compiler-builtin-id-tl-stdin-eof-label (state-ref state 308))
     (set! compiler-builtin-id-tl-flush-stdout-label (state-ref state 309))
+    (set! compiler-builtin-id-tl-arena-make-small (state-ref state 310))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -1886,6 +1890,9 @@
     (set!
       compiler-builtin-id-tl-arena-make
       (compiler-builtin-resolve-name insert-missing "tl_arena_make"))
+    (set!
+      compiler-builtin-id-tl-arena-make-small
+      (compiler-builtin-resolve-name insert-missing "tl_arena_make_small"))
     (set!
       compiler-builtin-id-tl-arena-make-atomic
       (compiler-builtin-resolve-name insert-missing "tl_arena_make_atomic"))
@@ -3117,12 +3124,13 @@
         compiler-builtin-id-tl-arena-make)
       (compiler-builtin-id-any4?
         name-id
+        compiler-builtin-id-tl-arena-make-small
         compiler-builtin-id-tl-arena-make-atomic
         compiler-builtin-id-tl-arena-current
-        compiler-builtin-id-tl-arena-set
-        compiler-builtin-id-tl-arena-destroy)
-      (compiler-builtin-id-any3?
+        compiler-builtin-id-tl-arena-set)
+      (compiler-builtin-id-any4?
         name-id
+        compiler-builtin-id-tl-arena-destroy
         compiler-builtin-id-tl-arena-poison-enable
         compiler-builtin-id-tl-thread-entry-ptr
         compiler-builtin-id-tl-thread-init))))
@@ -3214,10 +3222,11 @@
         name-id
         compiler-builtin-id-tl-arena-poison-enable
         compiler-builtin-id-tl-arena-make
-        compiler-builtin-id-tl-arena-make-atomic
-        compiler-builtin-id-tl-arena-current)
-      (compiler-builtin-id-any3?
+        compiler-builtin-id-tl-arena-make-small
+        compiler-builtin-id-tl-arena-make-atomic)
+      (compiler-builtin-id-any4?
         name-id
+        compiler-builtin-id-tl-arena-current
         compiler-builtin-id-tl-arena-set
         compiler-builtin-id-tl-thread-entry-ptr
         compiler-builtin-id-tl-thread-init)

@@ -8400,6 +8400,7 @@
               [out : ResultAstProgramDiagnostic
                 (ResultAstProgramDiagnostic.Ok out-program)]
               (begin
+                (ast-node-pool-context-destroy-storage! scratch-pools)
                 (unsafe
                   (arena.tl_arena_destroy scratch-head))
                 out))])]
@@ -8415,6 +8416,7 @@
             (ResultAstProgramDiagnostic.Err stable-diag)]
           (begin
             (reader.sp-node-pool-truncate! records-start)
+            (ast-node-pool-context-destroy-storage! scratch-pools)
             (unsafe
               (arena.tl_arena_destroy scratch-head))
             out))])))

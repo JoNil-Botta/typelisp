@@ -425,6 +425,7 @@ else
     run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg stage0-seed-bootstrap --stdlib-root stdlib --stdlib-root src --opt-level 2
 fi
 
+bootstrap_seed_runtime_small_arena_compat "$STAGE1_ASM"
 assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
 if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then

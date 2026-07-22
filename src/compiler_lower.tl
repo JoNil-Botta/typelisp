@@ -605,6 +605,10 @@
   (ast-node-pool-context-capture-active))
 (define lower-checked-source-release-arena : i64
   0)
+(define lower-checked-source-release-expr-storage-arena : i64
+  0)
+(define lower-checked-source-release-type-storage-arena : i64
+  0)
 (define lower-checked-frontend-release-arena : i64
   0)
 (define lower-checked-frontend-released : bool
@@ -621,10 +625,18 @@
 (define (compiler-lower-checked-dest-pools-use!
   [dest-pools : AstNodePoolContext]
   [source-release-arena : i64]
+  [source-release-expr-storage-arena : i64]
+  [source-release-type-storage-arena : i64]
   [frontend-release-arena : i64]) : unit
   (begin
     (set! lower-checked-dest-pools-context dest-pools)
     (set! lower-checked-source-release-arena source-release-arena)
+    (set!
+      lower-checked-source-release-expr-storage-arena
+      source-release-expr-storage-arena)
+    (set!
+      lower-checked-source-release-type-storage-arena
+      source-release-type-storage-arena)
     (set! lower-checked-frontend-release-arena frontend-release-arena)
     (set! lower-checked-frontend-released false)
     (set! lower-checked-dest-pools-rolled-over false)
@@ -637,6 +649,8 @@
     (set! lower-checked-dest-pools-active false)
     (set! lower-checked-dest-pools-committed false)
     (set! lower-checked-source-release-arena 0)
+    (set! lower-checked-source-release-expr-storage-arena 0)
+    (set! lower-checked-source-release-type-storage-arena 0)
     (set! lower-checked-frontend-release-arena 0)
     (set! lower-checked-frontend-released false)
     (set! lower-checked-dest-pools-rolled-over false)
@@ -679,9 +693,13 @@
       ;; original source through its stable owner.
       (if lower-checked-dest-pools-deferred
         unit
-        (unsafe
-          (arena.tl_arena_destroy
-            (ast-node-pool-context-base-arena lower-checked-dest-pools-context))))
+        (begin
+          (ast-node-pool-context-destroy-storage!
+            lower-checked-dest-pools-context)
+          (unsafe
+            (arena.tl_arena_destroy
+              (ast-node-pool-context-base-arena
+                lower-checked-dest-pools-context)))))
       (set! lower-checked-dest-pools-rolled-over false)
       (set! lower-checked-dest-pools-deferred false)
       (set! lower-checked-dest-pools-active false))
@@ -709,6 +727,12 @@
         (set! lower-checked-dest-pools-deferred-type-capacity type-capacity)
         (set! lower-checked-dest-pools-deferred true)
         (set! lower-checked-source-release-arena source-arena)
+        (set!
+          lower-checked-source-release-expr-storage-arena
+          (ast-node-pool-context-expr-storage-arena source-pools))
+        (set!
+          lower-checked-source-release-type-storage-arena
+          (ast-node-pool-context-type-storage-arena source-pools))
         (set! lower-checked-frontend-release-arena macro-frontend-arena)
         ;; The driver's original frontend has already been retired. Preserve
         ;; that fact so an error between the two compactions restores allocation
@@ -741,6 +765,8 @@
           (unsafe
             (arena.tl_arena_destroy macro-frontend-arena)))
         (set! lower-checked-source-release-arena 0)
+        (set! lower-checked-source-release-expr-storage-arena 0)
+        (set! lower-checked-source-release-type-storage-arena 0)
         (set! lower-checked-frontend-release-arena 0)
         (set! lower-checked-dest-pools-deferred false)
         (set! lower-checked-dest-pools-rolled-over false)
@@ -840,6 +866,10 @@
   (if lower-checked-dest-pools-active
     (let
       [old-arena : i64 lower-checked-source-release-arena]
+      [old-expr-storage-arena : i64
+        lower-checked-source-release-expr-storage-arena]
+      [old-type-storage-arena : i64
+        lower-checked-source-release-type-storage-arena]
       [old-frontend-arena : i64 lower-checked-frontend-release-arena]
       [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
       [final-expr-state : AstExprNodePoolState
@@ -850,6 +880,8 @@
         (set! lower-checked-dest-pools-committed true)
         (set! lower-checked-dest-pools-rolled-over false)
         (set! lower-checked-source-release-arena 0)
+        (set! lower-checked-source-release-expr-storage-arena 0)
+        (set! lower-checked-source-release-type-storage-arena 0)
         (set! lower-checked-frontend-release-arena 0)
         (unsafe
           (arena.tl_arena_set dest-arena))
@@ -861,6 +893,10 @@
           lower-checked-dest-pools-context
           (ast-node-pool-context-new final-expr-state final-type-state))
         (ast-node-pool-context-install! lower-checked-dest-pools-context)
+        (ast-node-pool-storage-arenas-destroy!
+          old-expr-storage-arena
+          old-type-storage-arena
+          old-arena)
         (if (= old-arena 0)
           unit
           (unsafe
@@ -1175,11 +1211,23 @@
         (string.append "ast_expr_pool." (string.append point ".capacity"))
         (ast-node-pool-context-expr-capacity pools))
       (compiler-lower-profile-counter
+        (string.append "ast_expr_pool." (string.append point ".segments"))
+        (ast-node-pool-context-expr-segment-count pools))
+      (compiler-lower-profile-counter
+        (string.append "ast_expr_pool." (string.append point ".segment_bytes"))
+        (ast-node-pool-context-expr-segment-bytes pools))
+      (compiler-lower-profile-counter
         (string.append "ast_type_pool." (string.append point ".len"))
         (ast-node-pool-context-type-len pools))
       (compiler-lower-profile-counter
         (string.append "ast_type_pool." (string.append point ".capacity"))
-        (ast-node-pool-context-type-capacity pools)))))
+        (ast-node-pool-context-type-capacity pools))
+      (compiler-lower-profile-counter
+        (string.append "ast_type_pool." (string.append point ".segments"))
+        (ast-node-pool-context-type-segment-count pools))
+      (compiler-lower-profile-counter
+        (string.append "ast_type_pool." (string.append point ".segment_bytes"))
+        (ast-node-pool-context-type-segment-bytes pools)))))
 
 (cfg
   compile-profile

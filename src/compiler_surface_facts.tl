@@ -221,69 +221,72 @@
         (array-length decl-keys)
         surface-typecheck-facts-max-clone-observations))))
 
-(define (surface-typecheck-facts-encode
-  [facts : SurfaceTypecheckFacts]
-  [source-count : i64]
-  [identity-count : i64]) : ResultSurfaceTypecheckFactBytes
-  (if (not (surface-typecheck-facts-valid? facts))
-    (ResultSurfaceTypecheckFactBytes.Err
-      "surface facts: invalid checked-prefix facts")
-    (let
-      [decl-keys : (Array i64) (struct-get facts clone-decl-keys)]
-      [root-keys : (Array i64) (struct-get facts clone-root-keys)]
-      [call-indices : (Array i64) (struct-get facts clone-call-indices)]
-      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      [index : i64 0]
-      [ok : bool true]
-      (begin
-        (binary.surface-binary-push-u64!
-          (&mut out)
-          surface-typecheck-facts-magic)
-        (binary.surface-binary-push-u64!
-          (&mut out)
-          surface-typecheck-facts-schema-version)
-        (binary.surface-binary-push-u64!
-          (&mut out)
-          (struct-get facts macro-prefix-decl-count))
-        (binary.surface-binary-push-u64!
-          (&mut out)
-          (struct-get facts prefix-decl-count))
-        (binary.surface-binary-push-u64!
-          (&mut out)
-          (struct-get facts summary-values))
-        (binary.surface-binary-push-u64!
-          (&mut out)
-          (struct-get facts summary-functions))
-        (binary.surface-binary-push-u64!
-          (&mut out)
-          (struct-get facts summary-externs))
-        (binary.surface-binary-push-u64! (&mut out) (array-length decl-keys))
-        (while (and ok (< index (array-length decl-keys)))
-          (let
-            [decl-key : i64
-              (surface_identity.surface-identity-portable-id
-                (array-ref decl-keys index)
-                source-count
-                identity-count)]
-            [root-key : i64
-              (surface_identity.surface-identity-portable-id
-                (array-ref root-keys index)
-                source-count
-                identity-count)]
-            (if (or (< decl-key 0) (< root-key 0))
-              (set! ok false)
-              (begin
-                (binary.surface-binary-push-u64! (&mut out) decl-key)
-                (binary.surface-binary-push-u64! (&mut out) root-key)
-                (binary.surface-binary-push-u64!
-                  (&mut out)
-                  (array-ref call-indices index))
-                (set! index (+ index 1))))))
-        (if ok
-          (ResultSurfaceTypecheckFactBytes.Ok
-            (byte_buf_core.byte-buf-builder-finish-array (& out)))
-          (ResultSurfaceTypecheckFactBytes.Err
-            "surface facts: identity is not relocatable"))))))
+(cfg
+  compiler-surface-producer
+  (define (surface-typecheck-facts-encode
+    [facts : SurfaceTypecheckFacts]
+    [source-count : i64]
+    [identity-count : i64]) : ResultSurfaceTypecheckFactBytes
+    (if (not (surface-typecheck-facts-valid? facts))
+      (ResultSurfaceTypecheckFactBytes.Err
+        "surface facts: invalid checked-prefix facts")
+      (let
+        [decl-keys : (Array i64) (struct-get facts clone-decl-keys)]
+        [root-keys : (Array i64) (struct-get facts clone-root-keys)]
+        [call-indices : (Array i64) (struct-get facts clone-call-indices)]
+        [out : byte_buf_core.ByteBufBuilder
+          (byte_buf_core.byte-buf-builder-new)]
+        [index : i64 0]
+        [ok : bool true]
+        (begin
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            surface-typecheck-facts-magic)
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            surface-typecheck-facts-schema-version)
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            (struct-get facts macro-prefix-decl-count))
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            (struct-get facts prefix-decl-count))
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            (struct-get facts summary-values))
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            (struct-get facts summary-functions))
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            (struct-get facts summary-externs))
+          (binary.surface-binary-push-u64! (&mut out) (array-length decl-keys))
+          (while (and ok (< index (array-length decl-keys)))
+            (let
+              [decl-key : i64
+                (surface_identity.surface-identity-portable-id
+                  (array-ref decl-keys index)
+                  source-count
+                  identity-count)]
+              [root-key : i64
+                (surface_identity.surface-identity-portable-id
+                  (array-ref root-keys index)
+                  source-count
+                  identity-count)]
+              (if (or (< decl-key 0) (< root-key 0))
+                (set! ok false)
+                (begin
+                  (binary.surface-binary-push-u64! (&mut out) decl-key)
+                  (binary.surface-binary-push-u64! (&mut out) root-key)
+                  (binary.surface-binary-push-u64!
+                    (&mut out)
+                    (array-ref call-indices index))
+                  (set! index (+ index 1))))))
+          (if ok
+            (ResultSurfaceTypecheckFactBytes.Ok
+              (byte_buf_core.byte-buf-builder-finish-array (& out)))
+            (ResultSurfaceTypecheckFactBytes.Err
+              "surface facts: identity is not relocatable")))))))
 
 (define (surface-typecheck-fact-reader-new [bytes : (Array u8)]) : SurfaceTypecheckFactReader
   (let

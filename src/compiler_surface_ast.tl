@@ -1408,140 +1408,145 @@
               (ResultSurfaceAstHydration.Ok
                 (SurfaceAstHydration decls paths modules seen pools))]))))))
 
-(define (surface-ast-tests-ok?) : bool
-  (let
-    [_reset : unit (ci.intern-reset!)]
-    [module-id : i64 (ci.intern "test.module")]
-    [path-id : i64 (ci.intern "test.tl")]
-    [fn-id : i64 (ci.intern "main")]
-    [source-pools : AstNodePoolContext
-      (ast-node-pool-context-new-with-capacities 8 8)]
-    [left : i64
-      (ast-node-pool-context-expr-push
-        source-pools
-        (AstExpr.Literal (AstLiteral.Int 20 "20")))]
-    [right : i64
-      (ast-node-pool-context-expr-push
-        source-pools
-        (AstExpr.Literal (AstLiteral.Int 22 "22")))]
-    [body : i64
-      (ast-node-pool-context-expr-push
-        source-pools
-        (AstExpr.Binary AstBinOp.Add left right))]
-    [decl-slots : (Array AstDecl) (make-array AstDecl 1)]
-    [path-slots : (Array String) (make-array String 1)]
-    [owner-slots : (Array i64) (make-array i64 1)]
-    [module-slots : (Array i64) (make-array i64 1)]
-    [key-modules : (Array String) (make-array String 1)]
-    (begin
-      (array-set!
-        decl-slots
-        0
-        (AstDecl.DefFn
-          ast-decl-meta-runtime
-          fn-id
-          (AstParamList (make-array AstParam 0) 0)
-          AstType.I64
-          body
-          AstFnMetadata.No))
-      (array-set! path-slots 0 "test.tl")
-      (array-set! owner-slots 0 module-id)
-      (array-set! module-slots 0 module-id)
-      (array-set! key-modules 0 "test.tl")
-      (let
-        [decls : AstDeclList (AstDeclList decl-slots 0 1 true)]
-        [paths : AstDeclPathList
-          (AstDeclPathList path-slots owner-slots 0 1 true)]
-        [modules : AstDeclModuleList (AstDeclModuleList module-slots 0 1 true)]
-        [seen : sym_i64_env.SymI64Env
-          (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) path-id 1)]
-        [key : surface_identity.SurfaceIdentityKey
-          (surface_identity.SurfaceIdentityKey
-            "test.package"
-            key-modules
-            "source-hash"
-            "compiler-build"
-            "host")]
-        [identity-payload : surface_identity.SurfaceIdentityPayload
-          (surface_identity.surface-identity-capture key)]
-        [source-count : i64
-          (array-length (struct-get identity-payload source-names))]
-        [identity-count : i64
-          (+
-            source-count
-            (array-length (struct-get identity-payload generated)))]
-        (match (surface_identity.surface-identity-encode identity-payload)
-          [(surface_identity.ResultSurfaceIdentityBytes.Err _) false]
-          [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
-            (match (surface-ast-encode
-              decls
-              paths
-              modules
-              seen
-              source-pools
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-tests-ok?) : bool
+    (let
+      [_reset : unit (ci.intern-reset!)]
+      [module-id : i64 (ci.intern "test.module")]
+      [path-id : i64 (ci.intern "test.tl")]
+      [fn-id : i64 (ci.intern "main")]
+      [source-pools : AstNodePoolContext
+        (ast-node-pool-context-new-with-capacities 8 8)]
+      [left : i64
+        (ast-node-pool-context-expr-push
+          source-pools
+          (AstExpr.Literal (AstLiteral.Int 20 "20")))]
+      [right : i64
+        (ast-node-pool-context-expr-push
+          source-pools
+          (AstExpr.Literal (AstLiteral.Int 22 "22")))]
+      [body : i64
+        (ast-node-pool-context-expr-push
+          source-pools
+          (AstExpr.Binary AstBinOp.Add left right))]
+      [decl-slots : (Array AstDecl) (make-array AstDecl 1)]
+      [path-slots : (Array String) (make-array String 1)]
+      [owner-slots : (Array i64) (make-array i64 1)]
+      [module-slots : (Array i64) (make-array i64 1)]
+      [key-modules : (Array String) (make-array String 1)]
+      (begin
+        (array-set!
+          decl-slots
+          0
+          (AstDecl.DefFn
+            ast-decl-meta-runtime
+            fn-id
+            (AstParamList (make-array AstParam 0) 0)
+            AstType.I64
+            body
+            AstFnMetadata.No))
+        (array-set! path-slots 0 "test.tl")
+        (array-set! owner-slots 0 module-id)
+        (array-set! module-slots 0 module-id)
+        (array-set! key-modules 0 "test.tl")
+        (let
+          [decls : AstDeclList (AstDeclList decl-slots 0 1 true)]
+          [paths : AstDeclPathList
+            (AstDeclPathList path-slots owner-slots 0 1 true)]
+          [modules : AstDeclModuleList
+            (AstDeclModuleList module-slots 0 1 true)]
+          [seen : sym_i64_env.SymI64Env
+            (sym_i64_env.sym-i64-bind-id (sym_i64_env.sym-i64-empty) path-id 1)]
+          [key : surface_identity.SurfaceIdentityKey
+            (surface_identity.SurfaceIdentityKey
+              "test.package"
+              key-modules
+              "source-hash"
+              "compiler-build"
+              "host")]
+          [identity-payload : surface_identity.SurfaceIdentityPayload
+            (surface_identity.surface-identity-capture key)]
+          [source-count : i64
+            (array-length (struct-get identity-payload source-names))]
+          [identity-count : i64
+            (+
               source-count
-              identity-count)
-              [(ResultSurfaceAstBytes.Err _) false]
-              [(ResultSurfaceAstBytes.Ok ast-bytes)
-                (begin
-                  (ci.intern-reset!)
-                  (let
-                    [_unrelated : i64 (ci.intern "unrelated")]
-                    (match (surface_identity.surface-identity-hydrate
-                      identity-bytes
-                      key)
-                      [(surface_identity.ResultSurfaceIdentityHydration.Err _)
-                        false]
-                      [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch
-                          _)
-                        false]
-                      [(surface_identity.ResultSurfaceIdentityHydration.Ok
-                          identity-hydration)
-                        (let
-                          [dest-pools : AstNodePoolContext
-                            (ast-node-pool-context-new-with-capacities 8 8)]
-                          (match (surface-ast-decode
-                            ast-bytes
-                            (struct-get identity-hydration remap)
-                            dest-pools)
-                            [(ResultSurfaceAstHydration.Err _) false]
-                            [(ResultSurfaceAstHydration.Ok hydration)
-                              (and
-                                (=
-                                  (ast-node-pool-context-expr-len
-                                    (struct-get hydration pools))
-                                  3)
-                                (=
-                                  (ast-decl-list-len
-                                    (& (struct-get hydration decls)))
-                                  1)
-                                (match (array-ref
-                                  (struct-get
-                                    (struct-get hydration decls)
-                                    slots)
-                                  0)
-                                  [(AstDecl.DefFn
-                                      _
-                                      hydrated-name
-                                      _
-                                      _
-                                      hydrated-body
-                                      _)
-                                    (and
-                                      (surface_identity.surface-identity-string-eq?
-                                        (ci.intern-str hydrated-name)
-                                        "main")
-                                      (match (ast-node-pool-context-expr-get
-                                        (struct-get hydration pools)
-                                        hydrated-body)
-                                        [(AstExpr.Binary op _ _)
-                                          (match op
-                                            [(AstBinOp.Add) true]
-                                            [_ false])]
-                                        [_ false]))]
-                                  [_ false]))]))])))])])))))
+              (array-length (struct-get identity-payload generated)))]
+          (match (surface_identity.surface-identity-encode identity-payload)
+            [(surface_identity.ResultSurfaceIdentityBytes.Err _) false]
+            [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
+              (match (surface-ast-encode
+                decls
+                paths
+                modules
+                seen
+                source-pools
+                source-count
+                identity-count)
+                [(ResultSurfaceAstBytes.Err _) false]
+                [(ResultSurfaceAstBytes.Ok ast-bytes)
+                  (begin
+                    (ci.intern-reset!)
+                    (let
+                      [_unrelated : i64 (ci.intern "unrelated")]
+                      (match (surface_identity.surface-identity-hydrate
+                        identity-bytes
+                        key)
+                        [(surface_identity.ResultSurfaceIdentityHydration.Err _)
+                          false]
+                        [(surface_identity.ResultSurfaceIdentityHydration.KeyMismatch
+                            _)
+                          false]
+                        [(surface_identity.ResultSurfaceIdentityHydration.Ok
+                            identity-hydration)
+                          (let
+                            [dest-pools : AstNodePoolContext
+                              (ast-node-pool-context-new-with-capacities 8 8)]
+                            (match (surface-ast-decode
+                              ast-bytes
+                              (struct-get identity-hydration remap)
+                              dest-pools)
+                              [(ResultSurfaceAstHydration.Err _) false]
+                              [(ResultSurfaceAstHydration.Ok hydration)
+                                (and
+                                  (=
+                                    (ast-node-pool-context-expr-len
+                                      (struct-get hydration pools))
+                                    3)
+                                  (=
+                                    (ast-decl-list-len
+                                      (& (struct-get hydration decls)))
+                                    1)
+                                  (match (array-ref
+                                    (struct-get
+                                      (struct-get hydration decls)
+                                      slots)
+                                    0)
+                                    [(AstDecl.DefFn
+                                        _
+                                        hydrated-name
+                                        _
+                                        _
+                                        hydrated-body
+                                        _)
+                                      (and
+                                        (surface_identity.surface-identity-string-eq?
+                                          (ci.intern-str hydrated-name)
+                                          "main")
+                                        (match (ast-node-pool-context-expr-get
+                                          (struct-get hydration pools)
+                                          hydrated-body)
+                                          [(AstExpr.Binary op _ _)
+                                            (match op
+                                              [(AstBinOp.Add) true]
+                                              [_ false])]
+                                          [_ false]))]
+                                    [_ false]))]))])))])]))))))
 
-(define (surface-ast-selftest-main) : i64
-  (if (surface-ast-tests-ok?)
-    42
-    1))
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-selftest-main) : i64
+    (if (surface-ast-tests-ok?)
+      42
+      1)))

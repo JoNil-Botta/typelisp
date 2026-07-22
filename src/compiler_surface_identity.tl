@@ -45,10 +45,6 @@
   (ok (Array bool))
   (message (Array String)))
 
-(defenum ResultSurfaceIdentityBytes
-  (Ok (Array u8))
-  (Err String))
-
 (defenum ResultSurfaceIdentityPayload
   (Ok SurfaceIdentityPayload)
   (Err String))
@@ -177,15 +173,6 @@
       (struct-get left configuration)
       (struct-get right configuration))))
 
-(define (surface-identity-push-string!
-  [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [text : String]) : unit
-  (begin
-    (binary.surface-binary-push-u64!
-      out
-      (binary.surface-binary-string-length text))
-    (binary.surface-binary-push-string! out text)))
-
 (define (surface-identity-local-ref [id : i64] [source-count : i64]) : i64
   (cond
     [(and (>= id 0) (< id source-count)) id]
@@ -277,78 +264,6 @@
       [(and (>= id 0) (< id image-stride)) (array-ref remap id)]
       [else -1])))
 
-(define (surface-identity-generated-record [id : i64] [source-count : i64]) : SurfaceGeneratedIdentity
-  (let
-    [qualified : bool (ci.intern-qualified? id)]
-    [dotted : bool (ci.intern-dotted? id)]
-    [ref0 : i64 -1]
-    [ref1 : i64 -1]
-    [ref2 : i64 -1]
-    (begin
-      (if qualified
-        (begin
-          (set!
-            ref0
-            (surface-identity-local-ref
-              (ci.intern-qualified-module-id id)
-              source-count))
-          (set!
-            ref1
-            (surface-identity-local-ref
-              (ci.intern-qualified-base-id id)
-              source-count)))
-        (if dotted
-          (begin
-            (set!
-              ref0
-              (surface-identity-local-ref
-                (ci.intern-leading-dot-id id)
-                source-count))
-            (set!
-              ref1
-              (surface-identity-local-ref
-                (ci.intern-dotted-prefix-id id)
-                source-count))
-            (set!
-              ref2
-              (surface-identity-local-ref
-                (ci.intern-dotted-tail-id id)
-                source-count)))
-          unit))
-      (SurfaceGeneratedIdentity
-        (ci.intern-str id)
-        (ci.intern-generated-canonical-id? id)
-        qualified
-        dotted
-        ref0
-        ref1
-        ref2))))
-
-(define (surface-identity-capture [key : SurfaceIdentityKey]) : SurfaceIdentityPayload
-  (let
-    [source-count : i64 (ci.intern-pool-len)]
-    [generated-count : i64 (ci.intern-generated-count)]
-    [source-names : (Array String) (make-array String source-count)]
-    [generated : (Array SurfaceGeneratedIdentity)
-      (make-array SurfaceGeneratedIdentity generated-count)]
-    [index : i64 0]
-    (begin
-      (while (< index source-count)
-        (begin
-          (array-set! source-names index (ci.intern-str index))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index generated-count)
-        (begin
-          (array-set!
-            generated
-            index
-            (surface-identity-generated-record
-              (ci.intern-generated-id-at-allocation-index index)
-              source-count))
-          (set! index (+ index 1))))
-      (SurfaceIdentityPayload key source-names generated))))
-
 (define (surface-identity-generated-record-valid?
   [record : SurfaceGeneratedIdentity]
   [prior-count : i64]) : bool
@@ -386,82 +301,6 @@
           (set! index (+ index 1))
           (set! ok false)))
       ok)))
-
-(define (surface-identity-encode [payload : SurfaceIdentityPayload]) : ResultSurfaceIdentityBytes
-  (if (not (surface-identity-payload-valid? payload))
-    (ResultSurfaceIdentityBytes.Err
-      "surface identity: invalid package key or identity graph")
-    (let
-      [key : SurfaceIdentityKey (struct-get payload key)]
-      [source-names : (Array String) (struct-get payload source-names)]
-      [generated : (Array SurfaceGeneratedIdentity)
-        (struct-get payload generated)]
-      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      [index : i64 0]
-      (begin
-        (binary.surface-binary-push-u64! (&mut out) surface-identity-magic)
-        (binary.surface-binary-push-u64!
-          (&mut out)
-          surface-identity-schema-version)
-        (binary.surface-binary-push-u64!
-          (&mut out)
-          (array-length (struct-get key modules)))
-        (binary.surface-binary-push-u64! (&mut out) (array-length source-names))
-        (binary.surface-binary-push-u64! (&mut out) (array-length generated))
-        (surface-identity-push-string! (&mut out) (struct-get key package-name))
-        (surface-identity-push-string! (&mut out) (struct-get key source-hash))
-        (surface-identity-push-string!
-          (&mut out)
-          (struct-get key compiler-build))
-        (surface-identity-push-string!
-          (&mut out)
-          (struct-get key configuration))
-        (while (< index (array-length (struct-get key modules)))
-          (begin
-            (surface-identity-push-string!
-              (&mut out)
-              (array-ref (struct-get key modules) index))
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index (array-length source-names))
-          (begin
-            (surface-identity-push-string!
-              (&mut out)
-              (array-ref source-names index))
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index (array-length generated))
-          (let
-            [record : SurfaceGeneratedIdentity (array-ref generated index)]
-            [flags : i64
-              (+
-                (if (struct-get record canonical)
-                  surface-identity-generated-canonical
-                  0)
-                (+
-                  (if (struct-get record qualified)
-                    surface-identity-generated-qualified
-                    0)
-                  (if (struct-get record dotted)
-                    surface-identity-generated-dotted
-                    0)))]
-            (begin
-              (binary.surface-binary-push-u64! (&mut out) flags)
-              (binary.surface-binary-push-u64!
-                (&mut out)
-                (struct-get record ref0))
-              (binary.surface-binary-push-u64!
-                (&mut out)
-                (struct-get record ref1))
-              (binary.surface-binary-push-u64!
-                (&mut out)
-                (struct-get record ref2))
-              (surface-identity-push-string!
-                (&mut out)
-                (struct-get record name))
-              (set! index (+ index 1)))))
-        (ResultSurfaceIdentityBytes.Ok
-          (byte_buf_core.byte-buf-builder-finish-array (& out)))))))
 
 (define (surface-identity-reader-new [bytes : (Array u8)]) : SurfaceIdentityReader
   (let
@@ -705,120 +544,311 @@
     [(ResultSurfaceIdentityPayload.Ok payload)
       (surface-identity-hydrate-payload payload expected-key)]))
 
-(define (surface-identity-test-key) : SurfaceIdentityKey
-  (let
-    [modules : (Array String) (make-array String 2)]
+(defenum ResultSurfaceIdentityBytes
+  (Ok (Array u8))
+  (Err String))
+
+(cfg
+  compiler-surface-producer
+  (define (surface-identity-push-string!
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]
+    [text : String]) : unit
     (begin
-      (array-set! modules 0 "pkg/a.tl")
-      (array-set! modules 1 "pkg/b.tl")
-      (SurfaceIdentityKey "pkg" modules "source-hash" "compiler-build" "host"))))
+      (binary.surface-binary-push-u64!
+        out
+        (binary.surface-binary-string-length text))
+      (binary.surface-binary-push-string! out text))))
 
-(define (surface-identity-remap-test-ok?
-  [hydration : SurfaceIdentityHydration]
-  [source-count : i64]
-  [generated-count : i64]) : bool
-  (let
-    [remap : (Array i64) (struct-get hydration remap)]
-    (and
-      (= (array-length remap) (+ source-count generated-count))
-      (= generated-count 4)
-      (surface-identity-string-eq? (ci.intern-str (array-ref remap 0)) "alpha")
-      (surface-identity-string-eq? (ci.intern-str (array-ref remap 1)) "module")
-      (surface-identity-string-eq? (ci.intern-str (array-ref remap 2)) "base")
-      (ci.intern-qualified? (array-ref remap (+ source-count 1)))
-      (ci.intern-dotted? (array-ref remap (+ source-count 2)))
-      (ci.intern-generated-canonical-id? (array-ref remap (+ source-count 3))))))
-
-(define (surface-identity-tests-ok?) : bool
-  (let
-    [_reset : unit (ci.intern-reset!)]
-    [alpha : i64 (ci.intern "alpha")]
-    [module-id : i64 (ci.intern "module")]
-    [base-id : i64 (ci.intern "base")]
-    [dotted-source : i64 (ci.intern "base.Item")]
-    [_opaque : i64 (ci.intern-generated-name "opaque/local")]
-    [_qualified : i64
-      (ci.intern-generated-qualified-name "module/base" module-id base-id)]
-    [_dotted : i64
-      (ci.intern-generated-dotted-name
-        "base.Item.Next"
-        base-id
-        dotted-source
-        (ci.intern-dotted-tail-id dotted-source))]
-    [_canonical : i64 (ci.intern-generated-canonical-name "canonical")]
-    [key : SurfaceIdentityKey (surface-identity-test-key)]
-    [payload : SurfaceIdentityPayload (surface-identity-capture key)]
-    [source-count : i64 (array-length (struct-get payload source-names))]
-    [identity-count : i64
-      (+ source-count (array-length (struct-get payload generated)))]
-    [session-stride : i64 (ci.intern-capacity)]
-    [pair-id : i64 (+ session-stride (+ (* module-id session-stride) base-id))]
-    [triple-id : i64
-      (+
-        session-stride
-        (+
-          (* session-stride session-stride)
-          (+
-            (* module-id (* session-stride session-stride))
-            (+ (* base-id session-stride) alpha))))]
-    [portable-pair : i64
-      (surface-identity-portable-id pair-id source-count identity-count)]
-    [portable-triple : i64
-      (surface-identity-portable-id triple-id source-count identity-count)]
-    (if (not (= alpha 0))
-      false
-      (match (surface-identity-encode payload)
-        [(ResultSurfaceIdentityBytes.Err _) false]
-        [(ResultSurfaceIdentityBytes.Ok bytes)
-          (let
-            [copy : (Array u8) (binary.surface-binary-copy bytes)]
+(cfg
+  compiler-surface-producer
+  (define (surface-identity-generated-record [id : i64] [source-count : i64]) : SurfaceGeneratedIdentity
+    (let
+      [qualified : bool (ci.intern-qualified? id)]
+      [dotted : bool (ci.intern-dotted? id)]
+      [ref0 : i64 -1]
+      [ref1 : i64 -1]
+      [ref2 : i64 -1]
+      (begin
+        (if qualified
+          (begin
+            (set!
+              ref0
+              (surface-identity-local-ref
+                (ci.intern-qualified-module-id id)
+                source-count))
+            (set!
+              ref1
+              (surface-identity-local-ref
+                (ci.intern-qualified-base-id id)
+                source-count)))
+          (if dotted
             (begin
-              (ci.intern-reset!)
-              (let
-                [unrelated : i64 (ci.intern "unrelated")]
-                (match (surface-identity-hydrate bytes key)
-                  [(ResultSurfaceIdentityHydration.Err _) false]
-                  [(ResultSurfaceIdentityHydration.KeyMismatch _) false]
-                  [(ResultSurfaceIdentityHydration.Ok hydration)
-                    (let
-                      [remap : (Array i64) (struct-get hydration remap)]
-                      [mapped-module : i64 (array-ref remap 1)]
-                      [mapped-base : i64 (array-ref remap 2)]
-                      [mapped-alpha : i64 (array-ref remap 0)]
-                      (and
-                        (= unrelated 0)
-                        (surface-identity-remap-test-ok?
-                          hydration
-                          source-count
-                          (array-length (struct-get payload generated)))
-                        (=
-                          (surface-identity-resolve-portable-id
-                            portable-pair
-                            remap)
-                          (+
-                            session-stride
-                            (+ (* mapped-module session-stride) mapped-base)))
-                        (=
-                          (surface-identity-resolve-portable-id
-                            portable-triple
-                            remap)
-                          (+
-                            session-stride
-                            (+
-                              (* session-stride session-stride)
-                              (+
-                                (*
-                                  mapped-module
-                                  (* session-stride session-stride))
-                                (+ (* mapped-base session-stride) mapped-alpha)))))
-                        (match (surface-identity-decode copy)
-                          [(ResultSurfaceIdentityPayload.Err _) false]
-                          [(ResultSurfaceIdentityPayload.Ok decoded)
-                            (surface-identity-key-eq?
-                              (struct-get decoded key)
-                              key)])))]))))]))))
+              (set!
+                ref0
+                (surface-identity-local-ref
+                  (ci.intern-leading-dot-id id)
+                  source-count))
+              (set!
+                ref1
+                (surface-identity-local-ref
+                  (ci.intern-dotted-prefix-id id)
+                  source-count))
+              (set!
+                ref2
+                (surface-identity-local-ref
+                  (ci.intern-dotted-tail-id id)
+                  source-count)))
+            unit))
+        (SurfaceGeneratedIdentity
+          (ci.intern-str id)
+          (ci.intern-generated-canonical-id? id)
+          qualified
+          dotted
+          ref0
+          ref1
+          ref2)))))
 
-(define (main) : i64
-  (if (surface-identity-tests-ok?)
-    42
-    1))
+(cfg
+  compiler-surface-producer
+  (define (surface-identity-capture [key : SurfaceIdentityKey]) : SurfaceIdentityPayload
+    (let
+      [source-count : i64 (ci.intern-pool-len)]
+      [generated-count : i64 (ci.intern-generated-count)]
+      [source-names : (Array String) (make-array String source-count)]
+      [generated : (Array SurfaceGeneratedIdentity)
+        (make-array SurfaceGeneratedIdentity generated-count)]
+      [index : i64 0]
+      (begin
+        (while (< index source-count)
+          (begin
+            (array-set! source-names index (ci.intern-str index))
+            (set! index (+ index 1))))
+        (set! index 0)
+        (while (< index generated-count)
+          (begin
+            (array-set!
+              generated
+              index
+              (surface-identity-generated-record
+                (ci.intern-generated-id-at-allocation-index index)
+                source-count))
+            (set! index (+ index 1))))
+        (SurfaceIdentityPayload key source-names generated)))))
+
+(cfg
+  compiler-surface-producer
+  (define (surface-identity-encode [payload : SurfaceIdentityPayload]) : ResultSurfaceIdentityBytes
+    (if (not (surface-identity-payload-valid? payload))
+      (ResultSurfaceIdentityBytes.Err
+        "surface identity: invalid package key or identity graph")
+      (let
+        [key : SurfaceIdentityKey (struct-get payload key)]
+        [source-names : (Array String) (struct-get payload source-names)]
+        [generated : (Array SurfaceGeneratedIdentity)
+          (struct-get payload generated)]
+        [out : byte_buf_core.ByteBufBuilder
+          (byte_buf_core.byte-buf-builder-new)]
+        [index : i64 0]
+        (begin
+          (binary.surface-binary-push-u64! (&mut out) surface-identity-magic)
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            surface-identity-schema-version)
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            (array-length (struct-get key modules)))
+          (binary.surface-binary-push-u64!
+            (&mut out)
+            (array-length source-names))
+          (binary.surface-binary-push-u64! (&mut out) (array-length generated))
+          (surface-identity-push-string!
+            (&mut out)
+            (struct-get key package-name))
+          (surface-identity-push-string!
+            (&mut out)
+            (struct-get key source-hash))
+          (surface-identity-push-string!
+            (&mut out)
+            (struct-get key compiler-build))
+          (surface-identity-push-string!
+            (&mut out)
+            (struct-get key configuration))
+          (while (< index (array-length (struct-get key modules)))
+            (begin
+              (surface-identity-push-string!
+                (&mut out)
+                (array-ref (struct-get key modules) index))
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index (array-length source-names))
+            (begin
+              (surface-identity-push-string!
+                (&mut out)
+                (array-ref source-names index))
+              (set! index (+ index 1))))
+          (set! index 0)
+          (while (< index (array-length generated))
+            (let
+              [record : SurfaceGeneratedIdentity (array-ref generated index)]
+              [flags : i64
+                (+
+                  (if (struct-get record canonical)
+                    surface-identity-generated-canonical
+                    0)
+                  (+
+                    (if (struct-get record qualified)
+                      surface-identity-generated-qualified
+                      0)
+                    (if (struct-get record dotted)
+                      surface-identity-generated-dotted
+                      0)))]
+              (begin
+                (binary.surface-binary-push-u64! (&mut out) flags)
+                (binary.surface-binary-push-u64!
+                  (&mut out)
+                  (struct-get record ref0))
+                (binary.surface-binary-push-u64!
+                  (&mut out)
+                  (struct-get record ref1))
+                (binary.surface-binary-push-u64!
+                  (&mut out)
+                  (struct-get record ref2))
+                (surface-identity-push-string!
+                  (&mut out)
+                  (struct-get record name))
+                (set! index (+ index 1)))))
+          (ResultSurfaceIdentityBytes.Ok
+            (byte_buf_core.byte-buf-builder-finish-array (& out))))))))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-identity-test-key) : SurfaceIdentityKey
+    (let
+      [modules : (Array String) (make-array String 2)]
+      (begin
+        (array-set! modules 0 "pkg/a.tl")
+        (array-set! modules 1 "pkg/b.tl")
+        (SurfaceIdentityKey "pkg" modules "source-hash" "compiler-build" "host")))))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-identity-remap-test-ok?
+    [hydration : SurfaceIdentityHydration]
+    [source-count : i64]
+    [generated-count : i64]) : bool
+    (let
+      [remap : (Array i64) (struct-get hydration remap)]
+      (and
+        (= (array-length remap) (+ source-count generated-count))
+        (= generated-count 4)
+        (surface-identity-string-eq?
+          (ci.intern-str (array-ref remap 0))
+          "alpha")
+        (surface-identity-string-eq?
+          (ci.intern-str (array-ref remap 1))
+          "module")
+        (surface-identity-string-eq? (ci.intern-str (array-ref remap 2)) "base")
+        (ci.intern-qualified? (array-ref remap (+ source-count 1)))
+        (ci.intern-dotted? (array-ref remap (+ source-count 2)))
+        (ci.intern-generated-canonical-id? (array-ref remap (+ source-count 3)))))))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-identity-tests-ok?) : bool
+    (let
+      [_reset : unit (ci.intern-reset!)]
+      [alpha : i64 (ci.intern "alpha")]
+      [module-id : i64 (ci.intern "module")]
+      [base-id : i64 (ci.intern "base")]
+      [dotted-source : i64 (ci.intern "base.Item")]
+      [_opaque : i64 (ci.intern-generated-name "opaque/local")]
+      [_qualified : i64
+        (ci.intern-generated-qualified-name "module/base" module-id base-id)]
+      [_dotted : i64
+        (ci.intern-generated-dotted-name
+          "base.Item.Next"
+          base-id
+          dotted-source
+          (ci.intern-dotted-tail-id dotted-source))]
+      [_canonical : i64 (ci.intern-generated-canonical-name "canonical")]
+      [key : SurfaceIdentityKey (surface-identity-test-key)]
+      [payload : SurfaceIdentityPayload (surface-identity-capture key)]
+      [source-count : i64 (array-length (struct-get payload source-names))]
+      [identity-count : i64
+        (+ source-count (array-length (struct-get payload generated)))]
+      [session-stride : i64 (ci.intern-capacity)]
+      [pair-id : i64
+        (+ session-stride (+ (* module-id session-stride) base-id))]
+      [triple-id : i64
+        (+
+          session-stride
+          (+
+            (* session-stride session-stride)
+            (+
+              (* module-id (* session-stride session-stride))
+              (+ (* base-id session-stride) alpha))))]
+      [portable-pair : i64
+        (surface-identity-portable-id pair-id source-count identity-count)]
+      [portable-triple : i64
+        (surface-identity-portable-id triple-id source-count identity-count)]
+      (if (not (= alpha 0))
+        false
+        (match (surface-identity-encode payload)
+          [(ResultSurfaceIdentityBytes.Err _) false]
+          [(ResultSurfaceIdentityBytes.Ok bytes)
+            (let
+              [copy : (Array u8) (binary.surface-binary-copy bytes)]
+              (begin
+                (ci.intern-reset!)
+                (let
+                  [unrelated : i64 (ci.intern "unrelated")]
+                  (match (surface-identity-hydrate bytes key)
+                    [(ResultSurfaceIdentityHydration.Err _) false]
+                    [(ResultSurfaceIdentityHydration.KeyMismatch _) false]
+                    [(ResultSurfaceIdentityHydration.Ok hydration)
+                      (let
+                        [remap : (Array i64) (struct-get hydration remap)]
+                        [mapped-module : i64 (array-ref remap 1)]
+                        [mapped-base : i64 (array-ref remap 2)]
+                        [mapped-alpha : i64 (array-ref remap 0)]
+                        (and
+                          (= unrelated 0)
+                          (surface-identity-remap-test-ok?
+                            hydration
+                            source-count
+                            (array-length (struct-get payload generated)))
+                          (=
+                            (surface-identity-resolve-portable-id
+                              portable-pair
+                              remap)
+                            (+
+                              session-stride
+                              (+ (* mapped-module session-stride) mapped-base)))
+                          (=
+                            (surface-identity-resolve-portable-id
+                              portable-triple
+                              remap)
+                            (+
+                              session-stride
+                              (+
+                                (* session-stride session-stride)
+                                (+
+                                  (*
+                                    mapped-module
+                                    (* session-stride session-stride))
+                                  (+
+                                    (* mapped-base session-stride)
+                                    mapped-alpha)))))
+                          (match (surface-identity-decode copy)
+                            [(ResultSurfaceIdentityPayload.Err _) false]
+                            [(ResultSurfaceIdentityPayload.Ok decoded)
+                              (surface-identity-key-eq?
+                                (struct-get decoded key)
+                                key)])))]))))])))))
+
+(cfg
+  compiler-surface-selftest
+  (define (main) : i64
+    (if (surface-identity-tests-ok?)
+      42
+      1)))

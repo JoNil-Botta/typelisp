@@ -29115,7 +29115,10 @@
           (tc_i64_i64_map.contains? (& tc-clone-root-collection-selected) key))]
       (begin
         (set! tc-clone-root-collection-current-decl selected)
-        (surface_facts.surface-typecheck-facts-recording-select-decl! key)))
+        (cfg
+          compiler-surface-producer
+          (surface_facts.surface-typecheck-facts-recording-select-decl! key)
+          unit)))
     unit))
 
 (define (tc-clone-root-collection-record-surface-roots! [roots : CloneNameList]) : unit
@@ -29147,17 +29150,23 @@
           [resolved : AstType
             (tc-type-without-regions (tc-resolve-type ctx ty))]
           [recorded-roots : CloneNameList
-            (if (surface_facts.surface-typecheck-facts-recording?)
-              (clone-root-add-type
-                (tc-context-pools ctx)
-                (box-get decls-box)
-                (tc-clone-able-set ctx)
-                (CloneNameList.Nil)
-                resolved
-                cbi.compiler-builtin-id-fix-empty)
+            (cfg
+              compiler-surface-producer
+              (if (surface_facts.surface-typecheck-facts-recording?)
+                (clone-root-add-type
+                  (tc-context-pools ctx)
+                  (box-get decls-box)
+                  (tc-clone-able-set ctx)
+                  (CloneNameList.Nil)
+                  resolved
+                  cbi.compiler-builtin-id-fix-empty)
+                (CloneNameList.Nil))
               (CloneNameList.Nil))]
           (begin
-            (tc-clone-root-collection-record-surface-roots! recorded-roots)
+            (cfg
+              compiler-surface-producer
+              (tc-clone-root-collection-record-surface-roots! recorded-roots)
+              unit)
             ;; Resolve the nominal closure while `ty` and all nested type-pool
             ;; ids are still live in this function's semantic scratch scope.
             ;; Retaining the shallow AstType until the declaration walk ends
@@ -73807,7 +73816,10 @@
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin
     (surface_facts.surface-typecheck-facts-clear!)
-    (surface_facts.surface-typecheck-facts-recording-abort!)
+    (cfg
+      compiler-surface-producer
+      (surface_facts.surface-typecheck-facts-recording-abort!)
+      unit)
     (tc-unbound-suggestion-snapshot-reset!)
     (tc-fn-scratch-arena-release!)
     (tc-decl-scratch-arena-release!)

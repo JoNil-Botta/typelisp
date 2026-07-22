@@ -79,7 +79,8 @@ MUTATED_SOURCE_HASH=$(
     done < "$MANIFEST" | git hash-object --stdin
 )
 "$COMPILER" run tools/embedded-stdlib-tlci/build-surface.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
+    --stdlib-root stdlib --stdlib-root src \
+    --cfg compiler-surface-producer -- \
     "$MUTATED_ROOT" "$MUTATED_SURFACE" "$HOST_TARGET" \
     "$BUILD_HASH" "$MUTATED_SOURCE_HASH"
 "$COMPILER" run tools/embedded-stdlib-tlci/build.tl \

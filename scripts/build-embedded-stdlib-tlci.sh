@@ -77,7 +77,8 @@ SOURCE_HASH=$(
 )
 printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
 "$COMPILER" run tools/embedded-stdlib-tlci/build-surface.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
+    --stdlib-root stdlib --stdlib-root src \
+    --cfg compiler-surface-producer -- \
     stdlib "$SURFACE" "$HOST_TARGET" "$BUILD_HASH" "$SOURCE_HASH"
 "$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
     --stdlib-root stdlib --stdlib-root src -- \

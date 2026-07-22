@@ -2,10 +2,12 @@
 (import stdlib.arena)
 (import stdlib.byte_buf_core)
 (import "compiler_ast_types.tl")
-(cfg compiler-surface-selftest (import compiler_intern as ci))
-(cfg
-  compiler-surface-selftest
-  (import compiler_surface_identity as surface_identity))
+
+;; lint-allow: unused-import -- used by compiler-surface-selftest builds.
+(import compiler_intern as ci)
+
+;; lint-allow: unused-import -- used by compiler-surface-selftest builds.
+(import compiler_surface_identity as surface_identity)
 (import "compiler_surface_ast_codec_core.tl")
 (import "compiler_surface_ast_expr.tl")
 (import sym_i64_env)

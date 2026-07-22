@@ -3,7 +3,9 @@
 (import compiler_surface_binary as binary)
 (import compiler_surface_identity as surface_identity)
 (import stdlib.arena)
-(cfg compiler-surface-producer (import stdlib.byte_buf_core))
+
+;; lint-allow: unused-import -- used by compiler-surface-producer builds.
+(import stdlib.byte_buf_core)
 
 (defstruct SurfaceTypecheckFacts
   (macro-prefix-decl-count i64)

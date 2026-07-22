@@ -3,6 +3,7 @@
 (import "compiler_typecheck_api.tl")
 (import "compiler_typecheck_core.tl")
 (import "compiler_load.tl")
+(import compiler_embedded_stdlib as ces)
 (import stdlib.string)
 (import sym_i64_env)
 (import compiler_builtin_ids as cbi)
@@ -8106,11 +8107,78 @@
 (module main)
 ")
 
+(define (compiler-typecheck-string-prefix-at?
+  [text : String]
+  [prefix : String]
+  [start : i64]) : bool
+  (let
+    [text-len : i64 (string.string-length text)]
+    [prefix-len : i64 (string.string-length prefix)]
+    (if (< start 0)
+      false
+      (if (> (+ start prefix-len) text-len)
+        false
+        (let
+          [index : i64 0]
+          [ok : bool true]
+          (begin
+            (while ok
+              (if (< index prefix-len)
+                (if (=
+                  (string.string-ref text (+ start index))
+                  (string.string-ref prefix index))
+                  (set! index (+ index 1))
+                  (set! ok false))
+                (set! ok false)))
+            (= index prefix-len)))))))
+
+(define (compiler-typecheck-string-find-from
+  [text : String]
+  [needle : String]
+  [start : i64]) : i64
+  (let
+    [text-len : i64 (string.string-length text)]
+    [needle-len : i64 (string.string-length needle)]
+    [index : i64 start]
+    [found : i64 -1]
+    [done : bool (= needle-len 0)]
+    (begin
+      (if done
+        (set! found start)
+        unit)
+      (while (not done)
+        (if (<= (+ index needle-len) text-len)
+          (if (compiler-typecheck-string-prefix-at? text needle index)
+            (begin
+              (set! found index)
+              (set! done true))
+            (set! index (+ index 1)))
+          (set! done true)))
+      found)))
+
+(define (compiler-typecheck-macro-prelude-for-core-source) : String
+  (match (compiler-load-embedded-stdlib-source "core_macros.tl")
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource source)
+      (let
+        [start-marker : String "(cfg\n  feature-stdlib-for-defmacro"]
+        [end-marker : String
+          ";; Published seed compilers still own the old bootstrap fast path."]
+        [start : i64
+          (compiler-typecheck-string-find-from source start-marker 0)]
+        [end : i64
+          (compiler-typecheck-string-find-from source end-marker start)]
+        (if (and (>= start 0) (> end start))
+          (string.append
+            "(module fixture.core_for)\n(import stdlib.comptime)\n"
+            (string.substring source start (- end start)))
+          (io.panic "typecheck: embedded scalar for macro source missing")))]
+    [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+      (io.panic "typecheck: embedded core macro source missing")]))
+
 (define (compiler-typecheck-macro-prelude-for-source) : String
   (string.append
-    (compiler-typecheck-macro-prelude-module-source)
-    "(module fixture.iter)
-(defstruct Bag (value i64))
+    (compiler-typecheck-macro-prelude-for-core-source)
+    "(defstruct Bag (value i64))
 (defstruct Iter (:lifetimes source) (value (& source i64)) (done bool))
 (defenum IterNext (:lifetimes source) (Done) (Item (& source i64)))
 (defstruct IterMut (:lifetimes source) (value (&mut source i64)) (done bool))
@@ -8145,21 +8213,13 @@
     (begin
       (set! (struct-get state done) true)
       (IntoNext.Item (struct-get state value)))))
-(module main)
-(import fixture.iter)
 (define (main) : i64
   (let
-    [shared : iter.Bag (iter.Bag 1)]
-    [mutable : iter.Bag (iter.Bag 2)]
-    [owned-a : iter.Bag (iter.Bag 20)]
-    [owned-b : iter.Bag (iter.Bag 22)]
     [sum : i64 0]
     (begin
-      (for [item : (& shared i64) (& shared)] unit)
-      (for [item : (&mut mutable i64) (&mut mutable)] unit)
       (for
-        [left : i64 owned-a]
-        [right owned-b]
+        [left : i64 (Bag 20)]
+        [right (Bag 22)]
         (set! sum (+ sum (+ left right))))
       sum)))"))
 
@@ -8168,16 +8228,16 @@
     (compiler-typecheck-macro-prelude-for-source)
     "
 (define (bad-for-annotation) : unit
-  (for [item : bool (iter.Bag 1)] unit))"))
+  (for [item : bool (Bag 1)] unit))"))
 
 (define (compiler-typecheck-macro-prelude-for-no-binding-source) : String
   (string.append
-    (compiler-typecheck-macro-prelude-module-source)
+    (compiler-typecheck-macro-prelude-for-core-source)
     "(define (main) : unit (for unit))"))
 
 (define (compiler-typecheck-macro-prelude-for-no-body-source) : String
   (string.append
-    (compiler-typecheck-macro-prelude-module-source)
+    (compiler-typecheck-macro-prelude-for-core-source)
     "(defstruct NotIterable (value i64))
 (define (main) : unit (for [item (NotIterable 1)]))"))
 

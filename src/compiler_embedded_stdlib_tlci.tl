@@ -442,7 +442,7 @@
               [(CompilerCtfeValue.ExprList items)
                 (let
                   [node : i64
-                    (ast-expr-call-with-pools
+                    (ctfe-ast-expr-call-with-provenance
                       (array-ref compiler-comptime-host-pools 0)
                       callee-node
                       items)]
@@ -583,6 +583,11 @@
                     (set!
                       compiler-comptime-host-stack-len
                       (- compiler-comptime-host-stack-len 2))
+                    (if (and
+                      (ctfe-hygiene-inert-literal-node? pools when-true-node)
+                      (ctfe-hygiene-inert-literal-node? pools when-false-node))
+                      (ctfe-result-hygiene-free-note! out-node)
+                      unit)
                     (compiler-comptime-host-push!
                       (CompilerCtfeValue.Expr out-node (AstType.Expr)))))]
               [_ tlci-host-callback-status-bad-request]))))]
@@ -649,6 +654,13 @@
                     (set!
                       compiler-comptime-host-stack-len
                       (- compiler-comptime-host-stack-len 2))
+                    (if (and
+                      (ctfe-hygiene-inert-literal-node? pools missing-node)
+                      (ctfe-hygiene-inert-literal-node?
+                        pools
+                        else-not-final-node))
+                      (ctfe-result-hygiene-free-note! out-node)
+                      unit)
                     (compiler-comptime-host-push!
                       (CompilerCtfeValue.Expr out-node (AstType.Expr)))))]
               [_ tlci-host-callback-status-bad-request]))))]

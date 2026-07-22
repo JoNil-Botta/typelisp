@@ -2710,6 +2710,30 @@
   compile-profile
   (define compiler-tc-walk-rewalk-calls : i64
     0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-rewalk-zero-fire-calls : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-walk-rewalk-provenance-skips : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-note-rewalk-fire-decision! [fires : bool]) : unit
+    (if fires
+      unit
+      (set!
+        compiler-tc-walk-rewalk-zero-fire-calls
+        (+ compiler-tc-walk-rewalk-zero-fire-calls 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-walk-note-rewalk-provenance-skip!) : unit
+    (set!
+      compiler-tc-walk-rewalk-provenance-skips
+      (+ compiler-tc-walk-rewalk-provenance-skips 1))))
 
 (cfg
   compile-profile
@@ -4576,6 +4600,12 @@
       (compiler-tc-macro-counter-profile-line
         "walk_rewalk_calls"
         compiler-tc-walk-rewalk-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_rewalk_zero_fire_calls"
+        compiler-tc-walk-rewalk-zero-fire-calls)
+      (compiler-tc-macro-counter-profile-line
+        "walk_rewalk_provenance_skips"
+        compiler-tc-walk-rewalk-provenance-skips)
       (compiler-tc-macro-counter-profile-line
         "walk_decl_sp_defer_us"
         (/ compiler-tc-walk-decl-sp-defer-ns 1000))
@@ -60282,8 +60312,19 @@
       (macro-name-set-add-all names (&mut set))
       set)))
 
+(define (macro-ctfe-visible-name-set-add-all [names : TcNameIdList]) : unit
+  (match names
+    [(TcNameIdList.Nil) unit]
+    [(TcNameIdList.Cons name-id rest)
+      (begin
+        (ctfe-visible-macro-name-add! name-id)
+        (macro-ctfe-visible-name-set-add-all (box-get rest)))]))
+
 (define (macro-expand-set-macro-names! [names : TcNameIdList]) : unit
-  (set! macro-expand-macro-name-set (macro-name-set-from-list names)))
+  (begin
+    (set! macro-expand-macro-name-set (macro-name-set-from-list names))
+    (ctfe-visible-macro-names-reset!)
+    (macro-ctfe-visible-name-set-add-all names)))
 
 (define (macro-expand-set-expr-type-macro-names! [names : TcNameIdList]) : unit
   (set! macro-expand-expr-type-macro-name-set (macro-name-set-from-list names)))
@@ -65472,6 +65513,11 @@
         bind-result))
       [(ResultMacroEnv.Ok env)
         (begin
+          ;; Both routes publish per-transformer syntax metadata. Reset before
+          ;; native dispatch as well as before an interpreted fallback so an
+          ;; earlier expansion cannot leak either marker into this result.
+          (ctfe-result-hygiene-free-reset!)
+          (ctfe-result-macro-provenance-reset!)
           (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
           (cfg compile-profile (compiler-tc-macro-profile-start))
           (match (let
@@ -65503,6 +65549,7 @@
               (begin
                 (macro-note-stdlib-tlci-route fallback-module macro-name)
                 (ctfe-result-hygiene-free-reset!)
+                (ctfe-result-macro-provenance-reset!)
                 (cfg compile-profile (compiler-tc-macro-profile-start))
                 (match (ctfe-eval-node
                   body
@@ -66013,6 +66060,42 @@
 
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
+(define (macro-expand-produced-node
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : AstDeclList]
+  [depth : i64]
+  [expr-id : i64]) : ResultMacroExpr
+  (let
+    [expr : AstExpr (ast-node-get expr-id)]
+    (if (not (ctfe-result-may-contain-macro?))
+      (begin
+        (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
+        (cfg compile-profile (compiler-tc-walk-note-rewalk-provenance-skip!))
+        ;; Produced roots can belong to a transformer scratch pool. Match the
+        ;; old value-entry no-fire path by copying the root into the active AST
+        ;; pool before that scratch storage is released.
+        (ResultMacroExpr.Ok (ast-node-push expr)))
+      (let
+        [fires : bool (macro-expr-might-fire? expr)]
+        (begin
+          (cfg
+            compile-profile
+            (compiler-tc-walk-note-rewalk-fire-decision! fires))
+          (if (or (not fires) (< (macro-expand-depth-limit) depth))
+            (begin
+              (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
+              (if (not fires)
+                (ResultMacroExpr.Ok (ast-node-push expr))
+                (ResultMacroExpr.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "macro expansion exceeded depth limit")))))
+            (begin
+              (cfg compile-profile (compiler-tc-walk-note-expand-visit!))
+              (macro-expand-expr-fire ctx env decls depth expr))))))))
+
 (define (macro-expand-call
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -66061,23 +66144,22 @@
                   (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                   (let
                     [rewalk-result : ResultMacroExpr
-                      (macro-expand-expr
+                      (macro-expand-produced-node
                         ctx
                         type-env
                         decls
                         (+ depth 1)
-                        (ast-node-get
-                          (if (= expanded (ctfe-result-hygiene-free-node-id))
-                            expanded
-                            (macro-hygiene-expr
-                              (ast-node-get expanded)
-                              MacroHygieneEnv.Nil
-                              (MacroHygieneContext
-                                macro-name-id
-                                definition-module-id
-                                declaration-id
-                                (tc-context-symbols ctx))
-                              (+ depth 1)))))]
+                        (if (= expanded (ctfe-result-hygiene-free-node-id))
+                          expanded
+                          (macro-hygiene-expr
+                            (ast-node-get expanded)
+                            MacroHygieneEnv.Nil
+                            (MacroHygieneContext
+                              macro-name-id
+                              definition-module-id
+                              declaration-id
+                              (tc-context-symbols ctx))
+                            (+ depth 1))))]
                     (begin
                       (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                       rewalk-result)))
@@ -66096,23 +66178,22 @@
                   (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                   (let
                     [rewalk-result : ResultMacroExpr
-                      (macro-expand-expr
+                      (macro-expand-produced-node
                         ctx
                         type-env
                         decls
                         (+ depth 1)
-                        (ast-node-get
-                          (if (= expanded (ctfe-result-hygiene-free-node-id))
-                            expanded
-                            (macro-hygiene-expr
-                              (ast-node-get expanded)
-                              MacroHygieneEnv.Nil
-                              (MacroHygieneContext
-                                macro-name-id
-                                definition-module-id
-                                declaration-id
-                                (tc-context-symbols ctx))
-                              (+ depth 1)))))]
+                        (if (= expanded (ctfe-result-hygiene-free-node-id))
+                          expanded
+                          (macro-hygiene-expr
+                            (ast-node-get expanded)
+                            MacroHygieneEnv.Nil
+                            (MacroHygieneContext
+                              macro-name-id
+                              definition-module-id
+                              declaration-id
+                              (tc-context-symbols ctx))
+                            (+ depth 1))))]
                     (begin
                       (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                       rewalk-result)))

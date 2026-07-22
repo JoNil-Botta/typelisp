@@ -69,6 +69,11 @@ BUILD_STDOUT="$WORKDIR/profile-build.stdout"
 BUILD_STDERR="$WORKDIR/profile-build.stderr"
 CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
+COMPTIME_HOST_SMOKE_STDOUT="$WORKDIR/comptime-host-smoke.stdout"
+COMPTIME_HOST_SMOKE_STDERR="$WORKDIR/comptime-host-smoke.stderr"
+COMPTIME_HOST_SMOKE_ASM="$WORKDIR/comptime-host-smoke.s"
+COMPTIME_HOST_SMOKE_OBJ="$WORKDIR/comptime-host-smoke.$NL_OBJ_EXT"
+COMPTIME_HOST_SMOKE_BIN="$WORKDIR/comptime-host-smoke$NL_BIN_EXT"
 STDLIB_TLCI_DIR="$WORKDIR/stdlib-tlci-dispatch"
 STDLIB_TLCI_EMBEDDED_ASM="$STDLIB_TLCI_DIR/embedded.s"
 STDLIB_TLCI_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/embedded.stdout"
@@ -359,6 +364,36 @@ if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFI
     >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI link failed"
+fi
+
+echo "[compile-profile] verify native comptime host metadata parity"
+if ! "$PROFILE_BIN" compile src/tests/comptime_host_smoke.tl \
+    -o "$COMPTIME_HOST_SMOKE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    > "$COMPTIME_HOST_SMOKE_STDOUT" 2> "$COMPTIME_HOST_SMOKE_STDERR"; then
+    show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
+    fail "native comptime host metadata smoke compile failed"
+fi
+if ! assemble_and_link \
+    comptime-host-smoke \
+    "$COMPTIME_HOST_SMOKE_ASM" \
+    "$COMPTIME_HOST_SMOKE_OBJ" \
+    "$COMPTIME_HOST_SMOKE_BIN" \
+    >> "$COMPTIME_HOST_SMOKE_STDOUT" 2>> "$COMPTIME_HOST_SMOKE_STDERR"; then
+    show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
+    fail "native comptime host metadata smoke link failed"
+fi
+set +e
+"$COMPTIME_HOST_SMOKE_BIN" \
+    >> "$COMPTIME_HOST_SMOKE_STDOUT" 2>> "$COMPTIME_HOST_SMOKE_STDERR"
+COMPTIME_HOST_SMOKE_STATUS=$?
+set -e
+if [ "$COMPTIME_HOST_SMOKE_STATUS" -ne 42 ]; then
+    show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
+    fail "native comptime host metadata smoke expected exit 42, got $COMPTIME_HOST_SMOKE_STATUS"
 fi
 
 echo "[compile-profile] verify hydrated prelude bypass and source parity"
@@ -896,6 +931,14 @@ assert_contains "$CHECK_STDERR" "stdlib.str_cat_runtime/str-cat-pack arity=3"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/and arity=3"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/or arity=2"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/cond arity=4"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_rewalk_zero_fire_calls|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.walk_rewalk_provenance_skips|"
+assert_profile_counter_at_least_in \
+    "$CHECK_STDERR" \
+    "typecheck.macro.walk_rewalk_provenance_skips" \
+    1 \
+    "$CHECK_STDOUT" \
+    "$CHECK_STDERR"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.binds|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.lookups|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.cache_builds|"

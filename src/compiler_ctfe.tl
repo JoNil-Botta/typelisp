@@ -41,6 +41,89 @@
 (define (ctfe-result-hygiene-free-node-id) : i64
   ctfe-result-hygiene-free-node)
 
+;; Transformer construction records only the event that can make an otherwise
+;; expanded syntax value need another macro walk: creating a call whose callee
+;; base name is visible as a macro at this splice point. The flag is monotonic
+;; for one transformer evaluation. Captured operands have already completed
+;; their own fixpoint walk before binding; every newly created call flows
+;; through the helpers below.
+(define ctfe-result-may-contain-macro : bool
+  false)
+(define ctfe-visible-macro-name-set : ctfe_key_map.Map
+  (ctfe_key_map.with-capacity 128))
+
+(define (ctfe-visible-macro-names-reset!) : unit
+  (set! ctfe-visible-macro-name-set (ctfe_key_map.with-capacity 128)))
+
+(define (ctfe-visible-macro-name-add! [name-id : i64]) : unit
+  (ctfe_key_map.insert-ref! (&mut ctfe-visible-macro-name-set) name-id 1))
+
+(define (ctfe-result-macro-provenance-reset!) : unit
+  (set! ctfe-result-may-contain-macro false))
+
+(define (ctfe-result-may-contain-macro-note!) : unit
+  (set! ctfe-result-may-contain-macro true))
+
+(define (ctfe-result-may-contain-macro?) : bool
+  ctfe-result-may-contain-macro)
+
+(define (ctfe-macro-provenance-callee-base-name-id [name-id : i64]) : i64
+  (cond
+    [(intern-composite-triple-id? name-id)
+      (intern-composite-triple-right-id name-id)]
+    [(intern-composite-pair-id? name-id)
+      (intern-composite-pair-right-id name-id)]
+    [else
+      (let
+        [source-id : i64
+          (if (intern-template-source-id? name-id)
+            (intern-template-source-name-id name-id)
+            (ci.intern-macro-global-source-name-id-or name-id name-id))]
+        [base-id : i64
+          (if (and
+            (>= source-id 0)
+            (< source-id (intern-capacity))
+            (ci.intern-qualified? source-id))
+            (ci.intern-qualified-base-id source-id)
+            source-id)]
+        (if (and
+          (>= base-id 0)
+          (< base-id (intern-capacity))
+          (ci.intern-dotted? base-id))
+          (ci.intern-dotted-final-id base-id)
+          base-id))]))
+
+(define (ctfe-result-macro-provenance-note-call-head-with-pools!
+  [pools : AstNodePoolContext]
+  [callee-node : i64]) : unit
+  (match (ast-expr-unspan-with-pools
+    pools
+    (ast-node-pool-context-expr-get pools callee-node))
+    [(AstExpr.Var name-id)
+      (let
+        [base-id : i64 (ctfe-macro-provenance-callee-base-name-id name-id)]
+        [hit : bool
+          (or
+            (ctfe_key_map.contains? (& ctfe-visible-macro-name-set) base-id)
+            (= base-id cbi.compiler-builtin-id-fix-when)
+            (= base-id cbi.compiler-builtin-id-fix-unless))]
+        (if hit
+          (ctfe-result-may-contain-macro-note!)
+          unit))]
+    [_ unit]))
+
+(define (ctfe-ast-expr-call-with-provenance
+  [pools : AstNodePoolContext]
+  [callee-node : i64]
+  [args : AstExprList]) : i64
+  (let
+    [node : i64 (ast-expr-call-with-pools pools callee-node args)]
+    (begin
+      (ctfe-result-macro-provenance-note-call-head-with-pools!
+        pools
+        callee-node)
+      node)))
+
 (define (ctfe-hygiene-inert-literal-node?
   [pools : AstNodePoolContext]
   [node : i64]) : bool
@@ -5820,7 +5903,7 @@
                       (ResultCtfe.Ok
                         (ctfe-syntax-expr-value
                           env
-                          (ast-expr-call-with-pools
+                          (ctfe-ast-expr-call-with-provenance
                             (ctfe-env-syntax-pool-context env)
                             callee-node
                             call-args)
@@ -5849,7 +5932,7 @@
   [fuel : i64]) : ResultCtfe
   (ResultCtfe.Ok
     (CompilerCtfeValue.Expr
-      (ast-expr-call-with-pools
+      (ctfe-ast-expr-call-with-provenance
         (ctfe-env-pools env)
         callee
         (ast-expr-cons
@@ -6748,11 +6831,16 @@
   [else-not-final-node : i64]
   [expr : AstExpr]
   [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
+  [fuel : i64]
+  [hygiene-free? : bool]) : ResultCtfe
   (if (< index 0)
-    (ResultCtfe.Ok
-      (CompilerCtfeValue.CapturedExpr out-node (ctfe-untyped-expr-type) pools)
-      fuel)
+    (begin
+      (if hygiene-free?
+        (ctfe-result-hygiene-free-note! out-node)
+        unit)
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.CapturedExpr out-node (ctfe-untyped-expr-type) pools)
+        fuel))
     (if (<= fuel 0)
       (ResultCtfe.Err
         (box
@@ -6773,7 +6861,8 @@
           else-not-final-node
           expr
           env
-          (- fuel 1))))))
+          (- fuel 1)
+          hygiene-free?)))))
 
 (define (ctfe-expr-clause-list-fold-if-terminal-error [expr : AstExpr]) : ResultCtfe
   (ResultCtfe.Err
@@ -6862,7 +6951,12 @@
                         else-not-final-node
                         expr
                         env
-                        (- fuel 1))))))]
+                        (- fuel 1)
+                        (and
+                          (ctfe-hygiene-inert-literal-node? pools missing-node)
+                          (ctfe-hygiene-inert-literal-node?
+                            pools
+                            else-not-final-node)))))))]
             [_ (ctfe-expr-clause-list-fold-if-terminal-error expr)])]
         [_ (ctfe-expr-clause-list-fold-if-terminal-error expr)])]
     [_
@@ -7669,7 +7763,7 @@
   (ast-expr-if-with-pools (ctfe-env-pools env) cond then-expr else-expr))
 
 (define (ctfe-source-helper-call1 [env : CtfeEnv] [name : String] [arg : i64]) : i64
-  (ast-expr-call-with-pools
+  (ctfe-ast-expr-call-with-provenance
     (ctfe-env-pools env)
     (ctfe-source-helper-var env name)
     (ast-expr-cons arg (ast-expr-list-new))))
@@ -9372,7 +9466,7 @@
   [name-id : i64]
   [args : AstExprList]
   [env : CtfeEnv]) : i64
-  (ast-expr-call-with-pools
+  (ctfe-ast-expr-call-with-provenance
     (ctfe-env-pools env)
     (ctfe-ast-push env (AstExpr.Var name-id))
     args))
@@ -10432,7 +10526,7 @@
             (match (ctfe-quote-expr-list args env func-fuel quasiquote)
               [(ResultCtfeQuoteExprList.Ok quoted-args args-fuel)
                 (ResultCtfeQuoteExpr.Ok
-                  (ast-expr-call-with-pools
+                  (ctfe-ast-expr-call-with-provenance
                     (ctfe-env-pools env)
                     quoted-func
                     quoted-args)

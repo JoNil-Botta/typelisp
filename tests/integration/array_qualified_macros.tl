@@ -1,4 +1,12 @@
 (import stdlib.array)
+(import stdlib.comptime)
+
+(defmacro (integration-all [items : bool ...]) : bool
+  (comptime.expr-list-fold-if
+    items
+    (comptime.expr-bool true)
+    (comptime.expr-bool false)
+    true))
 
 (define (put-mut!
   [items : (&mut items (Array i64))]
@@ -32,6 +40,12 @@
       (+ (array-ref items 0) (+ (array-ref items 1) (array-ref items 2))))))
 
 (define (main) : i64
-  (if (and (= (dynamic-score) 42) (= (fixed-score) 24))
-    42
-    1))
+  (let
+    [flag : bool true]
+    (if (and
+      (integration-all flag true)
+      flag
+      (= (dynamic-score) 42)
+      (= (fixed-score) 24))
+      42
+      1)))

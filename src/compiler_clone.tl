@@ -304,6 +304,40 @@
               (set! cur (box-get rest)))]))
       result)))
 
+;; Recover an imported nominal's canonical key when a generated declaration
+;; retains only its unqualified base name. Ambiguous bases deliberately fail:
+;; the lowerer must never bind a clone call to the wrong module's helper.
+(define (clone-name-list-unique-key-for-base-id-or
+  [names : CloneNameList]
+  [base-id : i64]
+  [fallback : i64]) : i64
+  (let
+    [cur : CloneNameList names]
+    [result : i64 fallback]
+    [found : bool false]
+    [ambiguous : bool false]
+    (begin
+      (while (and
+        (not ambiguous)
+        (match cur
+          [(CloneNameList.Nil) false]
+          [_ true]))
+        (match cur
+          [(CloneNameList.Nil) unit]
+          [(CloneNameList.ConsId head _ rest)
+            (begin
+              (if (= (clone-name-key-base-id head) base-id)
+                (if found
+                  (set! ambiguous true)
+                  (begin
+                    (set! result head)
+                    (set! found true)))
+                unit)
+              (set! cur (box-get rest)))]))
+      (if ambiguous
+        fallback
+        result))))
+
 (define (clone-name-list-contains-id? [names : CloneNameList] [key-id : i64]) : bool
   (let
     [cur : CloneNameList names]
@@ -346,11 +380,23 @@
     [dupe : CloneNameSet (clone-name-set-insert-id one 1)]
     [seed-capacity : i64 (clone-name-set-capacity dupe)]
     [grown : CloneNameSet (clone-name-set-smoke-insert-count dupe 10)]
+    [base-id : i64 (ci.intern "CloneSmokeKey")]
+    [first-key : i64
+      (clone-name-pair-key-id (ci.intern "clone.smoke.first") base-id)]
+    [second-key : i64
+      (clone-name-pair-key-id (ci.intern "clone.smoke.second") base-id)]
+    [unique : CloneNameList
+      (CloneNameList.ConsId first-key 1 (box (CloneNameList.Nil)))]
+    [ambiguous : CloneNameList (CloneNameList.ConsId second-key 2 (box unique))]
     (and
       (not (clone-name-set-contains-id? one 2))
       (clone-name-set-contains-id? one 1)
       (= (clone-name-set-len dupe) 1)
       (= (clone-name-set-len grown) 11)
+      (=
+        (clone-name-list-unique-key-for-base-id-or unique base-id -1)
+        first-key)
+      (= (clone-name-list-unique-key-for-base-id-or ambiguous base-id -1) -1)
       (> (clone-name-set-capacity grown) seed-capacity))))
 
 (define (clone-type-get [pools : AstNodePoolContext] [id : i64]) : AstType

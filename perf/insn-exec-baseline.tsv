@@ -32,4 +32,4 @@ benchmark/c-scalar/opt_quicksort	398372863
 benchmark/typelisp/spmd_reduce	1478733772
 benchmark/c/spmd_reduce	1693815306
 benchmark/c-scalar/spmd_reduce	3381322973
-self_compile/compile_cli_opt1	57765991881
+self_compile/compile_cli_opt1	57390721803

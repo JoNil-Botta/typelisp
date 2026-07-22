@@ -6,8 +6,8 @@
 ;#
 ;# String keys use borrowed lookup/contains/remove entry points and the stable
 ;# `hash.string-key`/`hash.key-string-eq?` rules. i64 keys use a multiplicative
-;# bucket hash and scalar equality. The aggregate-key test fixture derives a
-;# deterministic hash/equality pair from its declaration-order fields.
+;# bucket hash and scalar equality. Other cloneable structural keys use the
+;# generated `(hash K)` and `(eq K)` modules.
 ;#
 ;# Public capacities are positive powers of two. Probing visits at most the
 ;# slot-array length, remembers the first tombstone, and terminates on full
@@ -26,6 +26,8 @@
 ;#       (map.lookup-value-or (map.get (& m) "k") 0))))
 ;# ```
 (import stdlib.comptime)
+(import stdlib.eq)
+(import stdlib.hash)
 
 ;; lint-allow: unused-import
 (import stdlib.string)
@@ -38,7 +40,7 @@
 (define (i64-key-descriptor-key) : String
   "stdlib/hashmap/i64-key-v1")
 
-;: Stable descriptor identity for generated nominal aggregate-key hashmap families.
+;: Stable descriptor identity for generated structural-key hashmap families.
 (define (aggregate-key-descriptor-key) : String
   "stdlib/hashmap/aggregate-key-v1")
 
@@ -49,8 +51,7 @@
       (match (type-key K)
         ["String" "string"]
         ["i64" "i64"]
-        ["struct_stdlib.hashmap/HashNestedKey" "aggregate"]
-        [_ "unsupported"])]
+        [_ "generated"])]
     [value-kind : String
       (match (type-key V)
         ["i64" "i64"]
@@ -58,11 +59,7 @@
         ["struct_stdlib.hashmap/HashPayload" "aggregate"]
         ["enum_stdlib.hashmap/HashState" "aggregate"]
         [_ "unsupported"])]
-    [module-key-k : String
-      (match (type-key K)
-        ["struct_stdlib.hashmap/HashNestedKey"
-          "struct_stdlib.hashmap.HashNestedKey"]
-        [_ (type-key K)])]
+    [module-key-k : String (type-key K)]
     [module-key-v : String
       (match (type-key V)
         ["struct_stdlib.hashmap/HashPayload"
@@ -76,6 +73,14 @@
           module-key-k
           (comptime.string-append "." module-key-v)))]
     [module-name : comptime.Expr (comptime.expr-var module-name-text)]
+    [key-module-imports : comptime.ExprList
+      (if (string.eq key-kind "generated")
+        (comptime.expr-list-cons
+          `(import (hash.hash ,K) as key_hash)
+          (comptime.expr-list-cons
+            `(import (eq.eq ,K) as key_eq)
+            (comptime.expr-list-empty)))
+        (comptime.expr-list-empty))]
     [insert-helper-name : comptime.Expr
       (comptime.expr-string
         (comptime.string-append module-name-text ".insert-ref!"))]
@@ -114,8 +119,11 @@
       (match key-kind
         ["string" `(string_mod.copy (& key))]
         ["i64" `key]
-        ["aggregate" `(clone key)]
-        [_ `key])]
+        [_ `(clone key)])]
+    [insert-key-copy : comptime.Expr
+      (if (string.eq key-kind "generated")
+        `(clone key)
+        `key)]
     [value-copy : comptime.Expr
       (match value-kind
         ["string" `(string_mod.copy (& value))]
@@ -126,96 +134,17 @@
       (match key-kind
         ["string" `(string_mod.copy (& (struct-get entry key)))]
         ["i64" `(struct-get entry key)]
-        ["aggregate" `(clone (struct-get entry key))]
-        [_ `(struct-get entry key)])]
+        [_ `(clone (struct-get entry key))])]
     [hash-key-body : comptime.Expr
       (match key-kind
         ["string" `(hash_mod.string-key key)]
         ["i64" `(* key 6364136223846793005)]
-        ["aggregate"
-          `(hash-combine
-            (hash-combine
-              0
-              (hash-combine
-                (hash-combine
-                  (hash-combine
-                    (hash-combine
-                      0
-                      (hash-normalize (struct-get (struct-get key point) x)))
-                    (if (struct-get (struct-get key point) enabled)
-                      1
-                      0))
-                  (hash_mod.string-key
-                    (& (struct-get (struct-get key point) label))))
-                (hash-normalize
-                  (cast (struct-get (struct-get key point) code) : i64))))
-            (match (struct-get key tag)
-              [(base.HashTagNone) (hash-combine 0 (hash-normalize 0))]
-              [(base.HashTagNumber payload)
-                (hash-combine
-                  (hash-combine 0 (hash-normalize 1))
-                  (hash-normalize payload))]
-              [(base.HashTagOtherNumber payload)
-                (hash-combine
-                  (hash-combine 0 (hash-normalize 2))
-                  (hash-normalize payload))]
-              [(base.HashTagText enabled text code)
-                (hash-combine
-                  (hash-combine
-                    (hash-combine
-                      (hash-combine 0 (hash-normalize 3))
-                      (if enabled
-                        1
-                        0))
-                    (hash_mod.string-key (& text)))
-                  (hash-normalize (cast code : i64)))]))]
-        [_ `0])]
+        [_ `(key_hash.hash key)])]
     [key-eq-body : comptime.Expr
       (match key-kind
         ["string" `(hash_mod.key-string-eq? (& left) right)]
         ["i64" `(= left right)]
-        ["aggregate"
-          `(and
-            (and
-              (and
-                (=
-                  (struct-get (struct-get left point) x)
-                  (struct-get (struct-get right point) x))
-                (=
-                  (struct-get (struct-get left point) enabled)
-                  (struct-get (struct-get right point) enabled)))
-              (hash_mod.key-string-eq?
-                (& (struct-get (struct-get left point) label))
-                (& (struct-get (struct-get right point) label))))
-            (and
-              (=
-                (cast (struct-get (struct-get left point) code) : i64)
-                (cast (struct-get (struct-get right point) code) : i64))
-              (match (struct-get left tag)
-                [(base.HashTagNone)
-                  (match (struct-get right tag)
-                    [(base.HashTagNone) true]
-                    [_ false])]
-                [(base.HashTagNumber left-value)
-                  (match (struct-get right tag)
-                    [(base.HashTagNumber right-value)
-                      (= left-value right-value)]
-                    [_ false])]
-                [(base.HashTagOtherNumber left-value)
-                  (match (struct-get right tag)
-                    [(base.HashTagOtherNumber right-value)
-                      (= left-value right-value)]
-                    [_ false])]
-                [(base.HashTagText left-enabled left-text left-code)
-                  (match (struct-get right tag)
-                    [(base.HashTagText right-enabled right-text right-code)
-                      (and
-                        (and
-                          (= left-enabled right-enabled)
-                          (hash_mod.key-string-eq? (& left-text) (& right-text)))
-                        (= (cast left-code : i64) (cast right-code : i64)))]
-                    [_ false])])))]
-        [_ `false])]
+        [_ `(key_eq.eq left right)])]
     ;; Keep the generated i64 -> i64 hot path as lean as the former concrete
     ;; family. Its raw reads are bounded by the positive power-of-two capacity;
     ;; growth finishes before a pointer is captured, and no scan reallocates.
@@ -258,6 +187,22 @@
                           (set! walked (+ walked 1))))]))
                 fallback))))
         `(lookup-value-or (get map key) fallback))]
+    [update-slot-body : comptime.Expr
+      (if (string.eq key-kind "generated")
+        `(match (array-ref (struct-get map slots) index)
+          [(GeneratedHashmapSlot.Occupied existing _ existing-hash)
+            (array-set!
+              (struct-get map slots)
+              index
+              (GeneratedHashmapSlot.Occupied
+                (clone existing)
+                value
+                existing-hash))]
+          [_ unit])
+        `(array-set!
+          (struct-get map slots)
+          index
+          (GeneratedHashmapSlot.Occupied key value hash)))]
     [insert-ref-body : comptime.Expr
       (if scalar-family
         `(let
@@ -417,11 +362,7 @@
               (capacity-mut map)
               ,owned-query-key
               hash)
-              [(GeneratedHashmapProbe.Found index)
-                (array-set!
-                  (struct-get map slots)
-                  index
-                  (GeneratedHashmapSlot.Occupied key value hash))]
+              [(GeneratedHashmapProbe.Found index) ,update-slot-body]
               [(GeneratedHashmapProbe.Absent index)
                 (let
                   [was-tombstone : bool
@@ -432,7 +373,10 @@
                     (array-set!
                       (struct-get map slots)
                       index
-                      (GeneratedHashmapSlot.Occupied key value hash))
+                      (GeneratedHashmapSlot.Occupied
+                        ,insert-key-copy
+                        value
+                        hash))
                     (set! (struct-get map len) (+ (struct-get map len) 1))
                     (if was-tombstone
                       (set!
@@ -487,9 +431,7 @@
                           (set! walked (+ walked 1))))]))
                 (RemoveMissing)))))
         `(remove-borrowed-ref! map ,owned-query-key))]
-    (if (if (string.eq key-kind "unsupported")
-      true
-      (string.eq value-kind "unsupported"))
+    (if (string.eq value-kind "unsupported")
       `(begin
         (module ,module-name)
         (import stdlib.comptime))
@@ -497,8 +439,8 @@
         (module ,module-name)
         (import stdlib.array as array_ops)
         (import stdlib.hash as hash_mod)
-        (import stdlib.hashmap as base)
         (import stdlib.string as string_mod)
+        ,@key-module-imports
         (defenum GeneratedHashmapSlot
           (Empty)
           (Tombstone)
@@ -534,10 +476,6 @@
         (defenum Entry
           (EntryNone)
           (EntrySome ,K ,V))
-        (define (hash-normalize [value : i64]) : i64
-          (hash_mod.normalize value))
-        (define (hash-combine [seed : i64] [component : i64]) : i64
-          (hash_mod.combine seed component))
         (define (hash-key [key : ,query-key-type]) : i64
           ,hash-key-body)
         (define (key-eq? [left : ,K] [right : ,query-key-type]) : bool

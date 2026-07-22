@@ -62,13 +62,12 @@ src/compiler_backend.tl	compiler-backend-runtime-linux-arena-functions	runtime	C
 src/compiler_backend.tl	compiler-backend-runtime-windows-alloc-functions	runtime	CompilerBackendTarget[.]Windows	1	Windows allocation runtime is emitted by an explicit target helper.
 src/compiler_backend.tl	compiler-backend-runtime-windows-arena-functions	runtime	CompilerBackendTarget[.]Windows	2	Windows arena runtime is emitted by explicit target helpers.
 src/compiler_backend.tl	compiler-backend-runtime-externs-for-target	runtime	compiler-backend-target-windows[?]	1	Runtime extern declarations differ for Windows imports.
-src/compiler_backend.tl	compiler-backend-runtime-fs-functions-for-target	runtime	compiler-backend-target-windows[?]	1	Runtime filesystem helpers differ between Windows and Linux.
 src/compiler_backend.tl	compiler-backend-runtime-memcpy-functions	runtime	compiler-backend-target-windows[?]	1	Runtime memcpy helper differs between Windows and Linux.
 src/compiler_backend.tl	compiler-backend-runtime-memchr-functions	runtime	compiler-backend-target-windows[?]	1	Runtime memchr helper differs between Windows and Linux.
 src/compiler_backend.tl	compiler-backend-runtime-array-zero-functions	runtime	compiler-backend-target-windows[?]	1	Runtime array-zero helper saves the nonvolatile rdi on Windows but not on Linux.
 src/compiler_backend.tl	compiler-backend-runtime-tlci-entry-functions	runtime	compiler-backend-target-windows[?]	1	Runtime tlci entry-call bridge follows the host C ABI on each target.
 src/compiler_backend.tl	compiler-backend-runtime-tlci-macro-entry-functions	runtime	compiler-backend-target-windows[?]	1	Runtime tlci macro-entry bridge reshapes the loader call to the host C ABI on each target.
-src/compiler_backend.tl	compiler-backend-runtime-functions-for-target	runtime	compiler-backend-target-windows[?]	13	Runtime helper assembly selects Windows imports and implementations by target.
+src/compiler_backend.tl	compiler-backend-runtime-functions-for-target	runtime	compiler-backend-target-windows[?]	5	Live runtime helper assembly selects Windows imports and implementations by target.
 src/compiler_backend.tl	compiler-backend-emit-program-linux	entry	CompilerBackendTarget[.]Linux	1	Linux-named assembly emitter explicitly selects the Linux entry/runtime target.
 src/compiler_backend.tl	compiler-backend-emit-program-linux-with-spans	entry	CompilerBackendTarget[.]Linux	1	Linux-named span-aware emitter explicitly selects the Linux entry/runtime target.
 src/compiler_backend.tl	compiler-backend-object-tlci-entry-bytes	object-format	compiler-backend-target-windows[?]	1	Direct-object tlci entry-call bridge bytes follow the target C ABI.

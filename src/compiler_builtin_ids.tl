@@ -3347,23 +3347,6 @@
         compiler-builtin-id-tl-int-to-string
         -1))))
 
-(define (compiler-builtin-backend-runtime-compatibility-alias-id?
-  [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any3?
-      name-id
-      compiler-builtin-id-tl-env-var-exists
-      compiler-builtin-id-tl-env-var-value
-      compiler-builtin-id-env-path-separator)))
-
-(define (compiler-builtin-backend-runtime-helper-known-id? [name-id : i64]) : bool
-  (or
-    (compiler-builtin-backend-runtime-core-id? name-id)
-    (compiler-builtin-backend-runtime-stdlib-ffi-id? name-id)
-    (compiler-builtin-backend-runtime-stdlib-type-lisp-id? name-id)
-    (compiler-builtin-backend-runtime-compatibility-alias-id? name-id)))
-
 (define (compiler-builtin-backend-runtime-concat-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
@@ -3504,21 +3487,6 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-hash-string)))
-
-(define (compiler-builtin-backend-env-var-exists-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-env-var-exists)))
-
-(define (compiler-builtin-backend-env-var-value-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-env-var-value)))
-
-(define (compiler-builtin-backend-env-path-separator-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-env-path-separator)))
 
 (define (compiler-builtin-backend-tls-current-arena-call-id? [name-id : i64]) : bool
   (begin

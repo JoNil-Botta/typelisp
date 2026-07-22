@@ -34,6 +34,12 @@ mkdir -p "$WORKDIR"
 PROFILE_ASM="$WORKDIR/typelisp-profile.s"
 PROFILE_OBJ="$WORKDIR/typelisp-profile.$NL_OBJ_EXT"
 PROFILE_BIN="$WORKDIR/typelisp-profile$NL_BIN_EXT"
+SURFACE_HYDRATED_ASM="$WORKDIR/surface-hydrated.s"
+SURFACE_HYDRATED_STDOUT="$WORKDIR/surface-hydrated.stdout"
+SURFACE_HYDRATED_STDERR="$WORKDIR/surface-hydrated.stderr"
+SURFACE_SOURCE_ASM="$WORKDIR/surface-source.s"
+SURFACE_SOURCE_STDOUT="$WORKDIR/surface-source.stdout"
+SURFACE_SOURCE_STDERR="$WORKDIR/surface-source.stderr"
 SUMMARY_ASM="$WORKDIR/typelisp-summary.s"
 SUMMARY_OBJ="$WORKDIR/typelisp-summary.$NL_OBJ_EXT"
 SUMMARY_BIN="$WORKDIR/typelisp-summary$NL_BIN_EXT"
@@ -348,6 +354,42 @@ if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFI
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI link failed"
 fi
+
+echo "[compile-profile] verify hydrated prelude bypass and source parity"
+if ! "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
+    -o "$SURFACE_HYDRATED_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    > "$SURFACE_HYDRATED_STDOUT" 2> "$SURFACE_HYDRATED_STDERR"; then
+    show_failure_logs "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR"
+    fail "hydrated prelude profile fixture failed"
+fi
+for row in \
+    'prelude.source_pipeline_entries|0' \
+    'prelude.hydrations|1' \
+    'prelude.macro_walk_decl_visits|0' \
+    'prelude.typecheck_decl_checks|0'; do
+    assert_contains_in "$SURFACE_HYDRATED_STDERR" \
+        "compile-profile-detail|$row" \
+        "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR"
+done
+if ! "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
+    -o "$SURFACE_SOURCE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$SURFACE_SOURCE_STDOUT" 2> "$SURFACE_SOURCE_STDERR"; then
+    show_failure_logs "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR"
+    fail "source prelude parity fixture failed"
+fi
+assert_contains_in "$SURFACE_SOURCE_STDERR" \
+    "compile-profile-detail|prelude.source_pipeline_entries|1" \
+    "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR"
+assert_contains_in "$SURFACE_SOURCE_STDERR" \
+    "compile-profile-detail|prelude.hydrations|0" \
+    "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR"
+cmp "$SURFACE_HYDRATED_ASM" "$SURFACE_SOURCE_ASM" >/dev/null ||
+    fail "hydrated prelude assembly differs from source prelude output"
 
 echo "[compile-profile] compile compact-summary CLI"
 if ! "$COMPILER" compile src/main.tl \

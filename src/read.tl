@@ -87,16 +87,17 @@
 ;; (box ...). Two plain globals (array + count), NOT a struct, to avoid the
 ;; opt2 hot-path-inline miscompile seen on the AstExpr pool. The spanned tree
 ;; is transient (consumed into AstExpr, spans copied out by value, then dead),
-;; so the pool is reset per program parse (see compiler_parse_core.tl).
+;; so the pool is reset per program parse (see compiler_parse_core.tl). Start
+;; empty and retain geometrically grown storage: small compile commands should
+;; not construct 262,144 enum slots before argv dispatch. Growth uses one
+;; dedicated arena that is created once and never reset, keeping the long-lived
+;; global valid across transient driver arenas.
 (define sp-node-pool-slots : (Array SpannedSexpr)
-  (make-array SpannedSexpr 262144))
+  (make-array SpannedSexpr 0))
 
-;; The backing array is process-global. Capture its arena after the initial
-;; allocation so a safety-net grow cannot accidentally move it into a
-;; short-lived parser/test arena and leave this global dangling when that arena
-;; is destroyed.
+;; Current head of the dedicated backing arena, or zero before first use.
 (define sp-node-pool-base-arena : i64
-  (arena.tl_arena_current))
+  0)
 (define sp-node-pool-count : i64
   0)
 
@@ -150,9 +151,13 @@
         (* old-cap 2))]
     [previous-arena : i64 (arena.tl_arena_current)]
     [base-arena : i64 sp-node-pool-base-arena]
+    [storage-root : i64
+      (if (= base-arena 0)
+        (arena.tl_arena_make)
+        base-arena)]
     [_set-arena : unit
       (unsafe
-        (arena.tl_arena_set base-arena))]
+        (arena.tl_arena_set storage-root))]
     [new-slots : (Array SpannedSexpr) (make-array SpannedSexpr new-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit

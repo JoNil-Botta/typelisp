@@ -87,6 +87,20 @@
     (cast (ptr->int (ptr-cast (array-data now-scratch) : (Ptr u8))) : i64)))
 
 ;: Linux `clock_gettime(CLOCK_MONOTONIC)` via raw syscall 228.
+(define (linux-now-ticks) : i64
+  (let
+    [status : i64
+      (unsafe
+        (syscall 228 1 (scratch-addr)))]
+    (if (< status 0)
+      0
+      (+ (* (array-ref now-scratch 0) 1000000000) (array-ref now-scratch 1)))))
+
+;: Linux monotonic ticks per second. `linux-now-ticks` returns nanoseconds.
+(define (linux-ticks-per-second) : i64
+  1000000000)
+
+;: Linux `clock_gettime(CLOCK_MONOTONIC)` in coarse milliseconds.
 (define (linux-now-ms) : i64
   (let
     [status : i64
@@ -97,6 +111,22 @@
       (+
         (* (array-ref now-scratch 0) 1000)
         (/ (array-ref now-scratch 1) 1000000)))))
+
+;: Windows raw `QueryPerformanceCounter` timestamp.
+(cfg
+  windows
+  (define (windows-now-ticks) : i64
+    (if (= (windows-query-performance-counter (scratch-ptr 0)) (cast 0 : i32))
+      0
+      (array-ref now-scratch 0))))
+
+;: Windows `QueryPerformanceCounter` ticks per second.
+(cfg
+  windows
+  (define (windows-ticks-per-second) : i64
+    (if (= (windows-query-performance-frequency (scratch-ptr 1)) (cast 0 : i32))
+      0
+      (array-ref now-scratch 1))))
 
 ;: Windows `QueryPerformanceCounter/Frequency` timestamp.
 (cfg
@@ -115,6 +145,15 @@
 ;: Return a coarse monotonic timestamp in milliseconds.
 (define (now-ms) : i64
   (cfg windows (windows-now-ms) (linux-now-ms)))
+
+;: Return a high-resolution monotonic timestamp in platform-native ticks.
+;: Windows returns QueryPerformanceCounter ticks; Linux returns nanoseconds.
+(define (now-ticks) : i64
+  (cfg windows (windows-now-ticks) (linux-now-ticks)))
+
+;: Return the number of `now-ticks` units in one second.
+(define (ticks-per-second) : i64
+  (cfg windows (windows-ticks-per-second) (linux-ticks-per-second)))
 
 ;: Return total allocated bytes since process start.
 (define (alloc-total) : i64
@@ -158,6 +197,8 @@
   profile-api
   (begin
     (test-assert (>= (now-ms) 0))
+    (test-assert (> (ticks-per-second) 0))
+    (test-assert (> (now-ticks) 0))
     (alloc-reset-peak)
     (let
       [before-total : i64 (alloc-total)]

@@ -33,6 +33,9 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
+(cfg
+  compile-startup-profile
+  (import compiler_startup_profile as startup_profile))
 
 (defenum ResultCompileCliBatchEntryList
   ;; Batch entries are adjacent input/output string pairs in this generated
@@ -1066,6 +1069,10 @@
       unit)
     (compiler-driver-state-install-pools! state)
     (compiler-driver-state-install-interns! state)
+    (cfg
+      compile-startup-profile
+      (startup_profile.compiler-startup-profile-mark-preflight-begin!)
+      unit)
     (let
       [doctest-status : i64
         (compile-cli-typecheck-doctests input-path stdlib-roots)]
@@ -1081,6 +1088,11 @@
                   (compile-cli-cfg-names-to-env cfgs))
                 "typecheck-prefix-inline-compile")
               0)]
+          [_preflight-end : unit
+            (cfg
+              compile-startup-profile
+              (startup_profile.compiler-startup-profile-mark-preflight-end!)
+              unit)]
           (if (= inline-test-status 0)
             (begin
               (compiler-driver-state-reset-file-state! state)
@@ -1093,56 +1105,71 @@
                   (compile-cli-cfg-names-to-env-with-intern-state
                     cfgs
                     (compiler-driver-state-owned-interns state))]
+                [_file-state-reset-end : unit
+                  (cfg
+                    compile-startup-profile
+                    (startup_profile.compiler-startup-profile-mark-file-state-reset-end!)
+                    unit)]
                 [status : i64
-                  (if emit-ir
-                    (compile-cli-write-result-with-ir-verification
-                      (if compile-cli-dump-ir-requested
-                        (compiler-driver-state-emit-ir-text-file-with-target-roots-level-mode-and-cfg
-                          state
-                          input-path
-                          target
-                          stdlib-roots
-                          opt-level
-                          backend-mode
-                          emit-cfgs
-                          compile-cli-dump-ir-pass)
-                        (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
-                          state
-                          input-path
-                          target
-                          stdlib-roots
-                          opt-level
-                          backend-mode
-                          emit-cfgs))
-                      output-path)
-                    (if pic
-                      (compile-cli-write-pic-result-with-ir-verification
-                        (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
-                          state
-                          input-path
-                          target
-                          true
-                          stdlib-roots
-                          opt-level
-                          backend-mode
-                          emit-cfgs)
+                  (begin
+                    (cfg
+                      compile-startup-profile
+                      (startup_profile.compiler-startup-profile-mark-compile-driver-start!)
+                      unit)
+                    (if emit-ir
+                      (compile-cli-write-result-with-ir-verification
+                        (if compile-cli-dump-ir-requested
+                          (compiler-driver-state-emit-ir-text-file-with-target-roots-level-mode-and-cfg
+                            state
+                            input-path
+                            target
+                            stdlib-roots
+                            opt-level
+                            backend-mode
+                            emit-cfgs
+                            compile-cli-dump-ir-pass)
+                          (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+                            state
+                            input-path
+                            target
+                            stdlib-roots
+                            opt-level
+                            backend-mode
+                            emit-cfgs))
                         output-path)
-                      (compile-cli-write-buffer-result-with-ir-verification
-                        (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
-                          state
-                          input-path
-                          target
-                          true
-                          stdlib-roots
-                          opt-level
-                          backend-mode
-                          emit-cfgs)
-                        output-path)))]
+                      (if pic
+                        (compile-cli-write-pic-result-with-ir-verification
+                          (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
+                            state
+                            input-path
+                            target
+                            true
+                            stdlib-roots
+                            opt-level
+                            backend-mode
+                            emit-cfgs)
+                          output-path)
+                        (compile-cli-write-buffer-result-with-ir-verification
+                          (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+                            state
+                            input-path
+                            target
+                            true
+                            stdlib-roots
+                            opt-level
+                            backend-mode
+                            emit-cfgs)
+                          output-path))))]
                 (begin
                   (compiler-driver-state-capture-session-floors! state)
                   status)))
             inline-test-status))
-        doctest-status))))
+        (begin
+          (cfg
+            compile-startup-profile
+            (startup_profile.compiler-startup-profile-mark-preflight-end!)
+            unit)
+          doctest-status)))))
 
 (define (compile-cli-run-batch-inline-tests-from
   [entries : (& entries cli_svec.Vec)]
@@ -1516,31 +1543,56 @@
 (define (compile-cli-run-action [action : CompileCliAction]) : i64
   (match action
     [(CompileCliAction.Run config)
-      (match config
-        [(CompileCliConfig.Config
-            input-path
-            output-path
-            emit-ir
-            pic
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            backend-mode
-            opt-level)
-          (compile-cli-run-compile-file
-            (compiler-driver-state-new-for-compile)
-            input-path
-            output-path
-            emit-ir
-            pic
-            has-target
-            target
-            stdlib-roots
-            cfgs
-            backend-mode
-            opt-level
-            true)])]
+      (begin
+        (cfg
+          compile-startup-profile
+          (startup_profile.compiler-startup-profile-mark-cli-compile-action!)
+          unit)
+        (match config
+          [(CompileCliConfig.Config
+              input-path
+              output-path
+              emit-ir
+              pic
+              has-target
+              target
+              stdlib-roots
+              cfgs
+              backend-mode
+              opt-level)
+            (let
+              [_state-begin : unit
+                (cfg
+                  compile-startup-profile
+                  (startup_profile.compiler-startup-profile-mark-driver-state-begin!)
+                  unit)]
+              [state : CompilerDriverState
+                (compiler-driver-state-new-for-compile)]
+              [_state-end : unit
+                (cfg
+                  compile-startup-profile
+                  (startup_profile.compiler-startup-profile-mark-driver-state-end!)
+                  unit)]
+              [status : i64
+                (compile-cli-run-compile-file
+                  state
+                  input-path
+                  output-path
+                  emit-ir
+                  pic
+                  has-target
+                  target
+                  stdlib-roots
+                  cfgs
+                  backend-mode
+                  opt-level
+                  true)]
+              (begin
+                (cfg
+                  compile-startup-profile
+                  (startup_profile.compiler-startup-profile-print!)
+                  unit)
+                status))]))]
     [(CompileCliAction.Batch config) (compile-cli-run-batch config)]
     [(CompileCliAction.Check input-path stdlib-roots)
       (match (compiler-check-file-with-roots input-path stdlib-roots)

@@ -35,6 +35,7 @@
 
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
+(import stdlib.arena)
 (import stdlib.io)
 (import token)
 (import stdlib.text_buf)
@@ -1110,18 +1111,95 @@
 
 ;; Reusable spanned-token buffer. The per-source token array is sized to the
 ;; SOURCE BYTE COUNT (a safe upper bound on the token count, since each token
-;; spans >= 1 byte), but only ~1/4 of those slots ever hold a token -- and with
-;; direct module parsing those over-sized arrays were never freed, so they
-;; accumulated to a large share of cold self-build peak memory. Every caller
-;; consumes the token array immediately (lex -> read -> parse, sequentially per
-;; module), so a single program-lifetime buffer can back them all: it is filled
-;; afresh on each lex and never aliased across two live token streams. Sources
-;; larger than the buffer fall back to a one-off array (correct, just unpooled),
-;; so the fixed size needs no growth path.
+;; spans >= 1 byte), but only ~1/4 of those slots ever hold a token. Every
+;; caller consumes the token array immediately (lex -> read -> parse,
+;; sequentially per module), so one program-lifetime buffer can back them all.
+;; Size that buffer on first use instead of constructing 1.3 million enum slots
+;; during process startup for every command. Geometric growth retains the
+;; bounded reuse that prevents per-module arrays from dominating self-build
+;; peak memory. The backing allocations live in one dedicated arena that is
+;; created once and never reset, so a grow while a transient driver arena is
+;; active cannot leave this global pointing at reclaimed storage.
 (define lex-spanned-token-buffer-cap : i64
   1310720)
 (define lex-spanned-token-buffer : (Array token.SpannedToken)
-  (make-array token.SpannedToken lex-spanned-token-buffer-cap))
+  (make-array token.SpannedToken 0))
+(define lex-spanned-token-buffer-arena : i64
+  0)
+
+(define (lex-spanned-token-buffer-next-capacity [required : i64]) : i64
+  (let
+    [current : i64 (array-length lex-spanned-token-buffer)]
+    [next : i64
+      (if (< current 1024)
+        1024
+        current)]
+    (begin
+      (while (< next required)
+        (set!
+          next
+          (if (> (* next 2) lex-spanned-token-buffer-cap)
+            lex-spanned-token-buffer-cap
+            (* next 2))))
+      next)))
+
+(define (lex-spanned-token-buffer-grow-to! [required : i64]) : unit
+  (let
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [old-storage-arena : i64 lex-spanned-token-buffer-arena]
+    [storage-root : i64
+      (if (= old-storage-arena 0)
+        (arena.tl_arena_make)
+        old-storage-arena)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set storage-root))]
+    [new-buffer : (Array token.SpannedToken)
+      (make-array
+        token.SpannedToken
+        (lex-spanned-token-buffer-next-capacity required))]
+    [new-storage-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous-arena old-storage-arena)
+            new-storage-arena
+            previous-arena)))
+      (set! lex-spanned-token-buffer-arena new-storage-arena)
+      (set! lex-spanned-token-buffer new-buffer))))
+
+(define (lex-spanned-token-buffer-ensure! [required : i64]) : unit
+  (if (and
+    (<= required lex-spanned-token-buffer-cap)
+    (> required (array-length lex-spanned-token-buffer)))
+    (lex-spanned-token-buffer-grow-to! required)
+    unit))
+
+(define (lex-spanned-token-buffer-arena-ownership-ok?) : bool
+  (let
+    [home : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    [required : i64 (+ (array-length lex-spanned-token-buffer) 1)]
+    (begin
+      (unsafe
+        (arena.set! scratch))
+      (lex-spanned-token-buffer-grow-to! required)
+      (unsafe
+        (begin
+          (arena.set! home)
+          (arena.destroy scratch)))
+      (and
+        (>= (array-length lex-spanned-token-buffer) required)
+        (match (lex-spanned-result "(arena-ok)")
+          [(ResultSpannedTokens.Ok tokens)
+            (and
+              (=
+                (token.tag (token.spanned-token-tok (array-ref tokens 0)))
+                (token.tag-lparen))
+              (=
+                (token.tag (token.spanned-token-tok (array-ref tokens 3)))
+                (token.tag-end)))]
+          [(ResultSpannedTokens.Err _) false])))))
 
 ;; `lex-spanned-result : (-> String ResultSpannedTokens)` - lex into a token +
 ;; start-index pair of arrays, then materialize `count + 1` spanned tokens
@@ -1129,6 +1207,7 @@
 (define (lex-spanned-result [src : String]) : ResultSpannedTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
+    [_buffer-ready : unit (lex-spanned-token-buffer-ensure! cap)]
     [stoks : (Array token.SpannedToken)
       (if (<= cap lex-spanned-token-buffer-cap)
         lex-spanned-token-buffer
@@ -1581,6 +1660,9 @@
             unit
             (set! ok false))
           (if (lex-quote-prefix-tokens-ok?)
+            unit
+            (set! ok false))
+          (if (lex-spanned-token-buffer-arena-ownership-ok?)
             unit
             (set! ok false))
           (if ok

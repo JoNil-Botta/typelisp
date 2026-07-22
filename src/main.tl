@@ -17,6 +17,9 @@
 ;; (`compiler_check_core` ->
 ;; `compiler_typecheck`), so `check` does the same macro-expansion and
 ;; specialization as build/run/test.
+(cfg
+  compile-startup-profile
+  (import compiler_startup_profile as startup_profile))
 (import "compiler_tlci_native_producer.tl")
 (import stdlib.io)
 
@@ -431,6 +434,11 @@ Options:
         (cli-print-help 1))]))
 
 (define (main) : i64
-  (if (< (cli-argc) 2)
-    (cli-print-help 1)
-    (cli-dispatch (cli-arg 1) (cli-argc))))
+  (begin
+    (cfg
+      compile-startup-profile
+      (startup_profile.compiler-startup-profile-mark-main-entry!)
+      unit)
+    (if (< (cli-argc) 2)
+      (cli-print-help 1)
+      (cli-dispatch (cli-arg 1) (cli-argc)))))

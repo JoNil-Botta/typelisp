@@ -42229,10 +42229,23 @@
     (or absorbable? (= const-args param-count))
     true))
 
+;; Keep loop-bearing bounds callees behind the general acyclic gate. `vm-run`
+;; is the one measured exception: eliminating its hot dispatch-call boundary
+;; wins without changing the static bounds-check count. Match the exact IR leaf
+;; so similarly shaped package functions (notably `qs-partition`) stay refused.
+(define (opt-inline-vm-run-bounds-loop-exception? [callee-name : i64]) : bool
+  (let
+    [name : String (compiler-ir-symbol-text callee-name)]
+    (opt-symbol-leaf-matches-from? name (opt-symbol-leaf-start name) "vm-run")))
+
 (define (opt-inline-multiblock-bounds-loop-ok?
   [has-bounds? : bool]
+  [callee-name : i64]
   [blocks : CompilerIrBlockList]) : bool
-  (or (not has-bounds?) (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
+  (or
+    (not has-bounds?)
+    (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
+    (opt-inline-vm-run-bounds-loop-exception? callee-name)))
 
 (define (opt-inline-bounds-leaf-cost-inline?
   [callee-instrs : i64]
@@ -42685,19 +42698,8 @@
                   (and
                     (not stage-args?)
                     (opt-inline-tiny-predicate-callee? index callee census))]
-                ;; Bounds-carrying multiblock callees stay ACYCLIC-only.
-                ;; A 2026-07-18 remeasurement showed that loop-BCE now composes:
-                ;; vm-run's stack length const-folds to 64 after inlining. The
-                ;; merged hot loop instead spills pc, regressing opt_bytecode_vm
-                ;; by 8.4%; the broad non-Switch dispatch exception also
-                ;; regressed hashmap_grow by 1.7%. Regalloc already weights ref
-                ;; counts by loop depth, so the spill has a subtler cause; retry
-                ;; lifting this gate only once merged hot-loop counters provably
-                ;; stay register-resident. A 2026-07-20 exact admission of the
-                ;; generated i64/i64 get-value-or loop removed both hot calls
-                ;; but regressed hashmap_get by 6.90%: main grew 129 -> 264 IR
-                ;; vars, its frame 696 -> 1208 bytes, and rsp references 16 ->
-                ;; 66, while static bounds checks stayed 5 -> 5 (#5188).
+                ;; Bounds-carrying loops stay acyclic-only except for the exact
+                ;; measured vm-run leaf selected by the shared gate (#5325).
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
                 [bounds-ok? : bool
@@ -42707,7 +42709,10 @@
                     const-args
                     np)]
                 [bounds-loop-ok? : bool
-                  (opt-inline-multiblock-bounds-loop-ok? has-bounds? cblocks)]
+                  (opt-inline-multiblock-bounds-loop-ok?
+                    has-bounds?
+                    callee-name
+                    cblocks)]
                 [inline? : bool
                   (and
                     bounds-ok?
@@ -43308,16 +43313,7 @@
                   (and
                     (not stage-args?)
                     (opt-inline-tiny-predicate-callee? index callee census))]
-                ;; Bounds-carrying multiblock callees stay ACYCLIC-only. The
-                ;; 2026-07-18 remeasurement found loop-BCE composes, but regalloc
-                ;; spills vm-run's hot-loop pc (+8.4% opt_bytecode_vm); the broad
-                ;; non-Switch exception also regressed hashmap_grow by 1.7%.
-                ;; Regalloc already weights ref counts by loop depth, so the
-                ;; spill has a subtler cause; retry only once merged hot-loop
-                ;; counters provably stay register-resident. #5188's 2026-07-20
-                ;; exact i64/i64 get-value-or admission regressed hashmap_get
-                ;; by 6.90% with 129 -> 264 main IR vars, a 696 -> 1208 byte
-                ;; frame, 16 -> 66 rsp references, and no static-BCE gain.
+                ;; Keep the span-aware path on the same exact vm-run decision.
                 [has-bounds? : bool
                   (opt-inline-blocks-have-bounds-check? cblocks)]
                 [bounds-ok? : bool
@@ -43327,7 +43323,10 @@
                     const-args
                     np)]
                 [bounds-loop-ok? : bool
-                  (opt-inline-multiblock-bounds-loop-ok? has-bounds? cblocks)]
+                  (opt-inline-multiblock-bounds-loop-ok?
+                    has-bounds?
+                    callee-name
+                    cblocks)]
                 [inline? : bool
                   (and
                     bounds-ok?

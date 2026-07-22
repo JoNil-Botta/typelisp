@@ -9204,11 +9204,30 @@
     zero-label
     (compiler-ir-switch-case-cons 1 one-label CompilerIrSwitchCaseList.Nil)))
 
+(define (opt-inline-switch-loop-bounds-instr [ok-label : String]) : CompilerIrInstr
+  (CompilerIrInstr.BoundsCheck
+    (CompilerIrValue.Var 1)
+    (CompilerIrValue.Var 2)
+    ok-label))
+
+(define (opt-inline-switch-loop-phi-instr) : CompilerIrInstr
+  (CompilerIrInstr.Phi
+    3
+    (compiler-ir-phi-input-cons
+      (CompilerIrValue.I64 10)
+      "zero"
+      (compiler-ir-phi-input-cons
+        (CompilerIrValue.I64 20)
+        "one"
+        CompilerIrPhiInputList.Nil))
+    (AstType.I64)))
+
 ;; A cyclic bounds-carrying Switch callee remains behind the acyclic gate even
-;; when absorbable.
-(define (opt-inline-switch-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+;; when absorbable, unless its exact IR-symbol leaf is the measured `vm-run`
+;; exception.
+(define (opt-inline-switch-callee-named [callee-name : i64]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    (struct-get symbols inline-switch)
+    callee-name
     (opt-inline-switch-params)
     (AstType.I64)
     4
@@ -9222,10 +9241,7 @@
         (compiler-ir-block
           "loop"
           (compiler-ir-instr-cons
-            (CompilerIrInstr.BoundsCheck
-              (CompilerIrValue.Var 1)
-              (CompilerIrValue.Var 2)
-              "switch_bounds_ok")
+            (opt-inline-switch-loop-bounds-instr "switch_bounds_ok")
             (compiler-ir-instr-cons
               (CompilerIrInstr.Switch
                 (CompilerIrValue.Var 0)
@@ -9249,21 +9265,15 @@
               (compiler-ir-block
                 "join"
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Phi
-                    3
-                    (compiler-ir-phi-input-cons
-                      (CompilerIrValue.I64 10)
-                      "zero"
-                      (compiler-ir-phi-input-cons
-                        (CompilerIrValue.I64 20)
-                        "one"
-                        CompilerIrPhiInputList.Nil))
-                    (AstType.I64))
+                  (opt-inline-switch-loop-phi-instr)
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
                       (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
                     CompilerIrInstrList.Nil)))
               CompilerIrBlockList.Nil)))))))
+
+(define (opt-inline-switch-callee [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (opt-inline-switch-callee-named (struct-get symbols inline-switch)))
 
 ;; The acyclic counterpart exercises Switch admission and label remapping. Its
 ;; join phi makes stale, unprefixed case/default predecessor labels observable.
@@ -9329,7 +9339,7 @@
                     CompilerIrInstrList.Nil)))
               CompilerIrBlockList.Nil)))))))
 
-(define (opt-inline-switch-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+(define (opt-inline-switch-caller-call-named [callee-name : i64]) : CompilerIrInstr
   (let
     [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 3)]
     (begin
@@ -9338,25 +9348,33 @@
       (array-set! args 0 (CompilerIrValue.Var 1))
       (array-set! args 1 (CompilerIrValue.Var 0))
       (array-set! args 2 (CompilerIrValue.Var 2))
-      (CompilerIrFunction.Function
-        (struct-get symbols main)
-        (opt-inline-switch-params)
-        (AstType.I64)
-        4
-        (compiler-ir-block-cons
-          (compiler-ir-block
-            "entry"
-            (compiler-ir-instr-cons
-              (CompilerIrInstr.Call
-                3
-                (struct-get symbols inline-switch)
-                (CompilerIrCallArgs.Array args)
-                (AstType.I64))
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Return
-                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
-                CompilerIrInstrList.Nil)))
-          CompilerIrBlockList.Nil)))))
+      (CompilerIrInstr.Call
+        3
+        callee-name
+        (CompilerIrCallArgs.Array args)
+        (AstType.I64)))))
+
+(define (opt-inline-switch-caller-named
+  [symbols : OptInlineMultiTestSymbols]
+  [callee-name : i64]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (struct-get symbols main)
+    (opt-inline-switch-params)
+    (AstType.I64)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (opt-inline-switch-caller-call-named callee-name)
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
+
+(define (opt-inline-switch-caller [symbols : OptInlineMultiTestSymbols]) : CompilerIrFunction
+  (opt-inline-switch-caller-named symbols (struct-get symbols inline-switch)))
 
 (define (opt-inline-cloned-switch-terminator-ok? [blocks : CompilerIrBlockList]) : bool
   (match (opt-cfg-find-block blocks "inl.entry.0.entry")
@@ -9447,6 +9465,184 @@
             (= (opt-count-bounds-blocks blocks) 0)
             (opt-inline-structure-ok? blocks)))]
       [(OptMaybeFunction.No) false])))
+
+(define (opt-inline-switch-functions-named
+  [symbols : OptInlineMultiTestSymbols]
+  [callee-name : i64]) : CompilerIrFunctionList
+  (compiler-ir-function-cons
+    (opt-inline-switch-caller-named symbols callee-name)
+    (compiler-ir-function-cons
+      (opt-inline-switch-callee-named callee-name)
+      CompilerIrFunctionList.Nil)))
+
+(define (opt-inline-switch-case-result-ok?
+  [functions : CompilerIrFunctionList]
+  [callee-text : String]
+  [expected-calls : i64]
+  [expected-bounds : i64]) : bool
+  (match (opt-function-list-find functions "main")
+    [(OptMaybeFunction.Some main)
+      (let
+        [blocks : CompilerIrBlockList (opt-function-blocks main)]
+        (and
+          (=
+            (opt-count-direct-call-name-blocks blocks callee-text)
+            expected-calls)
+          (= (opt-count-bounds-blocks blocks) expected-bounds)
+          (opt-inline-structure-ok? blocks)))]
+    [(OptMaybeFunction.No) false]))
+
+(define (compiler-optimize-inline-vm-run-bounds-loop-ok?) : bool
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [vm-text : String "bench.tl::vm-run"]
+    [other-text : String "bench.tl::qs-partition"]
+    [vm-name : i64 (opt-test-symbol vm-text)]
+    [other-name : i64 (opt-test-symbol other-text)]
+    [vm-opt2 : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (opt-inline-switch-functions-named symbols vm-name)
+        2)]
+    [other-opt2 : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (opt-inline-switch-functions-named symbols other-name)
+        2)]
+    [vm-opt1 : CompilerIrFunctionList
+      (opt-inline-program-functions
+        (opt-inline-switch-functions-named symbols vm-name)
+        1)]
+    (and
+      (opt-inline-switch-case-result-ok? vm-opt2 vm-text 0 1)
+      (opt-inline-switch-case-result-ok? other-opt2 other-text 1 0)
+      (opt-inline-switch-case-result-ok? vm-opt1 vm-text 1 0))))
+
+(define (opt-inline-phi-span-ok-instr-seq-from?
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [spans : CompilerSourceSpans]
+  [caller-name : i64]
+  [line : i64]
+  [col : i64]) : bool
+  (if (>= pos (compiler-ir-instr-seq-count instrs))
+    false
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
+      (or
+        (match instr
+          [(CompilerIrInstr.Phi _ _ _)
+            (opt-span-lookup-ok? spans caller-name instr line col)]
+          [_ false])
+        (opt-inline-phi-span-ok-instr-seq-from?
+          instrs
+          (+ pos 1)
+          spans
+          caller-name
+          line
+          col)))))
+
+(define (opt-inline-phi-span-ok-blocks?
+  [blocks : CompilerIrBlockList]
+  [spans : CompilerSourceSpans]
+  [caller-name : i64]
+  [line : i64]
+  [col : i64]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (or
+            (opt-inline-phi-span-ok-instr-seq-from?
+              instrs
+              0
+              spans
+              caller-name
+              line
+              col)
+            (opt-inline-phi-span-ok-blocks?
+              (box-get rest)
+              spans
+              caller-name
+              line
+              col))])]
+    [(CompilerIrBlockList.Array seq)
+      (opt-inline-phi-span-ok-blocks?
+        (compiler-ir-block-seq-to-list seq)
+        spans
+        caller-name
+        line
+        col)]))
+
+(define (opt-inline-switch-span-case-code
+  [callee-text : String]
+  [expect-inline? : bool]) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [callee-name : i64 (opt-test-symbol callee-text)]
+    [caller-name : i64 (struct-get symbols main)]
+    [callee-phi : CompilerIrInstr (opt-inline-switch-loop-phi-instr)]
+    [caller-call : CompilerIrInstr
+      (opt-inline-switch-caller-call-named callee-name)]
+    [spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (opt-spans-base)
+          callee-name
+          callee-phi
+          (opt-test-span 171 33))
+        caller-name
+        caller-call
+        (opt-test-span 181 35))]
+    (match (opt-inline-program-functions-with-spans
+      (opt-inline-switch-functions-named symbols callee-name)
+      2
+      spans)
+      [(OptInlineSpanProgram.Program optimized optimized-spans)
+        (match (opt-function-list-find optimized "main")
+          [(OptMaybeFunction.Some main)
+            (let
+              [blocks : CompilerIrBlockList (opt-function-blocks main)]
+              (+
+                (if (=
+                  (opt-count-direct-call-name-blocks blocks callee-text)
+                  (if expect-inline?
+                    0
+                    1))
+                  1
+                  0)
+                (+
+                  (if (=
+                    (opt-count-bounds-blocks blocks)
+                    (if expect-inline?
+                      1
+                      0))
+                    2
+                    0)
+                  (+
+                    (if (if expect-inline?
+                      (opt-inline-phi-span-ok-blocks?
+                        blocks
+                        optimized-spans
+                        caller-name
+                        171
+                        33)
+                      (opt-span-lookup-ok?
+                        optimized-spans
+                        caller-name
+                        caller-call
+                        181
+                        35))
+                      4
+                      0)
+                    (if (opt-inline-structure-ok? blocks)
+                      8
+                      0)))))]
+          [(OptMaybeFunction.No) 0])])))
+
+(define (compiler-optimize-spans-inline-vm-run-bounds-loop-ok?) : bool
+  (and
+    (= (opt-inline-switch-span-case-code "bench.tl::vm-run" true) 15)
+    (= (opt-inline-switch-span-case-code "bench.tl::qs-partition" false) 15)))
 
 (define (opt-inline-costly-switch-params) : CompilerIrParamList
   (compiler-ir-param-cons

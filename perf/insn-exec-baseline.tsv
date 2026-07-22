@@ -20,7 +20,7 @@ benchmark/c-scalar/hashmap_grow	1983833
 benchmark/typelisp/hashmap_insert	42817631
 benchmark/c/hashmap_insert	65952384
 benchmark/c-scalar/hashmap_insert	65952384
-benchmark/typelisp/opt_bytecode_vm	972001096
+benchmark/typelisp/opt_bytecode_vm	964001107
 benchmark/c/opt_bytecode_vm	716006209
 benchmark/c-scalar/opt_bytecode_vm	716006209
 benchmark/typelisp/opt_crc32	325170298

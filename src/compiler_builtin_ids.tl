@@ -634,7 +634,7 @@
 (define compiler-builtin-id-cfg-feature-cleanup-owner-reflection : i64
   -1)
 (define compiler-builtin-ctfe-ids : (Array i64)
-  (make-array i64 234))
+  (make-array i64 272))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -646,7 +646,7 @@
   (let
     [metadata : (Array i64) (make-array i64 4)]
     [ids : (Array i64) (make-array i64 311)]
-    [ctfe-ids : (Array i64) (make-array i64 234)]
+    [ctfe-ids : (Array i64) (make-array i64 272)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
@@ -658,7 +658,7 @@
           (array-set! ids i -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 234)
+      (while (< i 272)
         (begin
           (array-set! ctfe-ids i -1)
           (set! i (+ i 1))))
@@ -720,7 +720,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 234)
+    (while (< i 272)
       (begin
         (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -728,7 +728,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 234)
+    (while (< i 272)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
@@ -1873,7 +1873,48 @@
     (compiler-builtin-load-ctfe-id! insert-missing 230 "ref")
     (compiler-builtin-load-ctfe-id! insert-missing 231 "mut-ref")
     (compiler-builtin-load-ctfe-id! insert-missing 232 "region")
-    (compiler-builtin-load-ctfe-id! insert-missing 233 "type-var")))
+    (compiler-builtin-load-ctfe-id! insert-missing 233 "type-var")
+    ;; Remaining parser-only fixed metadata, SPMD, extern, import, and policy
+    ;; names. These IDs deliberately use source provenance: a generated name
+    ;; with identical display text must not acquire fixed-syntax identity.
+    (compiler-builtin-load-ctfe-id! insert-missing 234 ":cleanup")
+    (compiler-builtin-load-ctfe-id! insert-missing 235 ":owned")
+    (compiler-builtin-load-ctfe-id! insert-missing 236 ":lifetimes")
+    (compiler-builtin-load-ctfe-id! insert-missing 237 ":repr")
+    (compiler-builtin-load-ctfe-id! insert-missing 238 ":packed")
+    (compiler-builtin-load-ctfe-id! insert-missing 239 "packed")
+    (compiler-builtin-load-ctfe-id! insert-missing 240 "scalar")
+    (compiler-builtin-load-ctfe-id! insert-missing 241 "avx2")
+    (compiler-builtin-load-ctfe-id! insert-missing 242 "avx512")
+    (compiler-builtin-load-ctfe-id! insert-missing 243 "cfg")
+    (compiler-builtin-load-ctfe-id! insert-missing 244 "uniform")
+    (compiler-builtin-load-ctfe-id! insert-missing 245 "varying")
+    (compiler-builtin-load-ctfe-id! insert-missing 246 "none")
+    (compiler-builtin-load-ctfe-id! insert-missing 247 "lanes")
+    (compiler-builtin-load-ctfe-id! insert-missing 248 "args")
+    (compiler-builtin-load-ctfe-id! insert-missing 249 "result")
+    (compiler-builtin-load-ctfe-id! insert-missing 250 "index-param")
+    (compiler-builtin-load-ctfe-id! insert-missing 251 "specialization")
+    (compiler-builtin-load-ctfe-id! insert-missing 252 ":export-symbol")
+    (compiler-builtin-load-ctfe-id! insert-missing 253 ":spmd-callable")
+    (compiler-builtin-load-ctfe-id! insert-missing 254 "c-varargs")
+    (compiler-builtin-load-ctfe-id! insert-missing 255 ":abi")
+    (compiler-builtin-load-ctfe-id! insert-missing 256 ":symbol")
+    (compiler-builtin-load-ctfe-id! insert-missing 257 ":link-lib")
+    (compiler-builtin-load-ctfe-id! insert-missing 258 ":link-search")
+    (compiler-builtin-load-ctfe-id! insert-missing 259 ":link-arg")
+    (compiler-builtin-load-ctfe-id! insert-missing 260 "as")
+    (compiler-builtin-load-ctfe-id! insert-missing 261 ":as")
+    (compiler-builtin-load-ctfe-id! insert-missing 262 "sum")
+    (compiler-builtin-load-ctfe-id! insert-missing 263 "min")
+    (compiler-builtin-load-ctfe-id! insert-missing 264 "max")
+    (compiler-builtin-load-ctfe-id! insert-missing 265 "defgeneric")
+    (compiler-builtin-load-ctfe-id! insert-missing 266 "generic")
+    (compiler-builtin-load-ctfe-id! insert-missing 267 "deftrait")
+    (compiler-builtin-load-ctfe-id! insert-missing 268 "trait")
+    (compiler-builtin-load-ctfe-id! insert-missing 269 "interface")
+    (compiler-builtin-load-ctfe-id! insert-missing 270 "impl")
+    (compiler-builtin-load-ctfe-id! insert-missing 271 "where")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -2971,10 +3012,94 @@
       (=
         (compiler-builtin-ctfe-ref 233)
         (ci.intern-source-slice "type-var" 0 8))
+      (=
+        (compiler-builtin-ctfe-ref 234)
+        (ci.intern-source-slice ":cleanup" 0 8))
+      (= (compiler-builtin-ctfe-ref 235) (ci.intern-source-slice ":owned" 0 6))
+      (=
+        (compiler-builtin-ctfe-ref 236)
+        (ci.intern-source-slice ":lifetimes" 0 10))
+      (= (compiler-builtin-ctfe-ref 237) (ci.intern-source-slice ":repr" 0 5))
+      (= (compiler-builtin-ctfe-ref 238) (ci.intern-source-slice ":packed" 0 7))
+      (= (compiler-builtin-ctfe-ref 239) (ci.intern-source-slice "packed" 0 6))
+      (= (compiler-builtin-ctfe-ref 240) (ci.intern-source-slice "scalar" 0 6))
+      (= (compiler-builtin-ctfe-ref 241) (ci.intern-source-slice "avx2" 0 4))
+      (= (compiler-builtin-ctfe-ref 242) (ci.intern-source-slice "avx512" 0 6))
+      (= (compiler-builtin-ctfe-ref 243) (ci.intern-source-slice "cfg" 0 3))
+      (= (compiler-builtin-ctfe-ref 244) (ci.intern-source-slice "uniform" 0 7))
+      (= (compiler-builtin-ctfe-ref 245) (ci.intern-source-slice "varying" 0 7))
+      (= (compiler-builtin-ctfe-ref 246) (ci.intern-source-slice "none" 0 4))
+      (= (compiler-builtin-ctfe-ref 247) (ci.intern-source-slice "lanes" 0 5))
+      (= (compiler-builtin-ctfe-ref 248) (ci.intern-source-slice "args" 0 4))
+      (= (compiler-builtin-ctfe-ref 249) (ci.intern-source-slice "result" 0 6))
+      (=
+        (compiler-builtin-ctfe-ref 250)
+        (ci.intern-source-slice "index-param" 0 11))
+      (=
+        (compiler-builtin-ctfe-ref 251)
+        (ci.intern-source-slice "specialization" 0 14))
+      (=
+        (compiler-builtin-ctfe-ref 252)
+        (ci.intern-source-slice ":export-symbol" 0 14))
+      (=
+        (compiler-builtin-ctfe-ref 253)
+        (ci.intern-source-slice ":spmd-callable" 0 14))
+      (=
+        (compiler-builtin-ctfe-ref 254)
+        (ci.intern-source-slice "c-varargs" 0 9))
+      (= (compiler-builtin-ctfe-ref 255) (ci.intern-source-slice ":abi" 0 4))
+      (= (compiler-builtin-ctfe-ref 256) (ci.intern-source-slice ":symbol" 0 7))
+      (=
+        (compiler-builtin-ctfe-ref 257)
+        (ci.intern-source-slice ":link-lib" 0 9))
+      (=
+        (compiler-builtin-ctfe-ref 258)
+        (ci.intern-source-slice ":link-search" 0 12))
+      (=
+        (compiler-builtin-ctfe-ref 259)
+        (ci.intern-source-slice ":link-arg" 0 9))
+      (= (compiler-builtin-ctfe-ref 260) (ci.intern-source-slice "as" 0 2))
+      (= (compiler-builtin-ctfe-ref 261) (ci.intern-source-slice ":as" 0 3))
+      (= (compiler-builtin-ctfe-ref 262) (ci.intern-source-slice "sum" 0 3))
+      (= (compiler-builtin-ctfe-ref 263) (ci.intern-source-slice "min" 0 3))
+      (= (compiler-builtin-ctfe-ref 264) (ci.intern-source-slice "max" 0 3))
+      (=
+        (compiler-builtin-ctfe-ref 265)
+        (ci.intern-source-slice "defgeneric" 0 10))
+      (= (compiler-builtin-ctfe-ref 266) (ci.intern-source-slice "generic" 0 7))
+      (=
+        (compiler-builtin-ctfe-ref 267)
+        (ci.intern-source-slice "deftrait" 0 8))
+      (= (compiler-builtin-ctfe-ref 268) (ci.intern-source-slice "trait" 0 5))
+      (=
+        (compiler-builtin-ctfe-ref 269)
+        (ci.intern-source-slice "interface" 0 9))
+      (= (compiler-builtin-ctfe-ref 270) (ci.intern-source-slice "impl" 0 4))
+      (= (compiler-builtin-ctfe-ref 271) (ci.intern-source-slice "where" 0 5))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
-          (ci.intern-generated-canonical-name "all"))))))
+          (ci.intern-generated-canonical-name "all")))
+      (not
+        (=
+          (compiler-builtin-ctfe-ref 234)
+          (ci.intern-generated-canonical-name ":cleanup")))
+      (not
+        (=
+          (compiler-builtin-ctfe-ref 243)
+          (ci.intern-generated-canonical-name "cfg")))
+      (not
+        (=
+          (compiler-builtin-ctfe-ref 255)
+          (ci.intern-generated-canonical-name ":abi")))
+      (not
+        (=
+          (compiler-builtin-ctfe-ref 260)
+          (ci.intern-generated-canonical-name "as")))
+      (not
+        (=
+          (compiler-builtin-ctfe-ref 265)
+          (ci.intern-generated-canonical-name "defgeneric"))))))
 
 (cfg
   test
@@ -2989,6 +3114,8 @@
         (begin
           (compiler-builtin-ctfe-set! 219 -1)
           (compiler-builtin-ctfe-set! 233 -1)
+          (compiler-builtin-ctfe-set! 234 -1)
+          (compiler-builtin-ctfe-set! 271 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)

@@ -981,6 +981,9 @@
     [(reader.Sexpr.Sym name-id) (= name-id cbi.compiler-builtin-id-fix-colon)]
     [_ false]))
 
+;; ID-to-text is intentionally a boundary, not a classifier. Production
+;; callers are limited to lazy unknown-name diagnostics, prefix/content syntax
+;; (`:unknown`, typed `...T`, retired name families), and dotted import paths.
 (define (compiler-parse-name-text [name-id : i64]) : String
   (cond
     [(ci.intern-macro-global-structural-id? name-id)
@@ -1002,9 +1005,6 @@
               "."
               (ci.intern-str (ci.intern-composite-triple-right-id name-id))))))]
     [else (ci.intern-str name-id)]))
-
-(define (compiler-parse-name-eq? [name-id : i64] [text : String]) : bool
-  (string.eq (compiler-parse-name-text name-id) text))
 
 (define (compiler-cfg-key-id [name-id : i64]) : i64
   (+ (ci.intern-capacity) name-id))
@@ -1210,15 +1210,19 @@
           name
           "; TypeLisp has no source-level generic type constructors; use defmacro to generate concrete declarations instead"))]))
 
-(define (compiler-parse-policy-form? [name : String]) : bool
-  (cond
-    [(string.eq name "defgeneric") true]
-    [(string.eq name "generic") true]
-    [(string.eq name "deftrait") true]
-    [(string.eq name "trait") true]
-    [(string.eq name "interface") true]
-    [(string.eq name "impl") true]
-    [else (string.eq name "where")]))
+(define (compiler-parse-policy-form? [name : i64]) : bool
+  (or
+    (cbi.compiler-builtin-id-any4?
+      name
+      (cbi.compiler-builtin-ctfe-ref 265)
+      (cbi.compiler-builtin-ctfe-ref 266)
+      (cbi.compiler-builtin-ctfe-ref 267)
+      (cbi.compiler-builtin-ctfe-ref 268))
+    (cbi.compiler-builtin-id-any3?
+      name
+      (cbi.compiler-builtin-ctfe-ref 269)
+      (cbi.compiler-builtin-ctfe-ref 270)
+      (cbi.compiler-builtin-ctfe-ref 271))))
 
 (define (compiler-parse-removed-compressed-include-name) : String
   (string.append "include-str-comptime-" "lzss"))
@@ -3818,7 +3822,7 @@
       (match (box-get key-node)
         [(reader.Sexpr.Sym key)
           (cond
-            [(compiler-parse-name-eq? key ":cleanup")
+            [(= key (cbi.compiler-builtin-ctfe-ref 234))
               (match (box-get tail)
                 [(reader.Sexpr.Cons cleanup-node end)
                   (match (box-get end)
@@ -3836,7 +3840,7 @@
                 [_
                   (ResultAstFieldCleanup.Err
                     "parse: malformed field :cleanup metadata")])]
-            [(compiler-parse-name-eq? key ":owned")
+            [(= key (cbi.compiler-builtin-ctfe-ref 235))
               (match (box-get tail)
                 [(reader.Sexpr.Nil)
                   (ResultAstFieldCleanup.Ok (AstFieldCleanup.Owned))]
@@ -3861,7 +3865,7 @@
       (match (box-get key-node)
         [(reader.Sexpr.Sym key)
           (cond
-            [(compiler-parse-name-eq? key ":cleanup")
+            [(= key (cbi.compiler-builtin-ctfe-ref 234))
               (match (box-get tail)
                 [(reader.Sexpr.Cons cleanup-node end)
                   (match (box-get end)
@@ -3879,7 +3883,7 @@
                 [_
                   (ResultAstVariantPayloadCleanup.Err
                     "parse: malformed enum payload :cleanup metadata")])]
-            [(compiler-parse-name-eq? key ":owned")
+            [(= key (cbi.compiler-builtin-ctfe-ref 235))
               (match (box-get tail)
                 [(reader.Sexpr.Nil)
                   (ResultAstVariantPayloadCleanup.Ok
@@ -3990,6 +3994,8 @@
         (ResultAstFieldDefList.Err message)])))
 
 (define (compiler-parse-metadata-key? [name-id : i64]) : bool
+  ;; Unknown metadata is a genuinely prefix-bearing diagnostic boundary. All
+  ;; recognized fixed keys are classified by ID before reaching this helper.
   (let
     [name : String (compiler-parse-name-text name-id)]
     (and (> (string.string-length name) 0) (= (string.string-ref name 0) ':'))))
@@ -4011,9 +4017,9 @@
         [(reader.Sexpr.Nil)
           (match (box-get name-node)
             [(reader.Sexpr.Sym name)
-              (if (compiler-parse-name-eq? name "c")
+              (if (= name cbi.compiler-builtin-id-fix-c)
                 (ResultAstStructRepr.Ok (AstStructRepr.C))
-                (if (compiler-parse-name-eq? name "packed")
+                (if (= name (cbi.compiler-builtin-ctfe-ref 239))
                   (ResultAstStructRepr.Err "parse: packed repr is reserved")
                   (ResultAstStructRepr.Err
                     (string.append
@@ -4116,7 +4122,7 @@
           (match (box-get key-node)
             [(reader.Sexpr.Sym key)
               (cond
-                [(compiler-parse-name-eq? key ":lifetimes")
+                [(= key (cbi.compiler-builtin-ctfe-ref 236))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -4142,7 +4148,7 @@
                             false)]
                         [(ResultAstLifetimeList.Err message)
                           (ResultAstStructDefParts.Err message)])))]
-                [(compiler-parse-name-eq? key ":repr")
+                [(= key (cbi.compiler-builtin-ctfe-ref 237))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -4170,7 +4176,7 @@
                               false))]
                         [(ResultAstStructRepr.Err message)
                           (ResultAstStructDefParts.Err message)])))]
-                [(compiler-parse-name-eq? key ":cleanup")
+                [(= key (cbi.compiler-builtin-ctfe-ref 234))
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
@@ -4201,7 +4207,7 @@
                   (if seen-field
                     (ResultAstStructDefParts.Err
                       "parse: defstruct metadata must appear before fields")
-                    (if (compiler-parse-name-eq? key ":packed")
+                    (if (= key (cbi.compiler-builtin-ctfe-ref 238))
                       (ResultAstStructDefParts.Err
                         "parse: packed repr is reserved")
                       (ResultAstStructDefParts.Err
@@ -4365,7 +4371,7 @@
       (match (box-get name-node)
         [(reader.Sexpr.Sym name)
           (if (compiler-parse-metadata-key? name)
-            (if (compiler-parse-name-eq? name ":cleanup")
+            (if (= name (cbi.compiler-builtin-ctfe-ref 234))
               (ResultAstVariantDef.Err
                 "parse: defenum metadata must appear before variants")
               (ResultAstVariantDef.Err
@@ -4427,11 +4433,11 @@
 
 (define (parse-ast-dispatch-isa [name : i64]) : ResultAstDispatchIsa
   (cond
-    [(compiler-parse-name-eq? name "scalar")
+    [(= name (cbi.compiler-builtin-ctfe-ref 240))
       (ResultAstDispatchIsa.Ok (AstDispatchIsa.Scalar))]
-    [(compiler-parse-name-eq? name "avx2")
+    [(= name (cbi.compiler-builtin-ctfe-ref 241))
       (ResultAstDispatchIsa.Ok (AstDispatchIsa.Avx2))]
-    [(compiler-parse-name-eq? name "avx512")
+    [(= name (cbi.compiler-builtin-ctfe-ref 242))
       (ResultAstDispatchIsa.Ok (AstDispatchIsa.Avx512))]
     [else
       (ResultAstDispatchIsa.Err
@@ -4565,7 +4571,7 @@
                 [seen-variant
                   (ResultAstEnumDefParts.Err
                     "parse: defenum metadata must appear before variants")]
-                [(compiler-parse-name-eq? key ":lifetimes")
+                [(= key (cbi.compiler-builtin-ctfe-ref 236))
                   (if seen-lifetimes
                     (ResultAstEnumDefParts.Err
                       "parse: duplicate defenum :lifetimes metadata")
@@ -4585,7 +4591,7 @@
                           false)]
                       [(ResultAstLifetimeList.Err message)
                         (ResultAstEnumDefParts.Err message)]))]
-                [(compiler-parse-name-eq? key ":cleanup")
+                [(= key (cbi.compiler-builtin-ctfe-ref 234))
                   (if seen-cleanup
                     (ResultAstEnumDefParts.Err
                       "parse: duplicate defenum :cleanup metadata")
@@ -4766,7 +4772,7 @@
     [(reader.SpannedSexpr.Cons op-node cfg-rest _)
       (match (reader.sp-node-get op-node)
         [(reader.SpannedSexpr.Sym op _)
-          (if (compiler-parse-name-eq? op "cfg")
+          (if (= op (cbi.compiler-builtin-ctfe-ref 243))
             (parse-ast-cfg-expr-maybe
               dispatch
               pools
@@ -4872,7 +4878,7 @@
     [(reader.SpannedSexpr.Cons op-node cfg-rest _)
       (match (reader.sp-node-get op-node)
         [(reader.SpannedSexpr.Sym op _)
-          (if (compiler-parse-name-eq? op "cfg")
+          (if (= op (cbi.compiler-builtin-ctfe-ref 243))
             (parse-ast-cfg-expr-maybe
               dispatch
               pools
@@ -5784,34 +5790,44 @@
     [_ (ResultAstExpr.Err "parse: type expects exactly one type")]))
 
 (define (parse-ast-reduce-op [name-id : i64]) : ResultAstReduceOp
-  (let
-    [name : String (compiler-parse-name-text name-id)]
-    (cond
-      [(string.eq name "sum") (ResultAstReduceOp.Ok (AstReduceOp.Sum))]
-      [(string.eq name "min") (ResultAstReduceOp.Ok (AstReduceOp.Min))]
-      [(string.eq name "max") (ResultAstReduceOp.Ok (AstReduceOp.Max))]
-      [(string.eq name "all") (ResultAstReduceOp.Ok (AstReduceOp.All))]
-      [(string.eq name "any") (ResultAstReduceOp.Ok (AstReduceOp.Any))]
-      [else
-        (ResultAstReduceOp.Err
+  (cond
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 262))
+      (ResultAstReduceOp.Ok (AstReduceOp.Sum))]
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 263))
+      (ResultAstReduceOp.Ok (AstReduceOp.Min))]
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 264))
+      (ResultAstReduceOp.Ok (AstReduceOp.Max))]
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 219))
+      (ResultAstReduceOp.Ok (AstReduceOp.All))]
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 220))
+      (ResultAstReduceOp.Ok (AstReduceOp.Any))]
+    [else
+      (ResultAstReduceOp.Err
+        (string.append
+          "parse: unsupported spmd-reduce operator `"
           (string.append
-            "parse: unsupported spmd-reduce operator `"
-            (string.append name "`; expected one of sum, min, max, all, any")))])))
+            (compiler-parse-name-text name-id)
+            "`; expected one of sum, min, max, all, any")))]))
 
 (define (parse-ast-scan-op [name-id : i64]) : ResultAstReduceOp
-  (let
-    [name : String (compiler-parse-name-text name-id)]
-    (cond
-      [(string.eq name "sum") (ResultAstReduceOp.Ok (AstReduceOp.Sum))]
-      [(string.eq name "min") (ResultAstReduceOp.Ok (AstReduceOp.Min))]
-      [(string.eq name "max") (ResultAstReduceOp.Ok (AstReduceOp.Max))]
-      [(string.eq name "all") (ResultAstReduceOp.Ok (AstReduceOp.All))]
-      [(string.eq name "any") (ResultAstReduceOp.Ok (AstReduceOp.Any))]
-      [else
-        (ResultAstReduceOp.Err
+  (cond
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 262))
+      (ResultAstReduceOp.Ok (AstReduceOp.Sum))]
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 263))
+      (ResultAstReduceOp.Ok (AstReduceOp.Min))]
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 264))
+      (ResultAstReduceOp.Ok (AstReduceOp.Max))]
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 219))
+      (ResultAstReduceOp.Ok (AstReduceOp.All))]
+    [(= name-id (cbi.compiler-builtin-ctfe-ref 220))
+      (ResultAstReduceOp.Ok (AstReduceOp.Any))]
+    [else
+      (ResultAstReduceOp.Err
+        (string.append
+          "parse: unsupported spmd-scan operator `"
           (string.append
-            "parse: unsupported spmd-scan operator `"
-            (string.append name "`; expected one of sum, min, max, all, any")))])))
+            (compiler-parse-name-text name-id)
+            "`; expected one of sum, min, max, all, any")))]))
 
 (define (parse-ast-spmd-reduce-binding
   [dispatch : sym_i64_env.SymI64Env]
@@ -7424,7 +7440,9 @@
       (cond
         [(= op (cbi.compiler-builtin-ctfe-ref 213))
           (parse-ast-internal-binary-data pools rest)]
-        [(compiler-parse-name-eq? op "init")
+        [(=
+            (compiler-parse-dispatch-tag dispatch op)
+            (compiler-parse-tag-expr-init))
           (match rest
             [(reader.SpannedSexpr.Cons first _ _)
               (if (sexpr-colon?
@@ -7554,7 +7572,7 @@
         [(reader.SpannedSexpr.Cons head rest _)
           (match (reader.sp-node-get head)
             [(reader.SpannedSexpr.Sym op _)
-              (if (compiler-parse-name-eq? op "cfg")
+              (if (= op (cbi.compiler-builtin-ctfe-ref 243))
                 (match (parse-ast-cfg-expr
                   dispatch
                   pools
@@ -7650,13 +7668,13 @@
         [(reader.Sexpr.Sym name)
           (let
             [next : AstSpmdParamClassList out]
-            (if (compiler-parse-name-eq? name "uniform")
+            (if (= name (cbi.compiler-builtin-ctfe-ref 244))
               (begin
                 (ast-spmd-param-class-list-push
                   (&mut next)
                   AstSpmdParamClass.Uniform)
                 (parse-ast-spmd-param-classes (box-get rest) next))
-              (if (compiler-parse-name-eq? name "varying")
+              (if (= name (cbi.compiler-builtin-ctfe-ref 245))
                 (begin
                   (ast-spmd-param-class-list-push
                     (&mut next)
@@ -7679,11 +7697,11 @@
           (match (box-get head)
             [(reader.Sexpr.Sym name)
               (cond
-                [(compiler-parse-name-eq? name "unit")
+                [(= name (cbi.compiler-builtin-ctfe-ref 173))
                   (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Unit)]
-                [(compiler-parse-name-eq? name "uniform")
+                [(= name (cbi.compiler-builtin-ctfe-ref 244))
                   (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Uniform)]
-                [(compiler-parse-name-eq? name "varying")
+                [(= name (cbi.compiler-builtin-ctfe-ref 245))
                   (ResultAstSpmdResultClass.Ok AstSpmdResultClass.Varying)]
                 [else
                   (ResultAstSpmdResultClass.Err
@@ -7705,7 +7723,7 @@
         [(reader.Sexpr.Nil)
           (match (box-get head)
             [(reader.Sexpr.Sym name)
-              (if (compiler-parse-name-eq? name "none")
+              (if (= name (cbi.compiler-builtin-ctfe-ref 246))
                 (ResultAstSpmdIndexParam.Ok -1)
                 (ResultAstSpmdIndexParam.Err
                   "parse: :spmd-callable index-param expects none or a non-negative integer"))]
@@ -7735,7 +7753,7 @@
           (match (box-get key-node)
             [(reader.Sexpr.Sym key)
               (cond
-                [(compiler-parse-name-eq? key "lanes")
+                [(= key (cbi.compiler-builtin-ctfe-ref 247))
                   (if (struct-get state seen-lanes)
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable lanes field")
@@ -7768,7 +7786,7 @@
                       [_
                         (ResultAstSpmdSpecializationParseState.Err
                           "parse: :spmd-callable lanes expects one integer")]))]
-                [(compiler-parse-name-eq? key "args")
+                [(= key (cbi.compiler-builtin-ctfe-ref 248))
                   (if (struct-get state seen-args)
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable args field")
@@ -7789,7 +7807,7 @@
                             true
                             (struct-get state seen-result)
                             (struct-get state seen-index-param)))]))]
-                [(compiler-parse-name-eq? key "result")
+                [(= key (cbi.compiler-builtin-ctfe-ref 249))
                   (if (struct-get state seen-result)
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable result field")
@@ -7808,7 +7826,7 @@
                             (struct-get state seen-args)
                             true
                             (struct-get state seen-index-param)))]))]
-                [(compiler-parse-name-eq? key "index-param")
+                [(= key (cbi.compiler-builtin-ctfe-ref 250))
                   (if (struct-get state seen-index-param)
                     (ResultAstSpmdSpecializationParseState.Err
                       "parse: duplicate :spmd-callable index-param field")
@@ -7959,7 +7977,7 @@
         [(reader.Sexpr.Cons name-node fields)
           (match (box-get name-node)
             [(reader.Sexpr.Sym name)
-              (if (compiler-parse-name-eq? name "specialization")
+              (if (= name (cbi.compiler-builtin-ctfe-ref 251))
                 (match (parse-ast-spmd-specialization
                   (box-get fields)
                   param-count)
@@ -8112,7 +8130,7 @@
               (match (box-get key-node)
                 [(reader.Sexpr.Sym key)
                   (cond
-                    [(compiler-parse-name-eq? key ":export-symbol")
+                    [(= key (cbi.compiler-builtin-ctfe-ref 252))
                       (if seen-export
                         (ResultAstDecl.Err
                           "parse: duplicate define :export-symbol metadata")
@@ -8131,7 +8149,7 @@
                               (reader.sp-node-get tail))]
                           [(ResultAstFnExport.Err message)
                             (ResultAstDecl.Err message)]))]
-                    [(compiler-parse-name-eq? key ":spmd-callable")
+                    [(= key (cbi.compiler-builtin-ctfe-ref 253))
                       (if seen-spmd-callable
                         (ResultAstDecl.Err
                           "parse: duplicate define :spmd-callable metadata")
@@ -8285,6 +8303,8 @@
     [_ (ResultAstDecl.Err "parse: malformed defmacro")]))
 
 (define (parse-ast-extern-varargs-typed-name? [name-id : i64]) : bool
+  ;; Unlike the fixed open tail `...`, typed tails encode their type in the
+  ;; symbol spelling (`...T`) and therefore require this content boundary.
   (let
     [name : String (compiler-parse-name-text name-id)]
     (if (> (string.string-length name) 3)
@@ -8298,7 +8318,7 @@
       (string.substring name 3 (- (string.string-length name) 3)))))
 
 (define (parse-ast-extern-varargs-open? [name-id : i64]) : bool
-  (compiler-parse-name-eq? name-id "..."))
+  (= name-id (cbi.compiler-builtin-ctfe-ref 222)))
 
 (define (parse-ast-extern-varargs-tail-type
   [dispatch : sym_i64_env.SymI64Env]
@@ -8466,9 +8486,9 @@
         [(reader.Sexpr.Sym name)
           (match (box-get rest)
             [(reader.Sexpr.Nil)
-              (if (compiler-parse-name-eq? name "c")
+              (if (= name cbi.compiler-builtin-id-fix-c)
                 (ResultAstExternAbi.Ok (AstExternAbi.C))
-                (if (compiler-parse-name-eq? name "c-varargs")
+                (if (= name (cbi.compiler-builtin-ctfe-ref 254))
                   (ResultAstExternAbi.Err
                     (parse-ast-extern-c-varargs-legacy-message))
                   (ResultAstExternAbi.Err
@@ -8480,7 +8500,7 @@
                 [(reader.Sexpr.Nil)
                   (match (box-get fixed-node)
                     [(reader.Sexpr.Int _ _)
-                      (if (compiler-parse-name-eq? name "c-varargs")
+                      (if (= name (cbi.compiler-builtin-ctfe-ref 254))
                         (ResultAstExternAbi.Err
                           (parse-ast-extern-c-varargs-legacy-message))
                         (ResultAstExternAbi.Err
@@ -8573,7 +8593,7 @@
             (match (box-get key-node)
               [(reader.Sexpr.Sym key)
                 (cond
-                  [(compiler-parse-name-eq? key ":abi")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 255))
                     (if seen-abi
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :abi metadata")
@@ -8590,7 +8610,7 @@
                             seen-symbol)]
                         [(ResultAstExternAbi.Err message)
                           (ResultAstExternParts.Err message)]))]
-                  [(compiler-parse-name-eq? key ":symbol")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 256))
                     (if seen-symbol
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
@@ -8607,7 +8627,7 @@
                             true)]
                         [(ResultAstExternSymbol.Err message)
                           (ResultAstExternParts.Err message)]))]
-                  [(compiler-parse-name-eq? key ":link-lib")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 257))
                     (match (parse-ast-extern-string-tail
                       ":link-lib"
                       (box-get after-key))
@@ -8627,7 +8647,7 @@
                             seen-symbol))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
-                  [(compiler-parse-name-eq? key ":link-search")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 258))
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       (box-get after-key))
@@ -8647,7 +8667,7 @@
                             seen-symbol))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
-                  [(compiler-parse-name-eq? key ":link-arg")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 259))
                     (match (parse-ast-extern-string-tail
                       ":link-arg"
                       (box-get after-key))
@@ -8717,7 +8737,7 @@
           (match (box-get key-node)
             [(reader.Sexpr.Sym key)
               (cond
-                [(compiler-parse-name-eq? key ":abi")
+                [(= key (cbi.compiler-builtin-ctfe-ref 255))
                   (if seen-abi
                     (ResultAstExternParts.Err
                       "parse: duplicate extern :abi metadata")
@@ -8740,7 +8760,7 @@
                             (ResultAstExternParts.Err message)])]
                       [(ResultAstExternAbi.Err message)
                         (ResultAstExternParts.Err message)]))]
-                [(compiler-parse-name-eq? key ":symbol")
+                [(= key (cbi.compiler-builtin-ctfe-ref 256))
                   (if seen-symbol
                     (ResultAstExternParts.Err
                       "parse: duplicate extern :symbol metadata")
@@ -8759,7 +8779,7 @@
                           ret)]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)]))]
-                [(compiler-parse-name-eq? key ":link-lib")
+                [(= key (cbi.compiler-builtin-ctfe-ref 257))
                   (match (parse-ast-extern-string-tail
                     ":link-lib"
                     (box-get after-key))
@@ -8781,7 +8801,7 @@
                           ret))]
                     [(ResultAstExternSymbol.Err message)
                       (ResultAstExternParts.Err message)])]
-                [(compiler-parse-name-eq? key ":link-search")
+                [(= key (cbi.compiler-builtin-ctfe-ref 258))
                   (match (parse-ast-extern-string-tail
                     ":link-search"
                     (box-get after-key))
@@ -8803,7 +8823,7 @@
                           ret))]
                     [(ResultAstExternSymbol.Err message)
                       (ResultAstExternParts.Err message)])]
-                [(compiler-parse-name-eq? key ":link-arg")
+                [(= key (cbi.compiler-builtin-ctfe-ref 259))
                   (match (parse-ast-extern-string-tail
                     ":link-arg"
                     (box-get after-key))
@@ -8891,7 +8911,7 @@
             (match (box-get key-node)
               [(reader.Sexpr.Sym key)
                 (cond
-                  [(compiler-parse-name-eq? key ":abi")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 255))
                     (if seen-abi
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :abi metadata")
@@ -8913,7 +8933,7 @@
                               (ResultAstExternParts.Err message)])]
                         [(ResultAstExternAbi.Err message)
                           (ResultAstExternParts.Err message)]))]
-                  [(compiler-parse-name-eq? key ":symbol")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 256))
                     (if seen-symbol
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
@@ -8931,7 +8951,7 @@
                             param-types)]
                         [(ResultAstExternSymbol.Err message)
                           (ResultAstExternParts.Err message)]))]
-                  [(compiler-parse-name-eq? key ":link-lib")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 257))
                     (match (parse-ast-extern-string-tail
                       ":link-lib"
                       (box-get after-key))
@@ -8952,7 +8972,7 @@
                             param-types))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
-                  [(compiler-parse-name-eq? key ":link-search")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 258))
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       (box-get after-key))
@@ -8973,7 +8993,7 @@
                             param-types))]
                       [(ResultAstExternSymbol.Err message)
                         (ResultAstExternParts.Err message)])]
-                  [(compiler-parse-name-eq? key ":link-arg")
+                  [(= key (cbi.compiler-builtin-ctfe-ref 259))
                     (match (parse-ast-extern-string-tail
                       ":link-arg"
                       (box-get after-key))
@@ -9323,9 +9343,10 @@
                 [(reader.SpannedSexpr.Nil _)
                   (match (reader.sp-node-get alias-node)
                     [(reader.SpannedSexpr.Sym alias _)
-                      (if (or
-                        (compiler-parse-name-eq? as-name "as")
-                        (compiler-parse-name-eq? as-name ":as"))
+                      (if (cbi.compiler-builtin-id-any2?
+                        as-name
+                        (cbi.compiler-builtin-ctfe-ref 260)
+                        (cbi.compiler-builtin-ctfe-ref 261))
                         (parse-ast-import-spec
                           kind
                           path
@@ -9380,14 +9401,14 @@
     [(reader.SpannedSexpr.Cons head-node after-head _)
       (match (reader.sp-node-get head-node)
         [(reader.SpannedSexpr.Sym head _)
-          (if (compiler-parse-name-eq? head "as")
+          (if (= head (cbi.compiler-builtin-ctfe-ref 260))
             (parse-ast-import-alias
               (AstImportKind.Path)
               path
               AstMaybeModuleName.No
               tail
               span)
-            (if (compiler-parse-name-eq? head "module")
+            (if (= head cbi.compiler-builtin-id-fix-module)
               (parse-ast-import-module-tail
                 path
                 (reader.sp-node-get after-head)
@@ -9419,9 +9440,10 @@
             [(reader.SpannedSexpr.Cons head-node _ _)
               (match (reader.sp-node-get head-node)
                 [(reader.SpannedSexpr.Sym head _)
-                  (if (or
-                    (compiler-parse-name-eq? head "as")
-                    (compiler-parse-name-eq? head ":as"))
+                  (if (cbi.compiler-builtin-id-any2?
+                    head
+                    (cbi.compiler-builtin-ctfe-ref 260)
+                    (cbi.compiler-builtin-ctfe-ref 261))
                     (parse-ast-import-alias
                       (AstImportKind.Macro call-expr AstMaybeModuleName.No)
                       ""
@@ -9511,9 +9533,10 @@
         [(reader.SpannedSexpr.Cons head-node _ _)
           (match (reader.sp-node-get head-node)
             [(reader.SpannedSexpr.Sym head _)
-              (if (or
-                (compiler-parse-name-eq? head "as")
-                (compiler-parse-name-eq? head ":as"))
+              (if (cbi.compiler-builtin-id-any2?
+                head
+                (cbi.compiler-builtin-ctfe-ref 260)
+                (cbi.compiler-builtin-ctfe-ref 261))
                 (parse-ast-import-alias
                   (AstImportKind.Module)
                   module-name
@@ -9711,6 +9734,8 @@
   "parse: comptime-decl and comptime-decls are removed; use defmacro with Module or Decls return type instead")
 
 (define (parse-ast-removed-declaration-name? [name : i64]) : bool
+  ;; Preserve the shared diagnostic for the retired prefix family
+  ;; comptime-decl/comptime-decls without interning more accepted syntax.
   (let
     [text : String (compiler-parse-name-text name)]
     [n : i64 (string.string-length text)]
@@ -9843,7 +9868,7 @@
                       (reader.sp-node-get rest)
                       (ast-source-span-from-source-span
                         (reader.spanned-sexpr-span s)))]
-                  [(compiler-parse-policy-form? (compiler-parse-name-text head))
+                  [(compiler-parse-policy-form? head)
                     (ResultAstDecl.Err
                       (compiler-parse-abstraction-policy-message))]
                   [else (parse-ast-module-macro-call dispatch pools s)]))]
@@ -9861,7 +9886,7 @@
         [(reader.SpannedSexpr.Cons head-node rest _)
           (match (reader.sp-node-get head-node)
             [(reader.SpannedSexpr.Sym head _)
-              (if (compiler-parse-name-eq? head "cfg")
+              (if (= head (cbi.compiler-builtin-ctfe-ref 243))
                 (match (reader.sp-node-get rest)
                   [(reader.SpannedSexpr.Cons pred decl-tail _)
                     (match (reader.sp-node-get decl-tail)
@@ -10092,7 +10117,7 @@
             (let
               [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
               (cond
-                [(compiler-parse-name-eq? head "cfg")
+                [(= head (cbi.compiler-builtin-ctfe-ref 243))
                   (match (reader.sp-node-get rest)
                     [(reader.SpannedSexpr.Cons _ decl-tail _)
                       (match (reader.sp-node-get decl-tail)
@@ -13458,6 +13483,21 @@
         [_ false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-parse-fixed-source-id-only-ok?
+  [text : String]
+  [fixed-id : i64]) : bool
+  (let
+    [source-id : i64 (reader.read-stable-symbol-id text)]
+    [generated-id : i64 (ci.intern-generated-canonical-name text)]
+    [macro-global-id : i64
+      (+ (ci.intern-macro-global-structural-base) source-id)]
+    (and
+      (= source-id fixed-id)
+      (not (= generated-id fixed-id))
+      (ci.intern-macro-global-structural-id? macro-global-id)
+      (string.eq (compiler-parse-name-text macro-global-id) text)
+      (not (= macro-global-id fixed-id)))))
+
 (define (compiler-parse-fixed-syntax-name-provenance-ok?) : bool
   (let
     [source-kind : i64 (reader.read-stable-symbol-id "i64")]
@@ -13472,7 +13512,33 @@
       (= source-all (cbi.compiler-builtin-ctfe-ref 219))
       (not (= generated-all (cbi.compiler-builtin-ctfe-ref 219)))
       (= source-dots (cbi.compiler-builtin-ctfe-ref 222))
-      (not (= generated-dots (cbi.compiler-builtin-ctfe-ref 222))))))
+      (not (= generated-dots (cbi.compiler-builtin-ctfe-ref 222)))
+      ;; One adversarial spelling per new fixed-name family proves that equal
+      ;; rendered text does not confer parser syntax identity.
+      (compiler-parse-fixed-source-id-only-ok?
+        ":cleanup"
+        (cbi.compiler-builtin-ctfe-ref 234))
+      (compiler-parse-fixed-source-id-only-ok?
+        "scalar"
+        (cbi.compiler-builtin-ctfe-ref 240))
+      (compiler-parse-fixed-source-id-only-ok?
+        "cfg"
+        (cbi.compiler-builtin-ctfe-ref 243))
+      (compiler-parse-fixed-source-id-only-ok?
+        "sum"
+        (cbi.compiler-builtin-ctfe-ref 262))
+      (compiler-parse-fixed-source-id-only-ok?
+        ":spmd-callable"
+        (cbi.compiler-builtin-ctfe-ref 253))
+      (compiler-parse-fixed-source-id-only-ok?
+        ":abi"
+        (cbi.compiler-builtin-ctfe-ref 255))
+      (compiler-parse-fixed-source-id-only-ok?
+        "as"
+        (cbi.compiler-builtin-ctfe-ref 260))
+      (compiler-parse-fixed-source-id-only-ok?
+        "defgeneric"
+        (cbi.compiler-builtin-ctfe-ref 265)))))
 
 (define (compiler-parse-defmacro-tests-ok?) : bool
   (and

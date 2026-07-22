@@ -1,6 +1,57 @@
 ;; Reverse mixed-source nominal identity regression.
 (import "../compiler_typecheck_core.tl")
 
+(define (tc-qualified-variant-member-lookup-smoke?
+  [module-id : i64]
+  [enum-id : i64]) : bool
+  (let
+    [variant-id : i64 (intern "Value")]
+    [generated-variant-id : i64 (ci.intern-generated-canonical-name "Value")]
+    [dotted-pattern-id : i64
+      (ci.intern-generated-canonical-name "ReverseMixedItem.Value")]
+    [hygienic-variant-id : i64
+      (macro-hygiene-global-id
+        (compiler-symbol-root-module-id)
+        generated-variant-id
+        false)]
+    [qualified-variant-id : i64
+      (compiler-symbol-module-key-id-by-id
+        module-id
+        (compiler-enum-qualified-variant-name-id enum-id hygienic-variant-id))]
+    [qualified-variants : AstVariantDefList (ast-variant-def-list-new)]
+    [enum-handle : i64
+      (compiler-symbol-make-handle (compiler-symbol-kind-defenum) 0)]
+    (begin
+      (ast-variant-def-list-push
+        (&mut qualified-variants)
+        (AstVariantDef.Def
+          qualified-variant-id
+          (ast-type-list-new)
+          (ast-variant-payload-cleanup-list-new)))
+      (and
+        (not (= variant-id generated-variant-id))
+        (match (tc-variant-handle-in-list-at
+          enum-handle
+          variant-id
+          (& qualified-variants)
+          0)
+          [(option_i64.Some _) true]
+          [(option_i64.None) false])
+        (match (tc-variant-handle-in-list-at
+          enum-handle
+          dotted-pattern-id
+          (& qualified-variants)
+          0)
+          [(option_i64.Some _) true]
+          [(option_i64.None) false])
+        (match (tc-variant-handle-in-list-at
+          enum-handle
+          (intern "Missing")
+          (& qualified-variants)
+          0)
+          [(option_i64.Some _) false]
+          [(option_i64.None) true])))))
+
 (define (tc-reverse-mixed-source-nominal-match-smoke?) : bool
   (match (parse-ast-source
     "(defenum ReverseMixedItem (Value i64))
@@ -113,7 +164,8 @@
                     actual-ref
                     different-ref)
                     [(ResultTcLifetimeSubst.Ok _) false]
-                    [(ResultTcLifetimeSubst.Err _) true])))]
+                    [(ResultTcLifetimeSubst.Err _) true])
+                  (tc-qualified-variant-member-lookup-smoke? module-id flat-id)))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))

@@ -39851,7 +39851,7 @@
     (compiler-registry-handle-owner-index handle)
     fallback))
 
-(define (tc-source-variant-handle-for-enum-id-or
+(define (tc-source-variant-handle-for-enum-id-raw-or
   [ctx : TcContext]
   [enum-name-id : i64]
   [variant-name-id : i64]
@@ -39909,6 +39909,28 @@
               registries
               (tc-qualified-variant-key-id-by-id enum-name-id variant-name-id)
               fallback)))))))
+
+(define (tc-source-variant-handle-for-enum-id-or
+  [ctx : TcContext]
+  [enum-name-id : i64]
+  [variant-name-id : i64]
+  [fallback : i64]) : i64
+  (let
+    [handle : i64
+      (tc-source-variant-handle-for-enum-id-raw-or
+        ctx
+        enum-name-id
+        variant-name-id
+        (compiler-symbols-missing-handle))]
+    (cond
+      [(compiler-symbols-handle-found? handle) handle]
+      [else
+        (match (tc-variant-handle-for-enum-id-and-name-id
+          ctx
+          enum-name-id
+          variant-name-id)
+          [(option_i64.Some enum-handle) enum-handle]
+          [(option_i64.None) fallback])])))
 
 (define (tc-variant-name-for-enum [enum-name : String] [variant-name : String]) : String
   (if (tc-name-qualified? variant-name)
@@ -40209,7 +40231,7 @@
     option_i64.None
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
-        (if (= name variant-id)
+        (if (tc-variant-member-name-id-eq? name variant-id)
           (option_i64.Some
             (compiler-registry-make-handle
               (compiler-symbol-kind-enum-variant)
@@ -40222,15 +40244,60 @@
             (+ index 1)))])))
 
 (define (tc-variant-member-name-id [name-id : i64]) : i64
-  (cond
-    [(compiler-composite-pair-key-id? name-id)
-      (compiler-composite-pair-right-id name-id)]
-    [(and
-        (>= name-id 0)
-        (< name-id (intern-capacity))
-        (>= (tc-name-first-dot-id name-id) 0))
-      (intern-dotted-final-id name-id)]
-    [else name-id]))
+  (let
+    [member-id : i64
+      (cond
+        [(compiler-composite-triple-key-id? name-id)
+          (compiler-composite-triple-right-id name-id)]
+        [(compiler-composite-pair-key-id? name-id)
+          (compiler-composite-pair-right-id name-id)]
+        [(and
+            (>= name-id 0)
+            (< name-id (intern-capacity))
+            (>= (tc-name-first-dot-id name-id) 0))
+          (intern-dotted-final-id name-id)]
+        [else name-id])]
+    (macro-hygiene-global-source-name-id-or member-id member-id)))
+
+(define (tc-variant-member-name-id-eq? [left : i64] [right : i64]) : bool
+  (let
+    [left-member : i64 (tc-variant-member-name-id left)]
+    [right-member : i64 (tc-variant-member-name-id right)]
+    (cond
+      [(= left-member right-member) true]
+      [(or
+          (< left-member 0)
+          (>= left-member (intern-capacity))
+          (< right-member 0)
+          (>= right-member (intern-capacity)))
+        false]
+      [else
+        (string.eq
+          (tc-variant-member-name-text left-member)
+          (tc-variant-member-name-text right-member))])))
+
+(define (tc-variant-member-name-text [name-id : i64]) : String
+  (let
+    [name : String (tc-env-key-name-text name-id)]
+    [len : i64 (string.string-length name)]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& name)))]
+    [last-dot : i64 -1]
+    [index : i64 0]
+    (begin
+      (while (< index len)
+        (begin
+          (if (=
+            (unsafe
+              (ptr-read (ptr-offset data index)))
+            (cast 46 : u8))
+            (set! last-dot index)
+            unit)
+          (set! index (+ index 1))))
+      (if (and (>= last-dot 0) (< last-dot (- len 1)))
+        (string.substring name (+ last-dot 1) (- len (+ last-dot 1)))
+        name))))
 
 (define (tc-variant-name-matches-id?
   [ctx : TcContext]

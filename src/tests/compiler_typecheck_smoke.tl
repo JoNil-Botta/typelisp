@@ -3583,7 +3583,7 @@
     (module stdlib.result.generated.invalid)
     (defenum Result (Ok ,T) (Err ,E))
     (define broken : i64 true)))
-(import (result i64 String) as unused-result)
+(import (result.result i64 String) as unused-result)
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-smoke-generated-catalog-body-has-name?

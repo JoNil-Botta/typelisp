@@ -6573,6 +6573,61 @@
   (span AstSourceSpan)
   (next-index i64))
 
+;; Source-coordinate lookups dominate lint time on large files when every
+;; declaration and local binder scans from byte zero. Build one line-start
+;; table for the active lint program, then use direct line lookup and binary
+;; search for all span conversions. The array is rebuilt before every lint
+;; walk, while the parsed file's scratch arena is active.
+(define lint-source-line-starts : (Array i64)
+  (make-array i64 0))
+
+(define (lint-source-line-index-build! [source : String]) : unit
+  (let
+    [source-len : i64 (string.string-length source)]
+    [index : i64 0]
+    [line-count : i64 1]
+    (begin
+      (while (< index source-len)
+        (begin
+          (if (= (string.string-ref source index) '\n')
+            (set! line-count (+ line-count 1))
+            unit)
+          (set! index (+ index 1))))
+      (let
+        [starts : (Array i64) (make-array i64 line-count)]
+        [source-index : i64 0]
+        [line-index : i64 1]
+        (begin
+          (array-set! starts 0 0)
+          (while (< source-index source-len)
+            (begin
+              (if (= (string.string-ref source source-index) '\n')
+                (begin
+                  (array-set! starts line-index (+ source-index 1))
+                  (set! line-index (+ line-index 1)))
+                unit)
+              (set! source-index (+ source-index 1))))
+          (set! lint-source-line-starts starts))))))
+
+(define (lint-source-line-start [line : i64]) : i64
+  (if (or (<= line 0) (> line (array-length lint-source-line-starts)))
+    (- 0 1)
+    (array-ref lint-source-line-starts (- line 1))))
+
+(define (lint-source-index-line-index [target : i64]) : i64
+  (let
+    [low : i64 0]
+    [high : i64 (array-length lint-source-line-starts)]
+    (begin
+      (while (< low high)
+        (let
+          [mid : i64 (/ (+ low high) 2)]
+          [start : i64 (array-ref lint-source-line-starts mid)]
+          (if (<= start target)
+            (set! low (+ mid 1))
+            (set! high mid))))
+      (- low 1))))
+
 (defstruct LintUnusedVariableBinding
   (name String)
   (span AstSourceSpan)
@@ -6644,6 +6699,25 @@
           (set! i (+ i 1))))
       found)))
 
+(define (lint-source-find-prefix-backward-from
+  [source : String]
+  [needle : String]
+  [idx : i64]) : i64
+  (let
+    [needle-len : i64 (string.string-length needle)]
+    [last-start : i64 (- (string.string-length source) needle-len)]
+    [cursor : i64
+      (if (< idx last-start)
+        idx
+        last-start)]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (>= cursor 0))
+        (if (lint-source-prefix-at? source cursor needle)
+          (set! found cursor)
+          (set! cursor (- cursor 1))))
+      found)))
+
 (define (lint-source-symbol-boundary? [source : String] [idx : i64]) : bool
   (let
     [source-len : i64 (string.string-length source)]
@@ -6676,42 +6750,24 @@
           (set! i (+ i 1))))
       found)))
 
-(define (lint-source-index-line [source : String] [target : i64]) : i64
-  (let
-    [i : i64 0]
-    [line : i64 1]
-    (begin
-      (while (< i target)
-        (begin
-          (if (= (string.string-ref source i) '\n')
-            (set! line (+ line 1))
-            unit)
-          (set! i (+ i 1))))
-      line)))
+(define (lint-source-index-line [target : i64]) : i64
+  (+ (lint-source-index-line-index target) 1))
 
-(define (lint-source-index-col [source : String] [target : i64]) : i64
+(define (lint-source-index-col [target : i64]) : i64
   (let
-    [i : i64 0]
-    [col : i64 1]
-    (begin
-      (while (< i target)
-        (begin
-          (if (= (string.string-ref source i) '\n')
-            (set! col 1)
-            (set! col (+ col 1)))
-          (set! i (+ i 1))))
-      col)))
+    [line-index : i64 (lint-source-index-line-index target)]
+    [start : i64 (array-ref lint-source-line-starts line-index)]
+    (+ (- target start) 1)))
 
 (define (lint-source-index-span
-  [source : String]
   [idx : i64]
   [width : i64]
   [fallback : AstSourceSpan]) : AstSourceSpan
   (if (< idx 0)
     fallback
     (let
-      [line : i64 (lint-source-index-line source idx)]
-      [col : i64 (lint-source-index-col source idx)]
+      [line : i64 (lint-source-index-line idx)]
+      [col : i64 (lint-source-index-col idx)]
       (ast-source-span line col line (+ col width)))))
 
 (define (lint-source-span-start-index [source : String] [span : AstSourceSpan]) : i64
@@ -6719,24 +6775,17 @@
     [target-line : i64 (ast-source-span-start-line span)]
     [target-col : i64 (ast-source-span-start-col span)]
     [source-len : i64 (string.string-length source)]
-    [idx : i64 0]
-    [line : i64 1]
-    [col : i64 1]
-    [found : i64 (- 0 1)]
-    (begin
-      (if (or (<= target-line 0) (<= target-col 0))
-        (set! found (- 0 1))
-        (while (and (< found 0) (< idx source-len))
-          (if (and (= line target-line) (= col target-col))
-            (set! found idx)
-            (begin
-              (if (= (string.string-ref source idx) '\n')
-                (begin
-                  (set! line (+ line 1))
-                  (set! col 1))
-                (set! col (+ col 1)))
-              (set! idx (+ idx 1))))))
-      found)))
+    [line-start : i64 (lint-source-line-start target-line)]
+    [next-line-start : i64 (lint-source-line-start (+ target-line 1))]
+    [candidate : i64 (+ line-start (- target-col 1))]
+    (if (or
+      (< line-start 0)
+      (<= target-col 0)
+      (< candidate 0)
+      (>= candidate source-len)
+      (and (>= next-line-start 0) (>= candidate next-line-start)))
+      (- 0 1)
+      candidate)))
 
 (define (lint-source-name-span-from
   [source : String]
@@ -6749,7 +6798,7 @@
     (if (< found 0)
       (LintSourceNameSpan fallback cursor)
       (LintSourceNameSpan
-        (lint-source-index-span source found width fallback)
+        (lint-source-index-span found width fallback)
         (+ found width)))))
 
 (define (lint-source-name-span-between
@@ -6763,7 +6812,7 @@
     (if (or (< found 0) (>= found limit))
       (LintSourceNameSpan (lint-no-span) cursor)
       (LintSourceNameSpan
-        (lint-source-index-span source found width (lint-no-span))
+        (lint-source-index-span found width (lint-no-span))
         (+ found width)))))
 
 (defstruct LintNameCasePatternScan
@@ -7054,7 +7103,6 @@
         (LintSourceNameSpan (lint-no-span) cursor)
         (LintSourceNameSpan
           (lint-source-index-span
-            source
             found
             (string.string-length name)
             (lint-no-span))
@@ -8956,26 +9004,28 @@
   [fallback : AstSourceSpan]) : i64
   (let
     [needle : String (string.append prefix name)]
-    [source-len : i64 (string.string-length source)]
+    [fallback-start : i64 (lint-source-span-start-index source fallback)]
     [found : i64 (- 0 1)]
-    [cursor : i64 0]
+    [cursor : i64 fallback-start]
     (begin
-      (while (and (< found 0) (< cursor source-len))
+      ;; The body span is inside this declaration. Searching backward finds the
+      ;; nearest declaration head in work proportional to its signature, while
+      ;; the old forward scan restarted at byte zero for every declaration.
+      (while (and (< found 0) (>= cursor 0))
         (let
-          [candidate : i64 (lint-source-find-prefix-from source needle cursor)]
+          [candidate : i64
+            (lint-source-find-prefix-backward-from source needle cursor)]
           (if (< candidate 0)
-            (set! cursor source-len)
+            (set! cursor (- 0 1))
             (let
               [end : i64 (+ candidate (string.string-length needle))]
               (if (lint-source-symbol-boundary? source end)
                 (set! found candidate)
-                (set! cursor (+ candidate 1)))))))
+                (set! cursor (- candidate 1)))))))
       (if (< found 0)
-        (let
-          [fallback-start : i64 (lint-source-span-start-index source fallback)]
-          (if (< fallback-start 0)
-            0
-            fallback-start))
+        (if (< fallback-start 0)
+          0
+          fallback-start)
         (+ found (string.string-length needle))))))
 
 (define (lint-unused-variable-decl-with-param-frame
@@ -10405,6 +10455,7 @@
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
+        [_line-index : unit (lint-source-line-index-build! source)]
         [copy-on-update-shapes : LintCopyOnUpdateStructList
           (lint-copy-on-update-collect-structs
             decls

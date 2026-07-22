@@ -1816,6 +1816,11 @@
           roots
           (compiler-load-string-vec-push-copy roots root))])))
 
+(define (compiler-load-stdlib-root-configured? [roots : svec.Vec]) : bool
+  (let
+    [effective-roots : svec.Vec (compiler-load-roots-with-env roots)]
+    (> (svec.len (& effective-roots)) 0)))
+
 (define (compiler-load-cache-root-prefix [root : String]) : String
   (compiler-load-join-root-path (compiler-load-normalize-path root) ""))
 
@@ -2986,6 +2991,138 @@
 
 (define compiler-load-core-macro-prelude-path : String
   "stdlib/core_macros.tl")
+(define compiler-load-runtime-prelude-path : String
+  "stdlib/runtime.tl")
+
+;; Prelude source selection is physical, but its loader path is deliberately
+;; canonical. That keeps module identity, import restoration, diagnostics, and
+;; deduplication independent of the absolute/relative spelling of a stdlib root.
+(define (compiler-load-stdlib-prelude-source-with-roots-cfg
+  [path : String]
+  [source : String]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-source-with-paths-and-roots-expect-cfg
+    path
+    source
+    seen
+    stdlib-roots
+    AstMaybeModuleName.No
+    (compiler-load-stdlib-private-cfgs
+      path
+      stdlib-roots
+      AstMaybeModuleName.No
+      cfgs)))
+
+(define (compiler-load-stdlib-prelude-file-with-roots-cfg
+  [path : String]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  (let
+    [suffix : String (compiler-load-stdlib-suffix path)]
+    (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
+      [(CompilerLoadSomePath source-path)
+        (begin
+          (compiler-load-note-embedded-equivalent-if-matching!
+            suffix
+            source-path)
+          (compiler-load-stdlib-prelude-source-with-roots-cfg
+            path
+            (io.read-file source-path)
+            seen
+            stdlib-roots
+            cfgs))]
+      [(CompilerLoadNoPath)
+        (match (compiler-load-embedded-stdlib-source suffix)
+          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+              source)
+            (begin
+              (compiler-load-note-embedded-module! path)
+              (compiler-load-session-note-embedded-stdlib-source!)
+              (compiler-load-stdlib-prelude-source-with-roots-cfg
+                path
+                source
+                seen
+                stdlib-roots
+                cfgs))]
+          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+            (compiler-load-file-with-paths-and-roots-cfg
+              path
+              seen
+              stdlib-roots
+              cfgs)])])))
+
+(define (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
+  [load-state : CompilerLoadSessionState]
+  [path : String]
+  [source : String]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+    load-state
+    path
+    source
+    seen
+    stdlib-roots
+    AstMaybeModuleName.No
+    (compiler-load-stdlib-private-cfgs
+      path
+      stdlib-roots
+      AstMaybeModuleName.No
+      cfgs)
+    pools))
+
+(define (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
+  [load-state : CompilerLoadSessionState]
+  [path : String]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (let
+    [suffix : String (compiler-load-stdlib-suffix path)]
+    (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
+      [(CompilerLoadSomePath source-path)
+        (begin
+          (compiler-load-note-embedded-equivalent-if-matching!
+            suffix
+            source-path)
+          (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
+            load-state
+            path
+            (io.read-file source-path)
+            seen
+            stdlib-roots
+            cfgs
+            pools))]
+      [(CompilerLoadNoPath)
+        (match (compiler-load-embedded-stdlib-source suffix)
+          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+              source)
+            (begin
+              (compiler-load-note-embedded-module! path)
+              (compiler-load-session-state-note-embedded-stdlib-source!
+                load-state)
+              (compiler-load-stdlib-prelude-source-with-roots-cfg-with-pools
+                load-state
+                path
+                source
+                seen
+                stdlib-roots
+                cfgs
+                pools))]
+          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+            (compiler-load-file-with-paths-and-roots-cfg-with-pools
+              load-state
+              path
+              seen
+              stdlib-roots
+              cfgs
+              pools)])])))
 
 ;; `stdlib/core_macros.tl` infers as `stdlib.core_macros`. Add a root module
 ;; marker after loading it so the following entry resumes in the root module,
@@ -3023,7 +3160,7 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
-    (compiler-load-file-with-paths-and-roots-cfg
+    (compiler-load-stdlib-prelude-file-with-roots-cfg
       compiler-load-core-macro-prelude-path
       seen
       stdlib-roots
@@ -3036,7 +3173,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
-    (compiler-load-file-with-paths-and-roots-cfg-with-pools
+    (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
       load-state
       compiler-load-core-macro-prelude-path
       seen
@@ -11141,6 +11278,91 @@
     cfgs
     false))
 
+(define (compiler-load-package-stdlib-prelude-source-with-roots-cfg
+  [path : String]
+  [source : String]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  (let
+    [parse-cfgs : sym_i64_env.SymI64Env
+      (compiler-load-stdlib-private-cfgs
+        path
+        stdlib-roots
+        AstMaybeModuleName.No
+        cfgs)]
+    [parse-identity : CompilerLoadParseIdentity
+      (compiler-load-parse-identity
+        path
+        (compiler-load-canonical-module-id-from-path path)
+        AstMaybeModuleName.No)]
+    (match (compiler-load-parse-source-diagnostic-escaping
+      path
+      source
+      parse-cfgs)
+      [(ResultAstProgramDiagnostic.Ok program)
+        (compiler-load-package-program-with-paths-and-roots-expect
+          path
+          program
+          seen
+          stdlib-roots
+          AstMaybeModuleName.No
+          manifest-dir
+          deps
+          parse-cfgs
+          parse-identity)]
+      [(ResultAstProgramDiagnostic.Err diag)
+        (ResultCompilerLoadWithPaths.Err diag)])))
+
+(define (compiler-load-package-stdlib-prelude-file-with-roots-cfg
+  [path : String]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  (let
+    [suffix : String (compiler-load-stdlib-suffix path)]
+    (match (compiler-load-resolve-stdlib-root suffix stdlib-roots)
+      [(CompilerLoadSomePath source-path)
+        (begin
+          (compiler-load-note-embedded-equivalent-if-matching!
+            suffix
+            source-path)
+          (compiler-load-package-stdlib-prelude-source-with-roots-cfg
+            path
+            (io.read-file source-path)
+            seen
+            stdlib-roots
+            manifest-dir
+            deps
+            cfgs))]
+      [(CompilerLoadNoPath)
+        (match (compiler-load-embedded-stdlib-source suffix)
+          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+              source)
+            (begin
+              (compiler-load-note-embedded-module! path)
+              (compiler-load-session-note-embedded-stdlib-source!)
+              (compiler-load-package-stdlib-prelude-source-with-roots-cfg
+                path
+                source
+                seen
+                stdlib-roots
+                manifest-dir
+                deps
+                cfgs))]
+          [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+            (compiler-load-package-file-with-paths-and-roots-cfg
+              path
+              seen
+              stdlib-roots
+              manifest-dir
+              deps
+              cfgs)])])))
+
 (define (compiler-load-package-core-macro-prelude-with-roots-cfg
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
@@ -11148,7 +11370,7 @@
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
-    (compiler-load-package-file-with-paths-and-roots-cfg
+    (compiler-load-package-stdlib-prelude-file-with-roots-cfg
       compiler-load-core-macro-prelude-path
       seen
       stdlib-roots
@@ -11164,8 +11386,8 @@
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if emit-entry
-    (match (compiler-load-package-file-with-paths-and-roots-cfg
-      "stdlib/runtime.tl"
+    (match (compiler-load-package-stdlib-prelude-file-with-roots-cfg
+      compiler-load-runtime-prelude-path
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       manifest-dir
@@ -13218,6 +13440,86 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (compiler-load-test-seen-contains? seen "srf.mod")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
+
+;; A physically rooted prelude keeps its canonical logical path/module while
+;; consuming the root's bytes. Rootless canonical paths prefer embedded source,
+;; whereas a root that owns the suffix explicitly requests disk source.
+(define (compiler-load-prelude-source-precedence-ok?) : bool
+  (let
+    [root-dir : String "target/cl_prelude_root"]
+    [root-path : String "target/cl_prelude_root/runtime.tl"]
+    [roots : svec.Vec (compiler-load-string-vec-one root-dir)]
+    (begin
+      (fs.mkdir-status-owned root-dir)
+      (io.write-file root-path "(define prelude-root-marker : i64 1)")
+      (io.write-file
+        "target/cl_prelude_root/core_macros.tl"
+        "(define core-prelude-root-marker : i64 1)")
+      (and
+        (match (compiler-load-stdlib-prelude-file-with-roots-cfg
+          compiler-load-runtime-prelude-path
+          (sym_i64_env.sym-i64-empty)
+          roots
+          (compiler-cfg-empty))
+          [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
+            (and
+              (=
+                (compiler-load-decl-list-value-name-count
+                  decls
+                  "prelude-root-marker")
+                1)
+              (string.eq
+                (compiler-load-test-path-at paths 0)
+                compiler-load-runtime-prelude-path)
+              (string.eq
+                (ast-decl-module-list-get (& modules) 0 "")
+                "stdlib.runtime"))]
+          [(ResultCompilerLoadWithPaths.Err _) false])
+        (match (compiler-load-core-macro-prelude-with-roots-cfg
+          (sym_i64_env.sym-i64-empty)
+          roots
+          (compiler-cfg-empty))
+          [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
+            (and
+              (=
+                (compiler-load-decl-list-value-name-count
+                  decls
+                  "core-prelude-root-marker")
+                1)
+              (string.eq
+                (compiler-load-test-path-at paths 0)
+                compiler-load-core-macro-prelude-path)
+              (string.eq
+                (ast-decl-module-list-get (& modules) 0 "")
+                "stdlib.core_macros")
+              (string.eq
+                (ast-decl-module-list-get
+                  (& modules)
+                  (- (ast-decl-module-list-len (& modules)) 1)
+                  "missing")
+                ""))]
+          [(ResultCompilerLoadWithPaths.Err _) false])
+        (match (compiler-load-package-stdlib-prelude-file-with-roots-cfg
+          compiler-load-runtime-prelude-path
+          (sym_i64_env.sym-i64-empty)
+          roots
+          ""
+          (compiler-pkg-deps-empty)
+          (compiler-cfg-empty))
+          [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
+            (and
+              (=
+                (compiler-load-decl-list-value-name-count
+                  decls
+                  "prelude-root-marker")
+                1)
+              (string.eq
+                (compiler-load-test-path-at paths 0)
+                compiler-load-runtime-prelude-path)
+              (string.eq
+                (ast-decl-module-list-get (& modules) 0 "")
+                "stdlib.runtime"))]
+          [(ResultCompilerLoadWithPaths.Err _) false])))))
 
 ;; `--stdlib-root` resolution searches roots in order; the first existing
 ;; candidate wins, so a missing leading root is skipped.
@@ -16029,6 +16331,10 @@
     (unless
       (compiler-load-stdlib-root-fallback-ok?)
       (return (io.panic "compiler-load: stdlib root fallback smoke mismatch")))
+    (unless
+      (compiler-load-prelude-source-precedence-ok?)
+      (return
+        (io.panic "compiler-load: prelude source precedence smoke mismatch")))
     (unless
       (compiler-load-stdlib-searched-root-ok?)
       (return (io.panic "compiler-load: stdlib searched root smoke mismatch")))

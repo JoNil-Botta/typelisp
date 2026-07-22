@@ -2165,7 +2165,7 @@
         (compiler-driver-prelude-surface-configuration cfgs)]
       (if (or
         (= surface-arena 0)
-        (> (svec.len (& stdlib-roots)) 0)
+        (compiler-load-stdlib-root-configured? stdlib-roots)
         (= (string.string-length configuration) 0))
         CompilerDriverPreludeSurface.Missing
         (let
@@ -2205,8 +2205,8 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (begin
     (compiler-driver-note-prelude-source-pipeline!)
-    (match (compiler-load-file-with-paths-and-roots-cfg
-      "stdlib/runtime.tl"
+    (match (compiler-load-stdlib-prelude-file-with-roots-cfg
+      compiler-load-runtime-prelude-path
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs)
@@ -2358,9 +2358,9 @@
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (begin
     (compiler-driver-note-prelude-source-pipeline!)
-    (match (compiler-load-file-with-paths-and-roots-cfg-with-pools
+    (match (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
       load-state
-      "stdlib/runtime.tl"
+      compiler-load-runtime-prelude-path
       (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs

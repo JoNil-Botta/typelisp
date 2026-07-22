@@ -2564,6 +2564,15 @@ Identity resolution maps a dotted identity to a source file:
   identity segments mapping to path components relative to the importing
   file's directory.
 
+The compiler-injected `stdlib.runtime` and `stdlib.core_macros` preludes are
+resolved independently of an entry module's source tree. Explicit
+`--stdlib-root` entries take precedence, followed by `TYPELISP_STDLIB_ROOT` and
+the embedded stdlib payload. The fixed `stdlib/<name>.tl` disk spelling is only
+a compatibility fallback when the embedded payload does not contain that
+prelude (for example, during a seed bootstrap). Regardless of the physical
+source selected, these preludes retain their canonical `stdlib.*` module and
+path identities.
+
 #### 4.4.2 Default visibility
 
 Every top-level item of a module is visible to any module that imports it.

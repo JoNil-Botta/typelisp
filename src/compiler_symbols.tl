@@ -2035,18 +2035,18 @@
             (if (> (array-ref (struct-get macros keys) index) 0)
               (let
                 [handle : i64 (array-ref (struct-get macros values) index)]
-                (if (and
-                  (=
-                    (compiler-symbol-handle-kind handle)
-                    (compiler-symbol-kind-defmacro))
-                  (=
-                    (compiler-symbols-owner-module-id-at-index-or
-                      symbols
-                      (compiler-symbol-handle-index handle)
-                      (compiler-symbol-root-module-id))
-                    target-module-id))
-                  (return true)
-                  unit))
+                (when
+                  (and
+                    (=
+                      (compiler-symbol-handle-kind handle)
+                      (compiler-symbol-kind-defmacro))
+                    (=
+                      (compiler-symbols-owner-module-id-at-index-or
+                        symbols
+                        (compiler-symbol-handle-index handle)
+                        (compiler-symbol-root-module-id))
+                      target-module-id))
+                  (return true)))
               unit)
             (set! index (+ index 1)))
           false))]))

@@ -352,6 +352,12 @@ tl_arena_poison_enable:
     .globl tl_arena_make
 tl_arena_make:
     movq $0x4000000, %rsi
+    jmp .L_tl_arena_make_sized
+
+    .globl tl_arena_make_small
+tl_arena_make_small:
+    movq $0x1000000, %rsi
+.L_tl_arena_make_sized:
     xorq %rdi, %rdi
     movq $3, %rdx
     movq $0x22, %r10
@@ -370,7 +376,7 @@ tl_arena_make:
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
-    addq $0x4000000, %rcx
+    addq %rsi, %rcx
     movq %rcx, 24(%rax)
     ret
 .L_tl_arena_make_abort:

@@ -70548,15 +70548,17 @@
                                           compile-profile
                                           (compiler-tc-walk-sp-probe-start! 0)
                                           unit)]
-                                      [marker-tail : AstDeclList
-                                        (macro-scratch-decl-list-append
+                                      ;; Share one scratch-arena backing array
+                                      ;; across the marker splice's whole-program
+                                      ;; declaration view instead of copying the
+                                      ;; complete program through two appends.
+                                      [marker-decl-view : MacroSpliceDeclView
+                                        (macro-scratch-splice-decl-view-build
+                                          out-rev
                                           expanded
                                           rest)]
                                       [next-decls : AstDeclList
-                                        (macro-scratch-decl-list-append
-                                          (macro-scratch-decl-list-reverse
-                                            out-rev)
-                                          marker-tail)]
+                                        (struct-get marker-decl-view view)]
                                       [next-decls-for-ctx : AstDeclList
                                         (AstDeclList
                                           (struct-get next-decls slots)

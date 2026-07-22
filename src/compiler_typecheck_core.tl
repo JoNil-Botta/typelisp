@@ -65411,6 +65411,7 @@
       [(ResultMacroEnv.Ok env)
         (begin
           (cfg compile-profile (compiler-tc-walk-native-dispatch-start!))
+          (cfg compile-profile (compiler-tc-macro-profile-start))
           (match (let
             [native-result : MacroNativeStdlibTlciResult
               (macro-try-stdlib-tlci-native
@@ -65426,9 +65427,16 @@
             [(MacroNativeStdlibTlciResult.Value value)
               (begin
                 (tc-context-install-pools! ctx)
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-finish macro-name expanded-args))
                 (ResultMacroValueEnv.Ok value env))]
             [(MacroNativeStdlibTlciResult.Err diag)
-              (ResultMacroValueEnv.Err (box diag))]
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-finish macro-name expanded-args))
+                (ResultMacroValueEnv.Err (box diag)))]
             [(MacroNativeStdlibTlciResult.No)
               (begin
                 (macro-note-stdlib-tlci-route fallback-module macro-name)

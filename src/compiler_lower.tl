@@ -57105,6 +57105,12 @@
             (if detach-before-macro?
               (lower-checked-dest-pools-rollover-for-macro!)
               unit)]
+          [_macro-handoff-profile-finish : unit
+            (cfg
+              compile-profile
+              (compiler-lower-profile-finish "macro_handoff"))]
+          [_macro-expand-profile-start : unit
+            (cfg compile-profile (compiler-lower-profile-start))]
           (match (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names
             load-state
             macro-program
@@ -57148,7 +57154,7 @@
                         (compiler-lower-profile-counter
                           "macro_detach.change_reasons"
                           (macro-expand-program-structural-change-reasons-value))))]
-                  [_detach-profile-start : unit
+                  [_finalize-profile-start : unit
                     (if checked-detach?
                       (cfg compile-profile (compiler-lower-profile-start))
                       unit)]
@@ -57210,11 +57216,11 @@
                     (if checked-detach?
                       (lower-checked-dest-pools-deactivate-after-commit!)
                       unit)]
-                  [_detach-profile-finish : unit
+                  [_finalize-profile-finish : unit
                     (if checked-detach?
                       (cfg
                         compile-profile
-                        (compiler-lower-profile-finish "macro_detach"))
+                        (compiler-lower-profile-finish "macro_finalize"))
                       unit)]
                   (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
                     detached-entry-path
@@ -57238,7 +57244,7 @@
                         macro-entry-path)))))]))]
       [(ResultGenProgramWithPaths.Err diag)
         (begin
-          (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
+          (cfg compile-profile (compiler-lower-profile-finish "macro_handoff"))
           (ResultCompilerLower.Err
             (box (lower-diagnostic-with-path (box-get diag) entry-path))))])))
 

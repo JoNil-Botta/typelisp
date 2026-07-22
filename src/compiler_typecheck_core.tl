@@ -71477,7 +71477,14 @@
                                         compile-profile
                                         (compiler-tc-profile-finish
                                           "macro_setup"))
+                                      (cfg
+                                        compile-profile
+                                        (compiler-tc-profile-start))
                                       (macro-expand-ctfe-env-build-once! ctx)
+                                      (cfg
+                                        compile-profile
+                                        (compiler-tc-profile-finish
+                                          "macro_materialize"))
                                       (cfg
                                         compile-profile
                                         (compiler-tc-profile-start))

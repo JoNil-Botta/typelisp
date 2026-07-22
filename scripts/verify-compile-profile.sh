@@ -571,6 +571,21 @@ assert_profile_live_counter_eq_in \
     1 \
     "$DETACH_CHANGED_STDOUT" \
     "$DETACH_CHANGED_STDERR"
+assert_contains_in \
+    "$DETACH_CHANGED_STDERR" \
+    "compile-profile|lower.macro_handoff|" \
+    "$DETACH_CHANGED_STDOUT" \
+    "$DETACH_CHANGED_STDERR"
+assert_contains_in \
+    "$DETACH_CHANGED_STDERR" \
+    "compile-profile|lower.macro_expand|" \
+    "$DETACH_CHANGED_STDOUT" \
+    "$DETACH_CHANGED_STDERR"
+assert_contains_in \
+    "$DETACH_CHANGED_STDERR" \
+    "compile-profile|lower.macro_finalize|" \
+    "$DETACH_CHANGED_STDOUT" \
+    "$DETACH_CHANGED_STDERR"
 assert_profile_live_counter_at_least_in \
     "$DETACH_CHANGED_STDERR" \
     "lower.macro_detach.change_reasons" \
@@ -868,6 +883,7 @@ if ! "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \
 fi
 
 assert_contains "$CHECK_STDERR" "compile-profile-detail|typecheck.macro_expand|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro_materialize|"
 assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=1"
 assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=6 calls=1"
 # str-cat's six-plus-operand path now delegates packing to the bootstrap-safe

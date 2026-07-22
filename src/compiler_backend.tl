@@ -424,16 +424,13 @@
 
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
-  (hash-string bool)
   (tlci-macro-entry bool))
 
 (defenum CompilerBackendRuntimeHelperOwner
   (Unknown)
   (Core)
   (StdlibFfi)
-  (StdlibTypeLisp)
-  (CompatibilityAlias)
-  (Deprecated))
+  (StdlibTypeLisp))
 
 (defenum ResultCompilerBackendBuffer
   (Ok text_buf.TextBuf)
@@ -444,42 +441,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerBackendRuntimePlan
-  (Plan
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    bool
-    CompilerBackendRuntimeTailPlan)
+  (Plan bool bool bool bool bool bool bool CompilerBackendRuntimeTailPlan)
   ;; Per-function code-generation view.  Reuse the runtime plan already threaded
   ;; through every emitter instead of installing scratch state in process globals.
   (WithScratch (Box CompilerBackendRuntimePlan) CompilerRegScratchPlan))
@@ -488,8 +450,6 @@
   (defines backend_i64_i64_map.Map)
   (externs backend_i64_i64_map.Map)
   (calls backend_i64_i64_map.Map)
-  (needs-div-abort bool)
-  (needs-shift-abort bool)
   (tlci-macro-entry-call-id i64))
 
 (defstruct CompilerBackendRuntimePlanWithIndex
@@ -536,43 +496,7 @@
   (match plan
     [(CompilerBackendRuntimePlan.WithScratch base _)
       (compiler-backend-runtime-plan-tail (box-get base))]
-    [(CompilerBackendRuntimePlan.Plan
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        tail)
-      tail]))
+    [(CompilerBackendRuntimePlan.Plan _ _ _ _ _ _ _ tail) tail]))
 
 (define compiler-backend-empty-scratch-plan : CompilerRegScratchPlan
   (compiler-reg-scratch-plan-empty))
@@ -581,42 +505,7 @@
   [plan : CompilerBackendRuntimePlan]) : CompilerRegScratchPlan
   (match plan
     [(CompilerBackendRuntimePlan.WithScratch _ scratch) scratch]
-    [(CompilerBackendRuntimePlan.Plan
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _)
+    [(CompilerBackendRuntimePlan.Plan _ _ _ _ _ _ _ _)
       compiler-backend-empty-scratch-plan]))
 
 ;; Backend code-generation target. Linux/System V and Windows x64 are
@@ -10874,9 +10763,6 @@
 (define (compiler-backend-closure-entry-label [name : String]) : String
   (string.append ".L_tl_fn_entry_" (compiler-backend-asm-safe-symbol name)))
 
-(define (compiler-backend-runtime-user-symbol-id? [name-id : i64]) : bool
-  (cbi.compiler-builtin-backend-env-path-separator-id? name-id))
-
 (define (compiler-backend-fixed-fault-symbol-id? [name-id : i64]) : bool
   (or
     (cbi.compiler-builtin-backend-fixed-fault-id? name-id)
@@ -10900,9 +10786,7 @@
   [name-id : i64]
   [plan : CompilerBackendRuntimePlan]) : String
   (if (compiler-backend-call-raw-symbol-id? plan name-id)
-    (if (compiler-backend-runtime-user-symbol-id? name-id)
-      (compiler-backend-user-symbol-id name-id)
-      (compiler-ir-symbol-text name-id))
+    (compiler-ir-symbol-text name-id)
     (compiler-backend-asm-safe-symbol (compiler-ir-symbol-text name-id))))
 
 (define (compiler-backend-call-symbol-index
@@ -10922,16 +10806,12 @@
             (= link-symbol-id name)
             (compiler-backend-call-raw-symbol-id? plan name)
             (not (compiler-backend-index-function-defines? index name)))
-            (if (compiler-backend-runtime-user-symbol-id? name)
-              (compiler-backend-user-symbol-id name)
-              name-text)
+            name-text
             (compiler-backend-link-symbol-id link-symbol-id plan)))]
       [(and
           (compiler-backend-call-raw-symbol-id? plan name)
           (not (compiler-backend-index-function-defines? index name)))
-        (if (compiler-backend-runtime-user-symbol-id? name)
-          (compiler-backend-user-symbol-id name)
-          name-text)]
+        name-text]
       [else (compiler-backend-function-symbol-index index name)])))
 
 (define (compiler-backend-function-label-scope
@@ -49652,38 +49532,11 @@
             helper
             (+ index 1)))])))
 
-(define (compiler-backend-binop-needs-div-abort?
-  [op : CompilerIrBinOp]
-  [rhs : CompilerIrValue]
-  [ty : AstType]) : bool
-  (if (compiler-backend-float-type? ty)
-    false
-    (match op
-      [(CompilerIrBinOp.Div)
-        (not (compiler-backend-divmod-safe-literal? rhs ty))]
-      [(CompilerIrBinOp.Mod)
-        (not (compiler-backend-divmod-safe-literal? rhs ty))]
-      [(CompilerIrBinOp.SafeDiv) false]
-      [(CompilerIrBinOp.SafeMod) false]
-      [_ false])))
-
-(define (compiler-backend-binop-needs-shift-abort?
-  [op : CompilerIrBinOp]
-  [ty : AstType]) : bool
-  (if (compiler-backend-float-type? ty)
-    false
-    (match op
-      [(CompilerIrBinOp.Shl) true]
-      [(CompilerIrBinOp.Shr) true]
-      [_ false])))
-
 (define (compiler-backend-runtime-index-empty) : CompilerBackendRuntimeIndex
   (CompilerBackendRuntimeIndex
     (backend_i64_i64_map.with-capacity 256)
     (backend_i64_i64_map.with-capacity 256)
     (backend_i64_i64_map.with-capacity 256)
-    false
-    false
     -1))
 
 (define (compiler-backend-runtime-index-defines?
@@ -49701,14 +49554,6 @@
   [name-id : i64]) : bool
   (backend_i64_i64_map.contains? (& (struct-get index calls)) name-id))
 
-(define (compiler-backend-runtime-index-needs-div-abort?
-  [index : CompilerBackendRuntimeIndex]) : bool
-  (struct-get index needs-div-abort))
-
-(define (compiler-backend-runtime-index-needs-shift-abort?
-  [index : CompilerBackendRuntimeIndex]) : bool
-  (struct-get index needs-shift-abort))
-
 (define (compiler-backend-runtime-index-add-define
   [index : CompilerBackendRuntimeIndex]
   [name-id : i64]) : CompilerBackendRuntimeIndex
@@ -49720,8 +49565,6 @@
         defines
         (struct-get index externs)
         (struct-get index calls)
-        (struct-get index needs-div-abort)
-        (struct-get index needs-shift-abort)
         (struct-get index tlci-macro-entry-call-id)))))
 
 (define (compiler-backend-runtime-index-add-extern-name
@@ -49735,8 +49578,6 @@
         (struct-get index defines)
         externs
         (struct-get index calls)
-        (struct-get index needs-div-abort)
-        (struct-get index needs-shift-abort)
         (struct-get index tlci-macro-entry-call-id)))))
 
 (define (compiler-backend-runtime-index-add-call
@@ -49750,29 +49591,7 @@
         (struct-get index defines)
         (struct-get index externs)
         calls
-        (struct-get index needs-div-abort)
-        (struct-get index needs-shift-abort)
         (struct-get index tlci-macro-entry-call-id)))))
-
-(define (compiler-backend-runtime-index-with-div-abort
-  [index : CompilerBackendRuntimeIndex]) : CompilerBackendRuntimeIndex
-  (CompilerBackendRuntimeIndex
-    (struct-get index defines)
-    (struct-get index externs)
-    (struct-get index calls)
-    true
-    (struct-get index needs-shift-abort)
-    (struct-get index tlci-macro-entry-call-id)))
-
-(define (compiler-backend-runtime-index-with-shift-abort
-  [index : CompilerBackendRuntimeIndex]) : CompilerBackendRuntimeIndex
-  (CompilerBackendRuntimeIndex
-    (struct-get index defines)
-    (struct-get index externs)
-    (struct-get index calls)
-    (struct-get index needs-div-abort)
-    true
-    (struct-get index tlci-macro-entry-call-id)))
 
 (define (compiler-backend-runtime-index-with-extern-role
   [index : CompilerBackendRuntimeIndex]
@@ -49782,8 +49601,6 @@
     (struct-get index defines)
     (struct-get index externs)
     (struct-get index calls)
-    (struct-get index needs-div-abort)
-    (struct-get index needs-shift-abort)
     (if (or
       (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
       (string.eq
@@ -49804,34 +49621,7 @@
           (compiler-backend-runtime-index-add-call index call-name)])]
     [(CompilerIrInstr.TailCall call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
-    [(CompilerIrInstr.BoundsCheck _ _ _)
-      (compiler-backend-runtime-index-add-call
-        index
-        cbi.compiler-builtin-id-tl-oob-abort)]
-    [(CompilerIrInstr.BinOp _ op _ rhs ty)
-      (let
-        [with-div : CompilerBackendRuntimeIndex
-          (if (compiler-backend-binop-needs-div-abort? op rhs ty)
-            (compiler-backend-runtime-index-with-div-abort index)
-            index)]
-        (if (compiler-backend-binop-needs-shift-abort? op ty)
-          (compiler-backend-runtime-index-with-shift-abort with-div)
-          with-div))]
     [_ index]))
-
-(define (compiler-backend-runtime-index-safe-literal-divmod-fusion?
-  [instr : CompilerIrInstr]
-  [next : CompilerIrInstr]) : bool
-  (match instr
-    [(CompilerIrInstr.Mov dst src _)
-      (match next
-        [(CompilerIrInstr.BinOp _ op _ rhs bin-ty)
-          (and
-            (compiler-backend-divmod-op? op)
-            (compiler-backend-branch-uses-var? rhs dst)
-            (compiler-backend-divmod-safe-literal? src bin-ty))]
-        [_ false])]
-    [_ false]))
 
 (define (compiler-backend-runtime-index-instr-seq
   [index : CompilerBackendRuntimeIndex]
@@ -49843,18 +49633,11 @@
     [out : CompilerBackendRuntimeIndex index]
     (begin
       (while (< i count)
-        (let
-          [instr : CompilerIrInstr (array-ref slots i)]
-          [advance : i64 1]
-          (begin
-            (if (and
-              (< (+ i 1) count)
-              (compiler-backend-runtime-index-safe-literal-divmod-fusion?
-                instr
-                (array-ref slots (+ i 1))))
-              (set! advance 2)
-              (set! out (compiler-backend-runtime-index-instr out instr)))
-            (set! i (+ i advance)))))
+        (begin
+          (set!
+            out
+            (compiler-backend-runtime-index-instr out (array-ref slots i)))
+          (set! i (+ i 1))))
       out)))
 
 (define (compiler-backend-runtime-index-blocks
@@ -49985,19 +49768,10 @@
 (define (compiler-backend-runtime-helper-stdlib-ffi-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-backend-runtime-stdlib-ffi-id? name-id))
 
-;; Runtime compatibility surfaces whose preferred ownership is TypeLisp stdlib.
-;; The IO/stdin/file/argv/print/env helpers are deliberately absent here:
-;; those names are stdlib-owned and must remain external from the backend
-;; runtime plan for normal source builds.
+;; Runtime helpers whose implementation and fixed export symbols are owned by
+;; the TypeLisp stdlib prelude.
 (define (compiler-backend-runtime-helper-stdlib-type-lisp-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-backend-runtime-stdlib-type-lisp-id? name-id))
-
-(define (compiler-backend-runtime-helper-compatibility-alias-id?
-  [name-id : i64]) : bool
-  (cbi.compiler-builtin-backend-runtime-compatibility-alias-id? name-id))
-
-(define (compiler-backend-runtime-helper-deprecated-id? [_name-id : i64]) : bool
-  false)
 
 (define (compiler-backend-runtime-helper-owner-id [name-id : i64]) : CompilerBackendRuntimeHelperOwner
   (cond
@@ -50007,93 +49781,12 @@
       (CompilerBackendRuntimeHelperOwner.StdlibFfi)]
     [(compiler-backend-runtime-helper-stdlib-type-lisp-id? name-id)
       (CompilerBackendRuntimeHelperOwner.StdlibTypeLisp)]
-    [(compiler-backend-runtime-helper-compatibility-alias-id? name-id)
-      (CompilerBackendRuntimeHelperOwner.CompatibilityAlias)]
-    [(compiler-backend-runtime-helper-deprecated-id? name-id)
-      (CompilerBackendRuntimeHelperOwner.Deprecated)]
     [else (CompilerBackendRuntimeHelperOwner.Unknown)]))
 
 (define (compiler-backend-runtime-helper-known-id? [name-id : i64]) : bool
   (match (compiler-backend-runtime-helper-owner-id name-id)
     [(CompilerBackendRuntimeHelperOwner.Unknown) false]
     [_ true]))
-
-(define (compiler-backend-runtime-index-defines-concat?
-  [index : CompilerBackendRuntimeIndex]) : bool
-  (or
-    (backend-or4
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-string-concat)
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-string-concat3)
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-string-concat4)
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-string-concat5))
-    false))
-
-(define (compiler-backend-runtime-index-extern-concat?
-  [index : CompilerBackendRuntimeIndex]) : bool
-  (or
-    (backend-or4
-      (compiler-backend-runtime-index-extern?
-        index
-        cbi.compiler-builtin-id-tl-string-concat)
-      (compiler-backend-runtime-index-extern?
-        index
-        cbi.compiler-builtin-id-tl-string-concat3)
-      (compiler-backend-runtime-index-extern?
-        index
-        cbi.compiler-builtin-id-tl-string-concat4)
-      (compiler-backend-runtime-index-extern?
-        index
-        cbi.compiler-builtin-id-tl-string-concat5))
-    false))
-
-(define (compiler-backend-runtime-index-calls-concat?
-  [index : CompilerBackendRuntimeIndex]) : bool
-  (or
-    (backend-or4
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-string-concat)
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-string-concat3)
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-string-concat4)
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-string-concat5))
-    false))
-
-(define (compiler-backend-plan-provides-tail-id?
-  [name-id : i64]
-  [read-bytes : bool]
-  [stdin-eof : bool]
-  [flush-stdout : bool]
-  [system-seed : bool]
-  [env-var-exists : bool]
-  [var-value : bool]
-  [path-separator : bool]) : bool
-  (let
-    [_read-bytes : bool read-bytes]
-    [_stdin-eof : bool stdin-eof]
-    [_flush-stdout : bool flush-stdout]
-    [_random-system-seed : bool system-seed]
-    (or
-      (and
-        env-var-exists
-        (cbi.compiler-builtin-backend-env-var-exists-id? name-id))
-      (and var-value (cbi.compiler-builtin-backend-env-var-value-id? name-id))
-      (and
-        path-separator
-        (cbi.compiler-builtin-backend-env-path-separator-id? name-id)))))
 
 ;; First-class arena runtime helpers and the arena poison debug toggle
 ;; are always emitted, so they are provided runtime symbols (resolve to
@@ -50114,93 +49807,30 @@
       (compiler-backend-plan-provides-rest-id? (box-get base) name-id)]
     [(CompilerBackendRuntimePlan.Plan
         alloc
-        oob
         substring
         str-view
         concat
-        _
-        _
         provides-int-to-string
-        provides-abort
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        provides-fs
-        _
-        _
-        _
-        _
-        _
         region-mark
         region-reset
-        _
-        provides-env-var-exists
-        provides-env-var-value
-        provides-env-path-separator
-        provides-div-abort
-        provides-shift-abort
         provides-tail)
-      (let
-        [_oob : bool oob]
-        [_provides-abort : bool provides-abort]
-        [_provides-fs : bool provides-fs]
-        [_provides-div-abort : bool provides-div-abort]
-        [_provides-shift-abort : bool provides-shift-abort]
-        (or
-          (backend-or8
-            (and alloc (cbi.compiler-builtin-backend-tl-alloc-id? name-id))
-            (and
-              region-mark
-              (cbi.compiler-builtin-backend-tl-region-mark-id? name-id))
-            (and
-              region-reset
-              (cbi.compiler-builtin-backend-tl-region-reset-id? name-id))
-            false
-            (and
-              substring
-              (cbi.compiler-builtin-backend-tl-substring-id? name-id))
-            (and
-              str-view
-              (cbi.compiler-builtin-backend-tl-str-view-id? name-id))
-            (and
-              concat
-              (cbi.compiler-builtin-backend-runtime-concat-id? name-id))
-            false)
-          (backend-or8
-            (and
-              provides-int-to-string
-              (cbi.compiler-builtin-backend-tl-int-to-string-id? name-id))
-            false
-            false
-            false
-            false
-            false
-            false
-            false)
-          (compiler-backend-plan-provides-tail-id?
-            name-id
-            false
-            false
-            false
-            false
-            provides-env-var-exists
-            provides-env-var-value
-            provides-env-path-separator)
-          (backend-or4
-            false
-            false
-            (and
-              (compiler-backend-runtime-tail-profile? provides-tail)
-              (cbi.compiler-builtin-backend-runtime-profile-id? name-id))
-            false)))]))
+      (backend-or8
+        (and alloc (cbi.compiler-builtin-backend-tl-alloc-id? name-id))
+        (and
+          region-mark
+          (cbi.compiler-builtin-backend-tl-region-mark-id? name-id))
+        (and
+          region-reset
+          (cbi.compiler-builtin-backend-tl-region-reset-id? name-id))
+        (and substring (cbi.compiler-builtin-backend-tl-substring-id? name-id))
+        (and str-view (cbi.compiler-builtin-backend-tl-str-view-id? name-id))
+        (and concat (cbi.compiler-builtin-backend-runtime-concat-id? name-id))
+        (and
+          provides-int-to-string
+          (cbi.compiler-builtin-backend-tl-int-to-string-id? name-id))
+        (and
+          (compiler-backend-runtime-tail-profile? provides-tail)
+          (cbi.compiler-builtin-backend-runtime-profile-id? name-id)))]))
 
 (define (compiler-backend-runtime-plan-with-index-for
   [functions : CompilerIrFunctionList]
@@ -50212,18 +49842,6 @@
       (compiler-backend-runtime-index-defines?
         index
         cbi.compiler-builtin-id-tl-alloc)]
-    [defines-oob : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-oob-abort)]
-    [defines-div-abort : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-div-abort)]
-    [defines-shift-abort : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-shift-abort)]
     [defines-substring : bool
       (compiler-backend-runtime-index-defines?
         index
@@ -50233,7 +49851,23 @@
         index
         cbi.compiler-builtin-id-tl-str-view)]
     [defines-concat : bool
-      (compiler-backend-runtime-index-defines-concat? index)]
+      (backend-or4
+        (compiler-backend-runtime-index-defines?
+          index
+          cbi.compiler-builtin-id-tl-string-concat)
+        (compiler-backend-runtime-index-defines?
+          index
+          cbi.compiler-builtin-id-tl-string-concat3)
+        (compiler-backend-runtime-index-defines?
+          index
+          cbi.compiler-builtin-id-tl-string-concat4)
+        (compiler-backend-runtime-index-defines?
+          index
+          cbi.compiler-builtin-id-tl-string-concat5))]
+    [defines-int-to-string : bool
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-int-to-string)]
     [provides-substring : bool
       (compiler-backend-function-list-defines-runtime-prelude-helper?
         functions
@@ -50256,10 +49890,6 @@
         (compiler-backend-function-list-defines-runtime-prelude-helper?
           functions
           "string-concat5"))]
-    [defines-int-to-string : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-int-to-string)]
     [provides-int-to-string : bool
       (compiler-backend-function-list-defines-runtime-prelude-helper?
         functions
@@ -50272,18 +49902,6 @@
       (compiler-backend-runtime-index-defines?
         index
         cbi.compiler-builtin-id-tl-region-reset)]
-    [defines-env-var-exists : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-env-var-exists)]
-    [defines-env-var-value : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-tl-env-var-value)]
-    [defines-env-path-separator : bool
-      (compiler-backend-runtime-index-defines?
-        index
-        cbi.compiler-builtin-id-env-path-separator)]
     [defines-profile-alloc-total : bool
       (compiler-backend-runtime-index-defines?
         index
@@ -50300,22 +49918,6 @@
       (compiler-backend-runtime-index-defines?
         index
         cbi.compiler-builtin-id-tl-profile-alloc-reset-peak)]
-    [extern-oob : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        cbi.compiler-builtin-id-tl-oob-abort)]
-    [extern-div-abort : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        cbi.compiler-builtin-id-tl-div-abort)]
-    [extern-shift-abort : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        cbi.compiler-builtin-id-tl-shift-abort)]
-    [extern-abort : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        cbi.compiler-builtin-id-tl-abort-label)]
     [extern-region-mark : bool
       (compiler-backend-runtime-index-extern?
         index
@@ -50344,18 +49946,6 @@
       (compiler-backend-runtime-index-calls?
         index
         cbi.compiler-builtin-id-tl-alloc)]
-    [calls-oob : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-oob-abort)]
-    [calls-div-abort : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-div-abort)]
-    [calls-shift-abort : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-shift-abort)]
     [calls-substring : bool
       (compiler-backend-runtime-index-calls?
         index
@@ -50364,15 +49954,24 @@
       (compiler-backend-runtime-index-calls?
         index
         cbi.compiler-builtin-id-tl-str-view)]
-    [calls-concat : bool (compiler-backend-runtime-index-calls-concat? index)]
+    [calls-concat : bool
+      (backend-or4
+        (compiler-backend-runtime-index-calls?
+          index
+          cbi.compiler-builtin-id-tl-string-concat)
+        (compiler-backend-runtime-index-calls?
+          index
+          cbi.compiler-builtin-id-tl-string-concat3)
+        (compiler-backend-runtime-index-calls?
+          index
+          cbi.compiler-builtin-id-tl-string-concat4)
+        (compiler-backend-runtime-index-calls?
+          index
+          cbi.compiler-builtin-id-tl-string-concat5))]
     [calls-int-to-string : bool
       (compiler-backend-runtime-index-calls?
         index
         cbi.compiler-builtin-id-tl-int-to-string)]
-    [calls-abort : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-abort-label)]
     [calls-region-mark : bool
       (compiler-backend-runtime-index-calls?
         index
@@ -50381,18 +49980,6 @@
       (compiler-backend-runtime-index-calls?
         index
         cbi.compiler-builtin-id-tl-region-reset)]
-    [calls-env-var-exists : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-env-var-exists)]
-    [calls-env-var-value : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-tl-env-var-value)]
-    [calls-env-path-separator : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        cbi.compiler-builtin-id-env-path-separator)]
     [calls-profile-alloc-total : bool
       (compiler-backend-runtime-index-calls?
         index
@@ -50409,90 +49996,27 @@
       (compiler-backend-runtime-index-calls?
         index
         cbi.compiler-builtin-id-tl-profile-alloc-reset-peak)]
-    [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
-    [needs-div-abort : bool
-      (or
-        (compiler-backend-runtime-index-needs-div-abort? index)
-        (and (not defines-div-abort) (or extern-div-abort calls-div-abort)))]
-    [needs-shift-abort : bool
-      (or
-        (compiler-backend-runtime-index-needs-shift-abort? index)
-        (and
-          (not defines-shift-abort)
-          (or extern-shift-abort calls-shift-abort)))]
-    ;; Migrated string helpers live in stdlib/runtime.tl, but the backend owns
-    ;; their fixed ABI labels once those prelude helpers are emitted.
+    ;; Prelude string helpers keep fixed export symbols for validation and call
+    ;; spelling, but their TypeLisp bodies expose allocator calls directly in
+    ;; the runtime index. The plan therefore retains only these symbol facts;
+    ;; only a real `tl_alloc` call enables allocator asm.
     [needs-substring : bool
       (or provides-substring (and (not defines-substring) calls-substring))]
     [needs-str-view : bool
       (or provides-str-view (and (not defines-str-view) calls-str-view))]
     [needs-concat : bool
       (or provides-concat (and (not defines-concat) calls-concat))]
-    [_needs-string-eq : bool false]
-    [_needs-string-to-int : bool false]
-    [_needs-hash-string : bool false]
     [needs-int-to-string : bool
       (or
         provides-int-to-string
         (and (not defines-int-to-string) calls-int-to-string))]
-    [_direct-abort : bool false]
-    [needs-print-err : bool false]
-    [needs-print-str : bool false]
-    [needs-print-char : bool false]
-    [needs-print-f64 : bool false]
-    [needs-arg-count : bool false]
-    [needs-arg : bool false]
-    [needs-read-file : bool false]
-    [needs-write-file : bool false]
-    [needs-file-exists : bool false]
-    [needs-file-handle : bool false]
-    [needs-file-read-chunk : bool false]
-    [needs-fs-runtime : bool false]
-    [needs-read-line : bool false]
-    [needs-read-bytes : bool false]
-    [needs-stdin-eof : bool false]
-    [needs-flush-stdout : bool false]
+    [needs-alloc : bool (and (not defines-alloc) calls-alloc)]
     [needs-region-mark : bool
       (and (not defines-region-mark) (or extern-region-mark calls-region-mark))]
     [needs-region-reset : bool
       (and
         (not defines-region-reset)
         (or extern-region-reset calls-region-reset))]
-    [needs-random-system-seed : bool false]
-    [needs-env-var-exists : bool
-      (and (not defines-env-var-exists) calls-env-var-exists)]
-    [needs-env-var-value : bool
-      (and (not defines-env-var-value) calls-env-var-value)]
-    [needs-env-path-separator : bool
-      (and (not defines-env-path-separator) calls-env-path-separator)]
-    [direct-alloc : bool (and (not defines-alloc) calls-alloc)]
-    [needs-abort : bool
-      (or extern-abort calls-abort needs-arg needs-read-file needs-write-file)]
-    [needs-alloc : bool
-      (or
-        (backend-or8
-          direct-alloc
-          needs-int-to-string
-          needs-substring
-          needs-str-view
-          needs-arg
-          needs-read-file
-          needs-write-file
-          needs-file-exists)
-        (backend-or8
-          needs-file-handle
-          needs-file-read-chunk
-          needs-fs-runtime
-          false
-          needs-read-line
-          needs-read-bytes
-          needs-random-system-seed
-          false)
-        (backend-or4
-          needs-env-var-exists
-          needs-env-var-value
-          needs-env-path-separator
-          false))]
     [needs-profile : bool
       (backend-or4
         (and
@@ -50517,43 +50041,13 @@
       (CompilerBackendRuntimePlanWithIndex
         (CompilerBackendRuntimePlan.Plan
           needs-alloc
-          needs-oob
           needs-substring
           needs-str-view
           needs-concat
-          false
-          false
           needs-int-to-string
-          needs-abort
-          needs-print-err
-          needs-print-str
-          needs-print-char
-          needs-print-f64
-          needs-arg-count
-          needs-arg
-          needs-read-file
-          needs-write-file
-          needs-file-exists
-          needs-file-handle
-          needs-file-read-chunk
-          needs-fs-runtime
-          false
-          needs-read-line
-          needs-read-bytes
-          needs-stdin-eof
-          needs-flush-stdout
           needs-region-mark
           needs-region-reset
-          needs-random-system-seed
-          needs-env-var-exists
-          needs-env-var-value
-          needs-env-path-separator
-          needs-div-abort
-          needs-shift-abort
-          (CompilerBackendRuntimeTailPlan
-            needs-profile
-            false
-            needs-tlci-macro-entry))
+          (CompilerBackendRuntimeTailPlan needs-profile needs-tlci-macro-entry))
         index))))
 
 (define (compiler-backend-runtime-plan-for
@@ -50652,14 +50146,6 @@
         referenced-functions
         buf)]))
 
-;; Allocation-failure messages live in the runtime prelude (stdlib/runtime.tl):
-;; generic overflow/non-OS paths use `oom-abort`/`tl_oom_abort`, while Windows
-;; VirtualAlloc failures pass captured provenance to
-;; `tl_windows_allocation_abort`. The allocator contributes no runtime data.
-(define (compiler-backend-runtime-alloc-data-for-target
-  [_target : CompilerBackendTarget]) : String
-  "")
-
 ;; `tl_current_arena` is the live bump-arena pointer shared by tl_alloc, the
 ;; region runtime, and the first-class arena builtins. It is a
 ;; per-thread active-arena slot: Linux uses local-exec ELF TLS; Windows
@@ -50739,18 +50225,13 @@ tl_profile_alloc_peak_bytes:
 
 ")
 
-(define (compiler-backend-runtime-env-data
-  [target : CompilerBackendTarget]
-  [env-data : bool]) : String
-  (let
-    [_target : CompilerBackendTarget target]
-    [_env-data : bool env-data]
-    "    .data
+(define (compiler-backend-runtime-env-data) : String
+  "    .data
     .balign 8
 .L_tl_envp:
     .quad 0
 
-"))
+")
 
 (define (compiler-backend-runtime-data-for-target
   [target : CompilerBackendTarget]
@@ -50758,57 +50239,16 @@ tl_profile_alloc_peak_bytes:
   (match plan
     [(CompilerBackendRuntimePlan.WithScratch base _)
       (compiler-backend-runtime-data-for-target target (box-get base))]
-    [(CompilerBackendRuntimePlan.Plan
-        alloc
-        oob
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        region-mark
-        region-reset
-        _
-        env-var-exists
-        var-value
-        _
-        div-abort
-        shift-abort
-        tail-plan)
+    [(CompilerBackendRuntimePlan.Plan _ _ _ _ _ _ region-reset tail-plan)
       (str_cat.str-cat
         (compiler-backend-runtime-arena-data-for-target target)
         (compiler-backend-runtime-profile-data
           (compiler-backend-runtime-tail-profile? tail-plan))
-        (if alloc
-          (compiler-backend-runtime-alloc-data-for-target target)
-          "")
-        ;; The oob/division/shift fault messages live in the runtime
-        ;; prelude (stdlib/runtime.tl) handlers, not backend rodata.
-        ""
         (if region-reset
           (compiler-backend-runtime-region-reset-data)
           "")
         (compiler-backend-runtime-argv-data)
-        (compiler-backend-runtime-env-data target (or env-var-exists var-value)))]))
+        (compiler-backend-runtime-env-data))]))
 
 (define (compiler-backend-runtime-profile-alloc-account-with-scratch
   [size-reg : String]
@@ -52563,42 +52003,6 @@ tl_alloc:
 
 ")))
 
-;; The Linux out-of-bounds/division/shift abort handlers live in the runtime
-;; prelude (stdlib/runtime.tl as `*-abort`, exported as the fixed
-;; `tl_*_abort` symbols); the backend does not emit them as asm.
-;; `tl_abort_string` (the general panic handler) lives in the runtime prelude
-;; (stdlib/runtime.tl as `abort-string`); the backend does not emit
-;; it as asm on either target.
-(define (compiler-backend-runtime-abort-functions) : String
-  "")
-
-;; Environment lookups moved entirely into TypeLisp (stdlib/env.tl): the Linux
-;; side walks the SysV stack-captured environment via the program-argv/argc
-;; builtins, and the Windows side calls kernel32 GetEnvironmentStringsA directly,
-;; with the name match and value copy done in TypeLisp. The backend therefore
-;; emits no `tl_env_var_exists` / `tl_env_var_value` / `_tl_env_path_separator`
-;; asm on either target (these were the last consumers of the removed `getenv`
-;; and `strlen` libc shims). The generators are retained as empty strings so the
-;; runtime-plan gating (which still tracks the now-never-set env call sites) does
-;; not need a struct change.
-(define (compiler-backend-runtime-env-var-exists-functions) : String
-  "")
-
-(define (compiler-backend-runtime-env-var-value-functions) : String
-  "")
-
-(define (compiler-backend-runtime-env-path-separator-functions) : String
-  "")
-
-(define (compiler-backend-runtime-windows-env-path-separator-functions) : String
-  "")
-
-(define (compiler-backend-runtime-windows-env-var-exists-functions) : String
-  "")
-
-(define (compiler-backend-runtime-windows-env-var-value-functions) : String
-  "")
-
 ;; Windows variant of `tl_region_reset`. Identical arena-walk structure to the
 ;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end,
 ;; 32=retired list link/head, 40=root, 48=kind/lock, 56=root-current; the arena header sits at the VirtualAlloc
@@ -52820,61 +52224,6 @@ tl_profile_alloc_reset_peak:
     ret
 
 ")
-
-(define (compiler-backend-runtime-profile-functions-for-target
-  [target : CompilerBackendTarget]
-  [profile : bool]) : String
-  (let
-    [_target : CompilerBackendTarget target]
-    (if profile
-      (compiler-backend-runtime-profile-functions)
-      "")))
-
-(define (compiler-backend-runtime-fs-functions) : String
-  "")
-
-(define (compiler-backend-runtime-windows-fs-functions) : String
-  "")
-
-(define (compiler-backend-runtime-fs-functions-for-target
-  [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    (compiler-backend-runtime-windows-fs-functions)
-    (compiler-backend-runtime-fs-functions)))
-
-;; The Windows out-of-bounds/division/shift abort handlers (and their shared
-;; fixed-abort emitter) live in the runtime prelude (stdlib/runtime.tl),
-;; exported as the fixed `tl_*_abort` symbols; the backend emits no
-;; asm for them.
-;; `tl_abort_string` lives in the runtime prelude (see
-;; `compiler-backend-runtime-abort-functions`); the Windows target emits no asm
-;; for it either.
-(define (compiler-backend-runtime-windows-abort-functions) : String
-  "")
-
-(define (compiler-backend-runtime-int-to-string-functions) : String
-  "")
-
-(define (compiler-backend-runtime-windows-int-to-string-functions) : String
-  "")
-
-(define (compiler-backend-runtime-substring-functions) : String
-  "")
-
-(define (compiler-backend-runtime-windows-substring-functions) : String
-  "")
-
-(define (compiler-backend-runtime-str-view-functions) : String
-  "")
-
-(define (compiler-backend-runtime-windows-str-view-functions) : String
-  "")
-
-(define (compiler-backend-runtime-concat-functions) : String
-  "")
-
-(define (compiler-backend-runtime-windows-concat-functions) : String
-  "")
 
 ;; Byte copy helper used by lower-emit-memcpy for large by-value aggregate
 ;; copies. Always emitted. Linux SysV args rdi=dst, rsi=src, rdx=len; rep movsb
@@ -53210,10 +52559,6 @@ tl_comptime_host_invoke_set:
 
 "))
 
-(define (compiler-backend-runtime-atomic-functions
-  [_target : CompilerBackendTarget]) : String
-  "")
-
 (define (compiler-backend-runtime-functions-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
@@ -53222,39 +52567,12 @@ tl_comptime_host_invoke_set:
       (compiler-backend-runtime-functions-for-target target (box-get base))]
     [(CompilerBackendRuntimePlan.Plan
         alloc
-        oob
-        substring
-        str-view
-        concat
-        _
-        _
-        int-to-string
-        abort
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        _
-        fs-runtime
-        _
         _
         _
         _
         _
         region-mark
         region-reset
-        _
-        env-var-exists
-        var-value
-        path-separator
-        div-abort
-        shift-abort
         tail-plan)
       (let
         [profile : bool (compiler-backend-runtime-tail-profile? tail-plan)]
@@ -53263,56 +52581,6 @@ tl_comptime_host_invoke_set:
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-alloc-functions profile)
               (compiler-backend-runtime-linux-alloc-functions profile))
-            "")]
-        ;; The out-of-bounds/division/shift fault handlers live in the
-        ;; runtime prelude (stdlib/runtime.tl); the backend
-        ;; emits no asm for them. The plan flags are retained for the runtime
-        ;; index (which still tracks the `tl_*_abort` call sites).
-        [oob-asm : String
-          (if oob
-            ""
-            "")]
-        [div-abort-asm : String
-          (if div-abort
-            ""
-            "")]
-        [shift-abort-asm : String
-          (if shift-abort
-            ""
-            "")]
-        [substring-asm : String
-          (if substring
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-substring-functions)
-              (compiler-backend-runtime-substring-functions))
-            "")]
-        [str-view-asm : String
-          (if str-view
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-str-view-functions)
-              (compiler-backend-runtime-str-view-functions))
-            "")]
-        [concat-asm : String
-          (if concat
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-concat-functions)
-              (compiler-backend-runtime-concat-functions))
-            "")]
-        [int-to-string-asm : String
-          (if int-to-string
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-int-to-string-functions)
-              (compiler-backend-runtime-int-to-string-functions))
-            "")]
-        [abort-asm : String
-          (if abort
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-abort-functions)
-              (compiler-backend-runtime-abort-functions))
-            "")]
-        [fs-asm : String
-          (if fs-runtime
-            (compiler-backend-runtime-fs-functions-for-target target)
             "")]
         [region-mark-asm : String
           (if region-mark
@@ -53329,7 +52597,9 @@ tl_comptime_host_invoke_set:
             (compiler-backend-runtime-windows-arena-functions profile)
             (compiler-backend-runtime-linux-arena-functions profile))]
         [profile-asm : String
-          (compiler-backend-runtime-profile-functions-for-target target profile)]
+          (if profile
+            (compiler-backend-runtime-profile-functions)
+            "")]
         [memcpy-asm : String (compiler-backend-runtime-memcpy-functions target)]
         [memchr-asm : String (compiler-backend-runtime-memchr-functions target)]
         [array-zero-asm : String
@@ -53340,7 +52610,6 @@ tl_comptime_host_invoke_set:
           (if (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
             (compiler-backend-runtime-tlci-macro-entry-functions target)
             "")]
-        [atomic-asm : String (compiler-backend-runtime-atomic-functions target)]
         [runtime-front-asm : String
           (string.append
             memcpy-asm
@@ -53353,44 +52622,14 @@ tl_comptime_host_invoke_set:
                   (string.append
                     tlci-macro-entry-asm
                     (string.append
-                      atomic-asm
+                      arena-asm
                       (string.append
-                        arena-asm
-                        (string.append
-                          profile-asm
-                          (str_cat.str-cat
-                            alloc-asm
-                            region-mark-asm
-                            region-reset-asm
-                            oob-asm
-                            div-abort-asm)))))))))]
-        [runtime-string-asm : String
-          (string.append
-            (str_cat.str-cat
-              shift-abort-asm
-              substring-asm
-              str-view-asm
-              concat-asm
-              "")
-            (string.append int-to-string-asm abort-asm))]
-        [env-var-exists-asm : String
-          (if env-var-exists
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-env-var-exists-functions)
-              (compiler-backend-runtime-env-var-exists-functions))
-            "")]
-        [env-var-value-asm : String
-          (if var-value
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-env-var-value-functions)
-              (compiler-backend-runtime-env-var-value-functions))
-            "")]
-        [env-path-separator-asm : String
-          (if path-separator
-            (if (compiler-backend-target-windows? target)
-              (compiler-backend-runtime-windows-env-path-separator-functions)
-              (compiler-backend-runtime-env-path-separator-functions))
-            "")]
+                        profile-asm
+                        (str_cat.str-cat
+                          alloc-asm
+                          region-mark-asm
+                          region-reset-asm
+                          ""))))))))]
         [linux-libc-shims-asm : String
           (if (compiler-backend-target-windows? target)
             (compiler-backend-runtime-windows-libc-shim-functions)
@@ -53399,16 +52638,7 @@ tl_comptime_host_invoke_set:
           (if (compiler-backend-target-windows? target)
             (compiler-backend-runtime-windows-thread-functions)
             "")]
-        (str_cat.str-cat
-          runtime-front-asm
-          runtime-string-asm
-          fs-asm
-          thread-asm
-          env-var-exists-asm
-          env-var-value-asm
-          env-path-separator-asm
-          linux-libc-shims-asm
-          ""))]))
+        (str_cat.str-cat runtime-front-asm thread-asm linux-libc-shims-asm ""))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
 ;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9;
@@ -53563,19 +52793,6 @@ tl_comptime_host_invoke_set:
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
   (compiler-abi-windows? (compiler-backend-target-abi target)))
-
-;; All runtime helpers the backend can be asked to emit now have a Windows
-;; variant (region mark/reset and the env-var/env-path helpers were the last
-;; Windows-unsupported ones; see the *-windows-* runtime functions above), so no
-;; plan is rejected on either target. The `plan` parameter is retained for the
-;; signature shape and possible future target-specific gating.
-(define (compiler-backend-target-runtime-ok?
-  [target : CompilerBackendTarget]
-  [plan : CompilerBackendRuntimePlan]) : bool
-  (let
-    [_ : CompilerBackendTarget target]
-    [_plan : CompilerBackendRuntimePlan plan]
-    true))
 
 (define (compiler-backend-runtime-externs-for-target
   [target : CompilerBackendTarget]
@@ -54063,88 +53280,70 @@ tl_comptime_host_invoke_set:
               compile-profile
               (compiler-backend-profile-finish "runtime_plan"))
             (cfg compile-profile (compiler-backend-profile-start))
-            (if (compiler-backend-target-runtime-ok? target plan)
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-backend-profile-finish "target_check"))
-                (cfg compile-profile (compiler-backend-profile-start))
-                (match program
-                  [(CompilerIrProgram.Program globals functions externs)
-                    ;; Build the program index ONCE over the entry function list
-                    ;; and share it with the globals emission: each build walks
-                    ;; every function body for the register-group counts, so the
-                    ;; former second build doubled both that walk and its ~120MB
-                    ;; of transient allocation. The entry list is a superset of
-                    ;; `functions` (at most the synthesized implicit main, which
-                    ;; no global initializer can reference), so globals resolve
-                    ;; identically against the shared index.
-                    (let
-                      [entry-functions : CompilerIrFunctionList
-                        (compiler-backend-functions-with-implicit-main
-                          functions
-                          emit-entry)]
-                      [program-index : CompilerBackendProgramIndex
-                        (compiler-backend-program-index-build
-                          entry-functions
-                          externs)]
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-backend-profile-finish "index"))
-                        (cfg compile-profile (compiler-backend-profile-start))
-                        (match (compiler-backend-emit-globals-buffer-into
-                          target
-                          globals
-                          (text_buf.append (text_buf.empty) ".data\n")
-                          program-index)
-                          [(ResultCompilerBackendBuffer.Ok globals-buf)
-                            (begin
-                              (cfg
-                                compile-profile
-                                (compiler-backend-profile-finish "globals"))
-                              (cfg
-                                compile-profile
-                                (compiler-backend-profile-start))
-                              (match (compiler-backend-validate-function-symbols
-                                globals
+            (match program
+              [(CompilerIrProgram.Program globals functions externs)
+                ;; Build the program index ONCE over the entry function list
+                ;; and share it with the globals emission: each build walks
+                ;; every function body for the register-group counts, so the
+                ;; former second build doubled both that walk and its ~120MB
+                ;; of transient allocation. The entry list is a superset of
+                ;; `functions` (at most the synthesized implicit main, which
+                ;; no global initializer can reference), so globals resolve
+                ;; identically against the shared index.
+                (let
+                  [entry-functions : CompilerIrFunctionList
+                    (compiler-backend-functions-with-implicit-main
+                      functions
+                      emit-entry)]
+                  [program-index : CompilerBackendProgramIndex
+                    (compiler-backend-program-index-build
+                      entry-functions
+                      externs)]
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-backend-profile-finish "index"))
+                    (cfg compile-profile (compiler-backend-profile-start))
+                    (match (compiler-backend-emit-globals-buffer-into
+                      target
+                      globals
+                      (text_buf.append (text_buf.empty) ".data\n")
+                      program-index)
+                      [(ResultCompilerBackendBuffer.Ok globals-buf)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-finish "globals"))
+                          (cfg compile-profile (compiler-backend-profile-start))
+                          (match (compiler-backend-validate-function-symbols
+                            globals
+                            entry-functions
+                            externs
+                            plan
+                            program-index)
+                            [(ResultCompilerBackendSymbolValidation.Ok _)
+                              (compiler-backend-emit-program-buffer-after-index
+                                program
+                                target
+                                mode
                                 entry-functions
+                                globals
                                 externs
                                 plan
-                                program-index)
-                                [(ResultCompilerBackendSymbolValidation.Ok _)
-                                  (compiler-backend-emit-program-buffer-after-index
-                                    program
-                                    target
-                                    mode
-                                    entry-functions
-                                    globals
-                                    externs
-                                    plan
-                                    runtime-index
-                                    program-index
-                                    spans
-                                    globals-buf
-                                    emit-entry
-                                    crt-entry)]
-                                [(ResultCompilerBackendSymbolValidation.Err
-                                    message)
-                                  (ResultCompilerBackendBuffer.Err message)]))]
-                          [(ResultCompilerBackendBuffer.Err message)
-                            (begin
-                              (cfg
-                                compile-profile
-                                (compiler-backend-profile-finish "globals"))
-                              (ResultCompilerBackendBuffer.Err message))])))]))
-              (begin
-                (cfg
-                  compile-profile
-                  (compiler-backend-profile-finish "target_check"))
-                (ResultCompilerBackendBuffer.Err
-                  (box
-                    (compiler-diagnostic-at-start
-                      ""
-                      "backend: internal target runtime rejection")))))))]
+                                runtime-index
+                                program-index
+                                spans
+                                globals-buf
+                                emit-entry
+                                crt-entry)]
+                            [(ResultCompilerBackendSymbolValidation.Err message)
+                              (ResultCompilerBackendBuffer.Err message)]))]
+                      [(ResultCompilerBackendBuffer.Err message)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-finish "globals"))
+                          (ResultCompilerBackendBuffer.Err message))])))])))]
       [(ResultBackendRuntimePlanWithIndex.Err message)
         (begin
           (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
@@ -57452,48 +56651,42 @@ tl_comptime_host_invoke_set:
     (compiler-backend-user-symbol-cache-reset!)
     (match (compiler-backend-runtime-plan program)
       [(ResultBackendRuntimePlan.Ok plan)
-        (if (compiler-backend-target-runtime-ok? target plan)
-          (match program
-            [(CompilerIrProgram.Program globals functions externs)
-              (let
-                [entry-functions : CompilerIrFunctionList
-                  (compiler-backend-functions-with-implicit-main
-                    functions
-                    emit-entry)]
-                [program-index : CompilerBackendProgramIndex
-                  (compiler-backend-program-index-build entry-functions externs)]
-                (match (compiler-backend-validate-function-symbols
-                  globals
-                  entry-functions
-                  externs
-                  plan
-                  program-index)
-                  [(ResultCompilerBackendSymbolValidation.Ok _)
-                    (match (compiler-backend-switch-validate-functions
-                      entry-functions)
-                      [(CompilerBackendSwitchValidation.Ok)
-                        (ResultCompilerBackendObject.Ok
-                          (compiler-backend-object-image-after-index
-                            program
-                            target
-                            mode
-                            entry-functions
-                            globals
-                            externs
-                            plan
-                            program-index
-                            emit-entry
-                            crt-entry))]
-                      [(CompilerBackendSwitchValidation.Err message)
-                        (ResultCompilerBackendObject.Err
-                          (box (compiler-diagnostic-at-start "" message)))])]
-                  [(ResultCompilerBackendSymbolValidation.Err message)
-                    (ResultCompilerBackendObject.Err message)]))])
-          (ResultCompilerBackendObject.Err
-            (box
-              (compiler-diagnostic-at-start
-                ""
-                "backend: internal target runtime rejection"))))]
+        (match program
+          [(CompilerIrProgram.Program globals functions externs)
+            (let
+              [entry-functions : CompilerIrFunctionList
+                (compiler-backend-functions-with-implicit-main
+                  functions
+                  emit-entry)]
+              [program-index : CompilerBackendProgramIndex
+                (compiler-backend-program-index-build entry-functions externs)]
+              (match (compiler-backend-validate-function-symbols
+                globals
+                entry-functions
+                externs
+                plan
+                program-index)
+                [(ResultCompilerBackendSymbolValidation.Ok _)
+                  (match (compiler-backend-switch-validate-functions
+                    entry-functions)
+                    [(CompilerBackendSwitchValidation.Ok)
+                      (ResultCompilerBackendObject.Ok
+                        (compiler-backend-object-image-after-index
+                          program
+                          target
+                          mode
+                          entry-functions
+                          globals
+                          externs
+                          plan
+                          program-index
+                          emit-entry
+                          crt-entry))]
+                    [(CompilerBackendSwitchValidation.Err message)
+                      (ResultCompilerBackendObject.Err
+                        (box (compiler-diagnostic-at-start "" message)))])]
+                [(ResultCompilerBackendSymbolValidation.Err message)
+                  (ResultCompilerBackendObject.Err message)]))])]
       [(ResultBackendRuntimePlan.Err message)
         (ResultCompilerBackendObject.Err
           (box (compiler-diagnostic-at-start "" message)))])))
@@ -61183,17 +60376,6 @@ tl_comptime_host_invoke_set:
         (compiler-backend-string-contains? asm ".L_tl_fs_remove_dir_status:\n")))
     (not (compiler-backend-string-contains? asm ".L_tl_fs_rename_status:\n"))))
 
-(define (compiler-backend-runtime-string-helper-generators-empty?) : bool
-  (backend-and8
-    (string.eq (compiler-backend-runtime-int-to-string-functions) "")
-    (string.eq (compiler-backend-runtime-windows-int-to-string-functions) "")
-    (string.eq (compiler-backend-runtime-substring-functions) "")
-    (string.eq (compiler-backend-runtime-windows-substring-functions) "")
-    (string.eq (compiler-backend-runtime-str-view-functions) "")
-    (string.eq (compiler-backend-runtime-windows-str-view-functions) "")
-    (string.eq (compiler-backend-runtime-concat-functions) "")
-    (string.eq (compiler-backend-runtime-windows-concat-functions) "")))
-
 ;; Backend-smoke regression for the fail-closed splice predicate.  Exercise a
 ;; missing needle at each of the three stages, plus the fully replaced and
 ;; inactive cases used by ordinary function emission.
@@ -61251,7 +60433,6 @@ tl_comptime_host_invoke_set:
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-shrinkwrap-splice-fallback-ok?)
-        (compiler-backend-runtime-string-helper-generators-empty?)
         (backend-and8
           (compiler-backend-string-contains? asm ".globl tl_alloc\n")
           (compiler-backend-string-contains? asm "tl_alloc:\n")
@@ -61657,7 +60838,7 @@ tl_comptime_host_invoke_set:
         (or
           (compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
           (compiler-backend-string-contains? asm ".globl _tl_f"))
-        (compiler-backend-string-contains? asm ".globl tl_alloc\n")
+        (not (compiler-backend-string-contains? asm ".globl tl_alloc\n"))
         (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
         (not (compiler-backend-string-contains? asm "tl_substring:\n"))
         (or

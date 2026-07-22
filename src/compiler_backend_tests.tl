@@ -12769,34 +12769,7 @@
           false
           false
           false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          false
-          (CompilerBackendRuntimeTailPlan false false false))
+          (CompilerBackendRuntimeTailPlan false false))
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
         (compiler-backend-program-index-build
@@ -13049,34 +13022,7 @@
     true
     true
     true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    true
-    (CompilerBackendRuntimeTailPlan true true true)))
+    (CompilerBackendRuntimeTailPlan true true)))
 
 ;; Test fixtures start from readable spellings, then exercise only the backend's
 ;; ID-native runtime inventory. Production never performs this conversion.
@@ -13148,15 +13094,6 @@
     (compiler-backend-runtime-helper-inventory-symbol-ok? plan name)
     (match (compiler-backend-test-runtime-helper-owner name)
       [(CompilerBackendRuntimeHelperOwner.StdlibTypeLisp) true]
-      [_ false])))
-
-(define (compiler-backend-runtime-helper-inventory-compat-alias-ok?
-  [plan : CompilerBackendRuntimePlan]
-  [name : String]) : bool
-  (and
-    (compiler-backend-test-plan-provides? plan name)
-    (match (compiler-backend-test-runtime-helper-owner name)
-      [(CompilerBackendRuntimeHelperOwner.CompatibilityAlias) true]
       [_ false])))
 
 (define (compiler-backend-runtime-helper-inventory-core-ok?
@@ -13299,18 +13236,6 @@
     (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
       plan
       "tl_hash_string")
-    true))
-
-(define (compiler-backend-runtime-helper-inventory-env-compat-ok?
-  [plan : CompilerBackendRuntimePlan]) : bool
-  (backend-and4
-    (compiler-backend-runtime-helper-inventory-compat-alias-ok?
-      plan
-      "tl_env_var_exists")
-    (compiler-backend-runtime-helper-inventory-compat-alias-ok?
-      plan
-      "tl_env_var_value")
-    (compiler-backend-test-plan-provides? plan "path-separator")
     true))
 
 (define (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
@@ -13475,14 +13400,15 @@
         (compiler-backend-test-runtime-name-id "tl_string_concat")]
       [atomic-id : i64
         (compiler-backend-test-runtime-name-id "tl_atomic_i64_cas_ptr")]
-      [compat-id : i64 (compiler-backend-test-runtime-name-id "path-separator")]
+      [retired-env-id : i64
+        (compiler-backend-test-runtime-name-id "path-separator")]
       [retired-id : i64 (compiler-backend-test-runtime-name-id "tl_oob_abort")]
       (and
         (backend-and4
           (compiler-backend-runtime-helper-core-id? core-id)
           (compiler-backend-runtime-helper-stdlib-ffi-id? profile-id)
           (compiler-backend-runtime-helper-stdlib-type-lisp-id? stdlib-id)
-          (compiler-backend-runtime-helper-compatibility-alias-id? compat-id))
+          (not (compiler-backend-runtime-helper-known-id? retired-env-id)))
         (compiler-backend-runtime-helper-stdlib-type-lisp-id? atomic-id)
         (not (compiler-backend-runtime-helper-known-id? retired-id))
         (cbi.compiler-builtin-backend-runtime-concat-id? stdlib-id)
@@ -13505,9 +13431,10 @@
           (compiler-backend-plan-provides-id?
             plan
             cbi.compiler-builtin-id-tl-profile-alloc-total)
-          (compiler-backend-plan-provides-id?
-            plan
-            cbi.compiler-builtin-id-env-path-separator)
+          (not
+            (compiler-backend-plan-provides-id?
+              plan
+              cbi.compiler-builtin-id-env-path-separator))
           (not (compiler-backend-runtime-helper-known-id? unknown-id))
           (match (compiler-backend-runtime-helper-owner-id unknown-id)
             [(CompilerBackendRuntimeHelperOwner.Unknown) true]
@@ -13538,37 +13465,65 @@
           (compiler-backend-test-plan-provides? plan "tl_region_reset"))]
       [(ResultBackendRuntimePlan.Err _) false])))
 
+(define (compiler-backend-runtime-prelude-test-function [name : String]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (ci.intern name)
+    CompilerIrParamList.Nil
+    (AstType.Unit)
+    0
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-runtime-prelude-validation-plan-ok?) : bool
+  (let
+    [functions : CompilerIrFunctionList
+      (compiler-ir-function-cons
+        (compiler-backend-runtime-prelude-test-function
+          "stdlib/runtime.tl::substring")
+        (compiler-ir-function-cons
+          (compiler-backend-runtime-prelude-test-function
+            "stdlib/runtime.tl::str-view")
+          (compiler-ir-function-cons
+            (compiler-backend-runtime-prelude-test-function
+              "stdlib/runtime.tl::string-concat")
+            (compiler-ir-function-cons
+              (compiler-backend-runtime-prelude-test-function
+                "stdlib/runtime.tl::int-to-string")
+              CompilerIrFunctionList.Nil))))]
+    (match (compiler-backend-runtime-plan-for
+      functions
+      CompilerIrExternList.Nil)
+      [(ResultBackendRuntimePlan.Ok plan)
+        (backend-and8
+          (compiler-backend-test-plan-provides? plan "tl_substring")
+          (compiler-backend-test-plan-provides? plan "tl_str_view")
+          (compiler-backend-test-plan-provides? plan "tl_string_concat")
+          (compiler-backend-test-plan-provides? plan "tl_int_to_string")
+          (not (compiler-backend-test-plan-provides? plan "tl_alloc"))
+          (not (compiler-backend-test-plan-provides? plan "tl_env_var_exists"))
+          (not (compiler-backend-test-plan-provides? plan "tl_env_var_value"))
+          (not (compiler-backend-test-plan-provides? plan "path-separator")))]
+      [(ResultBackendRuntimePlan.Err _) false])))
+
 (define (compiler-backend-runtime-helper-inventory-ok?) : bool
   (let
     [plan : CompilerBackendRuntimePlan
       (compiler-backend-runtime-helper-full-plan)]
-    (backend-and8
+    (and
       (compiler-backend-runtime-helper-inventory-core-ok? plan)
       (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok? plan)
       (compiler-backend-runtime-helper-inventory-stdlib-string-ok? plan)
       (compiler-backend-runtime-helper-inventory-stdlib-atomic-ok? plan)
-      (compiler-backend-runtime-helper-inventory-env-compat-ok? plan)
       (compiler-backend-runtime-helper-inventory-retired-file-ok? plan)
       (compiler-backend-runtime-helper-inventory-retired-io-ok? plan)
-      (and
-        (compiler-backend-runtime-helper-inventory-retired-compat-ok? plan)
-        (compiler-backend-runtime-helper-inventory-retired-process-ok? plan)
-        (compiler-backend-runtime-helper-inventory-retired-fs-metadata-ok? plan)
-        (compiler-backend-runtime-helper-inventory-retired-string-ok? plan)
-        (compiler-backend-runtime-helper-inventory-negative-ok? plan)
-        (compiler-backend-runtime-helper-owner-id-ok?)
-        (compiler-backend-runtime-plan-id-lookup-only-ok?)
-        (compiler-backend-region-extern-runtime-plan-ok?)))))
-
-(define (compiler-backend-runtime-atomic-functions-removed-ok?) : bool
-  (and
-    (string.eq
-      (compiler-backend-runtime-atomic-functions (CompilerBackendTarget.Linux))
-      "")
-    (string.eq
-      (compiler-backend-runtime-atomic-functions
-        (CompilerBackendTarget.Windows))
-      "")))
+      (compiler-backend-runtime-helper-inventory-retired-compat-ok? plan)
+      (compiler-backend-runtime-helper-inventory-retired-process-ok? plan)
+      (compiler-backend-runtime-helper-inventory-retired-fs-metadata-ok? plan)
+      (compiler-backend-runtime-helper-inventory-retired-string-ok? plan)
+      (compiler-backend-runtime-helper-inventory-negative-ok? plan)
+      (compiler-backend-runtime-helper-owner-id-ok?)
+      (compiler-backend-runtime-plan-id-lookup-only-ok?)
+      (compiler-backend-runtime-prelude-validation-plan-ok?)
+      (compiler-backend-region-extern-runtime-plan-ok?))))
 
 (define (compiler-backend-runtime-memchr-functions-ok?) : bool
   (let
@@ -17275,19 +17230,23 @@
     (__tl_string_length (path-separator))))")
 
 ;; Environment helpers are no longer emitted as backend asm — `stdlib/env.tl`
-;; implements them in TypeLisp. A program that externs the
-;; legacy `tl_env_var_exists` / `tl_env_var_value` / `_tl_env_path_separator`
-;; symbols therefore sees them as plain undefined externs (`.extern …`), with no
-;; backend-emitted definition and no `getenv`/`strlen` shim calls.
+;; implements them in TypeLisp. A program that externs the legacy symbols sees
+;; them as plain undefined externs, with no backend-emitted allocator or helper
+;; definitions and no `getenv`/`strlen` shim calls.
 (define (compiler-backend-env-runtime-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-env-runtime-source))
     [(ResultCompilerBackend.Ok asm)
       (and
-        (not (compiler-backend-string-contains? asm "\ntl_env_var_exists:\n"))
-        (not (compiler-backend-string-contains? asm "\ntl_env_var_value:\n"))
-        (compiler-backend-string-contains? asm "tl_alloc:\n")
-        (not
-          (compiler-backend-string-contains? asm "_tl_env_path_separator:\n")))]
+        (backend-and4
+          (compiler-backend-string-contains? asm ".extern tl_env_var_exists\n")
+          (compiler-backend-string-contains? asm ".extern tl_env_var_value\n")
+          (compiler-backend-string-contains? asm ".extern path_separator\n")
+          (not (compiler-backend-string-contains? asm "\ntl_alloc:\n")))
+        (backend-and4
+          (not (compiler-backend-string-contains? asm "\ntl_env_var_exists:\n"))
+          (not (compiler-backend-string-contains? asm "\ntl_env_var_value:\n"))
+          (not (compiler-backend-string-contains? asm "\npath_separator:\n"))
+          true))]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-windows-env-runtime-ok?) : bool
@@ -19914,37 +19873,31 @@
       [(ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-safe-divrem-guard-elision-ok?) : bool
-  (and
-    (backend-and4
-      (compiler-backend-divrem-binop-guard-shape?
-        (CompilerIrBinOp.Div)
-        (CompilerIrValue.Var 1)
-        (AstType.I64)
-        true
-        false)
-      (compiler-backend-divrem-binop-guard-shape?
-        (CompilerIrBinOp.SafeDiv)
-        (CompilerIrValue.Var 1)
-        (AstType.I64)
-        false
-        false)
-      (compiler-backend-divrem-binop-guard-shape?
-        (CompilerIrBinOp.SafeMod)
-        (CompilerIrValue.Var 1)
-        (AstType.I64)
-        false
-        true)
-      (compiler-backend-divrem-binop-guard-shape?
-        (CompilerIrBinOp.SafeDiv)
-        (CompilerIrValue.I64 (- 0 1))
-        (AstType.I64)
-        false
-        false))
-    (not
-      (compiler-backend-binop-needs-div-abort?
-        (CompilerIrBinOp.SafeDiv)
-        (CompilerIrValue.Var 1)
-        (AstType.I64)))))
+  (backend-and4
+    (compiler-backend-divrem-binop-guard-shape?
+      (CompilerIrBinOp.Div)
+      (CompilerIrValue.Var 1)
+      (AstType.I64)
+      true
+      false)
+    (compiler-backend-divrem-binop-guard-shape?
+      (CompilerIrBinOp.SafeDiv)
+      (CompilerIrValue.Var 1)
+      (AstType.I64)
+      false
+      false)
+    (compiler-backend-divrem-binop-guard-shape?
+      (CompilerIrBinOp.SafeMod)
+      (CompilerIrValue.Var 1)
+      (AstType.I64)
+      false
+      true)
+    (compiler-backend-divrem-binop-guard-shape?
+      (CompilerIrBinOp.SafeDiv)
+      (CompilerIrValue.I64 (- 0 1))
+      (AstType.I64)
+      false
+      false)))
 
 (define (compiler-backend-shift-guard-source) : String
   "(define (main) : i64 (shl 1 -1))")
@@ -27236,7 +27189,6 @@
         (compiler-backend-str-view-runtime-helper-asm-ok?)
         (compiler-backend-unused-str-view-extern-ok?)
         (compiler-backend-runtime-helper-inventory-ok?)
-        (compiler-backend-runtime-atomic-functions-removed-ok?)
         (compiler-backend-runtime-memchr-functions-ok?)
         (compiler-backend-runtime-atomic-wrapper-asm-ok?)
         (compiler-backend-runtime-tls-wrapper-asm-ok?)

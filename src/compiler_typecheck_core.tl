@@ -29149,23 +29149,19 @@
               (arena.tl_arena_set tc-clone-root-collection-arena))]
           [resolved : AstType
             (tc-type-without-regions (tc-resolve-type ctx ty))]
-          [recorded-roots : CloneNameList
-            (cfg
-              compiler-surface-producer
-              (if (surface_facts.surface-typecheck-facts-recording?)
-                (clone-root-add-type
-                  (tc-context-pools ctx)
-                  (box-get decls-box)
-                  (tc-clone-able-set ctx)
-                  (CloneNameList.Nil)
-                  resolved
-                  cbi.compiler-builtin-id-fix-empty)
-                (CloneNameList.Nil))
-              (CloneNameList.Nil))]
           (begin
             (cfg
               compiler-surface-producer
-              (tc-clone-root-collection-record-surface-roots! recorded-roots)
+              (tc-clone-root-collection-record-surface-roots!
+                (if (surface_facts.surface-typecheck-facts-recording?)
+                  (clone-root-add-type
+                    (tc-context-pools ctx)
+                    (box-get decls-box)
+                    (tc-clone-able-set ctx)
+                    (CloneNameList.Nil)
+                    resolved
+                    cbi.compiler-builtin-id-fix-empty)
+                  (CloneNameList.Nil)))
               unit)
             ;; Resolve the nominal closure while `ty` and all nested type-pool
             ;; ids are still live in this function's semantic scratch scope.

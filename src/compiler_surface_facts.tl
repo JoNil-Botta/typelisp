@@ -3,7 +3,7 @@
 (import compiler_surface_binary as binary)
 (import compiler_surface_identity as surface_identity)
 (import stdlib.arena)
-(import stdlib.byte_buf_core)
+(cfg compiler-surface-producer (import stdlib.byte_buf_core))
 
 (defstruct SurfaceTypecheckFacts
   (macro-prefix-decl-count i64)

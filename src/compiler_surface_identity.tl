@@ -12,7 +12,7 @@
 ;; variant. Later per-package images use the same schema and hydration path.
 (import compiler_intern as ci)
 (import compiler_surface_binary as binary)
-(import stdlib.byte_buf_core)
+(cfg compiler-surface-producer (import stdlib.byte_buf_core))
 
 (defstruct SurfaceIdentityKey
   (package-name String)

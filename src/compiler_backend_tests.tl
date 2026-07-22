@@ -13813,12 +13813,15 @@
             (compiler-backend-string-count
               windows
               "    call VirtualFree\n    movq %rsi, 40(%rsp)\n")
-            2)
+            1)
           (=
             (compiler-backend-string-count
               windows
               "    call VirtualFree\n    movq -48(%rbp), %rax\n    movq -40(%rbp), %r8\n    movq %rax, 40(%rsp)\n")
-            2))
+            2)
+          (compiler-backend-string-contains?
+            windows
+            ".L_tl_arena_make_win_initial_commit_os_fail:\n    call GetLastError\n    movl %eax, %eax\n    movq %rax, 40(%rsp)\n    movq %rbx, %rcx\n    xorq %rdx, %rdx\n    movq $0x8000, %r8\n    call VirtualFree\n    movq $0, 32(%rsp)\n    xorq %rcx, %rcx\n    movq $1, %rdx\n    movq $0x400000, %r8\n    movq %rsi, %r9\n    call tl_windows_allocation_abort\n"))
         (compiler-backend-string-contains?
           windows
           ".L_tl_alloc_win_commit_os_fail:\n    call GetLastError\n    movl %eax, %eax\n    movq %rax, 40(%rsp)\n")

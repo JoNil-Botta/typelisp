@@ -948,12 +948,14 @@ marker payloads. Hashmap support is stdlib-owned: declaration-emitting module
 macros provide the public `(hashmap K V)` surface. `String` key maps support
 borrowed lookup/contains/remove wrappers; `i64` key maps use scalar keys
 directly. Aggregate-key support, where provided by a stdlib family, derives
-deterministic hash/equality from declaration-order struct fields or enum
-variant tag plus declaration-order payloads for supported members (`i64`,
-`bool`, `char`, `String`, and nested supported nominal aggregates).
-Unsupported key shapes must be rejected by stdlib macro/typecheck diagnostics
-instead of using source-level traits, implicit `Hash`/`Eq` bounds, runtime
-type IDs, or address hashing. Generated hashmap-style families may also
+deterministic hash/equality from declaration-order struct fields, enum variant
+tag plus declaration-order payloads, tuple elements, or fixed-array elements.
+Supported leaves are unit, `bool`, `char`, fixed-width integers, and `String`;
+structs, enums, tuples, and fixed arrays may nest those finite structural
+members recursively when the complete key is cloneable. Unsupported key shapes
+must be rejected by the shared stdlib hash/equality policy instead of using
+source-level traits, implicit `Hash`/`Eq` bounds, runtime type IDs, or address
+hashing. Generated hashmap-style families may also
 expose borrowed-value lookup helpers such as `*-get-value-borrowed`. These
 helpers are independent from borrowed-key lookup: the key path controls
 whether lookup can inspect a borrowed key without copying it, while

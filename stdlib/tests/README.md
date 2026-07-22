@@ -50,8 +50,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.
 - `stdlib/hashmap.tl` inline tests cover generated String/i64, String/String,
-  i64/i64, and aggregate key/value hashmap modules, key descriptor identities,
-  borrowed string-key wrappers,
+  i64/i64, and aggregate value hashmap modules, while
+  `tests/inline/hashmap_macro_aggregate_modules.tl` covers generic struct, enum,
+  tuple, and fixed-array keys with nested owned strings, deliberate collisions,
+  caller-owned key independence, tombstones, and growth. The combined coverage
+  includes key descriptor identities, borrowed string-key wrappers,
   update-only, entry-or-insert, live mutable-entry helpers, tombstone reuse,
   growth/rehash, and deterministic bucket-order iteration. The
   `hashmap_mut_borrow_insert_or_update_live.tl` fixture verifies that a live

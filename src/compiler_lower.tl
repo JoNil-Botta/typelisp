@@ -1830,6 +1830,26 @@
             lower-active-global-name-cache
             type-key-id)]))))
 
+(define (lower-name-cache-clone-key-id
+  [cache : LowerNameCache]
+  [type-key-id : i64]) : i64
+  (if (>= (lower-name-cache-clone-helper-id cache type-key-id) 0)
+    type-key-id
+    (let
+      [candidate : i64
+        (clone-name-list-unique-key-for-base-id-or
+          (struct-get cache clone-roots)
+          (clone-name-key-base-id type-key-id)
+          -1)]
+      (if (>= candidate 0)
+        candidate
+        (match (struct-get cache parent)
+          [(LowerNameParent.None) -1]
+          [(LowerNameParent.Global)
+            (lower-name-cache-clone-key-id
+              lower-active-global-name-cache
+              type-key-id)])))))
+
 (define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : TcMaybeString
   (let
     [index : i64
@@ -18750,9 +18770,19 @@
 ;; match (the same gate as the helper's definition, so a non-aggregate clone$
 ;; target -- e.g. a type variable -- passes only the value).
 (define (lower-clone-type-key-id [ctx : TcContext] [name-id : i64]) : i64
-  (if (compiler-composite-pair-key-id? name-id)
-    name-id
-    (clone-name-key-id-in-module (tc-context-module-id ctx) name-id)))
+  (let
+    [fallback : i64
+      (if (compiler-composite-pair-key-id? name-id)
+        name-id
+        (clone-name-key-id-in-module (tc-context-module-id ctx) name-id))]
+    [handle : i64
+      (compiler-symbols-lookup-type-id-or
+        (tc-context-symbols ctx)
+        name-id
+        (compiler-symbols-missing-handle))]
+    (if (compiler-symbols-handle-found? handle)
+      (tc-nominal-owner-id-or ctx handle fallback)
+      fallback)))
 
 (define (lower-clone-helper-lookup-id
   [type-key-id : i64]
@@ -18771,9 +18801,13 @@
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
   (let
-    [type-key-id : i64 (lower-clone-type-key-id ctx name-id)]
+    [requested-key-id : i64 (lower-clone-type-key-id ctx name-id)]
+    [type-key-id : i64
+      (lower-name-cache-clone-key-id (lower-state-names state) requested-key-id)]
     [helper-name-id : i64
-      (lower-name-cache-clone-helper-id (lower-state-names state) type-key-id)]
+      (if (< type-key-id 0)
+        -1
+        (lower-name-cache-clone-helper-id (lower-state-names state) type-key-id))]
     (if (< helper-name-id 0)
       (ResultLowerExpr.Err
         (box

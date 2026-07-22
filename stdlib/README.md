@@ -183,15 +183,22 @@ use.
   lookup, containment, removal, and mutable-entry helpers. Generated metadata
   uses explicit key descriptor identities:
   `stdlib/hashmap/string-key-v1` for `String` keys and
-  `stdlib/hashmap/i64-key-v1` for `i64` keys; unsupported key types are not
-  inferred through traits. These descriptors also support nominal struct and
-  enum value types; values move into the map, owned lookup moves the value out
-  through the result, and `get-value-borrowed` returns a map-lifetime borrow
-  for field or payload inspection until the map is mutated. The checked-in
-  aggregate-key fixture derives deterministic hash and equality from its
-  declaration-order fields. Use these stdlib maps for ordinary program data
-  and keep compiler-specialized symbol tables where their value domain or
-  lifecycle is deliberately narrower. Import it with
+  `stdlib/hashmap/i64-key-v1` for `i64` keys. Other key modules use generated
+  `(hash K)` and `(eq K)` operations for unit, bool, char, the remaining
+  fixed-width integers, and cloneable structs, enums, tuples, and fixed arrays
+  composed recursively from those leaves, `String`, and supported structural
+  members. The hash is deterministic and
+  non-cryptographic; probing always confirms equal hashes with generated
+  structural equality. Unsupported floats, references, boxes, raw pointers,
+  functions, dynamic arrays, and borrowed views are rejected by the generated
+  hash/equality policy. Aggregate insertion and rehash clone map-owned keys;
+  lookup, containment, and removal inspect a reusable caller key without
+  cloning it. Generated modules also support nominal struct and enum value
+  types; values move into the map, owned lookup moves the value out through the
+  result, and `get-value-borrowed` returns a map-lifetime borrow for field or
+  payload inspection until the map is mutated. Use these stdlib maps for
+  ordinary program data and keep compiler-specialized symbol tables where their
+  value domain or lifecycle is deliberately narrower. Import it with
   `(import stdlib.hashmap)`. Module imports expose `Map`, `&` readers, and
   place-taking bang mutators: `insert!`,
   `insert-or-update!`, `insert-if-absent!` where supported, `remove!`,

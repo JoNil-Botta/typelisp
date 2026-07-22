@@ -1,10 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
-# Enforce generous wall-clock budgets on the four selfhost compile rows that
-# check-build-invariance.sh already records. This gate must remain a pure TSV
-# consumer: adding compiler invocations here would lengthen CI and make the
-# measurements differ from the build-invariance workload.
+# Enforce generous wall-clock budgets on the repository lint gate and the four
+# selfhost compile rows that check-build-invariance.sh already records. This
+# gate must remain a pure TSV consumer: adding compiler invocations here would
+# lengthen CI and make the measurements differ from the measured workloads.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -14,8 +14,9 @@ usage() {
 usage: scripts/check-ci-timing-budgets.sh <ci-timing.tsv>
        scripts/check-ci-timing-budgets.sh --self-test
 
-Checks the four Linux selfhost compile rows recorded by the build-invariance
-gate. Fails closed on missing, duplicate, malformed, or nonzero-exit rows.
+Checks the Linux source-lint gate and the four selfhost compile rows recorded
+by the build-invariance gate. Fails closed on missing, duplicate, malformed,
+or nonzero-exit rows.
 EOF
 }
 
@@ -36,6 +37,7 @@ check_budget() {
         -v opt1_opt1_cap=35000 \
         -v opt2_opt2_cap=55000 \
         -v opt1_opt2_cap=90000 \
+        -v lint_cap=60000 \
         -v ratio_limit=2.5 '
         function is_required(key) {
             return key == "opt2-built:selfhost_main_opt1" ||
@@ -69,6 +71,30 @@ check_budget() {
 
         {
             sub(/\r$/, "", $6)
+            if ($1 == "TypeLisp source lint" && $2 == "all" && $3 == "gate") {
+                key = "lint-gate"
+                counts[key] += 1
+                if (NF != 6) {
+                    mark_error("row " key " has " NF " fields; expected 6")
+                    next
+                }
+                if ($4 !~ /^[0-9]+$/) {
+                    mark_error("row " key " has invalid elapsed_ms: " $4)
+                    next
+                }
+                if ($5 != "0") {
+                    mark_error("row " key " recorded nonzero exit: " $5)
+                    next
+                }
+                if ($6 != "linux") {
+                    mark_error("row " key " has host " $6 "; expected linux")
+                    next
+                }
+                values[key] = $4 + 0
+                valid[key] = 1
+                next
+            }
+
             key = $2
             if ($1 != required_gate || $3 != "compile" || !is_required(key)) {
                 next
@@ -114,6 +140,13 @@ check_budget() {
                 }
             }
 
+            lint = "lint-gate"
+            if (counts[lint] == 0) {
+                mark_error("missing required row " lint)
+            } else if (counts[lint] != 1) {
+                mark_error("required row " lint " occurs " counts[lint] " times")
+            }
+
             print "[ci-timing-budget] measured compile rows:"
             print "[ci-timing-budget]   " opt2_opt1 "=" display(opt2_opt1) \
                 " cap=" opt2_opt1_cap "ms"
@@ -123,6 +156,13 @@ check_budget() {
                 " cap=" opt2_opt2_cap "ms"
             print "[ci-timing-budget]   " opt1_opt2 "=" display(opt1_opt2) \
                 " cap=" opt1_opt2_cap "ms"
+            print "[ci-timing-budget] measured lint gate:"
+            print "[ci-timing-budget]   " lint "=" display(lint) \
+                " cap=" lint_cap "ms"
+
+            if (counts[lint] == 1 && valid[lint] && values[lint] > lint_cap) {
+                mark_error(lint " exceeds its " lint_cap "ms cap")
+            }
 
             if (counts[opt2_opt1] == 1 && valid[opt2_opt1] &&
                     values[opt2_opt1] > opt2_opt1_cap) {
@@ -179,6 +219,7 @@ write_fixture() {
     opt1_opt1=$3
     opt2_opt2=$4
     opt1_opt2=${5:-}
+    lint_ms=${6-30000}
     {
         printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost\n'
         printf 'stage2 opt1/opt2 build-invariance\topt2-built:selfhost_main_opt1\tcompile\t%s\t0\tlinux\n' \
@@ -190,6 +231,9 @@ write_fixture() {
         if [ -n "$opt1_opt2" ]; then
             printf 'stage2 opt1/opt2 build-invariance\topt1-built:selfhost_main_opt2\tcompile\t%s\t0\tlinux\n' \
                 "$opt1_opt2"
+        fi
+        if [ -n "$lint_ms" ]; then
+            printf 'TypeLisp source lint\tall\tgate\t%s\t0\tlinux\n' "$lint_ms"
         fi
     } > "$fixture"
 }
@@ -234,6 +278,18 @@ self_test() {
     expect_fixture absolute-breach fail \
         "$workdir/absolute.tsv" "$workdir/absolute.out"
     grep -F 'exceeds its 25000ms cap' "$workdir/absolute.out" >/dev/null
+
+    write_fixture "$workdir/lint-absolute.tsv" 12800 18700 30300 50500 60001
+    expect_fixture lint-absolute-breach fail \
+        "$workdir/lint-absolute.tsv" "$workdir/lint-absolute.out"
+    grep -F 'lint-gate exceeds its 60000ms cap' \
+        "$workdir/lint-absolute.out" >/dev/null
+
+    write_fixture "$workdir/lint-missing.tsv" 12800 18700 30300 50500 ''
+    expect_fixture lint-missing fail \
+        "$workdir/lint-missing.tsv" "$workdir/lint-missing.out"
+    grep -F 'lint-gate=<missing> cap=60000ms' \
+        "$workdir/lint-missing.out" >/dev/null
 
     write_fixture "$workdir/missing.tsv" 12800 18700 30300
     expect_fixture missing-row fail \

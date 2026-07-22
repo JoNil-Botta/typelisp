@@ -47020,9 +47020,11 @@
         [has-group-vars : bool (> (compiler-live-set-count fn-group-vars) 0)]
         ;; Compact the frame after regalloc by renumbering stack-resident
         ;; values into a dense slot prefix. Plans without intervals (the
-        ;; stack-only opt0/opt1 path) pass through unchanged; `slot-vars`
-        ;; replaces the raw var count everywhere the frame layout is derived,
-        ;; while `rewritten-vars` keeps indexing per-variable side tables.
+        ;; stack-only opt0/opt1 path) pass through unchanged. Only real remat
+        ;; vars can demand slots; scratch pseudo-vars are register-only.
+        ;; `slot-vars` replaces the raw var count everywhere the frame layout
+        ;; is derived, while `scratch-vars` keeps indexing per-variable side
+        ;; tables.
         [coloring
           : CompilerRegColoring
           ;; Stack-homed register groups keep word0 in their remapped formula
@@ -47034,7 +47036,8 @@
             fn-group-vars
             params
             remat-blocks
-            scratch-vars)]
+            scratch-vars
+            remat-vars)]
         [assignments : CompilerRegAssignmentList
           (match coloring
             [(CompilerRegColoring.None)

@@ -15900,6 +15900,11 @@
 ;; scratch arena (per-function typecheck arenas): clear them to the
 ;; static empty string as well, so no slot can compare against freed memory
 ;; after the owning arena is destroyed.
+(define (tc-resolve-type-name-cache-reset!) : unit
+  (begin
+    (set! tc-resolve-type-name-cache-valid false)
+    (set! tc-resolve-type-name-cache-key -1)))
+
 (define (tc-nominal-owner-cache-reset!) : unit
   (begin
     (set! tc-nominal-owner-cache-handle -1)
@@ -15918,8 +15923,7 @@
     (set! tc-nominal-owner-cache-name6 "")
     (set! tc-nominal-owner-cache-handle7 -1)
     (set! tc-nominal-owner-cache-name7 "")
-    (set! tc-resolve-type-name-cache-valid false)
-    (set! tc-resolve-type-name-cache-key -1)))
+    (tc-resolve-type-name-cache-reset!)))
 
 (define (tc-resolve-type-name-cache-lookup [lookup-id : i64]) : TcTypeNameLookupCache
   (if (and
@@ -16233,10 +16237,11 @@
   [name-id : i64]) : bool
   (let
     [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
+    [decl-count : i64 (compiler-symbols-decl-count symbols)]
     [i : i64 0]
     [matches : i64 0]
     (begin
-      (while (and (< i (array-length decls)) (< matches 2))
+      (while (and (< i decl-count) (< matches 2))
         (begin
           (if (tc-decl-nominal-name-id-matches? (array-ref decls i) name-id)
             (set! matches (+ matches 1))
@@ -40533,7 +40538,7 @@
       (let
         [decls : (Array AstDecl)
           (compiler-symbols-decls (tc-context-symbols ctx))]
-        [count : i64 (array-length decls)]
+        [count : i64 (compiler-symbols-decl-count (tc-context-symbols ctx))]
         [prev-arena : i64 (arena.tl_arena_current)]
         [index-arena : i64 (arena.tl_arena_make)]
         [_switch : unit
@@ -55407,11 +55412,9 @@
       (set! macro-expand-ctfe-env-ready true))))
 
 ;; Live compiler symbols/registries reused across the expansion run (plan P2).
-;; build-compiler-symbols-with-paths / build-compiler-registries-with-symbols each
-;; walk the whole program (O(program)). Built at pass setup and rebuilt whenever
-;; the decl walk forces a splice inline (macro-live-symbols-fallback, set via
-;; macro-live-symbols-invalidate!), the conservative slow path for
-;; arbitrary/shadowing splices and freshly loaded generated file imports.
+;; Generated modules extend the symbol table at its logical end, keeping every
+;; prior handle stable. Arbitrary declaration splices and freshly loaded source
+;; files retain the conservative whole-program rebuild fallback.
 (define macro-live-symbols-ready : bool
   false)
 (define macro-live-symbols-value : CompilerSymbols
@@ -55424,6 +55427,8 @@
   false)
 (define macro-live-registries-fallback : bool
   true)
+(define macro-live-symbols-last-insert-index : i64
+  0)
 
 ;; Whole-program symbol/registry rebuilds replace the previous tables, but the
 ;; ordinary compile arena retains every obsolete generation until process exit.
@@ -55476,6 +55481,25 @@
 
 (define (macro-live-registries-invalidate!) : unit
   (set! macro-live-registries-fallback true))
+
+(define (macro-live-symbols-insert-decls!
+  [decls : AstDeclList]
+  [module-id : i64]) : bool
+  (if (and macro-live-symbols-ready (not macro-live-symbols-fallback))
+    (let
+      [append-index : i64
+        (compiler-symbols-decl-count macro-live-symbols-value)]
+      (match (compiler-symbols-insert-decls
+        macro-live-symbols-value
+        decls
+        module-id)
+        [(ResultCompilerSymbols.Ok symbols)
+          (begin
+            (set! macro-live-symbols-value symbols)
+            (set! macro-live-symbols-last-insert-index append-index)
+            true)]
+        [(ResultCompilerSymbols.Err _) false]))
+    false))
 
 ;; A direct generated declaration splice is safe to rebase when it has only a
 ;; positional registry effect. Imports can add aliases and macro definitions
@@ -55550,11 +55574,9 @@
         (macro-decl-has-unqualified-import-of-module? decl module-id)
         (macro-decls-have-unqualified-import-of-module? rest module-id))]))
 
-;; Rebase the cached registry across an additive generated splice before the
-;; fresh symbol build. The symbol table still rebuilds to preserve all ordinary
-;; duplicate/shadowing diagnostics; this path only avoids rewalking unrelated
-;; enum/struct registry entries. On any incremental registry error, retain the
-;; conservative full rebuild so its established diagnostic behavior wins.
+;; Rebase the cached registry across an additive non-module splice that still
+;; takes the fresh-symbol fallback. Generated modules use the append companion
+;; below so symbol and registry owner handles share one stable index space.
 (define (macro-live-registries-insert-decls!
   [decls : AstDeclList]
   [paths : AstDeclPathList]
@@ -55573,6 +55595,24 @@
         (set! macro-live-registries-fallback false)
         true)]
     [(ResultCompilerRegistries.Err _) false]))
+
+(define (macro-live-registries-append-decls!
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [module-id : i64]) : bool
+  (if (and macro-live-registries-ready (not macro-live-registries-fallback))
+    (match (compiler-registries-append-decls
+      macro-live-registries-value
+      decls
+      paths
+      macro-live-symbols-last-insert-index
+      module-id)
+      [(ResultCompilerRegistries.Ok registries)
+        (begin
+          (set! macro-live-registries-value registries)
+          true)]
+      [(ResultCompilerRegistries.Err _) false])
+    false))
 
 ;; Return the live symbols (building both symbols and registries on demand),
 ;; reusing the cached pair across passes unless a rebuild was requested. Errors
@@ -55599,12 +55639,26 @@
         [(ResultCompilerRegistries.Err message)
           (ResultCompilerRegistries.Err message)]))))
 
+(define (macro-live-symbols-reserved-capacity [program : AstProgram]) : i64
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decl-count : i64 (compiler-decl-list-index-count (box-get decls-box))]
+        (+
+          decl-count
+          (if (< decl-count 256)
+            64
+            (/ decl-count 4))))]))
+
 (define (macro-live-symbols-build-fresh-current
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerSymbols
   (begin
     (cfg compile-profile (compiler-tc-macro-profile-note-live-rebuild))
-    (match (build-compiler-symbols-diagnostic-with-paths program paths)
+    (match (build-compiler-symbols-diagnostic-with-paths-and-capacity
+      program
+      paths
+      (macro-live-symbols-reserved-capacity program))
       [(ResultCompilerSymbolsDiagnostic.Ok symbols)
         (match (macro-live-registries-build-current program symbols)
           [(ResultCompilerRegistries.Ok registries)
@@ -55666,7 +55720,15 @@
   (if (and macro-live-symbols-ready (not macro-live-symbols-fallback))
     (begin
       (cfg compile-profile (compiler-tc-macro-profile-note-live-reuse))
-      (ResultCompilerSymbols.Ok macro-live-symbols-value))
+      (match (macro-live-registries-build-current
+        program
+        macro-live-symbols-value)
+        [(ResultCompilerRegistries.Ok registries)
+          (begin
+            (set! macro-live-registries-value registries)
+            (ResultCompilerSymbols.Ok macro-live-symbols-value))]
+        [(ResultCompilerRegistries.Err message)
+          (ResultCompilerSymbols.Err message)]))
     (macro-live-symbols-build-fresh program paths)))
 
 ;; Hoisted whole-program macro prescans. macro-program-has-defmacro?,
@@ -69540,8 +69602,10 @@
         (macro-decl-reflection-relevant? decl)
         (macro-decls-reflection-relevant? rest))]))
 
-;; A forced splice always rebuilds live symbols/registries over the current
-;; program view. Its top env follows the narrowest correct plan: generated
+;; A forced splice installs the current live symbols/registries in a new
+;; context. Generated modules append to those tables; arbitrary splices and
+;; materialized files rebuild them. The top env follows the narrowest correct
+;; plan: generated
 ;; modules append an isolated namespace, arbitrary Decls refresh unresolved
 ;; cached signatures plus their source-local tail, and newly loaded files keep
 ;; the conservative whole-program rebuild because imports can alter unrelated
@@ -69555,7 +69619,7 @@
         ctx))
     (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)))
 
-;; A splice rebuilds symbols before it rebuilds the type env. Most cached
+;; A splice updates symbols before it rebuilds the type env. Most cached
 ;; bindings are already final nominal/scalar types; only signatures that still
 ;; contain `Var`/`VarArgs` nodes can change when the new symbols appear. Walk
 ;; each cache's retained binding keys until every indexed value has been seen,
@@ -69698,9 +69762,15 @@
     [pools : AstNodePoolContext (tc-context-pools cur-ctx)]
     [next-program : AstProgram (macro-splice-view-program next-decls)]
     (begin
-      (macro-live-symbols-invalidate!)
-      (tc-clone-able-cache-reset!)
-      (tc-nominal-owner-cache-reset!)
+      ;; Existing symbol handles and their cached owner names remain stable
+      ;; across an append-only splice. The one-entry type lookup also caches a
+      ;; missing result, so additions invalidate that entry alone. Cloneability
+      ;; is reset at expansion entry and populated only after expansion; a
+      ;; per-splice reset cannot change its state.
+      (tc-resolve-type-name-cache-reset!)
+      ;; Program-position and import-derived alias indexes can contain negative
+      ;; answers and refer to the replaced flat program view. Keep their shared
+      ;; invalidation until they gain an insert API of their own.
       (macro-alias-derived-cache-reset!)
       ;; Do not reset ctfe-module-macro-export here: the export set is stable
       ;; across the splice (additive-inert) and is owned by macro-live-prescan-
@@ -70096,9 +70166,10 @@
                                                     (tc-diag-at-start message))))
                                               (set! done true))])
                                         unit))
-                                    ;; Force the splice inline: rebuild the live
-                                    ;; symbols/env over the spliced whole-program view
-                                    ;; so the generated names resolve, and continue the
+                                    ;; Force the splice inline: append the generated
+                                    ;; symbols/registries and rebuild the context/env
+                                    ;; over the spliced whole-program view so the
+                                    ;; generated names resolve, and continue the
                                     ;; walk over the spliced body itself (its nested
                                     ;; placeholders and generated file imports included).
                                     (let
@@ -70141,6 +70212,20 @@
                                         (macro-generated-module-extension
                                           expanded
                                           cur-module-id)]
+                                      [symbols-inserted : bool
+                                        (match generated-ext
+                                          [(MacroMaybeGeneratedModuleExtension.Some
+                                              _
+                                              _)
+                                            (and
+                                              (compiler-symbols-insert-aliases-self-contained?
+                                                expanded
+                                                expanded)
+                                              (macro-live-symbols-insert-decls!
+                                                expanded
+                                                cur-module-id))]
+                                          [(MacroMaybeGeneratedModuleExtension.No)
+                                            false])]
                                       ;; An isolated generated-module splice only
                                       ;; appends fresh namespaced declarations, so
                                       ;; the cached CTFE reflection/layout metadata
@@ -70165,17 +70250,10 @@
                                         (cfg
                                           compile-profile
                                           (compiler-tc-walk-decl-sample-note! 6))
-                                        (if (and
-                                          (macro-decls-registry-incremental-safe?
-                                            expanded)
-                                          (not
-                                            (macro-decls-have-unqualified-import-of-module?
-                                              next-decls
-                                              cur-module-id)))
-                                          (if (macro-live-registries-insert-decls!
+                                        (if symbols-inserted
+                                          (if (macro-live-registries-append-decls!
                                             expanded
                                             expanded-paths
-                                            splice-index
                                             cur-module-id)
                                             (cfg
                                               compile-profile
@@ -70187,13 +70265,40 @@
                                                 compile-profile
                                                 (compiler-tc-walk-splice-flag-note!
                                                   2))
+                                              (macro-live-symbols-invalidate!)
                                               (macro-live-registries-invalidate!)))
-                                          (begin
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-walk-splice-flag-note!
-                                                2))
-                                            (macro-live-registries-invalidate!)))
+                                          (if (and
+                                            (macro-decls-registry-incremental-safe?
+                                              expanded)
+                                            (not
+                                              (macro-decls-have-unqualified-import-of-module?
+                                                next-decls
+                                                cur-module-id)))
+                                            (if (macro-live-registries-insert-decls!
+                                              expanded
+                                              expanded-paths
+                                              splice-index
+                                              cur-module-id)
+                                              (cfg
+                                                compile-profile
+                                                (compiler-tc-walk-splice-flag-note!
+                                                  1)
+                                                unit)
+                                              (begin
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-tc-walk-splice-flag-note!
+                                                    2))
+                                                (macro-live-registries-invalidate!)))
+                                            (begin
+                                              (cfg
+                                                compile-profile
+                                                (compiler-tc-walk-splice-flag-note!
+                                                  2))
+                                              (macro-live-registries-invalidate!))))
+                                        (if symbols-inserted
+                                          unit
+                                          (macro-live-symbols-invalidate!))
                                         (if (and
                                           (macro-decls-reflection-relevant?
                                             expanded)

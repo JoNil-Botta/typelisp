@@ -1174,6 +1174,27 @@ assert_profile_counter_eq_in \
     "$VECTOR_FIVE_STDOUT" \
     "$VECTOR_FIVE_STDERR"
 
+# The initial table build is the only whole-program symbol/registry build.
+# Every generated vector module extends the live tables at their logical end.
+assert_profile_counter_eq_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.live_rebuilds" \
+    1 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.live_reuses" \
+    5 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_FIVE_STDERR" \
+    "typecheck.macro.live_registry_reuses" \
+    5 \
+    "$VECTOR_FIVE_STDOUT" \
+    "$VECTOR_FIVE_STDERR"
+
 VECTOR_ONE_DECL_CHECKS=$(profile_counter_value_in \
     "$VECTOR_ONE_STDERR" \
     "typecheck.macro.generated_decl_checks")

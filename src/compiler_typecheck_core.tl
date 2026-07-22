@@ -19125,14 +19125,7 @@
     [_ (ResultTcType.Err message)]))
 
 (define (tc-atomic-pointer-name? [name : String]) : bool
-  (or
-    (string.eq name "atomic-load")
-    (string.eq name "atomic-store!")
-    (string.eq name "atomic-add!")
-    (string.eq name "atomic-fetch-add!")
-    (string.eq name "atomic-cas!")
-    (string.eq name "volatile-load")
-    (string.eq name "volatile-store!")))
+  (cbi.compiler-builtin-typecheck-atomic-pointer-name? name))
 
 (define (tc-atomic-load-name? [name : String]) : bool
   (or (string.eq name "atomic-load") (string.eq name "volatile-load")))

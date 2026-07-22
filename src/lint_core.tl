@@ -13,6 +13,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import "compiler_ast_types.tl")
+(import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import token)
 (import "lex.tl")
@@ -2224,7 +2225,9 @@
     (string.eq module-name "")))
 
 (define (lint-expr-list-requires-enclosing-unsafe? [exprs : AstExprList]) : bool
-  (lint-expr-list-uses-import? exprs "__tl_lint_requires_enclosing_unsafe" ""))
+  (struct-get
+    (lint-unsafe-scan-expr-list exprs (LintUnsafeScope LintNameList.Nil false))
+    requires))
 
 (define (lint-expr-list-uses-import?
   [exprs : AstExprList]
@@ -2884,12 +2887,7 @@
           (lint-decl-list-uses-import? rest alias module-name)))]))
 
 (define (lint-program-has-unused-unsafe-candidate? [program : AstProgram]) : bool
-  (match program
-    [(AstProgram.Program decls-box)
-      (lint-decl-list-uses-import?
-        (box-get decls-box)
-        "__tl_lint_unused_unsafe_candidate"
-        "")]))
+  (lint-unsafe-program-has-candidate? program))
 
 (define (lint-underscore-prefixed? [name : String]) : bool
   (let
@@ -3140,6 +3138,478 @@
   (match items
     [(LintNameList.Nil) 0]
     [(LintNameList.Cons _ rest) (+ 1 (lint-name-list-count (box-get rest)))]))
+
+;; Syntax-only classification for unused `(unsafe ...)` blocks. `requires`
+;; belongs to the nearest enclosing unsafe block; nested unsafe expressions do
+;; not propagate it. `candidate` records a block that still needs the typed
+;; fallback. Keeping both facts in one walk preserves nearest-block attribution
+;; without rerunning a context-free subtree scan.
+(defstruct LintUnsafeScan
+  (requires bool)
+  (candidate bool))
+
+(defstruct LintUnsafeScope
+  (shadowed LintNameList)
+  (ambiguous bool))
+
+(define (lint-unsafe-scan-empty) : LintUnsafeScan
+  (LintUnsafeScan false false))
+
+(define (lint-unsafe-scan-combine
+  [left : LintUnsafeScan]
+  [right : LintUnsafeScan]) : LintUnsafeScan
+  (LintUnsafeScan
+    (or (struct-get left requires) (struct-get right requires))
+    (or (struct-get left candidate) (struct-get right candidate))))
+
+(define (lint-unsafe-scan-require [children : LintUnsafeScan]) : LintUnsafeScan
+  (LintUnsafeScan true (struct-get children candidate)))
+
+(define (lint-unsafe-scope-add-id [scope : LintUnsafeScope] [name-id : i64]) : LintUnsafeScope
+  (LintUnsafeScope
+    (lint-name-list-add (struct-get scope shadowed) (intern-str name-id))
+    (struct-get scope ambiguous)))
+
+(define (lint-unsafe-scope-with-ambiguous [scope : LintUnsafeScope]) : LintUnsafeScope
+  (LintUnsafeScope (struct-get scope shadowed) true))
+
+(define (lint-unsafe-scope-add-params
+  [scope : LintUnsafeScope]
+  [params : AstParamList]) : LintUnsafeScope
+  (LintUnsafeScope
+    (lint-param-list-add-locals params (struct-get scope shadowed))
+    (struct-get scope ambiguous)))
+
+(define (lint-unsafe-scope-add-macro-params
+  [scope : LintUnsafeScope]
+  [params : AstMacroParamList]) : LintUnsafeScope
+  (LintUnsafeScope
+    (lint-macro-param-list-add-locals params (struct-get scope shadowed))
+    (struct-get scope ambiguous)))
+
+(define (lint-unsafe-pattern-add-bindings
+  [pattern : AstPattern]
+  [scope : LintUnsafeScope]) : LintUnsafeScope
+  (match pattern
+    [(AstPattern.Var name _) (lint-unsafe-scope-add-id scope name)]
+    [(AstPattern.Tuple items)
+      (lint-unsafe-pattern-list-add-bindings (box-get items) scope 0)]
+    [(AstPattern.Wildcard) scope]
+    [(AstPattern.Binding name) (lint-unsafe-scope-add-id scope name)]
+    [(AstPattern.Variant _ items)
+      (lint-unsafe-pattern-list-add-bindings (box-get items) scope 0)]
+    [(AstPattern.Literal _) scope]))
+
+(define (lint-unsafe-pattern-list-add-bindings
+  [patterns : AstPatternList]
+  [scope : LintUnsafeScope]
+  [index : i64]) : LintUnsafeScope
+  (if (>= index (struct-get patterns len))
+    scope
+    (lint-unsafe-pattern-list-add-bindings
+      patterns
+      (lint-unsafe-pattern-add-bindings
+        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        scope)
+      (+ index 1))))
+
+(define (lint-unsafe-call-unshadowed? [name-id : i64] [scope : LintUnsafeScope]) : bool
+  (and
+    (not (struct-get scope ambiguous))
+    (not
+      (lint-name-list-contains?
+        (struct-get scope shadowed)
+        (intern-str name-id)))
+    (cbi.compiler-builtin-typecheck-syntactic-unsafe-call-id? name-id)))
+
+(define (lint-unsafe-scan-node [node-id : i64] [scope : LintUnsafeScope]) : LintUnsafeScan
+  (lint-unsafe-scan-expr (ast-node-get node-id) scope))
+
+(define (lint-unsafe-scan-two-nodes
+  [left : i64]
+  [right : i64]
+  [scope : LintUnsafeScope]) : LintUnsafeScan
+  (lint-unsafe-scan-combine
+    (lint-unsafe-scan-node left scope)
+    (lint-unsafe-scan-node right scope)))
+
+(define (lint-unsafe-scan-three-nodes
+  [first : i64]
+  [second : i64]
+  [third : i64]
+  [scope : LintUnsafeScope]) : LintUnsafeScan
+  (lint-unsafe-scan-combine
+    (lint-unsafe-scan-node first scope)
+    (lint-unsafe-scan-two-nodes second third scope)))
+
+(define (lint-unsafe-scan-expr-list
+  [exprs : AstExprList]
+  [scope : LintUnsafeScope]) : LintUnsafeScan
+  (lint-unsafe-scan-expr-list-at (& exprs) scope 0))
+
+(define (lint-unsafe-scan-expr-list-at
+  [exprs : (& exprs AstExprList)]
+  [scope : LintUnsafeScope]
+  [index : i64]) : LintUnsafeScan
+  (if (>= index (struct-get exprs len))
+    (lint-unsafe-scan-empty)
+    (lint-unsafe-scan-combine
+      (lint-unsafe-scan-node (ast-expr-list-get exprs index 0) scope)
+      (lint-unsafe-scan-expr-list-at exprs scope (+ index 1)))))
+
+(define (lint-unsafe-scan-let-bindings
+  [bindings : AstLetBindingList]
+  [body : i64]
+  [scope : LintUnsafeScope]
+  [index : i64]) : LintUnsafeScan
+  (if (>= index (ast-let-binding-list-len (& bindings)))
+    (lint-unsafe-scan-node body scope)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ init)
+        (lint-unsafe-scan-combine
+          (lint-unsafe-scan-node init scope)
+          (lint-unsafe-scan-let-bindings
+            bindings
+            body
+            (lint-unsafe-scope-add-id scope name)
+            (+ index 1)))])))
+
+(define (lint-unsafe-scan-match-arms
+  [arms : AstMatchArmList]
+  [scope : LintUnsafeScope]
+  [index : i64]) : LintUnsafeScan
+  (if (>= index (struct-get arms len))
+    (lint-unsafe-scan-empty)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body)
+        (lint-unsafe-scan-combine
+          (lint-unsafe-scan-node
+            body
+            (lint-unsafe-pattern-add-bindings pattern scope))
+          (lint-unsafe-scan-match-arms arms scope (+ index 1)))])))
+
+(define (lint-unsafe-scan-resource-bindings
+  [bindings : AstResourceBindingList]
+  [body : AstExprList]
+  [scope : LintUnsafeScope]
+  [index : i64]) : LintUnsafeScan
+  (if (>= index (ast-resource-binding-list-len (& bindings)))
+    (lint-unsafe-scan-expr-list body scope)
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init cleanup _)
+        (let
+          [bound : LintUnsafeScope (lint-unsafe-scope-add-id scope name)]
+          (lint-unsafe-scan-combine
+            (lint-unsafe-scan-node init scope)
+            (lint-unsafe-scan-combine
+              (lint-unsafe-scan-node cleanup bound)
+              (lint-unsafe-scan-resource-bindings
+                bindings
+                body
+                bound
+                (+ index 1)))))])))
+
+(define (lint-unsafe-scan-expr [expr : AstExpr] [scope : LintUnsafeScope]) : LintUnsafeScan
+  (match expr
+    [(AstExpr.Spanned inner _) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.Literal _) (lint-unsafe-scan-empty)]
+    [(AstExpr.Var _) (lint-unsafe-scan-empty)]
+    [(AstExpr.Binary _ left right)
+      (lint-unsafe-scan-two-nodes left right scope)]
+    [(AstExpr.Unary _ inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.Call func args)
+      (let
+        [children : LintUnsafeScan
+          (lint-unsafe-scan-combine
+            (lint-unsafe-scan-node func scope)
+            (lint-unsafe-scan-expr-list args scope))]
+        (match (ast-expr-unspan (ast-node-get func))
+          [(AstExpr.Var name)
+            (if (lint-unsafe-call-unshadowed? name scope)
+              (lint-unsafe-scan-require children)
+              children)]
+          [_ children]))]
+    [(AstExpr.If cond then-branch else-branch)
+      (lint-unsafe-scan-three-nodes cond then-branch else-branch scope)]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body)
+          (lint-unsafe-scan-let-bindings bindings body scope 0)])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda params _ body)
+          (lint-unsafe-scan-node
+            body
+            (lint-unsafe-scope-add-params scope params))])]
+    [(AstExpr.Tuple items) (lint-unsafe-scan-expr-list items scope)]
+    [(AstExpr.TupleRef tuple _) (lint-unsafe-scan-node tuple scope)]
+    [(AstExpr.Array items) (lint-unsafe-scan-expr-list items scope)]
+    [(AstExpr.DynArray items) (lint-unsafe-scan-expr-list items scope)]
+    [(AstExpr.MakeArray _ len) (lint-unsafe-scan-node len scope)]
+    [(AstExpr.ArrayRef array index)
+      (lint-unsafe-scan-two-nodes array index scope)]
+    [(AstExpr.ArraySet array index value)
+      (lint-unsafe-scan-three-nodes array index value scope)]
+    [(AstExpr.ArrayTake array live index)
+      (lint-unsafe-scan-three-nodes array live index scope)]
+    [(AstExpr.ArrayPush array value)
+      (lint-unsafe-scan-two-nodes array value scope)]
+    [(AstExpr.StringRef text index)
+      (lint-unsafe-scan-two-nodes text index scope)]
+    [(AstExpr.While cond body) (lint-unsafe-scan-two-nodes cond body scope)]
+    [(AstExpr.Begin items) (lint-unsafe-scan-expr-list items scope)]
+    [(AstExpr.Unsafe items)
+      (let
+        [inside : LintUnsafeScan (lint-unsafe-scan-expr-list items scope)]
+        (LintUnsafeScan
+          false
+          (or (not (struct-get inside requires)) (struct-get inside candidate))))]
+    [(AstExpr.Set _ value) (lint-unsafe-scan-node value scope)]
+    [(AstExpr.Ann inner _) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.Cast inner _) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.Borrow _ _ place) (lint-unsafe-scan-node place scope)]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee arms)
+          (lint-unsafe-scan-combine
+            (lint-unsafe-scan-node scrutinee scope)
+            (lint-unsafe-scan-match-arms arms scope 0))])]
+    [(AstExpr.Foreach foreach-box)
+      (match (box-get foreach-box)
+        [(AstForeach.Foreach index _ start end body)
+          (lint-unsafe-scan-combine
+            (lint-unsafe-scan-two-nodes start end scope)
+            (lint-unsafe-scan-node body (lint-unsafe-scope-add-id scope index)))])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ index _ start end init value)
+          (lint-unsafe-scan-combine
+            (lint-unsafe-scan-three-nodes start end init scope)
+            (lint-unsafe-scan-node value (lint-unsafe-scope-add-id scope index)))])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan _ index _ start end prefix _ init value body)
+          (let
+            [index-scope : LintUnsafeScope
+              (lint-unsafe-scope-add-id scope index)]
+            [body-scope : LintUnsafeScope
+              (lint-unsafe-scope-add-id index-scope prefix)]
+            (lint-unsafe-scan-combine
+              (lint-unsafe-scan-three-nodes start end init scope)
+              (lint-unsafe-scan-combine
+                (lint-unsafe-scan-node value index-scope)
+                (lint-unsafe-scan-node body body-scope))))])]
+    [(AstExpr.SpmdBroadcast value lane)
+      (lint-unsafe-scan-two-nodes value lane scope)]
+    [(AstExpr.SpmdShuffle value lane)
+      (lint-unsafe-scan-two-nodes value lane scope)]
+    [(AstExpr.SpmdProgramIndex) (lint-unsafe-scan-empty)]
+    [(AstExpr.SpmdProgramCount) (lint-unsafe-scan-empty)]
+    [(AstExpr.StructGet receiver _) (lint-unsafe-scan-node receiver scope)]
+    [(AstExpr.StructSet receiver _ value)
+      (lint-unsafe-scan-two-nodes receiver value scope)]
+    [(AstExpr.WithRegion _ body) (lint-unsafe-scan-expr-list body scope)]
+    [(AstExpr.WithEscape scratch body)
+      (lint-unsafe-scan-combine
+        (lint-unsafe-scan-node scratch scope)
+        (lint-unsafe-scan-expr-list body scope))]
+    [(AstExpr.WithScratch body) (lint-unsafe-scan-expr-list body scope)]
+    [(AstExpr.InArena arena body)
+      (lint-unsafe-scan-combine
+        (lint-unsafe-scan-node arena scope)
+        (lint-unsafe-scan-expr-list body scope))]
+    [(AstExpr.WithResource resource-box)
+      (match (box-get resource-box)
+        [(AstWithResource.WithResource bindings body)
+          (lint-unsafe-scan-resource-bindings bindings body scope 0)])]
+    [(AstExpr.Box inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.BoxGet inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.BoxTake inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.BoxSet inner value)
+      (lint-unsafe-scan-two-nodes inner value scope)]
+    [(AstExpr.TypeLiteral _) (lint-unsafe-scan-empty)]
+    [(AstExpr.Init _) (lint-unsafe-scan-empty)]
+    [(AstExpr.Comptime inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.Quote inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.Quasiquote inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.Unquote inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.UnquoteSplicing inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.BracketClause items) (lint-unsafe-scan-expr-list items scope)]
+    [(AstExpr.Try inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.Return inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.Break) (lint-unsafe-scan-empty)]
+    [(AstExpr.Continue) (lint-unsafe-scan-empty)]
+    [(AstExpr.PtrNull _) (lint-unsafe-scan-empty)]
+    [(AstExpr.PtrNullCheck inner) (lint-unsafe-scan-node inner scope)]
+    [(AstExpr.PtrAddrOf place)
+      (lint-unsafe-scan-require (lint-unsafe-scan-node place scope))]
+    [(AstExpr.PtrRead ptr)
+      (lint-unsafe-scan-require (lint-unsafe-scan-node ptr scope))]
+    [(AstExpr.PtrWrite ptr value)
+      (lint-unsafe-scan-require (lint-unsafe-scan-two-nodes ptr value scope))]
+    [(AstExpr.PtrOffset ptr offset)
+      (lint-unsafe-scan-require (lint-unsafe-scan-two-nodes ptr offset scope))]
+    [(AstExpr.PtrCast ptr _)
+      (lint-unsafe-scan-require (lint-unsafe-scan-node ptr scope))]
+    [(AstExpr.PtrToInt ptr)
+      (lint-unsafe-scan-require (lint-unsafe-scan-node ptr scope))]
+    [(AstExpr.IntToPtr value _)
+      (lint-unsafe-scan-require (lint-unsafe-scan-node value scope))]
+    [(AstExpr.StringData inner)
+      (lint-unsafe-scan-require (lint-unsafe-scan-node inner scope))]
+    [(AstExpr.StringFromBytes ptr len)
+      (lint-unsafe-scan-require (lint-unsafe-scan-two-nodes ptr len scope))]
+    [(AstExpr.ArrayData inner)
+      (lint-unsafe-scan-require (lint-unsafe-scan-node inner scope))]
+    [(AstExpr.BinaryData _) (lint-unsafe-scan-empty)]
+    [(AstExpr.ProgramArgc) (lint-unsafe-scan-empty)]
+    [(AstExpr.ProgramArgv) (lint-unsafe-scan-require (lint-unsafe-scan-empty))]
+    [(AstExpr.ProgramEnvp) (lint-unsafe-scan-require (lint-unsafe-scan-empty))]
+    [(AstExpr.CpuIdEax leaf subleaf)
+      (lint-unsafe-scan-two-nodes leaf subleaf scope)]
+    [(AstExpr.CpuIdEbx leaf subleaf)
+      (lint-unsafe-scan-two-nodes leaf subleaf scope)]
+    [(AstExpr.CpuIdEcx leaf subleaf)
+      (lint-unsafe-scan-two-nodes leaf subleaf scope)]
+    [(AstExpr.CpuIdEdx leaf subleaf)
+      (lint-unsafe-scan-two-nodes leaf subleaf scope)]
+    [(AstExpr.Xgetbv index) (lint-unsafe-scan-node index scope)]
+    [(AstExpr.Syscall args)
+      (lint-unsafe-scan-require (lint-unsafe-scan-expr-list args scope))]))
+
+(define (lint-unsafe-decl-add-global [decl : AstDecl] [names : LintNameList]) : LintNameList
+  (match decl
+    [(AstDecl.Module name) (lint-name-list-add names (intern-str name))]
+    [(AstDecl.ModuleBody name _) (lint-name-list-add names (intern-str name))]
+    [(AstDecl.Def _ name _ _) (lint-name-list-add names (intern-str name))]
+    [(AstDecl.DefFn _ name _ _ _ _)
+      (lint-name-list-add names (intern-str name))]
+    [(AstDecl.DefMacro _ name _ _ _)
+      (lint-name-list-add names (intern-str name))]
+    [(AstDecl.Extern _ name _ _ _) (lint-name-list-add names (intern-str name))]
+    [(AstDecl.DefEnum _ name _ _) (lint-name-list-add names (intern-str name))]
+    [(AstDecl.DefEnumLifetimes _ name _ _ _)
+      (lint-name-list-add names (intern-str name))]
+    [(AstDecl.DefStruct _ name _ _ _)
+      (lint-name-list-add names (intern-str name))]
+    [(AstDecl.DefStructLifetimes _ name _ _ _ _)
+      (lint-name-list-add names (intern-str name))]
+    [(AstDecl.Import _ _) names]
+    [(AstDecl.IncludeStr name _) (lint-name-list-add names (intern-str name))]
+    [(AstDecl.IncludeStrComptime name _)
+      (lint-name-list-add names (intern-str name))]
+    [(AstDecl.IncludeStrLzss name _)
+      (lint-name-list-add names (intern-str name))]
+    [(AstDecl.IncludeBin name _) (lint-name-list-add names (intern-str name))]
+    [(AstDecl.DefDispatch _ name _)
+      (lint-name-list-add names (intern-str name))]
+    [(AstDecl.Test name _ _) (lint-name-list-add names (intern-str name))]
+    [(AstDecl.Unsafe inner) (lint-unsafe-decl-add-global (box-get inner) names)]))
+
+(define (lint-unsafe-decl-list-globals
+  [decls : AstDeclList]
+  [names : LintNameList]) : LintNameList
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) names]
+    [(AstDeclListStep.Cons decl rest)
+      (lint-unsafe-decl-list-globals
+        rest
+        (lint-unsafe-decl-add-global decl names))]))
+
+(define (lint-unsafe-import-ambiguous? [spec : AstImportSpec]) : bool
+  (match spec
+    [(AstImportSpec.Spec kind _ expected _ _)
+      (match kind
+        [(AstImportKind.Path)
+          (match expected
+            [(AstMaybeModuleName.No) true]
+            [(AstMaybeModuleName.Some _) false])]
+        [_ false])]))
+
+(define (lint-unsafe-decl-list-ambiguous? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (if (match decl
+        [(AstDecl.Import _ spec) (lint-unsafe-import-ambiguous? spec)]
+        [(AstDecl.Unsafe inner)
+          (match (box-get inner)
+            [(AstDecl.Import _ spec) (lint-unsafe-import-ambiguous? spec)]
+            [_ false])]
+        [_ false])
+        true
+        (lint-unsafe-decl-list-ambiguous? rest))]))
+
+(define (lint-unsafe-decl-generated? [decl : AstDecl]) : bool
+  (match (ast-decl-generated-meta decl)
+    [(AstGeneratedDeclMeta.No) false]
+    [(AstGeneratedDeclMeta.Some _ _ _ _) true]))
+
+(define (lint-unsafe-scan-decl [decl : AstDecl] [scope : LintUnsafeScope]) : LintUnsafeScan
+  (let
+    [body-scope : LintUnsafeScope
+      (if (lint-unsafe-decl-generated? decl)
+        (lint-unsafe-scope-with-ambiguous scope)
+        scope)]
+    (match decl
+      [(AstDecl.Module _) (lint-unsafe-scan-empty)]
+      [(AstDecl.ModuleBody _ body) (lint-unsafe-scan-decl-list (box-get body))]
+      [(AstDecl.Def _ _ _ body) (lint-unsafe-scan-node body body-scope)]
+      [(AstDecl.DefFn _ _ params _ body _)
+        (lint-unsafe-scan-node
+          body
+          (lint-unsafe-scope-add-params body-scope params))]
+      [(AstDecl.DefMacro _ _ params _ body)
+        (lint-unsafe-scan-node
+          body
+          (lint-unsafe-scope-add-macro-params body-scope params))]
+      [(AstDecl.Extern _ _ _ _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.DefEnum _ _ _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.DefEnumLifetimes _ _ _ _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.DefStruct _ _ _ _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.DefStructLifetimes _ _ _ _ _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.Import
+          _
+          (AstImportSpec.Spec (AstImportKind.Macro call _) _ _ _ _))
+        (lint-unsafe-scan-node call body-scope)]
+      [(AstDecl.Import
+          _
+          (AstImportSpec.Spec (AstImportKind.MacroDecls call _) _ _ _ _))
+        (lint-unsafe-scan-node call body-scope)]
+      [(AstDecl.Import _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.IncludeStr _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.IncludeStrComptime _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.IncludeStrLzss _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.IncludeBin _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.DefDispatch _ _ _) (lint-unsafe-scan-empty)]
+      [(AstDecl.Test _ body _) (lint-unsafe-scan-node body body-scope)]
+      [(AstDecl.Unsafe inner) (lint-unsafe-scan-decl (box-get inner) scope)])))
+
+(define (lint-unsafe-scan-decls-with-scope
+  [decls : AstDeclList]
+  [scope : LintUnsafeScope]) : LintUnsafeScan
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (lint-unsafe-scan-empty)]
+    [(AstDeclListStep.Cons decl rest)
+      (lint-unsafe-scan-combine
+        (lint-unsafe-scan-decl decl scope)
+        (lint-unsafe-scan-decls-with-scope rest scope))]))
+
+(define (lint-unsafe-scan-decl-list [decls : AstDeclList]) : LintUnsafeScan
+  (let
+    [scope : LintUnsafeScope
+      (LintUnsafeScope
+        (lint-unsafe-decl-list-globals decls LintNameList.Nil)
+        (lint-unsafe-decl-list-ambiguous? decls))]
+    (lint-unsafe-scan-decls-with-scope decls scope)))
+
+(define (lint-unsafe-program-has-candidate? [program : AstProgram]) : bool
+  (match program
+    [(AstProgram.Program decls)
+      (struct-get (lint-unsafe-scan-decl-list (box-get decls)) candidate)]))
 
 (defstruct LintCopyOnUpdateStructShape
   (name String)

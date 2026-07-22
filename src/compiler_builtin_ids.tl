@@ -1,5 +1,6 @@
 ;; compiler_builtin_ids.tl - reset-aware intern ids for fixed compiler builtins.
 (import stdlib.io)
+(import stdlib.string)
 (import compiler_intern as ci)
 (cfg test (import stdlib.test))
 
@@ -3728,6 +3729,27 @@
 
 (define (compiler-builtin-typecheck-tls-current-arena-read-id? [name-id : i64]) : bool
   (compiler-builtin-lower-tls-current-arena-read-id? name-id))
+
+;: Ordinary call spellings whose compiler-owned fallback always requires an
+;: unsafe context. Keep the typechecker and syntax-only lint preclassifier on
+;: this single list so a newly added atomic/volatile primitive cannot silently
+;: make unused-unsafe lint fall back to a whole-program check.
+(define (compiler-builtin-typecheck-atomic-pointer-name? [name : String]) : bool
+  (or
+    (string.eq name "atomic-load")
+    (string.eq name "atomic-store!")
+    (string.eq name "atomic-add!")
+    (string.eq name "atomic-fetch-add!")
+    (string.eq name "atomic-cas!")
+    (string.eq name "volatile-load")
+    (string.eq name "volatile-store!")))
+
+(define (compiler-builtin-typecheck-syntactic-unsafe-call-id? [name-id : i64]) : bool
+  (or
+    (compiler-builtin-typecheck-atomic-pointer-name? (ci.intern-str name-id))
+    (and
+      (compiler-builtin-typecheck-tls-current-arena-id? name-id)
+      (not (compiler-builtin-typecheck-tls-current-arena-read-id? name-id)))))
 
 (define (compiler-builtin-typecheck-region-arg-id? [name-id : i64]) : bool
   (begin

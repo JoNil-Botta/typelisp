@@ -14,6 +14,9 @@
 (import compiler_intern as ci)
 (import "compiler_load.tl")
 (cfg embedded-stdlib-tlci (import "compiler_surface_hydrate.tl"))
+(cfg
+  compile-startup-profile
+  (import compiler_startup_profile as startup_profile))
 (import "compiler_optimize.tl")
 (import stdlib.text_buf)
 (import sym_i64_env)
@@ -2479,26 +2482,39 @@
   [surface-arena : i64]) : ResultCompilerLoadWithPaths
   (cfg
     embedded-stdlib-tlci
-    (match (compiler-driver-try-hydrate-runtime-prelude
-      stdlib-roots
-      cfgs
-      pools
-      surface-arena)
-      [(CompilerDriverPreludeSurface.Missing)
-        (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
-          load-state
+    (let
+      [_surface-begin : unit
+        (cfg
+          compile-startup-profile
+          (startup_profile.compiler-startup-profile-mark-surface-begin!)
+          unit)]
+      [surface : CompilerDriverPreludeSurface
+        (compiler-driver-try-hydrate-runtime-prelude
           stdlib-roots
           cfgs
-          pools)]
-      [(CompilerDriverPreludeSurface.Ok decls paths modules seen)
-        (begin
-          (cfg
-            compile-profile
-            (set!
-              compiler-driver-profile-prelude-hydrations
-              (+ compiler-driver-profile-prelude-hydrations 1))
-            unit)
-          (ResultCompilerLoadWithPaths.Ok decls paths modules seen))])
+          pools
+          surface-arena)]
+      [_surface-end : unit
+        (cfg
+          compile-startup-profile
+          (startup_profile.compiler-startup-profile-mark-surface-end!)
+          unit)]
+      (match surface
+        [(CompilerDriverPreludeSurface.Missing)
+          (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
+            load-state
+            stdlib-roots
+            cfgs
+            pools)]
+        [(CompilerDriverPreludeSurface.Ok decls paths modules seen)
+          (begin
+            (cfg
+              compile-profile
+              (set!
+                compiler-driver-profile-prelude-hydrations
+                (+ compiler-driver-profile-prelude-hydrations 1))
+              unit)
+            (ResultCompilerLoadWithPaths.Ok decls paths modules seen))]))
     (compiler-driver-load-runtime-prelude-ordinary-with-state-and-pools
       load-state
       stdlib-roots
@@ -2534,40 +2550,58 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [surface-arena : i64]) : ResultCompilerLoadWithPaths
-  (match (compiler-driver-load-runtime-prelude-with-state-pools-and-surface
-    load-state
-    stdlib-roots
-    cfgs
-    pools
-    surface-arena)
-    [(ResultCompilerLoadWithPaths.Ok
-        prelude-decls
-        prelude-paths
-        prelude-modules
-        prelude-seen)
-      (match (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+  (let
+    [_prelude-begin : unit
+      (cfg
+        compile-startup-profile
+        (startup_profile.compiler-startup-profile-mark-prelude-begin!)
+        unit)]
+    [prelude : ResultCompilerLoadWithPaths
+      (compiler-driver-load-runtime-prelude-with-state-pools-and-surface
         load-state
-        input-path
-        prelude-seen
         stdlib-roots
         cfgs
-        pools)
-        [(ResultCompilerLoadWithPaths.Ok
-            entry-decls
-            entry-paths
-            entry-modules
-            seen)
-          (ResultCompilerLoadWithPaths.Ok
-            (compiler-load-decl-list-append prelude-decls entry-decls)
-            (compiler-load-decl-path-list-append prelude-paths entry-paths)
-            (compiler-load-decl-module-list-append
-              prelude-modules
-              entry-modules)
-            seen)]
-        [(ResultCompilerLoadWithPaths.Err diag)
-          (ResultCompilerLoadWithPaths.Err diag)])]
-    [(ResultCompilerLoadWithPaths.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
+        pools
+        surface-arena)]
+    [_prelude-end : unit
+      (cfg
+        compile-startup-profile
+        (startup_profile.compiler-startup-profile-mark-prelude-end!)
+        unit)]
+    (match prelude
+      [(ResultCompilerLoadWithPaths.Ok
+          prelude-decls
+          prelude-paths
+          prelude-modules
+          prelude-seen)
+        (begin
+          (cfg
+            compile-startup-profile
+            (startup_profile.compiler-startup-profile-mark-user-entry-start!)
+            unit)
+          (match (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
+            load-state
+            input-path
+            prelude-seen
+            stdlib-roots
+            cfgs
+            pools)
+            [(ResultCompilerLoadWithPaths.Ok
+                entry-decls
+                entry-paths
+                entry-modules
+                seen)
+              (ResultCompilerLoadWithPaths.Ok
+                (compiler-load-decl-list-append prelude-decls entry-decls)
+                (compiler-load-decl-path-list-append prelude-paths entry-paths)
+                (compiler-load-decl-module-list-append
+                  prelude-modules
+                  entry-modules)
+                seen)]
+            [(ResultCompilerLoadWithPaths.Err diag)
+              (ResultCompilerLoadWithPaths.Err diag)]))]
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (compiler-driver-load-file-with-runtime-with-state-and-pools
   [load-state : CompilerLoadSessionState]

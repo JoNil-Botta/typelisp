@@ -1408,6 +1408,27 @@
     help
     "|0"))
 
+;; The optional suffix after the secondary-count field transports one
+;; machine-applicable replacement of the primary span. The title is delimiter-
+;; safe and the replacement consumes the remaining payload, so symbol text may
+;; itself contain `|`.
+(define (tc-rich-error-with-machine-fix
+  [primary : AstSourceSpan]
+  [edit-span : AstSourceSpan]
+  [message : String]
+  [help : String]
+  [replacement : String]) : String
+  (str_cat.str-cat
+    (tc-rich-error-prefix)
+    (tc-rich-error-span-fields primary)
+    message
+    "|"
+    help
+    "|0|"
+    (tc-rich-error-span-fields edit-span)
+    "Replace misspelled name|"
+    replacement))
+
 (define (tc-rich-error-one-secondary
   [primary : AstSourceSpan]
   [message : String]
@@ -1538,6 +1559,57 @@
                 (CompilerDiagnosticSomeString label)))
             (set! idx (+ label-end 1))
             (set! remaining (- remaining 1)))))
+      (if (< idx (string.string-length message))
+        (let
+          [fix-line-end : i64 (tc-located-error-field-end message idx)]
+          [fix-col-start : i64 (+ fix-line-end 1)]
+          [fix-col-end : i64 (tc-located-error-field-end message fix-col-start)]
+          [fix-end-line-start : i64 (+ fix-col-end 1)]
+          [fix-end-line-end : i64
+            (tc-located-error-field-end message fix-end-line-start)]
+          [fix-end-col-start : i64 (+ fix-end-line-end 1)]
+          [fix-end-col-end : i64
+            (tc-located-error-field-end message fix-end-col-start)]
+          [title-start : i64 (+ fix-end-col-end 1)]
+          [title-end : i64 (tc-located-error-field-end message title-start)]
+          [replacement-start : i64 (+ title-end 1)]
+          (if (and
+            (< title-end (string.string-length message))
+            (<= replacement-start (string.string-length message)))
+            (set!
+              diag
+              (compiler-diagnostic-with-fix
+                diag
+                (compiler-diagnostic-fix-new
+                  (tc-located-error-field message title-start title-end)
+                  CompilerDiagnosticMachineApplicable
+                  (compiler-diagnostic-text-edit-single
+                    (compiler-diagnostic-text-edit-new
+                      (CompilerDiagnosticSpan
+                        ""
+                        (string.>int
+                          (tc-located-error-field message idx fix-line-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            fix-col-start
+                            fix-col-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            fix-end-line-start
+                            fix-end-line-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            fix-end-col-start
+                            fix-end-col-end)))
+                      (string.substring
+                        message
+                        replacement-start
+                        (- (string.string-length message) replacement-start)))))))
+            unit))
+        unit)
       (tc-canonical-diagnostic diag))))
 
 (define (tc-located-error [span : AstSourceSpan] [message : String]) : String
@@ -24960,22 +25032,29 @@
               (set! candidate-id (+ candidate-id 1))))))
       best)))
 
-(define (tc-unbound-help
+(defenum TcUnboundSuggestion
+  (No)
+  (Help String)
+  (Replace String String))
+
+(define (tc-unbound-suggestion
   [module-qualified : bool]
   [module-id : i64]
   [env : TcTypeEnv]
   [name : String]
-  [name-id : i64]) : String
+  [name-id : i64]) : TcUnboundSuggestion
   (let
     [provider : String (tc-unbound-stdlib-provider name)]
     (if (> (string.string-length provider) 0)
-      (tc-unbound-import-help name provider)
+      (TcUnboundSuggestion.Help (tc-unbound-import-help name provider))
       (let
         [near-miss : String
           (tc-unbound-near-miss module-qualified module-id env name name-id)]
         (if (> (string.string-length near-miss) 0)
-          (string.append "did you mean " (string.append near-miss "?"))
-          "")))))
+          (TcUnboundSuggestion.Replace
+            (string.append "did you mean " (string.append near-miss "?"))
+            near-miss)
+          (TcUnboundSuggestion.No))))))
 
 (define (tc-unbound-finalize-located-error [message : String]) : String
   (if (and (tc-located-error? message) (not (tc-rich-error? message)))
@@ -25014,33 +25093,44 @@
                 (string.append (tc-unbound-name-message-prefix) name)]
               (if (string.eq (tc-name-slashes-to-dots clean-name) name)
                 (let
-                  [help : String
-                    (tc-unbound-help
-                      module-qualified
-                      module-id
-                      env
-                      name
-                      name-id)]
-                  (if (> (string.string-length help) 0)
-                    (tc-rich-error-with-help
-                      (ast-source-span
-                        (string.>int
-                          (tc-located-error-field message prefix-len line-end))
-                        (string.>int
-                          (tc-located-error-field message col-start col-end))
-                        (string.>int
-                          (tc-located-error-field
-                            message
-                            end-line-start
-                            end-line-end))
-                        (string.>int
-                          (tc-located-error-field
-                            message
-                            end-col-start
-                            end-col-end)))
-                      display-message
-                      help)
-                    message))
+                  [span : AstSourceSpan
+                    (ast-source-span
+                      (string.>int
+                        (tc-located-error-field message prefix-len line-end))
+                      (string.>int
+                        (tc-located-error-field message col-start col-end))
+                      (string.>int
+                        (tc-located-error-field
+                          message
+                          end-line-start
+                          end-line-end))
+                      (string.>int
+                        (tc-located-error-field
+                          message
+                          end-col-start
+                          end-col-end)))]
+                  (match (tc-unbound-suggestion
+                    module-qualified
+                    module-id
+                    env
+                    name
+                    name-id)
+                    [(TcUnboundSuggestion.Help help)
+                      (tc-rich-error-with-help span display-message help)]
+                    [(TcUnboundSuggestion.Replace help replacement)
+                      (tc-rich-error-with-machine-fix
+                        span
+                        (ast-source-span
+                          (ast-source-span-start-line span)
+                          (ast-source-span-start-col span)
+                          (ast-source-span-start-line span)
+                          (+
+                            (ast-source-span-start-col span)
+                            (string.string-length name)))
+                        display-message
+                        help
+                        replacement)]
+                    [(TcUnboundSuggestion.No) message]))
                 message))]
           [(TcUnboundSuggestionSnapshot.No) message])
         message))

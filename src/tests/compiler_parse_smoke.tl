@@ -194,6 +194,175 @@
       "(define (main) : i64 (comptime-decls (define value : i64 1)))"
       (parse-ast-removed-declaration-message))))
 
+(define (compiler-diagnostic-test-source-position-index
+  [source : String]
+  [target-line : i64]
+  [target-col : i64]) : i64
+  (let
+    [idx : i64 0]
+    [source-len : i64 (string.string-length source)]
+    [line : i64 1]
+    [col : i64 1]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< idx source-len))
+        (if (and (= line target-line) (= col target-col))
+          (set! found idx)
+          (begin
+            (if (= (string.string-ref source idx) '\n')
+              (begin
+                (set! line (+ line 1))
+                (set! col 1))
+              (set! col (+ col 1)))
+            (set! idx (+ idx 1)))))
+      (if (and (< found 0) (= line target-line) (= col target-col))
+        source-len
+        found))))
+
+(define (compiler-diagnostic-test-apply-edit
+  [source : String]
+  [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticMaybeString
+  (let
+    [span : CompilerDiagnosticSpan (compiler-diagnostic-text-edit-span edit)]
+    [start : i64
+      (compiler-diagnostic-test-source-position-index
+        source
+        (compiler-diagnostic-span-start-line span)
+        (compiler-diagnostic-span-start-col span))]
+    [end : i64
+      (compiler-diagnostic-test-source-position-index
+        source
+        (compiler-diagnostic-span-end-line span)
+        (compiler-diagnostic-span-end-col span))]
+    [source-len : i64 (string.string-length source)]
+    (if (or (< start 0) (< end start))
+      CompilerDiagnosticNoString
+      (CompilerDiagnosticSomeString
+        (string.concat3
+          (string.substring source 0 start)
+          (compiler-diagnostic-text-edit-replacement edit)
+          (string.substring source end (- source-len end)))))))
+
+(define (compiler-diagnostic-fix-model-ok?) : bool
+  (let
+    [plain : CompilerDiagnostic
+      (compiler-diagnostic-simple "plain.tl" 1 1 "plain")]
+    [fix : CompilerDiagnosticFix
+      (compiler-diagnostic-fix-new
+        "Apply both edits"
+        CompilerDiagnosticMachineApplicable
+        (CompilerDiagnosticTextEditCons
+          (compiler-diagnostic-text-edit-new
+            (CompilerDiagnosticSpan "" 1 2 1 4)
+            "first")
+          (box
+            (CompilerDiagnosticTextEditCons
+              (compiler-diagnostic-text-edit-new
+                (CompilerDiagnosticSpan "other.tl" 2 3 2 5)
+                "λ")
+              (box CompilerDiagnosticTextEditNil)))))]
+    [diag : CompilerDiagnostic (compiler-diagnostic-with-fix plain fix)]
+    [copied : CompilerDiagnostic (compiler-diagnostic-copy diag)]
+    [moved : CompilerDiagnostic
+      (compiler-diagnostic-with-primary-span
+        (compiler-diagnostic-with-path copied "new.tl")
+        (CompilerDiagnosticSpan "new.tl" 4 5 4 6))]
+    (and
+      (match (compiler-diagnostic-fixes plain)
+        [CompilerDiagnosticFixNil true]
+        [(CompilerDiagnosticFixCons _ _) false])
+      (match (compiler-diagnostic-fixes moved)
+        [(CompilerDiagnosticFixCons copied-fix fix-rest)
+          (and
+            (string.eq
+              (compiler-diagnostic-fix-title copied-fix)
+              "Apply both edits")
+            (match (compiler-diagnostic-fix-applicability copied-fix)
+              [CompilerDiagnosticMachineApplicable true]
+              [_ false])
+            (match (compiler-diagnostic-fix-edits copied-fix)
+              [(CompilerDiagnosticTextEditCons first first-rest)
+                (match (box-get first-rest)
+                  [(CompilerDiagnosticTextEditCons second second-rest)
+                    (let
+                      [first-span : CompilerDiagnosticSpan
+                        (compiler-diagnostic-text-edit-span first)]
+                      [second-span : CompilerDiagnosticSpan
+                        (compiler-diagnostic-text-edit-span second)]
+                      (and
+                        (string.eq
+                          (compiler-diagnostic-span-path first-span)
+                          "new.tl")
+                        (string.eq
+                          (compiler-diagnostic-text-edit-replacement first)
+                          "first")
+                        (string.eq
+                          (compiler-diagnostic-span-path second-span)
+                          "other.tl")
+                        (= (compiler-diagnostic-span-start-line second-span) 2)
+                        (= (compiler-diagnostic-span-start-col second-span) 3)
+                        (string.eq
+                          (compiler-diagnostic-text-edit-replacement second)
+                          "λ")
+                        (match (box-get second-rest)
+                          [CompilerDiagnosticTextEditNil true]
+                          [(CompilerDiagnosticTextEditCons _ _) false])))]
+                  [CompilerDiagnosticTextEditNil false])]
+              [CompilerDiagnosticTextEditNil false])
+            (match (box-get fix-rest)
+              [CompilerDiagnosticFixNil true]
+              [(CompilerDiagnosticFixCons _ _) false]))]
+        [CompilerDiagnosticFixNil false]))))
+
+(define (compiler-diagnostic-invalid-fixes-rejected-ok?) : bool
+  (let
+    [base : CompilerDiagnostic
+      (compiler-diagnostic-simple "invalid.tl" 1 1 "invalid")]
+    [unknown : CompilerDiagnostic
+      (compiler-diagnostic-with-fix
+        base
+        (compiler-diagnostic-fix-new
+          "Unknown span"
+          CompilerDiagnosticMachineApplicable
+          (compiler-diagnostic-text-edit-single
+            (compiler-diagnostic-text-edit-new
+              (CompilerDiagnosticSpan "" 0 0 0 0)
+              "x"))))]
+    [overlap : CompilerDiagnostic
+      (compiler-diagnostic-with-fix
+        base
+        (compiler-diagnostic-fix-new
+          "Overlapping edits"
+          CompilerDiagnosticMachineApplicable
+          (CompilerDiagnosticTextEditCons
+            (compiler-diagnostic-text-edit-new
+              (CompilerDiagnosticSpan "" 1 2 1 6)
+              "left")
+            (box
+              (compiler-diagnostic-text-edit-single
+                (compiler-diagnostic-text-edit-new
+                  (CompilerDiagnosticSpan "" 1 4 1 7)
+                  "right"))))))]
+    (and
+      (match (compiler-diagnostic-fixes unknown)
+        [CompilerDiagnosticFixNil true]
+        [(CompilerDiagnosticFixCons _ _) false])
+      (match (compiler-diagnostic-fixes overlap)
+        [CompilerDiagnosticFixNil true]
+        [(CompilerDiagnosticFixCons _ _) false]))))
+
+(define (compiler-diagnostic-unicode-byte-edit-ok?) : bool
+  (let
+    [source : String "αx\n"]
+    [edit : CompilerDiagnosticTextEdit
+      (compiler-diagnostic-text-edit-new
+        ;; alpha occupies UTF-8 byte columns 1-2, so x is byte column 3.
+        (CompilerDiagnosticSpan "unicode.tl" 1 3 1 4)
+        "β")]
+    (match (compiler-diagnostic-test-apply-edit source edit)
+      [(CompilerDiagnosticSomeString updated) (string.eq updated "αβ\n")]
+      [CompilerDiagnosticNoString false])))
+
 (define (main) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -202,6 +371,9 @@
       (compiler-parse-test-decl-origin-records-ok?)
       (compiler-parse-member-origin-boundary-ok?)
       (compiler-parse-name-id-provenance-ok?)
-      (compiler-parse-removed-declaration-errors-ok?))
+      (compiler-parse-removed-declaration-errors-ok?)
+      (compiler-diagnostic-fix-model-ok?)
+      (compiler-diagnostic-invalid-fixes-rejected-ok?)
+      (compiler-diagnostic-unicode-byte-edit-ok?))
       (compiler-parse-smoke)
       1)))

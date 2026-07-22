@@ -2075,11 +2075,13 @@
             [(ResultCompilerSurfaceHydration.Err _)
               CompilerDriverPreludeSurface.Missing]
             [(ResultCompilerSurfaceHydration.Ok hydration)
-              (CompilerDriverPreludeSurface.Ok
-                (struct-get hydration decls)
-                (struct-get hydration paths)
-                (struct-get hydration modules)
-                (struct-get hydration seen))]))])))
+              (let
+                [ast : SurfaceAstHydration (struct-get hydration ast)]
+                (CompilerDriverPreludeSurface.Ok
+                  (struct-get ast decls)
+                  (struct-get ast paths)
+                  (struct-get ast modules)
+                  (struct-get ast seen)))]))])))
 
 (cfg
   embedded-stdlib-tlci

@@ -55773,6 +55773,49 @@
 (define macro-expand-scratch-arena : i64
   0)
 
+;; Whole-program declaration/path views are replaced at every forced splice.
+;; They must outlive the context/env rebuild that consumes them, but no later
+;; splice needs a view older than its immediate predecessor. Keep those large
+;; backing arrays in two independently owned generations: the next splice can
+;; read the current view while it builds its replacement, then the generation
+;; retired by the preceding splice can be released. This bounds view retention
+;; to two splice generations instead of the full expansion walk.
+(define macro-splice-view-arena : i64
+  0)
+(define macro-splice-view-retired-arena : i64
+  0)
+
+(define (macro-splice-view-arena-begin!) : unit
+  (if macro-expand-scratch-enabled
+    (let
+      [previous : i64 macro-splice-view-arena]
+      [retired : i64 macro-splice-view-retired-arena]
+      [next : i64 (arena.tl_arena_make)]
+      (begin
+        (set! macro-splice-view-arena next)
+        (set! macro-splice-view-retired-arena previous)
+        (if (= retired 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy retired)))))
+    unit))
+
+(define (macro-splice-view-arenas-release!) : unit
+  (let
+    [current : i64 macro-splice-view-arena]
+    [retired : i64 macro-splice-view-retired-arena]
+    (begin
+      (set! macro-splice-view-arena 0)
+      (set! macro-splice-view-retired-arena 0)
+      (if (= current 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy current)))
+      (if (or (= retired 0) (= retired current))
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired))))))
+
 ;; The checked-lowering pipeline compacts its parsed program before macro
 ;; expansion.  Keep an explicit proof of whether expansion changed the program
 ;; so lowering can retain that first compact generation when the walk only
@@ -55839,6 +55882,16 @@
         "typecheck.macro.peak"
         "macro-scratch"
         macro-expand-scratch-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "macro-splice-view-current"
+        macro-splice-view-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "macro-splice-view-retired"
+        macro-splice-view-retired-arena)
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
@@ -55937,7 +55990,9 @@
 
 (define (macro-expand-scratch-release!) : unit
   (if (= macro-expand-scratch-arena 0)
-    (set! macro-expand-scratch-enabled false)
+    (begin
+      (set! macro-expand-scratch-enabled false)
+      (macro-splice-view-arenas-release!))
     (let
       [scratch : i64 macro-expand-scratch-arena]
       [current : i64 (arena.tl_arena_current)]
@@ -55951,6 +56006,7 @@
         (set! macro-expand-scratch-enabled false)
         (set! macro-expand-scratch-arena 0)
         (macro-expand-scratch-clear-owned-caches!)
+        (macro-splice-view-arenas-release!)
         ;; Macro timing entries were emitted before this boundary and live in
         ;; scratch. Clear the global before destroying their backing storage so
         ;; a later lowering-time declaration macro starts from a valid list.
@@ -56959,6 +57015,30 @@
           (+ middle-count suffix-count)
           true)))))
 
+(define (macro-splice-path-tail-copy [suffix : AstDeclPathList]) : AstDeclPathList
+  (let
+    [count : i64 (ast-decl-path-list-len (& suffix))]
+    [capacity : i64
+      (if (< count 1)
+        1
+        count)]
+    [slots : (Array String) (array.make-array String capacity)]
+    [owner-ids : (Array i64) (array.make-array i64 capacity)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! slots index (ast-decl-path-list-get (& suffix) index ""))
+          (array-set!
+            owner-ids
+            index
+            (ast-decl-path-list-owner-id
+              (& suffix)
+              index
+              cbi.compiler-builtin-id-fix-empty))
+          (set! index (+ index 1))))
+      (AstDeclPathList slots owner-ids 0 count true))))
+
 (define (macro-scratch-splice-decl-view-build
   [prefix-rev : AstDeclList]
   [middle : AstDeclList]
@@ -56966,16 +57046,21 @@
   (if macro-expand-scratch-enabled
     (let
       [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (macro-expand-scratch-arena-get)]
+      [storage : i64
+        (if (= macro-splice-view-arena 0)
+          (macro-expand-scratch-arena-get)
+          macro-splice-view-arena)]
       (begin
         (unsafe
-          (arena.tl_arena_set scratch))
+          (arena.tl_arena_set storage))
         (let
           [out : MacroSpliceDeclView
             (macro-splice-decl-view-build prefix-rev middle suffix)]
-          [scratch-head : i64 (arena.tl_arena_current)]
+          [storage-head : i64 (arena.tl_arena_current)]
           (begin
-            (set! macro-expand-scratch-arena scratch-head)
+            (if (= macro-splice-view-arena 0)
+              (set! macro-expand-scratch-arena storage-head)
+              (set! macro-splice-view-arena storage-head))
             (unsafe
               (arena.tl_arena_set enclosing))
             out))))
@@ -56988,20 +57073,65 @@
   (if macro-expand-scratch-enabled
     (let
       [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (macro-expand-scratch-arena-get)]
+      [storage : i64
+        (if (= macro-splice-view-arena 0)
+          (macro-expand-scratch-arena-get)
+          macro-splice-view-arena)]
       (begin
         (unsafe
-          (arena.tl_arena_set scratch))
+          (arena.tl_arena_set storage))
         (let
           [out : MacroSplicePathView
             (macro-splice-path-view-build prefix-rev middle suffix)]
-          [scratch-head : i64 (arena.tl_arena_current)]
+          [storage-head : i64 (arena.tl_arena_current)]
           (begin
-            (set! macro-expand-scratch-arena scratch-head)
+            (if (= macro-splice-view-arena 0)
+              (set! macro-expand-scratch-arena storage-head)
+              (set! macro-splice-view-arena storage-head))
             (unsafe
               (arena.tl_arena_set enclosing))
             out))))
     (macro-splice-path-view-build prefix-rev middle suffix)))
+
+(define (macro-scratch-splice-path-tail-copy [suffix : AstDeclPathList]) : AstDeclPathList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [storage : i64
+        (if (= macro-splice-view-arena 0)
+          (macro-expand-scratch-arena-get)
+          macro-splice-view-arena)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set storage))
+        (let
+          [out : AstDeclPathList (macro-splice-path-tail-copy suffix)]
+          [storage-head : i64 (arena.tl_arena_current)]
+          (begin
+            (if (= macro-splice-view-arena 0)
+              (set! macro-expand-scratch-arena storage-head)
+              (set! macro-splice-view-arena storage-head))
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-splice-path-tail-copy suffix)))
+
+(define (macro-splice-view-program [decls : AstDeclList]) : AstProgram
+  (if (and macro-expand-scratch-enabled (not (= macro-splice-view-arena 0)))
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set macro-splice-view-arena))
+        (let
+          [program : AstProgram (ast-program decls)]
+          [storage-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-splice-view-arena storage-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            program))))
+    (ast-program decls)))
 
 (define (macro-scratch-decl-list-filter-path
   [decls : AstDeclList]
@@ -69565,7 +69695,7 @@
   [env-plan : MacroSpliceEnvPlan]) : ResultMacroSpliceRebuild
   (let
     [pools : AstNodePoolContext (tc-context-pools cur-ctx)]
-    [next-program : AstProgram (ast-program next-decls)]
+    [next-program : AstProgram (macro-splice-view-program next-decls)]
     (begin
       (macro-live-symbols-invalidate!)
       (tc-clone-able-cache-reset!)
@@ -69773,6 +69903,8 @@
                                           compile-profile
                                           (compiler-tc-walk-sp-probe-start! 0)
                                           unit)]
+                                      [_splice-view-generation : unit
+                                        (macro-splice-view-arena-begin!)]
                                       ;; Share one scratch-arena backing array
                                       ;; across the marker splice's whole-program
                                       ;; declaration view instead of copying the
@@ -69784,6 +69916,25 @@
                                           rest)]
                                       [next-decls : AstDeclList
                                         (struct-get marker-decl-view view)]
+                                      ;; Marker-only splices do not walk the
+                                      ;; generated marker again, but the walk
+                                      ;; tail still has to move into this view
+                                      ;; generation. Otherwise a later splice
+                                      ;; could reclaim the older backing array
+                                      ;; that `rest` still references.
+                                      [marker-rest : AstDeclList
+                                        (AstDeclList
+                                          (struct-get next-decls slots)
+                                          (+
+                                            (struct-get next-decls offset)
+                                            (+
+                                              (ast-decl-list-len (& out-rev))
+                                              (ast-decl-list-len (& expanded))))
+                                          (ast-decl-list-len (& rest))
+                                          false)]
+                                      [marker-rest-paths : AstDeclPathList
+                                        (macro-scratch-splice-path-tail-copy
+                                          rest-paths)]
                                       [next-decls-for-ctx : AstDeclList
                                         (AstDeclList
                                           (struct-get next-decls slots)
@@ -69793,7 +69944,8 @@
                                       [next-ctx : TcContext
                                         (tc-context-with-program
                                           cur-ctx
-                                          (ast-program next-decls-for-ctx))]
+                                          (macro-splice-view-program
+                                            next-decls-for-ctx))]
                                       [refresh-decls : AstDeclList
                                         (macro-scratch-decl-list-filter-path
                                           rest
@@ -69862,8 +70014,10 @@
                                                     (macro-decl-path-list-reverse-into
                                                       expanded-paths
                                                       out-paths-rev))
-                                                  (set! cur-decls rest)
-                                                  (set! cur-paths rest-paths))
+                                                  (set! cur-decls marker-rest)
+                                                  (set!
+                                                    cur-paths
+                                                    marker-rest-paths))
                                                 (begin
                                                   (cfg
                                                     compile-profile
@@ -69916,10 +70070,12 @@
                                                           (macro-decl-path-list-reverse-into
                                                             expanded-paths
                                                             out-paths-rev))
-                                                        (set! cur-decls rest)
+                                                        (set!
+                                                          cur-decls
+                                                          marker-rest)
                                                         (set!
                                                           cur-paths
-                                                          rest-paths))]
+                                                          marker-rest-paths))]
                                                     [(ResultTcEnv.Err
                                                         refresh-message)
                                                       (begin
@@ -69958,6 +70114,8 @@
                                       ;; instead of append + reverse + append
                                       ;; copies (~5MB of scratch per splice on a
                                       ;; self-compile).
+                                      [_splice-view-generation : unit
+                                        (macro-splice-view-arena-begin!)]
                                       [splice-decl-view : MacroSpliceDeclView
                                         (macro-scratch-splice-decl-view-build
                                           out-rev
@@ -70196,22 +70354,24 @@
                                 (let
                                   [_install-after-load : unit
                                     (tc-context-install-pools! cur-ctx)]
-                                  [materialized-tail : AstDeclList
-                                    (macro-scratch-decl-list-prefix-rev-current-suffix
-                                      (macro-scratch-decl-list-reverse
-                                        materialized-decls)
+                                  [_splice-view-generation : unit
+                                    (macro-splice-view-arena-begin!)]
+                                  [splice-decl-view : MacroSpliceDeclView
+                                    (macro-scratch-splice-decl-view-build
+                                      out-rev
+                                      materialized-decls
                                       rest)]
+                                  [splice-path-view : MacroSplicePathView
+                                    (macro-scratch-splice-path-view-build
+                                      out-paths-rev
+                                      materialized-paths
+                                      rest-paths)]
+                                  [materialized-tail : AstDeclList
+                                    (struct-get splice-decl-view tail)]
                                   [next-decls : AstDeclList
-                                    (macro-scratch-decl-list-append
-                                      (macro-scratch-decl-list-reverse out-rev)
-                                      materialized-tail)]
+                                    (struct-get splice-decl-view view)]
                                   [next-paths : AstDeclPathList
-                                    (macro-scratch-decl-path-list-append
-                                      (macro-scratch-decl-path-list-reverse
-                                        out-paths-rev)
-                                      (macro-scratch-decl-path-list-append
-                                        materialized-paths
-                                        rest-paths))]
+                                    (struct-get splice-path-view view)]
                                   (begin
                                     (set!
                                       cur-materialize-seen
@@ -70263,9 +70423,7 @@
                                           (set! cur-decls materialized-tail)
                                           (set!
                                             cur-paths
-                                            (macro-scratch-decl-path-list-append
-                                              materialized-paths
-                                              rest-paths)))]
+                                            (struct-get splice-path-view tail)))]
                                       [(ResultMacroSpliceRebuild.Err diag)
                                         (begin
                                           (set!

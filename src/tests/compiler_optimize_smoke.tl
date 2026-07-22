@@ -2601,6 +2601,26 @@
     "cyclic bounds+switch callee remains behind the acyclic admission gate"))
 
 (test
+  inline-vm-run-bounds-loop-exception
+  (test.assert-true
+    (compiler-optimize-inline-vm-run-bounds-loop-ok?)
+    "only exact vm-run bounds loop inlines at opt2; qs-partition and opt1 stay refused"))
+
+(test
+  inline-vm-run-bounds-loop-span-positive
+  (test.assert-i64-eq
+    (opt-inline-switch-span-case-code "bench.tl::vm-run" true)
+    15
+    "span-aware inliner admits exact vm-run and preserves cloned spans"))
+
+(test
+  inline-vm-run-bounds-loop-span-negative
+  (test.assert-i64-eq
+    (opt-inline-switch-span-case-code "bench.tl::qs-partition" false)
+    15
+    "span-aware inliner refuses the similarly shaped qs-partition loop"))
+
+(test
   inline-multiblock-switch-cost-refusal
   (test.assert-true
     (compiler-optimize-inline-multiblock-switch-cost-refusal-ok?)

@@ -2433,7 +2433,19 @@
           id)])))
 
 (define (ast-node-pool-context-expr-get [pools : AstNodePoolContext] [id : i64]) : AstExpr
-  (ast-expr-node-pool-state-get (array-ref (struct-get pools expr-pool) 0) id))
+  (let
+    [pool-cell : (Array AstExprNodePoolState) (struct-get pools expr-pool)]
+    [pool : AstExprNodePoolState
+      (unsafe
+        (ptr-read (array-data pool-cell)))]
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
+            (shr id 16))))]
+    (unsafe
+      (ptr-read (int->ptr (+ biased-base (* id 40)) : (Ptr AstExpr))))))
 
 (define (ast-node-pool-context-expr-set!
   [pools : AstNodePoolContext]

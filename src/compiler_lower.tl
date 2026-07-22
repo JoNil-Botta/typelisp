@@ -765,6 +765,8 @@
           (unsafe
             (arena.tl_arena_destroy macro-frontend-arena)))
         (set! lower-checked-source-release-arena 0)
+        (set! lower-checked-source-release-expr-storage-arena 0)
+        (set! lower-checked-source-release-type-storage-arena 0)
         (set! lower-checked-frontend-release-arena 0)
         (set! lower-checked-dest-pools-deferred false)
         (set! lower-checked-dest-pools-rolled-over false)

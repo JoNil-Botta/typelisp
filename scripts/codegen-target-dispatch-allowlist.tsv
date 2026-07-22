@@ -15,14 +15,14 @@ src/compiler_lower.tl	lower-mode-linux-c-abi?	abi	CompilerLowerMode[.]Linux(Scal
 src/compiler_lower.tl	lower-mode-windows-c-abi?	abi	CompilerLowerMode[.]Windows(Scalar|Avx2|Avx512)|lower-mode-windows-c-abi[?]	4	Windows-target lower modes select Win64 C ABI lowering.
 src/compiler_lower.tl	lower-mode-c-abi?	abi	lower-mode-(linux|windows)-c-abi[?]	2	Combined C ABI helper intentionally delegates to target-specific ABI predicates.
 src/compiler_lower.tl	lower-simd-lanes-for-elem	backend-mode	CompilerLowerMode[.](Linux|Windows)(Avx2|Avx512)	4	Target-aware SIMD modes share lane counts with the target-neutral ISA modes.
-src/compiler_lower.tl	compiler-lower-c-abi-linux-payload-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI payload enum aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-linux-tag-only-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI enum aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-windows-byref-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 by-reference aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-windows-enum-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 enum aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 nested scalar aggregate shape.
-src/compiler_lower.tl	compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 small float aggregate shape.
-src/compiler_lower.tl	compiler-lower-extern-value-fnptr-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test uses Linux C ABI mode for extern function pointer shape.
-src/compiler_lower.tl	compiler-lower-windows-error-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer diagnostic helper exercises Win64 C ABI failures.
+src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-payload-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI payload enum aggregate shape.
+src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-tag-only-enum-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI enum aggregate shape.
+src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-byref-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 by-reference aggregate shape.
+src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-enum-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 enum aggregate shape.
+src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 nested scalar aggregate shape.
+src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 small float aggregate shape.
+src/compiler_lower_tests.tl	compiler-lower-extern-value-fnptr-shape-ok?	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test uses Linux C ABI mode for extern function pointer shape.
+src/compiler_lower_tests.tl	compiler-lower-windows-error-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer diagnostic helper exercises Win64 C ABI failures.
 src/compiler_backend.tl	enum:CompilerBackendTarget	backend-mode	CompilerBackendTarget[.](Linux|Windows)	2	Backend target enum names the supported native codegen targets.
 src/compiler_backend.tl	compiler-backend-target-abi	abi	CompilerBackendTarget[.](Linux|Windows)	2	Central backend-target to shared ABI mapping feeds regalloc, call lowering, and ABI table helpers.
 src/compiler_backend.tl	compiler-backend-emit-stack-sub	abi	CompilerBackendTarget[.](Linux|Windows)	2	Windows stack probing and Linux direct stack adjustment intentionally differ.

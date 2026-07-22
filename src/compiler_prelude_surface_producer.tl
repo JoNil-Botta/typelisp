@@ -92,9 +92,9 @@
   [roots : surface_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-file-with-paths-and-roots-cfg-with-pools
+  (match (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
     load-state
-    "stdlib/runtime.tl"
+    compiler-load-runtime-prelude-path
     (sym_i64_env.sym-i64-empty)
     roots
     cfgs

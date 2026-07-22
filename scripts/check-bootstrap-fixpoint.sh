@@ -295,6 +295,45 @@ EOF
     )
     assert_contains "$WORKDIR/stage2-check-embedded-stdlib.stdout" "Type checking passed!"
 
+    LOCAL_PRELUDE_DIR="$WORKDIR/stage2-local-prelude-shadow"
+    mkdir -p "$LOCAL_PRELUDE_DIR/stdlib"
+    cat > "$LOCAL_PRELUDE_DIR/stdlib/runtime.tl" <<'EOF'
+)
+EOF
+    cat > "$LOCAL_PRELUDE_DIR/stdlib/core_macros.tl" <<'EOF'
+)
+EOF
+    cat > "$LOCAL_PRELUDE_DIR/main.tl" <<'EOF'
+(define (main) : i64 42)
+EOF
+    (
+        cd "$LOCAL_PRELUDE_DIR"
+        unset TYPELISP_STDLIB_ROOT
+        run_stage1_cli_capture \
+            stage2-check-embedded-prelude-over-local \
+            "$STAGE2_BIN" check main.tl
+        run_stage1_cli_capture \
+            stage2-compile-embedded-prelude-over-local \
+            "$STAGE2_BIN" compile main.tl
+    )
+    assert_contains \
+        "$WORKDIR/stage2-check-embedded-prelude-over-local.stdout" \
+        "Type checking passed!"
+    assert_contains \
+        "$WORKDIR/stage2-compile-embedded-prelude-over-local.stdout" \
+        "Wrote main.s"
+    (
+        cd "$LOCAL_PRELUDE_DIR"
+        TYPELISP_STDLIB_ROOT="$LOCAL_PRELUDE_DIR/stdlib"
+        export TYPELISP_STDLIB_ROOT
+        run_stage1_cli_expect_failure \
+            stage2-compile-env-prelude-root \
+            "$STAGE2_BIN" compile main.tl
+    )
+    assert_contains \
+        "$WORKDIR/stage2-compile-env-prelude-root.stderr" \
+        "stdlib/runtime.tl"
+
     ENV_ROOT="$WORKDIR/stage2-env-stdlib"
     mkdir -p "$ENV_ROOT"
     cat > "$ENV_ROOT/string.tl" <<'EOF'

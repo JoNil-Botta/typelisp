@@ -67976,15 +67976,19 @@
         "typecheck: module-scope macro call does not name a macro: "
         name)]
     (match (tc-source-dotted-alias-target-id decls module-id name-id)
-      [(TcMaybeNameId.Some _)
-        (str_cat.str-cat
-          "typecheck: imported macro `"
-          name
-          "` requires provider qualification; use `"
-          name
-          "."
-          name
-          "`")]
+      [(TcMaybeNameId.Some target-module-id)
+        (let
+          [macro-name : String
+            (parse-ast-dotted-import-default-alias
+              (intern-str target-module-id))]
+          (str_cat.str-cat
+            "typecheck: imported macro `"
+            macro-name
+            "` requires provider qualification; use `"
+            name
+            "."
+            macro-name
+            "`"))]
       [(TcMaybeNameId.No) default-message])))
 
 (define (macro-call-not-macro-diag

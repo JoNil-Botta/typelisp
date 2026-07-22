@@ -359,6 +359,23 @@ check_param_pin_interval() {
     assert_not_matches "$_div" '\(%rsp\)|\(%rbp\)' param-pin-div-arm
 }
 
+check_frame_slot_repacking() {
+    _linux_asm=$(compile_gate frame_slot_repacking_linux tests/integration/early_return.tl linux-x86_64)
+    _windows_asm=$(compile_gate frame_slot_repacking_windows tests/integration/early_return.tl windows-x86_64)
+    _linux_body=$(function_body "$_linux_asm" _tl_early_return_choose)
+    _windows_body=$(function_body "$_windows_asm" _tl_early_return_choose)
+    assert_regex_count_eq "$_linux_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 frame-slot-repacking-linux
+    assert_regex_count_eq "$_windows_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 frame-slot-repacking-windows
+    _linux_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_linux_body")
+    _windows_frame=$(sed -n 's/^[[:space:]]*subq \$\([0-9][0-9]*\), %rsp$/\1/p' "$_windows_body")
+    if [ "$_linux_frame" -gt 24 ] || [ "$_windows_frame" -gt 24 ]; then
+        fail "frame-slot-repacking expected frames <= 24 bytes, got linux=$_linux_frame windows=$_windows_frame"
+    fi
+    if [ "$_linux_frame" -ne "$_windows_frame" ]; then
+        fail "frame-slot-repacking target layout drift: linux=$_linux_frame windows=$_windows_frame"
+    fi
+}
+
 check_gep_value_direct() {
     _asm=$(compile_gate gep_value_direct tests/integration/gep_value_direct.tl)
     _label=$(grep -E '^_tl_.*stdlib_string_append:$' "$_asm" | sed -n '1s/:$//p')
@@ -405,6 +422,7 @@ check_param_csr_home
 check_handle_arg_csr
 check_shift_pin
 check_param_pin_interval
+check_frame_slot_repacking
 check_gep_value_direct
 check_stdlib_math_sqrt
 

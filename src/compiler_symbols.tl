@@ -30,7 +30,8 @@
     CompilerSymbolMap
     CompilerSymbolMap
     (Array AstDecl)
-    (Array i64)))
+    (Array i64)
+    i64))
 
 (defenum ResultCompilerSymbols
   (Ok CompilerSymbols)
@@ -457,13 +458,19 @@
             (set! index (+ index 1)))))
       count)))
 
-(define (compiler-symbols-empty-with-decls [decl-count : i64]) : CompilerSymbols
+(define (compiler-symbols-empty-with-decls-and-capacity
+  [decl-count : i64]
+  [capacity : i64]) : CompilerSymbols
   (CompilerSymbols
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
-    (make-array AstDecl decl-count)
-    (make-array i64 decl-count)))
+    (make-array AstDecl capacity)
+    (make-array i64 capacity)
+    decl-count))
+
+(define (compiler-symbols-empty-with-decls [decl-count : i64]) : CompilerSymbols
+  (compiler-symbols-empty-with-decls-and-capacity decl-count decl-count))
 
 (define (compiler-symbols-empty) : CompilerSymbols
   (compiler-symbols-empty-with-decls 0))
@@ -492,7 +499,7 @@
   [symbols : CompilerSymbols]
   [name-id : i64]) : option_i64.Option
   (match symbols
-    [(CompilerSymbols values _ _ _ _)
+    [(CompilerSymbols values _ _ _ _ _)
       (match (compiler-symbol-map-lookup-id
         (& values)
         (compiler-symbol-name-id-key name-id))
@@ -507,7 +514,7 @@
   [symbols : CompilerSymbols]
   [name-id : i64]) : option_i64.Option
   (match symbols
-    [(CompilerSymbols _ types _ _ _)
+    [(CompilerSymbols _ types _ _ _ _)
       (compiler-symbol-map-lookup-id
         (& types)
         (compiler-symbol-name-id-key name-id))]))
@@ -516,7 +523,7 @@
   [symbols : CompilerSymbols]
   [name-id : i64]) : option_i64.Option
   (match symbols
-    [(CompilerSymbols _ _ macros _ _)
+    [(CompilerSymbols _ _ macros _ _ _)
       (compiler-symbol-map-lookup-id
         (& macros)
         (compiler-symbol-name-id-key name-id))]))
@@ -552,12 +559,68 @@
 
 (define (compiler-symbols-decls [symbols : CompilerSymbols]) : (Array AstDecl)
   (match symbols
-    [(CompilerSymbols _ _ _ decls _) decls]))
+    [(CompilerSymbols _ _ _ decls _ _) decls]))
 
 (define (compiler-symbols-owner-module-ids [symbols : CompilerSymbols]) : (Array
     i64)
   (match symbols
-    [(CompilerSymbols _ _ _ _ owner-module-ids) owner-module-ids]))
+    [(CompilerSymbols _ _ _ _ owner-module-ids _) owner-module-ids]))
+
+(define (compiler-symbols-decl-count [symbols : CompilerSymbols]) : i64
+  (match symbols
+    [(CompilerSymbols _ _ _ _ _ decl-count) decl-count]))
+
+(define (compiler-symbols-growth-capacity [capacity : i64] [required : i64]) : i64
+  (if (>= capacity required)
+    capacity
+    (compiler-symbols-growth-capacity
+      (if (< capacity 8)
+        8
+        (* capacity 2))
+      required)))
+
+;; Symbol handles index the owned declaration arrays, not the flattened program
+;; view. That lets additive macro splices append fresh handles without shifting
+;; every existing map entry. Capacity grows geometrically, so the only
+;; whole-table copy is amortized across all splices in a compilation.
+(define (compiler-symbols-ensure-decl-capacity
+  [symbols : CompilerSymbols]
+  [required : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-module-ids decl-count)
+      (let
+        [capacity : i64 (array-length decls)]
+        (if (>= capacity required)
+          symbols
+          (let
+            [next-capacity : i64
+              (compiler-symbols-growth-capacity capacity required)]
+            [next-decls : (Array AstDecl) (make-array AstDecl next-capacity)]
+            [next-owner-module-ids : (Array i64) (make-array i64 next-capacity)]
+            [index : i64 0]
+            (begin
+              (while (< index decl-count)
+                (begin
+                  (array-set! next-decls index (array-ref decls index))
+                  (array-set!
+                    next-owner-module-ids
+                    index
+                    (array-ref owner-module-ids index))
+                  (set! index (+ index 1))))
+              (CompilerSymbols
+                values
+                types
+                macros
+                next-decls
+                next-owner-module-ids
+                decl-count)))))]))
+
+(define (compiler-symbols-with-decl-count
+  [symbols : CompilerSymbols]
+  [decl-count : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-module-ids _)
+      (CompilerSymbols values types macros decls owner-module-ids decl-count)]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
   (string.append "symbols: duplicate value declaration " name))
@@ -768,43 +831,43 @@
   [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (if (compiler-symbol-map-contains-id? (& values) key-id)
         symbols
         (begin
           (compiler-symbol-map-bind-id! (&mut values) key-id handle)
-          (CompilerSymbols values types macros decls owner-names)))]))
+          (CompilerSymbols values types macros decls owner-names decl-count)))]))
 
 (define (compiler-symbols-add-type-alias-key-id
   [symbols : CompilerSymbols]
   [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (if (compiler-symbol-map-contains-id? (& types) key-id)
         symbols
         (begin
           (compiler-symbol-map-bind-id! (&mut types) key-id handle)
-          (CompilerSymbols values types macros decls owner-names)))]))
+          (CompilerSymbols values types macros decls owner-names decl-count)))]))
 
 (define (compiler-symbols-add-macro-alias-key-id
   [symbols : CompilerSymbols]
   [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (if (compiler-symbol-map-contains-id? (& macros) key-id)
         symbols
         (begin
           (compiler-symbol-map-bind-id! (&mut macros) key-id handle)
-          (CompilerSymbols values types macros decls owner-names)))]))
+          (CompilerSymbols values types macros decls owner-names decl-count)))]))
 
 (define (compiler-symbols-remove-macro-alias-if-handle
   [symbols : CompilerSymbols]
   [name-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (match (compiler-symbol-map-lookup-id
         (& macros)
         (compiler-symbol-name-id-key name-id))
@@ -813,7 +876,7 @@
             (if (compiler-symbol-map-remove-id!
               (&mut macros)
               (compiler-symbol-name-id-key name-id))
-              (CompilerSymbols values types macros decls owner-names)
+              (CompilerSymbols values types macros decls owner-names decl-count)
               symbols)
             symbols)]
         [(option_i64.None) symbols])]))
@@ -836,7 +899,7 @@
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (if (compiler-symbol-map-contains-id? (& values) name-id)
         (ResultCompilerSymbols.Err
           (compiler-symbols-duplicate-value-message display-name))
@@ -846,7 +909,7 @@
           (begin
             (compiler-symbol-map-bind-id! (&mut values) name-id handle)
             (ResultCompilerSymbols.Ok
-              (CompilerSymbols values types macros decls owner-names)))))]))
+              (CompilerSymbols values types macros decls owner-names decl-count)))))]))
 
 (define (compiler-symbols-add-type-id
   [symbols : CompilerSymbols]
@@ -854,14 +917,14 @@
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (if (compiler-symbol-map-contains-id? (& types) name-id)
         (ResultCompilerSymbols.Err
           (compiler-symbols-duplicate-type-message display-name))
         (begin
           (compiler-symbol-map-bind-id! (&mut types) name-id handle)
           (ResultCompilerSymbols.Ok
-            (CompilerSymbols values types macros decls owner-names))))]))
+            (CompilerSymbols values types macros decls owner-names decl-count))))]))
 
 (define (compiler-symbols-add-macro-id
   [symbols : CompilerSymbols]
@@ -869,7 +932,7 @@
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (if (compiler-symbol-map-contains-id? (& macros) name-id)
         (ResultCompilerSymbols.Err
           (compiler-symbols-duplicate-macro-message display-name))
@@ -879,7 +942,7 @@
           (begin
             (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
             (ResultCompilerSymbols.Ok
-              (CompilerSymbols values types macros decls owner-names)))))]))
+              (CompilerSymbols values types macros decls owner-names decl-count)))))]))
 
 (define (compiler-symbols-handle-from-nonroot-owner?
   [symbols : CompilerSymbols]
@@ -897,7 +960,7 @@
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (match (compiler-symbol-map-lookup-id (& macros) name-id)
         [(option_i64.Some existing)
           (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
@@ -907,7 +970,13 @@
               (begin
                 (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
                 (ResultCompilerSymbols.Ok
-                  (CompilerSymbols values types macros decls owner-names))))
+                  (CompilerSymbols
+                    values
+                    types
+                    macros
+                    decls
+                    owner-names
+                    decl-count))))
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-message display-name)))]
         [(option_i64.None)
@@ -917,7 +986,13 @@
             (begin
               (compiler-symbol-map-bind-id! (&mut macros) name-id handle)
               (ResultCompilerSymbols.Ok
-                (CompilerSymbols values types macros decls owner-names))))])]))
+                (CompilerSymbols
+                  values
+                  types
+                  macros
+                  decls
+                  owner-names
+                  decl-count))))])]))
 
 (define (compiler-symbols-add-root-value-id
   [symbols : CompilerSymbols]
@@ -925,7 +1000,7 @@
   [display-name : String]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (match (compiler-symbol-map-lookup-id (& values) name-id)
         [(option_i64.Some existing)
           (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
@@ -935,7 +1010,13 @@
               (begin
                 (compiler-symbol-map-bind-id! (&mut values) name-id handle)
                 (ResultCompilerSymbols.Ok
-                  (CompilerSymbols values types macros decls owner-names))))
+                  (CompilerSymbols
+                    values
+                    types
+                    macros
+                    decls
+                    owner-names
+                    decl-count))))
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-value-message display-name)))]
         [(option_i64.None)
@@ -945,7 +1026,13 @@
             (begin
               (compiler-symbol-map-bind-id! (&mut values) name-id handle)
               (ResultCompilerSymbols.Ok
-                (CompilerSymbols values types macros decls owner-names))))])]))
+                (CompilerSymbols
+                  values
+                  types
+                  macros
+                  decls
+                  owner-names
+                  decl-count))))])]))
 
 (define (compiler-symbols-add-value-in-module-id
   [symbols : CompilerSymbols]
@@ -999,7 +1086,7 @@
   [display-name-id : i64]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (match (compiler-symbol-map-lookup-id (& values) key-id)
         [(option_i64.Some existing)
           (if (=
@@ -1019,7 +1106,13 @@
             (begin
               (compiler-symbol-map-bind-id! (&mut values) key-id handle)
               (ResultCompilerSymbols.Ok
-                (CompilerSymbols values types macros decls owner-names))))])]))
+                (CompilerSymbols
+                  values
+                  types
+                  macros
+                  decls
+                  owner-names
+                  decl-count))))])]))
 
 (define (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
   [symbols : CompilerSymbols]
@@ -1028,7 +1121,7 @@
   [display-name-id : i64]
   [handle : i64]) : ResultCompilerSymbols
   (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
+    [(CompilerSymbols values types macros decls owner-names decl-count)
       (match (compiler-symbol-map-lookup-id (& values) key-id)
         [(option_i64.Some existing)
           (if (=
@@ -1046,7 +1139,13 @@
             (begin
               (compiler-symbol-map-bind-id! (&mut values) key-id handle)
               (ResultCompilerSymbols.Ok
-                (CompilerSymbols values types macros decls owner-names))))])]))
+                (CompilerSymbols
+                  values
+                  types
+                  macros
+                  decls
+                  owner-names
+                  decl-count))))])]))
 
 (define (compiler-symbols-add-variant-value-in-module-id
   [symbols : CompilerSymbols]
@@ -1153,7 +1252,7 @@
   [module-id : i64]
   [name-id : i64]) : option_i64.Option
   (match symbols
-    [(CompilerSymbols values _ _ _ _)
+    [(CompilerSymbols values _ _ _ _ _)
       (compiler-symbol-map-lookup-id
         (& values)
         (compiler-symbol-module-key-id-by-id module-id name-id))]))
@@ -1163,7 +1262,7 @@
   [module-id : i64]
   [name-id : i64]) : option_i64.Option
   (match symbols
-    [(CompilerSymbols _ types _ _ _)
+    [(CompilerSymbols _ types _ _ _ _)
       (compiler-symbol-map-lookup-id
         (& types)
         (compiler-symbol-module-key-id-by-id module-id name-id))]))
@@ -1173,7 +1272,7 @@
   [module-id : i64]
   [name-id : i64]) : option_i64.Option
   (match symbols
-    [(CompilerSymbols _ _ macros _ _)
+    [(CompilerSymbols _ _ macros _ _ _)
       (compiler-symbol-map-lookup-id
         (& macros)
         (compiler-symbol-module-key-id-by-id module-id name-id))]))
@@ -1923,11 +2022,79 @@
               (set! i (+ i 1))))
           head))]))
 
+(define (compiler-symbols-module-has-macro-map?
+  [symbols : CompilerSymbols]
+  [target-module-id : i64]) : bool
+  (match symbols
+    [(CompilerSymbols _ _ macros _ _ _)
+      (let
+        [capacity : i64 (array-length (struct-get macros keys))]
+        [index : i64 0]
+        (begin
+          (while (< index capacity)
+            (if (> (array-ref (struct-get macros keys) index) 0)
+              (let
+                [handle : i64 (array-ref (struct-get macros values) index)]
+                (when
+                  (and
+                    (=
+                      (compiler-symbol-handle-kind handle)
+                      (compiler-symbol-kind-defmacro))
+                    (=
+                      (compiler-symbols-owner-module-id-at-index-or
+                        symbols
+                        (compiler-symbol-handle-index handle)
+                        (compiler-symbol-root-module-id))
+                      target-module-id))
+                  (return true)))
+              unit)
+            (set! index (+ index 1)))
+          false))]))
+
+(define (compiler-symbols-remove-module-macro-aliases-from-map
+  [symbols : CompilerSymbols]
+  [target-module-id : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols _ _ macros decls _ _)
+      (let
+        [capacity : i64 (array-length (struct-get macros keys))]
+        [cur-symbols : CompilerSymbols symbols]
+        [index : i64 0]
+        (begin
+          (while (< index capacity)
+            (if (> (array-ref (struct-get macros keys) index) 0)
+              (let
+                [handle : i64 (array-ref (struct-get macros values) index)]
+                [decl-index : i64 (compiler-symbol-handle-index handle)]
+                (if (and
+                  (>= decl-index 0)
+                  (< decl-index (compiler-symbols-decl-count cur-symbols))
+                  (=
+                    (compiler-symbol-handle-kind handle)
+                    (compiler-symbol-kind-defmacro))
+                  (=
+                    (compiler-symbols-owner-module-id-at-index-or
+                      cur-symbols
+                      decl-index
+                      (compiler-symbol-root-module-id))
+                    target-module-id))
+                  (set!
+                    cur-symbols
+                    (compiler-symbols-remove-decl-macro-alias
+                      cur-symbols
+                      (array-ref decls decl-index)
+                      decl-index))
+                  unit))
+              unit)
+            (set! index (+ index 1)))
+          cur-symbols))]))
+
 (define (compiler-symbols-remove-module-macro-aliases-indexed
   [symbols : CompilerSymbols]
   [decls : AstDeclList]
   [index : ModuleDeclIndex]
-  [target-module-id : i64]) : CompilerSymbols
+  [target-module-id : i64]
+  [handle-index-offset : i64]) : CompilerSymbols
   (match index
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
@@ -1936,6 +2103,13 @@
         [cur-symbols : CompilerSymbols symbols]
         [k : i64 (compiler-module-decl-index-head index target-module-id)]
         (begin
+          (if (< k 0)
+            (set!
+              cur-symbols
+              (compiler-symbols-remove-module-macro-aliases-from-map
+                cur-symbols
+                target-module-id))
+            unit)
           (while (>= k 0)
             (begin
               (set!
@@ -1943,7 +2117,7 @@
                 (compiler-symbols-remove-decl-macro-alias
                   cur-symbols
                   (array-ref slots (+ decl-offset (array-ref ent-pos k)))
-                  (array-ref ent-ridx k)))
+                  (+ handle-index-offset (array-ref ent-ridx k))))
               (set! k (array-ref ent-next k))))
           cur-symbols))]))
 
@@ -1952,7 +2126,8 @@
   [decls : AstDeclList]
   [index : ModuleDeclIndex]
   [target-module-id : i64]
-  [alias-id : i64]) : CompilerSymbols
+  [alias-id : i64]
+  [handle-index-offset : i64]) : CompilerSymbols
   (match index
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
@@ -1969,7 +2144,7 @@
                   cur-symbols
                   alias-id
                   (array-ref slots (+ decl-offset (array-ref ent-pos k)))
-                  (array-ref ent-ridx k)))
+                  (+ handle-index-offset (array-ref ent-ridx k))))
               (set! k (array-ref ent-next k))))
           cur-symbols))]))
 
@@ -1987,12 +2162,13 @@
     importer-module
     alias))
 
-(define (build-compiler-symbol-aliases-list
+(define (build-compiler-symbol-aliases-list-with-index-offset
   [all-decls : AstDeclList]
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
   [module-id : i64]
-  [macro-modules : sym_i64_env.SymI64Env]) : CompilerSymbols
+  [macro-modules : sym_i64_env.SymI64Env]
+  [handle-index-offset : i64]) : CompilerSymbols
   (let
     [cur-symbols : CompilerSymbols symbols]
     [cur-module-id : i64 module-id]
@@ -2019,16 +2195,21 @@
                 (let
                   [target-module-id : i64 target-module]
                   [target-has-macros : bool
-                    (sym_i64_env.sym-i64-contains-id
-                      macro-modules
-                      target-module-id)]
+                    (or
+                      (sym_i64_env.sym-i64-contains-id
+                        macro-modules
+                        target-module-id)
+                      (compiler-symbols-module-has-macro-map?
+                        cur-symbols
+                        target-module-id))]
                   [without-bare-macros : CompilerSymbols
                     (if target-has-macros
                       (compiler-symbols-remove-module-macro-aliases-indexed
                         cur-symbols
                         all-decls
                         decl-index
-                        target-module-id)
+                        target-module-id
+                        handle-index-offset)
                       cur-symbols)]
                   (if (= alias cbi.compiler-builtin-id-fix-empty)
                     (compiler-symbols-add-module-aliases-indexed
@@ -2036,7 +2217,8 @@
                       all-decls
                       decl-index
                       target-module-id
-                      cur-module-id)
+                      cur-module-id
+                      handle-index-offset)
                     without-bare-macros))]
               [_ cur-symbols])]
           (begin
@@ -2046,6 +2228,20 @@
               [_ unit])
             (set! index (+ index 1)))))
       cur-symbols)))
+
+(define (build-compiler-symbol-aliases-list
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [macro-modules : sym_i64_env.SymI64Env]) : CompilerSymbols
+  (build-compiler-symbol-aliases-list-with-index-offset
+    all-decls
+    decls
+    symbols
+    module-id
+    macro-modules
+    0))
 
 (define (build-compiler-symbol-list
   [decls : AstDeclList]
@@ -2310,7 +2506,7 @@
   [fallback : i64]) : i64
   (let
     [owner-module-ids : (Array i64) (compiler-symbols-owner-module-ids symbols)]
-    (if (or (< target 0) (>= target (array-length owner-module-ids)))
+    (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       fallback
       (array-ref owner-module-ids target))))
 
@@ -2321,7 +2517,7 @@
   (let
     [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
     [owner-module-ids : (Array i64) (compiler-symbols-owner-module-ids symbols)]
-    (if (or (< target 0) (>= target (array-length owner-module-ids)))
+    (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       fallback
       (let
         [owner-id : i64
@@ -2338,7 +2534,7 @@
   (let
     [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
     [owner-module-ids : (Array i64) (compiler-symbols-owner-module-ids symbols)]
-    (if (or (< target 0) (>= target (array-length owner-module-ids)))
+    (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       (CompilerNoString)
       (let
         [owner-name : String
@@ -2642,22 +2838,27 @@
           [(ResultCompilerSymbols.Err message)
             (ResultCompilerSymbols.Err message)]))]))
 
-(define (build-compiler-symbols-with-paths
+(define (build-compiler-symbols-with-paths-and-capacity
   [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerSymbols
+  [paths : AstDeclPathList]
+  [requested-capacity : i64]) : ResultCompilerSymbols
   (match program
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         [module-sets : CompilerSymbolsModuleSets
           (compiler-symbols-module-sets decls)]
+        [decl-count : i64 (compiler-decl-list-index-count decls)]
         (match (build-compiler-symbol-list-with-paths-in-module
           decls
           paths
           decls
           paths
-          (compiler-symbols-empty-with-decls
-            (compiler-decl-list-index-count decls))
+          (compiler-symbols-empty-with-decls-and-capacity
+            decl-count
+            (if (> requested-capacity decl-count)
+              requested-capacity
+              decl-count))
           (struct-get module-sets dotted-modules)
           0
           (compiler-symbol-root-module-id))
@@ -2674,6 +2875,11 @@
           [(ResultCompilerSymbols.Err message)
             (ResultCompilerSymbols.Err message)]))]))
 
+(define (build-compiler-symbols-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerSymbols
+  (build-compiler-symbols-with-paths-and-capacity program paths 0))
+
 (define (build-compiler-symbols-diagnostic-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerSymbolsDiagnostic
@@ -2685,6 +2891,155 @@
       [(ResultCompilerSymbols.Err message)
         (ResultCompilerSymbolsDiagnostic.Err
           (box (compiler-symbols-last-error-diagnostic message)))])))
+
+(define (build-compiler-symbols-diagnostic-with-paths-and-capacity
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [capacity : i64]) : ResultCompilerSymbolsDiagnostic
+  (begin
+    (compiler-symbols-clear-last-error!)
+    (match (build-compiler-symbols-with-paths-and-capacity
+      program
+      paths
+      capacity)
+      [(ResultCompilerSymbols.Ok symbols)
+        (ResultCompilerSymbolsDiagnostic.Ok symbols)]
+      [(ResultCompilerSymbols.Err message)
+        (ResultCompilerSymbolsDiagnostic.Err
+          (box (compiler-symbols-last-error-diagnostic message)))])))
+
+;; Extend the owned symbol storage with one additive splice. Existing handles
+;; remain stable; new declarations receive handles at the old logical end. The
+;; splice-local alias pass uses the same offset, so an unqualified marker that
+;; imports the freshly generated module points at the appended declarations.
+;; Callers keep the whole-program rebuild as the diagnostic fallback on error.
+(define (compiler-symbols-decls-declare-module-id?
+  [decls : AstDeclList]
+  [target-module-id : i64]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (or
+        (match decl
+          [(AstDecl.Module module-id) (= module-id target-module-id)]
+          [(AstDecl.ModuleBody module-id body-box)
+            (or
+              (= module-id target-module-id)
+              (compiler-symbols-decls-declare-module-id?
+                (box-get body-box)
+                target-module-id))]
+          [(AstDecl.Unsafe inner-box)
+            (match (box-get inner-box)
+              [(AstDecl.ModuleBody module-id body-box)
+                (or
+                  (= module-id target-module-id)
+                  (compiler-symbols-decls-declare-module-id?
+                    (box-get body-box)
+                    target-module-id))]
+              [_ false])]
+          [_ false])
+        (compiler-symbols-decls-declare-module-id? rest target-module-id))]))
+
+(define (compiler-symbols-insert-import-safe?
+  [all-decls : AstDeclList]
+  [target-module : i64]
+  [alias : i64]) : bool
+  (or
+    (compiler-symbols-decls-declare-module-id? all-decls target-module)
+    (not (= alias cbi.compiler-builtin-id-fix-empty))))
+
+(define (compiler-symbols-insert-aliases-self-contained?
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) true]
+    [(AstDeclListStep.Cons decl rest)
+      (and
+        (match decl
+          [(AstDecl.Import
+              decl-meta
+              (AstImportSpec.Spec
+                _
+                _
+                (AstMaybeModuleName.Some target-module)
+                (AstMaybeImportAlias.Some alias)
+                _))
+            (compiler-symbols-insert-import-safe? all-decls target-module alias)]
+          [(AstDecl.Import
+              decl-meta
+              (AstImportSpec.Spec
+                _
+                _
+                (AstMaybeModuleName.Some _)
+                (AstMaybeImportAlias.No)
+                _))
+            true]
+          ;; File-backed imports do not install symbol/registry aliases. The
+          ;; macro walk materializes them immediately afterward; that path
+          ;; intentionally performs the conservative whole-program rebuild.
+          [(AstDecl.Import decl-meta _) true]
+          [(AstDecl.ModuleBody _ body-box)
+            (compiler-symbols-insert-aliases-self-contained?
+              all-decls
+              (box-get body-box))]
+          [(AstDecl.Unsafe inner-box)
+            (match (box-get inner-box)
+              [(AstDecl.Import
+                  decl-meta
+                  (AstImportSpec.Spec
+                    _
+                    _
+                    (AstMaybeModuleName.Some target-module)
+                    (AstMaybeImportAlias.Some alias)
+                    _))
+                (compiler-symbols-insert-import-safe?
+                  all-decls
+                  target-module
+                  alias)]
+              [(AstDecl.Import
+                  decl-meta
+                  (AstImportSpec.Spec
+                    _
+                    _
+                    (AstMaybeModuleName.Some _)
+                    (AstMaybeImportAlias.No)
+                    _))
+                true]
+              [(AstDecl.Import decl-meta _) true]
+              [_ true])]
+          [_ true])
+        (compiler-symbols-insert-aliases-self-contained? all-decls rest))]))
+
+(define (compiler-symbols-insert-decls
+  [symbols : CompilerSymbols]
+  [decls : AstDeclList]
+  [module-id : i64]) : ResultCompilerSymbols
+  (let
+    [old-count : i64 (compiler-symbols-decl-count symbols)]
+    [added-count : i64 (compiler-decl-list-index-count decls)]
+    [grown : CompilerSymbols
+      (compiler-symbols-ensure-decl-capacity symbols (+ old-count added-count))]
+    (match (build-compiler-symbol-list-in-module
+      decls
+      decls
+      grown
+      old-count
+      module-id)
+      [(ResultCompilerSymbols.Ok appended)
+        (let
+          [macro-modules : sym_i64_env.SymI64Env
+            (compiler-symbols-macro-module-set decls)]
+          [aliased : CompilerSymbols
+            (build-compiler-symbol-aliases-list-with-index-offset
+              decls
+              decls
+              appended
+              module-id
+              macro-modules
+              old-count)]
+          (ResultCompilerSymbols.Ok
+            (compiler-symbols-with-decl-count aliased (+ old-count added-count))))]
+      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
 (define (build-compiler-symbols-from-source [src : String]) : ResultCompilerSymbols
   (match (parse-ast-source src)
@@ -2992,7 +3347,8 @@
   [decls : AstDeclList]
   [index : ModuleDeclIndex]
   [target-module-id : i64]
-  [alias-id : i64]) : CompilerRegistries
+  [alias-id : i64]
+  [handle-index-offset : i64]) : CompilerRegistries
   (match index
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
@@ -3009,15 +3365,16 @@
                   cur-registries
                   alias-id
                   (array-ref slots (+ decl-offset (array-ref ent-pos k)))
-                  (array-ref ent-ridx k)))
+                  (+ handle-index-offset (array-ref ent-ridx k))))
               (set! k (array-ref ent-next k))))
           cur-registries))]))
 
-(define (build-compiler-registry-aliases-list
+(define (build-compiler-registry-aliases-list-with-index-offset
   [all-decls : AstDeclList]
   [decls : AstDeclList]
   [registries : CompilerRegistries]
-  [module-id : i64]) : CompilerRegistries
+  [module-id : i64]
+  [handle-index-offset : i64]) : CompilerRegistries
   (let
     [enclosing-arena : i64 (arena.tl_arena_current)]
     [index-arena : i64 (arena.tl_arena_make)]
@@ -3060,7 +3417,8 @@
                         target-module
                         (compiler-symbols-import-alias-key-id
                           cur-module-id
-                          alias))
+                          alias)
+                        handle-index-offset)
                       cur-registries)]
                   [_ cur-registries])]
               (begin
@@ -3075,6 +3433,18 @@
       (unsafe
         (arena.tl_arena_destroy index-arena-head))
       result)))
+
+(define (build-compiler-registry-aliases-list
+  [all-decls : AstDeclList]
+  [decls : AstDeclList]
+  [registries : CompilerRegistries]
+  [module-id : i64]) : CompilerRegistries
+  (build-compiler-registry-aliases-list-with-index-offset
+    all-decls
+    decls
+    registries
+    module-id
+    0))
 
 (define (build-compiler-variant-registry-list-in-module
   [variants : AstVariantDefList]
@@ -3435,6 +3805,31 @@
       insertion-index
       module-id)))
 
+;; Companion to compiler-symbols-insert-decls: when symbol handles append, new
+;; registry owners use the same append index and no existing owner shifts.
+(define (compiler-registries-append-decls
+  [registries : CompilerRegistries]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [append-index : i64]
+  [module-id : i64]) : ResultCompilerRegistries
+  (match (build-compiler-registry-list-in-module
+    decls
+    paths
+    registries
+    append-index
+    module-id)
+    [(ResultCompilerRegistries.Ok appended)
+      (ResultCompilerRegistries.Ok
+        (build-compiler-registry-aliases-list-with-index-offset
+          decls
+          decls
+          appended
+          module-id
+          append-index))]
+    [(ResultCompilerRegistries.Err message)
+      (ResultCompilerRegistries.Err message)]))
+
 (define (build-compiler-registries-diagnostic-with-symbols-and-paths
   [program : AstProgram]
   [_symbols : CompilerSymbols]
@@ -3511,7 +3906,7 @@
   [target : i64]) : ResultAstDecl
   (let
     [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
-    (if (or (< target 0) (>= target (array-length decls)))
+    (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       (ResultAstDecl.Err "symbols: declaration index not found")
       (ResultAstDecl.Ok (array-ref decls target)))))
 
@@ -3682,7 +4077,7 @@
   [target : i64]) : i64
   (let
     [owners : (Array i64) (compiler-symbols-owner-module-ids symbols)]
-    (if (or (< target 0) (>= target (array-length owners)))
+    (if (or (< target 0) (>= target (compiler-symbols-decl-count symbols)))
       -1
       (array-ref owners target))))
 
@@ -4376,6 +4771,161 @@
                                   [(ResultCompilerSymbols.Err _) false])]
                               [(ResultAstProgram.Err _) false])]
                           [(ResultCompilerRegistries.Err _) false]))])]
+                [(ResultAstProgram.Err _) false])]
+            [(ResultCompilerRegistries.Err _) false])]
+        [(ResultCompilerSymbols.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-symbols-append-splice-source) : String
+  "(module fresh
+  (defenum Added (None) (Some i64))
+  (defstruct Boxed (value i64)))")
+
+(define (compiler-symbols-append-macro-base-source) : String
+  "(module data)
+(defmacro (all [first : bool]) : bool first)")
+
+(define (compiler-symbols-append-macro-import-source) : String
+  "(module fresh)
+(define answer : i64 42)
+(module main)
+(import \"data.tl\" module data :as d)")
+
+(define (compiler-symbols-append-external-macro-alias-ok?) : bool
+  (match (parse-ast-source (compiler-symbols-append-macro-base-source))
+    [(ResultAstProgram.Ok base-program)
+      (match (build-compiler-symbols base-program)
+        [(ResultCompilerSymbols.Ok base-symbols)
+          (match (parse-ast-source
+            (compiler-symbols-append-macro-import-source))
+            [(ResultAstProgram.Ok splice-program)
+              (match splice-program
+                [(AstProgram.Program splice-box)
+                  (match (compiler-symbols-insert-decls
+                    base-symbols
+                    (box-get splice-box)
+                    (compiler-symbol-root-module-id))
+                    [(ResultCompilerSymbols.Ok appended)
+                      (let
+                        [macro-id : i64
+                          (compiler-symbols-decl-name-id-at-index appended 0)]
+                        [module-id : i64
+                          (compiler-symbols-owner-module-id-at-index appended 0)]
+                        (and
+                          (=
+                            (compiler-symbol-lookup-score
+                              (compiler-symbols-lookup-macro-in-module-id
+                                appended
+                                module-id
+                                macro-id)
+                              (compiler-symbol-kind-defmacro)
+                              0)
+                            1)
+                          (=
+                            (compiler-symbols-miss-score
+                              (compiler-symbols-lookup-macro-id
+                                appended
+                                macro-id))
+                            1)))]
+                    [(ResultCompilerSymbols.Err _) false])])]
+            [(ResultAstProgram.Err _) false])]
+        [(ResultCompilerSymbols.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
+
+;; Append-only symbol and registry growth keeps old handles stable while the
+;; new nominal owners share the symbol table's logical end.
+(define (compiler-symbols-append-splice-ok?) : bool
+  (match (parse-ast-source (compiler-registries-incremental-base-source))
+    [(ResultAstProgram.Ok base-program)
+      (match (build-compiler-symbols base-program)
+        [(ResultCompilerSymbols.Ok base-symbols)
+          (match (build-compiler-registries base-program)
+            [(ResultCompilerRegistries.Ok base-registries)
+              (match (parse-ast-source (compiler-symbols-append-splice-source))
+                [(ResultAstProgram.Ok splice-program)
+                  (match splice-program
+                    [(AstProgram.Program splice-box)
+                      (let
+                        [splice-decls : AstDeclList (box-get splice-box)]
+                        [splice-paths : AstDeclPathList
+                          (compiler-symbol-path-list-repeat
+                            splice-decls
+                            "generated.tl"
+                            cbi.compiler-builtin-id-fix-empty)]
+                        [append-index : i64
+                          (compiler-symbols-decl-count base-symbols)]
+                        (match (compiler-symbols-insert-decls
+                          base-symbols
+                          splice-decls
+                          (compiler-symbol-root-module-id))
+                          [(ResultCompilerSymbols.Ok appended-symbols)
+                            (match (compiler-registries-append-decls
+                              base-registries
+                              splice-decls
+                              splice-paths
+                              append-index
+                              (compiler-symbol-root-module-id))
+                              [(ResultCompilerRegistries.Ok appended-registries)
+                                (let
+                                  [old-module-id : i64
+                                    (compiler-symbols-owner-module-id-at-index
+                                      appended-symbols
+                                      0)]
+                                  [old-enum-id : i64
+                                    (compiler-symbols-decl-name-id-at-index
+                                      appended-symbols
+                                      0)]
+                                  [old-variant-id : i64
+                                    (compiler-symbols-variant-name-id-at-index
+                                      appended-symbols
+                                      0
+                                      1)]
+                                  [new-module-id : i64
+                                    (compiler-symbols-owner-module-id-at-index
+                                      appended-symbols
+                                      append-index)]
+                                  [new-enum-id : i64
+                                    (compiler-symbols-decl-name-id-at-index
+                                      appended-symbols
+                                      append-index)]
+                                  [new-variant-id : i64
+                                    (compiler-symbols-variant-name-id-at-index
+                                      appended-symbols
+                                      append-index
+                                      1)]
+                                  (and
+                                    (=
+                                      (compiler-symbols-decl-count
+                                        appended-symbols)
+                                      (+ append-index 2))
+                                    (=
+                                      (compiler-registry-lookup-score
+                                        (compiler-registries-lookup-variant-key-id
+                                          appended-registries
+                                          (compiler-symbol-module-key-id-by-id
+                                            old-module-id
+                                            (compiler-enum-qualified-variant-name-id
+                                              old-enum-id
+                                              old-variant-id)))
+                                        (compiler-symbol-kind-enum-variant)
+                                        0
+                                        1)
+                                      1)
+                                    (=
+                                      (compiler-registry-lookup-score
+                                        (compiler-registries-lookup-variant-key-id
+                                          appended-registries
+                                          (compiler-symbol-module-key-id-by-id
+                                            new-module-id
+                                            (compiler-enum-qualified-variant-name-id
+                                              new-enum-id
+                                              new-variant-id)))
+                                        (compiler-symbol-kind-enum-variant)
+                                        append-index
+                                        1)
+                                      1)))]
+                              [(ResultCompilerRegistries.Err _) false])]
+                          [(ResultCompilerSymbols.Err _) false]))])]
                 [(ResultAstProgram.Err _) false])]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
@@ -5164,6 +5714,12 @@
                       unit
                       (set! ok false))
                     (if (compiler-registries-incremental-splice-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-append-splice-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-append-external-macro-alias-ok?)
                       unit
                       (set! ok false))
                     (if (compiler-symbols-nominal-decl-ok?)

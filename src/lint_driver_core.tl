@@ -663,6 +663,346 @@
   [right : LintFindings]) : LintFindings
   (selfhost-lint-findings-append-from right 0 left))
 
+(defstruct SelfhostLintUnsafeSurfaceName
+  (name String)
+  (requires-unsafe bool))
+
+(defenum SelfhostLintUnsafeSurfaceNames
+  (Nil)
+  (Cons SelfhostLintUnsafeSurfaceName (Box SelfhostLintUnsafeSurfaceNames)))
+
+(defstruct SelfhostLintUnsafeSurfaceCacheEntry
+  (path String)
+  (valid bool)
+  (names SelfhostLintUnsafeSurfaceNames))
+
+(defenum SelfhostLintUnsafeSurfaceCache
+  (Nil)
+  (Cons
+    SelfhostLintUnsafeSurfaceCacheEntry
+    (Box SelfhostLintUnsafeSurfaceCache)))
+
+(defenum SelfhostLintUnsafeSurfaceLookup
+  (Miss)
+  (Hit bool SelfhostLintUnsafeSurfaceNames))
+
+(define selfhost-lint-unsafe-surface-cache : SelfhostLintUnsafeSurfaceCache
+  (SelfhostLintUnsafeSurfaceCache.Nil))
+
+;; The cache arena is the explicit batch's outer arena. Entries copy only path,
+;; declaration name, and safety bits out of each file scratch; no AST nodes,
+;; signatures, or pool-backed lists survive their owner arena.
+(define selfhost-lint-unsafe-surface-cache-arena : i64
+  0)
+(define selfhost-lint-unsafe-surface-parse-count : i64
+  0)
+(define selfhost-lint-unsafe-surface-hit-count : i64
+  0)
+(define selfhost-lint-unused-unsafe-fallback-file-count : i64
+  0)
+(define selfhost-lint-unused-unsafe-surface-required-count : i64
+  0)
+(define selfhost-lint-unused-unsafe-surface-unused-count : i64
+  0)
+(define selfhost-lint-unused-unsafe-surface-unknown-count : i64
+  0)
+
+(define (selfhost-lint-unsafe-surface-cache-reset!) : unit
+  (begin
+    (set!
+      selfhost-lint-unsafe-surface-cache
+      (SelfhostLintUnsafeSurfaceCache.Nil))
+    (set! selfhost-lint-unsafe-surface-cache-arena (arena.tl_arena_current))
+    (set! selfhost-lint-unsafe-surface-parse-count 0)
+    (set! selfhost-lint-unsafe-surface-hit-count 0)
+    (set! selfhost-lint-unused-unsafe-fallback-file-count 0)
+    (set! selfhost-lint-unused-unsafe-surface-required-count 0)
+    (set! selfhost-lint-unused-unsafe-surface-unused-count 0)
+    (set! selfhost-lint-unused-unsafe-surface-unknown-count 0)))
+
+(define (selfhost-lint-unsafe-surface-cache-ensure!) : unit
+  (if (= selfhost-lint-unsafe-surface-cache-arena 0)
+    (selfhost-lint-unsafe-surface-cache-reset!)
+    unit))
+
+(define (selfhost-lint-unsafe-surface-cache-parse-count) : i64
+  selfhost-lint-unsafe-surface-parse-count)
+
+(define (selfhost-lint-unsafe-surface-cache-hit-count) : i64
+  selfhost-lint-unsafe-surface-hit-count)
+
+(define (selfhost-lint-unused-unsafe-fallback-count) : i64
+  selfhost-lint-unused-unsafe-fallback-file-count)
+
+(define (selfhost-lint-unused-unsafe-surface-required-total) : i64
+  selfhost-lint-unused-unsafe-surface-required-count)
+
+(define (selfhost-lint-unused-unsafe-surface-unused-total) : i64
+  selfhost-lint-unused-unsafe-surface-unused-count)
+
+(define (selfhost-lint-unused-unsafe-surface-unknown-total) : i64
+  selfhost-lint-unused-unsafe-surface-unknown-count)
+
+(define (selfhost-lint-unused-unsafe-surface-classified-total) : i64
+  (+
+    selfhost-lint-unused-unsafe-surface-required-count
+    selfhost-lint-unused-unsafe-surface-unused-count))
+
+(define (selfhost-lint-unsafe-surface-cache-lookup-from
+  [path : String]
+  [entries : SelfhostLintUnsafeSurfaceCache]) : SelfhostLintUnsafeSurfaceLookup
+  (match entries
+    [(SelfhostLintUnsafeSurfaceCache.Nil)
+      (SelfhostLintUnsafeSurfaceLookup.Miss)]
+    [(SelfhostLintUnsafeSurfaceCache.Cons entry rest)
+      (if (string.eq (struct-get entry path) path)
+        (SelfhostLintUnsafeSurfaceLookup.Hit
+          (struct-get entry valid)
+          (struct-get entry names))
+        (selfhost-lint-unsafe-surface-cache-lookup-from path (box-get rest)))]))
+
+(define (selfhost-lint-unsafe-surface-cache-lookup [path : String]) : SelfhostLintUnsafeSurfaceLookup
+  (selfhost-lint-unsafe-surface-cache-lookup-from
+    path
+    selfhost-lint-unsafe-surface-cache))
+
+(define (selfhost-lint-unsafe-surface-value-kind?
+  [kind : CompilerLoadSurfaceDeclKind]) : bool
+  (match kind
+    [(CompilerLoadSurfaceFunction) true]
+    [(CompilerLoadSurfaceExtern) true]
+    [(CompilerLoadSurfaceStruct) true]
+    [(CompilerLoadSurfaceEnum) true]
+    [(CompilerLoadSurfaceDispatch) true]
+    [_ false]))
+
+(define (selfhost-lint-unsafe-surface-copy-decls
+  [decls : CompilerLoadSurfaceDeclList]
+  [root-module : i64]) : SelfhostLintUnsafeSurfaceNames
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) (SelfhostLintUnsafeSurfaceNames.Nil)]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (let
+        [tail : SelfhostLintUnsafeSurfaceNames
+          (selfhost-lint-unsafe-surface-copy-decls (box-get rest) root-module)]
+        (if (and
+          (= (struct-get decl module) root-module)
+          (not (struct-get decl has-generated-meta))
+          (selfhost-lint-unsafe-surface-value-kind? (struct-get decl kind)))
+          (SelfhostLintUnsafeSurfaceNames.Cons
+            (SelfhostLintUnsafeSurfaceName
+              (string.copy (intern-str (struct-get decl name)))
+              (struct-get decl was-unsafe))
+            (box tail))
+          tail))]))
+
+(define (selfhost-lint-unsafe-surface-cache-store-summary!
+  [path : String]
+  [summary : CompilerLoadSurfaceSummary]) : unit
+  (let
+    [home : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set selfhost-lint-unsafe-surface-cache-arena))
+      (let
+        [entry : SelfhostLintUnsafeSurfaceCacheEntry
+          (SelfhostLintUnsafeSurfaceCacheEntry
+            (string.copy path)
+            true
+            (selfhost-lint-unsafe-surface-copy-decls
+              (struct-get summary decls)
+              (struct-get summary declaration-module-id)))]
+        (set!
+          selfhost-lint-unsafe-surface-cache
+          (SelfhostLintUnsafeSurfaceCache.Cons
+            entry
+            (box selfhost-lint-unsafe-surface-cache))))
+      (unsafe
+        (arena.tl_arena_set home)))))
+
+(define (selfhost-lint-unsafe-surface-cache-store-invalid! [path : String]) : unit
+  (let
+    [home : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set selfhost-lint-unsafe-surface-cache-arena))
+      (let
+        [entry : SelfhostLintUnsafeSurfaceCacheEntry
+          (SelfhostLintUnsafeSurfaceCacheEntry
+            (string.copy path)
+            false
+            (SelfhostLintUnsafeSurfaceNames.Nil))]
+        (set!
+          selfhost-lint-unsafe-surface-cache
+          (SelfhostLintUnsafeSurfaceCache.Cons
+            entry
+            (box selfhost-lint-unsafe-surface-cache))))
+      (unsafe
+        (arena.tl_arena_set home)))))
+
+(define (selfhost-lint-unsafe-surface-cache-load! [path : String]) : SelfhostLintUnsafeSurfaceLookup
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (match (selfhost-lint-unsafe-surface-cache-lookup normalized)
+      [(SelfhostLintUnsafeSurfaceLookup.Hit valid names)
+        (begin
+          (set!
+            selfhost-lint-unsafe-surface-hit-count
+            (+ selfhost-lint-unsafe-surface-hit-count 1))
+          (SelfhostLintUnsafeSurfaceLookup.Hit valid names))]
+      [(SelfhostLintUnsafeSurfaceLookup.Miss)
+        (begin
+          (set!
+            selfhost-lint-unsafe-surface-parse-count
+            (+ selfhost-lint-unsafe-surface-parse-count 1))
+          ;; Explicit file/package linting installs a growable pool context that
+          ;; can safely own a second parse. Pure source helpers use the legacy
+          ;; active pool, so leave their imports Unknown and use typed fallback.
+          (if (and
+            (ast-node-pool-compat-context-active?)
+            (io.file-exists? normalized))
+            (match (parse-ast-source-diagnostic-with-cfg-and-pools
+              normalized
+              (io.read-file normalized)
+              (compiler-cfg-empty)
+              (ast-node-pool-compat-context-current))
+              [(ResultAstProgramDiagnostic.Ok program)
+                (match (compiler-load-surface-summary-build
+                  normalized
+                  0
+                  ""
+                  program
+                  0
+                  true)
+                  [(ResultCompilerLoadSurfaceSummary.Ok summary)
+                    (selfhost-lint-unsafe-surface-cache-store-summary!
+                      normalized
+                      summary)]
+                  [(ResultCompilerLoadSurfaceSummary.Err _)
+                    (selfhost-lint-unsafe-surface-cache-store-invalid!
+                      normalized)])]
+              [(ResultAstProgramDiagnostic.Err _)
+                (selfhost-lint-unsafe-surface-cache-store-invalid! normalized)])
+            (selfhost-lint-unsafe-surface-cache-store-invalid! normalized))
+          (selfhost-lint-unsafe-surface-cache-lookup normalized))])))
+
+(define (selfhost-lint-unsafe-surface-import-alias
+  [import-edge : CompilerLoadSurfaceImport]) : String
+  (match (struct-get import-edge alias)
+    [(CompilerLoadSurfaceSomeString alias) alias]
+    [(CompilerLoadSurfaceNoString)
+      (match (struct-get import-edge default-alias)
+        [(CompilerLoadSurfaceSomeString alias) alias]
+        [(CompilerLoadSurfaceNoString) ""])]))
+
+(define (selfhost-lint-unsafe-surface-add-names!
+  [alias : String]
+  [names : SelfhostLintUnsafeSurfaceNames]) : unit
+  (match names
+    [(SelfhostLintUnsafeSurfaceNames.Nil) unit]
+    [(SelfhostLintUnsafeSurfaceNames.Cons fact rest)
+      (begin
+        (lint-unused-unsafe-classifier-add-exact-name!
+          (string.append alias (string.append "." (struct-get fact name)))
+          (struct-get fact requires-unsafe))
+        (lint-unused-unsafe-classifier-add-exact-name!
+          (string.append alias (string.append "/" (struct-get fact name)))
+          (struct-get fact requires-unsafe))
+        (selfhost-lint-unsafe-surface-add-names! alias (box-get rest)))]))
+
+(define (selfhost-lint-unsafe-surface-add-local-decls!
+  [decls : CompilerLoadSurfaceDeclList]
+  [root-module : i64]) : unit
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) unit]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (begin
+        (if (and
+          (= (struct-get decl module) root-module)
+          (not (struct-get decl has-generated-meta))
+          (selfhost-lint-unsafe-surface-value-kind? (struct-get decl kind)))
+          (lint-unused-unsafe-classifier-add-exact-name!
+            (string.copy (intern-str (struct-get decl name)))
+            (struct-get decl was-unsafe))
+          unit)
+        ;; A top-level declaration can shadow an import alias. Only qualified
+        ;; references consult this root blocker, so unqualified local facts
+        ;; remain usable.
+        (if (not (struct-get decl has-generated-meta))
+          (lint-unused-unsafe-classifier-add-unknown-root!
+            (string.copy (intern-str (struct-get decl name))))
+          unit)
+        (selfhost-lint-unsafe-surface-add-local-decls!
+          (box-get rest)
+          root-module))]))
+
+(define (selfhost-lint-unsafe-surface-resolve-import
+  [path : String]
+  [stdlib-roots : lint_svec.Vec]
+  [import-edge : CompilerLoadSurfaceImport]) : ResultPkgResolve
+  (match (struct-get import-edge kind)
+    [(CompilerLoadSurfaceImportPath)
+      (compiler-load-resolve-import-result-with-roots
+        path
+        (struct-get import-edge import-path)
+        stdlib-roots)]
+    [(CompilerLoadSurfaceImportModule)
+      (compiler-load-resolve-module-import-with-roots
+        path
+        ""
+        (struct-get import-edge import-path)
+        stdlib-roots)]
+    [_ (ResultPkgResolve.Err "lint: macro import surface is not static")]))
+
+(define (selfhost-lint-unsafe-surface-prepare-imports!
+  [path : String]
+  [stdlib-roots : lint_svec.Vec]
+  [imports : CompilerLoadSurfaceImportList]) : unit
+  (match imports
+    [(CompilerLoadSurfaceImportNil) unit]
+    [(CompilerLoadSurfaceImportCons import-edge rest)
+      (let
+        [alias : String (selfhost-lint-unsafe-surface-import-alias import-edge)]
+        (begin
+          (if (string.eq alias "")
+            unit
+            (match (selfhost-lint-unsafe-surface-resolve-import
+              path
+              stdlib-roots
+              import-edge)
+              [(ResultPkgResolve.Err _) unit]
+              [(ResultPkgResolve.Ok resolved)
+                (match (selfhost-lint-unsafe-surface-cache-load! resolved)
+                  [(SelfhostLintUnsafeSurfaceLookup.Miss) unit]
+                  [(SelfhostLintUnsafeSurfaceLookup.Hit valid names)
+                    (if valid
+                      (selfhost-lint-unsafe-surface-add-names! alias names)
+                      unit)])]))
+          (selfhost-lint-unsafe-surface-prepare-imports!
+            path
+            stdlib-roots
+            (box-get rest))))]))
+
+(define (selfhost-lint-unsafe-surface-prepare!
+  [path : String]
+  [program : AstProgram]
+  [stdlib-roots : lint_svec.Vec]) : unit
+  (begin
+    (selfhost-lint-unsafe-surface-cache-ensure!)
+    (lint-unused-unsafe-classifier-reset!)
+    (match (compiler-load-surface-summary-build path 0 "" program 0 false)
+      [(ResultCompilerLoadSurfaceSummary.Err _) unit]
+      [(ResultCompilerLoadSurfaceSummary.Ok summary)
+        (begin
+          (selfhost-lint-unsafe-surface-add-local-decls!
+            (struct-get summary decls)
+            (struct-get summary declaration-module-id))
+          (selfhost-lint-unsafe-surface-prepare-imports!
+            path
+            stdlib-roots
+            (struct-get summary imports)))])
+    (lint-unused-unsafe-classifier-enable!)))
+
 (define (selfhost-lint-unused-unsafe-findings-from
   [path : String]
   [index : i64]
@@ -683,9 +1023,8 @@
 (define (selfhost-lint-unused-unsafe-findings
   [path : String]
   [source : String]
-  [program : AstProgram]
   [stdlib-roots : lint_svec.Vec]) : LintFindings
-  (if (lint-program-has-unused-unsafe-candidate? program)
+  (if (> (lint-unused-unsafe-classifier-unknown-count) 0)
     (begin
       (tc-unused-unsafe-tracking-reset! path)
       (match (compiler-check-source-with-roots path source stdlib-roots)
@@ -707,6 +1046,28 @@
             (lint-findings-empty))]))
     (lint-findings-empty)))
 
+(define (selfhost-lint-findings-without-unused-unsafe-from
+  [items : LintFindings]
+  [index : i64]
+  [out : LintFindings]) : LintFindings
+  (if (>= index (lint-findings-count items))
+    out
+    (let
+      [finding : LintFinding (lint-findings-ref items index)]
+      [next : LintFindings
+        (if (string.eq
+          (struct-get finding rule-id)
+          (lint-rule-unused-unsafe-id))
+          out
+          (lint-findings-add finding out))]
+      (selfhost-lint-findings-without-unused-unsafe-from items (+ index 1) next))))
+
+(define (selfhost-lint-findings-without-unused-unsafe [items : LintFindings]) : LintFindings
+  (selfhost-lint-findings-without-unused-unsafe-from
+    items
+    0
+    (lint-findings-empty)))
+
 (define (selfhost-lint-program-and-typed-findings
   [path : String]
   [source : String]
@@ -716,15 +1077,45 @@
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
   [name-case : bool]) : LintFindings
-  (selfhost-lint-findings-append
-    (selfhost-lint-program-findings-with-all-options
-      source
-      program
-      deprecated-string-concat
-      redundant-function-name
-      prefer-dotted-field
-      name-case)
-    (selfhost-lint-unused-unsafe-findings path source program stdlib-roots)))
+  (begin
+    (selfhost-lint-unsafe-surface-prepare! path program stdlib-roots)
+    (let
+      [ordinary : LintFindings
+        (selfhost-lint-program-findings-with-all-options
+          source
+          program
+          deprecated-string-concat
+          redundant-function-name
+          prefer-dotted-field
+          name-case)]
+      [unknown-count : i64 (lint-unused-unsafe-classifier-unknown-count)]
+      [required-count : i64 (lint-unused-unsafe-classifier-required-count)]
+      [unused-count : i64 (lint-unused-unsafe-classifier-unused-count)]
+      [typed : LintFindings
+        (if (> unknown-count 0)
+          (selfhost-lint-unused-unsafe-findings path source stdlib-roots)
+          (lint-findings-empty))]
+      [base : LintFindings
+        (if (> unknown-count 0)
+          (selfhost-lint-findings-without-unused-unsafe ordinary)
+          ordinary)]
+      (begin
+        (set!
+          selfhost-lint-unused-unsafe-surface-required-count
+          (+ selfhost-lint-unused-unsafe-surface-required-count required-count))
+        (set!
+          selfhost-lint-unused-unsafe-surface-unused-count
+          (+ selfhost-lint-unused-unsafe-surface-unused-count unused-count))
+        (set!
+          selfhost-lint-unused-unsafe-surface-unknown-count
+          (+ selfhost-lint-unused-unsafe-surface-unknown-count unknown-count))
+        (if (> unknown-count 0)
+          (set!
+            selfhost-lint-unused-unsafe-fallback-file-count
+            (+ selfhost-lint-unused-unsafe-fallback-file-count 1))
+          unit)
+        (lint-unused-unsafe-classifier-disable!)
+        (selfhost-lint-findings-append base typed)))))
 
 (define (selfhost-lint-source-with-roots-and-all-options
   [path : String]
@@ -3252,6 +3643,7 @@
 
 (define (selfhost-lint-reset-file-state!) : unit
   (begin
+    (lint-unused-unsafe-classifier-reset!)
     (tc-unused-unsafe-tracking-clear!)
     (tc-prefix-snapshot-cache-clear!)
     (compiler-check-reset-pools!)
@@ -3516,17 +3908,19 @@
   [name-case : bool]
   [print-headers : bool]
   [status : i64]) : i64
-  (selfhost-lint-files-from
-    input-paths
-    0
-    stdlib-roots
-    enforcing
-    deprecated-string-concat
-    redundant-function-name
-    prefer-dotted-field
-    name-case
-    print-headers
-    status))
+  (begin
+    (selfhost-lint-unsafe-surface-cache-reset!)
+    (selfhost-lint-files-from
+      input-paths
+      0
+      stdlib-roots
+      enforcing
+      deprecated-string-concat
+      redundant-function-name
+      prefer-dotted-field
+      name-case
+      print-headers
+      status)))
 
 (define (selfhost-lint-package-files-from
   [input-paths : lint_svec.Vec]
@@ -3585,18 +3979,20 @@
   [dead-decls : SelfhostLintDeadDecls]
   [print-headers : bool]
   [status : i64]) : i64
-  (selfhost-lint-package-files-from
-    input-paths
-    0
-    stdlib-roots
-    enforcing
-    deprecated-string-concat
-    redundant-function-name
-    prefer-dotted-field
-    name-case
-    dead-decls
-    print-headers
-    status))
+  (begin
+    (selfhost-lint-unsafe-surface-cache-reset!)
+    (selfhost-lint-package-files-from
+      input-paths
+      0
+      stdlib-roots
+      enforcing
+      deprecated-string-concat
+      redundant-function-name
+      prefer-dotted-field
+      name-case
+      dead-decls
+      print-headers
+      status)))
 
 (define (selfhost-lint-package
   [manifest-path : String]

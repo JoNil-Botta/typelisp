@@ -634,7 +634,7 @@
 (define compiler-builtin-id-cfg-feature-cleanup-owner-reflection : i64
   -1)
 (define compiler-builtin-ctfe-ids : (Array i64)
-  (make-array i64 272))
+  (make-array i64 280))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -646,7 +646,7 @@
   (let
     [metadata : (Array i64) (make-array i64 4)]
     [ids : (Array i64) (make-array i64 311)]
-    [ctfe-ids : (Array i64) (make-array i64 272)]
+    [ctfe-ids : (Array i64) (make-array i64 280)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
@@ -658,7 +658,7 @@
           (array-set! ids i -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 272)
+      (while (< i 280)
         (begin
           (array-set! ctfe-ids i -1)
           (set! i (+ i 1))))
@@ -720,7 +720,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 272)
+    (while (< i 280)
       (begin
         (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -728,7 +728,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 272)
+    (while (< i 280)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
@@ -1914,7 +1914,17 @@
     (compiler-builtin-load-ctfe-id! insert-missing 268 "trait")
     (compiler-builtin-load-ctfe-id! insert-missing 269 "interface")
     (compiler-builtin-load-ctfe-id! insert-missing 270 "impl")
-    (compiler-builtin-load-ctfe-id! insert-missing 271 "where")))
+    (compiler-builtin-load-ctfe-id! insert-missing 271 "where")
+    ;; Generic source-macro builders append after the parser-only fixed names
+    ;; so every ID already shipped by main keeps its stable index.
+    (compiler-builtin-load-ctfe-id! insert-missing 272 "pattern-binding-typed")
+    (compiler-builtin-load-ctfe-id! insert-missing 273 "expr-resource-scope")
+    (compiler-builtin-load-ctfe-id! insert-missing 274 "expr-let-scope")
+    (compiler-builtin-load-ctfe-id! insert-missing 275 "expr-set-var")
+    (compiler-builtin-load-ctfe-id! insert-missing 276 "expr-begin-unit")
+    (compiler-builtin-load-ctfe-id! insert-missing 277 "expr-not")
+    (compiler-builtin-load-ctfe-id! insert-missing 278 "expr-while")
+    (compiler-builtin-load-ctfe-id! insert-missing 279 "syntax-name-fresh")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin
@@ -3076,6 +3086,30 @@
         (ci.intern-source-slice "interface" 0 9))
       (= (compiler-builtin-ctfe-ref 270) (ci.intern-source-slice "impl" 0 4))
       (= (compiler-builtin-ctfe-ref 271) (ci.intern-source-slice "where" 0 5))
+      (=
+        (compiler-builtin-ctfe-ref 272)
+        (ci.intern-source-slice "pattern-binding-typed" 0 21))
+      (=
+        (compiler-builtin-ctfe-ref 273)
+        (ci.intern-source-slice "expr-resource-scope" 0 19))
+      (=
+        (compiler-builtin-ctfe-ref 274)
+        (ci.intern-source-slice "expr-let-scope" 0 14))
+      (=
+        (compiler-builtin-ctfe-ref 275)
+        (ci.intern-source-slice "expr-set-var" 0 12))
+      (=
+        (compiler-builtin-ctfe-ref 276)
+        (ci.intern-source-slice "expr-begin-unit" 0 15))
+      (=
+        (compiler-builtin-ctfe-ref 277)
+        (ci.intern-source-slice "expr-not" 0 8))
+      (=
+        (compiler-builtin-ctfe-ref 278)
+        (ci.intern-source-slice "expr-while" 0 10))
+      (=
+        (compiler-builtin-ctfe-ref 279)
+        (ci.intern-source-slice "syntax-name-fresh" 0 17))
       (not
         (=
           (compiler-builtin-ctfe-ref 219)
@@ -3116,6 +3150,7 @@
           (compiler-builtin-ctfe-set! 233 -1)
           (compiler-builtin-ctfe-set! 234 -1)
           (compiler-builtin-ctfe-set! 271 -1)
+          (compiler-builtin-ctfe-set! 279 -1)
           (state-install! snapshot)
           (unless
             (compiler-builtin-parser-syntax-ids-current-ok?)

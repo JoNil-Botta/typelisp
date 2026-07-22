@@ -2,6 +2,7 @@
 ;; every source once, and stops at the shortest source when clauses are zipped.
 (import stdlib.iterator)
 (import stdlib.vector)
+(import stdlib.core_macros as core)
 
 (defstruct ForCounter
   (value i64))
@@ -132,6 +133,7 @@
       (for
         [item (iterator.range 2 2)]
         (set! empty-visits (+ empty-visits (+ item 1))))
+      (core.for [item (iterator.range 0 1)] (set! total (+ total item)))
       (for
         [item (iterator.range 0 1)]
         (set!

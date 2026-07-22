@@ -183,13 +183,22 @@
                   (compiler-ast-state-type-i64? p3 i64-id)
                   (compiler-ast-state-type-string? p3 string-id2))]))])]))
 
+(define (compiler-ast-state-owned-type-dedup-budget-smoke?) : bool
+  ;; Keep the source-macro self-host uniqueness budget from silently shrinking
+  ;; back below the measured 37.5K-node surface.
+  (>=
+    (array-length
+      (struct-get (ast.ast-type-node-pool-state-create 1) dedup-slots))
+    131072))
+
 (define (compiler-ast-state-owned-node-pools-smoke?) : bool
   (and
     (compiler-ast-state-owned-expr-pool-smoke?)
     (compiler-ast-state-owned-type-pool-smoke?)
     (compiler-ast-state-owned-type-dedup-reuse-smoke?)
     (compiler-ast-state-owned-type-dedup-isolated-smoke?)
-    (compiler-ast-state-owned-type-dedup-reset-smoke?)))
+    (compiler-ast-state-owned-type-dedup-reset-smoke?)
+    (compiler-ast-state-owned-type-dedup-budget-smoke?)))
 
 (define (compiler-ast-context-type-i64?
   [pools : ast.AstNodePoolContext]
@@ -1023,6 +1032,7 @@
           false
           0
           100
+          (ast.AstType.Var -3)
           (ast.ast-source-span 1 1 1 2)))
       (ast.ast-expr-binding-clause-list-push
         (&mut bindings)
@@ -1031,6 +1041,7 @@
           false
           0
           101
+          (ast.AstType.Var -3)
           (ast.ast-source-span 2 1 2 2)))
       (ast.ast-expr-binding-clause-list-push
         (&mut bindings)
@@ -1039,6 +1050,7 @@
           false
           0
           102
+          (ast.AstType.Var -3)
           (ast.ast-source-span 3 1 3 2)))
       (let
         [clause-tail : ast.AstExprClauseList

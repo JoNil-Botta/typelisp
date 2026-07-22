@@ -1347,32 +1347,35 @@
                       (compiler-cfg-enable-with-intern-state
                         (compiler-cfg-enable-with-intern-state
                           (compiler-cfg-enable-with-intern-state
-                            cfgs
-                            "feature-ptr-addr-of"
+                            (compiler-cfg-enable-with-intern-state
+                              cfgs
+                              "feature-ptr-addr-of"
+                              intern-state)
+                            "feature-str-view"
                             intern-state)
-                          "feature-str-view"
+                          "feature-runtime-str-view-extern"
                           intern-state)
-                        "feature-runtime-str-view-extern"
+                        "feature-private-string-intrinsics"
                         intern-state)
-                      "feature-private-string-intrinsics"
+                      "feature-compiler-private-string-intrinsics"
                       intern-state)
-                    "feature-compiler-private-string-intrinsics"
+                    "array-helper-intrinsics"
                     intern-state)
-                  "array-helper-intrinsics"
+                  "feature-tl-memchr"
                   intern-state)
-                "feature-tl-memchr"
+                "feature-plain-comptime-well-known"
                 intern-state)
-              "feature-plain-comptime-well-known"
+              "feature-comptime-public-fields"
               intern-state)
-            "feature-comptime-public-fields"
+            "feature-cleanup-owner-reflection"
             intern-state)
-          "feature-cleanup-owner-reflection"
+          "feature-tl-array-zero"
           intern-state)
-        "feature-tl-array-zero"
+        "feature-compiler-float-sqrt-intrinsic"
         intern-state)
-      "feature-compiler-float-sqrt-intrinsic"
+      "feature-compiler-float-bitcast-intrinsics"
       intern-state)
-    "feature-compiler-float-bitcast-intrinsics"
+    "feature-stdlib-for-defmacro"
     intern-state))
 
 (define (compiler-driver-target-cfgs

@@ -284,6 +284,13 @@
 (define (pattern-binding [name : String]) : Pattern
   (pattern-binding name))
 
+;: Build a typed match binding pattern during macro CTFE.
+;:
+;: `ty` must be captured type syntax. The generated program performs the
+;: ordinary annotation compatibility check when it typechecks the match.
+(define (pattern-binding-typed [name : String] [_ty : Expr]) : Pattern
+  (pattern-binding name))
+
 ;: Build an enum variant pattern by name and payload patterns.
 (define (pattern-variant [name : String] [payloads : PatternList]) : Pattern
   (pattern-variant name payloads))
@@ -315,6 +322,45 @@
 ;: Build a match expression from a scrutinee expression and generated arms.
 (define (expr-match [scrutinee : Expr] [arms : MatchArmList]) : Expr
   (expr-match scrutinee arms))
+
+;: Build a single-resource cleanup scope during macro CTFE.
+;:
+;: When `move-aware` is true, moving the bound resource transfers cleanup
+;: responsibility and disarms this scope. This is useful for generated
+;: ownership-transfer constructs; false has ordinary `with` semantics.
+(define (expr-resource-scope
+  [_name : String]
+  [_init : Expr]
+  [_cleanup : Expr]
+  [body : Expr]
+  [_move-aware : bool]) : Expr
+  body)
+
+;: Build a single-binding inferred-type `let` scope during macro CTFE.
+(define (expr-let-scope [_name : String] [_init : Expr] [body : Expr]) : Expr
+  body)
+
+;: Build assignment to a variable named by a compile-time string.
+(define (expr-set-var [_name : String] [value : Expr]) : Expr
+  value)
+
+;: Build a `begin` from an expression list and append a final `unit` value.
+;: The final value makes generated statement bodies uniformly unit-typed.
+(define (expr-begin-unit [items : ExprList]) : Expr
+  (expr-begin-unit items))
+
+;: Build boolean negation during macro CTFE.
+(define (expr-not [value : Expr]) : Expr
+  value)
+
+;: Build a while loop during macro CTFE.
+(define (expr-while [_condition : Expr] [body : Expr]) : Expr
+  body)
+
+;: Give identifier text a fresh syntax identity for hygienic generated bindings.
+;: Reusing the returned value in builders refers to that same binding.
+(define (syntax-name-fresh [text : String]) : String
+  text)
 
 ;: Return the produced type of a captured expression during macro CTFE.
 (define (expr-type [value : Expr]) : Expr

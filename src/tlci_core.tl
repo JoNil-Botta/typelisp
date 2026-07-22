@@ -517,8 +517,24 @@
   189)
 (define tlci-host-callback-op-expr-clause-list-fold-if : i64
   190)
+(define tlci-host-callback-op-pattern-binding-typed : i64
+  191)
+(define tlci-host-callback-op-expr-resource-scope : i64
+  192)
+(define tlci-host-callback-op-expr-let-scope : i64
+  193)
+(define tlci-host-callback-op-expr-set-var : i64
+  194)
+(define tlci-host-callback-op-expr-begin-unit : i64
+  195)
+(define tlci-host-callback-op-expr-not : i64
+  196)
+(define tlci-host-callback-op-expr-while : i64
+  197)
+(define tlci-host-callback-op-syntax-name-fresh : i64
+  198)
 (define tlci-host-callback-stdlib-op-count : i64
-  91)
+  99)
 (define tlci-header-size : i64
   176)
 (define tlci-page-align : i64
@@ -2962,7 +2978,15 @@
     (= tlci-host-callback-op-expr-int-literal 188)
     (= tlci-host-callback-op-expr-list-fold-if 189)
     (= tlci-host-callback-op-expr-clause-list-fold-if 190)
-    (= tlci-host-callback-stdlib-op-count 91)))
+    (= tlci-host-callback-op-pattern-binding-typed 191)
+    (= tlci-host-callback-op-expr-resource-scope 192)
+    (= tlci-host-callback-op-expr-let-scope 193)
+    (= tlci-host-callback-op-expr-set-var 194)
+    (= tlci-host-callback-op-expr-begin-unit 195)
+    (= tlci-host-callback-op-expr-not 196)
+    (= tlci-host-callback-op-expr-while 197)
+    (= tlci-host-callback-op-syntax-name-fresh 198)
+    (= tlci-host-callback-stdlib-op-count 99)))
 
 (define (tlci-test-host-abi-ok?) : bool
   (and

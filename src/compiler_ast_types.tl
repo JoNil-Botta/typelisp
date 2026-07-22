@@ -1321,9 +1321,15 @@
 
 (define (ast-type-node-pool-state-dedup-capacity [capacity : i64]) : i64
   (let
-    [want : i64
-      (if (< capacity 16384)
-        16384
+    [want
+      : i64
+      ;; Large ordinary transformer bodies can exceed the old half-full
+      ;; 8K/32K uniqueness budgets before the rest of a self-host check begins.
+      ;; The scalar `for` source port measures about 37.5K distinct nodes in a
+      ;; full check; retain headroom instead of falling back to millions of
+      ;; duplicate raw type nodes.
+      (if (< capacity 131072)
+        131072
         capacity)]
     [cap : i64 1]
     (begin
@@ -1690,9 +1696,9 @@
 ;; compare would dedup nondeterministically and break the stage2 == stage3
 ;; fixpoint. String payloads (lifetime names) compare by content.
 (define ty-node-dedup-capacity : i64
-  65536)
+  131072)
 (define ty-node-dedup-slots : (Array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 131072))
 (define ty-node-dedup-count : i64
   0)
 
@@ -2578,6 +2584,10 @@
   (has-type bool)
   (ty i64)
   (init i64)
+  ;; Produced-type metadata is populated lazily only for transformers that
+  ;; call `expr-type`; ordinary syntax-only binding captures keep the untyped
+  ;; sentinel and pay no caller typecheck cost.
+  (init-produced AstType)
   (span AstSourceSpan))
 
 (defstruct AstExprBindingClauseList
@@ -4588,11 +4598,12 @@
   [has-type : bool]
   [ty : i64]
   [init : i64]
+  [init-produced : AstType]
   [span : AstSourceSpan]) : AstExprBindingClause
-  (AstExprBindingClause name has-type ty init span))
+  (AstExprBindingClause name has-type ty init init-produced span))
 
 (define (ast-expr-binding-clause-fallback) : AstExprBindingClause
-  (AstExprBindingClause 0 false 0 0 (ast-source-span 0 0 0 0)))
+  (AstExprBindingClause 0 false 0 0 (AstType.Var -3) (ast-source-span 0 0 0 0)))
 
 (define (ast-expr-binding-clause-list-with-capacity [capacity : i64]) : AstExprBindingClauseList
   (let

@@ -40,6 +40,12 @@ SURFACE_HYDRATED_STDERR="$WORKDIR/surface-hydrated.stderr"
 SURFACE_SOURCE_ASM="$WORKDIR/surface-source.s"
 SURFACE_SOURCE_STDOUT="$WORKDIR/surface-source.stdout"
 SURFACE_SOURCE_STDERR="$WORKDIR/surface-source.stderr"
+SURFACE_MISMATCH_PROFILE_ASM="$WORKDIR/surface-mismatch-profile.s"
+SURFACE_MISMATCH_PROFILE_OBJ="$WORKDIR/surface-mismatch-profile.$NL_OBJ_EXT"
+SURFACE_MISMATCH_PROFILE_BIN="$WORKDIR/surface-mismatch-profile$NL_BIN_EXT"
+SURFACE_MISMATCH_ASM="$WORKDIR/surface-mismatch.s"
+SURFACE_MISMATCH_STDOUT="$WORKDIR/surface-mismatch.stdout"
+SURFACE_MISMATCH_STDERR="$WORKDIR/surface-mismatch.stderr"
 SUMMARY_ASM="$WORKDIR/typelisp-summary.s"
 SUMMARY_OBJ="$WORKDIR/typelisp-summary.$NL_OBJ_EXT"
 SUMMARY_BIN="$WORKDIR/typelisp-summary$NL_BIN_EXT"
@@ -390,6 +396,54 @@ assert_contains_in "$SURFACE_SOURCE_STDERR" \
     "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR"
 cmp "$SURFACE_HYDRATED_ASM" "$SURFACE_SOURCE_ASM" >/dev/null ||
     fail "hydrated prelude assembly differs from source prelude output"
+
+echo "[compile-profile] verify source-mismatched surface fallback"
+SOURCE_HASH_FILE=target/embedded-stdlib-tlci/source-hash.txt
+EXPECTED_SOURCE_HASH=$(cat "$SOURCE_HASH_FILE")
+printf '%s-mismatch' "$EXPECTED_SOURCE_HASH" > "$SOURCE_HASH_FILE"
+set +e
+"$COMPILER" compile src/main.tl \
+    -o "$SURFACE_MISMATCH_PROFILE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    --cfg compile-profile \
+    --cfg embedded-stdlib-tlci \
+    --cfg tlci-native-route \
+    > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
+status=$?
+set -e
+printf '%s' "$EXPECTED_SOURCE_HASH" > "$SOURCE_HASH_FILE"
+if [ "$status" -ne 0 ]; then
+    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+    fail "source-mismatch profile CLI compile failed"
+fi
+if ! assemble_and_link surface-mismatch-profile-cli \
+    "$SURFACE_MISMATCH_PROFILE_ASM" \
+    "$SURFACE_MISMATCH_PROFILE_OBJ" \
+    "$SURFACE_MISMATCH_PROFILE_BIN" \
+    >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
+    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+    fail "source-mismatch profile CLI link failed"
+fi
+if ! "$SURFACE_MISMATCH_PROFILE_BIN" compile \
+    tests/integration/arithmetic.tl \
+    -o "$SURFACE_MISMATCH_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    > "$SURFACE_MISMATCH_STDOUT" 2> "$SURFACE_MISMATCH_STDERR"; then
+    show_failure_logs "$SURFACE_MISMATCH_STDOUT" "$SURFACE_MISMATCH_STDERR"
+    fail "source-mismatched surface fallback fixture failed"
+fi
+assert_contains_in "$SURFACE_MISMATCH_STDERR" \
+    "compile-profile-detail|prelude.source_pipeline_entries|1" \
+    "$SURFACE_MISMATCH_STDOUT" "$SURFACE_MISMATCH_STDERR"
+assert_contains_in "$SURFACE_MISMATCH_STDERR" \
+    "compile-profile-detail|prelude.hydrations|0" \
+    "$SURFACE_MISMATCH_STDOUT" "$SURFACE_MISMATCH_STDERR"
+cmp "$SURFACE_SOURCE_ASM" "$SURFACE_MISMATCH_ASM" >/dev/null ||
+    fail "source-mismatched fallback differs from explicit source output"
 
 echo "[compile-profile] compile compact-summary CLI"
 if ! "$COMPILER" compile src/main.tl \

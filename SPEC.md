@@ -4820,7 +4820,35 @@ symbolization, never for linking:
 Table bytes are opaque beyond count/size validation until consumed; a loader
 must validate referenced name ranges and code offsets before use.
 
-##### 5.17.1.1 Host ABI handshake
+##### 5.17.1.1 Auxiliary rodata sections
+
+The rodata section may carry an independently versioned, package-agnostic
+auxiliary-section envelope. This is an additive encoding inside rodata, not a
+metadata-schema version. Existing package-specific rodata is the base payload.
+Auxiliary payloads follow it at 8-byte-aligned offsets, followed by an ordered
+directory and a fixed 48-byte trailer.
+
+Each 40-byte directory record contains five little-endian u64 fields: positive
+section kind, positive section schema version, payload offset, payload byte
+length, and the v1 rolling hash of that payload. Kinds are strictly increasing,
+payloads do not overlap the base payload, directory, or each other, and every
+payload offset is 8-byte aligned. V1 assigns kinds `1 = package identity`,
+`2 = frontend AST`, `3 = frontend types`, and `4 = frontend facts`.
+
+The trailer contains six little-endian u64 fields: magic `TLCIAUX1`, auxiliary
+format version (`1`), base-rodata byte length, directory offset, record count,
+and total rodata byte length. A missing trailer means that the image has no
+auxiliary sections. A recognized trailer with an unsupported version, invalid
+range/order/alignment, length mismatch, or payload-hash mismatch is malformed
+and must not be partially consumed. Unknown positive kinds may be ignored.
+
+Frontend surface deployments key their identity section by package name,
+canonical module set, source-closure hash, producer compiler build, and target
+configuration. Each payload schema is independently versioned. Consumers must
+validate the complete key against independently trusted package/source/build
+inputs before hydrating any AST, type, intern identity, or checked fact.
+
+##### 5.17.1.2 Host ABI handshake
 
 The tlci header field at byte offset 24 is the host callback ABI version. In v1
 it equals the host callback table version below; both values are `1`. A loader

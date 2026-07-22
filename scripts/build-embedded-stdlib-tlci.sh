@@ -38,6 +38,7 @@ fi
 WORKDIR="$ROOT/target/embedded-stdlib-tlci"
 MANIFEST="$WORKDIR/modules.txt"
 SURFACE="$WORKDIR/prelude-surface-$HOST_TARGET.rodata"
+SOURCE_HASH_FILE="$WORKDIR/source-hash.txt"
 mkdir -p "$WORKDIR" "$(dirname -- "$OUTPUT")"
 
 awk '
@@ -74,6 +75,7 @@ SOURCE_HASH=$(
         cat "$SOURCE_PATH"
     done < "$MANIFEST" | git hash-object --stdin
 )
+printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
 "$COMPILER" run tools/embedded-stdlib-tlci/build-surface.tl \
     --stdlib-root stdlib --stdlib-root src -- \
     stdlib "$SURFACE" "$HOST_TARGET" "$BUILD_HASH" "$SOURCE_HASH"

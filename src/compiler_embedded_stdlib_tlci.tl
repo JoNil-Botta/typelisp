@@ -29,7 +29,7 @@
   (Unavailable String))
 
 (defenum CompilerEmbeddedStdlibTlciSurface
-  (Ok String (Array u8))
+  (Ok String String (Array u8))
   (Unavailable String))
 
 ;; The compiler maps the image lazily on the first embedded-stdlib macro call
@@ -71,6 +71,7 @@
       [(ResultTlciImage.Ok image)
         (CompilerEmbeddedStdlibTlciSurface.Ok
           (struct-get image compiler-build-hash)
+          payload.embedded-stdlib-tlci-source-hash
           (struct-get image rodata))])))
 
 (define (compiler-embedded-stdlib-tlci-host-table) : TlciHostCallbackTable

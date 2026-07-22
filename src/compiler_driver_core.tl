@@ -2043,17 +2043,20 @@
   (define (compiler-driver-prelude-surface-key-valid?
     [key : surface_identity.SurfaceIdentityKey]
     [outer-build : String]
+    [expected-source-hash : String]
     [configuration : String]) : bool
     (and
       (string.eq (struct-get key package-name) "stdlib.prelude")
       (string.eq (struct-get key compiler-build) outer-build)
       (string.eq (struct-get key configuration) configuration)
-      (> (string.string-length (struct-get key source-hash)) 0))))
+      (> (string.string-length expected-source-hash) 0)
+      (string.eq (struct-get key source-hash) expected-source-hash))))
 
 (cfg
   embedded-stdlib-tlci
   (define (compiler-driver-hydrate-prelude-rodata
     [outer-build : String]
+    [expected-source-hash : String]
     [rodata : (Array u8)]
     [configuration : String]
     [pools : AstNodePoolContext]) : CompilerDriverPreludeSurface
@@ -2065,6 +2068,7 @@
           (compiler-driver-prelude-surface-key-valid?
             key
             outer-build
+            expected-source-hash
             configuration))
           CompilerDriverPreludeSurface.Missing
           (match (compiler-surface-hydrate rodata key pools)
@@ -2107,9 +2111,13 @@
             (match (compiler-embedded-stdlib-tlci-surface)
               [(CompilerEmbeddedStdlibTlciSurface.Unavailable _)
                 CompilerDriverPreludeSurface.Missing]
-              [(CompilerEmbeddedStdlibTlciSurface.Ok outer-build rodata)
+              [(CompilerEmbeddedStdlibTlciSurface.Ok
+                  outer-build
+                  source-hash
+                  rodata)
                 (compiler-driver-hydrate-prelude-rodata
                   outer-build
+                  source-hash
                   rodata
                   configuration
                   pools)])]

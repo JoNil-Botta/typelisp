@@ -238,6 +238,15 @@ write_fixture() {
     } > "$fixture"
 }
 
+append_lint_row() {
+    fixture=$1
+    elapsed_ms=$2
+    exit_status=$3
+    host=$4
+    printf 'TypeLisp source lint\tall\tgate\t%s\t%s\t%s\n' \
+        "$elapsed_ms" "$exit_status" "$host" >> "$fixture"
+}
+
 expect_fixture() {
     label=$1
     expectation=$2
@@ -290,6 +299,34 @@ self_test() {
         "$workdir/lint-missing.tsv" "$workdir/lint-missing.out"
     grep -F 'lint-gate=<missing> cap=60000ms' \
         "$workdir/lint-missing.out" >/dev/null
+
+    write_fixture "$workdir/lint-duplicate.tsv" 12800 18700 30300 50500
+    append_lint_row "$workdir/lint-duplicate.tsv" 30000 0 linux
+    expect_fixture lint-duplicate fail \
+        "$workdir/lint-duplicate.tsv" "$workdir/lint-duplicate.out"
+    grep -F 'required row lint-gate occurs 2 times' \
+        "$workdir/lint-duplicate.out" >/dev/null
+
+    write_fixture "$workdir/lint-malformed.tsv" 12800 18700 30300 50500 ''
+    append_lint_row "$workdir/lint-malformed.tsv" not-a-time 0 linux
+    expect_fixture lint-malformed fail \
+        "$workdir/lint-malformed.tsv" "$workdir/lint-malformed.out"
+    grep -F 'row lint-gate has invalid elapsed_ms: not-a-time' \
+        "$workdir/lint-malformed.out" >/dev/null
+
+    write_fixture "$workdir/lint-nonzero.tsv" 12800 18700 30300 50500 ''
+    append_lint_row "$workdir/lint-nonzero.tsv" 30000 7 linux
+    expect_fixture lint-nonzero fail \
+        "$workdir/lint-nonzero.tsv" "$workdir/lint-nonzero.out"
+    grep -F 'row lint-gate recorded nonzero exit: 7' \
+        "$workdir/lint-nonzero.out" >/dev/null
+
+    write_fixture "$workdir/lint-wrong-host.tsv" 12800 18700 30300 50500 ''
+    append_lint_row "$workdir/lint-wrong-host.tsv" 30000 0 windows
+    expect_fixture lint-wrong-host fail \
+        "$workdir/lint-wrong-host.tsv" "$workdir/lint-wrong-host.out"
+    grep -F 'row lint-gate has host windows; expected linux' \
+        "$workdir/lint-wrong-host.out" >/dev/null
 
     write_fixture "$workdir/missing.tsv" 12800 18700 30300
     expect_fixture missing-row fail \

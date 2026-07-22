@@ -57055,8 +57055,12 @@
             (if detach-before-macro?
               (compiler-lower-checked-dest-pools-current)
               macro-pools)]
+          [surface-macro-inert? : bool
+            (macro-surface-program-fast-inert-with-pools?
+              macro-program
+              committed-macro-pools)]
           [_arm-post-macro-detach : unit
-            (if detach-before-macro?
+            (if (and detach-before-macro? (not surface-macro-inert?))
               (lower-checked-dest-pools-rollover-for-macro!)
               unit)]
           (match (macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names

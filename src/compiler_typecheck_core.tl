@@ -71021,6 +71021,50 @@
         (MacroSurfacePrefixPlan.Cold)))
     (MacroSurfacePrefixPlan.Cold)))
 
+(define (macro-surface-decl-fast-inert? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Test _ _ _) false]
+    [(AstDecl.Unsafe inner-box)
+      (macro-surface-decl-fast-inert? (box-get inner-box))]
+    [_
+      (and
+        (not (macro-decl-needs-expansion? decl))
+        (not (macro-decl-might-fire-expression-macro? decl)))]))
+
+(define (macro-surface-decls-fast-inert? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) true]
+    [(AstDeclListStep.Cons decl rest)
+      (and
+        (macro-surface-decl-fast-inert? decl)
+        (macro-surface-decls-fast-inert? rest))]))
+
+(define (macro-surface-decls-fast-inert-after-prescan? [decls : AstDeclList]) : bool
+  (if (surface_facts.surface-typecheck-facts-active?)
+    (let
+      [facts : surface_facts.SurfaceTypecheckFacts
+        (surface_facts.surface-typecheck-facts-current)]
+      [count : i64 (struct-get facts macro-prefix-decl-count)]
+      [decl-count : i64 (ast-decl-list-len (& decls))]
+      (if (and (> count 0) (< count decl-count))
+        (begin
+          (macro-expand-set-macro-names! macro-live-prescan-visible-names)
+          (macro-surface-decls-fast-inert? (tc-decl-list-drop decls count)))
+        false))
+    false))
+
+(define (macro-surface-program-fast-inert-with-pools?
+  [program : AstProgram]
+  [pools : AstNodePoolContext]) : bool
+  (begin
+    (tc-install-pools! pools)
+    (match program
+      [(AstProgram.Program decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          [_prescan : unit (macro-live-prescan-ensure! decls)]
+          (macro-surface-decls-fast-inert-after-prescan? decls))])))
+
 (define (macro-expand-decls-with-surface-prefix
   [load-state : CompilerLoadSessionState]
   [ctx : TcContext]
@@ -71113,6 +71157,8 @@
                 (macro-expand-set-macro-names! prescan-macro-names)
                 (macro-program-might-fire-expression-macro? decls))
               false)]
+          [surface-fast-inert : bool
+            (macro-surface-decls-fast-inert-after-prescan? decls)]
           (begin
             ;; The CTFE-env cache is reset once per program at the macro-expand
             ;; entry and rebuilt at most once per run by
@@ -71137,137 +71183,157 @@
             ;; splice fallback. Clearing it here left every pass after the first
             ;; with an empty export set, breaking module-hook.
             (macro-expand-set-expr-type-macro-names! expr-type-macro-names)
-            ;; Scan once for type literals and module-value queries. The latter
-            ;; enables only the compact signature index; it must not force the
-            ;; much larger layout/nominal-reflection metadata build.
-            (ctfe-module-value-reflection-enable! false)
-            (let
-              [has-type-literal : bool (ctfe-program-has-type-literal? decls)]
+            (if surface-fast-inert
               (begin
-                ;; Source macro bodies and ordinary comptime expressions are
-                ;; visited by the combined scan above. Surface-summary macro
-                ;; bodies are outside this AST, so conservatively enable the
-                ;; compact index only for that imported-summary case.
-                (if has-summary-macro-import
-                  (ctfe-module-value-reflection-enable! true)
-                  unit)
-                ;; Only build the (tens-of-MB, O(types^2))
-                ;; reflection/layout metadata if the program actually contains
-                ;; a `(type T)` literal or macros need reflection.
-                (set!
-                  ctfe-needs-metadata
-                  (or
-                    has-defmacro
-                    has-visible-macro-call
-                    has-type-literal
-                    has-expr-type-macros))))
-            (if (or has-defmacro has-visible-macro-call program-needs-expansion)
-              (let
-                [prefix-reserve : i64 1024]
-                [active-decls : AstDeclList
-                  (macro-decl-list-with-prefix-reserve decls prefix-reserve)]
-                [active-paths : AstDeclPathList
-                  (macro-decl-path-list-with-prefix-reserve
-                    paths
-                    prefix-reserve)]
-                [active-program : AstProgram (ast-program active-decls)]
-                (begin
-                  (macro-expand-scratch-begin!)
-                  (cfg compile-profile (compiler-tc-profile-start))
-                  (match (macro-live-symbols-build-or-reuse!
-                    active-program
-                    active-paths)
-                    [(ResultCompilerSymbols.Ok symbols)
-                      (let
-                        [registries : CompilerRegistries
-                          macro-live-registries-value]
-                        (begin
-                          (set! macro-expand-active-module "")
-                          (macro-expand-set-macro-names!
-                            macro-live-prescan-visible-names)
+                (cfg
+                  compile-profile
+                  (macro-profile-surface-prefix-hit
+                    (struct-get
+                      (surface_facts.surface-typecheck-facts-current)
+                      macro-prefix-decl-count)))
+                (ResultMacroExpand.Ok program paths))
+              (begin
+                ;; Scan once for type literals and module-value queries. The
+                ;; latter enables only the compact signature index; it must not
+                ;; force the much larger layout/nominal-reflection metadata
+                ;; build.
+                (ctfe-module-value-reflection-enable! false)
+                (let
+                  [has-type-literal : bool
+                    (ctfe-program-has-type-literal? decls)]
+                  (begin
+                    ;; Source macro bodies and ordinary comptime expressions are
+                    ;; visited by the combined scan above. Surface-summary macro
+                    ;; bodies are outside this AST, so conservatively enable the
+                    ;; compact index only for that imported-summary case.
+                    (if has-summary-macro-import
+                      (ctfe-module-value-reflection-enable! true)
+                      unit)
+                    ;; Only build the (tens-of-MB, O(types^2)) reflection/layout
+                    ;; metadata if the program actually contains a `(type T)`
+                    ;; literal or macros need reflection.
+                    (set!
+                      ctfe-needs-metadata
+                      (or
+                        has-defmacro
+                        has-visible-macro-call
+                        has-type-literal
+                        has-expr-type-macros))))
+                (if (or
+                  has-defmacro
+                  has-visible-macro-call
+                  program-needs-expansion)
+                  (let
+                    [prefix-reserve : i64 1024]
+                    [active-decls : AstDeclList
+                      (macro-decl-list-with-prefix-reserve decls prefix-reserve)]
+                    [active-paths : AstDeclPathList
+                      (macro-decl-path-list-with-prefix-reserve
+                        paths
+                        prefix-reserve)]
+                    [active-program : AstProgram (ast-program active-decls)]
+                    (begin
+                      (macro-expand-scratch-begin!)
+                      (cfg compile-profile (compiler-tc-profile-start))
+                      (match (macro-live-symbols-build-or-reuse!
+                        active-program
+                        active-paths)
+                        [(ResultCompilerSymbols.Ok symbols)
                           (let
-                            [ctx : TcContext
-                              (tc-context-new-with-source-names
-                                active-program
-                                symbols
-                                registries
-                                ""
-                                cbi.compiler-builtin-id-fix-empty
-                                pools
-                                source-names)]
-                            (match (tc-stdlib-comptime-surface-ok-for-macro ctx)
-                              [(ResultTcUnit.Ok)
-                                (match (tc-build-top-env ctx active-program)
-                                  [(ResultTcEnv.Ok top-env)
-                                    (begin
-                                      (tc-hygiene-reset-active-top-env! top-env)
-                                      (tc-context-capture-active-pools! ctx)
-                                      (cfg
-                                        compile-profile
-                                        (compiler-tc-profile-finish
-                                          "macro_setup"))
-                                      (macro-expand-ctfe-env-build-once! ctx)
-                                      (cfg
-                                        compile-profile
-                                        (compiler-tc-profile-start))
-                                      (cfg
-                                        compile-profile
-                                        (compiler-tc-macro-profile-note-walk-share-gate
-                                          true))
-                                      (match (macro-expand-decls-with-surface-prefix
-                                        load-state
-                                        ctx
-                                        top-env
-                                        active-decls
-                                        active-paths
-                                        stdlib-roots
-                                        cfgs)
-                                        [(ResultMacroDeclsWithPaths.Ok
-                                            ndecls
-                                            npaths)
-                                          (begin
-                                            (tc-context-capture-active-pools!
-                                              ctx)
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-profile-finish
-                                                "macro_walk"))
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-env-profile-emit-prefix
-                                                "macro_"))
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-macro-profile-emit))
-                                            (ResultMacroExpand.Ok
-                                              (ast-program ndecls)
-                                              npaths))]
-                                        [(ResultMacroDeclsWithPaths.Err diag)
-                                          (begin
-                                            (tc-context-capture-active-pools!
-                                              ctx)
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-profile-finish
-                                                "macro_walk"))
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-env-profile-emit-prefix
-                                                "macro_"))
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-macro-profile-emit))
-                                            (ResultMacroExpand.Err diag))]))]
-                                  [(ResultTcEnv.Err message)
+                            [registries : CompilerRegistries
+                              macro-live-registries-value]
+                            (begin
+                              (set! macro-expand-active-module "")
+                              (macro-expand-set-macro-names!
+                                macro-live-prescan-visible-names)
+                              (let
+                                [ctx : TcContext
+                                  (tc-context-new-with-source-names
+                                    active-program
+                                    symbols
+                                    registries
+                                    ""
+                                    cbi.compiler-builtin-id-fix-empty
+                                    pools
+                                    source-names)]
+                                (match (tc-stdlib-comptime-surface-ok-for-macro
+                                  ctx)
+                                  [(ResultTcUnit.Ok)
+                                    (match (tc-build-top-env ctx active-program)
+                                      [(ResultTcEnv.Ok top-env)
+                                        (begin
+                                          (tc-hygiene-reset-active-top-env!
+                                            top-env)
+                                          (tc-context-capture-active-pools! ctx)
+                                          (cfg
+                                            compile-profile
+                                            (compiler-tc-profile-finish
+                                              "macro_setup"))
+                                          (macro-expand-ctfe-env-build-once!
+                                            ctx)
+                                          (cfg
+                                            compile-profile
+                                            (compiler-tc-profile-start))
+                                          (cfg
+                                            compile-profile
+                                            (compiler-tc-macro-profile-note-walk-share-gate
+                                              true))
+                                          (match (macro-expand-decls-with-surface-prefix
+                                            load-state
+                                            ctx
+                                            top-env
+                                            active-decls
+                                            active-paths
+                                            stdlib-roots
+                                            cfgs)
+                                            [(ResultMacroDeclsWithPaths.Ok
+                                                ndecls
+                                                npaths)
+                                              (begin
+                                                (tc-context-capture-active-pools!
+                                                  ctx)
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-tc-profile-finish
+                                                    "macro_walk"))
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-tc-env-profile-emit-prefix
+                                                    "macro_"))
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-tc-macro-profile-emit))
+                                                (ResultMacroExpand.Ok
+                                                  (ast-program ndecls)
+                                                  npaths))]
+                                            [(ResultMacroDeclsWithPaths.Err
+                                                diag)
+                                              (begin
+                                                (tc-context-capture-active-pools!
+                                                  ctx)
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-tc-profile-finish
+                                                    "macro_walk"))
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-tc-env-profile-emit-prefix
+                                                    "macro_"))
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-tc-macro-profile-emit))
+                                                (ResultMacroExpand.Err diag))]))]
+                                      [(ResultTcEnv.Err message)
+                                        (ResultMacroExpand.Err
+                                          (box (tc-diag-at-start message)))])]
+                                  [(ResultTcUnit.Err message)
                                     (ResultMacroExpand.Err
-                                      (box (tc-diag-at-start message)))])]
-                              [(ResultTcUnit.Err message)
-                                (ResultMacroExpand.Err
-                                  (box (tc-diag-at-start message)))]))))]
-                    [(ResultCompilerSymbols.Err message)
-                      (ResultMacroExpand.Err
-                        (box (compiler-symbols-last-error-diagnostic message)))])))
-              (ResultMacroExpand.Ok program paths))))])))
+                                      (box (tc-diag-at-start message)))]))))]
+                        [(ResultCompilerSymbols.Err message)
+                          (ResultMacroExpand.Err
+                            (box
+                              (compiler-symbols-last-error-diagnostic message)))])))
+                  (ResultMacroExpand.Ok program paths))))))])))
 
 (defenum MacroMaybeGeneratedNormalImport
   (No)

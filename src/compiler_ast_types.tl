@@ -15,6 +15,11 @@
 ;; imports, so this adds no cycle.
 (import stdlib.arena)
 
+;; Compiler AST pool storage starts with 16 MiB instead of a general arena's
+;; 64 MiB. Larger inputs append general chunks that pack multiple segments.
+(define (ast-node-pool-arena-make) : i64
+  (arena.tl_arena_make_small))
+
 ;; Hash/equality helpers for the ty-node hash-consing table below.
 (import stdlib.hash)
 (import stdlib.string)
@@ -751,6 +756,8 @@
   (arena.tl_arena_current))
 (define ast-node-pool-storage-arena : i64
   0)
+(define ty-node-pool-storage-arena : i64
+  0)
 (define ast-node-pool-count : i64
   0)
 
@@ -958,7 +965,7 @@
         (arena.tl_arena_set base-arena))]
     [segment-bases : (Array i64) (ast-node-pool-segment-base-table-new)]
     [base-head : i64 (arena.tl_arena_current)]
-    [storage-root : i64 (arena.tl_arena_make)]
+    [storage-root : i64 (ast-node-pool-arena-make)]
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
@@ -1171,8 +1178,6 @@
   0)
 (define ty-node-pool-exhausted : bool
   false)
-(define ty-node-pool-storage-arena : i64
-  0)
 
 ;: Current type-node count (also the next ty id ty-node-push will assign).
 (define (ty-node-pool-len) : i64
@@ -1339,7 +1344,7 @@
     [segment-bases : (Array i64) (ast-node-pool-segment-base-table-new)]
     [dedup-slots : (Array i64) (array.make-array i64 dedup-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
-    [storage-root : i64 (arena.tl_arena_make)]
+    [storage-root : i64 (ast-node-pool-arena-make)]
     [_set-storage-arena : unit
       (unsafe
         (arena.tl_arena_set storage-root))]
@@ -2289,10 +2294,10 @@
 (define (ast-node-pool-context-base-arena [pools : AstNodePoolContext]) : i64
   (struct-get (array-ref (struct-get pools expr-pool) 0) base-arena))
 
-;; Segments have no interior pointers into their backing arenas. Keep them in
-;; independent arenas so adding a segment never copies or relocates prior nodes.
-;; Payloads, dedup state, segment tables, and context cells remain in
-;; `base-arena`.
+;; Segments have no interior pointers into their backing arenas, so adding one
+;; never copies or relocates prior nodes. Expression and type segments use
+;; separate small-root storage chains; payloads, dedup state, segment tables,
+;; and context cells remain in `base-arena`.
 (define (ast-node-pool-storage-arenas-destroy!
   [expr-storage : i64]
   [type-storage : i64]
@@ -2476,7 +2481,7 @@
       (array-ref (struct-get source type-pool) 0)]
     [count : i64 (ast-type-node-pool-state-len source-state)]
     [previous-arena : i64 (arena.tl_arena_current)]
-    [new-arena : i64 (arena.tl_arena_make)]
+    [new-arena : i64 (ast-node-pool-arena-make)]
     [_set-new-arena : unit
       (unsafe
         (arena.tl_arena_set new-arena))]

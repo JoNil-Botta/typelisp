@@ -129,7 +129,10 @@
 ;; do not read or write through this context; their next load receives its
 ;; `AstNodePoolContext` directly.
 (define compiler-driver-detached-compat-pools : AstNodePoolContext
-  (ast-node-pool-context-new-with-capacities 1 1))
+  ;; This sentinel is never read or written. Snapshot the process-global
+  ;; compatibility fallback instead of allocating a duplicate 64K expression
+  ;; segment into the process-lifetime default arena.
+  (ast-node-pool-context-capture-active))
 
 (define (compiler-driver-state-detach-active-pools-if-owned!
   [pools : AstNodePoolContext]) : unit
@@ -141,7 +144,7 @@
 
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
-    [pool-arena : i64 (arena.tl_arena_make)]
+    [pool-arena : i64 (ast-node-pool-arena-make)]
     [pools : AstNodePoolContext
       (ast-node-pool-context-new-with-capacities-in-arena
         compiler-driver-compile-load-expr-pool-initial-capacity
@@ -324,7 +327,7 @@
 (define (compiler-driver-state-new-checked-lower-pools) : AstNodePoolContext
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
-    [pool-arena : i64 (arena.tl_arena_make)]
+    [pool-arena : i64 (ast-node-pool-arena-make)]
     [_set-pool-arena : unit
       (unsafe
         (arena.tl_arena_set pool-arena))]
@@ -423,13 +426,13 @@
     (compiler-driver-state-session-cache-enabled? state))
     unit
     (let
-      ;; The pool arena may grow past its first 64 MiB segment during a compile.
+      ;; The pool payload arena may grow past its root during a compile.
       ;; Destroy the installed head we just retired; the runtime root also tracks
       ;; that newest live segment so either head or root handle reclaims the chain.
       [old-newest : i64
         (ast-node-pool-context-base-arena
           (compiler-driver-state-pool-context state))]
-      [new-arena : i64 (arena.tl_arena_make)]
+      [new-arena : i64 (ast-node-pool-arena-make)]
       (begin
         (compiler-driver-state-clear-pool-backed-caches-for-state! state)
         ;; Do not materialize the replacement backing arrays while the retired
@@ -1763,14 +1766,10 @@
             (set! compiler-driver-pending-retired-source-arena 0)
             (set! compiler-driver-pending-retired-source-expr-storage-arena 0)
             (set! compiler-driver-pending-retired-source-type-storage-arena 0)
-            (if (= retire-expr-storage-arena 0)
-              unit
-              (arena.tl_arena_destroy retire-expr-storage-arena))
-            (if (or
-              (= retire-type-storage-arena 0)
-              (= retire-type-storage-arena retire-expr-storage-arena))
-              unit
-              (arena.tl_arena_destroy retire-type-storage-arena))
+            (ast-node-pool-storage-arenas-destroy!
+              retire-expr-storage-arena
+              retire-type-storage-arena
+              retire-arena)
             (arena.tl_arena_destroy retire-arena)
             (arena.tl_arena_set retained-arena)))))))
 

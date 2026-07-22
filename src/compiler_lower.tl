@@ -891,16 +891,10 @@
           lower-checked-dest-pools-context
           (ast-node-pool-context-new final-expr-state final-type-state))
         (ast-node-pool-context-install! lower-checked-dest-pools-context)
-        (if (= old-expr-storage-arena 0)
-          unit
-          (unsafe
-            (arena.tl_arena_destroy old-expr-storage-arena)))
-        (if (or
-          (= old-type-storage-arena 0)
-          (= old-type-storage-arena old-expr-storage-arena))
-          unit
-          (unsafe
-            (arena.tl_arena_destroy old-type-storage-arena)))
+        (ast-node-pool-storage-arenas-destroy!
+          old-expr-storage-arena
+          old-type-storage-arena
+          old-arena)
         (if (= old-arena 0)
           unit
           (unsafe

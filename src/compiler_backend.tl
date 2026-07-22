@@ -51522,8 +51522,11 @@ tl_boot_pool:
 ")
 
 ;; First-class arena runtime. `tl_arena_make` maps a fresh INDEPENDENT
-;; 64 MiB arena chain (prev-link 0) and returns its header WITHOUT changing the
-;; active arena. `tl_arena_current`/`tl_arena_set` read/write the active arena.
+;; 64 MiB arena chain (prev-link 0), while the compiler-internal
+;; `tl_arena_make_small` starts at 16 MiB; ordinary overflow chunks retain the
+;; general 64 MiB size so large selfhost workloads keep proven packing behavior.
+;; Both entry points return their header WITHOUT
+;; changing the active arena. `tl_arena_current`/`tl_arena_set` read/write it.
 ;; `tl_arena_destroy` releases an arena's whole active chain plus any retired
 ;; overflow chunks held by the chain root. Arena header is the same 64-byte
 ;; record as tl_alloc {0:prev, 8:base, 16:bump, 24:end, 32:retired, 40:root,
@@ -51593,6 +51596,12 @@ tl_arena_poison_enable:
     .globl tl_arena_make
 tl_arena_make:
     movq $0x4000000, %rsi
+    jmp .L_tl_arena_make_sized
+
+    .globl tl_arena_make_small
+tl_arena_make_small:
+    movq $0x1000000, %rsi
+.L_tl_arena_make_sized:
     xorq %rdi, %rdi
     movq $3, %rdx
     movq $0x22, %r10
@@ -51611,7 +51620,7 @@ tl_arena_make:
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
-    addq $0x4000000, %rcx
+    addq %rsi, %rcx
     movq %rcx, 24(%rax)
     ret
 .L_tl_arena_make_abort:
@@ -51763,8 +51772,21 @@ tl_arena_make:
     push %rbx
     push %rsi
     sub $48, %rsp
+    movq $0x4000000, %rsi
+    jmp .L_tl_arena_make_win_sized
+
+    .globl tl_arena_make_small
+tl_arena_make_small:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %rsi
+    sub $48, %rsp
+    movq $0x1000000, %rsi
+.L_tl_arena_make_win_sized:
+    movq %rsi, 40(%rsp)
     xorq %rcx, %rcx
-    movq $0x4000000, %rdx
+    movq %rsi, %rdx
     movq $0x2000, %r8
     movq $0x4, %r9
     call VirtualAlloc
@@ -51790,7 +51812,7 @@ tl_arena_make:
     addq $0x400000, %rsi
     movq %rsi, 64(%rbx)
     movq %rbx, %rcx
-    addq $0x4000000, %rcx
+    addq 40(%rsp), %rcx
     movq %rcx, 24(%rbx)
     movq %rbx, %rax
     add $48, %rsp
@@ -51805,23 +51827,23 @@ tl_arena_make:
     movq $0, 32(%rsp)
     xorq %rcx, %rcx
     xorq %rdx, %rdx
-    movq $0x4000000, %r8
+    movq %rsi, %r8
     xorq %r9, %r9
     call tl_windows_allocation_abort
     call tl_oom_abort
 .L_tl_arena_make_win_initial_commit_os_fail:
     call GetLastError
-    movl %eax, %esi
+    movl %eax, %eax
+    movq %rax, 40(%rsp)
     movq %rbx, %rcx
     xorq %rdx, %rdx
     movq $0x8000, %r8
     call VirtualFree
-    movq %rsi, 40(%rsp)
     movq $0, 32(%rsp)
     xorq %rcx, %rcx
     movq $1, %rdx
     movq $0x400000, %r8
-    movq $0x4000000, %r9
+    movq %rsi, %r9
     call tl_windows_allocation_abort
     call tl_oom_abort
 
@@ -56589,6 +56611,9 @@ tl_comptime_host_invoke_set:
       (set!
         symbols
         (compiler-backend-string-cons "tl_arena_make_atomic" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_arena_make_small" symbols))
       (set! symbols (compiler-backend-string-cons "tl_arena_set" symbols))
       (set! symbols (compiler-backend-string-cons "tl_arena_current" symbols))
       (set! symbols (compiler-backend-string-cons "tl_alloc" symbols))
@@ -56636,6 +56661,10 @@ tl_comptime_host_invoke_set:
         (compiler-backend-plan-provides-id?
           plan
           cbi.compiler-builtin-id-tl-arena-make-atomic)]
+      [(string.eq name "tl_arena_make_small")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-arena-make-small)]
       [(string.eq name "tl_arena_set")
         (compiler-backend-plan-provides-id?
           plan

@@ -209,6 +209,7 @@ while [ "$i" -le "$STAGES" ]; do
         echo "[build-stage0] stage$i emitted no assembly for src/main.tl" >&2
         exit 1
     }
+    bootstrap_seed_runtime_small_arena_compat "$STAGE_ASM"
     assemble_and_link "stage$i" "$STAGE_ASM" "$STAGE_OBJ" "$STAGE_BIN"
     PREV="$STAGE_BIN"
     i=$((i + 1))

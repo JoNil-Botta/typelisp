@@ -13181,6 +13181,9 @@
       (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
         "tl_arena_make"))
+    (compiler-backend-runtime-helper-inventory-core-symbol-ok?
+      plan
+      "tl_arena_make_small")
     (backend-and4
       (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
@@ -13606,6 +13609,7 @@
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_poison_enable")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make_atomic"))
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make_small")
     (backend-and8
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_destroy")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_total")
@@ -13631,7 +13635,7 @@
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 22)
+    (= (compiler-backend-string-count asm "    .globl ") 23)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -13640,7 +13644,7 @@
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 25)
+    (= (compiler-backend-string-count asm "    .globl ") 26)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
@@ -13874,10 +13878,50 @@
         asm
         "    movq 56(%r12), %r14\n    testq %r14, %r14\n    jnz .L_tl_region_reset_win_all_head_ready\n    movq %r12, %r14\n.L_tl_region_reset_win_all_head_ready:\n.L_tl_region_reset_win_all_retired_ready:\n    movq 32(%r12), %r12\n"))))
 
+(define (compiler-backend-runtime-small-arena-linux-ok?) : bool
+  (let
+    [asm : String
+      (compiler-backend-runtime-functions-for-target
+        (CompilerBackendTarget.Linux)
+        (compiler-backend-runtime-helper-full-plan))]
+    (and
+      (compiler-backend-string-contains?
+        asm
+        "tl_arena_make_small:\n    movq $0x1000000, %rsi\n.L_tl_arena_make_sized:\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq $0, 48(%rax)\n    movq %rax, 56(%rax)\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq %rax, %rcx\n    addq %rsi, %rcx\n    movq %rcx, 24(%rax)\n"))))
+
+(define (compiler-backend-runtime-small-arena-windows-ok?) : bool
+  (let
+    [asm : String
+      (compiler-backend-runtime-functions-for-target
+        (CompilerBackendTarget.Windows)
+        (compiler-backend-runtime-helper-full-plan))]
+    (and
+      (compiler-backend-string-contains?
+        asm
+        "tl_arena_make_small:\n    push %rbp\n    mov %rsp, %rbp\n    push %rbx\n    push %rsi\n    sub $48, %rsp\n    movq $0x1000000, %rsi\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq %rsi, 40(%rsp)\n    xorq %rcx, %rcx\n    movq %rsi, %rdx\n")
+      (compiler-backend-string-contains?
+        asm
+        "    movq %rbx, %rcx\n    addq 40(%rsp), %rcx\n    movq %rcx, 24(%rbx)\n"))))
+
+(define (compiler-backend-runtime-small-arena-ok?) : bool
+  (and
+    (compiler-backend-runtime-small-arena-linux-ok?)
+    (compiler-backend-runtime-small-arena-windows-ok?)))
+
 (define (compiler-backend-runtime-arena-root-current-ok?) : bool
   (and
     (compiler-backend-runtime-arena-root-current-linux-ok?)
-    (compiler-backend-runtime-arena-root-current-windows-ok?)))
+    (compiler-backend-runtime-arena-root-current-windows-ok?)
+    (compiler-backend-runtime-small-arena-ok?)))
 
 (define (compiler-backend-memory-op-ok?) : bool
   (and

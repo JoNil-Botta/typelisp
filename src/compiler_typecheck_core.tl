@@ -7871,16 +7871,58 @@
 ;; whose allocations land in scratch arenas; the cache's (box ...) cells and
 ;; cached env internals would dangle once the scratch arena is reclaimed. Build
 ;; cache entries inside this dedicated persistent arena (same idiom as the node
-;; pools' base arena). Module identity itself is the stable intern ID.
+;; pools' base arena). Linux starts small for tiny compiles; if a large cache
+;; spills, reset promotes it once to a reusable general root. Module identity
+;; itself is the stable intern ID.
 (define tc-hygiene-module-env-cache-arena : i64
   0)
+(define tc-hygiene-module-env-cache-arena-root : i64
+  0)
+(define tc-hygiene-module-env-cache-arena-mark : i64
+  0)
+
+(define (tc-hygiene-module-env-cache-arena-install! [root : i64]) : unit
+  (let
+    [previous : i64 (arena.tl_arena_current)]
+    (begin
+      (set! tc-hygiene-module-env-cache-arena-root root)
+      (set! tc-hygiene-module-env-cache-arena root)
+      (unsafe
+        (arena.tl_arena_set root))
+      (set! tc-hygiene-module-env-cache-arena-mark (arena.tl_region_mark))
+      (unsafe
+        (arena.tl_arena_set previous)))))
 
 (define (tc-hygiene-module-env-cache-arena-handle) : i64
   (begin
-    (if (= tc-hygiene-module-env-cache-arena 0)
-      (set! tc-hygiene-module-env-cache-arena (arena.tl_arena_make))
+    (if (= tc-hygiene-module-env-cache-arena-root 0)
+      (tc-hygiene-module-env-cache-arena-install!
+        (cfg windows (arena.tl_arena_make) (arena.tl_arena_make_small)))
       unit)
     tc-hygiene-module-env-cache-arena))
+
+(define (tc-hygiene-module-env-cache-arena-reset!) : unit
+  (if (= tc-hygiene-module-env-cache-arena-root 0)
+    unit
+    (let
+      [previous : i64 (arena.tl_arena_current)]
+      [head : i64 tc-hygiene-module-env-cache-arena]
+      [root : i64 tc-hygiene-module-env-cache-arena-root]
+      (if (= head root)
+        (begin
+          (unsafe
+            (begin
+              (arena.tl_arena_set head)
+              (arena.tl_region_reset tc-hygiene-module-env-cache-arena-mark)))
+          (set! tc-hygiene-module-env-cache-arena (arena.tl_arena_current))
+          (unsafe
+            (arena.tl_arena_set previous)))
+        (begin
+          ;; A large cache outgrew the small root. Replacing the chain with one
+          ;; general root here avoids another overflow on every later reset.
+          (unsafe
+            (arena.tl_arena_destroy head))
+          (tc-hygiene-module-env-cache-arena-install! (arena.tl_arena_make)))))))
 
 (define (tc-hygiene-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -8043,15 +8085,7 @@
     (set! tc-hygiene-active-top-env top-env)
     (set! tc-hygiene-active-top-env-ready true)
     (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
-    ;; Release the persistent cache arena with the chain it owns; the
-    ;; next cache miss creates a fresh one (keeps batch compiles from leaking
-    ;; one arena's worth of dead cache entries per program).
-    (if (= tc-hygiene-module-env-cache-arena 0)
-      unit
-      (begin
-        (unsafe
-          (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena))
-        (set! tc-hygiene-module-env-cache-arena 0)))))
+    (tc-hygiene-module-env-cache-arena-reset!)))
 
 (define (tc-unsafe-marker-id) : i64
   cbi.compiler-builtin-id-tc-unsafe-context)
@@ -73495,12 +73529,7 @@
     (set! tc-hygiene-active-top-env-ready false)
     (set! tc-hygiene-active-top-env (tc-empty-type-env))
     (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
-    (if (= tc-hygiene-module-env-cache-arena 0)
-      unit
-      (begin
-        (unsafe
-          (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena))
-        (set! tc-hygiene-module-env-cache-arena 0)))
+    (tc-hygiene-module-env-cache-arena-reset!)
     (set! tc-lazy-import-summary-macro-force-record-count 0)
     (ctfe-module-macro-export-reset!)
     (ctfe-module-value-reflection-enable! false)
@@ -73531,12 +73560,7 @@
     (set! tc-hygiene-active-top-env-ready false)
     (set! tc-hygiene-active-top-env (tc-empty-type-env))
     (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
-    (if (= tc-hygiene-module-env-cache-arena 0)
-      unit
-      (begin
-        (unsafe
-          (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena))
-        (set! tc-hygiene-module-env-cache-arena 0)))
+    (tc-hygiene-module-env-cache-arena-reset!)
     (set! macro-expand-active-module "")
     (macro-expand-set-macro-names! (TcNameIdList.Nil))
     (macro-expand-set-expr-type-macro-names! (TcNameIdList.Nil))

@@ -1135,9 +1135,110 @@
               (compiler-ast-context-expr-int-lit? pools retained-child 73)))]
         [_ false])]
     (begin
+      (ast.ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (arena.destroy dest))
       ok)))
+
+;; Force several fixed-size expression and type segments in two independently
+;; owned contexts. Boundary ids must continue to address their original nodes,
+;; hash-consing must survive type-segment growth, and neither context may alias
+;; the other's backing storage.
+(define (compiler-ast-segmented-growth-isolation-smoke?) : bool
+  (let
+    [home : arena.Arena (arena.current)]
+    [a-arena : arena.Arena (arena.make)]
+    [b-arena : arena.Arena (arena.make)]
+    [a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
+        1
+        1
+        (arena.raw-handle a-arena))]
+    [b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
+        1
+        1
+        (arena.raw-handle b-arena))]
+    [expr-index : i64 0]
+    [type-index : i64 0]
+    [a-last-expr : i64 -1]
+    [b-last-expr : i64 -1]
+    [a-last-type : i64 -1]
+    [b-last-type : i64 -1]
+    (begin
+      (while (<= expr-index 131072)
+        (begin
+          (set!
+            a-last-expr
+            (ast.ast-node-pool-context-expr-push
+              a
+              (ast.AstExpr.Literal (ast.ast-lit-int expr-index))))
+          (if (<= expr-index 65536)
+            (set!
+              b-last-expr
+              (ast.ast-node-pool-context-expr-push
+                b
+                (ast.AstExpr.Literal (ast.ast-lit-int (- 0 expr-index)))))
+            unit)
+          (set! expr-index (+ expr-index 1))))
+      (while (<= type-index 2048)
+        (begin
+          (set!
+            a-last-type
+            (ast.ast-node-pool-context-type-push a (ast.AstType.Var type-index)))
+          (if (<= type-index 1024)
+            (set!
+              b-last-type
+              (ast.ast-node-pool-context-type-push
+                b
+                (ast.AstType.Var (+ type-index 10000))))
+            unit)
+          (set! type-index (+ type-index 1))))
+      (let
+        [a-dupe-type : i64
+          (ast.ast-node-pool-context-type-push a (ast.AstType.Var 1024))]
+        [a-base : i64 (ast.ast-node-pool-context-base-arena a)]
+        [b-base : i64 (ast.ast-node-pool-context-base-arena b)]
+        [ok : bool
+          (and
+            (= a-last-expr 131072)
+            (= b-last-expr 65536)
+            (= a-last-type 2048)
+            (= b-last-type 1024)
+            (= a-dupe-type 1024)
+            (= (ast.ast-node-pool-context-expr-segment-count a) 3)
+            (= (ast.ast-node-pool-context-expr-segment-count b) 2)
+            (= (ast.ast-node-pool-context-type-segment-count a) 3)
+            (= (ast.ast-node-pool-context-type-segment-count b) 2)
+            (compiler-ast-context-expr-int-lit? a 0 0)
+            (compiler-ast-context-expr-int-lit? a 65535 65535)
+            (compiler-ast-context-expr-int-lit? a 65536 65536)
+            (compiler-ast-context-expr-int-lit? a 131072 131072)
+            (compiler-ast-context-expr-int-lit? b 65536 -65536)
+            (match (ast.ast-node-pool-context-type-get a 1024)
+              [(ast.AstType.Var name) (= name 1024)]
+              [_ false])
+            (match (ast.ast-node-pool-context-type-get a 2048)
+              [(ast.AstType.Var name) (= name 2048)]
+              [_ false])
+            (match (ast.ast-node-pool-context-type-get b 1024)
+              [(ast.AstType.Var name) (= name 11024)]
+              [_ false])
+            (not (= a-base b-base))
+            (not
+              (=
+                (ast.ast-node-pool-context-expr-storage-arena a)
+                (ast.ast-node-pool-context-expr-storage-arena b))))]
+        (begin
+          (unsafe
+            (arena.set! home))
+          (ast.ast-node-pool-context-destroy-storage! a)
+          (ast.ast-node-pool-context-destroy-storage! b)
+          (unsafe
+            (begin
+              (arena.tl_arena_destroy a-base)
+              (arena.tl_arena_destroy b-base)))
+          ok)))))
 
 (define (main) : i64
   (begin
@@ -1155,4 +1256,5 @@
     (unless (compiler-ast-generated-path-owner-smoke?) (return 12))
     (unless (compiler-ast-context-owned-arena-smoke?) (return 13))
     (unless (compiler-ast-compaction-borrow-child-smoke?) (return 14))
+    (unless (compiler-ast-segmented-growth-isolation-smoke?) (return 15))
     42))

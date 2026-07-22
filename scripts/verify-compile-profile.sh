@@ -629,10 +629,10 @@ fi
 # A source selfhost compile exercises the compiler's embedded canonical stdlib
 # payloads. On Windows it is the allocation boundary that small new modules
 # (such as the clone declaration-macro handoff) previously crossed. The macro
-# walk now starts in the compact destination and grows its 25-page node pool
-# once; typecheck starts in a fresh 25-page destination. Keep those phase-specific
-# capacities exact so an extra grow still consumes the headroom this probe
-# protects.
+# walk now starts in the compact destination and grows fixed-size node segments;
+# typecheck starts in a fresh segmented destination. Keep both the logical
+# capacity and physical payload bytes exact so an accidental return to eager or
+# copy-on-grow storage is visible.
 if [ "$NL_HOST_OS" = windows ]; then
     echo "[compile-profile] selfhost embedded-stdlib allocation probe"
     if ! "$PROFILE_BIN" compile src/main.tl \
@@ -653,27 +653,65 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.capacity" \
-        3309568 \
+        2686976 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.typecheck.capacity" \
-        1654784 \
+        1638400 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_type_pool.macro_expand.capacity" \
-        32768 \
+        5120 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_type_pool.typecheck.capacity" \
-        32768 \
+        6144 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    assert_profile_live_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "lower.ast_expr_pool.macro_expand.segments" \
+        41 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_live_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "lower.ast_expr_pool.macro_expand.segment_bytes" \
+        107479040 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_live_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "lower.ast_type_pool.typecheck.segments" \
+        6 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_live_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "lower.ast_type_pool.typecheck.segment_bytes" \
+        147456 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    # Each ownership boundary must expose used nodes, logical capacity, and
+    # physical segmentation for both pools. Values vary with the source graph;
+    # the exact selfhost segment invariants above catch sizing regressions.
+    for pool_point in source_load checked_pool macro_detach retained_reader; do
+        for pool_kind in ast_expr_pool ast_type_pool; do
+            for pool_metric in len capacity segments segment_bytes; do
+                assert_contains_in \
+                    "$SELFHOST_STDERR" \
+                    "compile-profile|lower.$pool_kind.$pool_point.$pool_metric|" \
+                    "$SELFHOST_STDOUT" \
+                    "$SELFHOST_STDERR"
+            done
+        done
+    done
     # The phase reports arena destruction as a negative live delta. Exact-size
     # declaration/path reversals keep accumulated macro scratch below 500 MB;
     # the former grow-and-copy reversals retained roughly 600 MB here.

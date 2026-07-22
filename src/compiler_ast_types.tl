@@ -676,24 +676,68 @@
   ;; translate errno.
   (Syscall AstExprList))
 
-;; --- flat AST node pool ---
-;; AstExpr nodes live in one growable pool, referenced by AstNodeId (an index)
-;; instead of i64. This makes the expression AST a flat array: parsing
-;; appends nodes (no per-node box), traversal indexes the pool (cache-friendly),
+;; --- segmented AST node pool ---
+;; AstExpr nodes live in fixed-size segments, referenced by AstNodeId (a flat
+;; logical index) instead of i64. Parsing appends nodes without per-node boxes,
+;; traversal resolves a segment and offset, and growth never relocates nodes.
 ;; and the loader needs no per-file deep clone (nodes already persist in the pool).
 ;; The pool is process-global and reset per compile (see ast-node-pool-reset!),
-;; reusing one backing array; AstNodeId values stay valid because the pool only
+;; reusing its allocated segments; AstNodeId values stay valid because the pool only
 ;; grows within a compile (callers truncate via ast-node-pool-mark/reset on parse
 ;; error). The process-global pool is only the compatibility fallback: compiler
 ;; and lint drivers install state-owned pools sized for their workloads before
 ;; parsing. Keep enough room for direct parser/typechecker smoke users without
 ;; permanently paying for a second selfhost-sized backing array. The fallback
 ;; retains the proven grow path for larger legacy callers.
-;; Two flat globals (array + count) rather than a reassigned struct: the hot
-;; push/get paths are inlined everywhere, and a global-struct reassign in that
-;; hot path tripped an opt2 miscompile. Plain mutable globals keep codegen simple.
-(define ast-node-pool-slots : (Array AstExpr)
-  (array.make-array AstExpr 65536))
+;; Plain mutable globals keep the hot compatibility path simple and avoid the
+;; global-struct reassignment that previously tripped an opt2 miscompile.
+(define ast-expr-node-pool-segment-size : i64
+  65536)
+(define ast-type-node-pool-segment-size : i64
+  1024)
+(define ast-expr-node-pool-segment-bytes : i64
+  ;; `size-of` on an enum type value reports the handle width, not the
+  ;; compiler's inline enum representation. AstExpr occupies 40 bytes in an
+  ;; array slot after payload boxing; keep this counter aligned with the arena
+  ;; allocation (plus the array's separately profiled 16-byte header).
+  (* 65536 40))
+(define ast-type-node-pool-segment-bytes : i64
+  ;; AstType occupies 24 bytes in an array slot.
+  (* 1024 24))
+(define ast-node-pool-max-segments : i64
+  ;; Preserve the former type pool's practical four-million-node ceiling while
+  ;; keeping the fixed base table small (32 KiB per pool).
+  4096)
+
+(define (ast-node-pool-segment-base-table-new) : (Array i64)
+  (array.make-array i64 ast-node-pool-max-segments))
+
+(define (ast-expr-node-pool-biased-segment-base
+  [segment : (Array AstExpr)]
+  [segment-index : i64]) : i64
+  (-
+    (cast
+      (unsafe
+        (ptr->int (ptr-cast (array-data segment) : (Ptr u8))))
+      : i64)
+    (* segment-index ast-expr-node-pool-segment-bytes)))
+
+(define ast-node-pool-first-segment : (Array AstExpr)
+  (array.make-array AstExpr ast-expr-node-pool-segment-size))
+(define ast-node-pool-segment-bases : i64
+  (let
+    [bases : (Array i64) (ast-node-pool-segment-base-table-new)]
+    (begin
+      (array-set!
+        bases
+        0
+        (ast-expr-node-pool-biased-segment-base ast-node-pool-first-segment 0))
+      (cast
+        (unsafe
+          (ptr->int (ptr-cast (array-data bases) : (Ptr u8))))
+        : i64))))
+(define ast-node-pool-segment-count : i64
+  1)
 
 ;; The program (base) arena, captured at global-init while it is the
 ;; active arena (the seed make-array above proves an allocation has happened, so
@@ -705,6 +749,8 @@
 ;; use-after-free). This is why the pool previously failed closed.
 (define node-pool-base-arena : i64
   (arena.tl_arena_current))
+(define ast-node-pool-storage-arena : i64
+  0)
 (define ast-node-pool-count : i64
   0)
 
@@ -718,54 +764,93 @@
         head-arena
         prev-arena))))
 
+(define (node-pool-restore-arena-after-storage-alloc!
+  [prev-arena : i64]
+  [old-storage-arena : i64]
+  [new-storage-arena : i64]) : unit
+  (unsafe
+    (arena.tl_arena_set
+      (if (= prev-arena old-storage-arena)
+        new-storage-arena
+        prev-arena))))
+
+(define (node-pool-segment-count-for-capacity
+  [capacity : i64]
+  [segment-size : i64]) : i64
+  (let
+    [normalized : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    [segments : i64 (/ (+ normalized (- segment-size 1)) segment-size)]
+    (if (> segments ast-node-pool-max-segments)
+      ast-node-pool-max-segments
+      segments)))
+
 ;: Current node count (also the next AstNodeId that ast-node-push will assign).
 (define (ast-node-pool-len) : i64
   ast-node-pool-count)
 
-;: Grow the pool's backing array to at least double its current capacity.
-;; Allocate the new backing array in the persistent base arena (see
-;; node-pool-base-arena) so it survives destruction of any scratch arena active
-;; when the grow fires.
+;: Add one fixed-size backing segment without relocating earlier nodes.
 (define (ast-node-pool-grow!) : unit
   (let
-    [old-slots : (Array AstExpr) ast-node-pool-slots]
-    [old-cap : i64 (array-length old-slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1024
-        (* old-cap 2))]
+    [segment-index : i64 ast-node-pool-segment-count]
     [prev-arena : i64 (arena.tl_arena_current)]
-    [base-arena : i64 node-pool-base-arena]
+    [old-storage-arena : i64 ast-node-pool-storage-arena]
+    [storage-root : i64
+      (if (= old-storage-arena 0)
+        (arena.tl_arena_make)
+        old-storage-arena)]
     [_set-arena : unit
       (unsafe
-        (arena.tl_arena_set base-arena))]
-    [new-slots : (Array AstExpr) (array.make-array AstExpr new-cap)]
-    [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (node-pool-restore-arena-after-base-alloc!
-        prev-arena
-        base-arena
-        head-arena)]
-    [len : i64 ast-node-pool-count]
-    [i : i64 0]
+        (arena.tl_arena_set storage-root))]
+    [new-segment : (Array AstExpr)
+      (array.make-array AstExpr ast-expr-node-pool-segment-size)]
+    [new-storage-arena : i64 (arena.tl_arena_current)]
     (begin
-      (while (< i len)
-        (begin
-          (array-set! new-slots i (array-ref old-slots i))
-          (set! i (+ i 1))))
-      (set! node-pool-base-arena head-arena)
-      (set! ast-node-pool-slots new-slots))))
+      (unsafe
+        (ptr-write!
+          (ptr-offset
+            (int->ptr ast-node-pool-segment-bases : (MutPtr i64))
+            segment-index)
+          (ast-expr-node-pool-biased-segment-base new-segment segment-index)))
+      (node-pool-restore-arena-after-storage-alloc!
+        prev-arena
+        old-storage-arena
+        new-storage-arena)
+      (set! ast-node-pool-storage-arena new-storage-arena)
+      (set! ast-node-pool-segment-count (+ segment-index 1)))))
 
 ;: Append `node` to the active pool and return its AstNodeId.
 (define (ast-node-push-active [node : AstExpr]) : i64
   (begin
-    (if (>= ast-node-pool-count (array-length ast-node-pool-slots))
+    (if (>=
+      ast-node-pool-count
+      (* ast-node-pool-segment-count ast-expr-node-pool-segment-size))
       (ast-node-pool-grow!)
       unit)
     (let
       [id : i64 ast-node-pool-count]
+      [biased-base : i64
+        (unsafe
+          (ptr-read
+            (ptr-offset
+              (int->ptr ast-node-pool-segment-bases : (Ptr i64))
+              (shr id 16))))]
+      [dest : (MutPtr i64)
+        (unsafe
+          (int->ptr (+ biased-base (* id 40)) : (MutPtr i64)))]
+      [source : (Ptr i64)
+        (unsafe
+          (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
       (begin
-        (array-set! ast-node-pool-slots id node)
+        (unsafe
+          (begin
+            (ptr-write! dest (ptr-read source))
+            (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+            (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
+            (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
+            (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
         (set! ast-node-pool-count (+ id 1))
         (ast-node-pool-active-context-capture-expr!)
         id))))
@@ -778,26 +863,50 @@
 
 ;: Read the node at `id` from the installed AST pool.
 ;;
-;; This MUST stay `array-ref`, not a raw `(ptr-read (ptr-offset (ptr-cast
-;; (array-data ...) : (Ptr AstExpr)) id))`. With inline-by-value aggregates
-;; `AstExpr` is a multi-word value; `array-ref` lowers with the correct element
-;; stride/size, whereas the raw ptr-offset path scales by a fixed word and adds a
-;; spurious load, reading garbage and corrupting the pool read.
-;; Compatibility contexts
-;; install their backing state at the context boundary, keeping this hottest
-;; operation branch-free.
+;; IDs below `count` prove both indices valid. Avoid two redundant bounds checks
+;; in this hottest compiler operation, but cast through bytes so pointer offset
+;; uses AstExpr's real 40-byte inline stride rather than pointer-word stride.
+;; Compatibility contexts install their backing state at the context boundary,
+;; keeping the path branch-free.
 (define (ast-node-get [id : i64]) : AstExpr
-  (array-ref ast-node-pool-slots id))
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr ast-node-pool-segment-bases : (Ptr i64))
+            (shr id 16))))]
+    (unsafe
+      (ptr-read (int->ptr (+ biased-base (* id 40)) : (Ptr AstExpr))))))
 
 ;: Overwrite the node at `id` in the selected AST pool (used when a node is
 ;; rewritten in place).
 (define (ast-node-set! [id : i64] [node : AstExpr]) : unit
   (if ast-node-pool-compat-context-explicit?
     (ast-node-pool-context-expr-set! ast-node-pool-compat-context id node)
-    (array-set! ast-node-pool-slots id node)))
+    (let
+      [biased-base : i64
+        (unsafe
+          (ptr-read
+            (ptr-offset
+              (int->ptr ast-node-pool-segment-bases : (Ptr i64))
+              (shr id 16))))]
+      [dest : (MutPtr i64)
+        (unsafe
+          (int->ptr (+ biased-base (* id 40)) : (MutPtr i64)))]
+      [source : (Ptr i64)
+        (unsafe
+          (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
+      (unsafe
+        (begin
+          (ptr-write! dest (ptr-read source))
+          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
+          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
+          (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4))))))))
 
 ;: Truncate the pool back to `mark` nodes (used to discard nodes from a failed
-;: parse). Reset to 0 between compiles so a fresh compile reuses the array.
+;: parse). Reset to 0 between compiles so a fresh compile reuses its segments.
 (define (ast-node-pool-truncate! [mark : i64]) : unit
   (begin
     (set! ast-node-pool-count mark)
@@ -813,17 +922,21 @@
 ;; workers. The current compiler hot path still uses the process-global wrappers
 ;; above until parser/typechecker/driver state is threaded through every call.
 (defstruct AstExprNodePoolState
-  (slots (Array AstExpr))
+  (segment-bases i64)
   (count i64)
-  (base-arena i64))
+  (base-arena i64)
+  (storage-arena i64)
+  (segment-count i64))
 
 (define (ast-expr-node-pool-state-with-base-arena
   [pool : AstExprNodePoolState]
   [base-arena : i64]) : AstExprNodePoolState
   (AstExprNodePoolState
-    (struct-get pool slots)
+    (struct-get pool segment-bases)
     (struct-get pool count)
-    base-arena))
+    base-arena
+    (struct-get pool storage-arena)
+    (struct-get pool segment-count)))
 
 (defenum AstExprNodePoolPushResult
   (AstExprNodePoolPushOk AstExprNodePoolState i64))
@@ -835,19 +948,48 @@
 
 (define (ast-expr-node-pool-state-init [capacity : i64] [base-arena : i64]) : AstExprNodePoolState
   (let
-    [cap : i64 (node-pool-state-normalize-capacity capacity)]
+    [segment-count : i64
+      (node-pool-segment-count-for-capacity
+        capacity
+        ast-expr-node-pool-segment-size)]
     [prev-arena : i64 (arena.tl_arena_current)]
-    [_set-arena : unit
+    [_set-base-arena : unit
       (unsafe
         (arena.tl_arena_set base-arena))]
-    [slots : (Array AstExpr) (array.make-array AstExpr cap)]
-    [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (node-pool-restore-arena-after-base-alloc!
-        prev-arena
-        base-arena
-        head-arena)]
-    (AstExprNodePoolState slots 0 head-arena)))
+    [segment-bases : (Array i64) (ast-node-pool-segment-base-table-new)]
+    [base-head : i64 (arena.tl_arena_current)]
+    [storage-root : i64 (arena.tl_arena_make)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set storage-root))]
+    [segment-index : i64 0]
+    (begin
+      (while (< segment-index segment-count)
+        (let
+          [segment : (Array AstExpr)
+            (array.make-array AstExpr ast-expr-node-pool-segment-size)]
+          (begin
+            (array-set!
+              segment-bases
+              segment-index
+              (ast-expr-node-pool-biased-segment-base segment segment-index))
+            (set! segment-index (+ segment-index 1)))))
+      (let
+        [storage-arena : i64 (arena.tl_arena_current)]
+        (begin
+          (node-pool-restore-arena-after-base-alloc!
+            prev-arena
+            base-arena
+            base-head)
+          (AstExprNodePoolState
+            (cast
+              (unsafe
+                (ptr->int (ptr-cast (array-data segment-bases) : (Ptr u8))))
+              : i64)
+            0
+            base-head
+            storage-arena
+            segment-count))))))
 
 (define (ast-expr-node-pool-state-create [capacity : i64]) : AstExprNodePoolState
   (ast-expr-node-pool-state-init capacity (arena.tl_arena_current)))
@@ -856,7 +998,7 @@
   (struct-get pool count))
 
 (define (ast-expr-node-pool-state-capacity [pool : AstExprNodePoolState]) : i64
-  (array-length (struct-get pool slots)))
+  (* (struct-get pool segment-count) ast-expr-node-pool-segment-size))
 
 (define (ast-expr-node-pool-state-mark [pool : AstExprNodePoolState]) : i64
   (ast-expr-node-pool-state-len pool))
@@ -865,9 +1007,11 @@
   [pool : AstExprNodePoolState]
   [mark : i64]) : AstExprNodePoolState
   (AstExprNodePoolState
-    (struct-get pool slots)
+    (struct-get pool segment-bases)
     mark
-    (struct-get pool base-arena)))
+    (struct-get pool base-arena)
+    (struct-get pool storage-arena)
+    (struct-get pool segment-count)))
 
 (define (ast-expr-node-pool-state-reset-to-mark
   [pool : AstExprNodePoolState]
@@ -876,32 +1020,33 @@
 
 (define (ast-expr-node-pool-state-grow [pool : AstExprNodePoolState]) : AstExprNodePoolState
   (let
-    [old-slots : (Array AstExpr) (struct-get pool slots)]
-    [old-cap : i64 (array-length old-slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1024
-        (* old-cap 2))]
+    [segment-bases : i64 (struct-get pool segment-bases)]
+    [segment-index : i64 (struct-get pool segment-count)]
     [base-arena : i64 (struct-get pool base-arena)]
+    [old-storage-arena : i64 (struct-get pool storage-arena)]
     [prev-arena : i64 (arena.tl_arena_current)]
     [_set-arena : unit
       (unsafe
-        (arena.tl_arena_set base-arena))]
-    [new-slots : (Array AstExpr) (array.make-array AstExpr new-cap)]
-    [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (node-pool-restore-arena-after-base-alloc!
-        prev-arena
-        base-arena
-        head-arena)]
+        (arena.tl_arena_set old-storage-arena))]
+    [new-segment : (Array AstExpr)
+      (array.make-array AstExpr ast-expr-node-pool-segment-size)]
+    [new-storage-arena : i64 (arena.tl_arena_current)]
     [len : i64 (struct-get pool count)]
-    [i : i64 0]
     (begin
-      (while (< i len)
-        (begin
-          (array-set! new-slots i (array-ref old-slots i))
-          (set! i (+ i 1))))
-      (AstExprNodePoolState new-slots len head-arena))))
+      (unsafe
+        (ptr-write!
+          (ptr-offset (int->ptr segment-bases : (MutPtr i64)) segment-index)
+          (ast-expr-node-pool-biased-segment-base new-segment segment-index)))
+      (node-pool-restore-arena-after-storage-alloc!
+        prev-arena
+        old-storage-arena
+        new-storage-arena)
+      (AstExprNodePoolState
+        segment-bases
+        len
+        base-arena
+        new-storage-arena
+        (+ segment-index 1)))))
 
 (define (ast-expr-node-pool-state-push
   [pool : AstExprNodePoolState]
@@ -913,53 +1058,128 @@
         (ast-expr-node-pool-state-capacity pool))
         (ast-expr-node-pool-state-grow pool)
         pool)]
-    [slots : (Array AstExpr) (struct-get ready slots)]
+    [segment-bases : i64 (struct-get ready segment-bases)]
     [id : i64 (struct-get ready count)]
+    [biased-base : i64
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+    [dest : (MutPtr i64)
+      (unsafe
+        (int->ptr (+ biased-base (* id 40)) : (MutPtr i64)))]
+    [source : (Ptr i64)
+      (unsafe
+        (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
     (begin
-      (array-set! slots id node)
+      (unsafe
+        (begin
+          (ptr-write! dest (ptr-read source))
+          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
+          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
+          (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
       (AstExprNodePoolPushOk
-        (AstExprNodePoolState slots (+ id 1) (struct-get ready base-arena))
+        (AstExprNodePoolState
+          segment-bases
+          (+ id 1)
+          (struct-get ready base-arena)
+          (struct-get ready storage-arena)
+          (struct-get ready segment-count))
         id))))
 
 (define (ast-expr-node-pool-state-get [pool : AstExprNodePoolState] [id : i64]) : AstExpr
-  (array-ref (struct-get pool slots) id))
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
+            (shr id 16))))]
+    (unsafe
+      (ptr-read (int->ptr (+ biased-base (* id 40)) : (Ptr AstExpr))))))
 
 (define (ast-expr-node-pool-state-set!
   [pool : AstExprNodePoolState]
   [id : i64]
   [node : AstExpr]) : AstExprNodePoolState
-  (begin
-    (array-set! (struct-get pool slots) id node)
-    pool))
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
+            (shr id 16))))]
+    [dest : (MutPtr i64)
+      (unsafe
+        (int->ptr (+ biased-base (* id 40)) : (MutPtr i64)))]
+    [source : (Ptr i64)
+      (unsafe
+        (ptr-cast (ptr-addr-of node) : (Ptr i64)))]
+    (begin
+      (unsafe
+        (begin
+          (ptr-write! dest (ptr-read source))
+          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
+          (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3)))
+          (ptr-write! (ptr-offset dest 4) (ptr-read (ptr-offset source 4)))))
+      pool)))
 
 (define (ast-node-pool-state-capture) : AstExprNodePoolState
   (AstExprNodePoolState
-    ast-node-pool-slots
+    ast-node-pool-segment-bases
     ast-node-pool-count
-    node-pool-base-arena))
+    node-pool-base-arena
+    ast-node-pool-storage-arena
+    ast-node-pool-segment-count))
 
-;; --- AstType node pool (flat ty ids) ---
+;; --- AstType node pool (segmented flat ty ids) ---
 ;; AstType's recursive children are stored as i64 ids into this pool instead of
 ;; (Box AstType), mirroring the AstExpr pool above. The pool is PERSISTENT for a
 ;; compile (types live for the whole compile, never per-form like the spanned
 ;; pool); ty-node-pool-reset! clears it between compiles (REPL/LSP). The
 ;; process-global compatibility fallback is deliberately modest: normal compile
 ;; and lint entry points install state-owned pools before parsing. With
-;; hash-consed pushes (below), 32K slots also cover direct smoke callers while
-;; the proven grow path remains as a backstop.
-(define ty-node-pool-slots : (Array AstType)
-  (array.make-array AstType 32768))
+;; hash-consed pushes (below), a 1K-node first segment covers direct smoke
+;; callers while additional segments grow on demand.
+(define (ast-type-node-pool-biased-segment-base
+  [segment : (Array AstType)]
+  [segment-index : i64]) : i64
+  (-
+    (cast
+      (unsafe
+        (ptr->int (ptr-cast (array-data segment) : (Ptr u8))))
+      : i64)
+    (* segment-index ast-type-node-pool-segment-bytes)))
+
+(define ty-node-pool-first-segment : (Array AstType)
+  (array.make-array AstType ast-type-node-pool-segment-size))
+(define ty-node-pool-segment-bases : i64
+  (let
+    [bases : (Array i64) (ast-node-pool-segment-base-table-new)]
+    (begin
+      (array-set!
+        bases
+        0
+        (ast-type-node-pool-biased-segment-base ty-node-pool-first-segment 0))
+      (cast
+        (unsafe
+          (ptr->int (ptr-cast (array-data bases) : (Ptr u8))))
+        : i64))))
+(define ty-node-pool-segment-count : i64
+  1)
 (define ty-node-pool-count : i64
   0)
 (define ty-node-pool-exhausted : bool
   false)
+(define ty-node-pool-storage-arena : i64
+  0)
 
 ;: Current type-node count (also the next ty id ty-node-push will assign).
 (define (ty-node-pool-len) : i64
   ty-node-pool-count)
 
 (define (ty-node-pool-capacity) : i64
-  (array-length ty-node-pool-slots))
+  (* ty-node-pool-segment-count ast-type-node-pool-segment-size))
 
 (define (ty-node-pool-exhausted?) : bool
   ty-node-pool-exhausted)
@@ -967,44 +1187,38 @@
 (define (ty-node-pool-exhausted-message) : String
   "compiler: AstType node pool exhausted")
 
-;: Grow the pool's backing array to at least double its current capacity.
+;: Add one fixed-size backing segment without relocating earlier nodes.
 ;;
-;; The global-array reassignment here had tripped opt2 miscompiles -- but that was
-;; with the raw-ptr `ty-node-get` (now `array-ref`, see below) whose in-place alias
-;; broke when the backing array was reassigned. With `array-ref` the reassignment
-;; is safe (same pattern `ast-node-pool-grow!` already uses), and growing is needed
-;; because inline-aggregate type resolution pushes more nodes (cli.tl/test.tl
-;; exceed the old fixed 4M cap). Growing keeps the compile.tl bootstrap at its ~4M
-;; footprint (no growth) while letting larger programs proceed.
+;; Type IDs use the same stable segment/offset mapping as expression IDs. The
+;; smaller segment size follows the measured hash-consed selfhost population.
 (define (ty-node-pool-grow!) : unit
   (let
-    [old-slots : (Array AstType) ty-node-pool-slots]
-    [old-cap : i64 (array-length old-slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1024
-        (* old-cap 2))]
+    [segment-index : i64 ty-node-pool-segment-count]
     [prev-arena : i64 (arena.tl_arena_current)]
-    [base-arena : i64 node-pool-base-arena]
+    [old-storage-arena : i64 ty-node-pool-storage-arena]
+    [storage-root : i64
+      (if (= old-storage-arena 0)
+        (arena.tl_arena_make)
+        old-storage-arena)]
     [_set-arena : unit
       (unsafe
-        (arena.tl_arena_set base-arena))]
-    [new-slots : (Array AstType) (array.make-array AstType new-cap)]
-    [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (node-pool-restore-arena-after-base-alloc!
-        prev-arena
-        base-arena
-        head-arena)]
-    [len : i64 ty-node-pool-count]
-    [i : i64 0]
+        (arena.tl_arena_set storage-root))]
+    [new-segment : (Array AstType)
+      (array.make-array AstType ast-type-node-pool-segment-size)]
+    [new-storage-arena : i64 (arena.tl_arena_current)]
     (begin
-      (while (< i len)
-        (begin
-          (array-set! new-slots i (array-ref old-slots i))
-          (set! i (+ i 1))))
-      (set! node-pool-base-arena head-arena)
-      (set! ty-node-pool-slots new-slots))))
+      (unsafe
+        (ptr-write!
+          (ptr-offset
+            (int->ptr ty-node-pool-segment-bases : (MutPtr i64))
+            segment-index)
+          (ast-type-node-pool-biased-segment-base new-segment segment-index)))
+      (node-pool-restore-arena-after-storage-alloc!
+        prev-arena
+        old-storage-arena
+        new-storage-arena)
+      (set! ty-node-pool-storage-arena new-storage-arena)
+      (set! ty-node-pool-segment-count (+ segment-index 1)))))
 
 (define (ty-node-persist-lifetimes-into
   [items : (& items AstLifetimeList)]
@@ -1075,23 +1289,27 @@
 ;; The compiler hot path still uses the process-global compatibility wrappers
 ;; until parser/typechecker/driver state is threaded through every call.
 (defstruct AstTypeNodePoolState
-  (slots (Array AstType))
+  (segment-bases i64)
   (count i64)
   (base-arena i64)
   (exhausted bool)
   (dedup-slots (Array i64))
-  (dedup-count i64))
+  (dedup-count i64)
+  (storage-arena i64)
+  (segment-count i64))
 
 (define (ast-type-node-pool-state-with-base-arena
   [pool : AstTypeNodePoolState]
   [base-arena : i64]) : AstTypeNodePoolState
   (AstTypeNodePoolState
-    (struct-get pool slots)
+    (struct-get pool segment-bases)
     (struct-get pool count)
     base-arena
     (struct-get pool exhausted)
     (struct-get pool dedup-slots)
-    (struct-get pool dedup-count)))
+    (struct-get pool dedup-count)
+    (struct-get pool storage-arena)
+    (struct-get pool segment-count)))
 
 (defenum AstTypeNodePoolPushResult
   (AstTypeNodePoolPushOk AstTypeNodePoolState i64))
@@ -1099,8 +1317,8 @@
 (define (ast-type-node-pool-state-dedup-capacity [capacity : i64]) : i64
   (let
     [want : i64
-      (if (< capacity 16)
-        16
+      (if (< capacity 16384)
+        16384
         capacity)]
     [cap : i64 1]
     (begin
@@ -1111,20 +1329,51 @@
 (define (ast-type-node-pool-state-init [capacity : i64] [base-arena : i64]) : AstTypeNodePoolState
   (let
     [cap : i64 (node-pool-state-normalize-capacity capacity)]
+    [segment-count : i64
+      (node-pool-segment-count-for-capacity cap ast-type-node-pool-segment-size)]
     [dedup-cap : i64 (ast-type-node-pool-state-dedup-capacity cap)]
     [prev-arena : i64 (arena.tl_arena_current)]
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set base-arena))]
-    [slots : (Array AstType) (array.make-array AstType cap)]
+    [segment-bases : (Array i64) (ast-node-pool-segment-base-table-new)]
     [dedup-slots : (Array i64) (array.make-array i64 dedup-cap)]
     [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (node-pool-restore-arena-after-base-alloc!
-        prev-arena
-        base-arena
-        head-arena)]
-    (AstTypeNodePoolState slots 0 head-arena false dedup-slots 0)))
+    [storage-root : i64 (arena.tl_arena_make)]
+    [_set-storage-arena : unit
+      (unsafe
+        (arena.tl_arena_set storage-root))]
+    [segment-index : i64 0]
+    (begin
+      (while (< segment-index segment-count)
+        (let
+          [segment : (Array AstType)
+            (array.make-array AstType ast-type-node-pool-segment-size)]
+          (begin
+            (array-set!
+              segment-bases
+              segment-index
+              (ast-type-node-pool-biased-segment-base segment segment-index))
+            (set! segment-index (+ segment-index 1)))))
+      (let
+        [storage-arena : i64 (arena.tl_arena_current)]
+        (begin
+          (node-pool-restore-arena-after-base-alloc!
+            prev-arena
+            base-arena
+            head-arena)
+          (AstTypeNodePoolState
+            (cast
+              (unsafe
+                (ptr->int (ptr-cast (array-data segment-bases) : (Ptr u8))))
+              : i64)
+            0
+            head-arena
+            false
+            dedup-slots
+            0
+            storage-arena
+            segment-count))))))
 
 (define (ast-type-node-pool-state-create [capacity : i64]) : AstTypeNodePoolState
   (ast-type-node-pool-state-init capacity (arena.tl_arena_current)))
@@ -1133,7 +1382,7 @@
   (struct-get pool count))
 
 (define (ast-type-node-pool-state-capacity [pool : AstTypeNodePoolState]) : i64
-  (array-length (struct-get pool slots)))
+  (* (struct-get pool segment-count) ast-type-node-pool-segment-size))
 
 (define (ast-type-node-pool-state-exhausted? [pool : AstTypeNodePoolState]) : bool
   (struct-get pool exhausted))
@@ -1152,12 +1401,14 @@
           (array-set! slots i 0)
           (set! i (+ i 1))))
       (AstTypeNodePoolState
-        (struct-get pool slots)
+        (struct-get pool segment-bases)
         (struct-get pool count)
         (struct-get pool base-arena)
         (struct-get pool exhausted)
         slots
-        0))))
+        0
+        (struct-get pool storage-arena)
+        (struct-get pool segment-count)))))
 
 (define (ast-type-node-pool-state-reset-to
   [pool : AstTypeNodePoolState]
@@ -1166,12 +1417,14 @@
   ;; table so no entry can point at an id >= mark; later pushes repopulate it.
   (ast-type-node-pool-state-dedup-clear
     (AstTypeNodePoolState
-      (struct-get pool slots)
+      (struct-get pool segment-bases)
       mark
       (struct-get pool base-arena)
       false
       (struct-get pool dedup-slots)
-      (struct-get pool dedup-count))))
+      (struct-get pool dedup-count)
+      (struct-get pool storage-arena)
+      (struct-get pool segment-count))))
 
 (define (ast-type-node-pool-state-reset-to-mark
   [pool : AstTypeNodePoolState]
@@ -1180,38 +1433,36 @@
 
 (define (ast-type-node-pool-state-grow [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
   (let
-    [old-slots : (Array AstType) (struct-get pool slots)]
-    [old-cap : i64 (array-length old-slots)]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1024
-        (* old-cap 2))]
+    [segment-bases : i64 (struct-get pool segment-bases)]
+    [segment-index : i64 (struct-get pool segment-count)]
     [base-arena : i64 (struct-get pool base-arena)]
+    [old-storage-arena : i64 (struct-get pool storage-arena)]
     [prev-arena : i64 (arena.tl_arena_current)]
     [_set-arena : unit
       (unsafe
-        (arena.tl_arena_set base-arena))]
-    [new-slots : (Array AstType) (array.make-array AstType new-cap)]
-    [head-arena : i64 (arena.tl_arena_current)]
-    [_restore-arena : unit
-      (node-pool-restore-arena-after-base-alloc!
-        prev-arena
-        base-arena
-        head-arena)]
+        (arena.tl_arena_set old-storage-arena))]
+    [new-segment : (Array AstType)
+      (array.make-array AstType ast-type-node-pool-segment-size)]
+    [new-storage-arena : i64 (arena.tl_arena_current)]
     [len : i64 (struct-get pool count)]
-    [i : i64 0]
     (begin
-      (while (< i len)
-        (begin
-          (array-set! new-slots i (array-ref old-slots i))
-          (set! i (+ i 1))))
+      (unsafe
+        (ptr-write!
+          (ptr-offset (int->ptr segment-bases : (MutPtr i64)) segment-index)
+          (ast-type-node-pool-biased-segment-base new-segment segment-index)))
+      (node-pool-restore-arena-after-storage-alloc!
+        prev-arena
+        old-storage-arena
+        new-storage-arena)
       (AstTypeNodePoolState
-        new-slots
+        segment-bases
         len
-        head-arena
+        base-arena
         (struct-get pool exhausted)
         (struct-get pool dedup-slots)
-        (struct-get pool dedup-count)))))
+        (struct-get pool dedup-count)
+        new-storage-arena
+        (+ segment-index 1)))))
 
 (define (ast-type-node-pool-state-push-raw
   [pool : AstTypeNodePoolState]
@@ -1223,14 +1474,23 @@
         (ast-type-node-pool-state-capacity pool))
         (ast-type-node-pool-state-grow pool)
         pool)]
-    [slots : (Array AstType) (struct-get ready slots)]
+    [segment-bases : i64 (struct-get ready segment-bases)]
     [id : i64 (struct-get ready count)]
+    [biased-base : i64
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10))))]
     [base-arena : i64 (struct-get ready base-arena)]
     [prev-arena : i64 (arena.tl_arena_current)]
     [_set-arena : unit
       (unsafe
         (arena.tl_arena_set base-arena))]
     [persistent : AstType (ty-node-persist node)]
+    [dest : (MutPtr i64)
+      (unsafe
+        (int->ptr (+ biased-base (* id 24)) : (MutPtr i64)))]
+    [source : (Ptr i64)
+      (unsafe
+        (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
     [head-arena : i64 (arena.tl_arena_current)]
     [_restore-arena : unit
       (node-pool-restore-arena-after-base-alloc!
@@ -1238,15 +1498,21 @@
         base-arena
         head-arena)]
     (begin
-      (array-set! slots id persistent)
+      (unsafe
+        (begin
+          (ptr-write! dest (ptr-read source))
+          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))))
       (AstTypeNodePoolPushOk
         (AstTypeNodePoolState
-          slots
+          segment-bases
           (+ id 1)
           head-arena
           (struct-get ready exhausted)
           (struct-get ready dedup-slots)
-          (struct-get ready dedup-count))
+          (struct-get ready dedup-count)
+          (struct-get ready storage-arena)
+          (struct-get ready segment-count))
         id))))
 
 (define (ast-type-node-pool-state-push-dedup
@@ -1265,15 +1531,17 @@
             (array-set! dedup-slots idx (+ id 1))
             (AstTypeNodePoolPushOk
               (AstTypeNodePoolState
-                (struct-get next slots)
+                (struct-get next segment-bases)
                 (struct-get next count)
                 (struct-get next base-arena)
                 (struct-get next exhausted)
                 dedup-slots
-                (+ dedup-count 1))
+                (+ dedup-count 1)
+                (struct-get next storage-arena)
+                (struct-get next segment-count))
               id))])
       (if (ty-node-shallow-value-eq?
-        (array-ref (struct-get pool slots) (- slot 1))
+        (ast-type-node-pool-state-get pool (- slot 1))
         node)
         (AstTypeNodePoolPushOk pool (- slot 1))
         (ast-type-node-pool-state-push-dedup
@@ -1305,7 +1573,15 @@
           mask)))))
 
 (define (ast-type-node-pool-state-get [pool : AstTypeNodePoolState] [id : i64]) : AstType
-  (array-ref (struct-get pool slots) id))
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
+            (shr id 10))))]
+    (unsafe
+      (ptr-read (int->ptr (+ biased-base (* id 24)) : (Ptr AstType))))))
 
 (define (ast-type-node-pool-state-set!
   [pool : AstTypeNodePoolState]
@@ -1324,8 +1600,24 @@
         prev-arena
         base-arena
         head-arena)]
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr (struct-get pool segment-bases) : (Ptr i64))
+            (shr id 10))))]
+    [dest : (MutPtr i64)
+      (unsafe
+        (int->ptr (+ biased-base (* id 24)) : (MutPtr i64)))]
+    [source : (Ptr i64)
+      (unsafe
+        (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
     (begin
-      (array-set! (struct-get pool slots) id persistent)
+      (unsafe
+        (begin
+          (ptr-write! dest (ptr-read source))
+          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))))
       ;; Overwriting an existing id can make hash entries stale. Clear the
       ;; private table and let future pushes repopulate it from new candidates.
       (ast-type-node-pool-state-dedup-clear
@@ -1334,17 +1626,31 @@
 ;: Append `node` to the pool unconditionally and return its ty id.
 (define (ty-node-push-raw [node : AstType]) : i64
   (begin
-    (if (>= ty-node-pool-count (array-length ty-node-pool-slots))
+    (if (>=
+      ty-node-pool-count
+      (* ty-node-pool-segment-count ast-type-node-pool-segment-size))
       (ty-node-pool-grow!)
       unit)
     (let
       [id : i64 ty-node-pool-count]
+      [biased-base : i64
+        (unsafe
+          (ptr-read
+            (ptr-offset
+              (int->ptr ty-node-pool-segment-bases : (Ptr i64))
+              (shr id 10))))]
       [prev-arena : i64 (arena.tl_arena_current)]
       [base-arena : i64 node-pool-base-arena]
       [_set-arena : unit
         (unsafe
           (arena.tl_arena_set base-arena))]
       [persistent : AstType (ty-node-persist node)]
+      [dest : (MutPtr i64)
+        (unsafe
+          (int->ptr (+ biased-base (* id 24)) : (MutPtr i64)))]
+      [source : (Ptr i64)
+        (unsafe
+          (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
       [head-arena : i64 (arena.tl_arena_current)]
       [_restore-arena : unit
         (node-pool-restore-arena-after-base-alloc!
@@ -1353,7 +1659,11 @@
           head-arena)]
       (begin
         (set! node-pool-base-arena head-arena)
-        (array-set! ty-node-pool-slots id persistent)
+        (unsafe
+          (begin
+            (ptr-write! dest (ptr-read source))
+            (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+            (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))))
         (set! ty-node-pool-count (+ id 1))
         (ast-node-pool-active-context-capture-type!)
         id))))
@@ -1707,11 +2017,18 @@
 
 ;: Read the type node at `id` from the installed type pool.
 ;;
-;; MUST stay `array-ref` (see `ast-node-get`): with inline-by-value
-;; `AstType` is a multi-word value, and the raw ptr-offset/ptr-read path mis-scales
-;; the element stride and reads garbage. `array-ref` lowers with the right size.
+;; As with `ast-node-get`, cast the inner backing store through bytes so the
+;; unchecked load uses AstType's 24-byte inline stride.
 (define (ty-node-get [id : i64]) : AstType
-  (array-ref ty-node-pool-slots id))
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr ty-node-pool-segment-bases : (Ptr i64))
+            (shr id 10))))]
+    (unsafe
+      (ptr-read (int->ptr (+ biased-base (* id 24)) : (Ptr AstType))))))
 
 ;; Identity of the current type-node id space: bumped whenever ids may change
 ;; meaning (truncation discards ids; a pool-state install swaps the whole
@@ -1745,21 +2062,27 @@
 
 (define (ty-node-pool-state-capture) : AstTypeNodePoolState
   (AstTypeNodePoolState
-    ty-node-pool-slots
+    ty-node-pool-segment-bases
     ty-node-pool-count
     node-pool-base-arena
     ty-node-pool-exhausted
     ty-node-dedup-slots
-    ty-node-dedup-count))
+    ty-node-dedup-count
+    ty-node-pool-storage-arena
+    ty-node-pool-segment-count))
 
 (define (ast-node-pools-state-install!
   [expr-pool : AstExprNodePoolState]
   [type-pool : AstTypeNodePoolState]) : unit
   (begin
-    (set! ast-node-pool-slots (struct-get expr-pool slots))
+    (set! ast-node-pool-segment-bases (struct-get expr-pool segment-bases))
     (set! ast-node-pool-count (struct-get expr-pool count))
-    (set! ty-node-pool-slots (struct-get type-pool slots))
+    (set! ast-node-pool-storage-arena (struct-get expr-pool storage-arena))
+    (set! ast-node-pool-segment-count (struct-get expr-pool segment-count))
+    (set! ty-node-pool-segment-bases (struct-get type-pool segment-bases))
     (set! ty-node-pool-count (struct-get type-pool count))
+    (set! ty-node-pool-storage-arena (struct-get type-pool storage-arena))
+    (set! ty-node-pool-segment-count (struct-get type-pool segment-count))
     (set! ty-node-pool-generation (+ ty-node-pool-generation 1))
     (set! ty-node-pool-exhausted (struct-get type-pool exhausted))
     (set!
@@ -1900,6 +2223,12 @@
 (define (ast-node-pool-base-arena-handle) : i64
   node-pool-base-arena)
 
+(define (ast-node-pool-expr-storage-arena-handle) : i64
+  ast-node-pool-storage-arena)
+
+(define (ast-node-pool-type-storage-arena-handle) : i64
+  ty-node-pool-storage-arena)
+
 (define (ast-node-pool-context-install! [pools : AstNodePoolContext]) : unit
   (if ast-node-pool-compat-context-explicit?
     unit
@@ -1925,11 +2254,33 @@
 (define (ast-node-pool-context-expr-capacity [pools : AstNodePoolContext]) : i64
   (ast-expr-node-pool-state-capacity (array-ref (struct-get pools expr-pool) 0)))
 
+(define (ast-node-pool-context-expr-segment-count [pools : AstNodePoolContext]) : i64
+  (struct-get (array-ref (struct-get pools expr-pool) 0) segment-count))
+
+(define (ast-node-pool-context-expr-segment-bytes [pools : AstNodePoolContext]) : i64
+  (*
+    (ast-node-pool-context-expr-segment-count pools)
+    ast-expr-node-pool-segment-bytes))
+
 (define (ast-node-pool-context-type-len [pools : AstNodePoolContext]) : i64
   (ast-type-node-pool-state-len (array-ref (struct-get pools type-pool) 0)))
 
 (define (ast-node-pool-context-type-capacity [pools : AstNodePoolContext]) : i64
   (ast-type-node-pool-state-capacity (array-ref (struct-get pools type-pool) 0)))
+
+(define (ast-node-pool-context-type-segment-count [pools : AstNodePoolContext]) : i64
+  (struct-get (array-ref (struct-get pools type-pool) 0) segment-count))
+
+(define (ast-node-pool-context-type-segment-bytes [pools : AstNodePoolContext]) : i64
+  (*
+    (ast-node-pool-context-type-segment-count pools)
+    ast-type-node-pool-segment-bytes))
+
+(define (ast-node-pool-context-expr-storage-arena [pools : AstNodePoolContext]) : i64
+  (struct-get (array-ref (struct-get pools expr-pool) 0) storage-arena))
+
+(define (ast-node-pool-context-type-storage-arena [pools : AstNodePoolContext]) : i64
+  (struct-get (array-ref (struct-get pools type-pool) 0) storage-arena))
 
 (define (ast-node-pool-context-type-exhausted? [pools : AstNodePoolContext]) : bool
   (ast-type-node-pool-state-exhausted?
@@ -1937,6 +2288,36 @@
 
 (define (ast-node-pool-context-base-arena [pools : AstNodePoolContext]) : i64
   (struct-get (array-ref (struct-get pools expr-pool) 0) base-arena))
+
+;; Segments have no interior pointers into their backing arenas. Keep them in
+;; independent arenas so adding a segment never copies or relocates prior nodes.
+;; Payloads, dedup state, segment tables, and context cells remain in
+;; `base-arena`.
+(define (ast-node-pool-storage-arenas-destroy!
+  [expr-storage : i64]
+  [type-storage : i64]
+  [base-arena : i64]) : unit
+  (let
+    [current-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (if (or (= current-arena expr-storage) (= current-arena type-storage))
+        (unsafe
+          (arena.tl_arena_set base-arena))
+        unit)
+      (if (= expr-storage 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy expr-storage)))
+      (if (or (= type-storage 0) (= type-storage expr-storage))
+        unit
+        (unsafe
+          (arena.tl_arena_destroy type-storage))))))
+
+(define (ast-node-pool-context-destroy-storage! [pools : AstNodePoolContext]) : unit
+  (ast-node-pool-storage-arenas-destroy!
+    (ast-node-pool-context-expr-storage-arena pools)
+    (ast-node-pool-context-type-storage-arena pools)
+    (ast-node-pool-context-base-arena pools)))
 
 (define (ast-node-pool-context-sync-base-arena!
   [pools : AstNodePoolContext]
@@ -2047,7 +2428,7 @@
           id)])))
 
 (define (ast-node-pool-context-expr-get [pools : AstNodePoolContext] [id : i64]) : AstExpr
-  (array-ref (struct-get (array-ref (struct-get pools expr-pool) 0) slots) id))
+  (ast-expr-node-pool-state-get (array-ref (struct-get pools expr-pool) 0) id))
 
 (define (ast-node-pool-context-expr-set!
   [pools : AstNodePoolContext]
@@ -2136,12 +2517,14 @@
               (struct-get dest type-pool)
               0
               (AstTypeNodePoolState
-                (struct-get cloned slots)
+                (struct-get cloned segment-bases)
                 (struct-get cloned count)
                 (struct-get cloned base-arena)
                 (struct-get source-state exhausted)
                 dedup-copy
-                (struct-get source-state dedup-count))))))
+                (struct-get source-state dedup-count)
+                (struct-get cloned storage-arena)
+                (struct-get cloned segment-count))))))
       (unsafe
         (arena.tl_arena_set previous-arena))
       dest)))

@@ -2252,6 +2252,7 @@
       (selfhost-lint-reset-file-state!)
       (ast-node-pool-context-reset-to! pools 0 0)
       (ast-node-pool-compat-context-clear!)
+      (ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
@@ -2929,6 +2930,7 @@
       (selfhost-lint-reset-file-state!)
       (ast-node-pool-context-reset-to! pools 0 0)
       (ast-node-pool-compat-context-clear!)
+      (ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
@@ -3257,9 +3259,9 @@
     (compiler-typecheck-reset-file-state!)))
 
 (define selfhost-lint-expr-pool-initial-capacity : i64
-  3145728)
+  1)
 (define selfhost-lint-type-pool-initial-capacity : i64
-  262144)
+  1)
 
 (define (selfhost-lint-run-file-in-scratch
   [input-path : String]
@@ -3301,6 +3303,7 @@
       (selfhost-lint-reset-file-state!)
       (ast-node-pool-context-reset-to! pools 0 0)
       (ast-node-pool-compat-context-clear!)
+      (ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)
@@ -3346,6 +3349,7 @@
       (selfhost-lint-reset-file-state!)
       (ast-node-pool-context-reset-to! pools 0 0)
       (ast-node-pool-compat-context-clear!)
+      (ast-node-pool-context-destroy-storage! pools)
       (unsafe
         (begin
           (arena.set! home)

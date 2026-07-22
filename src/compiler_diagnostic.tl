@@ -34,6 +34,35 @@
   (CompilerDiagnosticNoteNil)
   (CompilerDiagnosticNoteCons String (Box CompilerDiagnosticNoteList)))
 
+(defenum CompilerDiagnosticApplicability
+  (CompilerDiagnosticMachineApplicable)
+  (CompilerDiagnosticMaybeIncorrect)
+  (CompilerDiagnosticHasPlaceholders)
+  (CompilerDiagnosticUnspecified))
+
+(defstruct CompilerDiagnosticTextEdit
+  ;; An empty path inherits the diagnostic's primary path. Source positions are
+  ;; 1-based UTF-8 byte line/columns, matching lexer and LSP coordinates.
+  (span CompilerDiagnosticSpan)
+  (replacement String))
+
+(defenum CompilerDiagnosticTextEditList
+  (CompilerDiagnosticTextEditNil)
+  (CompilerDiagnosticTextEditCons
+    CompilerDiagnosticTextEdit
+    (Box CompilerDiagnosticTextEditList)))
+
+(defstruct CompilerDiagnosticFix
+  (title String)
+  (applicability CompilerDiagnosticApplicability)
+  (edits CompilerDiagnosticTextEditList))
+
+(defenum CompilerDiagnosticFixList
+  (CompilerDiagnosticFixNil)
+  (CompilerDiagnosticFixCons
+    CompilerDiagnosticFix
+    (Box CompilerDiagnosticFixList)))
+
 (defstruct CompilerDiagnostic
   (message String)
   (level CompilerDiagnosticLevel)
@@ -42,7 +71,8 @@
   (primary CompilerDiagnosticSpan)
   (help CompilerDiagnosticMaybeString)
   (secondary CompilerDiagnosticLabelList)
-  (notes CompilerDiagnosticNoteList))
+  (notes CompilerDiagnosticNoteList)
+  (fixes CompilerDiagnosticFixList))
 
 (define (compiler-diagnostic-span-path [span : (& span CompilerDiagnosticSpan)]) : String
   (string.copy (& (struct-get span path))))
@@ -120,8 +150,27 @@
 (define (compiler-diagnostic-notes [diag : CompilerDiagnostic]) : CompilerDiagnosticNoteList
   (struct-get diag notes))
 
+(define (compiler-diagnostic-fixes [diag : CompilerDiagnostic]) : CompilerDiagnosticFixList
+  (struct-get diag fixes))
+
 (define (compiler-diagnostic-primary-span [diag : CompilerDiagnostic]) : CompilerDiagnosticSpan
   (struct-get diag primary))
+
+(define (compiler-diagnostic-text-edit-span [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticSpan
+  (struct-get edit span))
+
+(define (compiler-diagnostic-text-edit-replacement
+  [edit : CompilerDiagnosticTextEdit]) : String
+  (struct-get edit replacement))
+
+(define (compiler-diagnostic-fix-title [fix : CompilerDiagnosticFix]) : String
+  (struct-get fix title))
+
+(define (compiler-diagnostic-fix-applicability [fix : CompilerDiagnosticFix]) : CompilerDiagnosticApplicability
+  (struct-get fix applicability))
+
+(define (compiler-diagnostic-fix-edits [fix : CompilerDiagnosticFix]) : CompilerDiagnosticTextEditList
+  (struct-get fix edits))
 
 (define (compiler-diagnostic-new
   [message : String]
@@ -132,7 +181,16 @@
   [help : CompilerDiagnosticMaybeString]
   [secondary : CompilerDiagnosticLabelList]
   [notes : CompilerDiagnosticNoteList]) : CompilerDiagnostic
-  (CompilerDiagnostic message level code category primary help secondary notes))
+  (CompilerDiagnostic
+    message
+    level
+    code
+    category
+    primary
+    help
+    secondary
+    notes
+    CompilerDiagnosticFixNil))
 
 (define (compiler-diagnostic-copy-maybe-string
   [value : CompilerDiagnosticMaybeString]) : CompilerDiagnosticMaybeString
@@ -169,6 +227,34 @@
         (string.copy (& note))
         (box (compiler-diagnostic-copy-note-list (box-get rest))))]))
 
+(define (compiler-diagnostic-copy-text-edit [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEdit
+  (CompilerDiagnosticTextEdit
+    (compiler-diagnostic-copy-span (struct-get edit span))
+    (string.copy (& (struct-get edit replacement)))))
+
+(define (compiler-diagnostic-copy-text-edit-list
+  [edits : CompilerDiagnosticTextEditList]) : CompilerDiagnosticTextEditList
+  (match edits
+    [CompilerDiagnosticTextEditNil CompilerDiagnosticTextEditNil]
+    [(CompilerDiagnosticTextEditCons edit rest)
+      (CompilerDiagnosticTextEditCons
+        (compiler-diagnostic-copy-text-edit edit)
+        (box (compiler-diagnostic-copy-text-edit-list (box-get rest))))]))
+
+(define (compiler-diagnostic-copy-fix [fix : CompilerDiagnosticFix]) : CompilerDiagnosticFix
+  (CompilerDiagnosticFix
+    (string.copy (& (struct-get fix title)))
+    (struct-get fix applicability)
+    (compiler-diagnostic-copy-text-edit-list (struct-get fix edits))))
+
+(define (compiler-diagnostic-copy-fix-list [fixes : CompilerDiagnosticFixList]) : CompilerDiagnosticFixList
+  (match fixes
+    [CompilerDiagnosticFixNil CompilerDiagnosticFixNil]
+    [(CompilerDiagnosticFixCons fix rest)
+      (CompilerDiagnosticFixCons
+        (compiler-diagnostic-copy-fix fix)
+        (box (compiler-diagnostic-copy-fix-list (box-get rest))))]))
+
 (define (compiler-diagnostic-copy [diag : CompilerDiagnostic]) : CompilerDiagnostic
   (CompilerDiagnostic
     (string.copy (& (struct-get diag message)))
@@ -178,7 +264,169 @@
     (compiler-diagnostic-copy-span (struct-get diag primary))
     (compiler-diagnostic-copy-maybe-string (struct-get diag help))
     (compiler-diagnostic-copy-label-list (struct-get diag secondary))
-    (compiler-diagnostic-copy-note-list (struct-get diag notes))))
+    (compiler-diagnostic-copy-note-list (struct-get diag notes))
+    (compiler-diagnostic-copy-fix-list (struct-get diag fixes))))
+
+(define (compiler-diagnostic-position-before-or-equal?
+  [left-line : i64]
+  [left-col : i64]
+  [right-line : i64]
+  [right-col : i64]) : bool
+  (or
+    (< left-line right-line)
+    (and (= left-line right-line) (<= left-col right-col))))
+
+(define (compiler-diagnostic-span-valid-for-edit?
+  [span : CompilerDiagnosticSpan]) : bool
+  (and
+    (> (compiler-diagnostic-span-start-line span) 0)
+    (> (compiler-diagnostic-span-start-col span) 0)
+    (> (compiler-diagnostic-span-end-line span) 0)
+    (> (compiler-diagnostic-span-end-col span) 0)
+    (compiler-diagnostic-position-before-or-equal?
+      (compiler-diagnostic-span-start-line span)
+      (compiler-diagnostic-span-start-col span)
+      (compiler-diagnostic-span-end-line span)
+      (compiler-diagnostic-span-end-col span))))
+
+(define (compiler-diagnostic-span-empty? [span : CompilerDiagnosticSpan]) : bool
+  (and
+    (=
+      (compiler-diagnostic-span-start-line span)
+      (compiler-diagnostic-span-end-line span))
+    (=
+      (compiler-diagnostic-span-start-col span)
+      (compiler-diagnostic-span-end-col span))))
+
+(define (compiler-diagnostic-edit-effective-path
+  [diagnostic-path : String]
+  [edit : CompilerDiagnosticTextEdit]) : String
+  (let
+    [span : CompilerDiagnosticSpan (struct-get edit span)]
+    [path : String (compiler-diagnostic-span-path span)]
+    (if (string.eq path "")
+      diagnostic-path
+      path)))
+
+(define (compiler-diagnostic-edit-overlaps?
+  [diagnostic-path : String]
+  [left : CompilerDiagnosticTextEdit]
+  [right : CompilerDiagnosticTextEdit]) : bool
+  (let
+    [left-span : CompilerDiagnosticSpan (struct-get left span)]
+    [right-span : CompilerDiagnosticSpan (struct-get right span)]
+    [same-path : bool
+      (string.eq
+        (compiler-diagnostic-edit-effective-path diagnostic-path left)
+        (compiler-diagnostic-edit-effective-path diagnostic-path right))]
+    [left-before-right : bool
+      (compiler-diagnostic-position-before-or-equal?
+        (compiler-diagnostic-span-end-line left-span)
+        (compiler-diagnostic-span-end-col left-span)
+        (compiler-diagnostic-span-start-line right-span)
+        (compiler-diagnostic-span-start-col right-span))]
+    [right-before-left : bool
+      (compiler-diagnostic-position-before-or-equal?
+        (compiler-diagnostic-span-end-line right-span)
+        (compiler-diagnostic-span-end-col right-span)
+        (compiler-diagnostic-span-start-line left-span)
+        (compiler-diagnostic-span-start-col left-span))]
+    [same-empty-position : bool
+      (and
+        (compiler-diagnostic-span-empty? left-span)
+        (compiler-diagnostic-span-empty? right-span)
+        (=
+          (compiler-diagnostic-span-start-line left-span)
+          (compiler-diagnostic-span-start-line right-span))
+        (=
+          (compiler-diagnostic-span-start-col left-span)
+          (compiler-diagnostic-span-start-col right-span)))]
+    (and
+      same-path
+      (or same-empty-position (not (or left-before-right right-before-left))))))
+
+(define (compiler-diagnostic-edit-overlaps-list?
+  [diagnostic-path : String]
+  [edit : CompilerDiagnosticTextEdit]
+  [rest : CompilerDiagnosticTextEditList]) : bool
+  (match rest
+    [CompilerDiagnosticTextEditNil false]
+    [(CompilerDiagnosticTextEditCons candidate tail)
+      (or
+        (compiler-diagnostic-edit-overlaps? diagnostic-path edit candidate)
+        (compiler-diagnostic-edit-overlaps-list?
+          diagnostic-path
+          edit
+          (box-get tail)))]))
+
+(define (compiler-diagnostic-edit-list-valid?
+  [diagnostic-path : String]
+  [edits : CompilerDiagnosticTextEditList]) : bool
+  (match edits
+    [CompilerDiagnosticTextEditNil true]
+    [(CompilerDiagnosticTextEditCons edit rest)
+      (and
+        (compiler-diagnostic-span-valid-for-edit? (struct-get edit span))
+        (not
+          (compiler-diagnostic-edit-overlaps-list?
+            diagnostic-path
+            edit
+            (box-get rest)))
+        (compiler-diagnostic-edit-list-valid? diagnostic-path (box-get rest)))]))
+
+(define (compiler-diagnostic-fix-valid?
+  [diagnostic-path : String]
+  [fix : CompilerDiagnosticFix]) : bool
+  (and
+    (> (string.string-length (struct-get fix title)) 0)
+    (match (struct-get fix edits)
+      [CompilerDiagnosticTextEditNil false]
+      [(CompilerDiagnosticTextEditCons _ _)
+        (compiler-diagnostic-edit-list-valid?
+          diagnostic-path
+          (struct-get fix edits))])))
+
+(define (compiler-diagnostic-repath-text-edit
+  [edit : CompilerDiagnosticTextEdit]
+  [path : String]) : CompilerDiagnosticTextEdit
+  (let
+    [span : CompilerDiagnosticSpan (struct-get edit span)]
+    [edit-path : String (compiler-diagnostic-span-path span)]
+    (CompilerDiagnosticTextEdit
+      (if (string.eq edit-path "")
+        (CompilerDiagnosticSpan
+          path
+          (compiler-diagnostic-span-start-line span)
+          (compiler-diagnostic-span-start-col span)
+          (compiler-diagnostic-span-end-line span)
+          (compiler-diagnostic-span-end-col span))
+        span)
+      (struct-get edit replacement))))
+
+(define (compiler-diagnostic-repath-text-edit-list
+  [edits : CompilerDiagnosticTextEditList]
+  [path : String]) : CompilerDiagnosticTextEditList
+  (match edits
+    [CompilerDiagnosticTextEditNil CompilerDiagnosticTextEditNil]
+    [(CompilerDiagnosticTextEditCons edit rest)
+      (CompilerDiagnosticTextEditCons
+        (compiler-diagnostic-repath-text-edit edit path)
+        (box (compiler-diagnostic-repath-text-edit-list (box-get rest) path)))]))
+
+(define (compiler-diagnostic-repath-fix-list
+  [fixes : CompilerDiagnosticFixList]
+  [path : String]) : CompilerDiagnosticFixList
+  (match fixes
+    [CompilerDiagnosticFixNil CompilerDiagnosticFixNil]
+    [(CompilerDiagnosticFixCons fix rest)
+      (CompilerDiagnosticFixCons
+        (CompilerDiagnosticFix
+          (struct-get fix title)
+          (struct-get fix applicability)
+          (compiler-diagnostic-repath-text-edit-list
+            (struct-get fix edits)
+            path))
+        (box (compiler-diagnostic-repath-fix-list (box-get rest) path)))]))
 
 (define (compiler-diagnostic-simple
   [path : String]
@@ -247,7 +495,7 @@
 (define (compiler-diagnostic-with-path
   [diag : CompilerDiagnostic]
   [path : String]) : CompilerDiagnostic
-  (compiler-diagnostic-new
+  (CompilerDiagnostic
     (compiler-diagnostic-message diag)
     (compiler-diagnostic-level diag)
     (compiler-diagnostic-code diag)
@@ -260,12 +508,13 @@
       (compiler-diagnostic-end-col diag))
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
-    (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-notes diag)
+    (compiler-diagnostic-repath-fix-list (compiler-diagnostic-fixes diag) path)))
 
 (define (compiler-diagnostic-with-level
   [diag : CompilerDiagnostic]
   [level : CompilerDiagnosticLevel]) : CompilerDiagnostic
-  (compiler-diagnostic-new
+  (CompilerDiagnostic
     (compiler-diagnostic-message diag)
     level
     (compiler-diagnostic-code diag)
@@ -273,12 +522,13 @@
     (compiler-diagnostic-primary-span diag)
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
-    (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-notes diag)
+    (compiler-diagnostic-fixes diag)))
 
 (define (compiler-diagnostic-with-code
   [diag : CompilerDiagnostic]
   [code : String]) : CompilerDiagnostic
-  (compiler-diagnostic-new
+  (CompilerDiagnostic
     (compiler-diagnostic-message diag)
     (compiler-diagnostic-level diag)
     (CompilerDiagnosticSomeString code)
@@ -286,12 +536,13 @@
     (compiler-diagnostic-primary-span diag)
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
-    (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-notes diag)
+    (compiler-diagnostic-fixes diag)))
 
 (define (compiler-diagnostic-with-category
   [diag : CompilerDiagnostic]
   [category : String]) : CompilerDiagnostic
-  (compiler-diagnostic-new
+  (CompilerDiagnostic
     (compiler-diagnostic-message diag)
     (compiler-diagnostic-level diag)
     (compiler-diagnostic-code diag)
@@ -299,12 +550,13 @@
     (compiler-diagnostic-primary-span diag)
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
-    (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-notes diag)
+    (compiler-diagnostic-fixes diag)))
 
 (define (compiler-diagnostic-with-help
   [diag : CompilerDiagnostic]
   [help : String]) : CompilerDiagnostic
-  (compiler-diagnostic-new
+  (CompilerDiagnostic
     (compiler-diagnostic-message diag)
     (compiler-diagnostic-level diag)
     (compiler-diagnostic-code diag)
@@ -312,13 +564,14 @@
     (compiler-diagnostic-primary-span diag)
     (CompilerDiagnosticSomeString help)
     (compiler-diagnostic-secondary-spans diag)
-    (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-notes diag)
+    (compiler-diagnostic-fixes diag)))
 
 (define (compiler-diagnostic-with-secondary
   [diag : CompilerDiagnostic]
   [span : CompilerDiagnosticSpan]
   [label : CompilerDiagnosticMaybeString]) : CompilerDiagnostic
-  (compiler-diagnostic-new
+  (CompilerDiagnostic
     (compiler-diagnostic-message diag)
     (compiler-diagnostic-level diag)
     (compiler-diagnostic-code diag)
@@ -328,12 +581,13 @@
     (CompilerDiagnosticLabelCons
       (CompilerDiagnosticLabel span label)
       (box (compiler-diagnostic-secondary-spans diag)))
-    (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-notes diag)
+    (compiler-diagnostic-fixes diag)))
 
 (define (compiler-diagnostic-with-note
   [diag : CompilerDiagnostic]
   [note : String]) : CompilerDiagnostic
-  (compiler-diagnostic-new
+  (CompilerDiagnostic
     (compiler-diagnostic-message diag)
     (compiler-diagnostic-level diag)
     (compiler-diagnostic-code diag)
@@ -341,12 +595,13 @@
     (compiler-diagnostic-primary-span diag)
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
-    (CompilerDiagnosticNoteCons note (box (compiler-diagnostic-notes diag)))))
+    (CompilerDiagnosticNoteCons note (box (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-fixes diag)))
 
 (define (compiler-diagnostic-with-primary-span
   [diag : CompilerDiagnostic]
   [span : CompilerDiagnosticSpan]) : CompilerDiagnostic
-  (compiler-diagnostic-new
+  (CompilerDiagnostic
     (compiler-diagnostic-message diag)
     (compiler-diagnostic-level diag)
     (compiler-diagnostic-code diag)
@@ -354,7 +609,8 @@
     span
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
-    (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-notes diag)
+    (compiler-diagnostic-fixes diag)))
 
 ;; Reuse a diagnostic's location (path/line/col) with a new message. Used by the
 ;;
@@ -362,7 +618,7 @@
 (define (compiler-diagnostic-with-message
   [diag : CompilerDiagnostic]
   [message : String]) : CompilerDiagnostic
-  (compiler-diagnostic-new
+  (CompilerDiagnostic
     message
     (compiler-diagnostic-level diag)
     (compiler-diagnostic-code diag)
@@ -370,7 +626,42 @@
     (compiler-diagnostic-primary-span diag)
     (compiler-diagnostic-help diag)
     (compiler-diagnostic-secondary-spans diag)
-    (compiler-diagnostic-notes diag)))
+    (compiler-diagnostic-notes diag)
+    (compiler-diagnostic-fixes diag)))
+
+(define (compiler-diagnostic-text-edit-new
+  [span : CompilerDiagnosticSpan]
+  [replacement : String]) : CompilerDiagnosticTextEdit
+  (CompilerDiagnosticTextEdit span replacement))
+
+(define (compiler-diagnostic-text-edit-single
+  [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditList
+  (CompilerDiagnosticTextEditCons edit (box CompilerDiagnosticTextEditNil)))
+
+(define (compiler-diagnostic-fix-new
+  [title : String]
+  [applicability : CompilerDiagnosticApplicability]
+  [edits : CompilerDiagnosticTextEditList]) : CompilerDiagnosticFix
+  (CompilerDiagnosticFix title applicability edits))
+
+;; Fix attachment is the validation boundary: generated/unknown 0:0 spans,
+;; reversed spans, empty edit sets, and overlapping half-open edits are not
+;; admitted to the diagnostic. Empty paths inherit the primary source path.
+(define (compiler-diagnostic-with-fix
+  [diag : CompilerDiagnostic]
+  [fix : CompilerDiagnosticFix]) : CompilerDiagnostic
+  (if (compiler-diagnostic-fix-valid? (compiler-diagnostic-path diag) fix)
+    (CompilerDiagnostic
+      (compiler-diagnostic-message diag)
+      (compiler-diagnostic-level diag)
+      (compiler-diagnostic-code diag)
+      (compiler-diagnostic-category diag)
+      (compiler-diagnostic-primary-span diag)
+      (compiler-diagnostic-help diag)
+      (compiler-diagnostic-secondary-spans diag)
+      (compiler-diagnostic-notes diag)
+      (CompilerDiagnosticFixCons fix (box (compiler-diagnostic-fixes diag))))
+    diag))
 
 (define (compiler-diagnostic-render-notes [notes : CompilerDiagnosticNoteList]) : String
   (match notes

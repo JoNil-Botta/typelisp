@@ -10937,7 +10937,6 @@
             [(option_i64.None)
               (tc-variant-constructor-type-for-lookup-or-id
                 ctx
-                lookup-name
                 lookup-id
                 (tc-source-unbound-display-message
                   ctx
@@ -14844,13 +14843,10 @@
         [(TcNameLookup.Err _) source-id])]
     [else source-id]))
 
-(define (tc-call-variant-name-id?
-  [ctx : TcContext]
-  [name : String]
-  [name-id : i64]) : bool
+(define (tc-call-variant-name-id? [ctx : TcContext] [name-id : i64]) : bool
   (if (< name-id 0)
     false
-    (match (tc-enum-qualified-variant-lookup-handle ctx name name-id)
+    (match (tc-enum-qualified-variant-lookup-handle ctx name-id)
       [(option_i64.Some _) true]
       [(option_i64.None) false])))
 
@@ -15221,7 +15217,6 @@
 
 (define (tc-enum-qualified-variant-lookup-handle
   [ctx : TcContext]
-  [_name : String]
   [name-id : i64]) : option_i64.Option
   (match ctx
     [(TcContext _ _ registries _ module-id _ _ _)
@@ -15253,6 +15248,79 @@
                       registries
                       key-id)))]
               [(option_i64.None) option_i64.None]))))]))
+
+(define (tc-enum-qualified-variant-constructor-handle
+  [ctx : TcContext]
+  [name-id : i64]) : option_i64.Option
+  (match (tc-enum-qualified-variant-lookup-handle ctx name-id)
+    [(option_i64.Some handle) (option_i64.Some handle)]
+    [(option_i64.None)
+      (tc-enum-qualified-variant-declaration-handle ctx name-id)]))
+
+(define (tc-enum-qualified-variant-declaration-handle
+  [ctx : TcContext]
+  [name-id : i64]) : option_i64.Option
+  (let
+    [base-id : i64
+      (if (tc-name-qualified-id? name-id)
+        (tc-qualified-name-base-id name-id)
+        name-id)]
+    [dotted-parts-id : i64 (tc-enum-qualified-variant-dotted-parts-id base-id)]
+    [enum-id : i64
+      (cond
+        [(compiler-composite-triple-key-id? base-id)
+          (compiler-composite-triple-middle-id base-id)]
+        [(compiler-composite-pair-key-id? base-id)
+          (compiler-composite-pair-left-id base-id)]
+        [(compiler-composite-pair-key-id? dotted-parts-id)
+          (compiler-composite-pair-left-id dotted-parts-id)]
+        [else -1])]
+    [variant-id : i64
+      (cond
+        [(compiler-composite-triple-key-id? base-id)
+          (compiler-composite-triple-right-id base-id)]
+        [(compiler-composite-pair-key-id? base-id)
+          (compiler-composite-pair-right-id base-id)]
+        [(compiler-composite-pair-key-id? dotted-parts-id)
+          (compiler-composite-pair-right-id dotted-parts-id)]
+        [else -1])]
+    (if (or (< enum-id 0) (< variant-id 0))
+      option_i64.None
+      (match (tc-variant-handle-for-enum-id-and-name-id ctx enum-id variant-id)
+        [(option_i64.Some handle) (option_i64.Some handle)]
+        [(option_i64.None)
+          (tc-variant-handle-for-canonical-enum-id-and-name-id
+            ctx
+            enum-id
+            variant-id)]))))
+
+(define (tc-enum-qualified-variant-dotted-parts-id [name-id : i64]) : i64
+  (if (or (< name-id 0) (>= name-id (intern-capacity)))
+    -1
+    (let
+      [name : String (tc-env-key-name-text name-id)]
+      [len : i64 (string.string-length name)]
+      [data : (Ptr u8)
+        (unsafe
+          (string-data (& name)))]
+      [last-dot : i64 -1]
+      [index : i64 0]
+      (begin
+        (while (< index len)
+          (begin
+            (if (=
+              (unsafe
+                (ptr-read (ptr-offset data index)))
+              (cast 46 : u8))
+              (set! last-dot index)
+              unit)
+            (set! index (+ index 1))))
+        (if (or (<= last-dot 0) (>= last-dot (- len 1)))
+          -1
+          (compiler-composite-pair-key-id
+            (intern (string.substring name 0 last-dot))
+            (intern
+              (string.substring name (+ last-dot 1) (- len (+ last-dot 1))))))))))
 
 (define (tc-enum-qualified-variant-lookup-key-id
   [ctx : TcContext]
@@ -24473,12 +24541,7 @@
           (if (and
             (not non-root-bare?)
             (tc-enum-qualified-variant-lookup-name-id? name-id))
-            (match (tc-enum-qualified-variant-lookup-handle
-              ctx
-              (if (and (>= name-id 0) (< name-id (intern-capacity)))
-                (intern-str name-id)
-                "")
-              name-id)
+            (match (tc-enum-qualified-variant-lookup-handle ctx name-id)
               [(option_i64.Some _) true]
               [(option_i64.None) false])
             (let
@@ -28402,7 +28465,7 @@
           (if (or
             (< name-id 0)
             (compiler-composite-triple-key-id? lookup-id)
-            (tc-call-variant-name-id? ctx name name-id))
+            (tc-call-variant-name-id? ctx name-id))
             (tc-call-expr-ordinary ctx env func args)
             (let
               [arena-call-kind : i64
@@ -29341,7 +29404,7 @@
         (if (or
           (< name-id 0)
           (compiler-composite-triple-key-id? lookup-id)
-          (tc-call-variant-name-id? ctx name name-id))
+          (tc-call-variant-name-id? ctx name-id))
           (tc-call-expr-ordinary ctx env func args)
           (let
             [arena-call-kind : i64
@@ -29451,7 +29514,7 @@
           (if (or
             (< name-id 0)
             (compiler-composite-triple-key-id? lookup-id)
-            (tc-call-variant-name-id? ctx name name-id))
+            (tc-call-variant-name-id? ctx name-id))
             (tc-call-expr-ordinary-id ctx env func-id args)
             (let
               [arena-call-kind : i64
@@ -38031,7 +38094,6 @@
 
 (define (tc-variant-constructor-type-for-lookup-or-id
   [ctx : TcContext]
-  [lookup-name : String]
   [lookup-id : i64]
   [not-found-message : String]) : ResultTcType
   (let
@@ -38040,10 +38102,7 @@
       [(option_i64.Some handle)
         (tc-variant-constructor-type-for-handle ctx handle)]
       [(option_i64.None)
-        (match (tc-enum-qualified-variant-lookup-handle
-          ctx
-          lookup-name
-          lookup-id)
+        (match (tc-enum-qualified-variant-lookup-handle ctx lookup-id)
           [(option_i64.Some handle)
             (tc-variant-constructor-type-for-handle ctx handle)]
           [(option_i64.None) (ResultTcType.Err not-found-message)])])))
@@ -39877,7 +39936,6 @@
             [(option_i64.None)
               (match (tc-enum-qualified-variant-lookup-handle
                 ctx
-                variant-name
                 variant-name-id)
                 [(option_i64.Some handle) handle]
                 [(option_i64.None)
@@ -40221,6 +40279,106 @@
             [_ option_i64.None])]
         [(ResultAstDecl.Err _) option_i64.None])
       option_i64.None)))
+
+(define tc-canonical-enum-decl-index-ready : bool
+  false)
+(define tc-canonical-enum-decl-index-registry-id : i64
+  -1)
+(define tc-canonical-enum-decl-index-arena : i64
+  0)
+(define tc-canonical-enum-decl-index-positions : CompilerSymbolMap
+  (compiler-symbol-map-with-capacity 16))
+
+(define (tc-canonical-enum-decl-index-bind!
+  [positions : (&mut positions CompilerSymbolMap)]
+  [name-id : i64]
+  [position : i64]) : unit
+  (let
+    [key-id : i64 (intern (tc-variant-member-name-text name-id))]
+    [value : i64 (+ position 1)]
+    [previous : i64 (compiler-symbol-map-lookup-handle-id positions key-id)]
+    (cond
+      [(< previous 0) (compiler-symbol-map-bind-id! positions key-id value)]
+      [(= previous value) unit]
+      [else (compiler-symbol-map-bind-id! positions key-id 0)])))
+
+(define (tc-canonical-enum-decl-index-ensure! [ctx : TcContext]) : unit
+  (let
+    [registry-id : i64
+      (compiler-registries-identity (tc-context-registries ctx))]
+    (if (and
+      tc-canonical-enum-decl-index-ready
+      (= tc-canonical-enum-decl-index-registry-id registry-id))
+      unit
+      (let
+        [decls : (Array AstDecl)
+          (compiler-symbols-decls (tc-context-symbols ctx))]
+        [count : i64 (array-length decls)]
+        [prev-arena : i64 (arena.tl_arena_current)]
+        [index-arena : i64 (arena.tl_arena_make)]
+        [_switch : unit
+          (unsafe
+            (arena.tl_arena_set index-arena))]
+        [positions : CompilerSymbolMap (compiler-symbol-map-with-capacity 64)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (match (array-ref decls index)
+                [(AstDecl.DefEnum decl-meta name _ _)
+                  (tc-canonical-enum-decl-index-bind!
+                    (&mut positions)
+                    name
+                    index)]
+                [(AstDecl.DefEnumLifetimes decl-meta name _ _ _)
+                  (tc-canonical-enum-decl-index-bind!
+                    (&mut positions)
+                    name
+                    index)]
+                [_ unit])
+              (set! index (+ index 1))))
+          (if (= tc-canonical-enum-decl-index-arena 0)
+            unit
+            (unsafe
+              (arena.tl_arena_destroy tc-canonical-enum-decl-index-arena)))
+          (set! tc-canonical-enum-decl-index-positions positions)
+          (set! tc-canonical-enum-decl-index-registry-id registry-id)
+          (set! tc-canonical-enum-decl-index-arena index-arena)
+          (set! tc-canonical-enum-decl-index-ready true)
+          (unsafe
+            (arena.tl_arena_set prev-arena)))))))
+
+(define (tc-variant-handle-for-canonical-enum-id-and-name-id
+  [ctx : TcContext]
+  [enum-id : i64]
+  [variant-id : i64]) : option_i64.Option
+  (let
+    [_ensure : unit (tc-canonical-enum-decl-index-ensure! ctx)]
+    [key-id : i64 (intern (tc-variant-member-name-text enum-id))]
+    [value : i64
+      (compiler-symbol-map-lookup-handle-id
+        (& tc-canonical-enum-decl-index-positions)
+        key-id)]
+    (if (<= value 0)
+      option_i64.None
+      (let
+        [index : i64 (- value 1)]
+        (match (array-ref
+          (compiler-symbols-decls (tc-context-symbols ctx))
+          index)
+          [(AstDecl.DefEnum decl-meta _ _ variants)
+            (tc-variant-handle-in-list-at
+              (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index)
+              variant-id
+              (& variants)
+              0)]
+          [(AstDecl.DefEnumLifetimes decl-meta _ _ _ variants)
+            (tc-variant-handle-in-list-at
+              (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index)
+              variant-id
+              (& variants)
+              0)]
+          [_ option_i64.None])))))
 
 (define (tc-variant-handle-in-list-at
   [enum-handle : i64]
@@ -42860,7 +43018,6 @@
               [(option_i64.None)
                 (tc-variant-constructor-type-for-lookup-or-id
                   ctx
-                  lookup-name
                   lookup-id
                   (tc-source-unbound-display-message
                     ctx
@@ -42868,7 +43025,17 @@
                     name
                     lookup-name
                     message))])])]
-      [(TcNameLookup.Err message) (ResultTcType.Err message)])))
+      [(TcNameLookup.Err message)
+        (tc-source-lookup-error-or-variant-constructor ctx name message)])))
+
+(define (tc-source-lookup-error-or-variant-constructor
+  [ctx : TcContext]
+  [name-id : i64]
+  [message : String]) : ResultTcType
+  (match (tc-enum-qualified-variant-constructor-handle ctx name-id)
+    [(option_i64.Some handle)
+      (tc-variant-constructor-type-for-handle ctx handle)]
+    [(option_i64.None) (ResultTcType.Err message)]))
 
 (define (tc-set-expr-after-local-field-check
   [ctx : TcContext]

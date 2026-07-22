@@ -111,6 +111,11 @@
                   (ast-ty-mut-ref lifetime-id (AstType.Enum qualified-id))]
                 [different-ref : AstType
                   (ast-ty-mut-ref lifetime-id (AstType.Enum other-qualified-id))]
+                [other-constructor-id : i64
+                  (ci.intern-generated-canonical-name "ReverseMixedOther.Value")]
+                [missing-constructor-id : i64
+                  (ci.intern-generated-canonical-name
+                    "ReverseMixedOther.Missing")]
                 (and
                   (tc-nominal-name-id-canonical-eq? ctx flat-id qualified-id)
                   (tc-nominal-name-id-canonical-eq? ctx qualified-id flat-id)
@@ -165,6 +170,44 @@
                     different-ref)
                     [(ResultTcLifetimeSubst.Ok _) false]
                     [(ResultTcLifetimeSubst.Err _) true])
+                  (match (tc-enum-qualified-variant-lookup-key-id
+                    ctx
+                    other-constructor-id
+                    (tc-context-module-id ctx))
+                    [(option_i64.Some _) false]
+                    [(option_i64.None) true])
+                  (match (tc-enum-qualified-variant-lookup-handle
+                    ctx
+                    other-constructor-id)
+                    [(option_i64.Some _) false]
+                    [(option_i64.None) true])
+                  (match (tc-enum-qualified-variant-constructor-handle
+                    ctx
+                    other-constructor-id)
+                    [(option_i64.Some _) true]
+                    [(option_i64.None) false])
+                  (match (tc-source-lookup-error-or-variant-constructor
+                    ctx
+                    other-constructor-id
+                    "missing constructor")
+                    [(ResultTcType.Ok _) true]
+                    [(ResultTcType.Err _) false])
+                  (match (tc-enum-qualified-variant-lookup-handle
+                    ctx
+                    missing-constructor-id)
+                    [(option_i64.Some _) false]
+                    [(option_i64.None) true])
+                  (match (tc-enum-qualified-variant-constructor-handle
+                    ctx
+                    missing-constructor-id)
+                    [(option_i64.Some _) false]
+                    [(option_i64.None) true])
+                  (match (tc-source-lookup-error-or-variant-constructor
+                    ctx
+                    missing-constructor-id
+                    "missing constructor")
+                    [(ResultTcType.Ok _) false]
+                    [(ResultTcType.Err _) true])
                   (tc-qualified-variant-member-lookup-smoke? module-id flat-id)))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]

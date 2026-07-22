@@ -2404,7 +2404,6 @@
                   (if (= lookup-key-id lookup-id)
                     (tc-variant-constructor-type-for-lookup-or-id
                       ctx
-                      lookup-name
                       lookup-id
                       (tc-source-unbound-display-message
                         ctx
@@ -2417,7 +2416,6 @@
                       [(ResultTcType.Err _)
                         (tc-variant-constructor-type-for-lookup-or-id
                           ctx
-                          lookup-name
                           lookup-id
                           (tc-source-unbound-display-message
                             ctx

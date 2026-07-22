@@ -6142,23 +6142,20 @@
 (defstruct AstProgramCompactionRemap
   (source-pools AstNodePoolContext)
   (dest-pools AstNodePoolContext)
-  (expr-map (Array i64))
-  (type-map (Array i64)))
+  (expr-map (Array i32))
+  (type-map (Array i32)))
 
-(define (ast-compaction-id-map-create [count : i64]) : (Array i64)
+(define (ast-compaction-id-map-create [count : i64]) : (Array i32)
   (let
     [cap : i64
       (if (< count 1)
         1
         count)]
-    [slots : (Array i64) (array.make-array i64 cap)]
-    [i : i64 0]
-    (begin
-      (while (< i cap)
-        (begin
-          (array-set! slots i -1)
-          (set! i (+ i 1))))
-      slots)))
+    ;; Arrays are zero-initialized. Store destination ids as id+1 so zero can
+    ;; remain the unseen sentinel without an O(source-pool-size) initialization
+    ;; pass before each compaction.
+    ;; Pool ids are bounded below i32::MAX by the 4096-segment pool ceiling.
+    (array.make-array i32 cap)))
 
 (define (ast-compaction-remap-source-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
   (struct-get remap source-pools))
@@ -6280,10 +6277,10 @@
   [remap : AstProgramCompactionRemap]
   [id : i64]) : i64
   (let
-    [type-map : (Array i64) (struct-get remap type-map)]
-    [cached : i64 (array-ref type-map id)]
-    (if (>= cached 0)
-      cached
+    [type-map : (Array i32) (struct-get remap type-map)]
+    [cached : i32 (array-ref type-map id)]
+    (if (> cached 0)
+      (cast (- cached 1) : i64)
       (let
         [source-pools : AstNodePoolContext
           (ast-compaction-remap-source-pools remap)]
@@ -6293,7 +6290,7 @@
         [new-ty : AstType (ast-compaction-remap-type remap source-ty)]
         [new-id : i64 (ast-node-pool-context-type-push dest-pools new-ty)]
         (begin
-          (array-set! type-map id new-id)
+          (array-set! type-map id (cast (+ new-id 1) : i32))
           new-id)))))
 
 (define (ast-compaction-remap-maybe-type
@@ -7130,10 +7127,10 @@
   [remap : AstProgramCompactionRemap]
   [id : i64]) : i64
   (let
-    [expr-map : (Array i64) (struct-get remap expr-map)]
-    [cached : i64 (array-ref expr-map id)]
-    (if (>= cached 0)
-      cached
+    [expr-map : (Array i32) (struct-get remap expr-map)]
+    [cached : i32 (array-ref expr-map id)]
+    (if (> cached 0)
+      (cast (- cached 1) : i64)
       (let
         [source-pools : AstNodePoolContext
           (ast-compaction-remap-source-pools remap)]
@@ -7143,7 +7140,7 @@
         [new-expr : AstExpr (ast-compaction-remap-expr remap source-expr)]
         [new-id : i64 (ast-node-pool-context-expr-push dest-pools new-expr)]
         (begin
-          (array-set! expr-map id new-id)
+          (array-set! expr-map id (cast (+ new-id 1) : i32))
           new-id)))))
 
 (define (ast-compaction-remap-generated-meta
@@ -7299,10 +7296,10 @@
       [_set-map-arena : unit
         (unsafe
           (arena.tl_arena_set map-arena))]
-      [expr-map : (Array i64)
+      [expr-map : (Array i32)
         (ast-compaction-id-map-create
           (ast-node-pool-context-expr-len source-pools))]
-      [type-map : (Array i64)
+      [type-map : (Array i32)
         (ast-compaction-id-map-create
           (ast-node-pool-context-type-len source-pools))]
       [remap : AstProgramCompactionRemap
@@ -7341,10 +7338,10 @@
     [_set-map-arena : unit
       (unsafe
         (arena.tl_arena_set map-arena))]
-    [expr-map : (Array i64)
+    [expr-map : (Array i32)
       (ast-compaction-id-map-create
         (ast-node-pool-context-expr-len source-pools))]
-    [type-map : (Array i64)
+    [type-map : (Array i32)
       (ast-compaction-id-map-create
         (ast-node-pool-context-type-len source-pools))]
     [remap : AstProgramCompactionRemap

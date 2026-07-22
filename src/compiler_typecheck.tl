@@ -8160,9 +8160,9 @@
   (match (compiler-load-embedded-stdlib-source "core_macros.tl")
     [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource source)
       (let
-        [start-marker : String "(cfg\n  feature-stdlib-for-defmacro"]
-        [end-marker : String
-          ";; Published seed compilers still own the old bootstrap fast path."]
+        [start-marker : String
+          "(defmacro (for [bindings : ExprBindingClause ...]"]
+        [end-marker : String "(cfg\n  test\n  (defmacro (core-macros-user-fold"]
         [start : i64
           (compiler-typecheck-string-find-from source start-marker 0)]
         [end : i64

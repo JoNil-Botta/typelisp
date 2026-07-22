@@ -32,10 +32,19 @@ MUTATION_ROOT="$WORKDIR/stdlib-root"
 rm -rf "$WORKDIR"
 mkdir -p "$MUTATION_ROOT"
 
-# The first declaration is the real feature-gated source body; the later seed
-# compatibility stub deliberately keeps its original name.
-sed '0,/(defmacro (for /s//(defmacro (for-copy /' \
-    stdlib/core_macros.tl > "$MUTATION_ROOT/for_copy_macros.tl"
+# Copy only the ordinary source declaration into an isolated module, then
+# rename it while leaving its body byte-for-byte identical. Copying the whole
+# implicit-prelude module would load a second copy of every core macro and make
+# this guard test module identity rather than the scalar-for implementation.
+{
+    printf '%s\n\n' '(import stdlib.comptime)'
+    awk '
+        /^\(defmacro \(for / { copying = 1 }
+        copying && /^\(cfg$/ { exit }
+        copying { print }
+    ' stdlib/core_macros.tl |
+        sed '0,/(defmacro (for /s//(defmacro (for-copy /'
+} > "$MUTATION_ROOT/for_copy_macros.tl"
 
 if ! grep -F '(defmacro (for-copy ' "$MUTATION_ROOT/for_copy_macros.tl" >/dev/null; then
     echo "failed to create renamed scalar-for mutation" >&2

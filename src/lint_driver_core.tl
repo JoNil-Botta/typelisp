@@ -1027,30 +1027,49 @@
           out)]
       (selfhost-lint-unused-unsafe-findings-from path (+ index 1) next))))
 
+(define (selfhost-lint-typed-unused-unsafe-findings
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]) : LintFindings
+  (begin
+    (tc-unused-unsafe-tracking-reset! path)
+    (match (compiler-check-source-with-roots path source stdlib-roots)
+      [(ResultCompilerCheck.Ok _)
+        (let
+          [findings : LintFindings
+            (selfhost-lint-filter-derived-origins
+              source
+              (selfhost-lint-unused-unsafe-findings-from
+                path
+                0
+                (lint-findings-empty)))]
+          (begin
+            (tc-unused-unsafe-tracking-disable!)
+            findings))]
+      [(ResultCompilerCheck.Err _)
+        (begin
+          (tc-unused-unsafe-tracking-disable!)
+          (lint-findings-empty))])))
+
 (define (selfhost-lint-unused-unsafe-findings
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]) : LintFindings
   (if (> (lint-unused-unsafe-classifier-unknown-count) 0)
+    (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots)
+    (lint-findings-empty)))
+
+(define (selfhost-lint-source-unused-unsafe-findings
+  [path : String]
+  [source : String]
+  [program : AstProgram]
+  [stdlib-roots : lint_svec.Vec]) : LintFindings
+  (if (lint-program-has-unused-unsafe-candidate? program)
     (begin
-      (tc-unused-unsafe-tracking-reset! path)
-      (match (compiler-check-source-with-roots path source stdlib-roots)
-        [(ResultCompilerCheck.Ok _)
-          (let
-            [findings : LintFindings
-              (selfhost-lint-filter-derived-origins
-                source
-                (selfhost-lint-unused-unsafe-findings-from
-                  path
-                  0
-                  (lint-findings-empty)))]
-            (begin
-              (tc-unused-unsafe-tracking-disable!)
-              findings))]
-        [(ResultCompilerCheck.Err _)
-          (begin
-            (tc-unused-unsafe-tracking-disable!)
-            (lint-findings-empty))]))
+      (set!
+        selfhost-lint-unused-unsafe-fallback-file-count
+        (+ selfhost-lint-unused-unsafe-fallback-file-count 1))
+      (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots))
     (lint-findings-empty)))
 
 (define (selfhost-lint-findings-without-unused-unsafe-from
@@ -1137,19 +1156,24 @@
     ;; Never let a prior request's compact cache survive into the next one;
     ;; explicit file/package batches reset once in their outer batch arena.
     (selfhost-lint-unsafe-surface-cache-reset!)
+    (lint-unused-unsafe-classifier-reset!)
     (let
       [findings : LintFindings
         (match (parse-ast-source-diagnostic path source)
           [(ResultAstProgramDiagnostic.Ok program)
-            (selfhost-lint-program-and-typed-findings
-              path
-              source
-              program
-              stdlib-roots
-              deprecated-string-concat
-              redundant-function-name
-              prefer-dotted-field
-              name-case)]
+            (selfhost-lint-findings-append
+              (selfhost-lint-program-findings-with-all-options
+                source
+                program
+                deprecated-string-concat
+                redundant-function-name
+                prefer-dotted-field
+                name-case)
+              (selfhost-lint-source-unused-unsafe-findings
+                path
+                source
+                program
+                stdlib-roots))]
           [(ResultAstProgramDiagnostic.Err _) (lint-findings-empty)])]
       (begin
         ;; Preserve diagnostic counters, but leave no global pointer into the

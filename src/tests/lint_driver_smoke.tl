@@ -266,6 +266,67 @@
   (unsafe
     (unsafe (ptr-read p))))")
 
+(define (lint-driver-smoke-unsafe-builtin-source [name : String]) : String
+  (string.append
+    "(define (main) : i64
+  (unsafe ("
+    (string.append name " 0)))")))
+
+(define (lint-driver-smoke-program-unsafe-source [name : String]) : String
+  (string.append
+    "(define (main) : (Ptr (Ptr u8))
+  (unsafe ("
+    (string.append name ")))")))
+
+(define (lint-driver-smoke-safe-program-argc-source) : String
+  "(define (main) : i64
+  (unsafe (program-argc)))")
+
+(define (lint-driver-smoke-safe-tls-current-arena-source) : String
+  "(define (main) : i64
+  (unsafe (tls-current-arena)))")
+
+(define (lint-driver-smoke-unsafe-parameter-shadow-source) : String
+  "(define (main [atomic-load : (-> i64 i64)]) : i64
+  (unsafe (atomic-load 1)))")
+
+(define (lint-driver-smoke-unsafe-local-shadow-source) : String
+  "(define (identity [value : i64]) : i64 value)
+(define (main) : i64
+  ((lambda ([atomic-add! : (-> i64 i64)]) : i64
+    (unsafe (atomic-add! 1)))
+    identity))")
+
+(define (lint-driver-smoke-unsafe-let-shadow-source) : String
+  "(define (identity [value : i64]) : i64 value)
+(define (main) : i64
+  (let
+    [atomic-store! : (-> i64 i64) identity]
+    (unsafe (atomic-store! 1))))")
+
+(define (lint-driver-smoke-unsafe-top-level-shadow-source) : String
+  "(define (volatile-load [value : i64]) : i64 value)
+(define (main) : i64
+  (unsafe (volatile-load 1)))")
+
+(define (lint-driver-smoke-unsafe-tls-shadow-source) : String
+  "(define (tls-current-arena-set! [value : i64]) : i64 value)
+(define (main) : i64
+  (unsafe (tls-current-arena-set! 1)))")
+
+(define (lint-driver-smoke-unsafe-ambiguous-import-source) : String
+  "(import \"legacy.tl\")
+(define (main) : i64
+  (unsafe (atomic-load 0)))")
+
+(define (lint-driver-smoke-source-has-unused-unsafe-candidate?
+  [path : String]
+  [source : String]) : bool
+  (match (parse-ast-source-diagnostic path source)
+    [(ResultAstProgramDiagnostic.Ok program)
+      (lint-program-has-unused-unsafe-candidate? program)]
+    [(ResultAstProgramDiagnostic.Err _) true]))
+
 (define (lint-driver-smoke-suppressed-unused-unsafe-source) : String
   "(define (main) : i64
   ;; lint-allow: unused-unsafe
@@ -890,6 +951,36 @@
         (lint-driver-smoke-suppressed-unused-unsafe-source)
         (lint_svec.new)
         false)]
+    [parameter-shadow : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unsafe_parameter_shadow.tl"
+        (lint-driver-smoke-unsafe-parameter-shadow-source)
+        (lint_svec.new)
+        false)]
+    [local-shadow : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unsafe_local_shadow.tl"
+        (lint-driver-smoke-unsafe-local-shadow-source)
+        (lint_svec.new)
+        false)]
+    [let-shadow : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unsafe_let_shadow.tl"
+        (lint-driver-smoke-unsafe-let-shadow-source)
+        (lint_svec.new)
+        false)]
+    [top-level-shadow : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unsafe_top_level_shadow.tl"
+        (lint-driver-smoke-unsafe-top-level-shadow-source)
+        (lint_svec.new)
+        false)]
+    [tls-shadow : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_unsafe_tls_shadow.tl"
+        (lint-driver-smoke-unsafe-tls-shadow-source)
+        (lint_svec.new)
+        false)]
     (cond
       [(not (= (lint-findings-count reported) 1)) 60]
       [(not
@@ -918,6 +1009,66 @@
             2))
         67]
       [(not (= (lint-findings-count suppressed) 0)) 68]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_atomic_load.tl"
+          (lint-driver-smoke-unsafe-builtin-source "atomic-load"))
+        160]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_atomic_store.tl"
+          (lint-driver-smoke-unsafe-builtin-source "atomic-store!"))
+        161]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_atomic_add.tl"
+          (lint-driver-smoke-unsafe-builtin-source "atomic-add!"))
+        162]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_atomic_fetch_add.tl"
+          (lint-driver-smoke-unsafe-builtin-source "atomic-fetch-add!"))
+        163]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_atomic_cas.tl"
+          (lint-driver-smoke-unsafe-builtin-source "atomic-cas!"))
+        164]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_volatile_load.tl"
+          (lint-driver-smoke-unsafe-builtin-source "volatile-load"))
+        165]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_volatile_store.tl"
+          (lint-driver-smoke-unsafe-builtin-source "volatile-store!"))
+        166]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_tls_set.tl"
+          (lint-driver-smoke-unsafe-builtin-source "tls-current-arena-set!"))
+        167]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_program_argv.tl"
+          (lint-driver-smoke-program-unsafe-source "program-argv"))
+        168]
+      [(lint-driver-smoke-source-has-unused-unsafe-candidate?
+          "lint_driver_program_envp.tl"
+          (lint-driver-smoke-program-unsafe-source "program-envp"))
+        169]
+      [(not
+          (lint-driver-smoke-source-has-unused-unsafe-candidate?
+            "lint_driver_program_argc.tl"
+            (lint-driver-smoke-safe-program-argc-source)))
+        170]
+      [(not
+          (lint-driver-smoke-source-has-unused-unsafe-candidate?
+            "lint_driver_tls_current.tl"
+            (lint-driver-smoke-safe-tls-current-arena-source)))
+        171]
+      [(not (= (lint-findings-count parameter-shadow) 1)) 172]
+      [(not (= (lint-findings-count local-shadow) 1)) 173]
+      [(not (= (lint-findings-count let-shadow) 1)) 174]
+      [(not (= (lint-findings-count top-level-shadow) 1)) 175]
+      [(not (= (lint-findings-count tls-shadow) 1)) 176]
+      [(not
+          (lint-driver-smoke-source-has-unused-unsafe-candidate?
+            "lint_driver_unsafe_ambiguous_import.tl"
+            (lint-driver-smoke-unsafe-ambiguous-import-source)))
+        177]
       [else 42])))
 
 (define (lint-driver-smoke-copy-on-update-struct-self-test) : i64

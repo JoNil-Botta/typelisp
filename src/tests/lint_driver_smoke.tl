@@ -1157,17 +1157,6 @@
       (lint_svec.push (&mut paths) "target/lint_unsafe_surface/macro.tl")
       paths)))
 
-(define (lint-driver-smoke-result-error-code?
-  [result : ResultSelfhostLintFindings]
-  [path : String]
-  [code : String]) : bool
-  (match result
-    [(ResultSelfhostLintFindings.Ok _) false]
-    [(ResultSelfhostLintFindings.Err diag _)
-      (and
-        (string.eq (compiler-diagnostic-path (box-get diag)) path)
-        (string.eq (compiler-diagnostic-code-or-empty (box-get diag)) code))]))
-
 (define (lint-driver-smoke-unsafe-surface-request-count
   [source : String]
   [stdlib-roots : lint_svec.Vec]) : i64
@@ -1299,16 +1288,18 @@
           false
           false)]
       [legacy-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
-      [direct-error : ResultSelfhostLintFindings
-        (selfhost-lint-source-result-with-roots
+      [_direct-error-findings : LintFindings
+        (selfhost-lint-typed-unused-unsafe-findings
           "target/lint_unsafe_surface/direct_type_error.tl"
           (lint-driver-smoke-unsafe-surface-type-error-source)
           (lint_svec.new))]
-      [direct-parse-error : ResultSelfhostLintFindings
-        (selfhost-lint-source-result-with-roots
+      [direct-error : String selfhost-lint-typed-unused-unsafe-error]
+      [_direct-parse-error-findings : LintFindings
+        (selfhost-lint-typed-unused-unsafe-findings
           "target/lint_unsafe_surface/direct_parse_error.tl"
           (lint-driver-smoke-unsafe-surface-parse-error-source)
           (lint_svec.new))]
+      [direct-parse-error : String selfhost-lint-typed-unused-unsafe-error]
       [file-error-status : i64
         (selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/type_error.tl"
@@ -1397,16 +1388,18 @@
         [(not (= local-value-fallbacks 0)) 112]
         [(not (= callable-value-fallbacks 1)) 113]
         [(not
-            (lint-driver-smoke-result-error-code?
-              direct-error
-              "target/lint_unsafe_surface/direct_type_error.tl"
-              (compiler-diagnostic-code-typecheck)))
+            (and
+              (string.contains
+                (& direct-error)
+                "target/lint_unsafe_surface/direct_type_error.tl")
+              (string.contains (& direct-error) "typecheck:")))
           179]
         [(not
-            (lint-driver-smoke-result-error-code?
-              direct-parse-error
-              "target/lint_unsafe_surface/direct_parse_error.tl"
-              (compiler-diagnostic-code-parse)))
+            (and
+              (string.contains
+                (& direct-parse-error)
+                "target/lint_unsafe_surface/direct_parse_error.tl")
+              (string.contains (& direct-parse-error) "reader:")))
           180]
         [(not (= file-error-status 1)) 181]
         [(not (= batch-error-status 1)) 182]

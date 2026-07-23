@@ -684,6 +684,10 @@
 ;; A valid-session callback failure is terminal for that transformer
 ;; invocation. Native entries may remain branch-free: later probes observe the
 ;; first status without mutating the value stack or committing a result.
+;; The operand-type-kind probe is the one data-returning operation: 1/0 is its
+;; boolean result and a negative value is its malformed-request sentinel. It
+;; must bypass the status latch; generated entries translate its negative
+;; sentinel to the public bad-request status before unwinding.
 ;; Invalid cookies do not poison the active session.
 (define (compiler-comptime-host-invoke
   [session : i64]
@@ -708,7 +712,9 @@
             arg-c)]
         (begin
           (when
-            (not (= status tlci-host-callback-status-ok))
+            (and
+              (not (= operation tlci-host-callback-op-operand-type-kind-eq))
+              (not (= status tlci-host-callback-status-ok)))
             (set! compiler-comptime-host-session-status status))
           status)))))
 

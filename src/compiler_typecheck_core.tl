@@ -46908,6 +46908,10 @@
         (struct-get b segments)
         (struct-get a segments)))))
 
+;; Render a move/borrow place in user-facing source syntax: struct fields as
+;; `.field`, tuple elements as `.N`, and array elements as `[N]`, so
+;; diagnostics read like what the user wrote rather than internal place
+;; encodings. Refs #5149.
 (define (tc-move-path-segments-render [segments : TcMovePathSegments]) : String
   (match segments
     [(TcMovePathSegments.Nil) ""]
@@ -46917,12 +46921,12 @@
         (tc-move-path-segments-render (box-get rest)))]
     [(TcMovePathSegments.TupleIndex index rest)
       (string.append
-        (string.append ".#tuple." (string.int->string index))
+        (string.append "." (string.int->string index))
         (tc-move-path-segments-render (box-get rest)))]
     [(TcMovePathSegments.ArrayIndex index rest)
       (string.append
-        (string.append ".#array." (string.int->string index))
-        (tc-move-path-segments-render (box-get rest)))]))
+        (string.append "[" (string.int->string index))
+        (string.append "]" (tc-move-path-segments-render (box-get rest))))]))
 
 (define (tc-move-path-render [path : TcMovePath]) : String
   (string.append

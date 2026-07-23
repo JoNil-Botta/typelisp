@@ -4382,7 +4382,7 @@
     [returned-borrowed-lookup-array-set-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-returned-borrowed-lookup-array-set-source)
-        "typecheck: cannot assign to borrowed place `bag.slots.#array.0`")]
+        "typecheck: cannot assign to borrowed place `bag.slots[0]`")]
     [regular-call-lifetime-subst-ok : bool
       (compiler-typecheck-ok?
         (compiler-typecheck-regular-call-lifetime-subst-source))]
@@ -9786,7 +9786,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-borrow-array-set-source)
-        "typecheck: cannot assign to borrowed place `items.#array.0`")
+        "typecheck: cannot assign to borrowed place `items[0]`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -9809,17 +9809,17 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-duplicate-source)
-        "typecheck: cannot read mutably borrowed place `items.#array.0`")
+        "typecheck: cannot read mutably borrowed place `items[0]`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-after-immut-source)
-        "typecheck: cannot mutably borrow borrowed place `items.#array.0`")
+        "typecheck: cannot mutably borrow borrowed place `items[0]`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-immut-borrow-after-mut-source)
-        "typecheck: cannot read mutably borrowed place `items.#array.0`")
+        "typecheck: cannot read mutably borrowed place `items[0]`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -9829,12 +9829,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-assign-source)
-        "typecheck: cannot assign to borrowed place `items.#array.0`")
+        "typecheck: cannot assign to borrowed place `items[0]`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-live-mut-borrow-array-set-source)
-        "typecheck: cannot assign to borrowed place `items.#array.0`")
+        "typecheck: cannot assign to borrowed place `items[0]`")
         unit
         (set! ok false))
       ok)))
@@ -9888,7 +9888,7 @@
       (match (tc-moved-path-conflict partial items0)
         [(TcMoveConflict.Some key origin-id)
           (and
-            (string.eq key "items.#array.0")
+            (string.eq key "items[0]")
             (not (= origin-id (tc-moved-no-origin-id))))]
         [TcMoveConflict.No false])]
     [partial-parent-conflict : bool
@@ -10114,7 +10114,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-tuple-ref-repeat-source)
-        "typecheck: use of moved value `p.#tuple.0`")
+        "typecheck: use of moved value `p.0`")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -10123,7 +10123,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-tuple-ref-nested-repeat-source)
-        "typecheck: use of moved value `p.#tuple.0.#tuple.0`")
+        "typecheck: use of moved value `p.0.0`")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -10136,7 +10136,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-array-ref-repeat-source)
-        "typecheck: use of moved value `items.#array.0`")
+        "typecheck: use of moved value `items[0]`")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -10149,12 +10149,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-array-ref-reinit-sibling-source)
-        "typecheck: use of moved value `items.#array.0`")
+        "typecheck: use of moved value `items[0]`")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-array-ref-reinit-nonliteral-source)
-        "typecheck: use of moved value `items.#array.0`")
+        "typecheck: use of moved value `items[0]`")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -10163,7 +10163,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-move-owner-array-ref-nested-repeat-source)
-        "typecheck: use of moved value `items.#array.0.#array.1`")
+        "typecheck: use of moved value `items[0][1]`")
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?

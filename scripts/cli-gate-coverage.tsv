@@ -1,31 +1,31 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	474
-# count	total	all	annotations	474
+# count	total	all	rows	476
+# count	total	all	annotations	476
 # count	total	all	sources	3
-# count	total	all	source-sites	348
+# count	total	all	source-sites	350
 # count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	296
-# count	gate	public-tools	source-sites	187
+# count	gate	public-tools	rows	297
+# count	gate	public-tools	source-sites	188
 # count	gate	public-tools	expanded-cases	125
 # count	gate	selfhost-cli	rows	77
 # count	gate	selfhost-cli	source-sites	76
 # count	gate	selfhost-cli	expanded-cases	16
-# count	gate	stage1-wrapper	rows	101
-# count	gate	stage1-wrapper	source-sites	85
+# count	gate	stage1-wrapper	rows	102
+# count	gate	stage1-wrapper	source-sites	86
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	352
-# count	host	linux	rows	119
+# count	host	all	rows	353
+# count	host	linux	rows	120
 # count	host	windows	rows	3
-# count	platform	linux	rows	471
-# count	platform	windows	rows	355
+# count	platform	linux	rows	473
+# count	platform	windows	rows	356
 # count	kind	delegated	rows	8
 # count	kind	direct	rows	51
-# count	kind	wrapper	rows	415
+# count	kind	wrapper	rows	417
 # count	process	compiler	rows	308
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
-# count	process	compiler+assembler+linker	rows	1
+# count	process	compiler+assembler+linker	rows	2
 # count	process	compiler+assembler+linker+failing-integration-program	rows	1
 # count	process	compiler+assembler+linker+failing-test-program	rows	1
 # count	process	compiler+assembler+linker+four-test-programs	rows	1
@@ -34,7 +34,7 @@
 # count	process	compiler+assembler+linker+test-programs-until-failure	rows	1
 # count	process	compiler+assembler+linker+two-test-programs	rows	2
 # count	process	compiler+git+native-tools	rows	6
-# count	process	compiler+native-tools	rows	64
+# count	process	compiler+native-tools	rows	65
 # count	process	compiler+native-tools+program	rows	57
 # count	process	compiler+native-tools+programs	rows	3
 # count	process	compiler+native-tools+scratch-program	rows	1
@@ -54,7 +54,7 @@
 schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	environment	expected_status	stdout	stderr	effects	canonical_owner	duplicate_reason
 # example	1	public-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage3/run_cmd	typelisp --help	-	none	repository	one-process	none	0	usage	ignore	none	public-help	-
 # source	scripts/check-stage1-wrapper.sh
-# stage1-wrapper inventory: 85 source sites and 101 behavior rows; each of the
+# stage1-wrapper inventory: 86 source sites and 102 behavior rows; each of the
 # two format-corpus sites expands to the nine names in format_manifest.
 1	stage1-wrapper-compile	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	compile <smoke.tl> -o <smoke.s>	main-returns-7	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:Wrote-smoke.s	not-asserted	writes:smoke.s	stage1-wrapper-compile	-
 1	stage1-wrapper-compile-synthesized-entry	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	compile <synthesized-entry.tl> -o <synthesized-entry.s>	source-without-main	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:Wrote-synthesized-entry.s	not-asserted	writes:synthesized-entry.s	stage1-wrapper-compile-synthesized-entry	-
@@ -73,6 +73,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	stage1-wrapper-check-file-manifest	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	check <smoke.tl> --manifest-path <pkg/typelisp.pkg>	file-and-manifest-conflict	inherited	repository	compiler	none	nonzero	empty	contains:cannot-combine-input-with-manifest	none	stage1-wrapper-check-file-manifest	-
 1	stage1-wrapper-build-package	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	build --manifest-path <pkg/typelisp.pkg> --opt-level 0	bin-package-with-path-dependency	inherited	repository	compiler+assembler+archiver+linker	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:four-Built-artifacts	not-asserted	writes:bin,asm,dependency-archive,package-tlci,dependency-tlci;asm-import-boundary	stage1-wrapper-build-package	-
 1	stage1-wrapper-inspect-package-tlci	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	inspect <stage1_pkg.tlci>	code-bearing-package-image	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:tlci-image,package-name,nonempty-code;excludes:none	empty	none	stage1-wrapper-inspect-package-tlci	-
+1	stage1-wrapper-package-tlci-native-verify	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	run <package-tlci-verifier> -- <stage1_pkg.tlci> <macro-identities>	code-bearing-package-template-fold-fallback	inherited	repository	compiler+assembler+linker	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	native-dispatch-template-fold-and-explicit-fallback	stage1-wrapper-package-tlci-native-verify	-
 1	stage1-wrapper-build-package-repeat	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	build --manifest-path <pkg/typelisp.pkg> --opt-level 0	repeat-release-package-build	inherited	repository	compiler+assembler+archiver+linker	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	not-asserted	not-asserted	tlci-byte-identical-to-first-build	stage1-wrapper-build-package-repeat	-
 1	stage1-wrapper-inspect-bad-tlci	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	inspect <bad.tlci>	three-byte-invalid-image	inherited	repository	compiler	none	nonzero	empty	contains:truncated-header-with-path	none	stage1-wrapper-inspect-bad-tlci	-
 1	stage1-wrapper-build-package-dev	stage1-wrapper	scripts/check-stage1-wrapper.sh	wrapper	linux	stage1/host-action	build --manifest-path <pkg/typelisp.pkg> --profile dev	dev-profile-bin-package	inherited	repository	compiler+assembler+archiver+linker	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	contains:four-dev-Built-artifacts	not-asserted	writes:dev-bin,asm,dependency-archive,package-tlci,dependency-tlci	stage1-wrapper-build-package-dev	-
@@ -158,7 +159,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	stage1-wrapper-opt2-handoff-missing-release	stage1-wrapper	scripts/check-stage1-wrapper.sh	delegated	linux	stage1/opt2-handoff-fixture	check-opt2-cli-regression.sh	seed-skips-generated-compiler	inherited	repository	gate+seed-process	none;OPT2_HANDOFF_TEST_SKIP_GENERATED=1	nonzero	not-asserted	contains:generated-compiler-missing-or-empty	none	stage1-wrapper-opt2-handoff-missing-release	-
 1	stage1-wrapper-opt2-handoff-cross-mismatch	stage1-wrapper	scripts/check-stage1-wrapper.sh	delegated	linux	stage1/opt2-handoff-fixture	check-opt2-cli-regression.sh	generated-cross-fixpoint-mismatch	inherited	repository	gate+seed+generated-compiler-processes	none;OPT2_HANDOFF_TEST_CROSS_MISMATCH=1	nonzero	not-asserted	contains:CROSS-FIXPOINT-MISMATCH	writes:mismatching-assembly	stage1-wrapper-opt2-handoff-cross-mismatch	-
 # source	scripts/verify-public-tools.sh
-# public-tools inventory: 182 source sites and 291 behavior rows; expansions cover 28 command-help cases, 18 inline backend/opt cases, 3 backend modes, 2 target aliases, 4 run-backend branches, 5 SPMD execution branches, 27 formatter cases, and 37 executable SPEC cases.
+# public-tools inventory: 183 source sites and 292 behavior rows; expansions cover 28 command-help cases, 18 inline backend/opt cases, 3 backend modes, 2 target aliases, 4 run-backend branches, 5 SPMD execution branches, 27 formatter cases, and 37 executable SPEC cases.
 1	usage	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp --help	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	assert_contains stderr repl;assert_contains stderr fmt;assert_contains stderr doc;assert_contains stderr Synopsis:;assert_contains stderr Commands:;assert_contains stderr typelisp repl;assert_contains stderr typelisp lsp;assert_contains stderr typelisp fmt;assert_contains stderr typelisp doc;assert_contains stderr typelisp clean;assert_contains stderr Global Options:;assert_contains stderr Common Command Options:;assert_contains stderr Environment:;assert_contains stderr typelisp compile        Generate assembly or IR;assert_contains stderr --opt-level <0|1|2>            Select optimizer level;assert_contains stderr 'Run `typelisp <command> --help` for command-specific usage.'	none	usage	-
 1	version	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp --version	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout typelisp ;assert_contains stdout  built	empty	none	version	-
 1	lsp-command-probe	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_stdin	typelisp lsp	prepared-by-gate	file:<lsp-command-probe>	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	any-capability-probe	not-asserted	not-asserted	none	lsp-command-probe	-
@@ -398,7 +399,8 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	package-inspect-dependency-tlci	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp inspect <math-tlci>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout tlci image;assert_contains stdout package-name: math;assert_contains stdout code: offset=;assert_not_contains stdout code: offset=0 bytes=0	empty	none	package-inspect-dependency-tlci	-
 1	package-inspect-bad-tlci	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp inspect <bad-tlci>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr inspect: <bad-tlci-display>: tlci: truncated header	none	package-inspect-bad-tlci	-
 1	package-host-target-split	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp build --manifest-path <split-pkg>/typelisp.pkg --target <package-split-target>	<split-pkg>/typelisp.pkg	inherited	repository	compiler+native-tools	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Built $(native_arg_path <split-math-archive>);assert_contains stdout Built $(native_arg_path <split-util-archive>);assert_contains stdout Built $(native_arg_path <split-root-archive>);assert_contains stdout Built $(native_arg_path <split-math-tlci>);assert_contains stdout Built $(native_arg_path <split-util-tlci>);assert_contains stdout Built $(native_arg_path <split-root-tlci>)	empty	[ -s <split-root-archive> ] || fail package split build did not write root target archive <split-root-archive>;[ -s <split-math-archive> ] || fail package split build did not write math target archive <split-math-archive>;[ -s <split-util-archive> ] || fail package split build did not write util target archive <split-util-archive>;[ -s <split-root-tlci> ] || fail package split build did not write root host tlci <split-root-tlci>;[ -s <split-math-tlci> ] || fail package split build did not write math host tlci <split-math-tlci>;[ -s <split-util-tlci> ] || fail package split build did not write util host tlci <split-util-tlci>	package-host-target-split	-
-1	package-host-target-split-inspect	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp inspect <split-root-tlci>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout host-arch: x86_64;assert_contains stdout package-name: split_pkg;assert_contains stdout code: offset=0 bytes=0	empty	none	package-host-target-split-inspect	-
+1	package-host-target-split-inspect	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp inspect <split-root-tlci>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout host-arch: x86_64;assert_contains stdout package-name: split_pkg;assert_contains stdout code: offset=;assert_not_contains stdout code: offset=0 bytes=0	empty	none	package-host-target-split-inspect	-
+1	package-host-target-split-native-verify	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp run <package-tlci-verifier> -- <split-root-tlci> <macro-identities>	prepared-by-gate	inherited	repository	compiler+native-tools	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	empty	empty	native-dispatch-template-fold-and-explicit-fallback	package-host-target-split-native-verify	-
 1	package-host-target-split-dep-inspect	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp inspect <split-math-tlci>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout host-arch: x86_64;assert_contains stdout package-name: split_math	empty	none	package-host-target-split-dep-inspect	-
 1	package-host-target-split-dev	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp build --manifest-path <split-pkg>/typelisp.pkg --target <package-split-target> --profile dev	<split-pkg>/typelisp.pkg	inherited	repository	compiler+native-tools	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	not-asserted	empty	[ -s <split-root-dev-archive> ] || fail package split dev build did not write root target archive <split-root-dev-archive>;[ -s <split-math-dev-archive> ] || fail package split dev build did not write math target archive <split-math-dev-archive>;[ -s <split-util-dev-archive> ] || fail package split dev build did not write util target archive <split-util-dev-archive>;[ -s <split-root-dev-tlci> ] || fail package split dev build did not write root host tlci <split-root-dev-tlci>;[ -s <split-math-dev-tlci> ] || fail package split dev build did not write math host tlci <split-math-dev-tlci>;[ -s <split-util-dev-tlci> ] || fail package split dev build did not write util host tlci <split-util-dev-tlci>;assert_contains <pkg-asm> main:;assert_contains <pkg-asm> inc:;assert_contains <pkg-asm> add_one;assert_contains_any <pkg-asm> \;assert_contains <pkg-asm> _tl_math_src_lib_add_one;assert_not_contains <pkg-asm> _tl_public_tool_pkg_vendor_math	package-host-target-split-dev	-
 1	package-clean-dry-run	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp clean --dry-run --manifest-path <pkg>/typelisp.pkg	<pkg>/typelisp.pkg	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	0	assert_contains stdout Would remove:;assert_contains stdout public_tool_pkg.s	empty	[ -f <pkg-asm> ] || fail package clean dry-run removed assembly	package-clean-dry-run	-

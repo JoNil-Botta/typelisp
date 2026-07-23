@@ -2982,11 +2982,13 @@ Example:
   builds produce each dependency's tlci next to its static archive without
   changing runtime link behavior. Macro-free packages emit metadata-only
   images. Packages with package-owned macro declarations emit deterministic
-  code-bearing images with native entry shells and one registration-table
-  record per macro. Macro-body lowering and consumer dispatch are later
-  integration layers. The tlci path is target-independent in v1: cross-target
-  builds keep target runtime artifacts separate while sharing the host
-  comptime image path.
+  code-bearing images and one registration-table record per macro. Supported
+  expression/value transformer bodies execute compiled template, literal, and
+  fold operations through the host callback ABI; unsupported bodies retain an
+  explicit registered shell and interpreted fallback. General consumer catalog
+  discovery/dispatch is a separate integration layer. The tlci path is
+  target-independent in v1: cross-target builds keep target runtime artifacts
+  separate while sharing the host comptime image path.
 - The optional top-level `(link ...)` section declares native link inputs for
   `bin` package builds, so a package that links system or vendored libraries
   does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`
@@ -6892,9 +6894,9 @@ the `.tl` extension removed on Linux and with `.exe` on Windows. Source-file
 `build` does not run the executable. The package build form writes the
 artifact selected by `typelisp.pkg`'s `kind` field and a metadata-only
 `<package-name>.tlci` image for macro-free packages, or a code-bearing host
-image with registered macro entry shells for macro-defining packages in the
-same profile directory. `inspect` validates and renders `.tlci` files without
-executing or loading contained code.
+image with compiled supported transformer entries and explicit fallback shells
+for unsupported bodies in the same profile directory. `inspect` validates and
+renders `.tlci` files without executing or loading contained code.
 
 Linux native build/run uses `as` and `ld`. Windows native build/run uses
 `clang --target=x86_64-pc-windows-msvc` and `lld-link`, links against the

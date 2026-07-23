@@ -393,6 +393,7 @@ EOF
     cat > "$PKG/src/macros.tl" <<'EOF'
 (module stage1.macros)
 (import "pkg:math/src/lib.tl")
+(import stdlib.comptime)
 (define stage1-exported-value : i64 7)
 (defstruct Stage1Point
   (x i64)
@@ -402,6 +403,14 @@ EOF
   (Stage1B i64))
 (defmacro (add-one-macro [value : i64]) : i64
   `(add-one ,value))
+(defmacro (all-macro [items : Expr ...]) : bool
+  (comptime.expr-list-fold-if
+    items
+    (comptime.expr-bool true)
+    (comptime.expr-bool false)
+    true))
+(defmacro (unsupported-macro [value : Expr]) : Expr
+  value)
 EOF
     cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package
@@ -497,6 +506,17 @@ EOF
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset="
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset=0 bytes=0"
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "  (none)"
+    # cli-gate-case stage1-wrapper-package-tlci-native-verify wrapper run_capture
+    run_capture package-tlci-native-verify \
+        "$COMPILER" run "$ROOT/src/tests/compiler_tlci_native_producer_smoke.tl" \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -- \
+        "$PKG_TLCI" \
+        "stage1.macros/add-one-macro" \
+        "add-one" \
+        "stage1.macros/all-macro" \
+        "stage1.macros/unsupported-macro"
+    assert_empty "$WORKDIR/package-tlci-native-verify.stdout"
+    assert_empty "$WORKDIR/package-tlci-native-verify.stderr"
     cp "$PKG_TLCI" "$WORKDIR/stage1_pkg.first.tlci"
     # cli-gate-case stage1-wrapper-build-package-repeat wrapper run_capture
     run_capture build-package-repeat "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0

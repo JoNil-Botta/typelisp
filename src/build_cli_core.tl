@@ -3522,7 +3522,7 @@
 
 (define (build-package-tlci-push-macro-name!
   [out : (&mut out cli_svec.Vec)]
-  [name : String]) : unit
+  [name : String]) : bool
   (let
     [index : i64 0]
     [present : bool false]
@@ -3532,8 +3532,44 @@
           (set! present true)
           (set! index (+ index 1))))
       (if present
-        unit
-        (cli_svec.push out name)))))
+        false
+        (begin
+          (cli_svec.push out name)
+          true)))))
+
+(defstruct BuildPackageTlciMacroCollector
+  (names (Array String))
+  (captures TlciNativeMacroCaptures))
+
+(define (build-package-tlci-sort-macro-catalog!
+  [catalog : (&mut catalog (Array String))]) : unit
+  (let
+    [count : i64 (array-length catalog)]
+    [index : i64 1]
+    (while (< index count)
+      (let
+        [value : String (clone (array-ref catalog index))]
+        [slot : i64 index]
+        (begin
+          (while (if (> slot 0)
+            (package-source-string-less?
+              (clone value)
+              (clone (array-ref catalog (- slot 1))))
+            false)
+            (begin
+              (array-set! catalog slot (clone (array-ref catalog (- slot 1))))
+              (set! slot (- slot 1))))
+          (array-set! catalog slot value)
+          (set! index (+ index 1)))))))
+
+(define (build-package-tlci-finish-macro-collector
+  [names : (&mut names cli_svec.Vec)]
+  [captures : TlciNativeMacroCaptures]) : BuildPackageTlciMacroCollector
+  (let
+    [catalog : (Array String) (cli_svec.to-array names)]
+    (begin
+      (build-package-tlci-sort-macro-catalog! (&mut catalog))
+      (BuildPackageTlciMacroCollector catalog captures))))
 
 (define (build-package-tlci-collect-decl-macro!
   [decl : AstDecl]
@@ -3541,18 +3577,24 @@
   [module : String]
   [package-name : String]
   [owned-sources : build_string_i64_map.Map]
-  [out : (&mut out cli_svec.Vec)]) : unit
+  [out : (&mut out cli_svec.Vec)]
+  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
   (match decl
-    [(AstDecl.DefMacro decl-meta name _ _ _)
+    [(AstDecl.DefMacro decl-meta name params _ body)
       (if (= (string.string-length owned-path) 0)
         unit
-        (build-package-tlci-push-macro-name!
-          out
-          (compiler-symbol-module-key
-            (if (= (string.string-length module) 0)
-              package-name
-              module)
-            (intern-str name))))]
+        (let
+          [identity : String
+            (compiler-symbol-module-key
+              (if (= (string.string-length module) 0)
+                package-name
+                module)
+              (intern-str name))]
+          (when
+            (build-package-tlci-push-macro-name! out identity)
+            (tlci-native-macro-captures-push!
+              captures
+              (TlciNativeMacroCapture identity params body)))))]
     [(AstDecl.Unsafe inner-box)
       (build-package-tlci-collect-decl-macro!
         (box-get inner-box)
@@ -3560,7 +3602,8 @@
         module
         package-name
         owned-sources
-        out)]
+        out
+        captures)]
     [(AstDecl.ModuleBody nested-module body-box)
       (build-package-tlci-collect-macros-into!
         (box-get body-box)
@@ -3569,7 +3612,8 @@
         (intern-str nested-module)
         package-name
         owned-sources
-        out)]
+        out
+        captures)]
     [_ unit]))
 
 (define (build-package-tlci-source-map [sources : cli_svec.Vec]) : build_string_i64_map.Map
@@ -3604,7 +3648,8 @@
   [initial-module : String]
   [package-name : String]
   [owned-sources : build_string_i64_map.Map]
-  [out : (&mut out cli_svec.Vec)]) : unit
+  [out : (&mut out cli_svec.Vec)]
+  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
   (let
     [decl-cursor : AstDeclList decls]
     [path-cursor : AstDeclPathList paths]
@@ -3633,20 +3678,22 @@
                     module
                     package-name
                     owned-sources
-                    out)])
+                    out
+                    captures)])
               (set! decl-cursor rest)
               (match (ast-decl-path-list-step path-cursor)
                 [(AstDeclPathListStep.Nil) unit]
                 [(AstDeclPathListStep.Cons _ path-rest)
                   (set! path-cursor path-rest)])))]))))
 
-(define (build-package-tlci-macro-names
+(define (build-package-tlci-macro-collector
   [manifest-path : String]
   [manifest : CompilerPkgManifest]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]) : (Array String)
+  [paths : AstDeclPathList]) : BuildPackageTlciMacroCollector
   (let
     [out : cli_svec.Vec (cli_svec.new)]
+    [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (begin
       (match (package-source-discover-for "build" manifest-path true)
         [(ResultPackageSourceSet.Err _) unit]
@@ -3661,8 +3708,108 @@
               ""
               (struct-get manifest name)
               owned-sources
-              (&mut out)))])
-      (cli_svec.to-array (& out)))))
+              (&mut out)
+              (&mut captures)))])
+      (build-package-tlci-finish-macro-collector (&mut out) captures))))
+
+(cfg
+  test
+  (define (build-package-tlci-macro-capture-smoke-ok?) : bool
+    (let
+      [source : String
+        "(module z.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(module dep.macros)\n(defmacro (foreign [value : Expr]) : Expr `(foreign ,value))\n(module a.macros)\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n"]
+      (match (parse-ast-source source)
+        [(ResultAstProgram.Err _) false]
+        [(ResultAstProgram.Ok program)
+          (match program
+            [(AstProgram.Program decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                [paths : AstDeclPathList (ast-decl-path-list-new)]
+                [owned-sources : build_string_i64_map.Map
+                  (build_string_i64_map.with-capacity 4)]
+                [names : cli_svec.Vec (cli_svec.new)]
+                [captures : TlciNativeMacroCaptures
+                  (tlci-native-macro-captures-new)]
+                (begin
+                  (build_string_i64_map.insert-ref!
+                    (&mut owned-sources)
+                    (compiler-load-normalize-path "pkg/src/macros.tl")
+                    1)
+                  (ast-decl-path-list-push-with-owner-id
+                    (&mut paths)
+                    "pkg/src/macros.tl"
+                    cbi.compiler-builtin-id-fix-empty)
+                  (ast-decl-path-list-push-with-owner-id
+                    (&mut paths)
+                    "pkg/src/macros.tl"
+                    cbi.compiler-builtin-id-fix-empty)
+                  (ast-decl-path-list-push-with-owner-id
+                    (&mut paths)
+                    "dep/src/lib.tl"
+                    cbi.compiler-builtin-id-fix-empty)
+                  (ast-decl-path-list-push-with-owner-id
+                    (&mut paths)
+                    "dep/src/lib.tl"
+                    cbi.compiler-builtin-id-fix-empty)
+                  (ast-decl-path-list-push-with-owner-id
+                    (&mut paths)
+                    "pkg/src/macros.tl"
+                    cbi.compiler-builtin-id-fix-empty)
+                  (ast-decl-path-list-push-with-owner-id
+                    (&mut paths)
+                    "pkg/src/macros.tl"
+                    cbi.compiler-builtin-id-fix-empty)
+                  (build-package-tlci-collect-macros-into!
+                    decls
+                    paths
+                    ""
+                    ""
+                    "pkg"
+                    owned-sources
+                    (&mut names)
+                    (&mut captures))
+                  (let
+                    [collector : BuildPackageTlciMacroCollector
+                      (build-package-tlci-finish-macro-collector
+                        (&mut names)
+                        captures)]
+                    [catalog : (Array String) (struct-get collector names)]
+                    [_source : String
+                      (embedded-native-source
+                        catalog
+                        (& (struct-get collector captures)))]
+                    (and
+                      (= (array-length catalog) 2)
+                      (string.eq (array-ref catalog 0) "a.macros/fold")
+                      (string.eq (array-ref catalog 1) "z.macros/wrap")
+                      (= (struct-get (struct-get collector captures) len) 2)
+                      (>=
+                        (tlci-native-macro-capture-slot
+                          (& (struct-get collector captures))
+                          "a.macros/fold")
+                        0)
+                      (>=
+                        (tlci-native-macro-capture-slot
+                          (& (struct-get collector captures))
+                          "z.macros/wrap")
+                        0)
+                      (<
+                        (tlci-native-macro-capture-slot
+                          (& (struct-get collector captures))
+                          "dep.macros/foreign")
+                        0)
+                      (=
+                        (array-ref embedded-stdlib-tlci-native-report-count 0)
+                        2)))))])]))))
+
+(cfg
+  test
+  (test
+    build-package-tlci-macro-capture
+    (unless
+      (build-package-tlci-macro-capture-smoke-ok?)
+      (io.panic "build package tlci macro capture smoke failed"))))
 
 (define (build-package-tlci-collect-callables-into!
   [decls : AstDeclList]
@@ -3787,8 +3934,9 @@
           mode
           decls
           paths)]
-      [macro-names : (Array String)
-        (build-package-tlci-macro-names manifest-path manifest decls paths)]
+      [macro-collector : BuildPackageTlciMacroCollector
+        (build-package-tlci-macro-collector manifest-path manifest decls paths)]
+      [macro-names : (Array String) (struct-get macro-collector names)]
       (if (> (string.string-length (struct-get collector error)) 0)
         (ResultBuildPackageTlciText.Err (struct-get collector error))
         (let
@@ -3810,7 +3958,8 @@
               producer-identity
               (cfg windows true false)
               (tlci-empty-bytes)
-              macro-names)
+              macro-names
+              (& (struct-get macro-collector captures)))
               [(ResultProducerBytes.Err message)
                 (ResultBuildPackageTlciText.Err
                   (str_cat.str-cat

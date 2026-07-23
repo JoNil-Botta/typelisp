@@ -2905,8 +2905,19 @@ maybe_strip_manifest_kind "$SPLIT_PKG/typelisp.pkg"
 cat > "$SPLIT_PKG/src/lib.tl" <<'EOF'
 (import "pkg:math/src/lib.tl")
 (import "pkg:util/src/lib.tl")
+(import stdlib.comptime)
 (define (split-root [x : i64]) : i64
   (+ (split-math x) (split-util x)))
+(defmacro (split-wrap [value : Expr]) : Expr
+  `(split-root ,value))
+(defmacro (split-all [items : Expr ...]) : bool
+  (comptime.expr-list-fold-if
+    items
+    (comptime.expr-bool true)
+    (comptime.expr-bool false)
+    true))
+(defmacro (split-unsupported [value : Expr]) : Expr
+  value)
 EOF
 cat > "$SPLIT_PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package
@@ -2973,10 +2984,21 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_stderr_empty
     assert_contains "$out" "host-arch: x86_64"
     assert_contains "$out" "package-name: split_pkg"
-    # Macro-free metadata-only images use the same exact producer contract as
-    # registration-bearing images above.
     assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
-    assert_contains "$out" "code: offset=0 bytes=0"
+    assert_contains "$out" "code: offset="
+    assert_not_contains "$out" "code: offset=0 bytes=0"
+    # cli-gate-case package-host-target-split-native-verify wrapper run_cmd
+    run_cmd package-host-target-split-native-verify \
+        "$COMPILER" run "$ROOT/src/tests/compiler_tlci_native_producer_smoke.tl" \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -- \
+        "$SPLIT_ROOT_TLCI" \
+        "split_pkg/split-wrap" \
+        "split-root" \
+        "split_pkg/split-all" \
+        "split_pkg/split-unsupported"
+    assert_success
+    assert_stdout_empty
+    assert_stderr_empty
     # cli-gate-case package-host-target-split-dep-inspect wrapper run_cmd
     run_cmd package-host-target-split-dep-inspect "$COMPILER" inspect "$SPLIT_MATH_TLCI"
     assert_success

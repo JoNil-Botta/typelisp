@@ -28415,14 +28415,21 @@
 ;; register that is (a) FREE in the occupancy mask at the phi-copy emit point --
 ;; so it homes no live-through value -- and (b) NOT a dst-home of any copy in the
 ;; break list -- so no cycle move overwrites it while the Temp is outstanding.
-;; The save becomes `movq dst-home, R` and the consumer's restore `movq R, home`,
-;; eliminating the reserved-slot traffic. Only the outermost break uses a
-;; register (outer-active gate): any nested break -- and every float/group break
-;; -- falls back to reserved frame-temp slots and never touches R.
+;; The allocator provides the analogous canonical-bank XMM register for direct
+;; scalar-float cycles. Saves and restores then stay in the matching register
+;; bank and eliminate the reserved-slot traffic. Only the outermost break uses a
+;; register (outer-active gate): nested, spilled, immediate, and group shapes
+;; retain the explicit reserved frame-temp fallback.
 (define compiler-backend-current-phi-planned-cycle : String
+  "")
+(define compiler-backend-current-phi-planned-xmm-cycle : String
   "")
 (define compiler-backend-current-phi-planned-stage : String
   "")
+(define compiler-backend-phi-xmm-cycle-register-count : i64
+  0)
+(define compiler-backend-phi-xmm-cycle-fallback-count : i64
+  0)
 
 (cfg
   scratch-vreg
@@ -28735,6 +28742,42 @@
         (str_cat.str-cat "    movq " reg ", " operand "\n"))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
+(define (compiler-backend-emit-phi-temp-save-xmm
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [reg : String]
+  [ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-phi-temp-home-operand assignments dst)
+    [(ResultCompilerBackend.Ok operand)
+      (ResultCompilerBackend.Ok
+        (str_cat.str-cat
+          "    "
+          (compiler-backend-float-move ty)
+          " "
+          operand
+          ", "
+          reg
+          "\n"))]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
+
+(define (compiler-backend-emit-phi-temp-restore-xmm
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [reg : String]
+  [ty : AstType]) : ResultCompilerBackend
+  (match (compiler-backend-phi-temp-home-operand assignments dst)
+    [(ResultCompilerBackend.Ok operand)
+      (ResultCompilerBackend.Ok
+        (str_cat.str-cat
+          "    "
+          (compiler-backend-float-move ty)
+          " "
+          reg
+          ", "
+          operand
+          "\n"))]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
+
 ;; OR the pooled-register-home bit of every copy's dst into a mask. A spilled dst
 ;; contributes 0; every register-homed dst, including ABI-special %rax/%rsi/%rdi,
 ;; contributes its ordinary scavenge bit and cannot be picked as the temp.
@@ -28887,6 +28930,53 @@
           copy
           program-index)
         (compiler-backend-phi-copy-list-reg-swappable?
+          assignments
+          (box-get rest)
+          program-index))]))
+
+;; A scalar-float register cycle has the same direct-move property in the XMM
+;; bank. Register groups and spills retain the frame-slot path. The scratch
+;; planner excludes every phi destination in the function; for a cycle every
+;; source home is also a destination home, and the allocator's canonical XMM
+;; bank makes scalar/vector aliases conflict with the same physical register.
+(define (compiler-backend-phi-copy-xmm-swappable?
+  [assignments : CompilerRegAssignmentList]
+  [copy : CompilerBackendPhiCopy]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match copy
+    [(CompilerBackendPhiCopy.Copy dst source ty)
+      (and
+        (compiler-backend-float-type? ty)
+        (not
+          (or
+            (compiler-backend-group-type? program-index ty)
+            (compiler-backend-group-var? dst)))
+        (not
+          (string.eq (compiler-backend-var-register-home assignments dst) ""))
+        (match source
+          [(CompilerBackendPhiSource.Value value)
+            (match value
+              [(CompilerIrValue.Var v)
+                (not
+                  (string.eq
+                    (compiler-backend-var-register-home assignments v)
+                    ""))]
+              [_ false])]
+          [(CompilerBackendPhiSource.Temp _) true]))]))
+
+(define (compiler-backend-phi-copy-list-xmm-swappable?
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match copies
+    [(CompilerBackendPhiCopyList.Nil) true]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
+      (and
+        (compiler-backend-phi-copy-xmm-swappable?
+          assignments
+          copy
+          program-index)
+        (compiler-backend-phi-copy-list-xmm-swappable?
           assignments
           (box-get rest)
           program-index))]))
@@ -29150,7 +29240,9 @@
           ty
           program-index
           vars)
-        (compiler-backend-emit-phi-temp-restore-reg assignments dst loc))]
+        (if (compiler-backend-float-type? ty)
+          (compiler-backend-emit-phi-temp-restore-xmm assignments dst loc ty)
+          (compiler-backend-emit-phi-temp-restore-reg assignments dst loc)))]
     [(CompilerBackendPhiSource.Value value)
       (if (compiler-backend-phi-same-home? assignments dst value)
         (ResultCompilerBackend.Ok "")
@@ -29265,13 +29357,13 @@
         [(CompilerBackendMaybePhiCopy.Some copy)
           (match copy
             [(CompilerBackendPhiCopy.Copy dst source ty)
-              ;; Only the OUTERMOST break may scavenge a register, and only when
-              ;; every copy in the break list is register-swappable (so no cycle
-              ;; move scavenges a scratch that could clobber the Temp register).
-              ;; Nested breaks, and any list with a spilled/float/group/immediate
-              ;; copy, stay on the untouchable stack slot.
+              ;; Only the OUTERMOST break may use an allocator-owned register.
+              ;; Every copy must be a direct move in the same bank, so no cycle
+              ;; move can scavenge a scratch that clobbers the outstanding Temp.
+              ;; Nested breaks and spill/group/immediate shapes stay on the
+              ;; untouchable frame slot.
               (let
-                [reg : String
+                [gp-reg : String
                   (if (and
                     (not outer-active)
                     (compiler-backend-phi-copy-list-reg-swappable?
@@ -29280,6 +29372,40 @@
                       program-index))
                     (compiler-backend-phi-temp-pick-reg assignments copies all)
                     "")]
+                [xmm-candidate : bool
+                  (and
+                    (string.eq gp-reg "")
+                    (not outer-active)
+                    (compiler-backend-phi-copy-list-xmm-swappable?
+                      assignments
+                      copies
+                      program-index))]
+                [xmm-reg : String
+                  (if (and
+                    xmm-candidate
+                    (not
+                      (string.eq
+                        compiler-backend-current-phi-planned-xmm-cycle
+                        "")))
+                    compiler-backend-current-phi-planned-xmm-cycle
+                    "")]
+                [reg : String
+                  (if (string.eq gp-reg "")
+                    xmm-reg
+                    gp-reg)]
+                [_xmm-census : unit
+                  (cfg
+                    regalloc-census
+                    (if xmm-candidate
+                      (if (string.eq xmm-reg "")
+                        (set!
+                          compiler-backend-phi-xmm-cycle-fallback-count
+                          (+ compiler-backend-phi-xmm-cycle-fallback-count 1))
+                        (set!
+                          compiler-backend-phi-xmm-cycle-register-count
+                          (+ compiler-backend-phi-xmm-cycle-register-count 1)))
+                      unit)
+                    unit)]
                 (match (if (string.eq reg "")
                   (compiler-backend-emit-phi-temp-save
                     assignments
@@ -29287,7 +29413,16 @@
                     ty
                     program-index
                     vars)
-                  (compiler-backend-emit-phi-temp-save-reg assignments dst reg))
+                  (if (string.eq xmm-reg "")
+                    (compiler-backend-emit-phi-temp-save-reg
+                      assignments
+                      dst
+                      reg)
+                    (compiler-backend-emit-phi-temp-save-xmm
+                      assignments
+                      dst
+                      reg
+                      ty)))
                   [(ResultCompilerBackend.Ok save)
                     (match (compiler-backend-emit-phi-source-to-var
                       assignments
@@ -29386,10 +29521,12 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [planned-cycle : String]
-  [planned-stage : String]) : ResultCompilerBackend
+  [planned-stage : String]
+  [planned-xmm-cycle : String]) : ResultCompilerBackend
   (begin
     (set! compiler-backend-current-phi-planned-cycle planned-cycle)
     (set! compiler-backend-current-phi-planned-stage planned-stage)
+    (set! compiler-backend-current-phi-planned-xmm-cycle planned-xmm-cycle)
     (compiler-backend-emit-phi-edge-copies-scan
       assignments
       blocks
@@ -29801,7 +29938,8 @@
       program-index
       vars
       planned-cycle
-      planned-stage)
+      planned-stage
+      compiler-backend-current-phi-planned-xmm-cycle)
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           assignments
@@ -29811,7 +29949,8 @@
           program-index
           vars
           planned-cycle
-          planned-stage)
+          planned-stage
+          compiler-backend-current-phi-planned-xmm-cycle)
           [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : String
@@ -29925,7 +30064,8 @@
       program-index
       vars
       planned-cycle
-      planned-stage)
+      planned-stage
+      compiler-backend-current-phi-planned-xmm-cycle)
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           assignments
@@ -29935,7 +30075,8 @@
           program-index
           vars
           planned-cycle
-          planned-stage)
+          planned-stage
+          compiler-backend-current-phi-planned-xmm-cycle)
           [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : String
@@ -30060,7 +30201,8 @@
       program-index
       vars
       planned-cycle
-      planned-stage)
+      planned-stage
+      compiler-backend-current-phi-planned-xmm-cycle)
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           assignments
@@ -30070,7 +30212,8 @@
           program-index
           vars
           planned-cycle
-          planned-stage)
+          planned-stage
+          compiler-backend-current-phi-planned-xmm-cycle)
           [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : String
@@ -30199,7 +30342,8 @@
       program-index
       vars
       planned-cycle
-      planned-stage)
+      planned-stage
+      compiler-backend-current-phi-planned-xmm-cycle)
       [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           assignments
@@ -30209,7 +30353,8 @@
           program-index
           vars
           planned-cycle
-          planned-stage)
+          planned-stage
+          compiler-backend-current-phi-planned-xmm-cycle)
           [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : String
@@ -33056,7 +33201,8 @@
               program-index
               vars
               planned-cycle
-              planned-stage)
+              planned-stage
+              "")
               [(ResultCompilerBackend.Ok copies)
                 (match (compiler-backend-emit-switch-case-edge-blocks
                   function
@@ -33629,7 +33775,8 @@
                   program-index
                   vars
                   planned-index-reg
-                  planned-table-reg)
+                  planned-table-reg
+                  "")
                   [(ResultCompilerBackend.Ok copies)
                     (ResultCompilerBackend.Ok
                       (compiler-backend-emit-switch-edge-block
@@ -33836,6 +33983,13 @@
           [(CompilerIrInstr.CallIndirectC _ _ _ _) planned-scratch2]
           [(CompilerIrInstr.CallCAbiStoreResult _) planned-scratch2]
           [(CompilerIrInstr.CallIndirectCAbiStoreResult _) planned-scratch2]
+          [_ ""]))]
+    [_phi-planned-xmm : unit
+      (set!
+        compiler-backend-current-phi-planned-xmm-cycle
+        (match instr
+          [(CompilerIrInstr.Jump _) planned-scratch2]
+          [(CompilerIrInstr.Branch _ _ _) planned-scratch3]
           [_ ""]))]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
@@ -34560,7 +34714,8 @@
                 ctx.program-index
                 ctx.vars
                 planned-scratch0
-                planned-scratch1)
+                planned-scratch1
+                planned-scratch2)
                 [(ResultCompilerBackend.Ok copies)
                   (ResultCompilerBackend.Ok
                     (str_cat.str-cat
@@ -50774,6 +50929,16 @@
                                     "")))
                               (io.print-error
                                 (str_cat.str-cat
+                                  "phi-xmm-cycle|register="
+                                  (string.int->string
+                                    compiler-backend-phi-xmm-cycle-register-count)
+                                  "|fallback="
+                                  (string.int->string
+                                    compiler-backend-phi-xmm-cycle-fallback-count)
+                                  "\n"
+                                  ""))
+                              (io.print-error
+                                (str_cat.str-cat
                                   "peephole-r10-dead-scan|cap="
                                   (string.int->string
                                     compiler-backend-peephole-r10-dead-scan-line-cap)
@@ -50828,6 +50993,8 @@
     (set! compiler-backend-fpo-demote-count 0)
     (set! compiler-backend-fpo-push-count 0)
     (set! compiler-backend-peephole-r10-dead-scan-cap-hits 0)
+    (set! compiler-backend-phi-xmm-cycle-register-count 0)
+    (set! compiler-backend-phi-xmm-cycle-fallback-count 0)
     ;; GAP5: clear the post-emission dead-frame-store sweep metadata before
     ;; recording this program's FPO functions (a stale entry from a prior
     ;; program emit in the same process must not leak into the sweep).

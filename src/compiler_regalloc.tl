@@ -23125,6 +23125,7 @@
   (CallMemoryXmm)
   (AggregateWord)
   (PhiCycle)
+  (PhiCycleXmm)
   (PhiStage)
   (SwitchIndex)
   (SwitchTable)
@@ -23583,6 +23584,7 @@
   [_types : CompilerRegVarTypeList]
   [_instr : CompilerIrInstr]
   [_phi-targets : CompilerRegStringList]
+  [_phi-xmm-targets : CompilerRegStringList]
   [_binop-return : bool]) : i64
   (cfg
     scratch-vreg
@@ -23627,13 +23629,19 @@
       [(CompilerIrInstr.Word _ _ _ _) 1]
       [(CompilerIrInstr.Jump target)
         (if (compiler-reg-string-list-contains? _phi-targets target)
-          2
+          (if (compiler-reg-string-list-contains? _phi-xmm-targets target)
+            3
+            2)
           0)]
       [(CompilerIrInstr.Branch condition true-label false-label)
         (if (or
           (compiler-reg-string-list-contains? _phi-targets true-label)
           (compiler-reg-string-list-contains? _phi-targets false-label))
-          3
+          (if (or
+            (compiler-reg-string-list-contains? _phi-xmm-targets true-label)
+            (compiler-reg-string-list-contains? _phi-xmm-targets false-label))
+            4
+            3)
           (if (compiler-reg-scratch-value-direct? _assignments condition)
             0
             1))]
@@ -23819,6 +23827,7 @@
   [types : CompilerRegVarTypeList]
   [instrs : CompilerIrInstrSeq]
   [phi-targets : CompilerRegStringList]
+  [phi-xmm-targets : CompilerRegStringList]
   [count : i64]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -23838,6 +23847,7 @@
                 types
                 (array-ref slots i)
                 phi-targets
+                phi-xmm-targets
                 (compiler-reg-scratch-binop-return-next? instrs i))))
           (set! i (+ i 1))))
       out)))
@@ -23848,6 +23858,7 @@
   [types : CompilerRegVarTypeList]
   [blocks : CompilerIrBlockList]
   [phi-targets : CompilerRegStringList]
+  [phi-xmm-targets : CompilerRegStringList]
   [count : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) count]
@@ -23860,12 +23871,14 @@
             types
             (box-get rest)
             phi-targets
+            phi-xmm-targets
             (compiler-reg-scratch-vreg-count-seq
               abi
               assignments
               types
               instrs
               phi-targets
+              phi-xmm-targets
               count))])]
     [(CompilerIrBlockList.Array seq)
       (let
@@ -23885,6 +23898,7 @@
                       types
                       instrs
                       phi-targets
+                      phi-xmm-targets
                       out))])
               (set! i (+ i 1))))
           out))]))
@@ -24297,6 +24311,14 @@
     (struct-get policy phi-excluded)
     ""))
 
+(define (compiler-reg-scratch-phi-xmm-constraint
+  [policy : CompilerRegScratchPolicy]) : CompilerRegScratchConstraint
+  (CompilerRegScratchConstraint
+    (CompilerRegScratchClass.Xmm)
+    CompilerRegStringList.Nil
+    (struct-get policy phi-excluded)
+    ""))
+
 (define (compiler-reg-scratch-switch-constraint
   [policy : CompilerRegScratchPolicy]
   [assignments : CompilerRegAssignmentList]
@@ -24398,6 +24420,50 @@
               tail))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-scratch-phi-targets-block-seq-from seq 0)]))
+
+(define (compiler-reg-scratch-seq-has-float-phi-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi _ _ ty)
+        (or
+          (compiler-reg-float-type? ty)
+          (compiler-reg-scratch-seq-has-float-phi-from? instrs (+ index 1)))]
+      [_ false])))
+
+(define (compiler-reg-scratch-phi-xmm-targets-block-seq-from
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : CompilerRegStringList
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    CompilerRegStringList.Nil
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block label instrs)
+        (let
+          [tail : CompilerRegStringList
+            (compiler-reg-scratch-phi-xmm-targets-block-seq-from
+              blocks
+              (+ index 1))]
+          (if (compiler-reg-scratch-seq-has-float-phi-from? instrs 0)
+            (compiler-reg-string-cons label tail)
+            tail))])))
+
+(define (compiler-reg-scratch-phi-xmm-targets-blocks
+  [blocks : CompilerIrBlockList]) : CompilerRegStringList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerRegStringList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (let
+            [tail : CompilerRegStringList
+              (compiler-reg-scratch-phi-xmm-targets-blocks (box-get rest))]
+            (if (compiler-reg-scratch-seq-has-float-phi-from? instrs 0)
+              (compiler-reg-string-cons label tail)
+              tail))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-scratch-phi-xmm-targets-block-seq-from seq 0)]))
 
 (define (compiler-reg-scratch-phi-dst-registers-seq-from
   [assignments : CompilerRegAssignmentList]
@@ -24590,10 +24656,13 @@
       (CompilerRegScratchRequirement
         point
         ordinal
-        (if (= ordinal 0)
-          (CompilerRegScratchRole.PhiCycle)
-          (CompilerRegScratchRole.PhiStage))
-        (compiler-reg-scratch-phi-constraint policy)
+        (cond
+          [(= ordinal 0) (CompilerRegScratchRole.PhiCycle)]
+          [(= ordinal 1) (CompilerRegScratchRole.PhiStage)]
+          [else (CompilerRegScratchRole.PhiCycleXmm)])
+        (if (= ordinal 2)
+          (compiler-reg-scratch-phi-xmm-constraint policy)
+          (compiler-reg-scratch-phi-constraint policy))
         point
         (+ point 1)
         var)]
@@ -24742,13 +24811,16 @@
         (cond
           [(= ordinal 0) (CompilerRegScratchRole.BranchTest)]
           [(= ordinal 1) (CompilerRegScratchRole.PhiCycle)]
-          [else (CompilerRegScratchRole.PhiStage)])
-        (if (= ordinal 0)
-          (compiler-reg-scratch-scalar-constraint
-            assignments
-            instr
-            CompilerRegStringList.Nil)
-          (compiler-reg-scratch-phi-constraint policy))
+          [(= ordinal 2) (CompilerRegScratchRole.PhiStage)]
+          [else (CompilerRegScratchRole.PhiCycleXmm)])
+        (cond
+          [(= ordinal 0)
+            (compiler-reg-scratch-scalar-constraint
+              assignments
+              instr
+              CompilerRegStringList.Nil)]
+          [(= ordinal 3) (compiler-reg-scratch-phi-xmm-constraint policy)]
+          [else (compiler-reg-scratch-phi-constraint policy)])
         point
         (+ point 1)
         var)]
@@ -25533,6 +25605,7 @@
   [var-types : CompilerRegVarTypeList]
   [instrs : CompilerIrInstrSeq]
   [phi-targets : CompilerRegStringList]
+  [phi-xmm-targets : CompilerRegStringList]
   [instruction-start : i64]
   [item-start : i64]
   [scratch-base : i64]
@@ -25572,6 +25645,7 @@
               var-types
               instr
               phi-targets
+              phi-xmm-targets
               (compiler-reg-scratch-binop-return-next? instrs i))]
           (begin
             (array-set! firsts instruction item)
@@ -25609,6 +25683,7 @@
   [var-types : CompilerRegVarTypeList]
   [blocks : CompilerIrBlockList]
   [phi-targets : CompilerRegStringList]
+  [phi-xmm-targets : CompilerRegStringList]
   [instruction-start : i64]
   [item-start : i64]
   [scratch-base : i64]
@@ -25633,6 +25708,7 @@
             var-types
             instrs
             phi-targets
+            phi-xmm-targets
             instruction-start
             item-start
             scratch-base
@@ -25652,6 +25728,7 @@
                 var-types
                 (box-get rest)
                 phi-targets
+                phi-xmm-targets
                 next-instruction
                 next-item
                 scratch-base
@@ -25681,6 +25758,7 @@
                     var-types
                     instrs
                     phi-targets
+                    phi-xmm-targets
                     instruction
                     item
                     scratch-base
@@ -26504,6 +26582,8 @@
         (let
           [phi-targets : CompilerRegStringList
             (compiler-reg-scratch-phi-targets-blocks blocks)]
+          [phi-xmm-targets : CompilerRegStringList
+            (compiler-reg-scratch-phi-xmm-targets-blocks blocks)]
           [scratch-count : i64
             (compiler-reg-scratch-vreg-count-blocks
               _abi
@@ -26511,6 +26591,7 @@
               (compiler-reg-plan-types plan)
               blocks
               phi-targets
+              phi-xmm-targets
               0)]
           [instruction-count : i64
             (compiler-reg-scratch-vreg-instr-count-blocks blocks 0)]
@@ -26592,6 +26673,7 @@
                         (compiler-reg-plan-types plan)
                         blocks
                         phi-targets
+                        phi-xmm-targets
                         0
                         0
                         _vars

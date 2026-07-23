@@ -3812,6 +3812,22 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-env-profile-borrow-lifetime-scans : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-borrow-lifetime-scan-bindings : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-borrow-lifetime-scan-current : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-borrow-lifetime-scan-max : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-generated-module-materializations : i64
     0))
 (cfg
@@ -3961,6 +3977,37 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-env-profile-borrow-lifetime-scan-start!) : unit
+    (begin
+      (set!
+        compiler-tc-env-profile-borrow-lifetime-scans
+        (+ compiler-tc-env-profile-borrow-lifetime-scans 1))
+      (set! compiler-tc-env-profile-borrow-lifetime-scan-current 0))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-borrow-lifetime-scan-note-binding!) : unit
+    (begin
+      (set!
+        compiler-tc-env-profile-borrow-lifetime-scan-bindings
+        (+ compiler-tc-env-profile-borrow-lifetime-scan-bindings 1))
+      (set!
+        compiler-tc-env-profile-borrow-lifetime-scan-current
+        (+ compiler-tc-env-profile-borrow-lifetime-scan-current 1)))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-borrow-lifetime-scan-finish!) : unit
+    (if (>
+      compiler-tc-env-profile-borrow-lifetime-scan-current
+      compiler-tc-env-profile-borrow-lifetime-scan-max)
+      (set!
+        compiler-tc-env-profile-borrow-lifetime-scan-max
+        compiler-tc-env-profile-borrow-lifetime-scan-current)
+      unit)))
+
+(cfg
+  compile-profile
   (define (compiler-tc-env-profile-reset) : unit
     (begin
       (set! compiler-tc-env-profile-binds 0)
@@ -3975,7 +4022,11 @@
       (set! compiler-tc-env-profile-scoped-cache-misses 0)
       (set! compiler-tc-env-profile-scoped-tail-fallbacks 0)
       (set! compiler-tc-env-profile-scoped-materializations 0)
-      (set! compiler-tc-env-profile-scoped-materialized-slots 0))))
+      (set! compiler-tc-env-profile-scoped-materialized-slots 0)
+      (set! compiler-tc-env-profile-borrow-lifetime-scans 0)
+      (set! compiler-tc-env-profile-borrow-lifetime-scan-bindings 0)
+      (set! compiler-tc-env-profile-borrow-lifetime-scan-current 0)
+      (set! compiler-tc-env-profile-borrow-lifetime-scan-max 0))))
 
 (cfg
   compile-profile
@@ -4631,6 +4682,15 @@
       (compiler-tc-env-profile-line
         "scoped_materialized_slots"
         compiler-tc-env-profile-scoped-materialized-slots)
+      (compiler-tc-env-profile-line
+        "borrow_lifetime_scans"
+        compiler-tc-env-profile-borrow-lifetime-scans)
+      (compiler-tc-env-profile-line
+        "borrow_lifetime_scan_bindings"
+        compiler-tc-env-profile-borrow-lifetime-scan-bindings)
+      (compiler-tc-env-profile-line
+        "borrow_lifetime_scan_max"
+        compiler-tc-env-profile-borrow-lifetime-scan-max)
       (compiler-tc-macro-counter-profile-line
         "generated_module_materializations"
         compiler-tc-macro-generated-module-materializations)
@@ -50929,47 +50989,64 @@
   [exprs : AstExprList]
   [lifetime : i64]
   [seen : TcStringList]) : bool
-  (match (tc-type-env-spine-step env)
-    [(TcTypeEnvSpineStep.Done) false]
-    [(TcTypeEnvSpineStep.Cache rest-env)
+  ;; Only lexical bindings can carry this function-local lifetime. Follow
+  ;; scan-through caches that compact a local prefix, but stop at the
+  ;; authoritative module/top-level cache instead of resolving every global
+  ;; signature during last-use pruning.
+  (match (tc-type-env-marker-step env)
+    [(TcTypeEnvMarkerStep.Done) false]
+    [(TcTypeEnvMarkerStep.Cache rest-env)
       (tc-borrow-check-env-lifetime-used-in-exprs?
         ctx
         rest-env
         exprs
         lifetime
         seen)]
-    [(TcTypeEnvSpineStep.Bind name-id ty rest-env)
-      (let
-        [name : String (tc-env-key-name-text name-id)]
-        (if (tc-string-list-contains seen name)
-          (tc-borrow-check-env-lifetime-used-in-exprs?
-            ctx
-            rest-env
-            exprs
-            lifetime
-            seen)
-          (if (and
-            (tc-borrow-check-binding-stores-lifetime? ctx ty lifetime)
-            (tc-expr-list-uses-free-name? exprs name TcStringList.Nil))
-            true
+    [(TcTypeEnvMarkerStep.Bind name-id ty rest-env)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-env-profile-borrow-lifetime-scan-note-binding!))
+        (let
+          [name : String (tc-env-key-name-text name-id)]
+          (if (tc-string-list-contains seen name)
             (tc-borrow-check-env-lifetime-used-in-exprs?
               ctx
               rest-env
               exprs
               lifetime
-              (tc-string-list-add seen name)))))]))
+              seen)
+            (if (and
+              (tc-borrow-check-binding-stores-lifetime? ctx ty lifetime)
+              (tc-expr-list-uses-free-name? exprs name TcStringList.Nil))
+              true
+              (tc-borrow-check-env-lifetime-used-in-exprs?
+                ctx
+                rest-env
+                exprs
+                lifetime
+                (tc-string-list-add seen name))))))]))
 
 (define (tc-borrow-check-lifetime-used-in-exprs?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]
   [lifetime : i64]) : bool
-  (tc-borrow-check-env-lifetime-used-in-exprs?
-    ctx
-    env
-    exprs
-    lifetime
-    TcStringList.Nil))
+  (begin
+    (cfg compile-profile (compiler-tc-env-profile-borrow-lifetime-scan-start!))
+    (let
+      [used : bool
+        (tc-borrow-check-env-lifetime-used-in-exprs?
+          ctx
+          env
+          exprs
+          lifetime
+          TcStringList.Nil)]
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-env-profile-borrow-lifetime-scan-finish!))
+        used))))
 
 ;; A lexical child scope can return a reference whose source borrow was created
 ;; inside that scope. Retain the source path at the enclosing scope when its

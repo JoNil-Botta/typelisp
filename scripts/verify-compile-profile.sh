@@ -947,6 +947,15 @@ if [ "$NL_HOST_OS" = windows ]; then
         -500000000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
+    # Last-use pruning only needs lexical bindings. The compiler's combined
+    # GOT lookup/insert body borrows a String in a loop and consumes it after;
+    # crossing the authoritative global cache here once made that one body
+    # take about five seconds while resolving the whole compiler environment.
+    BORROW_LIFETIME_SCAN_MAX=$(profile_counter_value_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.env.borrow_lifetime_scan_max")
+    [ "$BORROW_LIFETIME_SCAN_MAX" -le 256 ] ||
+        fail "borrow lifetime scan crossed lexical boundary: $BORROW_LIFETIME_SCAN_MAX bindings"
 fi
 
 echo "[compile-profile] compile deep string concat fixture"
@@ -1030,6 +1039,9 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_cache_miss
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_tail_fallbacks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_materializations|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.scoped_materialized_slots|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.borrow_lifetime_scans|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.borrow_lifetime_scan_bindings|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.borrow_lifetime_scan_max|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materializations|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_decl_checks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_memo_hits|"

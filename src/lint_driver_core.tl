@@ -707,6 +707,11 @@
 (define selfhost-lint-unused-unsafe-surface-unknown-count : i64
   0)
 
+;; Status-bearing file/package callers consume this before their scratch arena
+;; is reset; findings-only source callers keep their existing API.
+(define selfhost-lint-typed-unused-unsafe-error : String
+  "")
+
 (define (selfhost-lint-unsafe-surface-cache-reset!) : unit
   (begin
     (set!
@@ -1032,8 +1037,23 @@
   [source : String]
   [stdlib-roots : lint_svec.Vec]) : LintFindings
   (begin
+    (set! selfhost-lint-typed-unused-unsafe-error "")
     (tc-unused-unsafe-tracking-reset! path)
-    (match (compiler-check-source-with-roots path source stdlib-roots)
+    ;; File/package lint parses into a destroyable, explicitly installed pool.
+    ;; Run the nested check on process pools and reinstall the lint pool before
+    ;; its caller resumes the AST walk.
+    (match (if (ast-node-pool-compat-context-active?)
+      (let
+        [lint-pools : AstNodePoolContext (ast-node-pool-compat-context-current)]
+        (begin
+          (ast-node-pool-compat-context-clear!)
+          (let
+            [checked : ResultCompilerCheck
+              (compiler-check-source-with-roots path source stdlib-roots)]
+            (begin
+              (ast-node-pool-compat-context-use! lint-pools)
+              checked))))
+      (compiler-check-source-with-roots path source stdlib-roots))
       [(ResultCompilerCheck.Ok _)
         (let
           [findings : LintFindings
@@ -1046,18 +1066,13 @@
           (begin
             (tc-unused-unsafe-tracking-disable!)
             findings))]
-      [(ResultCompilerCheck.Err _)
+      [(ResultCompilerCheck.Err diag)
         (begin
+          (set!
+            selfhost-lint-typed-unused-unsafe-error
+            (compiler-diagnostic-render (box-get diag)))
           (tc-unused-unsafe-tracking-disable!)
           (lint-findings-empty))])))
-
-(define (selfhost-lint-unused-unsafe-findings
-  [path : String]
-  [source : String]
-  [stdlib-roots : lint_svec.Vec]) : LintFindings
-  (if (> (lint-unused-unsafe-classifier-unknown-count) 0)
-    (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots)
-    (lint-findings-empty)))
 
 (define (selfhost-lint-source-unused-unsafe-findings
   [path : String]
@@ -1104,6 +1119,7 @@
   [prefer-dotted-field : bool]
   [name-case : bool]) : LintFindings
   (begin
+    (set! selfhost-lint-typed-unused-unsafe-error "")
     (selfhost-lint-unsafe-surface-prepare! path program stdlib-roots)
     (let
       [ordinary : LintFindings
@@ -1119,7 +1135,7 @@
       [unused-count : i64 (lint-unused-unsafe-classifier-unused-count)]
       [typed : LintFindings
         (if (> unknown-count 0)
-          (selfhost-lint-unused-unsafe-findings path source stdlib-roots)
+          (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots)
           (lint-findings-empty))]
       [base : LintFindings
         (if (> unknown-count 0)
@@ -1155,28 +1171,32 @@
     ;; LSP/source-mode callers commonly run in a destroyable request arena.
     ;; Never let a prior request's compact cache survive into the next one;
     ;; explicit file/package batches reset once in their outer batch arena.
+    (set! selfhost-lint-typed-unused-unsafe-error "")
     (selfhost-lint-unsafe-surface-cache-reset!)
     (lint-unused-unsafe-classifier-reset!)
     (let
       [findings : LintFindings
         (match (parse-ast-source-diagnostic path source)
           [(ResultAstProgramDiagnostic.Ok program)
-            (selfhost-lint-findings-append
-              (selfhost-lint-program-findings-with-all-options
-                source
-                program
-                deprecated-string-concat
-                redundant-function-name
-                prefer-dotted-field
-                name-case)
-              (selfhost-lint-source-unused-unsafe-findings
-                path
-                source
-                program
-                stdlib-roots))]
+            (let
+              [ordinary : LintFindings
+                (selfhost-lint-program-findings-with-all-options
+                  source
+                  program
+                  deprecated-string-concat
+                  redundant-function-name
+                  prefer-dotted-field
+                  name-case)]
+              (selfhost-lint-findings-append
+                ordinary
+                (selfhost-lint-source-unused-unsafe-findings
+                  path
+                  source
+                  program
+                  stdlib-roots)))]
           [(ResultAstProgramDiagnostic.Err _) (lint-findings-empty)])]
       (begin
-        ;; Preserve diagnostic counters, but leave no global pointer into the
+        ;; Preserve diagnostic counters, but leave no cache pointer into the
         ;; caller's request arena after returning its findings.
         (selfhost-lint-unsafe-surface-cache-release!)
         findings))))
@@ -3686,6 +3706,7 @@
 
 (define (selfhost-lint-reset-file-state!) : unit
   (begin
+    (set! selfhost-lint-typed-unused-unsafe-error "")
     (lint-unused-unsafe-classifier-reset!)
     (tc-unused-unsafe-tracking-clear!)
     (tc-prefix-snapshot-cache-clear!)
@@ -3827,17 +3848,22 @@
               redundant-function-name
               prefer-dotted-field
               name-case)]
-          (begin
-            (selfhost-lint-print-findings input-path findings)
-            (io.print-string
-              (string.append
-                "lint: "
+          (if (string.eq selfhost-lint-typed-unused-unsafe-error "")
+            (begin
+              (selfhost-lint-print-findings input-path findings)
+              (io.print-string
                 (string.append
-                  (string.int->string (lint-findings-count findings))
-                  " finding(s)\n")))
-            (selfhost-lint-enforce-exit
-              enforcing
-              (lint-findings-count findings))))]
+                  "lint: "
+                  (string.append
+                    (string.int->string (lint-findings-count findings))
+                    " finding(s)\n")))
+              (selfhost-lint-enforce-exit
+                enforcing
+                (lint-findings-count findings)))
+            (begin
+              (io.print-error
+                (string.append selfhost-lint-typed-unused-unsafe-error "\n"))
+              1)))]
       [(ResultAstProgramDiagnostic.Err diag)
         (begin
           (io.print-error (compiler-diagnostic-render (box-get diag)))
@@ -3879,20 +3905,28 @@
               redundant-function-name
               prefer-dotted-field
               name-case)]
-          [ordinary-count : i64
-            (selfhost-lint-print-findings input-path findings)]
-          [dead-count : i64
-            (selfhost-lint-package-dead-print-for-source
-              input-path
-              source
-              dead-decls)]
-          [total-count : i64 (+ ordinary-count dead-count)]
-          (begin
-            (io.print-string
-              (string.append
-                "lint: "
-                (string.append (string.int->string total-count) " finding(s)\n")))
-            (selfhost-lint-enforce-exit enforcing total-count)))]
+          (if (string.eq selfhost-lint-typed-unused-unsafe-error "")
+            (let
+              [ordinary-count : i64
+                (selfhost-lint-print-findings input-path findings)]
+              [dead-count : i64
+                (selfhost-lint-package-dead-print-for-source
+                  input-path
+                  source
+                  dead-decls)]
+              [total-count : i64 (+ ordinary-count dead-count)]
+              (begin
+                (io.print-string
+                  (string.append
+                    "lint: "
+                    (string.append
+                      (string.int->string total-count)
+                      " finding(s)\n")))
+                (selfhost-lint-enforce-exit enforcing total-count)))
+            (begin
+              (io.print-error
+                (string.append selfhost-lint-typed-unused-unsafe-error "\n"))
+              1)))]
       [(ResultAstProgramDiagnostic.Err diag)
         (begin
           (io.print-error (compiler-diagnostic-render (box-get diag)))

@@ -386,6 +386,15 @@
 (define (main) : i64
   (unsafe (legacy-danger 42)))")
 
+(define (lint-driver-smoke-unsafe-surface-type-error-source) : String
+  "(defmacro (identity [value : Expr]) : Expr value)
+(define (main) : i64
+  (unsafe (identity missing-value)))")
+
+(define (lint-driver-smoke-unsafe-surface-parse-error-source) : String
+  "(define (main) : i64
+  (unsafe (+ 1 2))")
+
 (define (lint-driver-smoke-copy-on-update-struct-source) : String
   "(defstruct Point
   (x i64)
@@ -1133,6 +1142,21 @@
       (lint_svec.push (&mut paths) "target/lint_unsafe_surface/required_b.tl")
       paths)))
 
+(define (lint-driver-smoke-unsafe-surface-error-paths) : lint_svec.Vec
+  (let
+    [paths : lint_svec.Vec (lint_svec.new)]
+    (begin
+      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/type_error.tl")
+      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/required_a.tl")
+      paths)))
+
+(define (lint-driver-smoke-unsafe-surface-macro-paths) : lint_svec.Vec
+  (let
+    [paths : lint_svec.Vec (lint_svec.new)]
+    (begin
+      (lint_svec.push (&mut paths) "target/lint_unsafe_surface/macro.tl")
+      paths)))
+
 (define (lint-driver-smoke-unsafe-surface-request-count
   [source : String]
   [stdlib-roots : lint_svec.Vec]) : i64
@@ -1180,6 +1204,9 @@
     (io.write-file
       "target/lint_unsafe_surface/legacy.tl"
       (lint-driver-smoke-unsafe-surface-legacy-source))
+    (io.write-file
+      "target/lint_unsafe_surface/type_error.tl"
+      (lint-driver-smoke-unsafe-surface-type-error-source))
     (let
       [_reset-direct : unit (selfhost-lint-unsafe-surface-cache-reset!)]
       [direct-count : i64
@@ -1217,11 +1244,11 @@
           false)]
       [shadow-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
       [_reset-macro : unit (selfhost-lint-unsafe-surface-cache-reset!)]
-      [_macro-status : i64
+      [macro-status : i64
         (selfhost-lint-run-file-in-scratch
           "target/lint_unsafe_surface/macro.tl"
           (lint_svec.new)
-          false
+          true
           false
           false
           false
@@ -1261,6 +1288,73 @@
           false
           false)]
       [legacy-fallbacks : i64 (selfhost-lint-unused-unsafe-fallback-count)]
+      [_direct-error-findings : LintFindings
+        (selfhost-lint-typed-unused-unsafe-findings
+          "target/lint_unsafe_surface/direct_type_error.tl"
+          (lint-driver-smoke-unsafe-surface-type-error-source)
+          (lint_svec.new))]
+      [direct-error : String selfhost-lint-typed-unused-unsafe-error]
+      [_direct-parse-error-findings : LintFindings
+        (selfhost-lint-typed-unused-unsafe-findings
+          "target/lint_unsafe_surface/direct_parse_error.tl"
+          (lint-driver-smoke-unsafe-surface-parse-error-source)
+          (lint_svec.new))]
+      [direct-parse-error : String selfhost-lint-typed-unused-unsafe-error]
+      [file-error-status : i64
+        (selfhost-lint-run-file-in-scratch
+          "target/lint_unsafe_surface/type_error.tl"
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false)]
+      [batch-macro-status : i64
+        (selfhost-lint-files
+          (lint-driver-smoke-unsafe-surface-macro-paths)
+          (lint_svec.new)
+          true
+          false
+          false
+          false
+          false
+          false
+          0)]
+      [package-macro-status : i64
+        (selfhost-lint-package-files
+          (lint-driver-smoke-unsafe-surface-macro-paths)
+          (lint_svec.new)
+          true
+          false
+          false
+          false
+          false
+          (selfhost-lint-dead-decls-with-capacity 0)
+          false
+          0)]
+      [batch-error-status : i64
+        (selfhost-lint-files
+          (lint-driver-smoke-unsafe-surface-error-paths)
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false
+          false
+          0)]
+      [package-error-status : i64
+        (selfhost-lint-package-files
+          (lint-driver-smoke-unsafe-surface-error-paths)
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false
+          (selfhost-lint-dead-decls-with-capacity 0)
+          false
+          0)]
       [batch-status : i64
         (selfhost-lint-files
           (lint-driver-smoke-unsafe-surface-paths)
@@ -1281,6 +1375,7 @@
         [(not (= safe-parses 1)) 101]
         [(not (= safe-fallbacks 0)) 102]
         [(not (= shadow-fallbacks 1)) 103]
+        [(not (= macro-status 1)) 178]
         [(not (= macro-fallbacks 1)) 104]
         [(not (= legacy-fallbacks 1)) 105]
         [(not (= batch-status 0)) 106]
@@ -1292,6 +1387,25 @@
         [(not (= local-value-status 1)) 111]
         [(not (= local-value-fallbacks 0)) 112]
         [(not (= callable-value-fallbacks 1)) 113]
+        [(not
+            (and
+              (string.contains
+                (& direct-error)
+                "target/lint_unsafe_surface/direct_type_error.tl")
+              (string.contains (& direct-error) "typecheck:")))
+          179]
+        [(not
+            (and
+              (string.contains
+                (& direct-parse-error)
+                "target/lint_unsafe_surface/direct_parse_error.tl")
+              (string.contains (& direct-parse-error) "reader:")))
+          180]
+        [(not (= file-error-status 1)) 181]
+        [(not (= batch-error-status 1)) 182]
+        [(not (= package-error-status 1)) 183]
+        [(not (= batch-macro-status 1)) 184]
+        [(not (= package-macro-status 1)) 185]
         [else 42]))))
 
 (define (lint-driver-smoke-copy-on-update-struct-self-test) : i64

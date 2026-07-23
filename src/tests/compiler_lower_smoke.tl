@@ -6,6 +6,7 @@
 (import (vector.vector String) as svec)
 (import compiler_builtin_ids as cbi)
 (import "../compiler_driver_core.tl")
+(import "../compiler_lower_tests.tl")
 (import sym_i64_env)
 
 (define (compiler-lower-smoke-foreach-multi-output-source) : String

@@ -6,6 +6,7 @@
 (import compiler_object_coff as coff)
 (import compiler_object_elf as elf)
 (import "compiler_backend.tl")
+(import "compiler_lower_tests.tl")
 (import compiler_parallel_move as pmove)
 (import compiler_builtin_ids as cbi)
 (import "compiler_float.tl")

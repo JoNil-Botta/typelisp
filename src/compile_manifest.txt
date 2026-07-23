@@ -471,10 +471,11 @@ contains|_tl_compiler_load_self_test:
 contains|_tl_compiler_load_cfg_import_ok_question:
 end
 
+decision|src/compiler_lower_tests.tl|lowering self-test/fixture companion split from compiler_lower.tl (#5169): main-less, imported only by lowering fixture drivers; production compiler_lower.tl and compiler_driver_core imports remain fixture-free
+
 case|selfhost_compiler_lower|src/compiler_lower.tl|assembly|skip|direct
 contains|_tl_lower_compiler_source:
 contains|_tl_lower_compiler_program:
-contains|_tl_compiler_lower_back_half_tests_ok_question:
 contains|lower: unsupported expression
 end
 

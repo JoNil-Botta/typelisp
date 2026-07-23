@@ -4,7 +4,7 @@
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.string)
-(import "../compiler_lower.tl")
+(import "../compiler_lower_tests.tl")
 (import "../compiler_lower_package_tests.tl")
 (import "../compiler_backend_tests.tl")
 (import "../compiler_driver_smoke_tests.tl")

@@ -183,6 +183,10 @@ run_gate \
     scripts/measure-instruction-counts.sh \
     --self-test \
     --output target/instruction-count-c-region-self-test
+run_gate \
+    "stage0 release publication verifier self-tests" \
+    scripts/verify-stage0-release.sh \
+    --self-test
 if [ "$HOST_OS" = windows ]; then
     BOOTSTRAP_BENCH_POWERSHELL=powershell.exe
 else

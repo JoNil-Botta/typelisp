@@ -238,3 +238,12 @@ jobs:
             stage0-artifacts/typelisp-stage0-windows.exe \
             stage0-artifacts/typelisp.vsix \
             stage0-artifacts/SHA256SUMS
+
+          scripts/verify-stage0-release.sh \
+            "$GITHUB_REPOSITORY" \
+            stage0-latest \
+            "${{ github.sha }}" \
+            typelisp-stage0-linux \
+            typelisp-stage0-windows.exe \
+            typelisp.vsix \
+            SHA256SUMS

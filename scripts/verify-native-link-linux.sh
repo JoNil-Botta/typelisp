@@ -206,7 +206,8 @@ compile_selfhost_binary() {
     # Relative --stdlib-root (cwd is $ROOT) so the implicit stdlib/runtime.tl
     # prelude and resolved imports share one path spelling and dedup; an
     # absolute root makes cli.tl's larger closure trip a duplicate-symbol error.
-    "$COMPILER" compile "$_source" --stdlib-root stdlib -o "$_asm" > "$_out" 2> "$_err"
+    "$COMPILER" compile "$_source" --stdlib-root stdlib \
+        --cfg compiler-build-identity -o "$_asm" > "$_out" 2> "$_err"
     _got=$?
     set -e
     if [ "$_got" -ne 0 ]; then

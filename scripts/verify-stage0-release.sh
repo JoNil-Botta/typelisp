@@ -78,6 +78,21 @@ validate_published_release() {
     fi
 }
 
+select_single_release_id() {
+    release_ids=$1
+    tag=$2
+
+    if [ -z "$release_ids" ]; then
+        fail "no release (published or draft) found for tag $tag"
+        return 1
+    fi
+    if [ "$(printf '%s\n' "$release_ids" | wc -l | tr -d ' ')" -ne 1 ]; then
+        fail "multiple releases found for tag $tag: $release_ids"
+        return 1
+    fi
+    printf '%s\n' "$release_ids"
+}
+
 expect_failure() {
     expected=$1
     shift
@@ -121,6 +136,16 @@ self_test() {
         echo "self-test release record projection mismatch: $release_record" >&2
         return 1
     fi
+    release_id=$(select_single_release_id 100 stage0-latest)
+    [ "$release_id" = 100 ] || {
+        echo "self-test release id selection mismatch: $release_id" >&2
+        return 1
+    }
+    expect_failure "no release (published or draft) found" \
+        select_single_release_id "" stage0-latest
+    expect_failure "multiple releases found" \
+        select_single_release_id "100
+101" stage0-latest
 
     validate_published_release \
         100 false "$expected_sha" 2026-07-23T00:00:00Z \
@@ -183,18 +208,24 @@ for command in gh curl; do
 done
 
 # The tag endpoint hides drafts. Search the authenticated list first so a
-# complete draft can be recovered and its id can be reported actionably.
-release_ids=$(gh api "repos/$REPO/releases?per_page=100" \
-    --jq ".[] | select(.tag_name == \"$TAG\") | .id")
-if [ -z "$release_ids" ]; then
-    echo "[stage0-release] no release (published or draft) found for tag $TAG" >&2
-    exit 1
-fi
-if [ "$(printf '%s\n' "$release_ids" | wc -l | tr -d ' ')" -ne 1 ]; then
-    echo "[stage0-release] multiple releases found for tag $TAG: $release_ids" >&2
-    exit 1
-fi
-release_id=$release_ids
+# complete draft can be recovered and its id can be reported actionably. A
+# newly created release can take a few seconds to appear in this list, so bound
+# the discovery race with the same propagation retry budget used below.
+release_ids=
+attempt=1
+while [ "$attempt" -le "$ATTEMPTS" ]; do
+    if release_ids=$(gh api "repos/$REPO/releases?per_page=100" \
+        --jq ".[] | select(.tag_name == \"$TAG\") | .id" \
+        2>/dev/null) && [ -n "$release_ids" ]; then
+        break
+    fi
+    if [ "$attempt" -lt "$ATTEMPTS" ]; then
+        echo "[stage0-release] authenticated release list not ready (attempt $attempt/$ATTEMPTS); retrying in ${DELAY}s" >&2
+        sleep "$DELAY"
+    fi
+    attempt=$((attempt + 1))
+done
+release_id=$(select_single_release_id "$release_ids" "$TAG") || exit 1
 
 release_record=$(gh api "repos/$REPO/releases/$release_id" \
     --jq "$RELEASE_RECORD_JQ")

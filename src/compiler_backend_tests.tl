@@ -7685,6 +7685,15 @@
         (CompilerRegLocation.Register "%xmm3"))
       CompilerRegAssignmentList.Nil)))
 
+(define (compiler-backend-phi-f64-spill-cycle-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -16))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm3"))
+      CompilerRegAssignmentList.Nil)))
+
 (define (compiler-backend-phi-f64-cycle-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -7706,6 +7715,50 @@
               CompilerIrPhiInputList.Nil)
             (AstType.F64))
           CompilerIrInstrList.Nil)))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-phi-f32-three-cycle-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm3"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%xmm5"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-phi-f32-three-cycle-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "join"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Phi
+          0
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 1)
+            "back"
+            CompilerIrPhiInputList.Nil)
+          (AstType.F32))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            1
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 2)
+              "back"
+              CompilerIrPhiInputList.Nil)
+            (AstType.F32))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              2
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 0)
+                "back"
+                CompilerIrPhiInputList.Nil)
+              (AstType.F32))
+            CompilerIrInstrList.Nil))))
     CompilerIrBlockList.Nil))
 
 (define (compiler-backend-phi-group-f64-cycle-assignments) : CompilerRegAssignmentList
@@ -7831,6 +7884,7 @@
       CompilerIrExternList.Nil)
     4
     ""
+    ""
     "")
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -7857,6 +7911,7 @@
       CompilerIrExternList.Nil)
     4
     ""
+    ""
     "")
     [(ResultCompilerBackend.Ok reg-reg)
       (match (compiler-backend-emit-phi-edge-copies
@@ -7874,6 +7929,7 @@
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
         4
+        ""
         ""
         "")
         [(ResultCompilerBackend.Ok spill-reg)
@@ -7894,6 +7950,7 @@
               CompilerIrFunctionList.Nil
               CompilerIrExternList.Nil)
             4
+            ""
             ""
             "")
             [(ResultCompilerBackend.Ok reg-spill)
@@ -8236,6 +8293,7 @@
           CompilerIrExternList.Nil)
         0
         ""
+        ""
         "")
         [(ResultCompilerBackend.Ok same-home)
           (match (compiler-backend-emit-phi-edge-copies
@@ -8247,6 +8305,7 @@
               CompilerIrFunctionList.Nil
               CompilerIrExternList.Nil)
             0
+            ""
             ""
             "")
             [(ResultCompilerBackend.Ok cycle)
@@ -8291,6 +8350,7 @@
         "back"
         (compiler-backend-register-group-test-index)
         4
+        ""
         ""
         "")
         [(ResultCompilerBackend.Ok cycle)
@@ -8352,6 +8412,7 @@
         (compiler-backend-register-group-test-index)
         2
         ""
+        ""
         "")]
     [_group-disable : unit (compiler-backend-group-vars-disable!)]
     (match copied
@@ -8365,10 +8426,14 @@
   (let
     [prev-count : i64 compiler-backend-cycle-temp-used-count]
     [prev-base : i64 compiler-backend-cycle-temp-base-offset]
+    [prev-register-count : i64 compiler-backend-phi-xmm-cycle-register-count]
+    [prev-fallback-count : i64 compiler-backend-phi-xmm-cycle-fallback-count]
     [_set : unit
       (begin
         (set! compiler-backend-cycle-temp-used-count 0)
-        (set! compiler-backend-cycle-temp-base-offset -512))]
+        (set! compiler-backend-cycle-temp-base-offset -512)
+        (set! compiler-backend-phi-xmm-cycle-register-count 0)
+        (set! compiler-backend-phi-xmm-cycle-fallback-count 0))]
     [ok : bool
       (and
         (match (compiler-backend-emit-phi-edge-copies
@@ -8381,19 +8446,83 @@
             CompilerIrExternList.Nil)
           2
           ""
-          "")
+          ""
+          "%xmm4")
           [(ResultCompilerBackend.Ok cycle)
             (and
               (compiler-backend-string-contains?
                 cycle
-                "    movsd %xmm2, -512(%rbp)\n")
+                "    movsd %xmm2, %xmm4\n")
               (compiler-backend-string-contains?
                 cycle
-                "    movsd -512(%rbp), %xmm3\n")
+                "    movsd %xmm4, %xmm3\n")
+              (not (compiler-backend-string-contains? cycle "-512(%rbp)"))
               (not (compiler-backend-string-contains? cycle "%rsp"))
               (not (compiler-backend-string-contains? cycle "%xmm0"))
               (not (compiler-backend-string-contains? cycle "%xmm14"))
               (not (compiler-backend-string-contains? cycle "%xmm15")))]
+          [(ResultCompilerBackend.Err _) false])
+        (match (compiler-backend-emit-phi-edge-copies
+          (compiler-backend-phi-f64-cycle-assignments)
+          (compiler-backend-phi-f64-cycle-blocks)
+          "join"
+          "back"
+          (compiler-backend-program-index-build
+            CompilerIrFunctionList.Nil
+            CompilerIrExternList.Nil)
+          2
+          ""
+          ""
+          "")
+          [(ResultCompilerBackend.Ok fallback)
+            (and
+              (compiler-backend-string-contains?
+                fallback
+                "    movsd %xmm2, -512(%rbp)\n")
+              (compiler-backend-string-contains?
+                fallback
+                "    movsd -512(%rbp), %xmm3\n"))]
+          [(ResultCompilerBackend.Err _) false])
+        (match (compiler-backend-emit-phi-edge-copies
+          (compiler-backend-phi-f32-three-cycle-assignments)
+          (compiler-backend-phi-f32-three-cycle-blocks)
+          "join"
+          "back"
+          (compiler-backend-program-index-build
+            CompilerIrFunctionList.Nil
+            CompilerIrExternList.Nil)
+          3
+          ""
+          ""
+          "%xmm4")
+          [(ResultCompilerBackend.Ok cycle)
+            (and
+              (compiler-backend-string-contains?
+                cycle
+                "    movss %xmm2, %xmm4\n")
+              (compiler-backend-string-contains? cycle "%xmm4")
+              (not (compiler-backend-string-contains? cycle "-512(%rbp)"))
+              (not (compiler-backend-string-contains? cycle "movsd")))]
+          [(ResultCompilerBackend.Err _) false])
+        (match (compiler-backend-emit-phi-edge-copies
+          (compiler-backend-phi-f64-spill-cycle-assignments)
+          (compiler-backend-phi-f64-cycle-blocks)
+          "join"
+          "back"
+          (compiler-backend-program-index-build
+            CompilerIrFunctionList.Nil
+            CompilerIrExternList.Nil)
+          2
+          ""
+          ""
+          "%xmm4")
+          [(ResultCompilerBackend.Ok cycle)
+            (and
+              (compiler-backend-string-contains? cycle "-512(%rbp)")
+              (not
+                (compiler-backend-string-contains?
+                  cycle
+                  "    movsd -16(%rbp), %xmm4\n")))]
           [(ResultCompilerBackend.Err _) false])
         (match (compiler-backend-emit-phi-edge-copies
           (compiler-backend-phi-group-f64-cycle-assignments)
@@ -8402,6 +8531,7 @@
           "back"
           (compiler-backend-register-group-f64-test-index)
           4
+          ""
           ""
           "")
           [(ResultCompilerBackend.Ok cycle)
@@ -8421,11 +8551,19 @@
               (not (compiler-backend-string-contains? cycle "%rsp"))
               (not (compiler-backend-string-contains? cycle "%xmm14"))
               (not (compiler-backend-string-contains? cycle "%xmm15")))]
-          [(ResultCompilerBackend.Err _) false]))]
+          [(ResultCompilerBackend.Err _) false])
+        (cfg
+          regalloc-census
+          (and
+            (= compiler-backend-phi-xmm-cycle-register-count 2)
+            (= compiler-backend-phi-xmm-cycle-fallback-count 1))
+          true))]
     [_restore : unit
       (begin
         (set! compiler-backend-cycle-temp-used-count prev-count)
-        (set! compiler-backend-cycle-temp-base-offset prev-base))]
+        (set! compiler-backend-cycle-temp-base-offset prev-base)
+        (set! compiler-backend-phi-xmm-cycle-register-count prev-register-count)
+        (set! compiler-backend-phi-xmm-cycle-fallback-count prev-fallback-count))]
     ok))
 
 (define (compiler-backend-arg-cycle-temp-slot-ok?) : bool
@@ -23758,6 +23896,151 @@
             CompilerIrInstrList.Nil)))
       CompilerIrBlockList.Nil)))
 
+(define (compiler-backend-scratch-vreg-float-phi-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump "join")
+        CompilerIrInstrList.Nil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "join"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            0
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 1)
+              "entry"
+              CompilerIrPhiInputList.Nil)
+            (AstType.F64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              1
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 0)
+                "entry"
+                CompilerIrPhiInputList.Nil)
+              (AstType.F64))
+            (compiler-ir-instr-cons
+              ;; Var 3 is a source-only home. Its live interval, rather than
+              ;; the destination exclusion list, must keep %xmm4 unavailable.
+              (CompilerIrInstr.Phi
+                2
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 3)
+                  "entry"
+                  CompilerIrPhiInputList.Nil)
+                (AstType.F64))
+              CompilerIrInstrList.Nil))))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-scratch-vreg-float-phi-branch-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "join" "back")
+        CompilerIrInstrList.Nil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "back"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Jump "join")
+          CompilerIrInstrList.Nil))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "join"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              0
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 1)
+                "entry"
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 0)
+                  "back"
+                  CompilerIrPhiInputList.Nil))
+              (AstType.F64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                1
+                (compiler-ir-phi-input-cons
+                  (CompilerIrValue.Var 0)
+                  "entry"
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.Var 1)
+                    "back"
+                    CompilerIrPhiInputList.Nil))
+                (AstType.F64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Phi
+                  2
+                  (compiler-ir-phi-input-cons
+                    (CompilerIrValue.Var 3)
+                    "entry"
+                    (compiler-ir-phi-input-cons
+                      (CompilerIrValue.Var 3)
+                      "back"
+                      CompilerIrPhiInputList.Nil))
+                  (AstType.F64))
+                CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
+
+(define (compiler-backend-scratch-vreg-float-phi-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm3"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%xmm5"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%xmm4"))
+          CompilerRegAssignmentList.Nil)))))
+
+(define (compiler-backend-scratch-f64-four-types) : CompilerRegVarTypeList
+  (compiler-reg-var-type-cons
+    (CompilerRegVarType.Type 0 (AstType.F64))
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType.Type 1 (AstType.F64))
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType.Type 2 (AstType.F64))
+        (compiler-reg-var-type-cons
+          (CompilerRegVarType.Type 3 (AstType.F64))
+          CompilerRegVarTypeList.Nil)))))
+
+(define (compiler-backend-scratch-float-phi-branch-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm2"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm3"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%xmm5"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            3
+            (CompilerRegLocation.Register "%xmm4"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              4
+              (CompilerRegLocation.Register "%r12"))
+            CompilerRegAssignmentList.Nil))))))
+
+(define (compiler-backend-scratch-float-phi-branch-types) : CompilerRegVarTypeList
+  (compiler-reg-var-type-cons
+    (CompilerRegVarType.Type 4 (AstType.Bool))
+    (compiler-backend-scratch-f64-four-types)))
+
 (define (compiler-backend-scratch-vreg-phi-test-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
@@ -24088,8 +24371,40 @@
           (compiler-backend-scratch-vreg-phi-test-blocks)
           2
           (compiler-backend-scratch-vreg-phi-test-assignments))]
+      [float-types : CompilerRegVarTypeList
+        (compiler-backend-scratch-f64-four-types)]
+      [float-linux : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Linux)
+          "scratch_vreg_float_phi_linux"
+          (compiler-backend-scratch-vreg-float-phi-test-blocks)
+          4
+          float-types
+          (compiler-backend-scratch-vreg-float-phi-test-assignments))]
+      [float-windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Windows)
+          "scratch_vreg_float_phi_windows"
+          (compiler-backend-scratch-vreg-float-phi-test-blocks)
+          4
+          float-types
+          (compiler-backend-scratch-vreg-float-phi-test-assignments))]
+      [float-branch : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi-with-types
+          (CompilerRegTargetAbi.Linux)
+          "scratch_vreg_float_phi_branch"
+          (compiler-backend-scratch-vreg-float-phi-branch-test-blocks)
+          5
+          (compiler-backend-scratch-float-phi-branch-types)
+          (compiler-backend-scratch-float-phi-branch-assignments))]
       [cycle : String (compiler-backend-scratch-test-register result 0)]
       [stage : String (compiler-backend-scratch-test-register result 1)]
+      [float-linux-xmm : String
+        (compiler-backend-scratch-test-register float-linux 2)]
+      [float-windows-xmm : String
+        (compiler-backend-scratch-test-register float-windows 2)]
+      [float-branch-xmm : String
+        (compiler-backend-scratch-test-register float-branch 3)]
       (and
         (= (compiler-backend-scratch-test-plan-count result) 2)
         (= (compiler-backend-scratch-test-success-count result) 2)
@@ -24100,6 +24415,27 @@
         (not (string.eq cycle "%r13"))
         (not (string.eq stage "%r12"))
         (not (string.eq stage "%r13"))
+        (= (compiler-backend-scratch-test-plan-count float-linux) 3)
+        (= (compiler-backend-scratch-test-success-count float-linux) 3)
+        (= (compiler-backend-scratch-test-plan-count float-windows) 3)
+        (= (compiler-backend-scratch-test-success-count float-windows) 3)
+        (compiler-backend-string-prefix-at? float-linux-xmm "%xmm" 0)
+        (compiler-backend-string-prefix-at? float-windows-xmm "%xmm" 0)
+        (not (string.eq float-linux-xmm "%xmm2"))
+        (not (string.eq float-linux-xmm "%xmm3"))
+        (not (string.eq float-linux-xmm "%xmm4"))
+        (not (string.eq float-linux-xmm "%xmm5"))
+        (not (string.eq float-windows-xmm "%xmm2"))
+        (not (string.eq float-windows-xmm "%xmm3"))
+        (not (string.eq float-windows-xmm "%xmm4"))
+        (not (string.eq float-windows-xmm "%xmm5"))
+        (= (compiler-backend-scratch-test-plan-count float-branch) 7)
+        (= (compiler-backend-scratch-test-success-count float-branch) 7)
+        (compiler-backend-string-prefix-at? float-branch-xmm "%xmm" 0)
+        (not (string.eq float-branch-xmm "%xmm2"))
+        (not (string.eq float-branch-xmm "%xmm3"))
+        (not (string.eq float-branch-xmm "%xmm4"))
+        (not (string.eq float-branch-xmm "%xmm5"))
         (match result
           [(CompilerRegScratchPlanResult.Result _ plan)
             (and
@@ -24112,7 +24448,30 @@
                 (struct-get (array-ref (struct-get plan items) 1) requirement)
                 role)
                 [(CompilerRegScratchRole.PhiStage) true]
-                [_ false]))])))
+                [_ false])
+              true)])
+        (match float-linux
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 2) requirement)
+                role)
+                [(CompilerRegScratchRole.PhiCycleXmm) true]
+                [_ false])
+              (match (struct-get
+                (struct-get
+                  (struct-get (array-ref (struct-get plan items) 2) requirement)
+                  constraint)
+                register-class)
+                [(CompilerRegScratchClass.Xmm) true]
+                [_ false]))])
+        (match float-branch
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (match (struct-get
+              (struct-get (array-ref (struct-get plan items) 3) requirement)
+              role)
+              [(CompilerRegScratchRole.PhiCycleXmm) true]
+              [_ false])])))
     true))
 
 (define (compiler-backend-scratch-vreg-emission-uses-plan-ok?) : bool
@@ -24172,7 +24531,8 @@
                 index
                 2
                 "%r15"
-                "%r14")
+                "%r14"
+                "")
                 [(ResultCompilerBackend.Ok phi-stage)
                   (match (compiler-backend-emit-phi-edge-copies
                     cycle-assignments
@@ -24182,7 +24542,8 @@
                     index
                     2
                     "%r14"
-                    "%r15")
+                    "%r15"
+                    "")
                     [(ResultCompilerBackend.Ok phi-cycle)
                       (and
                         (string.eq
@@ -25090,6 +25451,7 @@
               (CompilerIrValue.Global (ci.intern "scratch_float_global"))
               (AstType.F64))
             CompilerRegStringList.Nil
+            CompilerRegStringList.Nil
             false)
           0)
         (=
@@ -25103,6 +25465,7 @@
               (CompilerIrValue.Var 1)
               (CompilerIrValue.Global (ci.intern "scratch_float_global"))
               (AstType.Bool))
+            CompilerRegStringList.Nil
             CompilerRegStringList.Nil
             false)
           0)
@@ -25612,6 +25975,7 @@
             same-home
             CompilerRegVarTypeList.Nil
             (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.F64))
+            CompilerRegStringList.Nil
             CompilerRegStringList.Nil
             false)
           0)

@@ -95,11 +95,16 @@
       unit)
     -1))
 
-;; GOT slot offset for extern `name`, allocating on first use.
-(define (compiler-tlci-native-got-slot-find
+;; GOT slot offset for extern `name`, allocating on first use. This also keeps
+;; the borrow-in-loop then consume-after-loop ownership pattern exercised by a
+;; whole-compiler function body.
+(define (compiler-tlci-native-got-slot!
   [import-names : (Array String)]
+  [import-offsets : (Array i64)]
   [import-count : (Array i64)]
-  [name : (& name str)]) : i64
+  [error : (Array String)]
+  [bases : CompilerTlciNativeBases]
+  [name : String]) : i64
   (let
     [count : i64 (array-ref import-count 0)]
     [index : i64 0]
@@ -109,49 +114,19 @@
         (if (string.eq (array-ref import-names index) name)
           (set! found index)
           (set! index (+ index 1))))
-      found)))
-
-;; Insert is a separate function on purpose: a body that both borrows the
-;; name inside the search loop and then consumes it into the name array
-;; sends the ownership analysis into a multi-second blowup at whole-compiler
-;; scale (typechecker performance bug; the split keeps each body linear).
-(define (compiler-tlci-native-got-slot-insert!
-  [import-names : (Array String)]
-  [import-offsets : (Array i64)]
-  [import-count : (Array i64)]
-  [bases : CompilerTlciNativeBases]
-  [name : String]) : i64
-  (let
-    [count : i64 (array-ref import-count 0)]
-    [offset : i64 (+ (struct-get bases got) (* count 8))]
-    (begin
-      (array-set! import-names count name)
-      (array-set! import-offsets count offset)
-      (array-set! import-count 0 (+ count 1))
-      offset)))
-
-(define (compiler-tlci-native-got-slot!
-  [import-names : (Array String)]
-  [import-offsets : (Array i64)]
-  [import-count : (Array i64)]
-  [error : (Array String)]
-  [bases : CompilerTlciNativeBases]
-  [name : String]) : i64
-  (let
-    [found : i64
-      (compiler-tlci-native-got-slot-find import-names import-count (& name))]
-    (if (>= found 0)
-      (array-ref import-offsets found)
-      (if (>= (array-ref import-count 0) compiler-tlci-native-import-cap)
-        (compiler-tlci-native-fail!
-          error
-          "tlci native image: too many imported symbols")
-        (compiler-tlci-native-got-slot-insert!
-          import-names
-          import-offsets
-          import-count
-          bases
-          name)))))
+      (if (>= found 0)
+        (array-ref import-offsets found)
+        (if (>= count compiler-tlci-native-import-cap)
+          (compiler-tlci-native-fail!
+            error
+            "tlci native image: too many imported symbols")
+          (let
+            [offset : i64 (+ (struct-get bases got) (* count 8))]
+            (begin
+              (array-set! import-names count name)
+              (array-set! import-offsets count offset)
+              (array-set! import-count 0 (+ count 1))
+              offset)))))))
 
 ;; Resolve symbol `name` to its region offset: text labels, rodata/data
 ;; labels, then bss labels. Externs resolve to their GOT slot. -1 = unknown.

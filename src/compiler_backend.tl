@@ -39709,6 +39709,235 @@
       rest
       buf)))
 
+(define (compiler-backend-emit-mov-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : CompilerIrInstr]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [ty : AstType]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (match rest
+    [(CompilerIrInstrList.Cons next after-jump)
+      (match next
+        [(CompilerIrInstr.Cast cast-dst cast-src _ _)
+          (match (box-get after-jump)
+            [(CompilerIrInstrList.Cons after-cast after-binop)
+              (match after-cast
+                [(CompilerIrInstr.BinOp bin-dst op lhs rhs bin-ty)
+                  (if (and
+                    (compiler-backend-divmod-op? op)
+                    (compiler-backend-branch-uses-var? cast-src dst)
+                    (compiler-backend-branch-uses-var? rhs cast-dst)
+                    (compiler-backend-var-single-use? ctx.use-counts dst)
+                    (compiler-backend-var-single-use? ctx.use-counts cast-dst)
+                    (compiler-backend-divmod-safe-literal? src bin-ty))
+                    (match (compiler-backend-emit-binop
+                      ctx.types
+                      ctx.global-types
+                      ctx.assignments
+                      bin-dst
+                      op
+                      lhs
+                      src
+                      bin-ty)
+                      [(ResultCompilerBackend.Ok binop-asm)
+                        (compiler-backend-emit-instrs
+                          ctx
+                          fallthrough
+                          (box-get after-binop)
+                          (compiler-backend-emergency-append buf binop-asm))]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)])
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      rest
+                      buf))]
+                [_
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf)])]
+            [_
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                rest
+                buf)])]
+        [(CompilerIrInstr.BinOp bin-dst op lhs rhs bin-ty)
+          (if (and
+            (compiler-backend-divmod-op? op)
+            (compiler-backend-branch-uses-var? rhs dst)
+            (compiler-backend-divmod-safe-literal? src bin-ty))
+            (match (if (compiler-backend-var-single-use? ctx.use-counts dst)
+              (ResultCompilerBackend.Ok "")
+              (compiler-backend-emit-mov
+                ctx.assignments
+                dst
+                src
+                ty
+                ctx.program-index
+                ctx.vars
+                ""))
+              [(ResultCompilerBackend.Ok prefix)
+                (match (compiler-backend-emit-binop
+                  ctx.types
+                  ctx.global-types
+                  ctx.assignments
+                  bin-dst
+                  op
+                  lhs
+                  src
+                  bin-ty)
+                  [(ResultCompilerBackend.Ok binop-asm)
+                    (compiler-backend-emit-instrs
+                      ctx
+                      fallthrough
+                      (box-get after-jump)
+                      (compiler-backend-emergency-append
+                        buf
+                        (string.append prefix binop-asm)))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])
+            (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf))]
+        [(CompilerIrInstr.Jump target-label)
+          (compiler-backend-emit-fused-mov-trivial-phi-return-rest
+            ctx
+            fallthrough
+            dst
+            src
+            ty
+            target-label
+            (box-get after-jump)
+            buf)]
+        [(CompilerIrInstr.Return maybe)
+          (match (box-get after-jump)
+            [(CompilerIrInstrList.Nil)
+              (match maybe
+                [(CompilerIrMaybeValue.Some value)
+                  (if (compiler-backend-branch-uses-var? value dst)
+                    (match (compiler-backend-emit-return
+                      ctx.source-function
+                      ctx.blocks
+                      (CompilerIrMaybeValue.Some src)
+                      ctx.assignments
+                      ctx.vars
+                      ctx.ret-ty
+                      ctx.program-index)
+                      [(ResultCompilerBackend.Ok asm)
+                        (ResultCompilerBackend.Ok
+                          (compiler-backend-emergency-render-append buf asm))]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err
+                          (box
+                            (compiler-backend-apply-instr-diagnostic
+                              (box-get message)
+                              (compiler-backend-instr-diagnostic
+                                ctx.spans
+                                ctx.source-function
+                                instr
+                                ctx.func-diag
+                                ""))))])
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      rest
+                      buf))]
+                [(CompilerIrMaybeValue.No)
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf)])]
+            [_
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                rest
+                buf)])]
+        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)]))
+
+(define (compiler-backend-emit-call-step
+  [ctx : CompilerBackendEmissionContext]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [instr : CompilerIrInstr]
+  [dst : i64]
+  [name : i64]
+  [args : CompilerIrCallArgs]
+  [ty : AstType]
+  [rest : CompilerIrInstrList]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (match rest
+    [(CompilerIrInstrList.Cons next after-return)
+      (match next
+        [(CompilerIrInstr.Return maybe)
+          (match (box-get after-return)
+            [(CompilerIrInstrList.Nil)
+              (match maybe
+                [(CompilerIrMaybeValue.Some value)
+                  (if (and
+                    (compiler-backend-branch-uses-var? value dst)
+                    (opt-type-eq ty ctx.ret-ty))
+                    (compiler-backend-emit-terminator-into
+                      (compiler-backend-emit-call-return
+                        ctx.target
+                        ctx.source-function
+                        ctx.blocks
+                        name
+                        args
+                        ctx.assignments
+                        (compiler-backend-scratch-plan-register-here
+                          (compiler-backend-runtime-plan-scratch ctx.plan)
+                          0)
+                        ctx.types
+                        ctx.global-types
+                        ctx.vars
+                        ctx.plan
+                        ctx.functions
+                        ctx.externs
+                        ctx.program-index
+                        (compiler-backend-instr-diagnostic
+                          ctx.spans
+                          ctx.source-function
+                          instr
+                          ctx.func-diag
+                          ""))
+                      buf)
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      rest
+                      buf))]
+                [(CompilerIrMaybeValue.No)
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    rest
+                    buf)])]
+            [_
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                rest
+                buf)])]
+        [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)])]
+    [_ (compiler-backend-emit-instrs-normal ctx fallthrough instr rest buf)]))
+
 (define (compiler-backend-emit-instrs-step
   [ctx : CompilerBackendEmissionContext]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -39719,255 +39948,26 @@
     [(CompilerIrInstrList.Cons instr rest)
       (match instr
         [(CompilerIrInstr.Mov dst src ty)
-          (match (box-get rest)
-            [(CompilerIrInstrList.Cons next after-jump)
-              (match next
-                [(CompilerIrInstr.Cast cast-dst cast-src _ _)
-                  (match (box-get after-jump)
-                    [(CompilerIrInstrList.Cons after-cast after-binop)
-                      (match after-cast
-                        [(CompilerIrInstr.BinOp bin-dst op lhs rhs bin-ty)
-                          (if (and
-                            (compiler-backend-divmod-op? op)
-                            (compiler-backend-branch-uses-var? cast-src dst)
-                            (compiler-backend-branch-uses-var? rhs cast-dst)
-                            (compiler-backend-var-single-use?
-                              ctx.use-counts
-                              dst)
-                            (compiler-backend-var-single-use?
-                              ctx.use-counts
-                              cast-dst)
-                            (compiler-backend-divmod-safe-literal? src bin-ty))
-                            (match (compiler-backend-emit-binop
-                              ctx.types
-                              ctx.global-types
-                              ctx.assignments
-                              bin-dst
-                              op
-                              lhs
-                              src
-                              bin-ty)
-                              [(ResultCompilerBackend.Ok binop-asm)
-                                (compiler-backend-emit-instrs
-                                  ctx
-                                  fallthrough
-                                  (box-get after-binop)
-                                  (compiler-backend-emergency-append
-                                    buf
-                                    binop-asm))]
-                              [(ResultCompilerBackend.Err message)
-                                (ResultCompilerBackend.Err message)])
-                            (compiler-backend-emit-instrs-normal
-                              ctx
-                              fallthrough
-                              instr
-                              (box-get rest)
-                              buf))]
-                        [_
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf)])]
-                    [_
-                      (compiler-backend-emit-instrs-normal
-                        ctx
-                        fallthrough
-                        instr
-                        (box-get rest)
-                        buf)])]
-                [(CompilerIrInstr.BinOp bin-dst op lhs rhs bin-ty)
-                  (if (and
-                    (compiler-backend-divmod-op? op)
-                    (compiler-backend-branch-uses-var? rhs dst)
-                    (compiler-backend-divmod-safe-literal? src bin-ty))
-                    (match (if (compiler-backend-var-single-use?
-                      ctx.use-counts
-                      dst)
-                      (ResultCompilerBackend.Ok "")
-                      (compiler-backend-emit-mov
-                        ctx.assignments
-                        dst
-                        src
-                        ty
-                        ctx.program-index
-                        ctx.vars
-                        ""))
-                      [(ResultCompilerBackend.Ok prefix)
-                        (match (compiler-backend-emit-binop
-                          ctx.types
-                          ctx.global-types
-                          ctx.assignments
-                          bin-dst
-                          op
-                          lhs
-                          src
-                          bin-ty)
-                          [(ResultCompilerBackend.Ok binop-asm)
-                            (compiler-backend-emit-instrs
-                              ctx
-                              fallthrough
-                              (box-get after-jump)
-                              (compiler-backend-emergency-append
-                                buf
-                                (string.append prefix binop-asm)))]
-                          [(ResultCompilerBackend.Err message)
-                            (ResultCompilerBackend.Err message)])]
-                      [(ResultCompilerBackend.Err message)
-                        (ResultCompilerBackend.Err message)])
-                    (compiler-backend-emit-instrs-normal
-                      ctx
-                      fallthrough
-                      instr
-                      (box-get rest)
-                      buf))]
-                [(CompilerIrInstr.Jump target-label)
-                  (compiler-backend-emit-fused-mov-trivial-phi-return-rest
-                    ctx
-                    fallthrough
-                    dst
-                    src
-                    ty
-                    target-label
-                    (box-get after-jump)
-                    buf)]
-                [(CompilerIrInstr.Return maybe)
-                  (match (box-get after-jump)
-                    [(CompilerIrInstrList.Nil)
-                      (match maybe
-                        [(CompilerIrMaybeValue.Some value)
-                          (if (compiler-backend-branch-uses-var? value dst)
-                            (match (compiler-backend-emit-return
-                              ctx.source-function
-                              ctx.blocks
-                              (CompilerIrMaybeValue.Some src)
-                              ctx.assignments
-                              ctx.vars
-                              ctx.ret-ty
-                              ctx.program-index)
-                              [(ResultCompilerBackend.Ok asm)
-                                (ResultCompilerBackend.Ok
-                                  (compiler-backend-emergency-render-append
-                                    buf
-                                    asm))]
-                              [(ResultCompilerBackend.Err message)
-                                (ResultCompilerBackend.Err
-                                  (box
-                                    (compiler-backend-apply-instr-diagnostic
-                                      (box-get message)
-                                      (compiler-backend-instr-diagnostic
-                                        ctx.spans
-                                        ctx.source-function
-                                        instr
-                                        ctx.func-diag
-                                        ""))))])
-                            (compiler-backend-emit-instrs-normal
-                              ctx
-                              fallthrough
-                              instr
-                              (box-get rest)
-                              buf))]
-                        [(CompilerIrMaybeValue.No)
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf)])]
-                    [_
-                      (compiler-backend-emit-instrs-normal
-                        ctx
-                        fallthrough
-                        instr
-                        (box-get rest)
-                        buf)])]
-                [_
-                  (compiler-backend-emit-instrs-normal
-                    ctx
-                    fallthrough
-                    instr
-                    (box-get rest)
-                    buf)])]
-            [_
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                (box-get rest)
-                buf)])]
+          (compiler-backend-emit-mov-step
+            ctx
+            fallthrough
+            instr
+            dst
+            src
+            ty
+            (box-get rest)
+            buf)]
         [(CompilerIrInstr.Call dst name args ty)
-          (match (box-get rest)
-            [(CompilerIrInstrList.Cons next after-return)
-              (match next
-                [(CompilerIrInstr.Return maybe)
-                  (match (box-get after-return)
-                    [(CompilerIrInstrList.Nil)
-                      (match maybe
-                        [(CompilerIrMaybeValue.Some value)
-                          (if (and
-                            (compiler-backend-branch-uses-var? value dst)
-                            (opt-type-eq ty ctx.ret-ty))
-                            (compiler-backend-emit-terminator-into
-                              (compiler-backend-emit-call-return
-                                ctx.target
-                                ctx.source-function
-                                ctx.blocks
-                                name
-                                args
-                                ctx.assignments
-                                (compiler-backend-scratch-plan-register-here
-                                  (compiler-backend-runtime-plan-scratch
-                                    ctx.plan)
-                                  0)
-                                ctx.types
-                                ctx.global-types
-                                ctx.vars
-                                ctx.plan
-                                ctx.functions
-                                ctx.externs
-                                ctx.program-index
-                                (compiler-backend-instr-diagnostic
-                                  ctx.spans
-                                  ctx.source-function
-                                  instr
-                                  ctx.func-diag
-                                  ""))
-                              buf)
-                            (compiler-backend-emit-instrs-normal
-                              ctx
-                              fallthrough
-                              instr
-                              (box-get rest)
-                              buf))]
-                        [(CompilerIrMaybeValue.No)
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            (box-get rest)
-                            buf)])]
-                    [_
-                      (compiler-backend-emit-instrs-normal
-                        ctx
-                        fallthrough
-                        instr
-                        (box-get rest)
-                        buf)])]
-                [_
-                  (compiler-backend-emit-instrs-normal
-                    ctx
-                    fallthrough
-                    instr
-                    (box-get rest)
-                    buf)])]
-            [_
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                (box-get rest)
-                buf)])]
+          (compiler-backend-emit-call-step
+            ctx
+            fallthrough
+            instr
+            dst
+            name
+            args
+            ty
+            (box-get rest)
+            buf)]
         [(CompilerIrInstr.StorePtr ptr value0 ty0)
           (compiler-backend-emit-store-ptr-step
             ctx

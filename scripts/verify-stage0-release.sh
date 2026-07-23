@@ -28,6 +28,11 @@ fail() {
     return 1
 }
 
+# Keep the multi-field API projection in one tested filter. Parenthesize the
+# piped fields: without the first pair, jq evaluates the later object lookups
+# against `.id` and fails with "expected an object but got: number".
+RELEASE_RECORD_JQ='[ (.id | tostring), (.draft | tostring), .target_commitish, (.published_at // "") ] | join("|")'
+
 # Validate state already returned by the GitHub releases API. Assets are a
 # sorted, newline-separated list so duplicates and unexpected names fail too.
 validate_release_payload() {
@@ -105,6 +110,17 @@ self_test() {
         SHA256SUMS \
         typelisp-stage0-linux \
         typelisp.vsix | LC_ALL=C sort)
+    command -v jq >/dev/null 2>&1 || {
+        echo "self-test requires jq" >&2
+        return 1
+    }
+    release_record=$(printf '%s\n' \
+        '{"id":100,"draft":false,"target_commitish":"0123456789abcdef0123456789abcdef01234567","published_at":"2026-07-23T00:00:00Z"}' |
+        jq -r "$RELEASE_RECORD_JQ")
+    if [ "$release_record" != "100|false|$expected_sha|2026-07-23T00:00:00Z" ]; then
+        echo "self-test release record projection mismatch: $release_record" >&2
+        return 1
+    fi
 
     validate_published_release \
         100 false "$expected_sha" 2026-07-23T00:00:00Z \
@@ -181,7 +197,7 @@ fi
 release_id=$release_ids
 
 release_record=$(gh api "repos/$REPO/releases/$release_id" \
-    --jq '[.id|tostring, (.draft|tostring), .target_commitish, (.published_at // "")] | join("|")')
+    --jq "$RELEASE_RECORD_JQ")
 IFS='|' read -r record_id draft target published_at <<EOF
 $release_record
 EOF
@@ -206,7 +222,7 @@ published=false
 attempt=1
 while [ "$attempt" -le "$ATTEMPTS" ]; do
     if tag_record=$(gh api "repos/$REPO/releases/tags/$TAG" \
-        --jq '[.id|tostring, (.draft|tostring), .target_commitish, (.published_at // "")] | join("|")' \
+        --jq "$RELEASE_RECORD_JQ" \
         2>/dev/null); then
         IFS='|' read -r tag_id tag_draft tag_target tag_published_at <<EOF
 $tag_record

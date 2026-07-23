@@ -165,6 +165,13 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 configure_toolchain
 
+# Every converged compiler and the frontend surfaces it produces must name the
+# exact checked-in compiler revision.  Keep this input outside the disposable
+# fixpoint directory because the source include is rooted at src/../target.
+BUILD_IDENTITY=$(git rev-parse --verify HEAD)
+mkdir -p "$ROOT/target/build-stage0"
+printf '%s' "$BUILD_IDENTITY" > "$ROOT/target/build-stage0/git-hash.txt"
+
 SEED_COMPTIME_VARIANT_BRIDGE_ROOT=$(
     bootstrap_seed_comptime_short_variant_bridge_root \
         "$ROOT" "$COMPILER" "$WORKDIR"
@@ -458,10 +465,10 @@ if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
     mkdir -p "$SEED_BOOTSTRAP_CWD"
     (
         cd "$SEED_BOOTSTRAP_CWD"
-        run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$ROOT/$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg stage0-seed-bootstrap --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2
+        run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$ROOT/$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg stage0-seed-bootstrap --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2
     )
 else
-    run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg stage0-seed-bootstrap --stdlib-root stdlib --stdlib-root src --opt-level 2
+    run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg stage0-seed-bootstrap --stdlib-root stdlib --stdlib-root src --opt-level 2
 fi
 
 bootstrap_seed_runtime_small_arena_compat "$STAGE1_ASM"
@@ -475,7 +482,7 @@ scripts/build-embedded-stdlib-tlci.sh \
     "$STAGE1_BIN" target/embedded-stdlib-tlci/stdlib.tlci "$HOST_OS"
 
 echo "[bootstrap] stage1 -> stage2.s"
-run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root stdlib --stdlib-root src --opt-level 2
+run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root stdlib --stdlib-root src --opt-level 2
 
 assemble_and_link_stage2
 
@@ -490,7 +497,7 @@ echo "[bootstrap] stage2 -> stage3.s"
 # stage2+ compile with the embedded stdlib (no stdlib root): the byte-equal
 # fixpoint against stage2.s (built from the on-disk stdlib) is the parity
 # gate for the embedded source payload and the native macro route.
-run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root src --opt-level 2
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root src --opt-level 2
 
 assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
 
@@ -498,7 +505,7 @@ bootstrap_build_stage4() {
     scripts/build-embedded-stdlib-tlci.sh \
         "$STAGE3_BIN" target/embedded-stdlib-tlci/stdlib.tlci "$HOST_OS"
     echo "[bootstrap] stage3 -> stage4.s"
-    run_with_heartbeat "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root src --opt-level 2
+    run_with_heartbeat "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root src --opt-level 2
     assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
 }
 
@@ -511,7 +518,7 @@ bootstrap_resolve_fixpoint
 # native macro route active, and require byte parity with stage3.s.
 echo "[bootstrap] stage2 embedded-provenance parity"
 EMBEDDED_PARITY_ASM="$WORKDIR/stage3-embedded.s"
-run_with_heartbeat "stage2 embedded parity" env -C "$WORKDIR" "$STAGE2_BIN" compile "$ROOT/$BOOTSTRAP_SRC" -o "$EMBEDDED_PARITY_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg embedded-stdlib-tlci --stdlib-root "$ROOT/src" --opt-level 2
+run_with_heartbeat "stage2 embedded parity" env -C "$WORKDIR" "$STAGE2_BIN" compile "$ROOT/$BOOTSTRAP_SRC" -o "$EMBEDDED_PARITY_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$ROOT/src" --opt-level 2
 if ! cmp -s "$STAGE3_ASM" "$EMBEDDED_PARITY_ASM"; then
     echo "embedded-provenance stage2 output differs from stage3.s" >&2
     exit 1

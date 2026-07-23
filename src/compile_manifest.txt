@@ -304,6 +304,7 @@ end
 # Main-less; compiled transitively through the selfhost_main case, so they get a
 # decision row rather than a direct compile case.
 decision|src/build_cli_core.tl|build command logic (#622/#1339): arg parsing, source/package build, and direct source build execution; main-less, imported by src/main.tl and exercised through the selfhost_main case
+decision|src/compiler_build_identity.tl|deterministic running-compiler source identity (#5525): shares the generated Git hash across CLI package producers and embedded frontend-surface admission without importing the main dispatcher
 decision|src/cli_option_core.tl|shared parsing for common CLI value options (--stdlib-root, --cfg, --target, and --opt-level); main-less, imported by command-specific CLI modules and exercised through the selfhost_main case
 decision|src/clean_cli_core.tl|clean command logic (#1643): dry-run/source artifact cleanup and manifest package output cleanup; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/run_cli_core.tl|run command logic: arg parsing and direct source run execution; main-less, imported by src/main.tl and exercised through the selfhost_main case

@@ -384,6 +384,7 @@
   [opt-level : i64]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
   (match (build-parse-target target-text)
     [(ResultBuildTarget.Err message)
@@ -413,6 +414,7 @@
                   profile
                   lock-policy
                   stdlib-roots
+                  producer-identity
                   false)]
               (if (= build-status 0)
                 (run-cli-run-package-artifact
@@ -427,6 +429,7 @@
 
 (define (run-cli-run-package
   [config : BuildConfig]
+  [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
   (match config
     [(BuildConfig.Package
@@ -461,10 +464,11 @@
               opt-level
               lock-policy
               stdlib-roots
+              producer-identity
               runtime-args)]))]
     [_ 1]))
 
-(define (run-direct-from [idx : i64] [count : i64]) : i64
+(define (run-direct-from [idx : i64] [count : i64] [producer-identity : String]) : i64
   (match (run-cli-config-from idx count)
     [(ResultRunCliConfig.Ok config)
       (match config
@@ -487,7 +491,7 @@
             mode
             link-inputs)]
         [(RunCliConfig.Package package-config runtime-args)
-          (run-cli-run-package package-config runtime-args)])]
+          (run-cli-run-package package-config producer-identity runtime-args)])]
     [(ResultRunCliConfig.Err message)
       (begin
         (io.print-error message)
@@ -496,7 +500,7 @@
 ;; Run the `run` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name). The bare form builds and executes
 ;; in-process.
-(define (run-run-from [start : i64] [count : i64]) : i64
+(define (run-run-from [start : i64] [count : i64] [producer-identity : String]) : i64
   (if (and (> count start) (string.eq (io.arg start) "--direct"))
-    (run-direct-from (+ start 1) count)
-    (run-direct-from start count)))
+    (run-direct-from (+ start 1) count producer-identity)
+    (run-direct-from start count producer-identity)))

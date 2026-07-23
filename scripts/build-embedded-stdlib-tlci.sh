@@ -62,7 +62,22 @@ collecting {
 }
 ' src/compiler_embedded_stdlib_payload.tl > "$MANIFEST"
 
-BUILD_HASH=$(git rev-parse --verify HEAD)
+if PRODUCER_IDENTITY=$($COMPILER --producer-identity 2>/dev/null); then
+    :
+else
+    # Transition fallback for the previously published stage0, which reports
+    # the same deterministic source identity through `--version` but predates
+    # the dedicated machine-readable command.
+    PRODUCER_VERSION=$($COMPILER --version 2>/dev/null) || {
+        echo "cannot read producer identity from compiler: $COMPILER" >&2
+        exit 1
+    }
+    PRODUCER_IDENTITY=$(printf '%s\n' "$PRODUCER_VERSION" | awk 'NR == 1 && $1 == "typelisp" { print $2 }')
+fi
+if ! printf '%s\n' "$PRODUCER_IDENTITY" | grep -Eq '^[0-9a-f]{40}$'; then
+    echo "compiler reported malformed producer identity: $PRODUCER_IDENTITY" >&2
+    exit 1
+fi
 SOURCE_HASH=$(
     while IFS= read -r MODULE_PATH; do
         SOURCE_PATH="$ROOT/stdlib/$MODULE_PATH"
@@ -79,10 +94,10 @@ printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
 "$COMPILER" run tools/embedded-stdlib-tlci/build-surface.tl \
     --stdlib-root stdlib --stdlib-root src \
     --cfg compiler-surface-producer -- \
-    stdlib "$SURFACE" "$HOST_TARGET" "$BUILD_HASH" "$SOURCE_HASH"
+    stdlib "$SURFACE" "$HOST_TARGET" "$PRODUCER_IDENTITY" "$SOURCE_HASH"
 "$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
     --stdlib-root stdlib --stdlib-root src -- \
-    "$MANIFEST" stdlib "$OUTPUT" "$HOST_TARGET" "$BUILD_HASH" "$SURFACE"
+    "$MANIFEST" stdlib "$OUTPUT" "$HOST_TARGET" "$PRODUCER_IDENTITY" "$SURFACE"
 
 [ -s "$OUTPUT" ] || {
     echo "embedded stdlib tlci builder emitted no image: $OUTPUT" >&2

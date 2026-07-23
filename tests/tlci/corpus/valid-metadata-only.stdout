@@ -2,7 +2,7 @@ tlci image
 format-version: 2
 host-arch: x86_64 (1)
 callback-abi-version: 1
-compiler-build-hash: tlci-v1-corpus
+producer-compiler-identity: tlci-v1-corpus
 content-hash: 996449910
 file-size: 0
 metadata-version: v1

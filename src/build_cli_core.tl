@@ -3152,9 +3152,6 @@
       (build-package-graph-artifact-paths-smoke-ok?)
       (io.panic "build package graph artifact paths smoke failed"))))
 
-(define build-package-tlci-compiler-build-hash : String
-  "typelisp-selfhost-v1")
-
 (define (build-package-tlci-owner-stdlib-path? [owner : String] [path : String]) : bool
   (if (= (string.string-length owner) 0)
     false
@@ -3753,11 +3750,13 @@
           owned-sources
           (BuildPackageTlciCallableCollector TlciSpmdCallableList.Nil "")))]))
 
-(define (build-package-tlci-image [metadata : TlciMetadata]) : TlciImage
+(define (build-package-tlci-image
+  [metadata : TlciMetadata]
+  [producer-identity : String]) : TlciImage
   (TlciImage
     tlci-host-arch-x86-64
     tlci-callback-abi-version
-    build-package-tlci-compiler-build-hash
+    producer-identity
     metadata
     (tlci-empty-bytes)
     (tlci-empty-bytes)
@@ -3775,42 +3774,51 @@
   [manifest : CompilerPkgManifest]
   [mode : CompilerBackendMode]
   [decls : AstDeclList]
-  [paths : AstDeclPathList]) : ResultBuildPackageTlciText
-  (let
-    [collector : BuildPackageTlciCallableCollector
-      (build-package-tlci-callable-collector
-        manifest-path
-        manifest
-        mode
-        decls
-        paths)]
-    [macro-names : (Array String)
-      (build-package-tlci-macro-names manifest-path manifest decls paths)]
-    (if (> (string.string-length (struct-get collector error)) 0)
-      (ResultBuildPackageTlciText.Err (struct-get collector error))
-      (let
-        [metadata : TlciMetadata
-          (build-package-tlci-metadata manifest (struct-get collector items))]
-        (if (= (array-length macro-names) 0)
-          (match (tlci-emit-image (build-package-tlci-image metadata))
-            [(ResultTlciBytes.Err message)
-              (ResultBuildPackageTlciText.Err
-                (str_cat.str-cat "build: failed to emit package tlci: " message))]
-            [(ResultTlciBytes.Ok bytes)
-              (ResultBuildPackageTlciText.Ok
-                (tlci-bytes->string bytes 0 (array-length bytes)))])
-          (match (embedded-native-emit-package
-            (tlci-metadata-emit metadata)
-            build-package-tlci-compiler-build-hash
-            (cfg windows true false)
-            (tlci-empty-bytes)
-            macro-names)
-            [(ResultProducerBytes.Err message)
-              (ResultBuildPackageTlciText.Err
-                (str_cat.str-cat "build: failed to emit package tlci: " message))]
-            [(ResultProducerBytes.Ok bytes)
-              (ResultBuildPackageTlciText.Ok
-                (tlci-bytes->string bytes 0 (array-length bytes)))]))))))
+  [paths : AstDeclPathList]
+  [producer-identity : String]) : ResultBuildPackageTlciText
+  (if (not (tlci-producer-identity-valid? producer-identity))
+    (ResultBuildPackageTlciText.Err
+      "build: exact producer compiler identity is unavailable")
+    (let
+      [collector : BuildPackageTlciCallableCollector
+        (build-package-tlci-callable-collector
+          manifest-path
+          manifest
+          mode
+          decls
+          paths)]
+      [macro-names : (Array String)
+        (build-package-tlci-macro-names manifest-path manifest decls paths)]
+      (if (> (string.string-length (struct-get collector error)) 0)
+        (ResultBuildPackageTlciText.Err (struct-get collector error))
+        (let
+          [metadata : TlciMetadata
+            (build-package-tlci-metadata manifest (struct-get collector items))]
+          (if (= (array-length macro-names) 0)
+            (match (tlci-emit-image
+              (build-package-tlci-image metadata producer-identity))
+              [(ResultTlciBytes.Err message)
+                (ResultBuildPackageTlciText.Err
+                  (str_cat.str-cat
+                    "build: failed to emit package tlci: "
+                    message))]
+              [(ResultTlciBytes.Ok bytes)
+                (ResultBuildPackageTlciText.Ok
+                  (tlci-bytes->string bytes 0 (array-length bytes)))])
+            (match (embedded-native-emit-package
+              (tlci-metadata-emit metadata)
+              producer-identity
+              (cfg windows true false)
+              (tlci-empty-bytes)
+              macro-names)
+              [(ResultProducerBytes.Err message)
+                (ResultBuildPackageTlciText.Err
+                  (str_cat.str-cat
+                    "build: failed to emit package tlci: "
+                    message))]
+              [(ResultProducerBytes.Ok bytes)
+                (ResultBuildPackageTlciText.Ok
+                  (tlci-bytes->string bytes 0 (array-length bytes)))])))))))
 
 (define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
   (source-tool-write-file path text "build: failed to write package tlci"))
@@ -4064,6 +4072,7 @@
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
   [dep-libs : process.ProcessStringList]
+  [producer-identity : String]
   [announce : bool]) : i64
   (let
     ;; Windows package DAG nodes are serial same-process compiles; keep only
@@ -4185,7 +4194,8 @@
                       manifest
                       mode
                       decls
-                      paths)
+                      paths
+                      producer-identity)
                       [(ResultBuildPackageTlciText.Err message)
                         (begin
                           (io.print-error message)
@@ -4496,7 +4506,10 @@
               (process.error-message error)))
           1))]))
 
-(define (build-package-worker-run-from [idx : i64] [count : i64]) : i64
+(define (build-package-worker-run-from
+  [idx : i64]
+  [count : i64]
+  [producer-identity : String]) : i64
   (match (build-package-worker-config-from idx count)
     [(ResultBuildPackageWorkerConfig.Err message)
       (begin
@@ -4550,6 +4563,7 @@
                       (struct-get config lock-policy)
                       (struct-get config stdlib-roots)
                       (process.args-empty)
+                      producer-identity
                       true)
                     (begin
                       (io.print-error
@@ -5026,6 +5040,7 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [producer-identity : String]
   [announce : bool]) : i64
   (let
     [index : i64 0]
@@ -5049,6 +5064,7 @@
               lock-policy
               stdlib-roots
               (process.args-empty)
+              producer-identity
               announce)]
           (if (= node-status 0)
             (set! index (+ index 1))
@@ -5070,6 +5086,7 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [producer-identity : String]
   [announce : bool]) : i64
   (if (and
     (build-package-async-process-supported?)
@@ -5091,6 +5108,7 @@
       mode
       lock-policy
       stdlib-roots
+      producer-identity
       announce)))
 
 (define (build-doctest-report [report : DocTestRunReport]) : i64
@@ -5165,6 +5183,7 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [producer-identity : String]
   [announce : bool]) : i64
   (match (build-parse-target target-text)
     [(ResultBuildTarget.Err message)
@@ -5204,6 +5223,7 @@
                       mode
                       lock-policy
                       stdlib-roots
+                      producer-identity
                       announce)]
                   (if (= dep-status 0)
                     (build-package-emit-one
@@ -5216,6 +5236,7 @@
                       lock-policy
                       stdlib-roots
                       (build-package-graph-link-libs nodes profile target)
+                      producer-identity
                       announce)
                     dep-status))])]))]))
 
@@ -5228,6 +5249,7 @@
   [profile : BuildProfile]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [producer-identity : String]
   [announce : bool]) : i64
   (match (source-tool-backend-mode "build" mode)
     [(ResultSourceToolBackendMode.Err message)
@@ -5251,6 +5273,7 @@
             backend-mode
             lock-policy
             stdlib-roots
+            producer-identity
             announce)])]))
 
 (define (build-package-from-path
@@ -5261,7 +5284,8 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : i64
+  [stdlib-roots : cli_svec.Vec]
+  [producer-identity : String]) : i64
   (build-package-from-path-announce
     manifest-path
     target-text
@@ -5271,9 +5295,10 @@
     profile
     lock-policy
     stdlib-roots
+    producer-identity
     true))
 
-(define (build-package [config : BuildConfig]) : i64
+(define (build-package [config : BuildConfig] [producer-identity : String]) : i64
   (match config
     [(BuildConfig.Package
         manifest-path
@@ -5306,10 +5331,11 @@
               opt-level
               profile
               lock-policy
-              stdlib-roots)]))]
+              stdlib-roots
+              producer-identity)]))]
     [_ 1]))
 
-(define (build-main-from [idx : i64]) : i64
+(define (build-main-from [idx : i64] [producer-identity : String]) : i64
   (match (build-config-from idx (arg-count))
     [(ResultBuildConfig.Ok config)
       (match config
@@ -5317,7 +5343,8 @@
           (begin
             (io.print-string (build-source-plan-render config))
             0)]
-        [(BuildConfig.Package _ _ _ _ _ _ _ _ _ _) (build-package config)])]
+        [(BuildConfig.Package _ _ _ _ _ _ _ _ _ _)
+          (build-package config producer-identity)])]
     [(ResultBuildConfig.Err message)
       (begin
         (io.print-error message)
@@ -5725,22 +5752,28 @@
         (io.print-error message)
         1)]))
 
-(define (build-direct-from [start : i64] [count : i64]) : i64
+(define (build-direct-from
+  [start : i64]
+  [count : i64]
+  [producer-identity : String]) : i64
   (if (or
     (build-args-contain-manifest? start count)
     (not (build-args-have-source? start count)))
-    (build-main-from start)
+    (build-main-from start producer-identity)
     (build-source-direct-from start count)))
 
 ;; Run the `build` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name). `--direct` remains accepted as a
 ;; compatibility no-op; the bare form also builds in-process.
-(define (build-run-from [start : i64] [count : i64]) : i64
+(define (build-run-from
+  [start : i64]
+  [count : i64]
+  [producer-identity : String]) : i64
   (cond
     [(and (> count start) (string.eq (io.arg start) "--package-worker"))
-      (build-package-worker-run-from (+ start 1) count)]
+      (build-package-worker-run-from (+ start 1) count producer-identity)]
     [(and (> count start) (string.eq (io.arg start) "--package-doctest-worker"))
       (build-package-doctest-worker-run-from (+ start 1) count)]
     [(and (> count start) (string.eq (io.arg start) "--direct"))
-      (build-direct-from (+ start 1) count)]
-    [else (build-direct-from start count)]))
+      (build-direct-from (+ start 1) count producer-identity)]
+    [else (build-direct-from start count producer-identity)]))

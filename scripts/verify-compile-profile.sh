@@ -46,6 +46,12 @@ SURFACE_MISMATCH_PROFILE_BIN="$WORKDIR/surface-mismatch-profile$NL_BIN_EXT"
 SURFACE_MISMATCH_ASM="$WORKDIR/surface-mismatch.s"
 SURFACE_MISMATCH_STDOUT="$WORKDIR/surface-mismatch.stdout"
 SURFACE_MISMATCH_STDERR="$WORKDIR/surface-mismatch.stderr"
+SURFACE_COMPILER_MISMATCH_PROFILE_ASM="$WORKDIR/surface-compiler-mismatch-profile.s"
+SURFACE_COMPILER_MISMATCH_PROFILE_OBJ="$WORKDIR/surface-compiler-mismatch-profile.$NL_OBJ_EXT"
+SURFACE_COMPILER_MISMATCH_PROFILE_BIN="$WORKDIR/surface-compiler-mismatch-profile$NL_BIN_EXT"
+SURFACE_COMPILER_MISMATCH_ASM="$WORKDIR/surface-compiler-mismatch.s"
+SURFACE_COMPILER_MISMATCH_STDOUT="$WORKDIR/surface-compiler-mismatch.stdout"
+SURFACE_COMPILER_MISMATCH_STDERR="$WORKDIR/surface-compiler-mismatch.stderr"
 SUMMARY_ASM="$WORKDIR/typelisp-summary.s"
 SUMMARY_OBJ="$WORKDIR/typelisp-summary.$NL_OBJ_EXT"
 SUMMARY_BIN="$WORKDIR/typelisp-summary$NL_BIN_EXT"
@@ -343,6 +349,19 @@ assert_lower_row() {
 echo "[compile-profile] build embedded stdlib tlci input"
 scripts/build-embedded-stdlib-tlci.sh \
     "$COMPILER" target/embedded-stdlib-tlci/stdlib.tlci "$NL_HOST_OS"
+if PRODUCER_IDENTITY=$($COMPILER --producer-identity 2>/dev/null); then
+    :
+else
+    # The published transition seed predates the dedicated command but reports
+    # the same exact revision as the second field of its version line.
+    PRODUCER_IDENTITY=$($COMPILER --version 2>/dev/null |
+        awk 'NR == 1 && $1 == "typelisp" { print $2 }')
+fi
+if ! printf '%s\n' "$PRODUCER_IDENTITY" | grep -Eq '^[0-9a-f]{40}$'; then
+    fail "compiler reported malformed producer identity: $PRODUCER_IDENTITY"
+fi
+mkdir -p target/build-stage0
+printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/git-hash.txt
 
 echo "[compile-profile] compile profile-enabled CLI"
 if ! "$COMPILER" compile src/main.tl \
@@ -351,6 +370,7 @@ if ! "$COMPILER" compile src/main.tl \
     $(native_target_cfg_args) \
     --stdlib-root stdlib \
     --stdlib-root src \
+    --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
     --cfg tlci-native-route \
@@ -443,6 +463,7 @@ set +e
     $(native_target_cfg_args) \
     --stdlib-root stdlib \
     --stdlib-root src \
+    --cfg compiler-build-identity \
     --cfg compile-profile \
     --cfg embedded-stdlib-tlci \
     --cfg tlci-native-route \
@@ -479,6 +500,62 @@ assert_contains_in "$SURFACE_MISMATCH_STDERR" \
     "$SURFACE_MISMATCH_STDOUT" "$SURFACE_MISMATCH_STDERR"
 cmp "$SURFACE_SOURCE_ASM" "$SURFACE_MISMATCH_ASM" >/dev/null ||
     fail "source-mismatched fallback differs from explicit source output"
+
+echo "[compile-profile] verify producer-compiler-mismatched surface fallback"
+MISMATCH_PRODUCER_IDENTITY=0000000000000000000000000000000000000000
+if [ "$MISMATCH_PRODUCER_IDENTITY" = "$PRODUCER_IDENTITY" ]; then
+    MISMATCH_PRODUCER_IDENTITY=1111111111111111111111111111111111111111
+fi
+printf '%s' "$MISMATCH_PRODUCER_IDENTITY" > target/build-stage0/git-hash.txt
+set +e
+"$COMPILER" compile src/main.tl \
+    -o "$SURFACE_COMPILER_MISMATCH_PROFILE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    --cfg compiler-build-identity \
+    --cfg compile-profile \
+    --cfg embedded-stdlib-tlci \
+    --cfg tlci-native-route \
+    > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
+status=$?
+set -e
+printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/git-hash.txt
+if [ "$status" -ne 0 ]; then
+    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+    fail "producer-mismatch profile CLI compile failed"
+fi
+if ! assemble_and_link surface-compiler-mismatch-profile-cli \
+    "$SURFACE_COMPILER_MISMATCH_PROFILE_ASM" \
+    "$SURFACE_COMPILER_MISMATCH_PROFILE_OBJ" \
+    "$SURFACE_COMPILER_MISMATCH_PROFILE_BIN" \
+    >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
+    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+    fail "producer-mismatch profile CLI link failed"
+fi
+if ! "$SURFACE_COMPILER_MISMATCH_PROFILE_BIN" compile \
+    tests/integration/arithmetic.tl \
+    -o "$SURFACE_COMPILER_MISMATCH_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    > "$SURFACE_COMPILER_MISMATCH_STDOUT" \
+    2> "$SURFACE_COMPILER_MISMATCH_STDERR"; then
+    show_failure_logs \
+        "$SURFACE_COMPILER_MISMATCH_STDOUT" \
+        "$SURFACE_COMPILER_MISMATCH_STDERR"
+    fail "producer-compiler-mismatched surface fallback fixture failed"
+fi
+assert_contains_in "$SURFACE_COMPILER_MISMATCH_STDERR" \
+    "compile-profile-detail|prelude.source_pipeline_entries|1" \
+    "$SURFACE_COMPILER_MISMATCH_STDOUT" \
+    "$SURFACE_COMPILER_MISMATCH_STDERR"
+assert_contains_in "$SURFACE_COMPILER_MISMATCH_STDERR" \
+    "compile-profile-detail|prelude.hydrations|0" \
+    "$SURFACE_COMPILER_MISMATCH_STDOUT" \
+    "$SURFACE_COMPILER_MISMATCH_STDERR"
+cmp "$SURFACE_SOURCE_ASM" "$SURFACE_COMPILER_MISMATCH_ASM" >/dev/null ||
+    fail "producer-compiler-mismatched fallback differs from explicit source output"
 
 echo "[compile-profile] compile compact-summary CLI"
 if ! "$COMPILER" compile src/main.tl \

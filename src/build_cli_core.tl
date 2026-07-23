@@ -11,12 +11,10 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
-(import stdlib.sort)
 (import stdlib.vector)
 (import compiler_builtin_ids as cbi)
 (import (hashmap.hashmap String i64) as build_string_i64_map)
 (import (vector.vector String) as cli_svec)
-(import (sort.vec String) as cli_svec_sort)
 (import cli_option_core as cli_option)
 (import "host_plan.tl")
 (import "build_run_core.tl")
@@ -3543,12 +3541,35 @@
   (names (Array String))
   (captures TlciNativeMacroCaptures))
 
+(define (build-package-tlci-sort-macro-catalog!
+  [catalog : (&mut catalog (Array String))]) : unit
+  (let
+    [count : i64 (array-length catalog)]
+    [index : i64 1]
+    (while (< index count)
+      (let
+        [value : String (clone (array-ref catalog index))]
+        [slot : i64 index]
+        (begin
+          (while (if (> slot 0)
+            (package-source-string-less?
+              (clone value)
+              (clone (array-ref catalog (- slot 1))))
+            false)
+            (begin
+              (array-set! catalog slot (clone (array-ref catalog (- slot 1))))
+              (set! slot (- slot 1))))
+          (array-set! catalog slot value)
+          (set! index (+ index 1)))))))
+
 (define (build-package-tlci-finish-macro-collector
   [names : (&mut names cli_svec.Vec)]
   [captures : TlciNativeMacroCaptures]) : BuildPackageTlciMacroCollector
-  (begin
-    (cli_svec_sort.sort! names sort.string-less?)
-    (BuildPackageTlciMacroCollector (cli_svec.to-array names) captures)))
+  (let
+    [catalog : (Array String) (cli_svec.to-array names)]
+    (begin
+      (build-package-tlci-sort-macro-catalog! (&mut catalog))
+      (BuildPackageTlciMacroCollector catalog captures))))
 
 (define (build-package-tlci-collect-decl-macro!
   [decl : AstDecl]

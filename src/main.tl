@@ -21,6 +21,7 @@
   compile-startup-profile
   (import compiler_startup_profile as startup_profile))
 (import stdlib.io)
+(import compiler_build_identity as build_identity)
 
 ;; Keep legacy root aliases for reader enum variants while stage0 expands the
 ;; build-version cfg declarations below. Dotted imports in the CLI cores share
@@ -44,15 +45,8 @@
 
 (cfg
   stage0-build-version
-  (include-str cli-build-git-hash "../target/build-stage0/git-hash.txt"))
-(cfg
-  stage0-build-version
   (include-str cli-build-date "../target/build-stage0/build-date.txt"))
 
-(cfg
-  (not stage0-build-version)
-  (define cli-build-git-hash : String
-    "unknown"))
 (cfg
   (not stage0-build-version)
   (define cli-build-date : String
@@ -358,8 +352,13 @@ Options:
       (cli-cat
         "typelisp "
         (cli-cat
-          cli-build-git-hash
+          build_identity.compiler-build-git-hash
           (cli-cat " built " (cli-cat cli-build-date "\n")))))
+    0))
+
+(define (cli-print-producer-identity) : i64
+  (begin
+    (io.print-string (cli-cat build_identity.compiler-build-git-hash "\n"))
     0))
 
 (define (cli-dispatch [command : String] [count : i64]) : i64
@@ -370,10 +369,11 @@ Options:
         (cli-eq? command "-h"))
       (cli-print-help 0)]
     [(cli-eq? command "--version") (cli-print-version)]
+    [(cli-eq? command "--producer-identity") (cli-print-producer-identity)]
     [(cli-eq? command "build")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-build-help-text) 0)
-        (build-run-from 2 count))]
+        (build-run-from 2 count build_identity.compiler-build-git-hash))]
     [(cli-eq? command "clean")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-clean-help-text) 0)
@@ -381,7 +381,7 @@ Options:
     [(cli-eq? command "run")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-run-help-text) 0)
-        (run-run-from 2 count))]
+        (run-run-from 2 count build_identity.compiler-build-git-hash))]
     [(cli-eq? command "check")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-check-help-text) 0)

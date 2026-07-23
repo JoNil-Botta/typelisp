@@ -103,7 +103,7 @@ Summary:
       "callback-abi-version: "
       (string.int->string (struct-get image callback-abi-version))
       "\n"
-      "compiler-build-hash: "
+      "producer-compiler-identity: "
       (struct-get image compiler-build-hash)
       "\n"
       "content-hash: "

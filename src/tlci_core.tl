@@ -168,6 +168,67 @@
   (Ok (Array u8))
   (Err String))
 
+;; The container field historically named `compiler-build-hash` is the exact
+;; producer-compiler identity for compiler-internal sections.  Native callback
+;; catalogs remain governed by their ABI/schema checks; only frontend surface
+;; hydration uses this stricter admission result.
+(defenum TlciProducerIdentityAdmission
+  (ExactMatch)
+  (Mismatch)
+  (Missing)
+  (Legacy)
+  (Malformed))
+
+(define tlci-legacy-package-producer-identity : String
+  "typelisp-selfhost-v1")
+
+(define (tlci-producer-identity-hex-char? [value : char]) : bool
+  (or (and (>= value '0') (<= value '9')) (and (>= value 'a') (<= value 'f'))))
+
+(define (tlci-producer-identity-valid-from? [identity : String] [index : i64]) : bool
+  (if (>= index (tlci-string-length identity))
+    true
+    (and
+      (tlci-producer-identity-hex-char? (tlci-string-ref identity index))
+      (tlci-producer-identity-valid-from? identity (+ index 1)))))
+
+;; Git's full object name is independent of host OS, build date, checkout path,
+;; and other temporary build locations while changing with the checked-in
+;; compiler source revision.
+(define (tlci-producer-identity-valid? [identity : String]) : bool
+  (and
+    (= (tlci-string-length identity) 40)
+    (tlci-producer-identity-valid-from? identity 0)))
+
+(define (tlci-producer-identity-admit
+  [image-identity : String]
+  [running-identity : String]) : TlciProducerIdentityAdmission
+  (cond
+    [(or
+        (= (tlci-string-length image-identity) 0)
+        (= (tlci-string-length running-identity) 0))
+      TlciProducerIdentityAdmission.Missing]
+    [(or
+        (string.eq image-identity tlci-legacy-package-producer-identity)
+        (string.eq image-identity "unknown")
+        (string.eq running-identity tlci-legacy-package-producer-identity)
+        (string.eq running-identity "unknown"))
+      TlciProducerIdentityAdmission.Legacy]
+    [(not (tlci-producer-identity-valid? image-identity))
+      TlciProducerIdentityAdmission.Malformed]
+    [(not (tlci-producer-identity-valid? running-identity))
+      TlciProducerIdentityAdmission.Malformed]
+    [(string.eq image-identity running-identity)
+      TlciProducerIdentityAdmission.ExactMatch]
+    [else TlciProducerIdentityAdmission.Mismatch]))
+
+(define (tlci-image-frontend-surface-admission
+  [image : TlciImage]
+  [running-identity : String]) : TlciProducerIdentityAdmission
+  (tlci-producer-identity-admit
+    (struct-get image compiler-build-hash)
+    running-identity))
+
 ;; Additive package payloads live in the v2 rodata section behind a small
 ;; directory/trailer envelope. Native-only v2 images keep their byte layout:
 ;; no envelope is emitted when there are no auxiliary sections. Keeping this
@@ -3600,6 +3661,40 @@
                     [_ false])))]
             [_ false])]))))
 
+(define (tlci-test-producer-identity-admission-ok?) : bool
+  (let
+    [current : String "0123456789abcdef0123456789abcdef01234567"]
+    [stale : String "1123456789abcdef0123456789abcdef01234567"]
+    (and
+      (tlci-producer-identity-valid? current)
+      (not
+        (tlci-producer-identity-valid?
+          "0123456789ABCDEF0123456789ABCDEF01234567"))
+      (match (tlci-producer-identity-admit current current)
+        [(TlciProducerIdentityAdmission.ExactMatch) true]
+        [_ false])
+      (match (tlci-producer-identity-admit stale current)
+        [(TlciProducerIdentityAdmission.Mismatch) true]
+        [_ false])
+      (match (tlci-producer-identity-admit "" current)
+        [(TlciProducerIdentityAdmission.Missing) true]
+        [_ false])
+      (match (tlci-producer-identity-admit current "")
+        [(TlciProducerIdentityAdmission.Missing) true]
+        [_ false])
+      (match (tlci-producer-identity-admit "typelisp-selfhost-v1" current)
+        [(TlciProducerIdentityAdmission.Legacy) true]
+        [_ false])
+      (match (tlci-producer-identity-admit current "unknown")
+        [(TlciProducerIdentityAdmission.Legacy) true]
+        [_ false])
+      (match (tlci-producer-identity-admit "not-a-build-identity" current)
+        [(TlciProducerIdentityAdmission.Malformed) true]
+        [_ false])
+      (match (tlci-producer-identity-admit current "not-a-build-identity")
+        [(TlciProducerIdentityAdmission.Malformed) true]
+        [_ false]))))
+
 (define (tlci-core-self-test-status) : i64
   (cond
     [(not (tlci-test-metadata-emit-parse?)) 1]
@@ -3616,6 +3711,7 @@
     [(not (tlci-test-parse-round-trip? (tlci-test-imports-image))) 13]
     [(not (tlci-test-aux-sections-ok?)) 14]
     [(not (tlci-test-aux-corruption-rejected?)) 15]
+    [(not (tlci-test-producer-identity-admission-ok?)) 16]
     [else 0]))
 
 (define (tlci-core-self-test-ok?) : bool

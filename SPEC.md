@@ -4812,6 +4812,16 @@ Windows. It is not ELF or COFF. The first 160 bytes are a fixed header:
 | 144 | 8 | Symbol-name table record count |
 | 152 | 8 | Total file size in bytes |
 
+The compiler build hash payload is the producer-compiler identity. Producers
+encode the full 40-byte lowercase Git object name of the checked-in compiler
+revision that encoded compiler-internal data. The identity excludes host OS,
+build date, checkout path, and temporary build location, so equivalent Linux
+and Windows compiler builds carry identical bytes. A consumer may use native
+callback catalogs when their host ABI/schema checks succeed, but it must not
+hydrate compiler-internal frontend surfaces unless this identity exactly
+matches the running compiler. Missing, legacy, malformed, and stale identities
+take the source rebuild path.
+
 All integer fields are unsigned logical values encoded in little-endian 64-bit
 slots; values that do not fit the `i64` range are rejected. The metadata
 section starts on an 8-byte boundary. Rodata and code sections are page-aligned

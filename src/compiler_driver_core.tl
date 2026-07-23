@@ -13,6 +13,7 @@
 (import "compiler_diagnostic.tl")
 (import compiler_intern as ci)
 (import "compiler_load.tl")
+(cfg embedded-stdlib-tlci (import compiler_build_identity as build_identity))
 (cfg embedded-stdlib-tlci (import "compiler_surface_hydrate.tl"))
 (cfg
   compile-startup-profile
@@ -2169,32 +2170,39 @@
     [rodata : (Array u8)]
     [configuration : String]
     [pools : AstNodePoolContext]) : CompilerDriverPreludeSurface
-    (match (compiler-surface-key rodata)
-      [(ResultCompilerSurfaceKey.Missing) CompilerDriverPreludeSurface.Missing]
-      [(ResultCompilerSurfaceKey.Err _) CompilerDriverPreludeSurface.Missing]
-      [(ResultCompilerSurfaceKey.Ok key)
-        (if (not
-          (compiler-driver-prelude-surface-key-valid?
-            key
-            outer-build
-            expected-source-hash
-            configuration))
-          CompilerDriverPreludeSurface.Missing
-          (match (compiler-surface-hydrate rodata key pools)
-            [(ResultCompilerSurfaceHydration.Missing)
-              CompilerDriverPreludeSurface.Missing]
-            [(ResultCompilerSurfaceHydration.KeyMismatch _)
-              CompilerDriverPreludeSurface.Missing]
-            [(ResultCompilerSurfaceHydration.Err _)
-              CompilerDriverPreludeSurface.Missing]
-            [(ResultCompilerSurfaceHydration.Ok hydration)
-              (let
-                [ast : SurfaceAstHydration (struct-get hydration ast)]
-                (CompilerDriverPreludeSurface.Ok
-                  (struct-get ast decls)
-                  (struct-get ast paths)
-                  (struct-get ast modules)
-                  (struct-get ast seen)))]))])))
+    (match (tlci-producer-identity-admit
+      outer-build
+      build_identity.compiler-build-git-hash)
+      [(TlciProducerIdentityAdmission.ExactMatch)
+        (match (compiler-surface-key rodata)
+          [(ResultCompilerSurfaceKey.Missing)
+            CompilerDriverPreludeSurface.Missing]
+          [(ResultCompilerSurfaceKey.Err _)
+            CompilerDriverPreludeSurface.Missing]
+          [(ResultCompilerSurfaceKey.Ok key)
+            (if (not
+              (compiler-driver-prelude-surface-key-valid?
+                key
+                outer-build
+                expected-source-hash
+                configuration))
+              CompilerDriverPreludeSurface.Missing
+              (match (compiler-surface-hydrate rodata key pools)
+                [(ResultCompilerSurfaceHydration.Missing)
+                  CompilerDriverPreludeSurface.Missing]
+                [(ResultCompilerSurfaceHydration.KeyMismatch _)
+                  CompilerDriverPreludeSurface.Missing]
+                [(ResultCompilerSurfaceHydration.Err _)
+                  CompilerDriverPreludeSurface.Missing]
+                [(ResultCompilerSurfaceHydration.Ok hydration)
+                  (let
+                    [ast : SurfaceAstHydration (struct-get hydration ast)]
+                    (CompilerDriverPreludeSurface.Ok
+                      (struct-get ast decls)
+                      (struct-get ast paths)
+                      (struct-get ast modules)
+                      (struct-get ast seen)))]))])]
+      [_ CompilerDriverPreludeSurface.Missing])))
 
 (cfg
   embedded-stdlib-tlci

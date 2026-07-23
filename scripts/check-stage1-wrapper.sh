@@ -489,9 +489,11 @@ EOF
     assert_not_contains "$PKG_ASM" "_tl_stage1_math_src_lib_add_one:"
     # cli-gate-case stage1-wrapper-inspect-package-tlci wrapper run_capture
     run_capture inspect-package-tlci "$COMPILER" inspect "$PKG_TLCI"
+    PRODUCER_IDENTITY=$($COMPILER --producer-identity)
     assert_empty "$WORKDIR/inspect-package-tlci.stderr"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "tlci image"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "package-name: stage1_pkg"
+    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset="
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset=0 bytes=0"
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "  (none)"

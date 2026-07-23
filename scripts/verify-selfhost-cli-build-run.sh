@@ -468,6 +468,8 @@ assert_active_cli_surface_command() {
             assert_empty "$label" "$WORKDIR/$label.err"
             assert_contains "$label" "$WORKDIR/$label.out" "tlci image"
             assert_contains "$label" "$WORKDIR/$label.out" "package-name: surface_inspect"
+            producer_identity=$($COMPILER --producer-identity)
+            assert_contains "$label" "$WORKDIR/$label.out" "producer-compiler-identity: $producer_identity"
             assert_contains "$label" "$WORKDIR/$label.out" "metadata-version: v1"
             assert_contains "$label" "$WORKDIR/$label.out" "code: offset="
             assert_not_contains "$label" "$WORKDIR/$label.out" "code: offset=0 bytes=0"

@@ -2849,6 +2849,14 @@ assert_contains "$out" "Built "
 PKG_TLCI="$PKG/target/release/public_tool_pkg.tlci"
 MATH_TLCI="$PKG/vendor/math/target/release/math.tlci"
 if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
+    if PRODUCER_IDENTITY=$($COMPILER --producer-identity 2>/dev/null); then
+        :
+    else
+        PRODUCER_IDENTITY=$($COMPILER --version | awk 'NR == 1 && $1 == "typelisp" { print $2 }')
+    fi
+    if ! printf '%s\n' "$PRODUCER_IDENTITY" | grep -Eq '^[0-9a-f]{40}$'; then
+        fail "compiler reported malformed producer identity: $PRODUCER_IDENTITY"
+    fi
     [ -s "$PKG_TLCI" ] || fail "package build did not write tlci image"
     [ -s "$MATH_TLCI" ] || fail "package build did not write dependency tlci image"
     # cli-gate-case package-inspect-tlci wrapper run_cmd
@@ -2857,6 +2865,7 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_stderr_empty
     assert_contains "$out" "tlci image"
     assert_contains "$out" "package-name: public_tool_pkg"
+    assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$out" "metadata-version: v1"
     assert_contains "$out" "code: offset="
     assert_not_contains "$out" "code: offset=0 bytes=0"
@@ -2866,6 +2875,7 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_stderr_empty
     assert_contains "$out" "tlci image"
     assert_contains "$out" "package-name: math"
+    assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$out" "code: offset="
     assert_not_contains "$out" "code: offset=0 bytes=0"
     BAD_TLCI="$WORKDIR/bad.tlci"
@@ -2963,6 +2973,9 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_stderr_empty
     assert_contains "$out" "host-arch: x86_64"
     assert_contains "$out" "package-name: split_pkg"
+    # Macro-free metadata-only images use the same exact producer contract as
+    # registration-bearing images above.
+    assert_contains "$out" "producer-compiler-identity: $PRODUCER_IDENTITY"
     assert_contains "$out" "code: offset=0 bytes=0"
     # cli-gate-case package-host-target-split-dep-inspect wrapper run_cmd
     run_cmd package-host-target-split-dep-inspect "$COMPILER" inspect "$SPLIT_MATH_TLCI"

@@ -1,8 +1,8 @@
 ;; End-to-end host-image coverage for package-owned macro captures (#2754).
-(import "compiler_tlci_native_producer.tl")
-(import "compiler_embedded_stdlib_tlci.tl")
-(import "tlci_loader.tl")
-(import "compiler_ctfe.tl")
+(import "../compiler_tlci_native_producer.tl")
+(import "../compiler_embedded_stdlib_tlci.tl")
+(import "../tlci_loader.tl")
+(import "../compiler_ctfe.tl")
 (import compiler_intern as ci)
 (import stdlib.array)
 (import stdlib.io)

@@ -508,7 +508,7 @@ EOF
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "  (none)"
     # cli-gate-case stage1-wrapper-package-tlci-native-verify wrapper run_capture
     run_capture package-tlci-native-verify \
-        "$COMPILER" run "$ROOT/src/compiler_tlci_native_producer_tests.tl" \
+        "$COMPILER" run "$ROOT/src/tests/compiler_tlci_native_producer_smoke.tl" \
         --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -- \
         "$PKG_TLCI" \
         "stage1.macros/add-one-macro" \

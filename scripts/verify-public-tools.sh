@@ -2989,7 +2989,7 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_not_contains "$out" "code: offset=0 bytes=0"
     # cli-gate-case package-host-target-split-native-verify wrapper run_cmd
     run_cmd package-host-target-split-native-verify \
-        "$COMPILER" run "$ROOT/src/compiler_tlci_native_producer_tests.tl" \
+        "$COMPILER" run "$ROOT/src/tests/compiler_tlci_native_producer_smoke.tl" \
         --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -- \
         "$SPLIT_ROOT_TLCI" \
         "split_pkg/split-wrap" \

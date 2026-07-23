@@ -13,6 +13,7 @@
 (import compiler_object as cobj)
 (import "compiler_backend.tl")
 (import "compiler_tlci_native_image.tl")
+(import "tlci_core.tl")
 (import compiler_builtin_ids as cbi)
 (import stdlib.array)
 (import stdlib.string)
@@ -640,6 +641,12 @@
                   " "
                   (string.int->string (string.string-length kind))
                   ")]\n"
+                  "  (if (< t"
+                  (string.int->string index)
+                  " 0)\n"
+                  "  "
+                  (string.int->string tlci-host-callback-status-bad-request)
+                  "\n"
                   "  (if (= t"
                   (string.int->string index)
                   " 1)\n"
@@ -651,7 +658,7 @@
                       opened))
                   "\n"
                   rest
-                  "))\n")))]
+                  ")))\n")))]
           [_ "  0\n"])])))
 
 (define (embedded-native-match-body

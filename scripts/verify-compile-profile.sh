@@ -80,6 +80,8 @@ COMPTIME_HOST_SMOKE_STDERR="$WORKDIR/comptime-host-smoke.stderr"
 COMPTIME_HOST_SMOKE_ASM="$WORKDIR/comptime-host-smoke.s"
 COMPTIME_HOST_SMOKE_OBJ="$WORKDIR/comptime-host-smoke.$NL_OBJ_EXT"
 COMPTIME_HOST_SMOKE_BIN="$WORKDIR/comptime-host-smoke$NL_BIN_EXT"
+BUILD_CLI_TEST_STDOUT="$WORKDIR/profile-build-cli-test.stdout"
+BUILD_CLI_TEST_STDERR="$WORKDIR/profile-build-cli-test.stderr"
 STDLIB_TLCI_DIR="$WORKDIR/stdlib-tlci-dispatch"
 STDLIB_TLCI_EMBEDDED_ASM="$STDLIB_TLCI_DIR/embedded.s"
 STDLIB_TLCI_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/embedded.stdout"
@@ -414,6 +416,15 @@ set -e
 if [ "$COMPTIME_HOST_SMOKE_STATUS" -ne 42 ]; then
     show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
     fail "native comptime host metadata smoke expected exit 42, got $COMPTIME_HOST_SMOKE_STATUS"
+fi
+
+echo "[compile-profile] verify package-test native structural equality"
+if ! "$PROFILE_BIN" test --check src/build_cli_core.tl \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    --stdlib-root stdlib \
+    > "$BUILD_CLI_TEST_STDOUT" 2> "$BUILD_CLI_TEST_STDERR"; then
+    show_failure_logs "$BUILD_CLI_TEST_STDOUT" "$BUILD_CLI_TEST_STDERR"
+    fail "profile package-test native structural equality failed"
 fi
 
 echo "[compile-profile] verify hydrated prelude bypass and source parity"

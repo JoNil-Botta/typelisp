@@ -100,6 +100,63 @@
       (= node (ctfe-result-hygiene-free-node-id))]
     [_ false]))
 
+;; Reflection probes return 1/0 as data rather than callback statuses. A true
+;; result must not poison the following construction operation, and the
+;; malformed-request sentinel is likewise caller-owned until a native entry
+;; translates it to the public bad-request status.
+(define (comptime-host-smoke-type-kind-data-ok?) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    [i64-kind : String "i64"]
+    [string-kind : String "string"]
+    (begin
+      (array-set! operands 0 (CompilerCtfeValue.Type (AstType.I64)))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        8
+        comptime-host-smoke-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [matched : i64
+          (compiler-comptime-host-invoke
+            comptime-host-smoke-cookie
+            tlci-host-callback-op-operand-type-kind-eq
+            0
+            (comptime-host-smoke-name-ptr i64-kind)
+            (string.string-length i64-kind))]
+        [mismatched : i64
+          (compiler-comptime-host-invoke
+            comptime-host-smoke-cookie
+            tlci-host-callback-op-operand-type-kind-eq
+            0
+            (comptime-host-smoke-name-ptr string-kind)
+            (string.string-length string-kind))]
+        [malformed : i64
+          (compiler-comptime-host-invoke
+            comptime-host-smoke-cookie
+            tlci-host-callback-op-operand-type-kind-eq
+            1
+            (comptime-host-smoke-name-ptr i64-kind)
+            (string.string-length i64-kind))]
+        [after-data : i64
+          (comptime-host-smoke-invoke
+            tlci-host-callback-op-expr-bool-literal
+            1
+            0)]
+        [ok : bool
+          (and
+            (= matched 1)
+            (= mismatched 0)
+            (< malformed 0)
+            (= after-data tlci-host-callback-status-ok))]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
 ;; Native sequence folds must publish the same exact-root hygiene exemption as
 ;; their interpreted CTFE counterparts. Otherwise a later handoff clones and
 ;; reattributes captured caller syntax through the macro definition context.
@@ -324,6 +381,8 @@
   (cond
     [(not (comptime-host-smoke-construct-ok?))
       (io.panic "comptime host smoke: construction")]
+    [(not (comptime-host-smoke-type-kind-data-ok?))
+      (io.panic "comptime host smoke: type-kind data status")]
     [(not (comptime-host-smoke-expr-list-fold-hygiene-ok?))
       (io.panic "comptime host smoke: expression fold hygiene")]
     [(not (comptime-host-smoke-clause-list-fold-hygiene-ok?))

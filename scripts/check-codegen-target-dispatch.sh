@@ -84,7 +84,14 @@ FNR == 1 {
         rest = substr(rest, RSTART + RLENGTH)
     }
 }
-' src/compiler_lower.tl src/compiler_lower_tests.tl src/compiler_backend.tl | sort > "$OBSERVED"
+' \
+    src/compiler_lower.tl \
+    src/compiler_lower_tests.tl \
+    src/compiler_backend.tl \
+    src/compiler_backend_runtime_common.tl \
+    src/compiler_backend_runtime_linux.tl \
+    src/compiler_backend_runtime_windows.tl \
+    | sort > "$OBSERVED"
 
 awk -F '\t' -v allowlist="$ALLOWLIST" -v observed="$OBSERVED" '
 BEGIN {
@@ -106,7 +113,7 @@ FILENAME == allowlist {
         failed = 1
         next
     }
-    if ($1 !~ /^src\/compiler_(lower|lower_tests|backend)\.tl$/) {
+    if ($1 !~ /^src\/compiler_(lower|lower_tests|backend(_runtime_(common|linux|windows))?)\.tl$/) {
         printf "malformed target dispatch allowlist row %d: unsupported file `%s`\n", FNR, $1 > "/dev/stderr"
         failed = 1
     }

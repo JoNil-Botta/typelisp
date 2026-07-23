@@ -351,7 +351,7 @@ contains|_tl_compiler_backend_emit_source:
 contains|_tl_compiler_backend_emit_program_for_target:
 contains|_tl_compiler_backend_emit_program_object_image_linux:
 contains|_tl_compiler_backend_extern_metadata_symbol_ok_question:
-contains|_tl_compiler_backend_runtime_windows_alloc_functions:
+contains|_tl_compiler_backend_runtime_windows_compiler_backend_runtime_windows_compiler_backend_runtime_windows_alloc_functions:
 contains|foreign_exact
 contains|backend: too many call args
 not-contains|_tl_compiler_backend_runtime_file_open_status_functions:
@@ -365,6 +365,10 @@ end
 decision|src/compiler_object.tl|structured object-image data model (#2308): main-less, imported by src/compiler_backend.tl and exercised through the backend object-image self-test plus selfhost_compiler_backend_smoke
 decision|src/compiler_object_coff.tl|COFF object serialization helper (#2310): main-less, imported by src/build_run_core.tl and the backend test helper, exercised through the selfhost_main case and the compiler_backend_smoke native integration test
 decision|src/compiler_object_elf.tl|ELF64 object serialization helper (#2309): main-less, imported by src/build_run_core.tl and the backend test helper, exercised through the selfhost_main case and the compiler_backend_smoke native integration test
+decision|src/compiler_backend_runtime_common.tl|target-neutral backend runtime feature recipe and shared assembly fragments (#5344): main-less, imported by compiler_backend.tl and both platform leaves; exercised through selfhost_compiler_backend, compiler_backend_runtime_tests.tl, and native backend runtime fixtures
+decision|src/compiler_backend_runtime_linux.tl|Linux backend runtime assembly leaf (#5344): main-less, imported by compiler_backend.tl; exercised through selfhost_compiler_backend, compiler_backend_runtime_tests.tl, exact runtime fixture parity, and Linux native integration
+decision|src/compiler_backend_runtime_windows.tl|Windows backend runtime assembly leaf (#5344): main-less, imported by compiler_backend.tl; exercised through selfhost_compiler_backend, compiler_backend_runtime_tests.tl, exact runtime fixture parity, and Windows native integration
+decision|src/compiler_backend_runtime_tests.tl|focused main-less runtime leaf fragment tests (#5344): discovered by typelisp test and exercised in the full test/typecheck gates; no direct CLI/main compile case
 decision|src/compiler_backend_tests.tl|backend smoke-test helper module (main-less): imported by src/tests/compiler_backend_smoke.tl and the backend fixture drivers; kept in src/ for the native compiler_backend_smoke staging and the verify-integration.sh fixture drivers; no direct CLI/main compile case
 decision|src/compiler_driver_smoke_tests.tl|shared driver/lowering smoke-test helper module (main-less): imported by the thin compiler_driver_pic/compiler_lower_symbol_identity wrappers and the consolidated compiler_codegen_smoke_suite; kept in src/ for native integration staging; no direct CLI/main compile case
 decision|src/compiler_lower_package_tests.tl|SPMD package callable smoke-test helper module (main-less): imported by the package fixture drivers; kept in src/ for native integration staging without adding test-only lowering support to the compiler; no direct CLI/main compile case

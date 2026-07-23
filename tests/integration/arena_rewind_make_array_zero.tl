@@ -6,7 +6,6 @@
 ;# before the rewind, so the zero fill must run again: if it were wrongly
 ;# skipped, `fresh` would alias the nonzero contents dirtied below and main
 ;# would return 1 instead of zero.
-(import stdlib.io)
 (import stdlib.array)
 (import stdlib.arena)
 
@@ -35,6 +34,7 @@
     [warm : (Array i64) (array.make-array i64 8)]
     [mark : arena.ArenaMark (arena.mark)]
     (begin
+      (dirty-range! warm 8)
       (dirty-range! (array.make-array i64 1024) 1024)
       (unsafe
         (arena.rewind mark))

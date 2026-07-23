@@ -259,20 +259,24 @@
         "target/tc_prefix_entry_a.tl")
         unit
         (set! ok false))
-      (compiler-typecheck-reset-load-session!)
+      ;; Preserve the owner generation while resetting transient file state so
+      ;; this smoke exercises a real same-session prefix hit. Pool/intern reset
+      ;; invalidation is covered by the explicit provenance rollover smoke.
+      (compiler-typecheck-reset-file-state!)
       (if (compiler-typecheck-prefix-cache-check
         (compiler-typecheck-prefix-cache-source-b)
         "target/tc_prefix_entry_b.tl")
         unit
         (set! ok false))
-      (if (> tc-prefix-snapshot-cache-hit-count 0)
+      (if (> (tc-prefix-snapshot-cache-hit-count-value) 0)
         unit
         (set! ok false))
-      (if (> tc-prefix-snapshot-cache-store-count 0)
+      (if (> (tc-prefix-snapshot-cache-store-count-value) 0)
         unit
         (set! ok false))
       (compiler-load-session-cache-disable-for-test!)
       (tc-prefix-snapshot-cache-clear!)
+      (compiler-typecheck-reset-load-session!)
       ok)))
 
 (define (compiler-typecheck-prefix-cache-stats-smoke-ok?) : bool

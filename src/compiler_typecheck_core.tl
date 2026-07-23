@@ -1002,134 +1002,282 @@
 
 (define tc-prefix-snapshot-cache-capacity : i64
   64)
-(define tc-prefix-snapshot-cache : (Array TcPrefixSnapshotSlot)
-  (array.make-array TcPrefixSnapshotSlot 64))
-(define tc-prefix-snapshot-cache-arena : i64
-  0)
-(define tc-prefix-snapshot-cache-enabled : bool
-  false)
-(define tc-prefix-snapshot-cache-ready : bool
-  false)
-(define tc-prefix-snapshot-cache-hit-count : i64
-  0)
-(define tc-prefix-snapshot-cache-miss-count : i64
-  0)
-(define tc-prefix-snapshot-cache-store-count : i64
-  0)
 
-(define (tc-prefix-snapshot-cache-fill! [index : i64]) : unit
+;; Prefix summaries are retained independently from the AST and intern pools,
+;; but their keys and module identities describe one load/typecheck job. Keep
+;; that ownership explicit so a reset or teardown of driver A can neither
+;; invalidate driver B's arena nor make B observe A's counters.
+(defstruct TcPrefixSnapshotCacheProvenance
+  (pool-arena i64)
+  (ast-floor i64)
+  (type-floor i64)
+  (intern-table-id i64)
+  (intern-generation i64)
+  (intern-floor i64))
+
+(defstruct TcPrefixSnapshotCacheState
+  (slots (Array TcPrefixSnapshotSlot))
+  (arena (Array i64))
+  (enabled (Array bool))
+  (ready (Array bool))
+  (hit-count (Array i64))
+  (miss-count (Array i64))
+  (store-count (Array i64))
+  (provenance (Array TcPrefixSnapshotCacheProvenance))
+  (provenance-ready (Array bool)))
+
+(define (tc-prefix-snapshot-cache-provenance-empty) : TcPrefixSnapshotCacheProvenance
+  (TcPrefixSnapshotCacheProvenance 0 0 0 0 0 0))
+
+(define (tc-prefix-snapshot-cache-state-new) : TcPrefixSnapshotCacheState
+  (let
+    [arena-cell : (Array i64) (array.make-array i64 1)]
+    [enabled-cell : (Array bool) (array.make-array bool 1)]
+    [ready-cell : (Array bool) (array.make-array bool 1)]
+    [hit-cell : (Array i64) (array.make-array i64 1)]
+    [miss-cell : (Array i64) (array.make-array i64 1)]
+    [store-cell : (Array i64) (array.make-array i64 1)]
+    [provenance-cell : (Array TcPrefixSnapshotCacheProvenance)
+      (array.make-array TcPrefixSnapshotCacheProvenance 1)]
+    [provenance-ready-cell : (Array bool) (array.make-array bool 1)]
+    (begin
+      (array-set! arena-cell 0 0)
+      (array-set! enabled-cell 0 false)
+      (array-set! ready-cell 0 false)
+      (array-set! hit-cell 0 0)
+      (array-set! miss-cell 0 0)
+      (array-set! store-cell 0 0)
+      (array-set! provenance-cell 0 (tc-prefix-snapshot-cache-provenance-empty))
+      (array-set! provenance-ready-cell 0 false)
+      (TcPrefixSnapshotCacheState
+        (array.make-array TcPrefixSnapshotSlot 64)
+        arena-cell
+        enabled-cell
+        ready-cell
+        hit-cell
+        miss-cell
+        store-cell
+        provenance-cell
+        provenance-ready-cell))))
+
+;; Standalone source APIs and direct tests are intentionally serial. Production
+;; driver jobs pass the state owned by `CompilerDriverState` instead.
+(define tc-prefix-snapshot-serial-test-cache-state : TcPrefixSnapshotCacheState
+  (tc-prefix-snapshot-cache-state-new))
+
+(define (tc-prefix-snapshot-cache-provenance-from-job
+  [load-state : CompilerLoadSessionState]
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : TcPrefixSnapshotCacheProvenance
+  (let
+    [session : ci.InternSourceNameSession
+      (ci.intern-source-name-session-handle-session source-names)]
+    (TcPrefixSnapshotCacheProvenance
+      (ast-node-pool-context-base-arena pools)
+      (compiler-load-session-state-ast-floor-value load-state)
+      (compiler-load-session-state-ty-floor-value load-state)
+      (struct-get session table-id)
+      (struct-get session reset-generation)
+      (compiler-load-session-state-intern-floor-value load-state))))
+
+(define (tc-prefix-snapshot-cache-provenance-eq?
+  [left : TcPrefixSnapshotCacheProvenance]
+  [right : TcPrefixSnapshotCacheProvenance]) : bool
+  (and
+    (= (struct-get left pool-arena) (struct-get right pool-arena))
+    (= (struct-get left ast-floor) (struct-get right ast-floor))
+    (= (struct-get left type-floor) (struct-get right type-floor))
+    (= (struct-get left intern-table-id) (struct-get right intern-table-id))
+    (= (struct-get left intern-generation) (struct-get right intern-generation))
+    (= (struct-get left intern-floor) (struct-get right intern-floor))))
+
+(define (tc-prefix-snapshot-cache-fill-for-state!
+  [state : TcPrefixSnapshotCacheState]
+  [index : i64]) : unit
   (if (>= index tc-prefix-snapshot-cache-capacity)
     unit
     (begin
-      (array-set! tc-prefix-snapshot-cache index (TcPrefixSnapshotSlot.Empty))
-      (tc-prefix-snapshot-cache-fill! (+ index 1)))))
+      (array-set! (struct-get state slots) index (TcPrefixSnapshotSlot.Empty))
+      (tc-prefix-snapshot-cache-fill-for-state! state (+ index 1)))))
 
-(define (tc-prefix-snapshot-cache-stats-reset!) : unit
+(define (tc-prefix-snapshot-cache-stats-reset-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
   (begin
-    (set! tc-prefix-snapshot-cache-hit-count 0)
-    (set! tc-prefix-snapshot-cache-miss-count 0)
-    (set! tc-prefix-snapshot-cache-store-count 0)))
+    (array-set! (struct-get state hit-count) 0 0)
+    (array-set! (struct-get state miss-count) 0 0)
+    (array-set! (struct-get state store-count) 0 0)))
 
-(define (tc-prefix-snapshot-cache-arena-handle) : i64
+(define (tc-prefix-snapshot-cache-arena-handle-for-state
+  [state : TcPrefixSnapshotCacheState]) : i64
   (begin
-    (if (= tc-prefix-snapshot-cache-arena 0)
-      (set! tc-prefix-snapshot-cache-arena (arena.tl_arena_make))
+    (if (= (array-ref (struct-get state arena) 0) 0)
+      (array-set! (struct-get state arena) 0 (arena.tl_arena_make_small))
       unit)
-    tc-prefix-snapshot-cache-arena))
+    (array-ref (struct-get state arena) 0)))
 
-(define (tc-prefix-snapshot-cache-arena-reset!) : unit
-  (if (= tc-prefix-snapshot-cache-arena 0)
-    unit
-    (begin
-      (if (= (arena.tl_arena_current) tc-prefix-snapshot-cache-arena)
-        (unsafe
-          (arena.tl_arena_set node-pool-base-arena))
-        unit)
-      (unsafe
-        (arena.tl_arena_destroy tc-prefix-snapshot-cache-arena))
-      (set! tc-prefix-snapshot-cache-arena 0))))
-
-(define (tc-prefix-snapshot-cache-clear!) : unit
-  (begin
-    (tc-prefix-snapshot-cache-fill! 0)
-    (tc-prefix-snapshot-cache-arena-reset!)
-    (set! tc-prefix-snapshot-cache-ready true)
-    (tc-prefix-snapshot-cache-stats-reset!)))
-
-(define (tc-prefix-snapshot-cache-enable!) : unit
-  (set! tc-prefix-snapshot-cache-enabled true))
-
-(define (tc-prefix-snapshot-cache-disable!) : unit
-  (set! tc-prefix-snapshot-cache-enabled false))
-
-(define (tc-prefix-snapshot-cache-active?) : bool
-  (or tc-prefix-snapshot-cache-enabled (compiler-load-session-cache-enabled?)))
-
-(define (tc-prefix-snapshot-cache-ensure!) : unit
-  (if tc-prefix-snapshot-cache-ready
-    unit
-    (tc-prefix-snapshot-cache-clear!)))
-
-(define (tc-prefix-snapshot-cache-note-hit!) : unit
-  (set!
-    tc-prefix-snapshot-cache-hit-count
-    (+ tc-prefix-snapshot-cache-hit-count 1)))
-
-(define (tc-prefix-snapshot-cache-note-miss!) : unit
-  (set!
-    tc-prefix-snapshot-cache-miss-count
-    (+ tc-prefix-snapshot-cache-miss-count 1)))
-
-(define (tc-prefix-snapshot-cache-note-store!) : unit
-  (set!
-    tc-prefix-snapshot-cache-store-count
-    (+ tc-prefix-snapshot-cache-store-count 1)))
-
-(define (tc-prefix-snapshot-cache-lookup-count) : i64
-  (+ tc-prefix-snapshot-cache-hit-count tc-prefix-snapshot-cache-miss-count))
-
-(define (tc-prefix-snapshot-cache-hit-rate-per-mille) : i64
+(define (tc-prefix-snapshot-cache-arena-reset-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
   (let
-    [lookups : i64 (tc-prefix-snapshot-cache-lookup-count)]
+    [cache-arena : i64 (array-ref (struct-get state arena) 0)]
+    (if (= cache-arena 0)
+      unit
+      (begin
+        (if (= (arena.tl_arena_current) cache-arena)
+          (unsafe
+            (arena.tl_arena_set node-pool-base-arena))
+          unit)
+        (unsafe
+          (arena.tl_arena_destroy cache-arena))
+        (array-set! (struct-get state arena) 0 0)))))
+
+(define (tc-prefix-snapshot-cache-clear-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
+  (begin
+    (tc-prefix-snapshot-cache-fill-for-state! state 0)
+    (tc-prefix-snapshot-cache-arena-reset-for-state! state)
+    (array-set! (struct-get state ready) 0 true)
+    (tc-prefix-snapshot-cache-stats-reset-for-state! state)))
+
+(define (tc-prefix-snapshot-cache-invalidate-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
+  (begin
+    (tc-prefix-snapshot-cache-clear-for-state! state)
+    (array-set! (struct-get state provenance-ready) 0 false)))
+
+(define (tc-prefix-snapshot-cache-enable-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
+  (array-set! (struct-get state enabled) 0 true))
+
+(define (tc-prefix-snapshot-cache-disable-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
+  (array-set! (struct-get state enabled) 0 false))
+
+(define (tc-prefix-snapshot-cache-active-for-state?
+  [state : TcPrefixSnapshotCacheState]
+  [load-state : CompilerLoadSessionState]) : bool
+  (or
+    (array-ref (struct-get state enabled) 0)
+    (compiler-load-session-state-cache-enabled? load-state)))
+
+(define (tc-prefix-snapshot-cache-ensure-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
+  (if (array-ref (struct-get state ready) 0)
+    unit
+    (tc-prefix-snapshot-cache-clear-for-state! state)))
+
+(define (tc-prefix-snapshot-cache-prepare-for-job!
+  [state : TcPrefixSnapshotCacheState]
+  [provenance : TcPrefixSnapshotCacheProvenance]) : unit
+  (if (and
+    (array-ref (struct-get state provenance-ready) 0)
+    (tc-prefix-snapshot-cache-provenance-eq?
+      (array-ref (struct-get state provenance) 0)
+      provenance))
+    (tc-prefix-snapshot-cache-ensure-for-state! state)
+    (begin
+      (tc-prefix-snapshot-cache-clear-for-state! state)
+      (array-set! (struct-get state provenance) 0 provenance)
+      (array-set! (struct-get state provenance-ready) 0 true))))
+
+(define (tc-prefix-snapshot-cache-note-hit-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
+  (array-set!
+    (struct-get state hit-count)
+    0
+    (+ (array-ref (struct-get state hit-count) 0) 1)))
+
+(define (tc-prefix-snapshot-cache-note-miss-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
+  (array-set!
+    (struct-get state miss-count)
+    0
+    (+ (array-ref (struct-get state miss-count) 0) 1)))
+
+(define (tc-prefix-snapshot-cache-note-store-for-state!
+  [state : TcPrefixSnapshotCacheState]) : unit
+  (array-set!
+    (struct-get state store-count)
+    0
+    (+ (array-ref (struct-get state store-count) 0) 1)))
+
+(define (tc-prefix-snapshot-cache-hit-count-for-state
+  [state : TcPrefixSnapshotCacheState]) : i64
+  (array-ref (struct-get state hit-count) 0))
+
+(define (tc-prefix-snapshot-cache-miss-count-for-state
+  [state : TcPrefixSnapshotCacheState]) : i64
+  (array-ref (struct-get state miss-count) 0))
+
+(define (tc-prefix-snapshot-cache-store-count-for-state
+  [state : TcPrefixSnapshotCacheState]) : i64
+  (array-ref (struct-get state store-count) 0))
+
+(define (tc-prefix-snapshot-cache-arena-value-for-state
+  [state : TcPrefixSnapshotCacheState]) : i64
+  (array-ref (struct-get state arena) 0))
+
+(define (tc-prefix-snapshot-cache-lookup-count-for-state
+  [state : TcPrefixSnapshotCacheState]) : i64
+  (+
+    (tc-prefix-snapshot-cache-hit-count-for-state state)
+    (tc-prefix-snapshot-cache-miss-count-for-state state)))
+
+(define (tc-prefix-snapshot-cache-hit-rate-per-mille-for-state
+  [state : TcPrefixSnapshotCacheState]) : i64
+  (let
+    [lookups : i64 (tc-prefix-snapshot-cache-lookup-count-for-state state)]
     (if (= lookups 0)
       0
-      (/ (* tc-prefix-snapshot-cache-hit-count 1000) lookups))))
+      (/ (* (tc-prefix-snapshot-cache-hit-count-for-state state) 1000) lookups))))
 
-(define (tc-prefix-snapshot-cache-stats-line [label : String]) : String
+(define (tc-prefix-snapshot-cache-stats-line-for-state
+  [state : TcPrefixSnapshotCacheState]
+  [label : String]) : String
   (str_cat.str-cat
     "typecheck-prefix-cache|"
     label
     "|hits="
-    (string.int->string tc-prefix-snapshot-cache-hit-count)
+    (string.int->string (tc-prefix-snapshot-cache-hit-count-for-state state))
     "|misses="
-    (string.int->string tc-prefix-snapshot-cache-miss-count)
+    (string.int->string (tc-prefix-snapshot-cache-miss-count-for-state state))
     "|stores="
-    (string.int->string tc-prefix-snapshot-cache-store-count)
+    (string.int->string (tc-prefix-snapshot-cache-store-count-for-state state))
     "|lookups="
-    (string.int->string (tc-prefix-snapshot-cache-lookup-count))
+    (string.int->string (tc-prefix-snapshot-cache-lookup-count-for-state state))
     "|hit-rate-per-mille="
-    (string.int->string (tc-prefix-snapshot-cache-hit-rate-per-mille))))
+    (string.int->string
+      (tc-prefix-snapshot-cache-hit-rate-per-mille-for-state state))))
 
-(define (tc-prefix-snapshot-cache-print-stats [label : String]) : unit
+(define (tc-prefix-snapshot-cache-print-stats-for-state
+  [state : TcPrefixSnapshotCacheState]
+  [label : String]) : unit
   (io.print-error
-    (string.append (tc-prefix-snapshot-cache-stats-line label) "\n")))
+    (string.append
+      (tc-prefix-snapshot-cache-stats-line-for-state state label)
+      "\n")))
 
-(define (tc-prefix-snapshot-cache-lookup-from [key : String] [index : i64]) : TcPrefixSnapshotLookup
+(define (tc-prefix-snapshot-cache-lookup-from-for-state
+  [state : TcPrefixSnapshotCacheState]
+  [key : String]
+  [index : i64]) : TcPrefixSnapshotLookup
   (if (>= index tc-prefix-snapshot-cache-capacity)
     (TcPrefixSnapshotLookup.Miss)
-    (match (array-ref tc-prefix-snapshot-cache index)
+    (match (array-ref (struct-get state slots) index)
       [(TcPrefixSnapshotSlot.Empty) (TcPrefixSnapshotLookup.Miss)]
       [(TcPrefixSnapshotSlot.Full slot-key count module module-id summary)
         (if (string.eq slot-key key)
           (TcPrefixSnapshotLookup.Hit count module module-id summary)
-          (tc-prefix-snapshot-cache-lookup-from key (+ index 1)))])))
+          (tc-prefix-snapshot-cache-lookup-from-for-state state key (+ index 1)))])))
 
-(define (tc-prefix-snapshot-cache-lookup [key : String]) : TcPrefixSnapshotLookup
+(define (tc-prefix-snapshot-cache-lookup-for-state
+  [state : TcPrefixSnapshotCacheState]
+  [key : String]) : TcPrefixSnapshotLookup
   (begin
-    (tc-prefix-snapshot-cache-ensure!)
-    (tc-prefix-snapshot-cache-lookup-from key 0)))
+    (tc-prefix-snapshot-cache-ensure-for-state! state)
+    (tc-prefix-snapshot-cache-lookup-from-for-state state key 0)))
 
-(define (tc-prefix-snapshot-cache-store-at
+(define (tc-prefix-snapshot-cache-store-at-for-state
+  [state : TcPrefixSnapshotCacheState]
   [key : String]
   [count : i64]
   [module : String]
@@ -1138,25 +1286,26 @@
   [index : i64]) : bool
   (if (>= index tc-prefix-snapshot-cache-capacity)
     false
-    (match (array-ref tc-prefix-snapshot-cache index)
+    (match (array-ref (struct-get state slots) index)
       [(TcPrefixSnapshotSlot.Empty)
         (begin
           (array-set!
-            tc-prefix-snapshot-cache
+            (struct-get state slots)
             index
             (TcPrefixSnapshotSlot.Full key count module module-id summary))
-          (tc-prefix-snapshot-cache-note-store!)
+          (tc-prefix-snapshot-cache-note-store-for-state! state)
           true)]
       [(TcPrefixSnapshotSlot.Full slot-key _ _ _ _)
         (if (string.eq slot-key key)
           (begin
             (array-set!
-              tc-prefix-snapshot-cache
+              (struct-get state slots)
               index
               (TcPrefixSnapshotSlot.Full key count module module-id summary))
-            (tc-prefix-snapshot-cache-note-store!)
+            (tc-prefix-snapshot-cache-note-store-for-state! state)
             true)
-          (tc-prefix-snapshot-cache-store-at
+          (tc-prefix-snapshot-cache-store-at-for-state
+            state
             key
             count
             module
@@ -1164,17 +1313,26 @@
             summary
             (+ index 1)))])))
 
-(define (tc-prefix-snapshot-cache-store
+(define (tc-prefix-snapshot-cache-store-for-state
+  [state : TcPrefixSnapshotCacheState]
   [key : String]
   [count : i64]
   [module : String]
   [module-id : i64]
   [summary : CompilerTypecheckSummary]) : bool
   (begin
-    (tc-prefix-snapshot-cache-ensure!)
-    (tc-prefix-snapshot-cache-store-at key count module module-id summary 0)))
+    (tc-prefix-snapshot-cache-ensure-for-state! state)
+    (tc-prefix-snapshot-cache-store-at-for-state
+      state
+      key
+      count
+      module
+      module-id
+      summary
+      0)))
 
-(define (tc-prefix-snapshot-cache-store-persistent
+(define (tc-prefix-snapshot-cache-store-persistent-for-state
+  [state : TcPrefixSnapshotCacheState]
   [key : String]
   [count : i64]
   [module : String]
@@ -1183,14 +1341,16 @@
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
     (begin
-      (tc-prefix-snapshot-cache-ensure!)
+      (tc-prefix-snapshot-cache-ensure-for-state! state)
       (unsafe
-        (arena.tl_arena_set (tc-prefix-snapshot-cache-arena-handle)))
+        (arena.tl_arena_set
+          (tc-prefix-snapshot-cache-arena-handle-for-state state)))
       (let
         [persistent-key : String (string.copy (& key))]
         [persistent-module : String (string.copy (& module))]
         [stored : bool
-          (tc-prefix-snapshot-cache-store
+          (tc-prefix-snapshot-cache-store-for-state
+            state
             persistent-key
             count
             persistent-module
@@ -1198,10 +1358,95 @@
             summary)]
         [cache-head : i64 (arena.tl_arena_current)]
         (begin
-          (set! tc-prefix-snapshot-cache-arena cache-head)
+          (array-set! (struct-get state arena) 0 cache-head)
           (unsafe
             (arena.tl_arena_set prev-arena))
           stored)))))
+
+;; Serial/test compatibility surface. These adapters are intentionally the only
+;; prefix-cache APIs that consult the serial loader selector.
+(define (tc-prefix-snapshot-cache-clear!) : unit
+  (tc-prefix-snapshot-cache-clear-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-enable!) : unit
+  (tc-prefix-snapshot-cache-enable-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-disable!) : unit
+  (tc-prefix-snapshot-cache-disable-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-hit-count-value) : i64
+  (tc-prefix-snapshot-cache-hit-count-for-state
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-miss-count-value) : i64
+  (tc-prefix-snapshot-cache-miss-count-for-state
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-store-count-value) : i64
+  (tc-prefix-snapshot-cache-store-count-for-state
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-stats-line [label : String]) : String
+  (tc-prefix-snapshot-cache-stats-line-for-state
+    tc-prefix-snapshot-serial-test-cache-state
+    label))
+
+(define (tc-prefix-snapshot-cache-print-stats [label : String]) : unit
+  (tc-prefix-snapshot-cache-print-stats-for-state
+    tc-prefix-snapshot-serial-test-cache-state
+    label))
+
+(define (tc-prefix-snapshot-cache-lookup [key : String]) : TcPrefixSnapshotLookup
+  (tc-prefix-snapshot-cache-lookup-for-state
+    tc-prefix-snapshot-serial-test-cache-state
+    key))
+
+(define (tc-prefix-snapshot-cache-store
+  [key : String]
+  [count : i64]
+  [module : String]
+  [module-id : i64]
+  [summary : CompilerTypecheckSummary]) : bool
+  (tc-prefix-snapshot-cache-store-for-state
+    tc-prefix-snapshot-serial-test-cache-state
+    key
+    count
+    module
+    module-id
+    summary))
+
+(define (tc-prefix-snapshot-cache-store-persistent
+  [key : String]
+  [count : i64]
+  [module : String]
+  [module-id : i64]
+  [summary : CompilerTypecheckSummary]) : bool
+  (tc-prefix-snapshot-cache-store-persistent-for-state
+    tc-prefix-snapshot-serial-test-cache-state
+    key
+    count
+    module
+    module-id
+    summary))
+
+(define (tc-prefix-snapshot-cache-note-hit!) : unit
+  (tc-prefix-snapshot-cache-note-hit-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-note-miss!) : unit
+  (tc-prefix-snapshot-cache-note-miss-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-note-store!) : unit
+  (tc-prefix-snapshot-cache-note-store-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
+
+(define (tc-prefix-snapshot-cache-stats-reset!) : unit
+  (tc-prefix-snapshot-cache-stats-reset-for-state!
+    tc-prefix-snapshot-serial-test-cache-state))
 
 (define (tc-context-with-module-id
   [ctx : TcContext]
@@ -56011,7 +56256,8 @@
         2
         "typecheck.macro.peak"
         "typecheck-prefix-cache"
-        tc-prefix-snapshot-cache-arena)
+        (tc-prefix-snapshot-cache-arena-value-for-state
+          tc-prefix-snapshot-serial-test-cache-state))
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
@@ -72987,6 +73233,7 @@
       (TcModuleLocalEnvCache.Nil))))
 
 (define (tc-check-decls-with-prefix-hit
+  [prefix-cache : TcPrefixSnapshotCacheState]
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
@@ -72996,7 +73243,7 @@
   [module-id : i64]
   [summary : CompilerTypecheckSummary]) : ResultCompilerTypecheck
   (begin
-    (tc-prefix-snapshot-cache-note-hit!)
+    (tc-prefix-snapshot-cache-note-hit-for-state! prefix-cache)
     (cfg compile-profile (compiler-tc-decl-profile-reset))
     (tc-check-decls-with-paths-in-module
       ctx
@@ -73009,6 +73256,7 @@
       (TcModuleLocalEnvCache.Nil))))
 
 (define (tc-check-decls-with-prefix-miss
+  [prefix-cache : TcPrefixSnapshotCacheState]
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
@@ -73018,7 +73266,7 @@
   [module : String]
   [module-id : i64]) : ResultCompilerTypecheck
   (begin
-    (tc-prefix-snapshot-cache-note-miss!)
+    (tc-prefix-snapshot-cache-note-miss-for-state! prefix-cache)
     (cfg compile-profile (compiler-tc-decl-profile-reset))
     (match (tc-check-decls-with-paths-in-module
       ctx
@@ -73031,7 +73279,8 @@
       (TcModuleLocalEnvCache.Nil))
       [(ResultCompilerTypecheck.Ok prefix-summary)
         (begin
-          (tc-prefix-snapshot-cache-store-persistent
+          (tc-prefix-snapshot-cache-store-persistent-for-state
+            prefix-cache
             key
             count
             module
@@ -73090,6 +73339,8 @@
       (TcModuleLocalEnvCache.Nil))))
 
 (define (tc-check-decls-with-paths
+  [prefix-cache : TcPrefixSnapshotCacheState]
+  [prefix-cache-active : bool]
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
@@ -73123,18 +73374,17 @@
           (begin
             (surface_facts.surface-typecheck-facts-clear!)
             (tc-check-decls-with-paths-cold ctx top-env decls paths summary))]))
-    (if (and
-      (tc-prefix-snapshot-cache-active?)
-      (not tc-clone-root-collection-active))
+    (if (and prefix-cache-active (not tc-clone-root-collection-active))
       (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
         [(TcPrefixCandidate.Some key count module module-id)
-          (match (tc-prefix-snapshot-cache-lookup key)
+          (match (tc-prefix-snapshot-cache-lookup-for-state prefix-cache key)
             [(TcPrefixSnapshotLookup.Hit
                 cached-count
                 cached-module
                 cached-module-id
                 cached-summary)
               (tc-check-decls-with-prefix-hit
+                prefix-cache
                 ctx
                 top-env
                 decls
@@ -73145,6 +73395,7 @@
                 cached-summary)]
             [(TcPrefixSnapshotLookup.Miss)
               (tc-check-decls-with-prefix-miss
+                prefix-cache
                 ctx
                 top-env
                 decls
@@ -73452,7 +73703,9 @@
                               (set! done true))]))))]))]))
       result)))
 
-(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names
+(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
+  [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -73460,6 +73713,12 @@
   [pools : AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
   (begin
+    (tc-prefix-snapshot-cache-prepare-for-job!
+      prefix-cache
+      (tc-prefix-snapshot-cache-provenance-from-job
+        load-state
+        pools
+        source-names))
     (tc-nominal-owner-cache-reset!)
     (tc-install-pools! pools)
     (match (build-compiler-symbols-diagnostic-with-paths program paths)
@@ -73495,6 +73754,10 @@
                                   (tc-clone-able-cache-populate! ctx)
                                   (tc-macro-helper-env-cache-reset!)
                                   (match (tc-check-decls-with-paths
+                                    prefix-cache
+                                    (tc-prefix-snapshot-cache-active-for-state?
+                                      prefix-cache
+                                      load-state)
                                     ctx
                                     top-env
                                     decls
@@ -73524,6 +73787,25 @@
             (ResultCompilerTypecheckChecked.Err diag)])]
       [(ResultCompilerSymbolsDiagnostic.Err diag)
         (ResultCompilerTypecheckChecked.Err diag)])))
+
+;; Serial/test compatibility adapter. Production jobs pass both explicit state
+;; values to the entry above.
+(define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
+  (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
+    (compiler-load-serial-test-session-state)
+    tc-prefix-snapshot-serial-test-cache-state
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools
+    source-names))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
   [program : AstProgram]
@@ -73579,6 +73861,26 @@
       pools
       source-names)))
 
+(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+  [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]
+  [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerTypecheckChecked
+  (tc-typecheck-checked-result-with-pool-check
+    (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools-and-source-names-and-prefix-cache-state
+      load-state
+      prefix-cache
+      program
+      paths
+      stdlib-roots
+      cache-scope
+      pools
+      source-names)))
+
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -73586,6 +73888,24 @@
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools
+    (ci.intern-source-name-session-capture-active-handle)))
+
+(define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
+  [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+    load-state
+    prefix-cache
     program
     paths
     stdlib-roots
@@ -73624,6 +73944,27 @@
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools)
+    [(ResultCompilerTypecheckChecked.Ok summary _ _ _)
+      (ResultCompilerTypecheck.Ok summary)]
+    [(ResultCompilerTypecheckChecked.Err diag)
+      (ResultCompilerTypecheck.Err diag)]))
+
+(define (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
+  [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
+  (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
+    load-state
+    prefix-cache
     program
     paths
     stdlib-roots

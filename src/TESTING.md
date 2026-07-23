@@ -39,6 +39,62 @@ pointer/length pairs as name identity across scratch/region reset: address
 equality is only a fast path while both live operands are in scope. Interning
 must own/canonicalize any spelling that survives its source arena.
 
+## Compiler arena ownership
+
+Compiler state must be allocated in an owner whose lifetime covers every state
+transition that can occur before the last use. Use these operational classes:
+
+| State | Required owner and release boundary |
+| --- | --- |
+| Transient walk data | The current scratch arena; retain nothing across its rewind or destruction. |
+| Retained phase data | A dedicated phase arena; it may cross scratch rewinds, but reset or destroy it only at the documented phase boundary after all consumers finish. |
+| AST/type nodes | The installed `AstNodePoolContext`; allocate through the pool APIs and release with that pool context. |
+| State crossing pool installs or intern resets | A separate arena created once for the required lifetime. Never rewind or destroy it during that lifetime; clear the collection logically by rebinding or resetting metadata. |
+
+Do not allocate unrelated long-lived sidecars by temporarily switching to
+`node-pool-base-arena`. An `AstNodePoolContext` captures the base-arena head.
+Pool growth advances that moving chain head, but a later
+`ast-node-pool-context-install!` of an older capture restores the older head.
+Allocations in segments added after the capture can then become unreachable;
+the fact that a global, map, or cache binding still contains their addresses
+does not keep those raw segments alive.
+
+The intern persistent arena is not a substitute. A floor reset through
+`intern-compat-state-persistent-arena-reset-to-floor!` rewinds allocations
+above its mark, and a full reset replaces or destroys the arena. State that
+must cross either boundary needs its own owner. Allocate the initial collection,
+owned keys/values, and every capacity growth in that same dedicated arena.
+Restore the caller's active arena after each operation, but never reclaim the
+dedicated arena until its complete required lifetime ends.
+
+`compiler-load-provenance-arena` in
+[`compiler_load.tl`](compiler_load.tl) is the process-lifetime positive example:
+the embedded-module provenance set and equivalence/catalog caches allocate and
+regrow there, while resets clear their logical bindings without resetting the
+arena. A dedicated arena is not automatically never-reset;
+`tc-hygiene-module-env-cache-arena` in
+[`compiler_typecheck_core.tl`](compiler_typecheck_core.tl) only needs to cross
+scratch rewinds and therefore has an explicit phase reset/teardown.
+
+For a regression test of retained mid-walk state, exercise the invalidating
+sequence rather than only testing insertion and lookup in one context:
+
+1. Capture an older node-pool context, allocate and force at least one regrowth
+   of the retained collection while a scratch arena is active, then install the
+   older context.
+2. Run the intern floor/full reset boundary that the state promises to cross,
+   where applicable.
+3. Read every retained entry and force another insertion/regrowth after the
+   boundary; compare the result with an equivalent fresh-state run.
+4. Run the reproducer on Linux and Windows. Keep poison/debug configurations as
+   additional diagnostics, not as a replacement for the semantic assertions.
+
+The production incidents and measurements are recorded in
+[#5458](https://github.com/JoNil-Botta/typelisp/pull/5458) and
+[#5474](https://github.com/JoNil-Botta/typelisp/issues/5474). The opt-in guard
+that should fail at an invalid reset/destroy/install operation is tracked in
+[#5510](https://github.com/JoNil-Botta/typelisp/issues/5510).
+
 ## Coverage layers
 
 ### Module-local self-tests

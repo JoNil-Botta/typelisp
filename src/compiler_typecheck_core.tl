@@ -65461,9 +65461,9 @@
   (define macro-expand-stdlib-tlci-catalog-cache : tc_string_i64_map.Map
     (tc_string_i64_map.new)))
 
-;; The catalog cache outlives every expansion-scoped scratch arena and its
-;; buckets regrow on insert; keep all of its allocations in the interner's
-;; persistent arena so sustained self-compiles cannot leave dangling buckets.
+;; The catalog cache outlives expansion scratch, node-pool context installs, and
+;; intern floor resets. Its buckets regrow on insert, so keep every allocation
+;; in compiler-load-provenance-arena, the dedicated arena that is never reset.
 (cfg
   embedded-stdlib-tlci
   (define (macro-expand-stdlib-tlci-catalog-cache-reset!) : unit

@@ -2111,7 +2111,7 @@
         (compiler-cfg-empty))
         unit
         (set! ok false))
-      (compiler-typecheck-reset-load-session!)
+      (compiler-typecheck-reset-file-state!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-prefix-cache-source-b)
         entry-b
@@ -2126,7 +2126,7 @@
       (if (>= (tc-prefix-snapshot-cache-store-count-value) 2)
         unit
         (set! ok false))
-      (compiler-typecheck-reset-load-session!)
+      (compiler-typecheck-reset-file-state!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-prefix-cache-source-b)
         "target/tc_prefix_root_entry_c.tl"
@@ -2142,6 +2142,7 @@
         (set! ok false))
       (compiler-load-session-cache-disable-for-test!)
       (tc-prefix-snapshot-cache-clear!)
+      (compiler-typecheck-reset-load-session!)
       ok)))
 
 (define (compiler-typecheck-smoke-prefix-cache-cfg-isolation-ok?) : bool
@@ -2162,7 +2163,7 @@
         (compiler-cfg-empty))
         unit
         (set! ok false))
-      (compiler-typecheck-reset-load-session!)
+      (compiler-typecheck-reset-file-state!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-smoke-prefix-cache-cfg-source)
         entry-feature
@@ -2177,7 +2178,7 @@
       (if (>= (tc-prefix-snapshot-cache-store-count-value) 2)
         unit
         (set! ok false))
-      (compiler-typecheck-reset-load-session!)
+      (compiler-typecheck-reset-file-state!)
       (if (compiler-typecheck-smoke-prefix-cache-check-cfg
         (compiler-typecheck-smoke-prefix-cache-cfg-source)
         "target/tc_prefix_cfg_entry_feature_b.tl"
@@ -2193,17 +2194,14 @@
         (set! ok false))
       (compiler-load-session-cache-disable-for-test!)
       (tc-prefix-snapshot-cache-clear!)
+      (compiler-typecheck-reset-load-session!)
       ok)))
 
-(define (compiler-typecheck-smoke-prefix-cache-file-check
-  [entry-path : String]
+(define (compiler-typecheck-smoke-prefix-cache-loaded-check
+  [loaded : ResultCompilerLoadWithPaths]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : bool
-  (match (compiler-load-file-with-paths-and-roots-cfg
-    entry-path
-    (sym_i64_env.sym-i64-empty)
-    stdlib-roots
-    cfgs)
+  (match loaded
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match (typecheck-compiler-program-with-paths-cache
         (ast-program decls)
@@ -2216,6 +2214,19 @@
         [(ResultCompilerTypecheck.Ok _) true]
         [(ResultCompilerTypecheck.Err _) false])]
     [(ResultCompilerLoadWithPaths.Err _) false]))
+
+(define (compiler-typecheck-smoke-prefix-cache-file-check
+  [entry-path : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
+  (compiler-typecheck-smoke-prefix-cache-loaded-check
+    (compiler-load-file-with-paths-and-roots-cfg
+      entry-path
+      (sym_i64_env.sym-i64-empty)
+      stdlib-roots
+      cfgs)
+    stdlib-roots
+    cfgs))
 
 (define (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?) : bool
   (let
@@ -2240,21 +2251,45 @@
 (define (main) : i64 (dep.value 2))")
       (compiler-load-session-cache-enable!)
       (tc-prefix-snapshot-cache-clear!)
-      (if (compiler-typecheck-smoke-prefix-cache-file-check entry-a roots cfgs)
-        unit
-        (set! ok false))
-      (compiler-typecheck-reset-load-session!)
-      (if (compiler-typecheck-smoke-prefix-cache-file-check entry-b roots cfgs)
-        unit
-        (set! ok false))
-      (if (> (tc-prefix-snapshot-cache-hit-count-value) 0)
-        unit
-        (set! ok false))
-      (if (> (tc-prefix-snapshot-cache-store-count-value) 0)
-        unit
-        (set! ok false))
+      ;; Load both programs before typechecking so the cache owner floors are
+      ;; stable across the store/hit pair. Loading a new persistent program can
+      ;; legitimately advance those floors and establish new provenance.
+      (let
+        [loaded-a : ResultCompilerLoadWithPaths
+          (compiler-load-file-with-paths-and-roots-cfg
+            entry-a
+            (sym_i64_env.sym-i64-empty)
+            roots
+            cfgs)]
+        [loaded-b : ResultCompilerLoadWithPaths
+          (compiler-load-file-with-paths-and-roots-cfg
+            entry-b
+            (sym_i64_env.sym-i64-empty)
+            roots
+            cfgs)]
+        (begin
+          (if (compiler-typecheck-smoke-prefix-cache-loaded-check
+            loaded-a
+            roots
+            cfgs)
+            unit
+            (set! ok false))
+          (compiler-typecheck-reset-file-state!)
+          (if (compiler-typecheck-smoke-prefix-cache-loaded-check
+            loaded-b
+            roots
+            cfgs)
+            unit
+            (set! ok false))
+          (if (> (tc-prefix-snapshot-cache-hit-count-value) 0)
+            unit
+            (set! ok false))
+          (if (> (tc-prefix-snapshot-cache-store-count-value) 0)
+            unit
+            (set! ok false))))
       (compiler-load-session-cache-disable-for-test!)
       (tc-prefix-snapshot-cache-clear!)
+      (compiler-typecheck-reset-load-session!)
       ok)))
 
 (define (compiler-typecheck-smoke-prefix-cache-moduleless-local-ok?) : bool
@@ -2277,15 +2312,36 @@
 (define (main) : i64 (flat-helper 2))")
       (compiler-load-session-cache-enable!)
       (tc-prefix-snapshot-cache-clear!)
-      (if (compiler-typecheck-smoke-prefix-cache-file-check entry-a roots cfgs)
-        unit
-        (set! ok false))
-      (compiler-typecheck-reset-load-session!)
-      (if (compiler-typecheck-smoke-prefix-cache-file-check entry-b roots cfgs)
-        unit
-        (set! ok false))
+      (let
+        [loaded-a : ResultCompilerLoadWithPaths
+          (compiler-load-file-with-paths-and-roots-cfg
+            entry-a
+            (sym_i64_env.sym-i64-empty)
+            roots
+            cfgs)]
+        [loaded-b : ResultCompilerLoadWithPaths
+          (compiler-load-file-with-paths-and-roots-cfg
+            entry-b
+            (sym_i64_env.sym-i64-empty)
+            roots
+            cfgs)]
+        (begin
+          (if (compiler-typecheck-smoke-prefix-cache-loaded-check
+            loaded-a
+            roots
+            cfgs)
+            unit
+            (set! ok false))
+          (compiler-typecheck-reset-file-state!)
+          (if (compiler-typecheck-smoke-prefix-cache-loaded-check
+            loaded-b
+            roots
+            cfgs)
+            unit
+            (set! ok false))))
       (compiler-load-session-cache-disable-for-test!)
       (tc-prefix-snapshot-cache-clear!)
+      (compiler-typecheck-reset-load-session!)
       ok)))
 
 (define (compiler-typecheck-smoke-generated-moduleless-import-order-ok?) : bool

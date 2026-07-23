@@ -410,7 +410,7 @@ EOF
     (comptime.expr-bool false)
     true))
 (defmacro (unsupported-macro [value : Expr]) : Expr
-  value)
+  (let [tag : String "x"] value))
 EOF
     cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package

@@ -2917,7 +2917,7 @@ cat > "$SPLIT_PKG/src/lib.tl" <<'EOF'
     (comptime.expr-bool false)
     true))
 (defmacro (split-unsupported [value : Expr]) : Expr
-  value)
+  (let [tag : String "x"] value))
 EOF
 cat > "$SPLIT_PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package

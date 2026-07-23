@@ -479,8 +479,10 @@ builds also emit a host comptime image `<name>.tlci` beside the native
 artifact. Macro-free packages use a metadata-only image; macro-defining
 packages include one deterministic registration-table record per package-owned
 macro. Supported expression/value transformer bodies compile into native
-template, literal, and fold entries; unsupported bodies retain explicit shells
-for interpreted fallback. `typelisp inspect <file.tlci>` renders the image
+template (nested calls, literals, plain symbols, unquoted operands, and
+unquote-splicing), literal, computed-if, and fold entries; unsupported bodies
+retain explicit shells for interpreted fallback. `typelisp inspect <file.tlci>`
+renders the image
 header, sections, and package metadata. General dependency-catalog discovery
 and consumer dispatch remain staged separately from emission.
 Self-host bootstrap builds the compiler's exact embedded stdlib source set into

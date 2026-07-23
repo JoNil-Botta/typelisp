@@ -2983,9 +2983,11 @@ Example:
   changing runtime link behavior. Macro-free packages emit metadata-only
   images. Packages with package-owned macro declarations emit deterministic
   code-bearing images and one registration-table record per macro. Supported
-  expression/value transformer bodies execute compiled template, literal, and
-  fold operations through the host callback ABI; unsupported bodies retain an
-  explicit registered shell and interpreted fallback. General consumer catalog
+  expression/value transformer bodies execute compiled template (nested calls,
+  literals, plain symbols, unquoted operands, unquote-splicing), literal,
+  computed-if, and fold operations through the host callback ABI; unsupported
+  bodies retain an explicit registered shell and interpreted fallback. General
+  consumer catalog
   discovery/dispatch is a separate integration layer. The tlci path is
   target-independent in v1: cross-target builds keep target runtime artifacts
   separate while sharing the host comptime image path.
@@ -5054,6 +5056,32 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 175 | `module-value?` |
 | 176 | `module-value-type` |
 | 177 | `reference-element-type` |
+| 178 | `expr-list-empty` (native template construction) |
+| 179 | `expr-list-append` (native template construction) |
+| 180 | `push-operand` (native template construction) |
+| 181 | `expr-call` (native template construction) |
+| 182 | `commit-result` (native template construction) |
+| 183 | `expr-array-ref` (native template construction) |
+| 184 | `expr-array-push` (native template construction) |
+| 185 | `expr-make-array` (native template construction) |
+| 186 | `operand-type-kind-eq` (data-returning probe) |
+| 187 | `expr-bool-literal` (native template construction) |
+| 188 | `expr-int-literal` (native template construction) |
+| 189 | `expr-list-fold-if` (native fold construction) |
+| 190 | `expr-clause-list-fold-if` (native fold construction) |
+| 191 | `pattern-binding-typed` |
+| 192 | `expr-resource-scope` |
+| 193 | `expr-let-scope` |
+| 194 | `expr-set-var` |
+| 195 | `expr-begin-unit` |
+| 196 | `expr-not` |
+| 197 | `expr-while` |
+| 198 | `syntax-name-fresh` |
+| 199 | `expr-begin` (native template construction) |
+| 200 | `expr-binary-op` (native template construction) |
+| 201 | `expr-unary-op` (native template construction) |
+| 202 | `expr-char-literal` (native template construction) |
+| 203 | `expr-unit-literal` (native template construction) |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned
@@ -6894,8 +6922,9 @@ the `.tl` extension removed on Linux and with `.exe` on Windows. Source-file
 `build` does not run the executable. The package build form writes the
 artifact selected by `typelisp.pkg`'s `kind` field and a metadata-only
 `<package-name>.tlci` image for macro-free packages, or a code-bearing host
-image with compiled supported transformer entries and explicit fallback shells
-for unsupported bodies in the same profile directory. `inspect` validates and
+image with compiled supported transformer entries (templates, literals,
+computed ifs, folds) and explicit fallback shells for unsupported bodies in
+the same profile directory. `inspect` validates and
 renders `.tlci` files without executing or loading contained code.
 
 Linux native build/run uses `as` and `ld`. Windows native build/run uses

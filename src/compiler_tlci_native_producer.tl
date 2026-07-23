@@ -1,14 +1,15 @@
 ;; compiler_tlci_native_producer.tl - Generate and map normal-backend
-;; transformer programs for tlci native package images (refs #5213).
+;; transformer programs for tlci native package images (refs #5213, #5596).
 ;;
 ;; The producer captures checked defmacro identities, parameters, and bodies,
-;; desugars eligible bodies (splice-only quasiquote templates, array intrinsic
-;; nodes, literal templates, and match-on-type-kind computed bodies) into
-;; ordinary TypeLisp entry functions whose comptime primitives are host
-;; callback calls, and resolves the compiled entries by the compact
-;; function-symbol contract. Ineligible bodies and match arms compile to
-;; ok-with-no-result shells so the dispatch route keeps its counted
-;; interpreted fallback.
+;; desugars eligible bodies (general quasiquote templates -- nested calls,
+;; literals, plain symbols, unquoted operands, and unquote-splicing -- array
+;; intrinsic nodes, literal templates, match-on-type-kind computed bodies,
+;; list-length computed ifs, and the expr-list fold intrinsics) into ordinary
+;; TypeLisp entry functions whose comptime primitives are host callback calls,
+;; and resolves the compiled entries by the compact function-symbol contract.
+;; Bodies outside the supported subset compile to ok-with-no-result shells so
+;; the dispatch route keeps its counted interpreted fallback.
 (import "compiler_parse_core.tl")
 (import compiler_object as cobj)
 (import "compiler_backend.tl")
@@ -108,21 +109,6 @@
           (set! index (+ index 1))))
       found)))
 
-;; Compile the splice-only quasiquote subset: the body must be a quasiquoted
-;; call form whose head is a plain name and whose arguments are unquoted
-;; macro parameters. Bodies outside this subset return false with no side
-;; effect, so the caller keeps them as interpreted-fallback shells. This is
-;; the first eligible tranche of #5213; richer bodies are later slices.
-(define (embedded-stdlib-tlci-unquoted-param
-  [params : (& params AstMacroParamList)]
-  [node : i64]) : i64
-  (match (embedded-stdlib-tlci-unwrap-expr node)
-    [(AstExpr.Unquote inner)
-      (match (embedded-stdlib-tlci-unwrap-expr inner)
-        [(AstExpr.Var pname) (embedded-stdlib-tlci-param-index params pname)]
-        [_ -1])]
-    [_ -1]))
-
 (define (embedded-stdlib-tlci-type-unquote-param
   [params : (& params AstMacroParamList)]
   [ty : AstType]) : i64
@@ -166,7 +152,7 @@
   (Err String))
 
 (define embedded-native-ops-cap : i64
-  256)
+  4096)
 
 (define (embedded-native-ops-push!
   [ops : (Array String)]
@@ -231,6 +217,9 @@
 
 ;; Emit the op-call chain for one eligible body into `ops`; returns the count
 ;; of opened let/if pairs, or -1 when the body is outside the subset.
+;; Quasiquoted bodies go through the general template walker; plain bodies may
+;; be a macro parameter (the identity transformer), a `(comptime.expr-var
+;; "name")` builder call, or one of the expr-list fold intrinsics.
 (define (embedded-native-body-ops
   [params : (& params AstMacroParamList)]
   [body-node : i64]
@@ -238,145 +227,21 @@
   [ops-count : (Array i64)]) : i64
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
     [(AstExpr.Quasiquote quoted)
-      (match (embedded-stdlib-tlci-unwrap-expr quoted)
-        [(AstExpr.Call func-id args)
-          (match (embedded-stdlib-tlci-unwrap-expr func-id)
-            [(AstExpr.Var head-id)
-              (let
-                [argc : i64 (ast-expr-list-len (& args))]
-                [head : String (intern-str head-id)]
-                [index : i64 0]
-                [opened : i64 0]
-                [ok : bool true]
-                (begin
-                  (embedded-native-ops-push!
-                    ops
-                    ops-count
-                    (embedded-native-op-open
-                      opened
-                      103
-                      (embedded-native-name-arg head)
-                      (string.int->string (string.string-length head))
-                      "0"))
-                  (set! opened (+ opened 1))
-                  (embedded-native-ops-push!
-                    ops
-                    ops-count
-                    (embedded-native-op-open opened 178 "0" "0" "0"))
-                  (set! opened (+ opened 1))
-                  (while (and ok (< index argc))
-                    (let
-                      [param : i64
-                        (embedded-stdlib-tlci-unquoted-param
-                          params
-                          (ast-expr-list-get (& args) index 0))]
-                      (if (< param 0)
-                        (set! ok false)
-                        (begin
-                          (embedded-native-ops-push!
-                            ops
-                            ops-count
-                            (embedded-native-op-open
-                              opened
-                              180
-                              (string.int->string param)
-                              "0"
-                              "0"))
-                          (set! opened (+ opened 1))
-                          (embedded-native-ops-push!
-                            ops
-                            ops-count
-                            (embedded-native-op-open opened 179 "0" "0" "0"))
-                          (set! opened (+ opened 1))
-                          (set! index (+ index 1))))))
-                  (if (not ok)
-                    -1
-                    (begin
-                      (embedded-native-ops-push!
-                        ops
-                        ops-count
-                        (embedded-native-op-open opened 181 "0" "0" "0"))
-                      (+ opened 1)))))]
-            [_ -1])]
-        [(AstExpr.Literal lit)
-          (match lit
-            [(AstLiteral.Bool flag)
-              (begin
-                (embedded-native-ops-push!
-                  ops
-                  ops-count
-                  (embedded-native-op-open
-                    0
-                    187
-                    (if flag
-                      "1"
-                      "0")
-                    "0"
-                    "0"))
-                1)]
-            [(AstLiteral.Int value text)
-              (if (string.eq text (string.int->string value))
-                (begin
-                  (embedded-native-ops-push!
-                    ops
-                    ops-count
-                    (embedded-native-op-open
-                      0
-                      188
-                      (string.int->string value)
-                      "0"
-                      "0"))
-                  1)
-                -1)]
-            [_ -1])]
-        [(AstExpr.ArrayRef target-node index-node)
-          (embedded-native-binary-ops
-            params
-            target-node
-            index-node
-            183
-            ops
-            ops-count)]
-        [(AstExpr.ArrayPush target-node value-node)
-          (embedded-native-binary-ops
-            params
-            target-node
-            value-node
-            184
-            ops
-            ops-count)]
-        [(AstExpr.MakeArray elem-type size-node)
-          (let
-            [ti : i64
-              (embedded-stdlib-tlci-type-unquote-param params elem-type)]
-            [si : i64 (embedded-stdlib-tlci-unquoted-param params size-node)]
-            (if (or (< ti 0) (< si 0))
-              -1
-              (begin
-                (embedded-native-ops-push!
-                  ops
-                  ops-count
-                  (embedded-native-op-open
-                    0
-                    180
-                    (string.int->string ti)
-                    "0"
-                    "0"))
-                (embedded-native-ops-push!
-                  ops
-                  ops-count
-                  (embedded-native-op-open
-                    1
-                    180
-                    (string.int->string si)
-                    "0"
-                    "0"))
-                (embedded-native-ops-push!
-                  ops
-                  ops-count
-                  (embedded-native-op-open 2 185 "0" "0" "0"))
-                3)))]
-        [_ -1])]
+      (embedded-native-template-ops params quoted ops ops-count)]
+    [(AstExpr.Var pname)
+      (let
+        [param : i64 (embedded-stdlib-tlci-param-index params pname)]
+        (if (< param 0)
+          -1
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              180
+              (string.int->string param)
+              "0"
+              "0")
+            1)))]
     [(AstExpr.Call fold-func fold-args)
       ;; Plain (not quasiquoted) call to the expr-list fold intrinsic: the
       ;; and/or shape. The host op mirrors the interpreted fold exactly, so
@@ -490,7 +355,19 @@
                         (string.int->string continue-flag)
                         "0"))
                     3)))
-              -1))]
+              (let
+                [var-name : String (embedded-native-expr-var-name body-node)]
+                (if (= (string.string-length var-name) 0)
+                  -1
+                  (begin
+                    (embedded-native-template-push!
+                      ops
+                      ops-count
+                      103
+                      (embedded-native-name-arg var-name)
+                      (string.int->string (string.string-length var-name))
+                      "0")
+                    1)))))]
         [_ -1])]
     [_ -1]))
 
@@ -545,32 +422,396 @@
         [_ -1])]
     [_ -1]))
 
-(define (embedded-native-binary-ops
-  [params : (& params AstMacroParamList)]
-  [target-node : i64]
-  [operand-node : i64]
+;; Escape `text` for embedding inside a generated source string literal. The
+;; generated transformer source is re-lexed by the ordinary lexer, whose
+;; string escapes are \\, \", \n, \t, and \r.
+(define (embedded-native-escape-string [text : String]) : String
+  (let
+    [out : String ""]
+    [index : i64 0]
+    [length : i64 (string.string-length text)]
+    (begin
+      (while (< index length)
+        (let
+          [c : char (string.string-ref text index)]
+          (begin
+            (cond
+              [(= c '\\') (set! out (str-cat out "\\\\"))]
+              [(= c '"') (set! out (str-cat out "\\\""))]
+              [(= c '\n') (set! out (str-cat out "\\n"))]
+              [(= c '\t') (set! out (str-cat out "\\t"))]
+              [(= c '\r') (set! out (str-cat out "\\r"))]
+              [else (set! out (str-cat out (string.substring text index 1)))])
+            (set! index (+ index 1)))))
+      out)))
+
+;; Push one host-op call whose status let name matches the current op slot,
+;; keeping generated status bindings unique across the whole entry.
+(define (embedded-native-template-push!
+  [ops : (Array String)]
+  [ops-count : (Array i64)]
   [op : i64]
+  [arg-a : String]
+  [arg-b : String]
+  [arg-c : String]) : unit
+  (embedded-native-ops-push!
+    ops
+    ops-count
+    (embedded-native-op-open (array-ref ops-count 0) op arg-a arg-b arg-c)))
+
+;; AstBinOp ordinal contract shared with the host callback consumer; the
+;; embedded image and its consumer are always the same source-bound binary.
+(define (embedded-native-binop-ordinal [op : AstBinOp]) : i64
+  (match op
+    [(AstBinOp.Add) 0]
+    [(AstBinOp.Sub) 1]
+    [(AstBinOp.Mul) 2]
+    [(AstBinOp.Div) 3]
+    [(AstBinOp.Mod) 4]
+    [(AstBinOp.Eq) 5]
+    [(AstBinOp.Ne) 6]
+    [(AstBinOp.Lt) 7]
+    [(AstBinOp.Le) 8]
+    [(AstBinOp.Gt) 9]
+    [(AstBinOp.Ge) 10]
+    [(AstBinOp.And) 11]
+    [(AstBinOp.Or) 12]
+    [(AstBinOp.BitAnd) 13]
+    [(AstBinOp.BitOr) 14]
+    [(AstBinOp.BitXor) 15]
+    [(AstBinOp.Shl) 16]
+    [(AstBinOp.Shr) 17]))
+
+(define (embedded-native-unop-ordinal [op : AstUnOp]) : i64
+  (match op
+    [(AstUnOp.Neg) 0]
+    [(AstUnOp.Not) 1]
+    [(AstUnOp.BitNot) 2]))
+
+(define (embedded-native-comparison-spelling [ordinal : i64]) : String
+  (cond
+    [(= ordinal 5) "="]
+    [(= ordinal 6) "!="]
+    [(= ordinal 7) "<"]
+    [(= ordinal 8) "<="]
+    [(= ordinal 9) ">"]
+    [(= ordinal 10) ">="]
+    [else "="]))
+
+;; Emit the op chain that pushes exactly one session-stack value for one
+;; quasiquoted template node, mirroring the interpreted quote's reconstruction
+;; of calls, if/begin/binary/unary forms, literals, plain symbols, unquoted
+;; operands, and the intrinsic array nodes. Returns the number of opened op
+;; lets, or -1 when the node is outside the supported template subset (the
+;; caller then keeps the counted fallback shell). Refs #5596.
+(define (embedded-native-template-ops
+  [params : (& params AstMacroParamList)]
+  [node : i64]
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Unquote inner)
+      (match (embedded-stdlib-tlci-unwrap-expr inner)
+        [(AstExpr.Var pname)
+          (let
+            [param : i64 (embedded-stdlib-tlci-param-index params pname)]
+            (if (< param 0)
+              -1
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  180
+                  (string.int->string param)
+                  "0"
+                  "0")
+                1)))]
+        [_ -1])]
+    [(AstExpr.Literal lit)
+      (match lit
+        [(AstLiteral.Bool flag)
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              187
+              (if flag
+                "1"
+                "0")
+              "0"
+              "0")
+            1)]
+        [(AstLiteral.Int value text)
+          (if (or
+            (= (string.string-length text) 0)
+            (string.eq text (string.int->string value)))
+            (begin
+              (embedded-native-template-push!
+                ops
+                ops-count
+                188
+                (string.int->string value)
+                "0"
+                "0")
+              1)
+            -1)]
+        [(AstLiteral.String sid)
+          (let
+            [text : String (intern-str sid)]
+            (begin
+              (embedded-native-template-push!
+                ops
+                ops-count
+                102
+                (embedded-native-name-arg (embedded-native-escape-string text))
+                (string.int->string (string.string-length text))
+                "0")
+              1))]
+        [(AstLiteral.Char c)
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              202
+              (string.int->string (cast c : i64))
+              "0"
+              "0")
+            1)]
+        [(AstLiteral.Unit)
+          (begin
+            (embedded-native-template-push! ops ops-count 203 "0" "0" "0")
+            1)]
+        [_ -1])]
+    [(AstExpr.Var name-id)
+      (let
+        [name : String (intern-str name-id)]
+        (begin
+          (embedded-native-template-push!
+            ops
+            ops-count
+            103
+            (embedded-native-name-arg name)
+            (string.int->string (string.string-length name))
+            "0")
+          1))]
+    [(AstExpr.Call func-id args)
+      (match (embedded-stdlib-tlci-unwrap-expr func-id)
+        [(AstExpr.Var head-id)
+          (let
+            [head : String (intern-str head-id)]
+            (begin
+              (embedded-native-template-push!
+                ops
+                ops-count
+                103
+                (embedded-native-name-arg head)
+                (string.int->string (string.string-length head))
+                "0")
+              (let
+                [arg-opened : i64
+                  (embedded-native-template-args-ops
+                    params
+                    (& args)
+                    ops
+                    ops-count)]
+                (if (< arg-opened 0)
+                  -1
+                  (begin
+                    (embedded-native-template-push!
+                      ops
+                      ops-count
+                      181
+                      "0"
+                      "0"
+                      "0")
+                    (+ arg-opened 2))))))]
+        [_ -1])]
+    [(AstExpr.If cond-node then-node else-node)
+      (let
+        [cond-opened : i64
+          (embedded-native-template-ops params cond-node ops ops-count)]
+        (if (< cond-opened 0)
+          -1
+          (let
+            [then-opened : i64
+              (embedded-native-template-ops params then-node ops ops-count)]
+            (if (< then-opened 0)
+              -1
+              (let
+                [else-opened : i64
+                  (embedded-native-template-ops params else-node ops ops-count)]
+                (if (< else-opened 0)
+                  -1
+                  (begin
+                    (embedded-native-template-push!
+                      ops
+                      ops-count
+                      115
+                      "0"
+                      "0"
+                      "0")
+                    (+ cond-opened then-opened else-opened 1))))))))]
+    [(AstExpr.Begin exprs)
+      (let
+        [arg-opened : i64
+          (embedded-native-template-args-ops params (& exprs) ops ops-count)]
+        (if (< arg-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push! ops ops-count 199 "0" "0" "0")
+            (+ arg-opened 1))))]
+    [(AstExpr.Binary op left-node right-node)
+      (let
+        [left-opened : i64
+          (embedded-native-template-ops params left-node ops ops-count)]
+        (if (< left-opened 0)
+          -1
+          (let
+            [right-opened : i64
+              (embedded-native-template-ops params right-node ops ops-count)]
+            (if (< right-opened 0)
+              -1
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  200
+                  (string.int->string (embedded-native-binop-ordinal op))
+                  "0"
+                  "0")
+                (+ left-opened right-opened 1))))))]
+    [(AstExpr.Unary op inner-node)
+      (let
+        [inner-opened : i64
+          (embedded-native-template-ops params inner-node ops ops-count)]
+        (if (< inner-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              201
+              (string.int->string (embedded-native-unop-ordinal op))
+              "0"
+              "0")
+            (+ inner-opened 1))))]
+    [(AstExpr.ArrayRef target-node index-node)
+      (let
+        [target-opened : i64
+          (embedded-native-template-ops params target-node ops ops-count)]
+        (if (< target-opened 0)
+          -1
+          (let
+            [index-opened : i64
+              (embedded-native-template-ops params index-node ops ops-count)]
+            (if (< index-opened 0)
+              -1
+              (begin
+                (embedded-native-template-push! ops ops-count 183 "0" "0" "0")
+                (+ target-opened index-opened 1))))))]
+    [(AstExpr.ArrayPush target-node value-node)
+      (let
+        [target-opened : i64
+          (embedded-native-template-ops params target-node ops ops-count)]
+        (if (< target-opened 0)
+          -1
+          (let
+            [value-opened : i64
+              (embedded-native-template-ops params value-node ops ops-count)]
+            (if (< value-opened 0)
+              -1
+              (begin
+                (embedded-native-template-push! ops ops-count 184 "0" "0" "0")
+                (+ target-opened value-opened 1))))))]
+    [(AstExpr.MakeArray elem-type size-node)
+      (let
+        [ti : i64 (embedded-stdlib-tlci-type-unquote-param params elem-type)]
+        (if (< ti 0)
+          -1
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              180
+              (string.int->string ti)
+              "0"
+              "0")
+            (let
+              [size-opened : i64
+                (embedded-native-template-ops params size-node ops ops-count)]
+              (if (< size-opened 0)
+                -1
+                (begin
+                  (embedded-native-template-push! ops ops-count 185 "0" "0" "0")
+                  (+ size-opened 2)))))))]
+    [_ -1]))
+
+;; Emit ops building one template argument/expression list: expr-list-empty,
+;; then per item either list-append of a pushed template value or expr-splice
+;; of a variadic operand's whole ExprList, matching the interpreted quote's
+;; unquote-splicing step. Returns the opened op-let count or -1 when an item
+;; is outside the supported subset.
+(define (embedded-native-template-args-ops
+  [params : (& params AstMacroParamList)]
+  [args : (& args AstExprList)]
   [ops : (Array String)]
   [ops-count : (Array i64)]) : i64
   (let
-    [ti : i64 (embedded-stdlib-tlci-unquoted-param params target-node)]
-    [oi : i64 (embedded-stdlib-tlci-unquoted-param params operand-node)]
-    (if (or (< ti 0) (< oi 0))
-      -1
-      (begin
-        (embedded-native-ops-push!
-          ops
-          ops-count
-          (embedded-native-op-open 0 180 (string.int->string ti) "0" "0"))
-        (embedded-native-ops-push!
-          ops
-          ops-count
-          (embedded-native-op-open 1 180 (string.int->string oi) "0" "0"))
-        (embedded-native-ops-push!
-          ops
-          ops-count
-          (embedded-native-op-open 2 op "0" "0" "0"))
-        3))))
+    [count : i64 (ast-expr-list-len args)]
+    [index : i64 0]
+    [opened : i64 1]
+    [ok : bool true]
+    (begin
+      (embedded-native-template-push! ops ops-count 178 "0" "0" "0")
+      (while (and ok (< index count))
+        (let
+          [item : i64 (ast-expr-list-get args index 0)]
+          (match (embedded-stdlib-tlci-unwrap-expr item)
+            [(AstExpr.UnquoteSplicing inner)
+              (match (embedded-stdlib-tlci-unwrap-expr inner)
+                [(AstExpr.Var pname)
+                  (let
+                    [param : i64
+                      (embedded-stdlib-tlci-param-index params pname)]
+                    (if (< param 0)
+                      (set! ok false)
+                      (begin
+                        (embedded-native-template-push!
+                          ops
+                          ops-count
+                          180
+                          (string.int->string param)
+                          "0"
+                          "0")
+                        (embedded-native-template-push!
+                          ops
+                          ops-count
+                          114
+                          "0"
+                          "0"
+                          "0")
+                        (set! opened (+ opened 2))
+                        (set! index (+ index 1)))))]
+                [_ (set! ok false)])]
+            [_
+              (let
+                [item-opened : i64
+                  (embedded-native-template-ops params item ops ops-count)]
+                (if (< item-opened 0)
+                  (set! ok false)
+                  (begin
+                    (embedded-native-template-push!
+                      ops
+                      ops-count
+                      179
+                      "0"
+                      "0"
+                      "0")
+                    (set! opened (+ opened item-opened 1))
+                    (set! index (+ index 1)))))])))
+      (if ok
+        opened
+        -1))))
 
 ;; Full source for the native package: the host extern plus one entry function
 ;; per identity in catalog order.
@@ -622,11 +863,7 @@
           [(AstPattern.Literal (AstLiteral.String sid))
             (let
               [kind : String (intern-str sid)]
-              [ops : (Array String)
-                (array.make-array String embedded-native-ops-cap)]
-              [ops-count : (Array i64) (make-array 0)]
-              [opened : i64
-                (embedded-native-body-ops params body-node ops ops-count)]
+              [arm-code : String (embedded-native-body-code params body-node)]
               [rest : String
                 (embedded-native-match-arms params type-index arms (+ index 1))]
               (if (string.eq rest "")
@@ -650,12 +887,9 @@
                   "  (if (= t"
                   (string.int->string index)
                   " 1)\n"
-                  (if (< opened 0)
+                  (if (string.eq arm-code "")
                     "  0\n"
-                    (embedded-native-arm-block
-                      ops
-                      (array-ref ops-count 0)
-                      opened))
+                    arm-code)
                   "\n"
                   rest
                   ")))\n")))]
@@ -692,6 +926,123 @@
             [_ ""])])]
     [_ ""]))
 
+;; One extracted `(cmp (comptime.expr-list-length p) lit)` condition: the
+;; variadic-operand index, the comparison AstBinOp ordinal (Eq..Ge only), and
+;; the canonical literal bound.
+(defenum EmbeddedNativeLengthProbe
+  (LengthProbe i64 i64 i64)
+  (NoLengthProbe))
+
+;; Extract `(cmp (comptime.expr-list-length p) lit)` with the length call on
+;; the left and a canonical int literal on the right. Anything else is not a
+;; length probe.
+(define (embedded-native-length-probe
+  [params : (& params AstMacroParamList)]
+  [cond-node : i64]) : EmbeddedNativeLengthProbe
+  (match (embedded-stdlib-tlci-unwrap-expr cond-node)
+    [(AstExpr.Binary op left-node right-node)
+      (let
+        [ordinal : i64 (embedded-native-binop-ordinal op)]
+        (if (or (< ordinal 5) (> ordinal 10))
+          (EmbeddedNativeLengthProbe.NoLengthProbe)
+          (match (embedded-stdlib-tlci-unwrap-expr left-node)
+            [(AstExpr.Call length-func length-args)
+              (match (embedded-stdlib-tlci-unwrap-expr length-func)
+                [(AstExpr.Var length-head)
+                  (if (and
+                    (or
+                      (string.eq
+                        (intern-str length-head)
+                        "comptime.expr-list-length")
+                      (string.eq (intern-str length-head) "expr-list-length"))
+                    (= (ast-expr-list-len (& length-args)) 1))
+                    (let
+                      [param : i64
+                        (embedded-native-var-param-index
+                          params
+                          (ast-expr-list-get (& length-args) 0 0))]
+                      (match (embedded-stdlib-tlci-unwrap-expr right-node)
+                        [(AstExpr.Literal (AstLiteral.Int value text))
+                          (if (and
+                            (>= param 0)
+                            (or
+                              (= (string.string-length text) 0)
+                              (string.eq text (string.int->string value))))
+                            (EmbeddedNativeLengthProbe.LengthProbe
+                              param
+                              ordinal
+                              value)
+                            (EmbeddedNativeLengthProbe.NoLengthProbe))]
+                        [_ (EmbeddedNativeLengthProbe.NoLengthProbe)]))
+                    (EmbeddedNativeLengthProbe.NoLengthProbe))]
+                [_ (EmbeddedNativeLengthProbe.NoLengthProbe)])]
+            [_ (EmbeddedNativeLengthProbe.NoLengthProbe)])))]
+    [_ (EmbeddedNativeLengthProbe.NoLengthProbe)]))
+
+;; Compile `(if (cmp (comptime.expr-list-length p) lit) then else)` when both
+;; branches are supported bodies; returns "" outside that shape. A negative
+;; probe (a non-list operand) unwinds as the public bad-request status, the
+;; same contract the type-kind probe uses.
+(define (embedded-native-computed-if-body
+  [params : (& params AstMacroParamList)]
+  [body-node : i64]) : String
+  (match (embedded-stdlib-tlci-unwrap-expr body-node)
+    [(AstExpr.If cond-node then-node else-node)
+      (match (embedded-native-length-probe params cond-node)
+        [(EmbeddedNativeLengthProbe.LengthProbe param ordinal literal)
+          (let
+            [then-code : String (embedded-native-body-code params then-node)]
+            [else-code : String (embedded-native-body-code params else-node)]
+            (if (or (string.eq then-code "") (string.eq else-code ""))
+              ""
+              (str-cat
+                "  (let [t0 : i64 (comptime-host-invoke host session 155 "
+                (string.int->string param)
+                " 0 0)]\n"
+                "  (if (< t0 0)\n  "
+                (string.int->string tlci-host-callback-status-bad-request)
+                "\n  (if ("
+                (embedded-native-comparison-spelling ordinal)
+                " t0 "
+                (string.int->string literal)
+                ")\n"
+                then-code
+                else-code
+                ")))\n")))]
+        [(EmbeddedNativeLengthProbe.NoLengthProbe) ""])]
+    [_ ""]))
+
+;; Compile a linear op-chain body (template, fold, or plain builder) into a
+;; complete arm block; returns "" when the body is outside the supported
+;; subset or would overflow the per-entry op budget (a dropped op can never
+;; be emitted silently).
+(define (embedded-native-linear-body-code
+  [params : (& params AstMacroParamList)]
+  [body-node : i64]) : String
+  (let
+    [ops : (Array String) (array.make-array String embedded-native-ops-cap)]
+    [ops-count : (Array i64) (make-array 0)]
+    [opened : i64 (embedded-native-body-ops params body-node ops ops-count)]
+    (if (or (< opened 0) (>= (array-ref ops-count 0) embedded-native-ops-cap))
+      ""
+      (embedded-native-arm-block ops (array-ref ops-count 0) opened))))
+
+;; Unified native body compiler: a type-kind match, a computed list-length
+;; if, or a linear template/fold/plain body. Returns "" when the body stays
+;; an interpreted-fallback shell.
+(define (embedded-native-body-code
+  [params : (& params AstMacroParamList)]
+  [body-node : i64]) : String
+  (let
+    [match-text : String (embedded-native-match-body params body-node)]
+    (if (not (string.eq match-text ""))
+      match-text
+      (let
+        [if-text : String (embedded-native-computed-if-body params body-node)]
+        (if (not (string.eq if-text ""))
+          if-text
+          (embedded-native-linear-body-code params body-node))))))
+
 (define (embedded-native-source
   [names : (Array String)]
   [captures : (& captures TlciNativeMacroCaptures)]) : String
@@ -709,29 +1060,15 @@
         (let
           [slot : i64
             (tlci-native-macro-capture-slot captures (array-ref names index))]
-          [ops : (Array String)
-            (array.make-array String embedded-native-ops-cap)]
-          [ops-count : (Array i64) (make-array 0)]
-          [match-text : String
+          [body-text : String
             (if (>= slot 0)
-              (embedded-native-match-body
+              (embedded-native-body-code
                 (&
                   (struct-get
                     (array-ref (struct-get captures slots) slot)
                     params))
                 (struct-get (array-ref (struct-get captures slots) slot) body))
               "")]
-          [opened : i64
-            (if (and (>= slot 0) (string.eq match-text ""))
-              (embedded-native-body-ops
-                (&
-                  (struct-get
-                    (array-ref (struct-get captures slots) slot)
-                    params))
-                (struct-get (array-ref (struct-get captures slots) slot) body)
-                ops
-                ops-count)
-              -1)]
           (begin
             (set!
               out
@@ -741,7 +1078,7 @@
                 (string.int->string index)
                 " [image-ctx : i64] [host : i64] [session : i64]"
                 " [operands : i64] [count : i64] [result : i64]) : i64\n"))
-            (if (and (string.eq match-text "") (< opened 0))
+            (if (string.eq body-text "")
               (set!
                 out
                 (str-cat
@@ -756,12 +1093,7 @@
                   (str-cat
                     out
                     (embedded-native-op-open 99 1 "0" "0" "0")
-                    (if (string.eq match-text "")
-                      (embedded-native-arm-block
-                        ops
-                        (array-ref ops-count 0)
-                        opened)
-                      match-text)
+                    body-text
                     ")))\n"))))
             (set! index (+ index 1)))))
       (array-set! embedded-stdlib-tlci-native-report-count 0 native-count)

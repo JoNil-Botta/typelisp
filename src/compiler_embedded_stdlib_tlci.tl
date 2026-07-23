@@ -294,11 +294,17 @@
 
 ;; Expression node id of a stack value, or -1 when the value does not carry
 ;; one. Captured operands keep their caller-pool node id; the pool-context
-;; bridging refinement is tracked with the real-body slice.
+;; bridging refinement is tracked with the real-body slice. A type operand
+;; converts to its type-syntax expression, matching the interpreted
+;; quasiquote's unquote substitution for `,T`.
 (define (compiler-comptime-host-value-node [value : CompilerCtfeValue]) : i64
   (match value
     [(CompilerCtfeValue.Expr node _) node]
     [(CompilerCtfeValue.CapturedExpr node _ _) node]
+    [(CompilerCtfeValue.Type ty)
+      (ctfe-type-to-expr
+        ty
+        (ctfe-env-empty-with-pools (array-ref compiler-comptime-host-pools 0)))]
     [_ -1]))
 
 ;; Pop two operand expressions (second then target) and push a two-operand
@@ -333,6 +339,40 @@
               (- compiler-comptime-host-stack-len 2))
             (compiler-comptime-host-push!
               (CompilerCtfeValue.Expr node (AstType.Expr)))))))))
+
+;; Decode the AstBinOp ordinal a native image passes for expr-binary-op. The
+;; producer and consumer are always the same source-bound binary, so the
+;; ordinal contract stays in sync with the producer's encoder. Callers range
+;; check the ordinal before decoding, so the fallback is unreachable.
+(define (compiler-comptime-host-binop-for-ordinal [ordinal : i64]) : AstBinOp
+  (cond
+    [(= ordinal 0) (AstBinOp.Add)]
+    [(= ordinal 1) (AstBinOp.Sub)]
+    [(= ordinal 2) (AstBinOp.Mul)]
+    [(= ordinal 3) (AstBinOp.Div)]
+    [(= ordinal 4) (AstBinOp.Mod)]
+    [(= ordinal 5) (AstBinOp.Eq)]
+    [(= ordinal 6) (AstBinOp.Ne)]
+    [(= ordinal 7) (AstBinOp.Lt)]
+    [(= ordinal 8) (AstBinOp.Le)]
+    [(= ordinal 9) (AstBinOp.Gt)]
+    [(= ordinal 10) (AstBinOp.Ge)]
+    [(= ordinal 11) (AstBinOp.And)]
+    [(= ordinal 12) (AstBinOp.Or)]
+    [(= ordinal 13) (AstBinOp.BitAnd)]
+    [(= ordinal 14) (AstBinOp.BitOr)]
+    [(= ordinal 15) (AstBinOp.BitXor)]
+    [(= ordinal 16) (AstBinOp.Shl)]
+    [(= ordinal 17) (AstBinOp.Shr)]
+    [else (AstBinOp.Add)]))
+
+;; Decode the AstUnOp ordinal a native image passes for expr-unary-op.
+(define (compiler-comptime-host-unop-for-ordinal [ordinal : i64]) : AstUnOp
+  (cond
+    [(= ordinal 0) (AstUnOp.Neg)]
+    [(= ordinal 1) (AstUnOp.Not)]
+    [(= ordinal 2) (AstUnOp.BitNot)]
+    [else (AstUnOp.Neg)]))
 
 ;; The compiler-owned callback invoke installed into the tlci host callback
 ;; table. TypeLisp's native convention passes scalar arguments in the SysV
@@ -382,10 +422,16 @@
           [name : String
             (unsafe
               (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))]
+          ;; Reproduce the interpreted quote's variable exactly: the lexer's
+          ;; source-name id for the spelling, marked as template source so
+          ;; dotted spellings resolve through the same hygiene path as an
+          ;; interpreted expansion.
           [node : i64
             (ast-node-pool-context-expr-push
               (array-ref compiler-comptime-host-pools 0)
-              (AstExpr.Var (ci.intern name)))]
+              (AstExpr.Var
+                (ci.intern-template-source-id
+                  (ci.intern-source-slice name 0 (string.string-length name)))))]
           (compiler-comptime-host-push!
             (CompilerCtfeValue.Expr node (AstType.Expr)))))]
     [(= operation tlci-host-callback-op-expr-list-empty)
@@ -528,6 +574,183 @@
           (ast-node-pool-context-expr-push
             (array-ref compiler-comptime-host-pools 0)
             (AstExpr.Literal (ast-lit-int arg-a)))
+          (AstType.Expr)))]
+    ;; Template string literal: the lexer interns literal text through the
+    ;; source-name session, so the same spelling maps to the same id here.
+    [(= operation tlci-host-callback-op-expr-string)
+      (if (or (<= arg-a 0) (< arg-b 0))
+        tlci-host-callback-status-bad-request
+        (let
+          [text : String
+            (unsafe
+              (string-from-bytes (int->ptr arg-a : (Ptr u8)) arg-b))]
+          (compiler-comptime-host-push!
+            (CompilerCtfeValue.Expr
+              (ast-node-pool-context-expr-push
+                (array-ref compiler-comptime-host-pools 0)
+                (AstExpr.Literal
+                  (AstLiteral.String
+                    (ci.intern-source-slice text 0 (string.string-length text)))))
+              (AstType.Expr)))))]
+    ;; Pop a splice ExprList then the list under construction and push the
+    ;; concatenation, matching the interpreted quote's unquote-splicing step.
+    [(= operation tlci-host-callback-op-expr-splice)
+      (if (< compiler-comptime-host-stack-len 2)
+        tlci-host-callback-status-bad-request
+        (let
+          [splice-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [list-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          (match list-value
+            [(CompilerCtfeValue.ExprList items)
+              (match splice-value
+                [(CompilerCtfeValue.ExprList splice-items)
+                  (let
+                    [next : AstExprList
+                      (ctfe-expr-list-append items splice-items)]
+                    (begin
+                      (set!
+                        compiler-comptime-host-stack-len
+                        (- compiler-comptime-host-stack-len 2))
+                      (compiler-comptime-host-push!
+                        (CompilerCtfeValue.ExprList next))))]
+                [_ tlci-host-callback-status-bad-request])]
+            [_ tlci-host-callback-status-bad-request])))]
+    ;; Pop else, then, and cond expressions and push the if node the parser
+    ;; produces, matching the interpreted quote.
+    [(= operation tlci-host-callback-op-expr-if)
+      (if (< compiler-comptime-host-stack-len 3)
+        tlci-host-callback-status-bad-request
+        (let
+          [else-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [then-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          [cond-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 3))]
+          [else-node : i64 (compiler-comptime-host-value-node else-value)]
+          [then-node : i64 (compiler-comptime-host-value-node then-value)]
+          [cond-node : i64 (compiler-comptime-host-value-node cond-value)]
+          (if (or (< else-node 0) (< then-node 0) (< cond-node 0))
+            tlci-host-callback-status-bad-request
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 3))
+              (compiler-comptime-host-push!
+                (CompilerCtfeValue.Expr
+                  (ast-expr-if-with-pools
+                    (array-ref compiler-comptime-host-pools 0)
+                    cond-node
+                    then-node
+                    else-node)
+                  (AstType.Expr)))))))]
+    ;; Item count of a variadic ExprList operand as data; negative reports a
+    ;; bad request without touching session state (the generated entry
+    ;; translates it to the public bad-request status before unwinding).
+    [(= operation tlci-host-callback-op-expr-list-length)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        -3
+        (match (array-ref compiler-comptime-host-operands arg-a)
+          [(CompilerCtfeValue.ExprList items) (ctfe-expr-list-length items)]
+          [_ -3]))]
+    ;; Pop an expression list and push the begin node the parser produces.
+    [(= operation tlci-host-callback-op-expr-begin)
+      (if (< compiler-comptime-host-stack-len 1)
+        tlci-host-callback-status-bad-request
+        (match (array-ref
+          compiler-comptime-host-stack
+          (- compiler-comptime-host-stack-len 1))
+          [(CompilerCtfeValue.ExprList items)
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-push!
+                (CompilerCtfeValue.Expr
+                  (ast-node-pool-context-expr-push
+                    (array-ref compiler-comptime-host-pools 0)
+                    (AstExpr.Begin items))
+                  (AstType.Expr))))]
+          [_ tlci-host-callback-status-bad-request]))]
+    ;; Pop the right then the left operand expression and push a binary node
+    ;; for the AstBinOp ordinal in `a`.
+    [(= operation tlci-host-callback-op-expr-binary-op)
+      (if (or (< compiler-comptime-host-stack-len 2) (< arg-a 0) (> arg-a 17))
+        tlci-host-callback-status-bad-request
+        (let
+          [right-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [left-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 2))]
+          [right-node : i64 (compiler-comptime-host-value-node right-value)]
+          [left-node : i64 (compiler-comptime-host-value-node left-value)]
+          (if (or (< right-node 0) (< left-node 0))
+            tlci-host-callback-status-bad-request
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 2))
+              (compiler-comptime-host-push!
+                (CompilerCtfeValue.Expr
+                  (ast-expr-binary-with-pools
+                    (array-ref compiler-comptime-host-pools 0)
+                    (compiler-comptime-host-binop-for-ordinal arg-a)
+                    left-node
+                    right-node)
+                  (AstType.Expr)))))))]
+    ;; Pop the operand expression and push a unary node for the AstUnOp
+    ;; ordinal in `a`.
+    [(= operation tlci-host-callback-op-expr-unary-op)
+      (if (or (< compiler-comptime-host-stack-len 1) (< arg-a 0) (> arg-a 2))
+        tlci-host-callback-status-bad-request
+        (let
+          [inner-value : CompilerCtfeValue
+            (array-ref
+              compiler-comptime-host-stack
+              (- compiler-comptime-host-stack-len 1))]
+          [inner-node : i64 (compiler-comptime-host-value-node inner-value)]
+          (if (< inner-node 0)
+            tlci-host-callback-status-bad-request
+            (begin
+              (set!
+                compiler-comptime-host-stack-len
+                (- compiler-comptime-host-stack-len 1))
+              (compiler-comptime-host-push!
+                (CompilerCtfeValue.Expr
+                  (ast-expr-unary-with-pools
+                    (array-ref compiler-comptime-host-pools 0)
+                    (compiler-comptime-host-unop-for-ordinal arg-a)
+                    inner-node)
+                  (AstType.Expr)))))))]
+    [(= operation tlci-host-callback-op-expr-char-literal)
+      (compiler-comptime-host-push!
+        (CompilerCtfeValue.Expr
+          (ast-node-pool-context-expr-push
+            (array-ref compiler-comptime-host-pools 0)
+            (AstExpr.Literal (AstLiteral.Char (cast arg-a : char))))
+          (AstType.Expr)))]
+    [(= operation tlci-host-callback-op-expr-unit-literal)
+      (compiler-comptime-host-push!
+        (CompilerCtfeValue.Expr
+          (ast-node-pool-context-expr-push
+            (array-ref compiler-comptime-host-pools 0)
+            (AstExpr.Literal (AstLiteral.Unit)))
           (AstType.Expr)))]
     [(= operation tlci-host-callback-op-expr-list-fold-if)
       (if (or
@@ -684,10 +907,11 @@
 ;; A valid-session callback failure is terminal for that transformer
 ;; invocation. Native entries may remain branch-free: later probes observe the
 ;; first status without mutating the value stack or committing a result.
-;; The operand-type-kind probe is the one data-returning operation: 1/0 is its
-;; boolean result and a negative value is its malformed-request sentinel. It
-;; must bypass the status latch; generated entries translate its negative
-;; sentinel to the public bad-request status before unwinding.
+;; The operand-type-kind and list-length probes are the data-returning
+;; operations: 1/0 (or the item count) is their result and a negative value is
+;; their malformed-request sentinel. They must bypass the status latch;
+;; generated entries translate the negative sentinel to the public bad-request
+;; status before unwinding.
 ;; Invalid cookies do not poison the active session.
 (define (compiler-comptime-host-invoke
   [session : i64]
@@ -714,6 +938,7 @@
           (when
             (and
               (not (= operation tlci-host-callback-op-operand-type-kind-eq))
+              (not (= operation tlci-host-callback-op-expr-list-length))
               (not (= status tlci-host-callback-status-ok)))
             (set! compiler-comptime-host-session-status status))
           status)))))

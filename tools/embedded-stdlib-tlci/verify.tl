@@ -28,7 +28,9 @@
           (and
             (match (ast-node-pool-context-expr-get pools callee-id)
               [(AstExpr.Var name-id)
-                (= name-id (ci.intern "__tl_array-length"))]
+                (=
+                  name-id
+                  (ci.intern-template-source-id (ci.intern "__tl_array-length")))]
               [_ false])
             (= (ast-expr-list-len (& args)) 1)
             (= (ast-expr-list-get (& args) 0 -1) operand-node))]

@@ -7,6 +7,9 @@
 (import compiler_object_elf as elf)
 (import "compiler_backend.tl")
 (import "compiler_lower_tests.tl")
+(import compiler_backend_runtime_common as runtime_common)
+(import compiler_backend_runtime_linux as runtime_linux)
+(import compiler_backend_runtime_windows as runtime_windows)
 (import compiler_parallel_move as pmove)
 (import compiler_builtin_ids as cbi)
 (import "compiler_float.tl")
@@ -13528,11 +13531,9 @@
 
 (define (compiler-backend-runtime-memchr-functions-ok?) : bool
   (let
-    [linux : String
-      (compiler-backend-runtime-memchr-functions (CompilerBackendTarget.Linux))]
+    [linux : String (runtime_linux.compiler-backend-runtime-memchr-functions)]
     [windows : String
-      (compiler-backend-runtime-memchr-functions
-        (CompilerBackendTarget.Windows))]
+      (runtime_windows.compiler-backend-runtime-memchr-functions)]
     (and
       (backend-and4
         (compiler-backend-string-contains? linux "    .globl tl_memchr\n")
@@ -13621,13 +13622,19 @@
         (= (compiler-backend-string-count asm "%fs:tl_current_arena@tpoff") 20)
         (= (compiler-backend-string-count asm "%gs:0x28") 0)))))
 
+(define (compiler-backend-test-runtime-functions-for-target
+  [target : CompilerBackendTarget]) : String
+  (let
+    [plan : CompilerBackendRuntimePlan
+      (compiler-backend-runtime-helper-full-plan)]
+    [features : runtime_common.CompilerBackendRuntimeFeatures
+      (compiler-backend-runtime-features plan)]
+    (compiler-backend-runtime-functions-for-target target (& features))))
+
 (define (compiler-backend-runtime-global-inventory-target-ok?
   [target : CompilerBackendTarget]) : bool
   (let
-    [asm : String
-      (compiler-backend-runtime-functions-for-target
-        target
-        (compiler-backend-runtime-helper-full-plan))]
+    [asm : String (compiler-backend-test-runtime-functions-for-target target)]
     (and
       (compiler-backend-runtime-sensitive-instrs-ok? target asm)
       (if (compiler-backend-target-windows? target)
@@ -13644,9 +13651,8 @@
 (define (compiler-backend-runtime-page-call-inventory-linux-ok?) : bool
   (let
     [asm : String
-      (compiler-backend-runtime-functions-for-target
-        (CompilerBackendTarget.Linux)
-        (compiler-backend-runtime-helper-full-plan))]
+      (compiler-backend-test-runtime-functions-for-target
+        (CompilerBackendTarget.Linux))]
     (and
       (backend-and8
         (compiler-backend-string-contains? asm "tl_alloc:\n")
@@ -13682,9 +13688,8 @@
 (define (compiler-backend-runtime-page-call-inventory-windows-ok?) : bool
   (let
     [asm : String
-      (compiler-backend-runtime-functions-for-target
-        (CompilerBackendTarget.Windows)
-        (compiler-backend-runtime-helper-full-plan))]
+      (compiler-backend-test-runtime-functions-for-target
+        (CompilerBackendTarget.Windows))]
     (and
       (backend-and8
         (compiler-backend-string-contains? asm "tl_alloc:\n")
@@ -13726,13 +13731,11 @@
 (define (compiler-backend-runtime-windows-allocation-provenance-ok?) : bool
   (let
     [windows : String
-      (compiler-backend-runtime-functions-for-target
-        (CompilerBackendTarget.Windows)
-        (compiler-backend-runtime-helper-full-plan))]
+      (compiler-backend-test-runtime-functions-for-target
+        (CompilerBackendTarget.Windows))]
     [linux : String
-      (compiler-backend-runtime-functions-for-target
-        (CompilerBackendTarget.Linux)
-        (compiler-backend-runtime-helper-full-plan))]
+      (compiler-backend-test-runtime-functions-for-target
+        (CompilerBackendTarget.Linux))]
     (and
       (backend-and8
         (compiler-backend-string-contains?
@@ -13800,9 +13803,8 @@
 (define (compiler-backend-runtime-arena-root-current-linux-ok?) : bool
   (let
     [asm : String
-      (compiler-backend-runtime-functions-for-target
-        (CompilerBackendTarget.Linux)
-        (compiler-backend-runtime-helper-full-plan))]
+      (compiler-backend-test-runtime-functions-for-target
+        (CompilerBackendTarget.Linux))]
     (and
       (compiler-backend-string-contains?
         asm
@@ -13820,9 +13822,8 @@
 (define (compiler-backend-runtime-arena-root-current-windows-ok?) : bool
   (let
     [asm : String
-      (compiler-backend-runtime-functions-for-target
-        (CompilerBackendTarget.Windows)
-        (compiler-backend-runtime-helper-full-plan))]
+      (compiler-backend-test-runtime-functions-for-target
+        (CompilerBackendTarget.Windows))]
     (and
       (compiler-backend-string-contains?
         asm
@@ -13840,9 +13841,8 @@
 (define (compiler-backend-runtime-small-arena-linux-ok?) : bool
   (let
     [asm : String
-      (compiler-backend-runtime-functions-for-target
-        (CompilerBackendTarget.Linux)
-        (compiler-backend-runtime-helper-full-plan))]
+      (compiler-backend-test-runtime-functions-for-target
+        (CompilerBackendTarget.Linux))]
     (and
       (compiler-backend-string-contains?
         asm
@@ -13857,9 +13857,8 @@
 (define (compiler-backend-runtime-small-arena-windows-ok?) : bool
   (let
     [asm : String
-      (compiler-backend-runtime-functions-for-target
-        (CompilerBackendTarget.Windows)
-        (compiler-backend-runtime-helper-full-plan))]
+      (compiler-backend-test-runtime-functions-for-target
+        (CompilerBackendTarget.Windows))]
     (and
       (compiler-backend-string-contains?
         asm

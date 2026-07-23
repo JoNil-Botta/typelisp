@@ -7848,6 +7848,15 @@
   `(inner ,value))
 (defmacro (inner [value : bool]) : bool value)")
 
+(define (compiler-typecheck-macro-constructed-forward-chain-source) : String
+  "(import stdlib.comptime)
+(define (main) : i64 (outer 42))
+(defmacro (outer [value : i64]) : i64
+  (comptime.expr-call
+    (comptime.expr-var \"inner\")
+    (comptime.expr-list-cons value (comptime.expr-list-empty))))
+(defmacro (inner [value : i64]) : i64 value)")
+
 (define (compiler-typecheck-macro-mutual-depth-source) : String
   "(define (main) : i64 (macro-a))
 (defmacro (macro-a) : Expr `(macro-b))
@@ -8504,6 +8513,8 @@
       (compiler-typecheck-macro-forward-qualified-export-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-forward-local-source))
     (compiler-typecheck-ok? (compiler-typecheck-macro-forward-chain-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-macro-constructed-forward-chain-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-macro-mutual-depth-source)
       "macro expansion exceeded depth limit")

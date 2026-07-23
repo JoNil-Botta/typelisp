@@ -56641,6 +56641,8 @@
 ;; compiler output), so building them before typecheck only forced a redundant
 ;; symbols/registries/top-env construction and a shadow expression typecheck.
 (define (lower-typecheck-clone-and-lower-with-source-names
+  [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -56654,7 +56656,9 @@
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
   (match (let
     [_start-early-exit-facts : unit (tc-body-early-exit-facts-start! pools)]
-    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names
+    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-source-names-and-prefix-cache-state
+      load-state
+      prefix-cache
       program
       paths
       stdlib-roots
@@ -56818,6 +56822,8 @@
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (lower-typecheck-clone-and-lower-with-source-names
+    (compiler-load-serial-test-session-state)
+    tc-prefix-snapshot-serial-test-cache-state
     entry-path
     program
     paths
@@ -56831,6 +56837,8 @@
     (ci.intern-source-name-session-capture-active-handle)))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
+  [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -56950,6 +56958,8 @@
                       [_commit-dest : unit
                         (lower-checked-dest-pools-commit! source-pools)]
                       (lower-typecheck-clone-and-lower-with-source-names
+                        load-state
+                        prefix-cache
                         source-entry-path
                         source-program
                         source-paths
@@ -56968,6 +56978,8 @@
               (box (lower-diagnostic-with-path (box-get diag) entry-path))))]))))
 
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
+  [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -56987,6 +56999,8 @@
       (let
         [result : ResultCompilerLower
           (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools-and-source-names
+            load-state
+            prefix-cache
             entry-path
             program
             paths
@@ -57011,6 +57025,8 @@
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
+    (compiler-load-serial-test-session-state)
+    tc-prefix-snapshot-serial-test-cache-state
     entry-path
     program
     paths
@@ -57038,6 +57054,7 @@
 
 (define (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
   [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -57089,9 +57106,10 @@
               (begin
                 (lower-clear-macro-expanded-source-caches-into-pools!
                   macro-pools)
-                (compiler-load-program-cache-clear!)
-                (compiler-load-runtime-prelude-cache-clear!)
-                (tc-prefix-snapshot-cache-clear!))
+                (compiler-load-session-state-program-cache-clear! load-state)
+                (compiler-load-session-state-runtime-prelude-cache-clear!
+                  load-state)
+                (tc-prefix-snapshot-cache-clear-for-state! prefix-cache))
               unit)]
           [_commit-generated-pools : unit
             (if detach-before-macro?
@@ -57223,6 +57241,8 @@
                         (compiler-lower-profile-finish "macro_finalize"))
                       unit)]
                   (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools-and-source-names
+                    load-state
+                    prefix-cache
                     detached-entry-path
                     detached-program
                     detached-paths
@@ -57261,6 +57281,7 @@
   [source-names : ci.InternSourceNameSessionHandle]) : ResultCompilerLower
   (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
     (compiler-load-serial-test-session-state)
+    tc-prefix-snapshot-serial-test-cache-state
     entry-path
     program
     paths

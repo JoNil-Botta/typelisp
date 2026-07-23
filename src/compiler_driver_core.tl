@@ -66,6 +66,7 @@
   (builtin-ids (Array cbi.CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
+  (typecheck-prefix-cache TcPrefixSnapshotCacheState)
   (pool-arena (Array i64))
   (surface-arena i64))
 
@@ -101,6 +102,7 @@
         builtin-cell
         lower-cell
         (compiler-load-session-state-new)
+        (tc-prefix-snapshot-cache-state-new)
         pool-arena-cell
         surface-arena))))
 
@@ -178,6 +180,32 @@
   (begin
     (compiler-load-session-state-cache-enable! (struct-get state load-session))
     state))
+
+(define (compiler-driver-state-typecheck-prefix-cache
+  [state : CompilerDriverState]) : TcPrefixSnapshotCacheState
+  (struct-get state typecheck-prefix-cache))
+
+(define (compiler-driver-state-prefix-cache-enable!
+  [state : CompilerDriverState]) : unit
+  (tc-prefix-snapshot-cache-enable-for-state!
+    (compiler-driver-state-typecheck-prefix-cache state)))
+
+(define (compiler-driver-state-prefix-cache-disable!
+  [state : CompilerDriverState]) : unit
+  (tc-prefix-snapshot-cache-disable-for-state!
+    (compiler-driver-state-typecheck-prefix-cache state)))
+
+(define (compiler-driver-state-prefix-cache-clear!
+  [state : CompilerDriverState]) : unit
+  (tc-prefix-snapshot-cache-clear-for-state!
+    (compiler-driver-state-typecheck-prefix-cache state)))
+
+(define (compiler-driver-state-prefix-cache-print-stats
+  [state : CompilerDriverState]
+  [label : String]) : unit
+  (tc-prefix-snapshot-cache-print-stats-for-state
+    (compiler-driver-state-typecheck-prefix-cache state)
+    label))
 
 (define (compiler-driver-state-session-program-cache-disable
   [state : CompilerDriverState]) : CompilerDriverState
@@ -290,6 +318,20 @@
         phase
         "type-pool-storage"
         (ast-node-pool-context-type-storage-arena pools))
+      unit)))
+
+(define (compiler-driver-state-prefix-cache-allocation-profile-snapshot!
+  [state : CompilerDriverState]
+  [phase : String]) : unit
+  (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
+    unit
+    (begin
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "typecheck-prefix-cache"
+        (tc-prefix-snapshot-cache-arena-value-for-state
+          (compiler-driver-state-typecheck-prefix-cache state)))
       unit)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
@@ -417,7 +459,8 @@
       (struct-get state load-session))
     (compiler-load-session-state-runtime-prelude-cache-clear!
       (struct-get state load-session))
-    (tc-prefix-snapshot-cache-clear!)))
+    (tc-prefix-snapshot-cache-invalidate-for-state!
+      (compiler-driver-state-typecheck-prefix-cache state))))
 
 ;; Serial compatibility adapter for the post-lowering arena retirement path.
 (define (compiler-driver-state-clear-pool-backed-caches!) : unit
@@ -2940,6 +2983,7 @@
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
                 (struct-get state load-session)
+                (struct-get state typecheck-prefix-cache)
                 input-path
                 (ast-program decls)
                 (ast-decl-path-list-with-modules paths modules)
@@ -3006,6 +3050,9 @@
                     compile-profile
                     (compiler-lower-profile-pools "macro_detach" result-pools)
                     unit)
+                  (compiler-driver-state-prefix-cache-allocation-profile-snapshot!
+                    state
+                    "lower")
                   (compiler-driver-allocation-profile-snapshot! "lower")
                   (if (ast-node-pool-reader-type-exhausted?)
                     (ResultCompilerDriverLowered.Err
@@ -3045,6 +3092,9 @@
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
+                  (compiler-driver-state-prefix-cache-allocation-profile-snapshot!
+                    state
+                    "lower")
                   (compiler-driver-allocation-profile-snapshot! "lower")
                   (ResultCompilerDriverLowered.Err diag))])))]
       [(ResultCompilerLoadWithPaths.Err diag)
@@ -3170,6 +3220,7 @@
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state
                 (struct-get state load-session)
+                (struct-get state typecheck-prefix-cache)
                 input-path
                 (ast-program decls)
                 (ast-decl-path-list-with-modules paths modules)

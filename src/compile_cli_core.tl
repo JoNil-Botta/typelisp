@@ -1519,8 +1519,8 @@
         (let
           [status : i64
             (begin
-              (tc-prefix-snapshot-cache-enable!)
-              (tc-prefix-snapshot-cache-clear!)
+              (compiler-driver-state-prefix-cache-enable! state)
+              (compiler-driver-state-prefix-cache-clear! state)
               (compile-cli-run-batch-from
                 state
                 (io.read-file batch-path)
@@ -1534,10 +1534,12 @@
                 opt-level))]
           (begin
             (if prefix-cache-stats
-              (tc-prefix-snapshot-cache-print-stats "compile-batch")
+              (compiler-driver-state-prefix-cache-print-stats
+                state
+                "compile-batch")
               unit)
-            (tc-prefix-snapshot-cache-clear!)
-            (tc-prefix-snapshot-cache-disable!)
+            (compiler-driver-state-prefix-cache-clear! state)
+            (compiler-driver-state-prefix-cache-disable! state)
             status))])))
 
 (define (compile-cli-run-action [action : CompileCliAction]) : i64

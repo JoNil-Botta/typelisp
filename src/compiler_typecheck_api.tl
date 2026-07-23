@@ -46,8 +46,9 @@
     cache-scope
     pools))
 
-(define (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
+(define (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
   [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -108,7 +109,9 @@
                                       [(ResultSpecProgramWithPaths.Ok
                                           specialized
                                           specialized-paths)
-                                        (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                                        (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
+                                          load-state
+                                          prefix-cache
                                           specialized
                                           specialized-paths
                                           stdlib-roots
@@ -118,7 +121,9 @@
                                         (ResultCompilerTypecheck.Err diag)]))]
                                 [(ResultCompilerSymbolsDiagnostic.Err diag)
                                   (ResultCompilerTypecheck.Err diag)])
-                              (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                              (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
+                                load-state
+                                prefix-cache
                                 normalized
                                 normalized-paths
                                 stdlib-roots
@@ -126,7 +131,9 @@
                                 pools)))]
                         [(ResultGenProgramWithPaths.Err diag)
                           (ResultCompilerTypecheck.Err diag)])
-                      (typecheck-compiler-specialized-program-with-paths-cache-and-pools
+                      (typecheck-compiler-specialized-program-with-paths-cache-with-pools-and-prefix-cache-state
+                        load-state
+                        prefix-cache
                         expanded
                         expanded-paths
                         stdlib-roots
@@ -137,8 +144,26 @@
             [(ResultGenProgramWithPaths.Err diag)
               (ResultCompilerTypecheck.Err diag)]))))))
 
+;; Serial/test adapter for callers migrated to explicit loader state before the
+;; prefix-cache state seam existed.
+(define (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
+  [load-state : CompilerLoadSessionState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheck
+  (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
+    load-state
+    tc-prefix-snapshot-serial-test-cache-state
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools))
+
 ;; Serial/test compatibility adapter. Production callers with a job context use
-;; the explicit load-state entry above.
+;; the explicit load-state plus prefix-cache-state entry above.
 (define (typecheck-compiler-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -231,8 +256,9 @@
     stdlib-roots
     (ast-node-pool-context-capture-active)))
 
-(define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-pools
+(define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
   [load-state : CompilerLoadSessionState]
+  [prefix-cache : TcPrefixSnapshotCacheState]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : svec.Vec]
@@ -287,7 +313,9 @@
                                       [(ResultSpecProgramWithPaths.Ok
                                           specialized
                                           specialized-paths)
-                                        (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                                        (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
+                                          load-state
+                                          prefix-cache
                                           specialized
                                           specialized-paths
                                           stdlib-roots
@@ -298,7 +326,9 @@
                                           diag)]))]
                                 [(ResultCompilerSymbolsDiagnostic.Err diag)
                                   (ResultCompilerTypecheckChecked.Err diag)])
-                              (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                              (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
+                                load-state
+                                prefix-cache
                                 normalized
                                 normalized-paths
                                 stdlib-roots
@@ -306,7 +336,9 @@
                                 pools)))]
                         [(ResultGenProgramWithPaths.Err diag)
                           (ResultCompilerTypecheckChecked.Err diag)])
-                      (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
+                      (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools-and-prefix-cache-state
+                        load-state
+                        prefix-cache
                         expanded
                         expanded-paths
                         stdlib-roots
@@ -316,6 +348,23 @@
                   (ResultCompilerTypecheckChecked.Err diag)])]
             [(ResultGenProgramWithPaths.Err diag)
               (ResultCompilerTypecheckChecked.Err diag)]))))))
+
+;; Serial/test adapter for the load-state-only surface.
+(define (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-pools
+  [load-state : CompilerLoadSessionState]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
+  (typecheck-compiler-program-with-paths-checked-cache-and-load-state-and-prefix-cache-state-and-pools
+    load-state
+    tc-prefix-snapshot-serial-test-cache-state
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools))
 
 ;; Serial/test compatibility adapter.
 (define (typecheck-compiler-program-with-paths-checked-cache-and-pools

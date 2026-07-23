@@ -1972,6 +1972,93 @@
       (svec.push (&mut roots) root)
       roots)))
 
+(define (compiler-typecheck-smoke-prefix-cache-state-isolation-ok?) : bool
+  (let
+    [state-a : TcPrefixSnapshotCacheState (tc-prefix-snapshot-cache-state-new)]
+    [state-b : TcPrefixSnapshotCacheState (tc-prefix-snapshot-cache-state-new)]
+    [owner-a : TcPrefixSnapshotCacheProvenance
+      (TcPrefixSnapshotCacheProvenance 101 11 13 17 19 23)]
+    [owner-a-reset : TcPrefixSnapshotCacheProvenance
+      (TcPrefixSnapshotCacheProvenance 101 29 31 17 37 41)]
+    [owner-b : TcPrefixSnapshotCacheProvenance
+      (TcPrefixSnapshotCacheProvenance 103 43 47 53 59 61)]
+    (begin
+      (tc-prefix-snapshot-cache-prepare-for-job! state-a owner-a)
+      (tc-prefix-snapshot-cache-prepare-for-job! state-b owner-b)
+      (tc-prefix-snapshot-cache-enable-for-state! state-a)
+      (tc-prefix-snapshot-cache-enable-for-state! state-b)
+      (tc-prefix-snapshot-cache-store-persistent-for-state
+        state-a
+        "shared-key"
+        7
+        "state-a"
+        71
+        (CompilerTypecheckSummary 1 2 3))
+      (tc-prefix-snapshot-cache-store-persistent-for-state
+        state-b
+        "shared-key"
+        11
+        "state-b"
+        73
+        (CompilerTypecheckSummary 4 5 6))
+      (tc-prefix-snapshot-cache-note-hit-for-state! state-a)
+      (tc-prefix-snapshot-cache-note-miss-for-state! state-a)
+      (tc-prefix-snapshot-cache-note-hit-for-state! state-b)
+      (let
+        [b-arena : i64 (tc-prefix-snapshot-cache-arena-value-for-state state-b)]
+        [b-hits : i64 (tc-prefix-snapshot-cache-hit-count-for-state state-b)]
+        [b-stores : i64
+          (tc-prefix-snapshot-cache-store-count-for-state state-b)]
+        (begin
+          ;; Simulate a pool/intern generation reset and retained-arena
+          ;; rollover for A. B must retain both its snapshot and metrics.
+          (tc-prefix-snapshot-cache-prepare-for-job! state-a owner-a-reset)
+          (let
+            [rollover-ok : bool
+              (and
+                (= (tc-prefix-snapshot-cache-hit-count-for-state state-a) 0)
+                (= (tc-prefix-snapshot-cache-miss-count-for-state state-a) 0)
+                (= (tc-prefix-snapshot-cache-store-count-for-state state-a) 0)
+                (= (tc-prefix-snapshot-cache-arena-value-for-state state-a) 0)
+                (match (tc-prefix-snapshot-cache-lookup-for-state
+                  state-a
+                  "shared-key")
+                  [(TcPrefixSnapshotLookup.Miss) true]
+                  [_ false]))]
+            (begin
+              ;; Teardown of A owns and destroys only A's retained arena.
+              (tc-prefix-snapshot-cache-invalidate-for-state! state-a)
+              (let
+                [isolated : bool
+                  (and
+                    rollover-ok
+                    (=
+                      (tc-prefix-snapshot-cache-arena-value-for-state state-b)
+                      b-arena)
+                    (=
+                      (tc-prefix-snapshot-cache-hit-count-for-state state-b)
+                      b-hits)
+                    (=
+                      (tc-prefix-snapshot-cache-store-count-for-state state-b)
+                      b-stores)
+                    (match (tc-prefix-snapshot-cache-lookup-for-state
+                      state-b
+                      "shared-key")
+                      [(TcPrefixSnapshotLookup.Hit
+                          count
+                          module
+                          module-id
+                          summary)
+                        (and
+                          (= count 11)
+                          (string.eq module "state-b")
+                          (= module-id 73)
+                          (= (compiler-typecheck-summary-score summary) 654))]
+                      [_ false]))]
+                (begin
+                  (tc-prefix-snapshot-cache-invalidate-for-state! state-b)
+                  isolated)))))))))
+
 (define (compiler-typecheck-smoke-paths-contain?
   [paths : AstDeclPathList]
   [needle : String]) : bool
@@ -2033,10 +2120,10 @@
         (compiler-cfg-empty))
         unit
         (set! ok false))
-      (if (= tc-prefix-snapshot-cache-hit-count 0)
+      (if (= (tc-prefix-snapshot-cache-hit-count-value) 0)
         unit
         (set! ok false))
-      (if (>= tc-prefix-snapshot-cache-store-count 2)
+      (if (>= (tc-prefix-snapshot-cache-store-count-value) 2)
         unit
         (set! ok false))
       (compiler-typecheck-reset-load-session!)
@@ -2050,7 +2137,7 @@
         (compiler-cfg-empty))
         unit
         (set! ok false))
-      (if (> tc-prefix-snapshot-cache-hit-count 0)
+      (if (> (tc-prefix-snapshot-cache-hit-count-value) 0)
         unit
         (set! ok false))
       (compiler-load-session-cache-disable-for-test!)
@@ -2084,10 +2171,10 @@
         (compiler-cfg-enable (compiler-cfg-empty) "feature"))
         unit
         (set! ok false))
-      (if (= tc-prefix-snapshot-cache-hit-count 0)
+      (if (= (tc-prefix-snapshot-cache-hit-count-value) 0)
         unit
         (set! ok false))
-      (if (>= tc-prefix-snapshot-cache-store-count 2)
+      (if (>= (tc-prefix-snapshot-cache-store-count-value) 2)
         unit
         (set! ok false))
       (compiler-typecheck-reset-load-session!)
@@ -2101,7 +2188,7 @@
         (compiler-cfg-enable (compiler-cfg-empty) "feature"))
         unit
         (set! ok false))
-      (if (> tc-prefix-snapshot-cache-hit-count 0)
+      (if (> (tc-prefix-snapshot-cache-hit-count-value) 0)
         unit
         (set! ok false))
       (compiler-load-session-cache-disable-for-test!)
@@ -2160,10 +2247,10 @@
       (if (compiler-typecheck-smoke-prefix-cache-file-check entry-b roots cfgs)
         unit
         (set! ok false))
-      (if (> tc-prefix-snapshot-cache-hit-count 0)
+      (if (> (tc-prefix-snapshot-cache-hit-count-value) 0)
         unit
         (set! ok false))
-      (if (> tc-prefix-snapshot-cache-store-count 0)
+      (if (> (tc-prefix-snapshot-cache-store-count-value) 0)
         unit
         (set! ok false))
       (compiler-load-session-cache-disable-for-test!)
@@ -2495,9 +2582,15 @@
       (compiler-load-serial-test-session-state)]
     [state-a : CompilerLoadSessionState (compiler-load-session-state-new)]
     [state-b : CompilerLoadSessionState (compiler-load-session-state-new)]
+    [prefix-cache-a : TcPrefixSnapshotCacheState
+      (tc-prefix-snapshot-cache-state-new)]
+    [prefix-cache-b : TcPrefixSnapshotCacheState
+      (tc-prefix-snapshot-cache-state-new)]
     [_enable-a : unit (compiler-load-session-state-cache-enable! state-a)]
     [_seed-b : unit
-      (array-set! (struct-get state-b program-cache-hit-count) 0 23)]
+      (begin
+        (array-set! (struct-get state-b program-cache-hit-count) 0 23)
+        (tc-prefix-snapshot-cache-note-hit-for-state! prefix-cache-b))]
     [entry : String "target/tc_state_macro_entry.tl"]
     [source : String
       "(defmacro (state-module) : Module
@@ -2523,8 +2616,9 @@
         cfgs
         pools)
         [(ResultCompilerLoadWithPaths.Ok decls paths modules _)
-          (typecheck-compiler-program-with-paths-cache-and-load-state-and-pools
+          (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
             state-a
+            prefix-cache-a
             (ast-program decls)
             (ast-decl-path-list-with-modules paths modules)
             roots
@@ -2532,12 +2626,34 @@
             pools)]
         [(ResultCompilerLoadWithPaths.Err diag)
           (ResultCompilerTypecheck.Err diag)])]
+    [_reset-before-controlled-failure : unit
+      (compiler-typecheck-reset-file-state!)]
+    [controlled-failure : ResultCompilerTypecheck
+      (match (parse-ast-source-diagnostic
+        "target/tc_state_controlled_failure.tl"
+        "(define broken : i64 true)")
+        [(ResultAstProgramDiagnostic.Ok bad-program)
+          (typecheck-compiler-program-with-paths-cache-and-load-state-and-prefix-cache-state-and-pools
+            state-a
+            prefix-cache-a
+            bad-program
+            (ast-decl-root-path-cons
+              "target/tc_state_controlled_failure.tl"
+              (ast-decl-path-list-new))
+            roots
+            "typecheck-controlled-failure-state-threading"
+            pools)]
+        [(ResultAstProgramDiagnostic.Err diag)
+          (ResultCompilerTypecheck.Err diag)])]
     [ok : bool
       (and
         (match result
           [(ResultCompilerTypecheck.Ok _) true]
           [(ResultCompilerTypecheck.Err diag)
             (io.panic (compiler-diagnostic-render (box-get diag)))])
+        (match controlled-failure
+          [(ResultCompilerTypecheck.Err _) true]
+          [(ResultCompilerTypecheck.Ok _) false])
         (match (compiler-load-session-state-surface-summary-find-module
           state-a
           (intern "tc_state.dep"))
@@ -2552,12 +2668,17 @@
         (=
           (compiler-load-session-state-program-cache-store-count-value state-b)
           0)
+        (= (tc-prefix-snapshot-cache-hit-count-for-state prefix-cache-b) 1)
+        (= (tc-prefix-snapshot-cache-miss-count-for-state prefix-cache-b) 0)
+        (= (tc-prefix-snapshot-cache-store-count-for-state prefix-cache-b) 0)
         (match (compiler-load-session-state-surface-summary-find-module
           state-b
           (intern "tc_state.dep"))
           [(CompilerLoadNoSurfaceSummary) true]
           [(CompilerLoadSomeSurfaceSummary _) false]))]
     (begin
+      (tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache-a)
+      (tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache-b)
       (compiler-load-session-state-use! previous-state)
       ok)))
 
@@ -4623,6 +4744,9 @@
     (unless
       (compiler-typecheck-smoke-lazy-summary-macro-comptime-ok?)
       (io.panic "typecheck: lazy summary macro comptime param smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-prefix-cache-state-isolation-ok?)
+      (io.panic "typecheck: prefix cache state isolation smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
       (io.panic "typecheck: prefix cache root smoke failed"))

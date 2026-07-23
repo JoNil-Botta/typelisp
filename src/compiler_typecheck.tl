@@ -265,10 +265,10 @@
         "target/tc_prefix_entry_b.tl")
         unit
         (set! ok false))
-      (if (> tc-prefix-snapshot-cache-hit-count 0)
+      (if (> (tc-prefix-snapshot-cache-hit-count-value) 0)
         unit
         (set! ok false))
-      (if (> tc-prefix-snapshot-cache-store-count 0)
+      (if (> (tc-prefix-snapshot-cache-store-count-value) 0)
         unit
         (set! ok false))
       (compiler-load-session-cache-disable-for-test!)

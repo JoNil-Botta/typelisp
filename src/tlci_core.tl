@@ -594,6 +594,26 @@
   197)
 (define tlci-host-callback-op-syntax-name-fresh : i64
   198)
+
+;; General quasiquote template construction (refs #5596): expr-begin pops an
+;; expression list and pushes the begin node the parser produces; expr-binary-op
+;; pops the right then the left operand expression and pushes a binary node for
+;; the AstBinOp ordinal in immediate `a`; expr-unary-op pops the operand
+;; expression and pushes a unary node for the AstUnOp ordinal in immediate `a`;
+;; expr-char-literal pushes a char literal node for the code point in immediate
+;; `a`; expr-unit-literal pushes the unit literal node. All are additive ABI v1
+;; ops -- the embedded image and its consumer are always the same source-bound
+;; binary.
+(define tlci-host-callback-op-expr-begin : i64
+  199)
+(define tlci-host-callback-op-expr-binary-op : i64
+  200)
+(define tlci-host-callback-op-expr-unary-op : i64
+  201)
+(define tlci-host-callback-op-expr-char-literal : i64
+  202)
+(define tlci-host-callback-op-expr-unit-literal : i64
+  203)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

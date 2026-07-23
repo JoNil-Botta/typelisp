@@ -1025,7 +1025,9 @@
       (str_cat.str-cat " in macro " name))
     (str_cat.str-cat
       "native comptime macro returned status "
-      (string.int->string status))))
+      (str_cat.str-cat
+        (string.int->string status)
+        (str_cat.str-cat " for " name)))))
 
 ;; Proof-only host harness: use the registered probe entry as the callback
 ;; dispatcher and select its return status through host context. Real compiler

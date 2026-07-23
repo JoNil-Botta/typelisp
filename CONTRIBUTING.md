@@ -133,6 +133,47 @@ The compiler is written in TypeLisp under [`src/`](src). Key modules:
 - `src/main.tl` — the unified toolchain CLI (the published stage0 binary)
 - `src/compile.tl` — the minimal compile entry point used by the bootstrap
 
+### Compiler arena ownership
+
+Choose an arena for compiler-internal state by the longest boundary that the
+state must cross, not by whichever arena is active where the state is first
+created:
+
+- Transient parse, load, expansion, typecheck, lowering, and optimizer work may
+  use the owning scratch arena when no reference survives its rewind.
+- State that crosses scratch rewinds may use a dedicated phase arena with an
+  explicit reset or teardown after every consumer is finished. The
+  `tc-hygiene-module-env-cache-arena` in
+  [`src/compiler_typecheck_core.tl`](src/compiler_typecheck_core.tl) is this
+  shorter-lived pattern.
+- AST and type nodes belong to the installed `AstNodePoolContext`; use its pool
+  APIs and do not attach unrelated sidecars to its arena.
+- State that crosses node-pool context installs, intern persistent-arena floor
+  resets, or equivalent owner churn needs an independent arena with that full
+  lifetime. Create it once, allocate the collection and every later regrowth in
+  it, and do not rewind or destroy it while any consumer may retain the state.
+  Clear logical contents by rebinding the collection or resetting its metadata,
+  not by reclaiming the arena. `compiler-load-provenance-arena` in
+  [`src/compiler_load.tl`](src/compiler_load.tl) is the current process-lifetime
+  example.
+
+Never use `node-pool-base-arena` or the intern persistent arena as convenient
+storage for an unrelated long-lived cache or sidecar. The pool base handle is
+the moving head of an arena chain. Pool growth advances it, while installing an
+older captured context can restore an older head and strand later segments. A
+still-live global binding into one of those segments does not keep the raw arena
+storage reachable. The intern persistent arena is also reset to a floor and is
+replaced or destroyed on full reset; “persistent” does not mean process
+lifetime.
+
+This rule follows the delayed-corruption fixes in
+[#5458](https://github.com/JoNil-Botta/typelisp/pull/5458) and the rejected
+experiment in [#5474](https://github.com/JoNil-Botta/typelisp/issues/5474).
+Debug enforcement is tracked separately in
+[#5510](https://github.com/JoNil-Botta/typelisp/issues/5510). See
+[`src/TESTING.md`](src/TESTING.md#compiler-arena-ownership) for the operational
+test and reproducer guidance.
+
 See [`src/TESTING.md`](src/TESTING.md) for the testing conventions.
 
 ## Questions?

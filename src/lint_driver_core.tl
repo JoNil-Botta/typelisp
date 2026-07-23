@@ -1034,38 +1034,27 @@
   ;; its adjacent compiler check and can still publish independent lint items.
   (Err (Box CompilerDiagnostic) LintFindings))
 
-;; File/package lint parses into a destroyable, explicitly installed pool. A
-;; nested whole-program check must use the process compiler pools: otherwise
-;; the prelude is compared with nodes from the unrelated lint pool and can
-;; produce a bogus well-known-type identity error. Reinstall the lint pool
-;; before returning so the caller can keep walking its already parsed program.
-(define (selfhost-lint-check-source-outside-explicit-pools
-  [path : String]
-  [source : String]
-  [stdlib-roots : lint_svec.Vec]) : ResultCompilerCheck
-  (if (ast-node-pool-compat-context-active?)
-    (let
-      [lint-pools : AstNodePoolContext (ast-node-pool-compat-context-current)]
-      (begin
-        (ast-node-pool-compat-context-clear!)
-        (let
-          [result : ResultCompilerCheck
-            (compiler-check-source-with-roots path source stdlib-roots)]
-          (begin
-            (ast-node-pool-compat-context-use! lint-pools)
-            result))))
-    (compiler-check-source-with-roots path source stdlib-roots)))
-
 (define (selfhost-lint-typed-unused-unsafe-findings
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]) : ResultSelfhostLintFindings
   (begin
     (tc-unused-unsafe-tracking-reset! path)
-    (match (selfhost-lint-check-source-outside-explicit-pools
-      path
-      source
-      stdlib-roots)
+    ;; File/package lint parses into a destroyable, explicitly installed pool.
+    ;; Run the nested check on process pools and reinstall the lint pool before
+    ;; its caller resumes the AST walk.
+    (match (if (ast-node-pool-compat-context-active?)
+      (let
+        [lint-pools : AstNodePoolContext (ast-node-pool-compat-context-current)]
+        (begin
+          (ast-node-pool-compat-context-clear!)
+          (let
+            [checked : ResultCompilerCheck
+              (compiler-check-source-with-roots path source stdlib-roots)]
+            (begin
+              (ast-node-pool-compat-context-use! lint-pools)
+              checked))))
+      (compiler-check-source-with-roots path source stdlib-roots))
       [(ResultCompilerCheck.Ok _)
         (let
           [findings : LintFindings
@@ -1082,14 +1071,6 @@
         (begin
           (tc-unused-unsafe-tracking-disable!)
           (ResultSelfhostLintFindings.Err diag (lint-findings-empty)))])))
-
-(define (selfhost-lint-unused-unsafe-findings
-  [path : String]
-  [source : String]
-  [stdlib-roots : lint_svec.Vec]) : ResultSelfhostLintFindings
-  (if (> (lint-unused-unsafe-classifier-unknown-count) 0)
-    (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots)
-    (ResultSelfhostLintFindings.Ok (lint-findings-empty))))
 
 (define (selfhost-lint-source-unused-unsafe-findings
   [path : String]
@@ -1151,7 +1132,7 @@
       [unused-count : i64 (lint-unused-unsafe-classifier-unused-count)]
       [typed-result : ResultSelfhostLintFindings
         (if (> unknown-count 0)
-          (selfhost-lint-unused-unsafe-findings path source stdlib-roots)
+          (selfhost-lint-typed-unused-unsafe-findings path source stdlib-roots)
           (ResultSelfhostLintFindings.Ok (lint-findings-empty)))]
       [base : LintFindings
         (if (> unknown-count 0)

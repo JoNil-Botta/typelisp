@@ -477,10 +477,12 @@ to the manifest directory and writes outputs under `target/<profile>/`
 inferred from `src/main.tl` and `staticlib` from `src/lib.tl`. Package
 builds also emit a host comptime image `<name>.tlci` beside the native
 artifact. Macro-free packages use a metadata-only image; macro-defining
-packages include deterministic native entry shells and one registration-table
-record per package-owned macro. `typelisp inspect <file.tlci>` renders the
-image header, sections, and package metadata. Macro-body lowering and consumer
-dispatch remain staged separately from these package emission artifacts.
+packages include one deterministic registration-table record per package-owned
+macro. Supported expression/value transformer bodies compile into native
+template, literal, and fold entries; unsupported bodies retain explicit shells
+for interpreted fallback. `typelisp inspect <file.tlci>` renders the image
+header, sections, and package metadata. General dependency-catalog discovery
+and consumer dispatch remain staged separately from emission.
 Self-host bootstrap builds the compiler's exact embedded stdlib source set into
 a source-bound `stdlib.tlci`, embeds it in the next compiler stage, and validates
 all registered macro identities through the production loader. A bootstrapped

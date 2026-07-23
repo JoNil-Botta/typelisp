@@ -22,21 +22,66 @@
     (intern-str name-id)
     (str-cat module "/" (intern-str name-id))))
 
-;; Every collected macro's checked source is captured so the producer can
+;; Every collected macro's parsed source is captured so the producer can
 ;; compile each eligible expression body to a native entry; identities whose
 ;; bodies fall outside the supported subset stay registration shells with the
-;; counted interpreted fallback. array/length must remain native as a
-;; regression floor. Refs #5212, #5213.
-(define embedded-stdlib-tlci-capture-cap : i64
-  1024)
-(define embedded-stdlib-tlci-capture-count : (Array i64)
-  (make-array 0))
-(define embedded-stdlib-tlci-capture-identities : (Array String)
-  (array.make-array String 1024))
-(define embedded-stdlib-tlci-capture-params : (Array AstMacroParamList)
-  (array.make-array AstMacroParamList 1024))
-(define embedded-stdlib-tlci-capture-bodies : (Array i64)
-  (array.make-array i64 1024))
+;; counted interpreted fallback. Captures are an explicit producer input so
+;; package dependency builds cannot observe stale sources from an earlier
+;; image in the same process. Refs #5212, #5213, #2754.
+(defstruct TlciNativeMacroCapture
+  (identity String)
+  (params AstMacroParamList)
+  (body i64))
+
+(defstruct TlciNativeMacroCaptures
+  (slots (Array TlciNativeMacroCapture))
+  (len i64))
+
+(define (tlci-native-macro-captures-new) : TlciNativeMacroCaptures
+  (TlciNativeMacroCaptures (array.make-array TlciNativeMacroCapture 0) 0))
+
+(define (tlci-native-macro-captures-copy-range!
+  [dst : (&mut dst (Array TlciNativeMacroCapture))]
+  [src : (& src (Array TlciNativeMacroCapture))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src index))
+      (tlci-native-macro-captures-copy-range! dst src (+ index 1) count))))
+
+(define (tlci-native-macro-captures-grow!
+  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
+  (let
+    [old-cap : i64 (array-length (struct-get captures slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array TlciNativeMacroCapture)
+      (array.make-array TlciNativeMacroCapture new-cap)]
+    (begin
+      (tlci-native-macro-captures-copy-range!
+        (&mut bigger)
+        (& (struct-get captures slots))
+        0
+        (struct-get captures len))
+      (set! (struct-get captures slots) bigger))))
+
+(define (tlci-native-macro-captures-push!
+  [captures : (&mut captures TlciNativeMacroCaptures)]
+  [capture : TlciNativeMacroCapture]) : unit
+  (begin
+    (when
+      (>= (struct-get captures len) (array-length (struct-get captures slots)))
+      (tlci-native-macro-captures-grow! captures))
+    (let
+      [index : i64 (struct-get captures len)]
+      (begin
+        (array-set! (struct-get captures slots) index capture)
+        (set! (struct-get captures len) (+ index 1))))))
+
 (define embedded-stdlib-tlci-native-floor-name : String
   "stdlib.array/length")
 
@@ -97,15 +142,17 @@
 (define embedded-stdlib-tlci-native-report-count : (Array i64)
   (make-array 0))
 
-(define (embedded-stdlib-tlci-capture-slot [identity : String]) : i64
+(define (tlci-native-macro-capture-slot
+  [captures : (& captures TlciNativeMacroCaptures)]
+  [identity : String]) : i64
   (let
-    [count : i64 (array-ref embedded-stdlib-tlci-capture-count 0)]
+    [count : i64 (struct-get captures len)]
     [index : i64 0]
     [found : i64 -1]
     (begin
       (while (and (< found 0) (< index count))
         (if (string.eq
-          (array-ref embedded-stdlib-tlci-capture-identities index)
+          (struct-get (array-ref (struct-get captures slots) index) identity)
           identity)
           (set! found index)
           (set! index (+ index 1))))
@@ -184,7 +231,7 @@
 ;; Emit the op-call chain for one eligible body into `ops`; returns the count
 ;; of opened let/if pairs, or -1 when the body is outside the subset.
 (define (embedded-native-body-ops
-  [params : AstMacroParamList]
+  [params : (& params AstMacroParamList)]
   [body-node : i64]
   [ops : (Array String)]
   [ops-count : (Array i64)]) : i64
@@ -220,7 +267,7 @@
                     (let
                       [param : i64
                         (embedded-stdlib-tlci-unquoted-param
-                          (& params)
+                          params
                           (ast-expr-list-get (& args) index 0))]
                       (if (< param 0)
                         (set! ok false)
@@ -300,9 +347,8 @@
         [(AstExpr.MakeArray elem-type size-node)
           (let
             [ti : i64
-              (embedded-stdlib-tlci-type-unquote-param (& params) elem-type)]
-            [si : i64
-              (embedded-stdlib-tlci-unquoted-param (& params) size-node)]
+              (embedded-stdlib-tlci-type-unquote-param params elem-type)]
+            [si : i64 (embedded-stdlib-tlci-unquoted-param params size-node)]
             (if (or (< ti 0) (< si 0))
               -1
               (begin
@@ -346,7 +392,7 @@
             (let
               [clauses-index : i64
                 (embedded-native-var-param-index
-                  (& params)
+                  params
                   (ast-expr-list-get (& fold-args) 0 0))]
               [missing-name : String
                 (embedded-native-expr-var-name
@@ -397,7 +443,7 @@
               (let
                 [items-index : i64
                   (embedded-native-var-param-index
-                    (& params)
+                    params
                     (ast-expr-list-get (& fold-args) 0 0))]
                 [when-true : i64
                   (embedded-native-expr-bool-flag
@@ -499,15 +545,15 @@
     [_ -1]))
 
 (define (embedded-native-binary-ops
-  [params : AstMacroParamList]
+  [params : (& params AstMacroParamList)]
   [target-node : i64]
   [operand-node : i64]
   [op : i64]
   [ops : (Array String)]
   [ops-count : (Array i64)]) : i64
   (let
-    [ti : i64 (embedded-stdlib-tlci-unquoted-param (& params) target-node)]
-    [oi : i64 (embedded-stdlib-tlci-unquoted-param (& params) operand-node)]
+    [ti : i64 (embedded-stdlib-tlci-unquoted-param params target-node)]
+    [oi : i64 (embedded-stdlib-tlci-unquoted-param params operand-node)]
     (if (or (< ti 0) (< oi 0))
       -1
       (begin
@@ -563,7 +609,7 @@
 ;; scrutinee falls back to the interpreter by returning ok with no result.
 ;; Returns "" when the body is outside the supported shape.
 (define (embedded-native-match-arms
-  [params : AstMacroParamList]
+  [params : (& params AstMacroParamList)]
   [type-index : i64]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : String
@@ -609,7 +655,7 @@
           [_ "  0\n"])])))
 
 (define (embedded-native-match-body
-  [params : AstMacroParamList]
+  [params : (& params AstMacroParamList)]
   [body-node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr body-node)
     [(AstExpr.Match match-box)
@@ -625,7 +671,7 @@
                     (let
                       [type-index : i64
                         (embedded-native-var-param-index
-                          (& params)
+                          params
                           (ast-expr-list-get (& args) 0 0))]
                       (if (< type-index 0)
                         ""
@@ -639,7 +685,9 @@
             [_ ""])])]
     [_ ""]))
 
-(define (embedded-native-source [names : (Array String)]) : String
+(define (embedded-native-source
+  [names : (Array String)]
+  [captures : (& captures TlciNativeMacroCaptures)]) : String
   (let
     [out : String
       (str-cat
@@ -653,21 +701,27 @@
       (while (< index count)
         (let
           [slot : i64
-            (embedded-stdlib-tlci-capture-slot (array-ref names index))]
+            (tlci-native-macro-capture-slot captures (array-ref names index))]
           [ops : (Array String)
             (array.make-array String embedded-native-ops-cap)]
           [ops-count : (Array i64) (make-array 0)]
           [match-text : String
             (if (>= slot 0)
               (embedded-native-match-body
-                (array-ref embedded-stdlib-tlci-capture-params slot)
-                (array-ref embedded-stdlib-tlci-capture-bodies slot))
+                (&
+                  (struct-get
+                    (array-ref (struct-get captures slots) slot)
+                    params))
+                (struct-get (array-ref (struct-get captures slots) slot) body))
               "")]
           [opened : i64
             (if (and (>= slot 0) (string.eq match-text ""))
               (embedded-native-body-ops
-                (array-ref embedded-stdlib-tlci-capture-params slot)
-                (array-ref embedded-stdlib-tlci-capture-bodies slot)
+                (&
+                  (struct-get
+                    (array-ref (struct-get captures slots) slot)
+                    params))
+                (struct-get (array-ref (struct-get captures slots) slot) body)
                 ops
                 ops-count)
               -1)]
@@ -737,9 +791,10 @@
   [build-hash : String]
   [windows-target : bool]
   [rodata : (Array u8)]
-  [names : (Array String)]) : ResultProducerBytes
+  [names : (Array String)]
+  [captures : (& captures TlciNativeMacroCaptures)]) : ResultProducerBytes
   (let
-    [source : String (embedded-native-source names)]
+    [source : String (embedded-native-source names captures)]
     [target : CompilerBackendTarget
       (if windows-target
         (CompilerBackendTarget.Windows)

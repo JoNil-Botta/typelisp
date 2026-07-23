@@ -84,35 +84,33 @@
 (define (embedded-stdlib-tlci-collect-decl!
   [decl : AstDecl]
   [module : String]
-  [names : (&mut names svec.Vec)]) : unit
+  [names : (&mut names svec.Vec)]
+  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
   (match decl
     [(AstDecl.DefMacro decl-meta name params _ body)
       (begin
         (embedded-stdlib-tlci-push-name! names module name)
-        (let
-          [slot : i64 (array-ref embedded-stdlib-tlci-capture-count 0)]
-          (when
-            (< slot embedded-stdlib-tlci-capture-cap)
-            (array-set!
-              embedded-stdlib-tlci-capture-identities
-              slot
-              (embedded-stdlib-tlci-identity module name))
-            (array-set! embedded-stdlib-tlci-capture-params slot params)
-            (array-set! embedded-stdlib-tlci-capture-bodies slot body)
-            (array-set! embedded-stdlib-tlci-capture-count 0 (+ slot 1)))))]
+        (tlci-native-macro-captures-push!
+          captures
+          (TlciNativeMacroCapture
+            (embedded-stdlib-tlci-identity module name)
+            params
+            body)))]
     [(AstDecl.Unsafe inner)
-      (embedded-stdlib-tlci-collect-decl! (box-get inner) module names)]
+      (embedded-stdlib-tlci-collect-decl! (box-get inner) module names captures)]
     [(AstDecl.ModuleBody nested body)
       (embedded-stdlib-tlci-collect-decls!
         (box-get body)
         (intern-str nested)
-        names)]
+        names
+        captures)]
     [_ unit]))
 
 (define (embedded-stdlib-tlci-collect-decls!
   [decls : AstDeclList]
   [module : String]
-  [names : (&mut names svec.Vec)]) : unit
+  [names : (&mut names svec.Vec)]
+  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) unit]
     [(AstDeclListStep.Cons decl rest)
@@ -121,16 +119,18 @@
           (embedded-stdlib-tlci-collect-decls!
             rest
             (intern-str next-module)
-            names)]
+            names
+            captures)]
         [_
           (begin
-            (embedded-stdlib-tlci-collect-decl! decl module names)
-            (embedded-stdlib-tlci-collect-decls! rest module names))])]))
+            (embedded-stdlib-tlci-collect-decl! decl module names captures)
+            (embedded-stdlib-tlci-collect-decls! rest module names captures))])]))
 
 (define (embedded-stdlib-tlci-collect-file!
   [root : String]
   [suffix : String]
-  [names : (&mut names svec.Vec)]) : unit
+  [names : (&mut names svec.Vec)]
+  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
   (let
     [module : String (embedded-stdlib-tlci-module-name suffix)]
     [path : String (str-cat root "/" suffix)]
@@ -153,13 +153,15 @@
                 (embedded-stdlib-tlci-collect-decls!
                   (box-get decls)
                   module
-                  names)])])))))
+                  names
+                  captures)])])))))
 
 (define (embedded-stdlib-tlci-collect-manifest!
   [manifest : String]
   [root : String]
   [start : i64]
-  [names : (&mut names svec.Vec)]) : unit
+  [names : (&mut names svec.Vec)]
+  [captures : (&mut captures TlciNativeMacroCaptures)]) : unit
   (when
     (and
       (= (string.string-length embedded-stdlib-tlci-build-error) 0)
@@ -176,21 +178,28 @@
       (begin
         (when
           (> (string.string-length line) 0)
-          (embedded-stdlib-tlci-collect-file! root line names))
-        (embedded-stdlib-tlci-collect-manifest! manifest root next names)))))
+          (embedded-stdlib-tlci-collect-file! root line names captures))
+        (embedded-stdlib-tlci-collect-manifest!
+          manifest
+          root
+          next
+          names
+          captures)))))
 
 (define (embedded-native-write
   [output : String]
   [build-hash : String]
   [windows-target : bool]
   [rodata : (Array u8)]
-  [names : (Array String)]) : i64
+  [names : (Array String)]
+  [captures : (& captures TlciNativeMacroCaptures)]) : i64
   (match (embedded-native-emit-package
     (tlci-metadata-emit (tlci-make-metadata "v1" "stdlib" "0.1.0"))
     build-hash
     windows-target
     rodata
-    names)
+    names
+    captures)
     [(ResultProducerBytes.Err message)
       (begin
         (io.print-error (str-cat "embedded stdlib tlci: " message "\n"))
@@ -224,6 +233,7 @@
       [build-hash : String (io.arg 5)]
       [rodata-path : String (io.arg 6)]
       [names : svec.Vec (svec.new)]
+      [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
       (if (or (string.eq target "linux") (string.eq target "windows"))
         (let
           [rodata : (Array u8) (tlci-string->bytes (io.read-file rodata-path))]
@@ -232,7 +242,8 @@
               (io.read-file manifest-path)
               root
               0
-              (&mut names))
+              (&mut names)
+              (&mut captures))
             (if (> (string.string-length embedded-stdlib-tlci-build-error) 0)
               (begin
                 (io.print-error
@@ -246,7 +257,8 @@
                 build-hash
                 (string.eq target "windows")
                 rodata
-                (svec.to-array (& names))))))
+                (svec.to-array (& names))
+                (& captures)))))
         (begin
           (io.print-error
             (str-cat "embedded stdlib tlci: invalid host target: " target "\n"))

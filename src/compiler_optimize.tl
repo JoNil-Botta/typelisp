@@ -24291,7 +24291,7 @@
 ;; have been unified into shared vars first. Facts flow down the dominator
 ;; tree as an immutable list, so sibling subtrees are isolated by construction.
 (defenum OptBoundsDomWalk
-  (Walk CompilerIrInstrList OptBoundsFacts))
+  (Walk CompilerIrInstrList OptBoundsFacts OptDomCmpFacts))
 
 ;; GVN rewrites a dominated duplicate expression (e.g. the per-access
 ;; `Cast(i -> U64)` index) into `Mov dst2 = dst1`, and block-local copy
@@ -24549,7 +24549,7 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : OptBoundsDomWalk
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    (OptBoundsDomWalk.Walk (CompilerIrInstrList.Nil) facts)
+    (OptBoundsDomWalk.Walk (CompilerIrInstrList.Nil) facts cmp-facts)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (match instr
@@ -24566,23 +24566,53 @@
                 instrs
                 (+ index 1))
               (let
-                [next-facts : OptBoundsFacts
-                  (if (and
+                [stable? : bool
+                  (and
                     (opt-gvn-value-stable? sources cidx)
-                    (opt-gvn-value-stable? sources clen))
+                    (opt-gvn-value-stable? sources clen))]
+                [next-facts : OptBoundsFacts
+                  (if stable?
                     (opt-bounds-add facts cidx clen)
                     facts)]
+                ;; A passed bounds check is an unsigned `idx < len` whose
+                ;; length operand is a runtime container length, so len is
+                ;; always < 2^63: the continuation also proves
+                ;; 0 <= idx < len in the SIGNED domain. Record both lt
+                ;; spellings so the dominating-comparison fold kills a later
+                ;; redundant signed test (`le idx len`, `gt len idx`, ...) --
+                ;; e.g. a loop-versioning guard condition that repeats what a
+                ;; dominating access already checked.
+                [next-cmp-facts : OptDomCmpFacts
+                  (if stable?
+                    (OptDomCmpFacts.Cons
+                      (OptDomCmpFact.Fact
+                        (CompilerIrBinOp.Lt)
+                        cidx
+                        clen
+                        (AstType.I64)
+                        true)
+                      (box
+                        (OptDomCmpFacts.Cons
+                          (OptDomCmpFact.Fact
+                            (CompilerIrBinOp.Lt)
+                            clen
+                            cidx
+                            (AstType.I64)
+                            false)
+                          (box cmp-facts))))
+                    cmp-facts)]
                 (match (opt-bounds-dom-instrs-from
-                  cmp-facts
+                  next-cmp-facts
                   next-facts
                   sources
                   copies
                   instrs
                   (+ index 1))
-                  [(OptBoundsDomWalk.Walk tail out-facts)
+                  [(OptBoundsDomWalk.Walk tail out-facts out-cmp-facts)
                     (OptBoundsDomWalk.Walk
                       (compiler-ir-instr-cons instr tail)
-                      out-facts)]))))]
+                      out-facts
+                      out-cmp-facts)]))))]
         [_
           (match (opt-bounds-dom-instrs-from
             cmp-facts
@@ -24591,12 +24621,13 @@
             copies
             instrs
             (+ index 1))
-            [(OptBoundsDomWalk.Walk tail out-facts)
+            [(OptBoundsDomWalk.Walk tail out-facts out-cmp-facts)
               (OptBoundsDomWalk.Walk
                 (compiler-ir-instr-cons
                   (opt-bounds-dom-fold-compare cmp-facts copies instr)
                   tail)
-                out-facts)])]))))
+                out-facts
+                out-cmp-facts)])]))))
 
 ;; Replace a comparison a dominating branch already decided with its constant.
 ;; The move keeps the destination and bool type, so every consumer -- branch,
@@ -24653,7 +24684,7 @@
                   copies
                   instrs
                   0)
-                  [(OptBoundsDomWalk.Walk rewritten out-facts)
+                  [(OptBoundsDomWalk.Walk rewritten out-facts out-cmp-facts)
                     (begin
                       (array-set!
                         out
@@ -24666,7 +24697,7 @@
                         defs
                         sources
                         copies
-                        cmp-facts
+                        out-cmp-facts
                         out-facts
                         blocks
                         out

@@ -290,6 +290,15 @@ tl_memchr:
     ret
     .globl tl_array_zero
 tl_array_zero:
+    cmpq $64, %rsi
+    jb .Ltl_array_zero_fill
+    movq %fs:tl_current_arena@tpoff, %r8
+    testq %r8, %r8
+    jz .Ltl_array_zero_fill
+    testq $5, 48(%r8)
+    jnz .Ltl_array_zero_fill
+    ret
+.Ltl_array_zero_fill:
     movq %rsi, %rcx
     shrq $3, %rcx
     xorl %eax, %eax

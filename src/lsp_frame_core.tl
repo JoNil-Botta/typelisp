@@ -20,7 +20,6 @@
 (import "lsp_vector_families.tl")
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector LspDocument core) as lsp_document_vec)
-(import (vector.vector LspFoldRange core) as lsp_fold_vec)
 (import stdlib.string)
 (import token)
 (import sym_i64_env)
@@ -5937,7 +5936,7 @@
 ;; Extend the running comment block, or open a new one when the previous
 ;; comment-only line was not the immediately preceding line.
 (define (lsp-fold-comment-line!
-  [folds : (&mut lsp_fold_vec.Vec)]
+  [folds : (&mut LspFoldRanges)]
   [slot : i64]
   [previous-line : i64]
   [line : i64]
@@ -5945,9 +5944,9 @@
   (if (and (>= slot 0) (= line (+ previous-line 1)))
     (let
       [open : LspFoldRange
-        (lsp_fold_vec.get folds slot (lsp-fold-range-fallback))]
+        (lsp-fold-ranges-get folds slot (lsp-fold-range-fallback))]
       (begin
-        (lsp_fold_vec.set
+        (lsp-fold-ranges-set!
           folds
           slot
           (LspFoldRange
@@ -5960,9 +5959,9 @@
             true))
         slot))
     (let
-      [fresh : i64 (lsp_fold_vec.len folds)]
+      [fresh : i64 (lsp-fold-ranges-len folds)]
       (begin
-        (lsp_fold_vec.push
+        (lsp-fold-ranges-push!
           folds
           (LspFoldRange
             line
@@ -5974,10 +5973,10 @@
             false))
         fresh))))
 
-(define (lsp-fold-ranges-scan [text : String]) : lsp_fold_vec.Vec
+(define (lsp-fold-ranges-scan [text : String]) : LspFoldRanges
   (let
     [n : i64 (string.string-length text)]
-    [folds : lsp_fold_vec.Vec (lsp_fold_vec.new)]
+    [folds : LspFoldRanges (lsp-fold-ranges-new)]
     [cursor : LspFoldCursor (LspFoldCursor 1 1 false)]
     [i : i64 0]
     [top : i64 -1]
@@ -6038,7 +6037,7 @@
                   (set! i past)))]
             [(or (= c '(') (= c '['))
               (begin
-                (lsp_fold_vec.push
+                (lsp-fold-ranges-push!
                   (&mut folds)
                   (LspFoldRange
                     (struct-get cursor line)
@@ -6048,7 +6047,7 @@
                     lsp-fold-kind-region
                     top
                     false))
-                (set! top (- (lsp_fold_vec.len (& folds)) 1))
+                (set! top (- (lsp-fold-ranges-len (& folds)) 1))
                 (set! (struct-get cursor col) (+ (struct-get cursor col) 1))
                 (set! (struct-get cursor code) true)
                 (set! i (+ i 1)))]
@@ -6057,13 +6056,16 @@
                 (if (>= top 0)
                   (let
                     [open : LspFoldRange
-                      (lsp_fold_vec.get (& folds) top (lsp-fold-range-fallback))]
+                      (lsp-fold-ranges-get
+                        (& folds)
+                        top
+                        (lsp-fold-range-fallback))]
                     [parent : i64 (struct-get open parent)]
                     (begin
                       (if (>
                         (struct-get cursor line)
                         (struct-get open start-line))
-                        (lsp_fold_vec.set
+                        (lsp-fold-ranges-set!
                           (&mut folds)
                           top
                           (LspFoldRange
@@ -6117,14 +6119,14 @@
 ;; recursion over the document.
 (define (lsp-folding-ranges-in-text [text : String]) : json.JsonList
   (let
-    [folds : lsp_fold_vec.Vec (lsp-fold-ranges-scan text)]
-    [i : i64 (- (lsp_fold_vec.len (& folds)) 1)]
+    [folds : LspFoldRanges (lsp-fold-ranges-scan text)]
+    [i : i64 (- (lsp-fold-ranges-len (& folds)) 1)]
     [acc : json.JsonList json.JsonListNil]
     (begin
       (while (>= i 0)
         (let
           [fold : LspFoldRange
-            (lsp_fold_vec.get (& folds) i (lsp-fold-range-fallback))]
+            (lsp-fold-ranges-get (& folds) i (lsp-fold-range-fallback))]
           (begin
             (if (struct-get fold emit)
               (set! acc (lsp-json-list-cons (lsp-fold-range-json fold) acc))

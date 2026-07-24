@@ -353,3 +353,4 @@ function_lifetime_elision|tests/integration/function_lifetime_elision.tl|42|-|-|
 consume_parameters|tests/integration/consume_parameters.tl|0|-|-|consume_parameters_helper.tl stdlib/string.tl
 comptime_module_value_reflection|tests/integration/comptime_module_value_reflection.tl|42|-|-|comptime_module_value_reflection_provider.tl stdlib/comptime.tl
 str_cat_scoped_region|tests/integration/str_cat_scoped_region.tl|42|-|-|-
+tlci_native_index_folds|tests/integration/tlci_native_index_folds.tl|42|-|-|stdlib/fs.tl stdlib/string.tl stdlib/str_cat.tl

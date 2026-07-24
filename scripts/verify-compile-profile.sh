@@ -1264,6 +1264,75 @@ if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_PATHROOT_ASM"; then
     diff -u "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_PATHROOT_ASM" >&2 || true
     fail "path-spelled modified stdlib root changed generated assembly (#5454)"
 fi
+
+# #5647: the index-fold bodies walk an operand list by index, and a fold that
+# stops one element early, repeats one, or reverses the order still compiles
+# and still runs. Only a route differential catches that, and
+# array_qualified_macros.tl exercises neither fold, so drive them explicitly.
+echo "[compile-profile] verify tlci index-fold route differential"
+STDLIB_TLCI_FOLDS_SOURCE="$ROOT/tests/integration/tlci_native_index_folds.tl"
+STDLIB_TLCI_FOLDS_EMBEDDED_ASM="$STDLIB_TLCI_DIR/folds-embedded.s"
+STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/folds-embedded.stdout"
+STDLIB_TLCI_FOLDS_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/folds-embedded.stderr"
+STDLIB_TLCI_FOLDS_MODIFIED_ASM="$STDLIB_TLCI_DIR/folds-modified.s"
+STDLIB_TLCI_FOLDS_MODIFIED_STDOUT="$STDLIB_TLCI_DIR/folds-modified.stdout"
+STDLIB_TLCI_FOLDS_MODIFIED_STDERR="$STDLIB_TLCI_DIR/folds-modified.stderr"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$STDLIB_TLCI_FOLDS_SOURCE" \
+        -o "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT" \
+    2> "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT" \
+        "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR"
+    fail "embedded tlci index-fold fixture compile failed"
+fi
+if ! (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" compile "$STDLIB_TLCI_FOLDS_SOURCE" \
+        -o "$STDLIB_TLCI_FOLDS_MODIFIED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib
+) > "$STDLIB_TLCI_FOLDS_MODIFIED_STDOUT" \
+    2> "$STDLIB_TLCI_FOLDS_MODIFIED_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_FOLDS_MODIFIED_STDOUT" \
+        "$STDLIB_TLCI_FOLDS_MODIFIED_STDERR"
+    fail "comment-modified-root tlci index-fold fixture compile failed"
+fi
+# The embedded route must actually take the native entries, and the modified
+# root must actually interpret, or the byte comparison below proves nothing.
+assert_profile_counter_at_least_in \
+    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_dispatches" \
+    1 \
+    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT" \
+    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_misses" \
+    0 \
+    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDOUT" \
+    "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$STDLIB_TLCI_FOLDS_MODIFIED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$STDLIB_TLCI_FOLDS_MODIFIED_STDOUT" \
+    "$STDLIB_TLCI_FOLDS_MODIFIED_STDERR"
+# Both folds must fire, so a fixture edit cannot silently stop covering them.
+assert_contains "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR" \
+    "stdlib.str_cat_runtime/str-cat-pack arity=3"
+assert_contains "$STDLIB_TLCI_FOLDS_EMBEDDED_STDERR" \
+    "stdlib.fs/path-join-fold arity=3"
+if ! cmp -s "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
+    "$STDLIB_TLCI_FOLDS_MODIFIED_ASM"; then
+    diff -u "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
+        "$STDLIB_TLCI_FOLDS_MODIFIED_ASM" >&2 || true
+    fail "native and interpreted index folds produced different assembly"
+fi
 fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"

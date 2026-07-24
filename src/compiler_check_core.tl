@@ -43,7 +43,9 @@
               "|0|0|0\n")))))))
 
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
-  (compiler-cfg-empty))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (compiler-cfg-empty)))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]

@@ -72,19 +72,21 @@
           out)))))
 
 (define (prelude-surface-target-cfgs [windows-target : bool]) : sym_i64_env.SymI64Env
-  (let
-    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
-    (if windows-target
-      (compiler-cfg-enable
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
+      (if windows-target
         (compiler-cfg-enable
-          (compiler-cfg-enable cfgs "windows")
-          "target-windows")
-        "os-windows")
-      (compiler-cfg-enable
+          (compiler-cfg-enable
+            (compiler-cfg-enable cfgs "windows")
+            "target-windows")
+          "os-windows")
         (compiler-cfg-enable
-          (compiler-cfg-enable (compiler-cfg-enable cfgs "linux") "unix")
-          "target-linux")
-        "os-linux"))))
+          (compiler-cfg-enable
+            (compiler-cfg-enable (compiler-cfg-enable cfgs "linux") "unix")
+            "target-linux")
+          "os-linux")))))
 
 (define (prelude-surface-load-cold
   [load-state : CompilerLoadSessionState]

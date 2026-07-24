@@ -406,7 +406,9 @@
   (typecheck-compiler-program-with-paths program (ast-decl-path-list-new)))
 
 (define (typecheck-compiler-source-language-cfgs) : sym_i64_env.SymI64Env
-  (compiler-cfg-empty))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (compiler-cfg-empty)))
 
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
   (let

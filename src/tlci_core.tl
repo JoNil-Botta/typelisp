@@ -680,6 +680,20 @@
 ;; runtime count, refs #5603). Additive ABI v1 op.
 (define tlci-host-callback-op-expr-int-from-data : i64
   221)
+
+;; Expression-value destructuring for computed bodies that match on the shape
+;; of an operand (refs #5602). operand-expr-call? answers 1/0 as data for
+;; "operand `a` is a call expression" (a negative value is its malformed-request
+;; sentinel, like the other data-returning probes); the two accessors push the
+;; callee expression and the argument list the interpreted
+;; `(comptime.Expr.Call callee args)` pattern binds. All three unwrap `Spanned`
+;; first, matching `ctfe-match-expr-variant`. Additive ABI v1 ops.
+(define tlci-host-callback-op-operand-expr-call? : i64
+  222)
+(define tlci-host-callback-op-operand-expr-call-callee : i64
+  223)
+(define tlci-host-callback-op-operand-expr-call-args : i64
+  224)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

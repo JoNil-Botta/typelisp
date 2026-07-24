@@ -480,7 +480,10 @@ artifact. Macro-free packages use a metadata-only image; macro-defining
 packages include one deterministic registration-table record per package-owned
 macro. Supported expression/value transformer bodies compile into native
 template (nested calls, literals, plain symbols, unquoted operands, and
-unquote-splicing), literal, computed-if, and fold entries; unsupported bodies
+unquote-splicing), literal, computed-if, and fold entries; supported
+let-rooted bodies evaluate computed binding inits through host session locals
+and emit compiled template, bracket, borrow, array, match, and let
+declarations the same way; unsupported bodies
 retain explicit shells for interpreted fallback. `typelisp inspect <file.tlci>`
 renders the image
 header, sections, and package metadata. General dependency-catalog discovery

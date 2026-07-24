@@ -13401,7 +13401,49 @@
       (opt-cfg-switch-case-successors (opt-label-add set default-label) cases)]
     [_ set]))
 
-(define (opt-cfg-switch-case-successors
+;; Above this many cases, dedup through a hash set instead of `opt-label-add`'s
+;; linear `string.eq` scan. `opt-label-add` prepends only on first occurrence, so
+;; seeding the seen-set from `set` and applying the same first-occurrence rule
+;; reproduces the identical list, order included. Small switches keep the linear
+;; path: seeding and allocating a map is not worth it for a handful of arms, and
+;; leaving them alone keeps their output trivially unchanged.
+(define (opt-cfg-switch-case-hash-threshold) : i64
+  16)
+
+(define (opt-cfg-switch-seen-seed
+  [set : OptLabelSet]
+  [seen : opt_string_i64_map.Map]) : opt_string_i64_map.Map
+  (match set
+    [(OptLabelSet.Nil) seen]
+    [(OptLabelSet.Cons head rest)
+      (begin
+        (opt_string_i64_map.insert-ref! (&mut seen) head 1)
+        (opt-cfg-switch-seen-seed (box-get rest) seen))]))
+
+(define (opt-cfg-switch-case-successors-hashed
+  [set : OptLabelSet]
+  [cases : CompilerIrSwitchCaseList]
+  [seen : opt_string_i64_map.Map]) : OptLabelSet
+  (match cases
+    [(CompilerIrSwitchCaseList.Nil) set]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case _ label)
+          (if (opt_string_i64_map.contains? (& seen) label)
+            (opt-cfg-switch-case-successors-hashed set (box-get rest) seen)
+            (begin
+              (opt_string_i64_map.insert-ref! (&mut seen) label 1)
+              (opt-cfg-switch-case-successors-hashed
+                (OptLabelSet.Cons label (box set))
+                (box-get rest)
+                seen)))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-cfg-switch-case-successors-hashed
+        set
+        (compiler-ir-switch-case-seq-to-list seq)
+        seen)]))
+
+(define (opt-cfg-switch-case-successors-linear
   [set : OptLabelSet]
   [cases : CompilerIrSwitchCaseList]) : OptLabelSet
   (match cases
@@ -13409,13 +13451,25 @@
     [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case _ label)
-          (opt-cfg-switch-case-successors
+          (opt-cfg-switch-case-successors-linear
             (opt-label-add set label)
             (box-get rest))])]
     [(CompilerIrSwitchCaseList.Array seq)
-      (opt-cfg-switch-case-successors
+      (opt-cfg-switch-case-successors-linear
         set
         (compiler-ir-switch-case-seq-to-list seq))]))
+
+(define (opt-cfg-switch-case-successors
+  [set : OptLabelSet]
+  [cases : CompilerIrSwitchCaseList]) : OptLabelSet
+  (if (<
+    (compiler-ir-switch-case-list-count cases)
+    (opt-cfg-switch-case-hash-threshold))
+    (opt-cfg-switch-case-successors-linear set cases)
+    (opt-cfg-switch-case-successors-hashed
+      set
+      cases
+      (opt-cfg-switch-seen-seed set (opt_string_i64_map.with-capacity 64)))))
 
 (define (opt-cfg-instr-seq-successors
   [set : OptLabelSet]

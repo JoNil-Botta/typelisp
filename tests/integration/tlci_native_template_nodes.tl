@@ -5,6 +5,9 @@
 ;; compile-profile gate compiles this file through the embedded (native) and
 ;; the source (interpreted) macro routes and requires byte-identical assembly,
 ;; so any divergence in the reconstructed nodes fails the build.
+;; Referenced only as the serialize strategy module in the generated import
+;; below, which the unused-import rule does not count as a reference.
+;; lint-allow: unused-import
 (import stdlib.json)
 (import stdlib.math)
 (import stdlib.serialize)
@@ -51,9 +54,8 @@
     [(sample_json.Ok decoded)
       (if (and
         (string.eq (struct-get decoded label) (struct-get sample label))
-        (and
-          (= (struct-get decoded count) (struct-get sample count))
-          (= (struct-get decoded active) (struct-get sample active))))
+        (= (struct-get decoded count) (struct-get sample count))
+        (= (struct-get decoded active) (struct-get sample active)))
         (array-ref (struct-get decoded marks) 2)
         -1)]
     [(sample_json.Err _) -2]))
@@ -65,8 +67,8 @@
     [rendered : String (label-of sample)]
     (if (and
       (string.eq rendered "tag!")
-      (and
-        (= (round-trip sample) 3)
-        (and (= (abs-score -1.5) 1.5) (= (abs-score-shadowed -2.5) 2.5))))
+      (= (round-trip sample) 3)
+      (= (abs-score -1.5) 1.5)
+      (= (abs-score-shadowed -2.5) 2.5))
       42
       1)))

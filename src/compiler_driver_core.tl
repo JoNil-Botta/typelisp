@@ -1375,9 +1375,12 @@
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (match target
-    [(CompilerBackendTarget.Linux) (compiler-driver-enable-linux-cfgs cfgs)]
-    [(CompilerBackendTarget.Windows) (compiler-driver-enable-windows-cfgs cfgs)]))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (match target
+      [(CompilerBackendTarget.Linux) (compiler-driver-enable-linux-cfgs cfgs)]
+      [(CompilerBackendTarget.Windows)
+        (compiler-driver-enable-windows-cfgs cfgs)])))
 
 (define (compiler-driver-state-target-cfgs
   [state : CompilerDriverState]

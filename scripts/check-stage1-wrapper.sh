@@ -410,7 +410,7 @@ EOF
     (comptime.expr-bool false)
     true))
 (defmacro (unsupported-macro [value : Expr]) : Expr
-  (match value [(comptime.Expr.Int n) value] [_ value]))
+  `(return ,value))
 EOF
     cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package

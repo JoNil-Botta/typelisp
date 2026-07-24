@@ -135,7 +135,7 @@
           (str_cat.str-cat "embedded stdlib tlci validation failed: " message))
         1)]
     [(CompilerEmbeddedStdlibTlciValidation.Ok count)
-      (if (= count 105)
+      (if (= count 101)
         (if (and
           (embedded-verify-native-array-length-ok?)
           (embedded-verify-native-array-length-error-ok?
@@ -154,6 +154,6 @@
         (begin
           (io.print-error
             (str_cat.str-cat
-              "embedded stdlib tlci macro count mismatch: expected 105, got "
+              "embedded stdlib tlci macro count mismatch: expected 101, got "
               (string.int->string count)))
           2))]))

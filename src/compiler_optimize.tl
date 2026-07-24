@@ -7586,23 +7586,27 @@
             (OptI64List.Cons idx (box tail))]
           [(opt_string_i64_map.LookupMissing) tail]))]))
 
-(define (opt-cfg-index-add-pred-edges!
+;; The successor row for this block already holds every resolved target id, in
+;; label-set order, with unresolvable labels dropped -- exactly the sequence the
+;; label-walking version produced. Reuse it instead of hashing each successor
+;; label a second time: `opt-cfg-index-label-set-to-ids` has already paid one
+;; `opt_string_i64_map.get` per edge.
+(define (opt-cfg-index-add-pred-edges-from-ids!
   [pred-rows : (Array OptI64List)]
-  [ids : opt_string_i64_map.Map]
   [source-id : i64]
-  [succs : OptLabelSet]) : unit
-  (match succs
-    [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Cons s rest)
+  [succ-ids : OptI64List]) : unit
+  (match succ-ids
+    [(OptI64List.Nil) unit]
+    [(OptI64List.Cons idx rest)
       (begin
-        (match (opt_string_i64_map.get (& ids) s)
-          [(opt_string_i64_map.LookupFound idx)
-            (array-set!
-              pred-rows
-              idx
-              (opt-i64-list-add (array-ref pred-rows idx) source-id))]
-          [(opt_string_i64_map.LookupMissing) unit])
-        (opt-cfg-index-add-pred-edges! pred-rows ids source-id (box-get rest)))]))
+        (array-set!
+          pred-rows
+          idx
+          (opt-i64-list-add (array-ref pred-rows idx) source-id))
+        (opt-cfg-index-add-pred-edges-from-ids!
+          pred-rows
+          source-id
+          (box-get rest)))]))
 
 (define (opt-cfg-index-fill-row-seq!
   [blocks : CompilerIrBlockSeq]
@@ -7624,9 +7628,10 @@
         [succs : OptLabelSet
           (opt-cfg-block-successors-with-next block next-label)]
         [row : i64 (+ base index)]
+        [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
         (begin
-          (array-set! succ-rows row (opt-cfg-index-label-set-to-ids succs ids))
-          (opt-cfg-index-add-pred-edges! pred-rows ids row succs)
+          (array-set! succ-rows row succ-ids)
+          (opt-cfg-index-add-pred-edges-from-ids! pred-rows row succ-ids)
           (set! index (+ index 1)))))))
 
 (define (opt-cfg-index-fill-rows!
@@ -7645,12 +7650,10 @@
               (opt-cfg-block-successors-with-next
                 block
                 (opt-cfg-entry-label (box-get rest)))]
+            [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
             (begin
-              (array-set!
-                succ-rows
-                index
-                (opt-cfg-index-label-set-to-ids succs ids))
-              (opt-cfg-index-add-pred-edges! pred-rows ids index succs)
+              (array-set! succ-rows index succ-ids)
+              (opt-cfg-index-add-pred-edges-from-ids! pred-rows index succ-ids)
               (opt-cfg-index-fill-rows!
                 (box-get rest)
                 ids

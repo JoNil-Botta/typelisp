@@ -19924,14 +19924,35 @@
       (+ start 1)
       end)))
 
+;; An empty var-type view, for callers that must bind one on a path where the
+;; scalar plan is not taken and no types are needed.
+(define (compiler-reg-var-types-empty) : CompilerRegVarTypes
+  (CompilerRegVarTypes
+    CompilerRegVarTypeList.Nil
+    (array.make-array i64 0)
+    (array.make-array AstType 0)))
+
 (define (compiler-reg-plan-function-scalar-cold-for-abi
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [forced-spill-from : i64]) : CompilerRegPlan
+  (compiler-reg-plan-function-scalar-cold-for-abi-with-types
+    abi
+    func
+    forced-spill-from
+    (compiler-reg-function-var-types func)))
+
+;; `type-info` must be `(compiler-reg-function-var-types func)`. The backend
+;; already needs that view for its caller-save rewrite, so it computes it once
+;; and passes it in rather than having both walk the function.
+(define (compiler-reg-plan-function-scalar-cold-for-abi-with-types
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [forced-spill-from : i64]
+  [type-info : CompilerRegVarTypes]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make func true)]
-    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [vars : i64
       (match func

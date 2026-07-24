@@ -770,6 +770,8 @@
     [(CompilerCtfeValue.PatternList _) "pattern-list"]
     [(CompilerCtfeValue.MatchArm _) "match-arm"]
     [(CompilerCtfeValue.MatchArmList _) "match-arm-list"]
+    [(CompilerCtfeValue.LetBinding _) "let-binding"]
+    [(CompilerCtfeValue.LetBindingList _) "let-binding-list"]
     [(CompilerCtfeValue.TypeInfo ty)
       (string.append "typeinfo_" (spec-type-key ty))]
     [(CompilerCtfeValue.TypeInfoBox ty)
@@ -2111,6 +2113,12 @@
         (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-MatchArm))]
       [(CompilerCtfeValue.MatchArmList _)
         (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-MatchArmList))]
+      [(CompilerCtfeValue.LetBinding _)
+        (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-LetBinding))]
+      [(CompilerCtfeValue.LetBindingList _)
+        (ctfe-type-eq
+          ty
+          (AstType.Var cbi.compiler-builtin-id-fix-LetBindingList))]
       [(CompilerCtfeValue.TypeInfo _) false]
       [(CompilerCtfeValue.TypeInfoBox _) false]
       [(CompilerCtfeValue.TypeInfoList _) false]
@@ -2146,6 +2154,8 @@
     [(CompilerCtfeValue.PatternList _) "PatternList"]
     [(CompilerCtfeValue.MatchArm _) "MatchArm"]
     [(CompilerCtfeValue.MatchArmList _) "MatchArmList"]
+    [(CompilerCtfeValue.LetBinding _) "LetBinding"]
+    [(CompilerCtfeValue.LetBindingList _) "LetBindingList"]
     [(CompilerCtfeValue.TypeInfo _) "TypeInfo"]
     [(CompilerCtfeValue.TypeInfoBox _) "TypeInfoBox"]
     [(CompilerCtfeValue.TypeInfoList _) "TypeInfoList"]
@@ -2575,6 +2585,18 @@
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time MatchArmList value into runtime expression")))]
+    [(CompilerCtfeValue.LetBinding _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time LetBinding value into runtime expression")))]
+    [(CompilerCtfeValue.LetBindingList _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time LetBindingList value into runtime expression")))]
     [(CompilerCtfeValue.TypeInfo _)
       (ResultSpecSubExpr.Err
         (box

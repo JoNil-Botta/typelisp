@@ -326,6 +326,10 @@
   -1)
 (define compiler-builtin-id-fix-MatchArmList : i64
   -1)
+(define compiler-builtin-id-fix-LetBinding : i64
+  -1)
+(define compiler-builtin-id-fix-LetBindingList : i64
+  -1)
 (define compiler-builtin-id-fix-Maybe : i64
   -1)
 (define compiler-builtin-id-fix-missing : i64
@@ -646,7 +650,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 311)]
+    [ids : (Array i64) (make-array i64 313)]
     [ctfe-ids : (Array i64) (make-array i64 280)]
     [i : i64 0]
     (begin
@@ -654,7 +658,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 311)
+      (while (< i 313)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -1136,6 +1140,8 @@
     (state-set! state 308 compiler-builtin-id-tl-stdin-eof-label)
     (state-set! state 309 compiler-builtin-id-tl-flush-stdout-label)
     (state-set! state 310 compiler-builtin-id-tl-arena-make-small)
+    (state-set! state 311 compiler-builtin-id-fix-LetBinding)
+    (state-set! state 312 compiler-builtin-id-fix-LetBindingList)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState

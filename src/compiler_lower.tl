@@ -22991,6 +22991,18 @@
                     (lower-diagnostic-at-expr
                       origin
                       "MatchArmList value is compile-time only")))]
+              [(CompilerCtfeValue.LetBinding _)
+                (ResultLowerExpr.Err
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "LetBinding value is compile-time only")))]
+              [(CompilerCtfeValue.LetBindingList _)
+                (ResultLowerExpr.Err
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "LetBindingList value is compile-time only")))]
               [(CompilerCtfeValue.TypeInfo _)
                 (ResultLowerExpr.Err
                   (box

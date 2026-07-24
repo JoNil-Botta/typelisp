@@ -256,6 +256,94 @@
 ;; `check` selector picks the result assertion: 0 = flat call template, 1 =
 ;; nested call template, 2 = literal argument pack, 3 = identity body, 4 =
 ;; quasiquoted plain symbol.
+;; The `gen` fixture's computed module name: `(begin (module ,module-name)
+;; ...)` with the let-computed string append resolved by the host.
+(define (producer-test-gen-result-ok? [pools : AstNodePoolContext]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (match (ast-node-pool-context-expr-get pools node)
+        [(AstExpr.Begin items)
+          (and
+            (= (ast-expr-list-len (& items)) 2)
+            (let
+              [first : i64 (ast-expr-list-get (& items) 0 -1)]
+              (match (ast-node-pool-context-expr-get pools first)
+                [(AstExpr.Call callee args)
+                  (and
+                    (match (ast-node-pool-context-expr-get pools callee)
+                      [(AstExpr.Var name)
+                        (= name (producer-test-name-id "module"))]
+                      [_ false])
+                    (= (ast-expr-list-len (& args)) 1)
+                    (match (ast-node-pool-context-expr-get
+                      pools
+                      (ast-expr-list-get (& args) 0 -1))
+                      [(AstExpr.Var name-id)
+                        (string.eq (intern-str name-id) "test.gen.i64")]
+                      [_ false]))]
+                [_ false])))]
+        [_ false])]
+    [_ false]))
+
+;; The `classify` fixture's match node: variant pattern with a wildcard and
+;; a unit-variant pattern.
+(define (producer-test-classify-result-ok? [pools : AstNodePoolContext]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (match (ast-node-pool-context-expr-get pools node)
+        [(AstExpr.Match match-box)
+          (match (box-get match-box)
+            [(AstMatch.Match _ arms)
+              (and
+                (= (struct-get arms len) 2)
+                (match (array-ref (struct-get arms slots) 0)
+                  [(AstMatchArm.Arm pattern _)
+                    (match pattern
+                      [(AstPattern.Variant name-id args-box)
+                        (and
+                          (= name-id (ci.intern "Some"))
+                          (= (struct-get (& (box-get args-box)) len) 1)
+                          (match (ast-pattern-list-get
+                            (& (box-get args-box))
+                            0
+                            (ast-pattern-fallback))
+                            [(AstPattern.Wildcard) true]
+                            [_ false]))]
+                      [_ false])]
+                  [_ false])
+                (match (array-ref (struct-get arms slots) 1)
+                  [(AstMatchArm.Arm pattern _)
+                    (match pattern
+                      [(AstPattern.Binding name-id)
+                        (= name-id (producer-test-name-id "None"))]
+                      [_ false])]
+                  [_ false]))])]
+        [_ false])]
+    [_ false]))
+
+;; The `twice` fixture's begin of two set! nodes for the same marked name.
+(define (producer-test-twice-result-ok? [pools : AstNodePoolContext]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (match (ast-node-pool-context-expr-get pools node)
+        [(AstExpr.Begin items)
+          (and
+            (= (ast-expr-list-len (& items)) 2)
+            (match (ast-node-pool-context-expr-get
+              pools
+              (ast-expr-list-get (& items) 0 -1))
+              [(AstExpr.Set name-id _)
+                (= name-id (producer-test-name-id "flag"))]
+              [_ false])
+            (match (ast-node-pool-context-expr-get
+              pools
+              (ast-expr-list-get (& items) 1 -1))
+              [(AstExpr.Set name-id _)
+                (= name-id (producer-test-name-id "flag"))]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
 (define (producer-test-dispatch-shape?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]
@@ -296,7 +384,49 @@
                   [(= check 1) (producer-test-nest-result-ok? pools operand)]
                   [(= check 2) (producer-test-lits-result-ok? pools)]
                   [(= check 3) (producer-test-operand-result-ok? operand)]
-                  [else (producer-test-var-result-ok? pools expected)]))])]
+                  [(= check 4) (producer-test-var-result-ok? pools expected)]
+                  [(= check 5) (producer-test-classify-result-ok? pools)]
+                  [else (producer-test-twice-result-ok? pools)]))])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
+;; Dispatch the module-generator fixture with a type and an expression
+;; operand; the computed module name must resolve to "test.gen.i64".
+(define (producer-test-dispatch-gen?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [operand : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "value")))]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 2)]
+    (begin
+      (array-set! operands 0 (CompilerCtfeValue.Type (AstType.I64)))
+      (array-set! operands 1 (CompilerCtfeValue.Expr operand (AstType.Expr)))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        2
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (if (= (struct-get dispatch status) tlci-host-callback-status-ok)
+                (if (compiler-comptime-host-result-ready?)
+                  (producer-test-gen-result-ok? pools)
+                  false)
+                false)])]
         (begin
           (compiler-comptime-host-session-close!)
           ok)))))
@@ -507,7 +637,7 @@
 (define (producer-test-package-native-image-ok?) : bool
   (let
     [source : String
-      "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (let [tag : String \"x\"] value))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n"]
+      "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.Int n) value] [_ value]))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n"]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -542,13 +672,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 9)
-                              (= (struct-get captures len) 9)
+                              (= (array-length name-array) 12)
+                              (= (struct-get captures len) 12)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-count
                                   0)
-                                8)
+                                11)
                               (producer-test-dispatch-shape?
                                 (& loaded)
                                 "package.macros/wrap"
@@ -581,6 +711,21 @@
                               (producer-test-dispatch-tytpl?
                                 (& loaded)
                                 "package.macros/tytpl")
+                              (producer-test-dispatch-gen?
+                                (& loaded)
+                                "package.macros/gen")
+                              (producer-test-dispatch-shape?
+                                (& loaded)
+                                "package.macros/classify"
+                                "value"
+                                5
+                                "")
+                              (producer-test-dispatch-shape?
+                                (& loaded)
+                                "package.macros/twice"
+                                "value"
+                                6
+                                "")
                               (producer-test-dispatch-shape?
                                 (& loaded)
                                 "package.macros/lits"

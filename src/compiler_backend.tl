@@ -51475,26 +51475,6 @@
         site
         (box-get rest))]))
 
-(define (compiler-backend-object-phi-inputs-with-type
-  [parts : CompilerBackendObjectParts]
-  [site : String]
-  [inputs : CompilerIrPhiInputList]
-  [ty : AstType]) : CompilerBackendObjectParts
-  (match (compiler-ir-phi-input-list-force-cons inputs)
-    [(CompilerIrPhiInputList.Nil) parts]
-    [(CompilerIrPhiInputList.Array seq)
-      (compiler-backend-object-phi-inputs-with-type
-        parts
-        site
-        (compiler-ir-phi-input-seq-to-list seq)
-        ty)]
-    [(CompilerIrPhiInputList.Cons value _ rest)
-      (compiler-backend-object-phi-inputs-with-type
-        (compiler-backend-object-value-ref-with-type parts site value ty)
-        site
-        (box-get rest)
-        ty)]))
-
 (define (compiler-backend-object-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
 
@@ -51772,6 +51752,23 @@
     (begin
       (compiler-backend-object-push-u8! (&mut out) 0x48)
       (compiler-backend-object-push-u8! (&mut out) 0x89)
+      (if (compiler-backend-object-disp8? disp)
+        (begin
+          (compiler-backend-object-push-u8! (&mut out) 0x44)
+          (compiler-backend-object-push-u8! (&mut out) 0x24)
+          (compiler-backend-object-push-u8! (&mut out) disp))
+        (begin
+          (compiler-backend-object-push-u8! (&mut out) 0x84)
+          (compiler-backend-object-push-u8! (&mut out) 0x24)
+          (compiler-backend-object-push-u32! (&mut out) disp)))
+      (compiler-backend-object-bytes-finish (& out)))))
+
+(define (compiler-backend-object-load-rax-rsp-bytes [disp : i64]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    (begin
+      (compiler-backend-object-push-u8! (&mut out) 0x48)
+      (compiler-backend-object-push-u8! (&mut out) 0x8b)
       (if (compiler-backend-object-disp8? disp)
         (begin
           (compiler-backend-object-push-u8! (&mut out) 0x44)
@@ -52509,12 +52506,198 @@
                 (box-get rest)
                 (+ int-index 1))))])]))
 
+;; --- object-image phi edge copies --------------------------------------------
+;;
+;; The object emitter assigns every IR var its own rbp slot, so a phi whose
+;; destination differs from an input needs a real copy on each incoming edge;
+;; materializing the inputs and dropping the destination (the historical Phi
+;; case) silently reads an uninitialized slot at the merge. Jump and Branch
+;; terminators targeting a block with leading phis emit these copies before
+;; transferring control; conditional edges are split into tiny edge blocks so
+;; each edge's copies run only when that edge is taken. Copies are staged
+;; through the stack (sources first, destinations after) so parallel-copy
+;; cycles like a<-b, b<-a cannot clobber a pending source. Aggregate
+;; (copy-group) phis keep the previous materialize-only behavior; the tlci
+;; image path never lowers those.
+(define (compiler-backend-object-phi-copy-list-count
+  [copies : CompilerBackendPhiCopyList]) : i64
+  (match copies
+    [(CompilerBackendPhiCopyList.Nil) 0]
+    [(CompilerBackendPhiCopyList.Cons _ rest)
+      (+ 1 (compiler-backend-object-phi-copy-list-count (box-get rest)))]))
+
+(define (compiler-backend-object-phi-copy-list-nil?
+  [copies : CompilerBackendPhiCopyList]) : bool
+  (match copies
+    [(CompilerBackendPhiCopyList.Nil) true]
+    [_ false]))
+
+(define (compiler-backend-object-edge-phi-copies-scan
+  [instrs : CompilerIrInstrSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [from-label : String]
+  [index : i64]
+  [acc : CompilerBackendPhiCopyList]) : CompilerBackendPhiCopyList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    acc
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi dst inputs ty)
+        (match (compiler-backend-phi-input-value inputs from-label)
+          [(ResultBackendValue.Ok value)
+            (compiler-backend-object-edge-phi-copies-scan
+              instrs
+              program-index
+              from-label
+              (+ index 1)
+              (if (compiler-backend-copy-group? program-index ty dst value)
+                acc
+                (compiler-backend-phi-copy-cons
+                  (CompilerBackendPhiCopy.Copy
+                    dst
+                    (CompilerBackendPhiSource.Value value)
+                    ty)
+                  acc)))]
+          [(ResultBackendValue.Err _)
+            (compiler-backend-object-edge-phi-copies-scan
+              instrs
+              program-index
+              from-label
+              (+ index 1)
+              acc)])]
+      [_ acc])))
+
+(define (compiler-backend-object-edge-phi-copies-seq
+  [blocks : CompilerIrBlockSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [target-label : String]
+  [from-label : String]
+  [index : i64]) : CompilerBackendPhiCopyList
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    CompilerBackendPhiCopyList.Nil
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block label instrs)
+        (if (string.eq label target-label)
+          (compiler-backend-object-edge-phi-copies-scan
+            instrs
+            program-index
+            from-label
+            0
+            CompilerBackendPhiCopyList.Nil)
+          (compiler-backend-object-edge-phi-copies-seq
+            blocks
+            program-index
+            target-label
+            from-label
+            (+ index 1)))])))
+
+(define (compiler-backend-object-edge-phi-copies
+  [blocks : CompilerIrBlockList]
+  [program-index : CompilerBackendProgramIndex]
+  [target-label : String]
+  [from-label : String]) : CompilerBackendPhiCopyList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerBackendPhiCopyList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (if (string.eq label target-label)
+            (compiler-backend-object-edge-phi-copies-scan
+              instrs
+              program-index
+              from-label
+              0
+              CompilerBackendPhiCopyList.Nil)
+            (compiler-backend-object-edge-phi-copies
+              (box-get rest)
+              program-index
+              target-label
+              from-label))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-object-edge-phi-copies-seq
+        seq
+        program-index
+        target-label
+        from-label
+        0)]))
+
+(define (compiler-backend-object-emit-phi-copies-stage
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [copies : CompilerBackendPhiCopyList]
+  [index : i64]) : CompilerBackendObjectParts
+  (match copies
+    [(CompilerBackendPhiCopyList.Nil) parts]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
+      (match copy
+        [(CompilerBackendPhiCopy.Copy _ source ty)
+          (match source
+            [(CompilerBackendPhiSource.Value value)
+              (compiler-backend-object-emit-phi-copies-stage
+                (compiler-backend-object-add-nonempty-bytes
+                  (compiler-backend-object-load-value-to-reg-with-type
+                    parts
+                    site
+                    value
+                    ty
+                    "%rax")
+                  (compiler-backend-object-store-rax-rsp-bytes (* index 8)))
+                site
+                (box-get rest)
+                (+ index 1))]
+            [(CompilerBackendPhiSource.Temp _)
+              (compiler-backend-object-emit-phi-copies-stage
+                parts
+                site
+                (box-get rest)
+                (+ index 1))])])]))
+
+(define (compiler-backend-object-emit-phi-copies-store
+  [parts : CompilerBackendObjectParts]
+  [copies : CompilerBackendPhiCopyList]
+  [index : i64]) : CompilerBackendObjectParts
+  (match copies
+    [(CompilerBackendPhiCopyList.Nil) parts]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
+      (match copy
+        [(CompilerBackendPhiCopy.Copy dst _ _)
+          (compiler-backend-object-emit-phi-copies-store
+            (compiler-backend-object-store-reg-to-var
+              (compiler-backend-object-add-nonempty-bytes
+                parts
+                (compiler-backend-object-load-rax-rsp-bytes (* index 8)))
+              dst
+              "%rax")
+            (box-get rest)
+            (+ index 1))])]))
+
+(define (compiler-backend-object-emit-phi-copies
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [copies : CompilerBackendPhiCopyList]) : CompilerBackendObjectParts
+  (let
+    [count : i64 (compiler-backend-object-phi-copy-list-count copies)]
+    (if (= count 0)
+      parts
+      (compiler-backend-object-add-nonempty-bytes
+        (compiler-backend-object-emit-phi-copies-store
+          (compiler-backend-object-emit-phi-copies-stage
+            (compiler-backend-object-add-nonempty-bytes
+              parts
+              (compiler-backend-object-sub-rsp-bytes (* count 8)))
+            site
+            copies
+            0)
+          copies
+          0)
+        (compiler-backend-object-add-rsp-bytes (* count 8))))))
+
 (define (compiler-backend-object-instr
   [parts : CompilerBackendObjectParts]
   [target : CompilerBackendTarget]
   [function : String]
   [label-scope : String]
   [current-label : String]
+  [blocks : CompilerIrBlockList]
   [instr : CompilerIrInstr]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
@@ -52660,7 +52843,14 @@
         [symbol : String (compiler-backend-asm-label label-scope target)]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
-            parts
+            (compiler-backend-object-emit-phi-copies
+              parts
+              function
+              (compiler-backend-object-edge-phi-copies
+                blocks
+                program-index
+                target
+                current-label))
             function
             (cobj.CompilerObjectRelocationKind.Branch)
             symbol)
@@ -52671,17 +52861,87 @@
           (compiler-backend-asm-label label-scope true-label)]
         [false-symbol : String
           (compiler-backend-asm-label label-scope false-label)]
-        (compiler-backend-object-add-text
-          (compiler-backend-object-add-text-relocation
+        [true-copies : CompilerBackendPhiCopyList
+          (compiler-backend-object-edge-phi-copies
+            blocks
+            program-index
+            true-label
+            current-label)]
+        [false-copies : CompilerBackendPhiCopyList
+          (compiler-backend-object-edge-phi-copies
+            blocks
+            program-index
+            false-label
+            current-label)]
+        (if (and
+          (compiler-backend-object-phi-copy-list-nil? true-copies)
+          (compiler-backend-object-phi-copy-list-nil? false-copies))
+          (compiler-backend-object-add-text
             (compiler-backend-object-add-text-relocation
-              (compiler-backend-object-value-ref parts function cond)
+              (compiler-backend-object-add-text-relocation
+                (compiler-backend-object-value-ref parts function cond)
+                function
+                (cobj.CompilerObjectRelocationKind.Branch)
+                true-symbol)
               function
               (cobj.CompilerObjectRelocationKind.Branch)
-              true-symbol)
-            function
-            (cobj.CompilerObjectRelocationKind.Branch)
-            false-symbol)
-          (cobj.CompilerObjectX64Instr.Branch true-symbol false-symbol)))]
+              false-symbol)
+            (cobj.CompilerObjectX64Instr.Branch true-symbol false-symbol))
+          (let
+            [true-edge : String
+              (compiler-backend-asm-label
+                label-scope
+                (str_cat.str-cat current-label ".phit"))]
+            [false-edge : String
+              (compiler-backend-asm-label
+                label-scope
+                (str_cat.str-cat current-label ".phif"))]
+            (compiler-backend-object-add-text
+              (compiler-backend-object-add-text-relocation
+                (compiler-backend-object-emit-phi-copies
+                  (compiler-backend-object-add-text
+                    (compiler-backend-object-symbol-local-section
+                      (compiler-backend-object-add-text
+                        (compiler-backend-object-add-text-relocation
+                          (compiler-backend-object-emit-phi-copies
+                            (compiler-backend-object-add-text
+                              (compiler-backend-object-symbol-local-section
+                                (compiler-backend-object-add-text
+                                  (compiler-backend-object-add-text-relocation
+                                    (compiler-backend-object-add-text-relocation
+                                      (compiler-backend-object-value-ref
+                                        parts
+                                        function
+                                        cond)
+                                      function
+                                      (cobj.CompilerObjectRelocationKind.Branch)
+                                      true-edge)
+                                    function
+                                    (cobj.CompilerObjectRelocationKind.Branch)
+                                    false-edge)
+                                  (cobj.CompilerObjectX64Instr.Branch
+                                    true-edge
+                                    false-edge))
+                                true-edge
+                                (cobj.CompilerObjectSectionKind.Text)
+                                (cobj.CompilerObjectSymbolKind.Function))
+                              (cobj.CompilerObjectX64Instr.Label true-edge))
+                            function
+                            true-copies)
+                          function
+                          (cobj.CompilerObjectRelocationKind.Branch)
+                          true-symbol)
+                        (cobj.CompilerObjectX64Instr.Jump true-symbol))
+                      false-edge
+                      (cobj.CompilerObjectSectionKind.Text)
+                      (cobj.CompilerObjectSymbolKind.Function))
+                    (cobj.CompilerObjectX64Instr.Label false-edge))
+                  function
+                  false-copies)
+                function
+                (cobj.CompilerObjectRelocationKind.Branch)
+                false-symbol)
+              (cobj.CompilerObjectX64Instr.Jump false-symbol)))))]
     [(CompilerIrInstr.Return value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
@@ -52698,8 +52958,9 @@
               inner
               "%rax")])
         (compiler-backend-object-leave-ret-bytes))]
-    [(CompilerIrInstr.Phi _ inputs ty)
-      (compiler-backend-object-phi-inputs-with-type parts function inputs ty)]
+    ;; Edge copies are emitted by the Jump/Branch terminators that target this
+    ;; block, so the phi itself emits nothing.
+    [(CompilerIrInstr.Phi _ _ _) parts]
     [(CompilerIrInstr.Gep dst base offset elem-ty)
       (compiler-backend-object-gep-to-var
         parts
@@ -52949,6 +53210,7 @@
   [function : String]
   [label-scope : String]
   [current-label : String]
+  [blocks : CompilerIrBlockList]
   [instrs : CompilerIrInstrSeq]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
@@ -52962,6 +53224,7 @@
         function
         label-scope
         current-label
+        blocks
         (compiler-ir-instr-seq-ref instrs index)
         plan
         program-index)
@@ -52969,6 +53232,7 @@
       function
       label-scope
       current-label
+      blocks
       instrs
       plan
       program-index
@@ -53003,6 +53267,7 @@
                 function-symbol
                 label-scope
                 label
+                blocks
                 instrs
                 plan
                 program-index
@@ -53052,6 +53317,7 @@
               function-symbol
               label-scope
               label
+              (CompilerIrBlockList.Array blocks)
               instrs
               plan
               program-index

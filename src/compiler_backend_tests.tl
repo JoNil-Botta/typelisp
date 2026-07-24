@@ -1399,6 +1399,43 @@
       (cobj.compiler-object-instr-list-contains-bytes? enabled expected)
       (not (cobj.compiler-object-instr-list-contains-bytes? disabled expected)))))
 
+;; Let-bound if-merge whose phi destination differs from both inputs: the
+;; object emitter must stage the edge values and copy them into the phi
+;; destination slot before jumping to the merge (refs #5596; the tlci native
+;; image path reads garbage otherwise). The call results keep the phi inputs
+;; opaque so the merge is not folded away.
+(define (compiler-backend-object-phi-edge-copy-source) : String
+  "(extern (f [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [g : i64]) : i64 (:symbol \"f\"))
+(define (chain [x : i64]) : i64
+  (let [s0 : i64
+    (let [q0 : i64 (f x 0 0 0 0 0)]
+      (if (not (= q0 0)) q0 (f 0 0 0 0 0 0)))]
+    (if (not (= s0 0)) s0 0)))
+(define (main) : i64
+  (chain 0))")
+
+(define (compiler-backend-object-phi-edge-copy-ok?) : bool
+  (match (compiler-backend-emit-source-object-image-for-target
+    (compiler-backend-object-phi-edge-copy-source)
+    (CompilerBackendTarget.Windows))
+    [(ResultCompilerBackendObject.Ok image)
+      (let
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        (and
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "4883ec08"))
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "4889442400"))
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "488b442400"))
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-bytes-from-hex "4883c408"))))]
+    [(ResultCompilerBackendObject.Err _) false]))
+
 (define (compiler-backend-pic-source) : String
   "(define greeting : String \"hi\")
 (define (main) : i64
@@ -5911,6 +5948,7 @@
         "main"
         "main"
         "entry"
+        CompilerIrBlockList.Nil
         (CompilerIrInstr.Pack 0 values ty)
         plan
         index)]
@@ -5921,6 +5959,7 @@
         "main"
         "main"
         "entry"
+        CompilerIrBlockList.Nil
         (CompilerIrInstr.Word
           1
           (CompilerIrValue.Function (ci.intern "word_target"))
@@ -27401,6 +27440,7 @@
       (and
         (compiler-backend-object-image-shape-ok?)
         (compiler-backend-object-tlci-macro-entry-gate-ok?)
+        (compiler-backend-object-phi-edge-copy-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-backend-windows-object-entry-unwind-ok?)
         (compiler-backend-windows-object-unit-main-zero-ok?)

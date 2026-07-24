@@ -24295,6 +24295,10 @@
     [(CompilerCtfeValue.MatchArm _) (ResultTcType.Ok (tc-macro-match-arm-type))]
     [(CompilerCtfeValue.MatchArmList _)
       (ResultTcType.Ok (tc-macro-match-arm-list-type))]
+    [(CompilerCtfeValue.LetBinding _)
+      (ResultTcType.Err "LetBinding value is compile-time only")]
+    [(CompilerCtfeValue.LetBindingList _)
+      (ResultTcType.Err "LetBindingList value is compile-time only")]
     [(CompilerCtfeValue.TypeInfo _)
       (ResultTcType.Err "TypeInfo value is compile-time only")]
     [(CompilerCtfeValue.TypeInfoBox _)

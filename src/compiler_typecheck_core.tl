@@ -46301,7 +46301,6 @@
     [(string.eq kind "mut-ref") (shl 1 25)]
     [(string.eq kind "region") (shl 1 26)]
     [(string.eq kind "type-var") (shl 1 27)]
-    ;; Reserved for a future parser-visible `box` kind constraint.
     [(string.eq kind "box") (shl 1 28)]
     [else (shl 1 29)]))
 

@@ -31,6 +31,7 @@ WORKDIR=${TYPELISP_IR_CHECK_OUT:-$DEFAULT_WORKDIR}
 UPDATE_BASELINE=0
 BENCHMARKS_ONLY=0
 SELF_COMPILE_ONLY=0
+SELF_TEST=0
 SEED_ARG=
 
 usage() {
@@ -43,6 +44,8 @@ Options:
   --runs N             Cachegrind runs per metric (default: 1)
   --benchmarks LIST    Comma-separated benchmark names for the per-PR gate
   --benchmarks-only    Measure benchmark cases only, not self_compile
+  --self-test          Check the comparison logic against fixtures and exit;
+                       needs no compiler, valgrind, or Linux host
   --self-compile-only  Measure and compare self_compile/compile_cli_opt1 only;
                        with --update-baseline, rewrites only that row and
                        preserves every benchmark row (benchmark/c and
@@ -107,6 +110,10 @@ while [ "$#" -gt 0 ]; do
             SELF_COMPILE_ONLY=1
             shift
             ;;
+        --self-test)
+            SELF_TEST=1
+            shift
+            ;;
         --output)
             [ "$#" -ge 2 ] || {
                 echo "missing value for --output" >&2
@@ -162,6 +169,218 @@ case "$STALE_BUDGET_PCT" in
         exit 2
         ;;
 esac
+
+# The comparison program, held in a variable so --self-test can exercise the
+# exact logic CI runs rather than a copy of it. Contains no single quotes.
+IR_COMPARE_AWK='
+function signed(n,    s) {
+    s = sprintf("%.0f", n)
+    if (n > 0) {
+        return "+" s
+    }
+    return s
+}
+function tolerance_for(name, base) {
+    if (name == "self_compile/compile_cli_opt1") {
+        return int(((base + 0) * self_compile_tolerance_ppm) / 1000000)
+    }
+    return 0
+}
+function pct(delta, base) {
+    if (base == 0) {
+        return "n/a"
+    }
+    return sprintf("%+.6f%%", (delta * 100.0) / base)
+}
+# Share of the tolerance for a row consumed by `delta`, as a percentage. Rows
+# with a zero tolerance are exact and can never be partially consumed.
+function budget_used(delta, tolerance,    d) {
+    if (tolerance <= 0) {
+        return 0
+    }
+    d = delta < 0 ? -delta : delta
+    return (d * 100.0) / tolerance
+}
+BEGIN {
+    print "metric | baseline | current | delta | pct | tolerance | status"
+    stale = 0
+}
+NR == FNR {
+    if (FNR == 1 && $1 == "name") {
+        next
+    }
+    if (NF < 2) {
+        next
+    }
+    if (self_compile_only == 1 && $1 != "self_compile/compile_cli_opt1") {
+        next
+    }
+    if (benchmarks_only == 1 && $1 == "self_compile/compile_cli_opt1") {
+        next
+    }
+    baseline[$1] = $2
+    baseline_order[++baseline_count] = $1
+    next
+}
+FNR == 1 && $1 == "name" {
+    next
+}
+{
+    if (NF < 2) {
+        next
+    }
+    current[$1] = $2
+    current_order[++current_count] = $1
+}
+END {
+    failed = 0
+    for (i = 1; i <= baseline_count; i++) {
+        name = baseline_order[i]
+        base = baseline[name]
+        if (!(name in current)) {
+            print name " | " base " | <missing> | n/a | n/a | n/a | missing-current"
+            failed = 1
+            continue
+        }
+        now = current[name]
+        delta = (now + 0) - (base + 0)
+        tolerance = tolerance_for(name, base)
+        status = "ok"
+        if (delta > tolerance) {
+            status = "REGRESSION"
+            failed = 1
+        } else if (delta < -tolerance) {
+            status = "IMPROVEMENT"
+            failed = 1
+        } else if (delta != 0) {
+            status = "within-tolerance"
+        }
+        used = budget_used(delta, tolerance)
+        if (used >= stale_budget_pct) {
+            status = status " (" sprintf("%d", used) "% of tolerance)"
+            stale = 1
+        }
+        print name " | " base " | " now " | " signed(delta) " | " pct(delta, base + 0) " | " tolerance " | " status
+    }
+    for (i = 1; i <= current_count; i++) {
+        name = current_order[i]
+        if (!(name in baseline)) {
+            print name " | <missing> | " current[name] " | n/a | n/a | n/a | extra-current"
+            failed = 1
+        }
+    }
+    if (stale) {
+        print ""
+        print "[ir-check] a tolerance-carrying row is at " stale_budget_pct "%+ of its budget."
+        print "[ir-check] the tolerance absorbs cross-runner noise, but it also absorbs real"
+        print "[ir-check] drift, and a tolerated result never refreshes the baseline. Once"
+        print "[ir-check] the baseline lags main, the next change to cross the line reports"
+        print "[ir-check] the accumulated total rather than its own cost. Refresh the row"
+        print "[ir-check] against main before attributing a regression to a change. Refs #5641."
+    }
+    exit failed ? 1 : 0
+}
+'
+
+# Compare a baseline TSV against a current TSV and render the report on stdout.
+# Exits non-zero when any row regresses, improves, or is missing or extra.
+compare_counts() {
+    awk -F '	' \
+        -v self_compile_tolerance_ppm="$SELF_COMPILE_TOLERANCE_PPM" \
+        -v benchmarks_only="$BENCHMARKS_ONLY" \
+        -v self_compile_only="$SELF_COMPILE_ONLY" \
+        -v stale_budget_pct="$STALE_BUDGET_PCT" \
+        "$IR_COMPARE_AWK" "$1" "$2"
+}
+
+# Host-independent coverage for the comparison itself: no compiler, no
+# valgrind, no measurement. Fixtures use the real numbers from the runs that
+# motivated the budget annotation so the cases stay recognizable.
+self_test_row() {
+    printf 'name\tir_count\nbenchmark/typelisp/arith_loop\t%s\nself_compile/compile_cli_opt1\t%s\n' \
+        "$1" "$2"
+}
+
+self_test_case() {
+    _stc_name=$1
+    _stc_current=$2
+    _stc_want_status=$3
+    _stc_want_exit=$4
+    _stc_want_note=$5
+
+    set +e
+    _stc_out=$(compare_counts "$SELF_TEST_DIR/base.tsv" "$_stc_current" 2>&1)
+    _stc_exit=$?
+    set -e
+
+    if [ "$_stc_exit" -ne "$_stc_want_exit" ]; then
+        echo "self-test $_stc_name: exit $_stc_exit, want $_stc_want_exit" >&2
+        echo "$_stc_out" >&2
+        return 1
+    fi
+    case "$_stc_out" in
+        *"$_stc_want_status"*) ;;
+        *)
+            echo "self-test $_stc_name: missing status '$_stc_want_status'" >&2
+            echo "$_stc_out" >&2
+            return 1
+            ;;
+    esac
+    case "$_stc_out" in
+        *"of its budget."*) _stc_saw_note=yes ;;
+        *) _stc_saw_note=no ;;
+    esac
+    if [ "$_stc_saw_note" != "$_stc_want_note" ]; then
+        echo "self-test $_stc_name: drift note $_stc_saw_note, want $_stc_want_note" >&2
+        echo "$_stc_out" >&2
+        return 1
+    fi
+}
+
+self_test() {
+    SELF_TEST_DIR=${TMPDIR:-/tmp}/ir-check-self-test.$$
+    mkdir -p "$SELF_TEST_DIR"
+    # 55356290376 is the committed self_compile baseline these cases were taken
+    # against; 276781451 is its 0.5% tolerance.
+    self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/base.tsv"
+    self_test_row 437500077 55608478646 > "$SELF_TEST_DIR/drifted.tsv"
+    self_test_row 437500077 55667745289 > "$SELF_TEST_DIR/regressed.tsv"
+    self_test_row 437500077 55366290376 > "$SELF_TEST_DIR/small.tsv"
+    self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/exact.tsv"
+    self_test_row 437000000 55356290376 > "$SELF_TEST_DIR/improved.tsv"
+    printf 'name\tir_count\nself_compile/compile_cli_opt1\t55356290376\n' \
+        > "$SELF_TEST_DIR/missing-row.tsv"
+
+    _st_status=0
+    # A tolerated row at 91% of budget still passes, and says so. This is the
+    # case that silently consumed the budget before the annotation existed.
+    self_test_case drifted "$SELF_TEST_DIR/drifted.tsv" \
+        "within-tolerance (91% of tolerance)" 0 yes || _st_status=1
+    # A regression still fails, now with the share of budget it used.
+    self_test_case regressed "$SELF_TEST_DIR/regressed.tsv" \
+        "REGRESSION (112% of tolerance)" 1 yes || _st_status=1
+    # Ordinary small drift stays quiet so the note keeps its meaning.
+    self_test_case small "$SELF_TEST_DIR/small.tsv" \
+        "| within-tolerance" 0 no || _st_status=1
+    self_test_case exact "$SELF_TEST_DIR/exact.tsv" "| ok" 0 no || _st_status=1
+    # Exact-tolerance rows cannot be partially consumed, so they never annotate.
+    self_test_case improved "$SELF_TEST_DIR/improved.tsv" \
+        "| IMPROVEMENT" 1 no || _st_status=1
+    # Fail-closed shapes are unchanged.
+    self_test_case missing-row "$SELF_TEST_DIR/missing-row.tsv" \
+        "missing-current" 1 no || _st_status=1
+
+    rm -rf "$SELF_TEST_DIR"
+    if [ "$_st_status" -ne 0 ]; then
+        return 1
+    fi
+    echo "instruction-count comparison self-test passed"
+}
+
+if [ "$SELF_TEST" -eq 1 ]; then
+    self_test
+    exit 0
+fi
 
 case "$WORKDIR" in
     "" | / | . | ..)
@@ -349,119 +568,7 @@ if [ ! -f "$BASELINE" ]; then
     exit 1
 fi
 
-if awk -F '\t' \
-    -v self_compile_tolerance_ppm="$SELF_COMPILE_TOLERANCE_PPM" \
-    -v benchmarks_only="$BENCHMARKS_ONLY" \
-    -v self_compile_only="$SELF_COMPILE_ONLY" \
-    -v stale_budget_pct="$STALE_BUDGET_PCT" '
-function signed(n,    s) {
-    s = sprintf("%.0f", n)
-    if (n > 0) {
-        return "+" s
-    }
-    return s
-}
-function tolerance_for(name, base) {
-    if (name == "self_compile/compile_cli_opt1") {
-        return int(((base + 0) * self_compile_tolerance_ppm) / 1000000)
-    }
-    return 0
-}
-function pct(delta, base) {
-    if (base == 0) {
-        return "n/a"
-    }
-    return sprintf("%+.6f%%", (delta * 100.0) / base)
-}
-# Share of a row's tolerance consumed by `delta`, as a percentage. Rows with a
-# zero tolerance are exact and can never be partially consumed.
-function budget_used(delta, tolerance,    d) {
-    if (tolerance <= 0) {
-        return 0
-    }
-    d = delta < 0 ? -delta : delta
-    return (d * 100.0) / tolerance
-}
-BEGIN {
-    print "metric | baseline | current | delta | pct | tolerance | status"
-    stale = 0
-}
-NR == FNR {
-    if (FNR == 1 && $1 == "name") {
-        next
-    }
-    if (NF < 2) {
-        next
-    }
-    if (self_compile_only == 1 && $1 != "self_compile/compile_cli_opt1") {
-        next
-    }
-    if (benchmarks_only == 1 && $1 == "self_compile/compile_cli_opt1") {
-        next
-    }
-    baseline[$1] = $2
-    baseline_order[++baseline_count] = $1
-    next
-}
-FNR == 1 && $1 == "name" {
-    next
-}
-{
-    if (NF < 2) {
-        next
-    }
-    current[$1] = $2
-    current_order[++current_count] = $1
-}
-END {
-    failed = 0
-    for (i = 1; i <= baseline_count; i++) {
-        name = baseline_order[i]
-        base = baseline[name]
-        if (!(name in current)) {
-            print name " | " base " | <missing> | n/a | n/a | n/a | missing-current"
-            failed = 1
-            continue
-        }
-        now = current[name]
-        delta = (now + 0) - (base + 0)
-        tolerance = tolerance_for(name, base)
-        status = "ok"
-        if (delta > tolerance) {
-            status = "REGRESSION"
-            failed = 1
-        } else if (delta < -tolerance) {
-            status = "IMPROVEMENT"
-            failed = 1
-        } else if (delta != 0) {
-            status = "within-tolerance"
-        }
-        used = budget_used(delta, tolerance)
-        if (used >= stale_budget_pct) {
-            status = status " (" sprintf("%d", used) "% of tolerance)"
-            stale = 1
-        }
-        print name " | " base " | " now " | " signed(delta) " | " pct(delta, base + 0) " | " tolerance " | " status
-    }
-    for (i = 1; i <= current_count; i++) {
-        name = current_order[i]
-        if (!(name in baseline)) {
-            print name " | <missing> | " current[name] " | n/a | n/a | n/a | extra-current"
-            failed = 1
-        }
-    }
-    if (stale) {
-        print ""
-        print "[ir-check] a tolerance-carrying row is at " stale_budget_pct "%+ of its budget."
-        print "[ir-check] the tolerance absorbs cross-runner noise, but it also absorbs real"
-        print "[ir-check] drift, and a tolerated result never refreshes the baseline. Once"
-        print "[ir-check] the baseline lags main, the next change to cross the line reports"
-        print "[ir-check] the accumulated total rather than its own cost. Refresh the row"
-        print "[ir-check] against main before attributing a regression to a change. Refs #5641."
-    }
-    exit failed ? 1 : 0
-}
-' "$BASELINE" "$CURRENT" > "$DIFF_OUT"; then
+if compare_counts "$BASELINE" "$CURRENT" > "$DIFF_OUT"; then
     cat "$DIFF_OUT"
     echo "[ir-check] instruction-count baseline matches $BASELINE"
 else

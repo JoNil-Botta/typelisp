@@ -14016,8 +14016,15 @@
             tail)]
         (match (opt-cfg-index-id (struct-get doms index) header)
           [(option_i64.Some header-id)
+            ;; `reachable` is the flattened form of this very index's
+            ;; `reachable` array (opt-cfg-index-reachable-labels builds one from
+            ;; the other), so testing the array at `header-id` decides exactly
+            ;; what scanning the set for `header` decided -- without the linear
+            ;; `string.eq` walk over every reachable label in the function.
             (if (and
-              (opt-label-contains reachable header)
+              (array-ref
+                (struct-get (struct-get doms index) reachable)
+                header-id)
               (opt-dom-info-dominates-id? doms header-id source-id))
               (OptNaturalLoopList.Cons
                 (opt-natural-loop-build blocks pred-map reachable header source)
@@ -14044,9 +14051,16 @@
                 pred-map
                 reachable
                 doms)]
-            (if (opt-label-contains reachable label)
-              (match (opt-cfg-index-id (struct-get doms index) label)
-                [(option_i64.Some source-id)
+            ;; Resolving the id first and then reading the index's reachable
+            ;; array replaces a linear scan of the reachable label set with one
+            ;; lookup. The order swap is safe: a label in the set necessarily
+            ;; has an id, so the None arm can only be reached in cases the scan
+            ;; would have rejected anyway.
+            (match (opt-cfg-index-id (struct-get doms index) label)
+              [(option_i64.Some source-id)
+                (if (array-ref
+                  (struct-get (struct-get doms index) reachable)
+                  source-id)
                   (opt-cfg-natural-loop-successors
                     all-blocks
                     pred-map
@@ -14057,9 +14071,9 @@
                     (opt-cfg-block-successors-with-next
                       block
                       (opt-cfg-entry-label (box-get rest)))
-                    tail)]
-                [(option_i64.None) tail])
-              tail))])]
+                    tail)
+                  tail)]
+              [(option_i64.None) tail]))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-natural-loop-blocks
         all-blocks

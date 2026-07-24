@@ -24563,12 +24563,14 @@
       (string.append
         (str_cat.str-cat "    leaq " size-text "(%rax), " next-reg "\n")
         (string.append
+          ;; No wrap guard: `size` is a fixed 8..64 byte literal (the
+          ;; fast-alloc admission gate) and the bump cursor is a canonical
+          ;; user-space arena address, so `cursor + size` cannot carry past
+          ;; 2^64. Only the usable-end bound below can fail, and it routes to
+          ;; the same slow path. The general variable-size `tl_alloc` keeps its
+          ;; guard because its size argument is caller-supplied.
           (str_cat.str-cat
-            "    cmpq %rax, "
-            next-reg
-            "\n    jb "
-            slow-label
-            "\n    cmpq "
+            "    cmpq "
             usable-end-offset
             "("
             scav

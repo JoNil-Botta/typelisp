@@ -205,10 +205,13 @@ tl_profile_alloc_peak_bytes:
     movq 16(%r8), %rax")]
     [ordinary-body-b : String
       (str_cat.str-cat "\n    leaq " size-text "(%rax), " next-reg)]
+    ;; No wrap guard: `size` is one of the fixed 8..64 stub sizes, and the bump
+    ;; cursor is a canonical user-space arena address, so `cursor + size` cannot
+    ;; carry past 2^64. The general variable-size `tl_alloc` keeps its guard
+    ;; because its size argument is caller-supplied. Only the usable-end bound
+    ;; below can fail, and it routes to the same slow path.
     [ordinary-body-c : String
-      (str_cat.str-cat
-        (str_cat.str-cat "\n    cmpq %rax, " next-reg "\n    jb " slow-label)
-        (str_cat.str-cat "\n    cmpq " usable-end-offset "(%r8), " next-reg))]
+      (str_cat.str-cat "\n    cmpq " usable-end-offset "(%r8), " next-reg)]
     [ordinary-body-d : String
       (str_cat.str-cat "\n    ja " slow-label "\n    movq " next-reg)]
     [ordinary-body : String
@@ -235,8 +238,8 @@ tl_profile_alloc_peak_bytes:
         atomic-cas-label)]
     [atomic-body-b : String
       (str_cat.str-cat ":\n    leaq " size-text "(%rax), " next-reg)]
-    [atomic-body-c : String
-      (str_cat.str-cat "\n    cmpq %rax, " next-reg "\n    jb " slow-label)]
+    ;; Same fixed-size wrap argument as the ordinary body above.
+    [atomic-body-c : String ""]
     [atomic-body-d : String
       (str_cat.str-cat
         "\n    cmpq "

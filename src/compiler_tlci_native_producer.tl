@@ -223,6 +223,44 @@
 (define embedded-stdlib-tlci-native-report-count : (Array i64)
   (make-array 0))
 
+;; A native entry can still hand single arms back to the interpreter: an arm
+;; body outside the supported subset compiles to ok-with-no-result instead of
+;; poisoning the whole entry. That is deliberate -- partial nativeness is still
+;; a win -- but it makes the native entry count an upper bound on coverage, so
+;; the emitted arm carries a marker comment and the producer reports how many
+;; such sites and entries the image contains. Refs #5596.
+(define embedded-native-interpreted-arm-marker : String
+  ";; tlci-interpreted-arm")
+(define embedded-native-interpreted-arm-code : String
+  "  ;; tlci-interpreted-arm\n  0\n")
+
+;: Entries that compiled natively but still contain at least one interpreted
+;: arm site.
+(define embedded-stdlib-tlci-native-report-partial-count : (Array i64)
+  (make-array 0))
+
+;: Interpreted arm sites across every native entry in the image.
+(define embedded-stdlib-tlci-native-report-interpreted-arms : (Array i64)
+  (make-array 0))
+
+;: How many non-overlapping occurrences of `needle` appear in `text`.
+(define (embedded-native-count-occurrences [text : String] [needle : String]) : i64
+  (let
+    [needle-len : i64 (string.string-length needle)]
+    [limit : i64 (string.string-length text)]
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (when
+        (> needle-len 0)
+        (while (<= (+ index needle-len) limit)
+          (if (string.is-string-prefix-at text needle index)
+            (begin
+              (set! count (+ count 1))
+              (set! index (+ index needle-len)))
+            (set! index (+ index 1)))))
+      count)))
+
 (define (tlci-native-macro-capture-slot
   [captures : (& captures TlciNativeMacroCaptures)]
   [identity : String]) : i64
@@ -2381,12 +2419,12 @@
                   (string.int->string index)
                   " 1)\n"
                   (if (string.eq arm-code "")
-                    "  0\n"
+                    embedded-native-interpreted-arm-code
                     arm-code)
                   "\n"
                   rest
                   ")))\n")))]
-          [_ "  0\n"])])))
+          [_ embedded-native-interpreted-arm-code])])))
 
 (define (embedded-native-match-body
   [params : (& params AstMacroParamList)]
@@ -2891,6 +2929,8 @@
     [count : i64 (array-length names)]
     [index : i64 0]
     [native-count : i64 0]
+    [partial-count : i64 0]
+    [interpreted-arms : i64 0]
     (begin
       (while (< index count)
         (let
@@ -2924,17 +2964,34 @@
                   "  (if (= count -"
                   (string.int->string (+ index 2))
                   ") 1 0))\n"))
-              (begin
-                (set! native-count (+ native-count 1))
-                (set!
-                  out
-                  (str-cat
-                    out
-                    (embedded-native-op-open 99 1 "0" "0" "0")
+              (let
+                [arm-sites : i64
+                  (embedded-native-count-occurrences
                     body-text
-                    ")))\n"))))
+                    embedded-native-interpreted-arm-marker)]
+                (begin
+                  (set! native-count (+ native-count 1))
+                  (set! interpreted-arms (+ interpreted-arms arm-sites))
+                  (when
+                    (> arm-sites 0)
+                    (set! partial-count (+ partial-count 1)))
+                  (set!
+                    out
+                    (str-cat
+                      out
+                      (embedded-native-op-open 99 1 "0" "0" "0")
+                      body-text
+                      ")))\n")))))
             (set! index (+ index 1)))))
       (array-set! embedded-stdlib-tlci-native-report-count 0 native-count)
+      (array-set!
+        embedded-stdlib-tlci-native-report-partial-count
+        0
+        partial-count)
+      (array-set!
+        embedded-stdlib-tlci-native-report-interpreted-arms
+        0
+        interpreted-arms)
       out)))
 
 (define (embedded-native-entry-offsets

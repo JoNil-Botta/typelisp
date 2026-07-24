@@ -466,10 +466,18 @@ expected_target_asm_mismatch() {
     # TL-vs-C parity green). The gate flags a stale entry if the output matches
     # again, so remove an entry once a future change re-converges the two targets.
     #
+    # Cycle 28 const-hoist widening (#5490): the loop-hoisted divmod magic plan
+    # is a Linux-only backend path (compiler-backend-target-linux? guard at the
+    # const-hoist-build! call site), so once the widened admission fires on
+    # unroll-guarded loops the Linux opt2 body reads magic from hoisted frame
+    # homes while the Windows body re-materializes per iteration. Both are
+    # correct; the divergence is the intended Linux optimization.
+    #
     case "${_etm_opt}:${_etm_name}" in
         2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
         2:many_args) return 0 ;;
+        2:target_asm_loop_divmod_parity) return 0 ;;
     esac
     return 1
 }

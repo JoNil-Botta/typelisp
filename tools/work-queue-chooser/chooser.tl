@@ -1,8 +1,11 @@
 ;# work-queue-chooser/chooser.tl - TypeLisp work-queue chooser.
 ;#
 ;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
-;# each entry, skips draft PRs and PRs whose checks are still pending/running as
-;# well as issues labeled `blocked`, weights the rest (PR review = 45,
+;# each entry, skips draft PRs and PRs whose checks are still pending/running,
+;# issues labeled `blocked`, and issues an open PR already claims (the issue
+;# number appears as a 4+ digit run in a PR branch name or title -- an issue
+;# someone is already working is not work to hand to a second agent), weights
+;# the rest (PR review = 45,
 ;# ready-for-implementation = 10, research/triage = 1, +50 for a p0 label,
 ;# +3 for a p1 label), uses system entropy to make a weighted pick, and prints
 ;# one action line:
@@ -25,6 +28,7 @@
 (import stdlib.io)
 (import stdlib.random)
 (import stdlib.string)
+(import stdlib.test)
 
 ;: Kind tags: 0 = PR (review), 1 = ready-for-implementation issue (implement),
 ;: 2 = research/triage issue.
@@ -290,17 +294,114 @@
           (CandList.Cons (pr-candidate head) (box tail))
           tail))]))
 
+;: Shortest digit run treated as an issue reference inside a branch name or PR
+;: title. Four digits keeps `cycle28-divmod-hoist` and `perf-opt2-cycle1` from
+;: claiming issues #28 and #1 while still matching every real reference in this
+;: repository, whose issue numbers are four digits and climbing.
+(define claim-digit-floor : i64
+  4)
+
+;: True when `text` contains `number` as a maximal digit run of at least
+;: `claim-digit-floor` digits. Maximal matters: `5641` must not be claimed by a
+;: branch mentioning `56412`.
+(define (text-claims-number? [text : String] [number : i64]) : bool
+  (let
+    [needle : String (string.int->string number)]
+    [n : i64 (string.string-length text)]
+    [m : i64 (string.string-length needle)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (if (< m claim-digit-floor)
+        unit
+        (while (and (not found) (<= (+ i m) n))
+          (let
+            [before-ok : bool
+              (if (= i 0)
+                true
+                (not (chooser-digit? (string.string-ref text (- i 1)))))]
+            [after-ok : bool
+              (if (= (+ i m) n)
+                true
+                (not (chooser-digit? (string.string-ref text (+ i m)))))]
+            (begin
+              (if (and
+                before-ok
+                after-ok
+                (string.is-string-prefix-at (& text) (& needle) i))
+                (set! found true)
+                unit)
+              (set! i (+ i 1))))))
+      found)))
+
+(define (chooser-digit? [c : char]) : bool
+  (and (>= c '0') (<= c '9')))
+
+(test
+  claim-matches-branch-and-title
+  (begin
+    (test.assert-true
+      (text-claims-number? "implement-5408-folding-ranges" 5408)
+      "branch name claims its issue")
+    (test.assert-true
+      (text-claims-number? "fix-5641-baseline-drift-visibility" 5641)
+      "claim may sit between separators")
+    (test.assert-true
+      (text-claims-number? "tlci-native-template-nodes-5605" 5605)
+      "claim may end the string")
+    (test.assert-true
+      (text-claims-number? "tlci native: computed dispatch (fixes #5604)" 5604)
+      "a PR title claims through its Fixes reference")))
+
+(test
+  claim-ignores-short-and-partial-numbers
+  (begin
+    (test.assert-false
+      (text-claims-number? "cycle28-divmod-hoist" 28)
+      "a 2-digit run is below the claim floor")
+    (test.assert-false
+      (text-claims-number? "perf-opt2-cycle1" 1)
+      "a 1-digit run is below the claim floor")
+    (test.assert-false
+      (text-claims-number? "branch-56041-thing" 5604)
+      "a claim must be a maximal digit run, not a prefix")
+    (test.assert-false
+      (text-claims-number? "branch-15604-thing" 5604)
+      "a claim must be a maximal digit run, not a suffix")
+    (test.assert-false
+      (text-claims-number? "tlci-str-cat-native" 5617)
+      "a branch naming no number claims nothing")))
+
+;: True when some open PR already claims `number` through its branch name or
+;: title. An issue someone has opened a PR for is not work to hand to a second
+;: agent, so it leaves the pool entirely rather than merely changing lane.
+(define (issue-claimed-by-pr? [prs : json.JsonList] [number : i64]) : bool
+  (match prs
+    [(json.JsonListNil) false]
+    [(json.JsonListCons head rest)
+      (if (or
+        (text-claims-number? (json-field-string head "headRefName") number)
+        (text-claims-number? (json-field-string head "title") number))
+        true
+        (issue-claimed-by-pr? (box-get rest) number))]))
+
 ;: Map a JSON array of issue objects to candidates, preserving source order.
-;: Blocked issues are always skipped; ready-for-implementation issues are also
-;: skipped when `implement-allowed?` is false (the review queue is saturated).
-(define (issue-candidates [items : json.JsonList] [implement-allowed? : bool]) : CandList
+;: Blocked issues are always skipped, as are issues an open PR already claims;
+;: ready-for-implementation issues are also skipped when `implement-allowed?` is
+;: false (the review queue is saturated).
+(define (issue-candidates
+  [items : json.JsonList]
+  [prs : json.JsonList]
+  [implement-allowed? : bool]) : CandList
   (match items
     [(json.JsonListNil) (CandList.Nil)]
     [(json.JsonListCons head rest)
       (let
-        [tail : CandList (issue-candidates (box-get rest) implement-allowed?)]
+        [tail : CandList
+          (issue-candidates (box-get rest) prs implement-allowed?)]
         (if (or
           (issue-blocked? head)
+          (issue-claimed-by-pr? prs (json-field-number head "number"))
           (and (not implement-allowed?) (issue-ready? head)))
           tail
           (CandList.Cons (issue-candidate head) (box tail))))]))
@@ -346,7 +447,7 @@
       (<= (count-open-nondraft-prs prs) implement-pr-cap)]
     (cand-append
       (pr-candidates prs)
-      (issue-candidates issues implement-allowed?))))
+      (issue-candidates issues prs implement-allowed?))))
 
 ;: Build the weight list from candidates, preserving order so a chosen weight
 ;: index maps back to the candidate at the same position.

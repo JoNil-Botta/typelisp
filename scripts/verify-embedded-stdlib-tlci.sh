@@ -33,8 +33,12 @@ MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
 MANIFEST=target/embedded-stdlib-tlci/modules.txt
 mkdir -p "$WORKDIR"
 
+COVERAGE_FLOOR=tools/embedded-stdlib-tlci/coverage-floor.txt
+COVERAGE_LOG=$WORKDIR/coverage.txt
+
 scripts/build-embedded-stdlib-tlci.sh \
-    "$COMPILER" "$EMBEDDED_IMAGE" "$HOST_TARGET"
+    "$COMPILER" "$EMBEDDED_IMAGE" "$HOST_TARGET" > "$COVERAGE_LOG"
+cat "$COVERAGE_LOG"
 cp "$EMBEDDED_IMAGE" "$IMAGE_A"
 scripts/build-embedded-stdlib-tlci.sh \
     "$COMPILER" "$EMBEDDED_IMAGE" "$HOST_TARGET"
@@ -43,6 +47,57 @@ cp "$EMBEDDED_IMAGE" "$IMAGE_B"
 if ! cmp -s "$IMAGE_A" "$IMAGE_B"; then
     echo "embedded stdlib tlci build is not deterministic" >&2
     exit 1
+fi
+
+# Ratchet the native-coverage numbers. The native entry count overstates
+# coverage on its own: a native entry can still hand single match arms back to
+# the interpreter, so both bounds are checked. Refs #5596.
+coverage_field() {
+    sed -n 's/^embedded stdlib tlci: coverage .*'"$1"'=\([0-9][0-9]*\).*$/\1/p' \
+        "$COVERAGE_LOG"
+}
+floor_field() {
+    sed -n 's/^'"$1"'[[:space:]][[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' \
+        "$COVERAGE_FLOOR"
+}
+
+NATIVE_ENTRIES=$(coverage_field native-entries)
+INTERPRETED_ARMS=$(coverage_field interpreted-arms)
+NATIVE_ENTRIES_MIN=$(floor_field native-entries-min)
+INTERPRETED_ARMS_MAX=$(floor_field interpreted-arms-max)
+
+for pair in \
+    "native entry count:$NATIVE_ENTRIES" \
+    "interpreted arm count:$INTERPRETED_ARMS" \
+    "native-entries-min:$NATIVE_ENTRIES_MIN" \
+    "interpreted-arms-max:$INTERPRETED_ARMS_MAX"; do
+    if [ -z "${pair#*:}" ]; then
+        echo "embedded stdlib tlci: cannot read ${pair%%:*}" >&2
+        exit 1
+    fi
+done
+
+if [ "$NATIVE_ENTRIES" -lt "$NATIVE_ENTRIES_MIN" ]; then
+    echo "embedded stdlib tlci native coverage regressed:" \
+        "$NATIVE_ENTRIES native entries, floor is $NATIVE_ENTRIES_MIN" >&2
+    echo "lower the floor in $COVERAGE_FLOOR only with an explicit reason" >&2
+    exit 1
+fi
+if [ "$INTERPRETED_ARMS" -gt "$INTERPRETED_ARMS_MAX" ]; then
+    echo "embedded stdlib tlci interpreted arms regressed:" \
+        "$INTERPRETED_ARMS arm sites, ceiling is $INTERPRETED_ARMS_MAX" >&2
+    echo "a native entry may still interpret single match arms; see $COVERAGE_FLOOR" >&2
+    exit 1
+fi
+# Improving past the ratchet is not an error -- several macro families land
+# concurrently and an exact expectation would collide on every merge -- but the
+# floor has to be re-ratcheted or it stops catching later regressions.
+if [ "$NATIVE_ENTRIES" -gt "$NATIVE_ENTRIES_MIN" ] ||
+    [ "$INTERPRETED_ARMS" -lt "$INTERPRETED_ARMS_MAX" ]; then
+    echo "embedded stdlib tlci coverage improved past the ratchet;" \
+        "re-ratchet $COVERAGE_FLOOR to" \
+        "native-entries-min $NATIVE_ENTRIES," \
+        "interpreted-arms-max $INTERPRETED_ARMS" >&2
 fi
 
 set +e

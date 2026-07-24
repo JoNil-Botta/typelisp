@@ -2485,8 +2485,27 @@
           (ast-node-pool-compat-context-sync-installed!)
           id)])))
 
+;; Raw type-node read keyed by the pool's segment-bases pointer rather than a
+;; pool value. Identical addressing to `ty-node-get`, so hot readers can hoist
+;; the context lookup out of recursive walks and pay the same per-node cost as
+;; the installed-pool fast path.
+(define (ast-type-segment-bases-get [segment-bases : i64] [id : i64]) : AstType
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10))))]
+    (unsafe
+      (ptr-read (int->ptr (+ biased-base (* id 24)) : (Ptr AstType))))))
+
+;; Segment-bases pointer of the context's live type-pool cell. The cell is
+;; replaced on every push, so callers may only cache this across pure reads.
+(define (ast-node-pool-context-type-segment-bases [pools : AstNodePoolContext]) : i64
+  (struct-get (array-ref (struct-get pools type-pool) 0) segment-bases))
+
 (define (ast-node-pool-context-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
-  (ast-type-node-pool-state-get (array-ref (struct-get pools type-pool) 0) id))
+  (ast-type-segment-bases-get
+    (ast-node-pool-context-type-segment-bases pools)
+    id))
 
 ;; Lowered IR retains AstType ids but no AstExpr ids. Clone the small canonical
 ;; type pool in id order so a compile driver can retire the checked-expression
@@ -2882,6 +2901,16 @@
   [head : AstType]
   [rest : AstTypeList]) : AstTypeList
   (ast-type-list-cons-id (ast-node-pool-context-type-push pools head) rest))
+
+(define (ast-type-strip-consuming-param-with-pools
+  [pools : AstNodePoolContext]
+  [ty : AstType]) : AstType
+  (match ty
+    [(AstType.Consume inner)
+      (ast-type-segment-bases-get
+        (ast-node-pool-context-type-segment-bases pools)
+        inner)]
+    [_ ty]))
 
 (define (ast-ty-func-with-pools
   [pools : AstNodePoolContext]
@@ -7817,6 +7846,309 @@
     [(AstExternAbi.CVarargsTyped aty)
       (match b
         [(AstExternAbi.CVarargsTyped bty) (ast-type-eq? aty bty)]
+        [_ false])]))
+
+(define (ast-type-list-eq-at-with-seg-bases?
+  [seg-bases : i64]
+  [a : (& a AstTypeList)]
+  [b : (& b AstTypeList)]
+  [len : i64]
+  [index : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (ast-type-eq-with-seg-bases?
+        seg-bases
+        (ast-type-segment-bases-get
+          seg-bases
+          (array-ref (struct-get a slots) index))
+        (ast-type-segment-bases-get
+          seg-bases
+          (array-ref (struct-get b slots) index)))
+      (ast-type-list-eq-at-with-seg-bases? seg-bases a b len (+ index 1)))))
+
+;; Read-only walk entry point: snapshot the type pool's segment-bases once, so
+;; the recursive workers address nodes exactly as cheaply as `ty-node-get`.
+;; Safe because these walkers never push, and pushes are what replace the cell.
+(define (ast-type-list-eq-at-with-pools?
+  [pools : AstNodePoolContext]
+  [a : (& a AstTypeList)]
+  [b : (& b AstTypeList)]
+  [len : i64]
+  [index : i64]) : bool
+  (ast-type-list-eq-at-with-seg-bases?
+    (ast-node-pool-context-type-segment-bases pools)
+    a
+    b
+    len
+    index))
+
+(define (ast-type-eq-with-pools?
+  [pools : AstNodePoolContext]
+  [a : AstType]
+  [b : AstType]) : bool
+  (ast-type-eq-with-seg-bases?
+    (ast-node-pool-context-type-segment-bases pools)
+    a
+    b))
+
+(define (ast-type-eq-with-seg-bases?
+  [seg-bases : i64]
+  [a : AstType]
+  [b : AstType]) : bool
+  (match a
+    [(AstType.I64)
+      (match b
+        [(AstType.I64) true]
+        [_ false])]
+    [(AstType.I32)
+      (match b
+        [(AstType.I32) true]
+        [_ false])]
+    [(AstType.I16)
+      (match b
+        [(AstType.I16) true]
+        [_ false])]
+    [(AstType.I8)
+      (match b
+        [(AstType.I8) true]
+        [_ false])]
+    [(AstType.U64)
+      (match b
+        [(AstType.U64) true]
+        [_ false])]
+    [(AstType.U32)
+      (match b
+        [(AstType.U32) true]
+        [_ false])]
+    [(AstType.U16)
+      (match b
+        [(AstType.U16) true]
+        [_ false])]
+    [(AstType.U8)
+      (match b
+        [(AstType.U8) true]
+        [_ false])]
+    [(AstType.F64)
+      (match b
+        [(AstType.F64) true]
+        [_ false])]
+    [(AstType.F32)
+      (match b
+        [(AstType.F32) true]
+        [_ false])]
+    [(AstType.Bool)
+      (match b
+        [(AstType.Bool) true]
+        [_ false])]
+    [(AstType.Char)
+      (match b
+        [(AstType.Char) true]
+        [_ false])]
+    [(AstType.String)
+      (match b
+        [(AstType.String) true]
+        [_ false])]
+    [(AstType.Str)
+      (match b
+        [(AstType.Str) true]
+        [_ false])]
+    [(AstType.Bytes)
+      (match b
+        [(AstType.Bytes) true]
+        [_ false])]
+    [(AstType.Unit)
+      (match b
+        [(AstType.Unit) true]
+        [_ false])]
+    [(AstType.Never)
+      (match b
+        [(AstType.Never) true]
+        [_ false])]
+    [(AstType.Expr)
+      (match b
+        [(AstType.Expr) true]
+        [_ false])]
+    [(AstType.ExprList)
+      (match b
+        [(AstType.ExprList) true]
+        [_ false])]
+    [(AstType.Func a-args a-ret)
+      (match b
+        [(AstType.Func b-args b-ret)
+          (let
+            [a-arg-list : AstTypeList (box-get a-args)]
+            [b-arg-list : AstTypeList (box-get b-args)]
+            [a-arg-len : i64 (ast-type-list-len (& a-arg-list))]
+            (and
+              (= a-arg-len (ast-type-list-len (& b-arg-list)))
+              (ast-type-list-eq-at-with-seg-bases?
+                seg-bases
+                (& a-arg-list)
+                (& b-arg-list)
+                a-arg-len
+                0)
+              (ast-type-eq-with-seg-bases?
+                seg-bases
+                (ast-type-segment-bases-get seg-bases a-ret)
+                (ast-type-segment-bases-get seg-bases b-ret))))]
+        [_ false])]
+    [(AstType.Tuple a-elems)
+      (match b
+        [(AstType.Tuple b-elems)
+          (let
+            [a-elem-list : AstTypeList (box-get a-elems)]
+            [b-elem-list : AstTypeList (box-get b-elems)]
+            [a-elem-len : i64 (ast-type-list-len (& a-elem-list))]
+            (and
+              (= a-elem-len (ast-type-list-len (& b-elem-list)))
+              (ast-type-list-eq-at-with-seg-bases?
+                seg-bases
+                (& a-elem-list)
+                (& b-elem-list)
+                a-elem-len
+                0)))]
+        [_ false])]
+    [(AstType.Array a-elem a-len)
+      (match b
+        [(AstType.Array b-elem b-len)
+          (and
+            (= a-len b-len)
+            (ast-type-eq-with-seg-bases?
+              seg-bases
+              (ast-type-segment-bases-get seg-bases a-elem)
+              (ast-type-segment-bases-get seg-bases b-elem)))]
+        [_ false])]
+    [(AstType.DynArray a-elem)
+      (match b
+        [(AstType.DynArray b-elem)
+          (ast-type-eq-with-seg-bases?
+            seg-bases
+            (ast-type-segment-bases-get seg-bases a-elem)
+            (ast-type-segment-bases-get seg-bases b-elem))]
+        [_ false])]
+    [(AstType.Box a-elem)
+      (match b
+        [(AstType.Box b-elem)
+          (ast-type-eq-with-seg-bases?
+            seg-bases
+            (ast-type-segment-bases-get seg-bases a-elem)
+            (ast-type-segment-bases-get seg-bases b-elem))]
+        [_ false])]
+    [(AstType.Region a-region a-inner)
+      (match b
+        [(AstType.Region b-region b-inner)
+          (and
+            (= a-region b-region)
+            (ast-type-eq-with-seg-bases?
+              seg-bases
+              (ast-type-segment-bases-get seg-bases a-inner)
+              (ast-type-segment-bases-get seg-bases b-inner)))]
+        [_ false])]
+    [(AstType.Ref a-lifetime a-inner)
+      (match b
+        [(AstType.Ref b-lifetime b-inner)
+          (and
+            (= a-lifetime b-lifetime)
+            (ast-type-eq-with-seg-bases?
+              seg-bases
+              (ast-type-segment-bases-get seg-bases a-inner)
+              (ast-type-segment-bases-get seg-bases b-inner)))]
+        [_ false])]
+    [(AstType.MutRef a-lifetime a-inner)
+      (match b
+        [(AstType.MutRef b-lifetime b-inner)
+          (and
+            (= a-lifetime b-lifetime)
+            (ast-type-eq-with-seg-bases?
+              seg-bases
+              (ast-type-segment-bases-get seg-bases a-inner)
+              (ast-type-segment-bases-get seg-bases b-inner)))]
+        [_ false])]
+    [(AstType.Enum a-name)
+      (match b
+        [(AstType.Enum b-name) (= a-name b-name)]
+        [_ false])]
+    [(AstType.EnumArgs a-name a-lifetimes)
+      (match b
+        [(AstType.EnumArgs b-name b-lifetimes)
+          (and
+            (= a-name b-name)
+            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+        [_ false])]
+    [(AstType.Struct a-name)
+      (match b
+        [(AstType.Struct b-name) (= a-name b-name)]
+        [_ false])]
+    [(AstType.StructArgs a-name a-lifetimes)
+      (match b
+        [(AstType.StructArgs b-name b-lifetimes)
+          (and
+            (= a-name b-name)
+            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+        [_ false])]
+    [(AstType.Var a-name)
+      (match b
+        [(AstType.Var b-name) (= a-name b-name)]
+        [_ false])]
+    [(AstType.VarArgs a-name a-lifetimes)
+      (match b
+        [(AstType.VarArgs b-name b-lifetimes)
+          (and
+            (= a-name b-name)
+            (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
+        [_ false])]
+    [(AstType.Ptr a-elem)
+      (match b
+        [(AstType.Ptr b-elem)
+          (ast-type-eq-with-seg-bases?
+            seg-bases
+            (ast-type-segment-bases-get seg-bases a-elem)
+            (ast-type-segment-bases-get seg-bases b-elem))]
+        [_ false])]
+    [(AstType.MutPtr a-elem)
+      (match b
+        [(AstType.MutPtr b-elem)
+          (ast-type-eq-with-seg-bases?
+            seg-bases
+            (ast-type-segment-bases-get seg-bases a-elem)
+            (ast-type-segment-bases-get seg-bases b-elem))]
+        [_ false])]
+    [(AstType.Consume a-inner)
+      (match b
+        [(AstType.Consume b-inner)
+          (ast-type-eq-with-seg-bases?
+            seg-bases
+            (ast-type-segment-bases-get seg-bases a-inner)
+            (ast-type-segment-bases-get seg-bases b-inner))]
+        [_ false])]))
+
+(define (ast-extern-abi-eq-with-pools?
+  [pools : AstNodePoolContext]
+  [a : AstExternAbi]
+  [b : AstExternAbi]) : bool
+  (ast-extern-abi-eq-with-seg-bases?
+    (ast-node-pool-context-type-segment-bases pools)
+    a
+    b))
+
+(define (ast-extern-abi-eq-with-seg-bases?
+  [seg-bases : i64]
+  [a : AstExternAbi]
+  [b : AstExternAbi]) : bool
+  (match a
+    [(AstExternAbi.C)
+      (match b
+        [(AstExternAbi.C) true]
+        [_ false])]
+    [(AstExternAbi.CVarargsOpen)
+      (match b
+        [(AstExternAbi.CVarargsOpen) true]
+        [_ false])]
+    [(AstExternAbi.CVarargsTyped aty)
+      (match b
+        [(AstExternAbi.CVarargsTyped bty)
+          (ast-type-eq-with-seg-bases? seg-bases aty bty)]
         [_ false])]))
 
 (define (ast-extern-link-input-eq?

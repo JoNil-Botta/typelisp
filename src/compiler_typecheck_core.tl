@@ -48618,7 +48618,9 @@
 (define (tc-call-param-consuming-now? [ctx : TcContext] [ty : AstType]) : bool
   (if (ast-type-consuming-param? ty)
     (tc-type-move-only?
-      (tc-resolve-type ctx (ast-type-strip-consuming-param ty)))
+      (tc-resolve-type
+        ctx
+        (ast-type-strip-consuming-param-with-pools (tc-context-pools ctx) ty)))
     (tc-type-consuming-by-value-now? ctx ty)))
 
 ;; Matching a cleanup-owning enum consumes the whole scrutinee value. Ordinary
@@ -50082,7 +50084,10 @@
         [head-expr : AstExpr (ast-node-get head)]
         [raw-ty : AstType
           (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
-        [ty : AstType (ast-type-strip-consuming-param raw-ty)]
+        [ty : AstType
+          (ast-type-strip-consuming-param-with-pools
+            (tc-context-pools ctx)
+            raw-ty)]
         (match (cfg
           compile-profile
           (compiler-tc-reinfer-profile-effective-arg-expr
@@ -53353,7 +53358,8 @@
   [arg : AstExpr]
   [ty : AstType]) : TcBorrowCheckResult
   (let
-    [want : AstType (ast-type-strip-consuming-param ty)]
+    [want : AstType
+      (ast-type-strip-consuming-param-with-pools (tc-context-pools ctx) ty)]
     (match (tc-borrow-check-expr ctx env locals borrowed arg)
       [(TcBorrowCheckResult.Ok borrowed1)
         (match (tc-borrow-check-after-consuming-value
@@ -53382,7 +53388,8 @@
   [arg : AstExpr]
   [ty : AstType]) : TcBorrowCheckResult
   (let
-    [want : AstType (ast-type-strip-consuming-param ty)]
+    [want : AstType
+      (ast-type-strip-consuming-param-with-pools (tc-context-pools ctx) ty)]
     (match (cfg
       compile-profile
       (compiler-tc-reinfer-profile-effective-arg-expr
@@ -53567,7 +53574,10 @@
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
       [raw-ty : AstType
         (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
-      [ty : AstType (ast-type-strip-consuming-param raw-ty)]
+      [ty : AstType
+        (ast-type-strip-consuming-param-with-pools
+          (tc-context-pools ctx)
+          raw-ty)]
       (match (cfg
         compile-profile
         (compiler-tc-reinfer-profile-effective-arg-expr

@@ -22398,6 +22398,20 @@
         cases
         default-label)]))
 
+;; Constant propagation can decide a bounds check outright. Only the in-range
+;; case is dropped: an out-of-range literal keeps its check so the trap still
+;; fires at the same program point.
+(define (opt-sccp-bounds-check-in-range? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BoundsCheck index length _)
+      (match index
+        [(CompilerIrValue.I64 idx)
+          (match length
+            [(CompilerIrValue.I64 len) (and (>= idx 0) (>= len 0) (< idx len))]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
 (define (opt-sccp-rewrite-instr-seq-from
   [env : OptSccpEnv]
   [instrs : CompilerIrInstrSeq]
@@ -22405,13 +22419,16 @@
   [out : CompilerIrInstrList]) : CompilerIrInstrList
   (if (< index 0)
     out
-    (opt-sccp-rewrite-instr-seq-from
-      env
-      instrs
-      (- index 1)
-      (compiler-ir-instr-cons
-        (opt-sccp-rewrite-instr env (compiler-ir-instr-seq-ref instrs index))
-        out))))
+    (let
+      [rewritten : CompilerIrInstr
+        (opt-sccp-rewrite-instr env (compiler-ir-instr-seq-ref instrs index))]
+      (opt-sccp-rewrite-instr-seq-from
+        env
+        instrs
+        (- index 1)
+        (if (opt-sccp-bounds-check-in-range? rewritten)
+          out
+          (compiler-ir-instr-cons rewritten out))))))
 
 (define (opt-sccp-rewrite-instr-seq
   [env : OptSccpEnv]

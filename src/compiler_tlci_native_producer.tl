@@ -2331,6 +2331,159 @@
                     "))\n")))))])]
     [_ ""]))
 
+;; Compile `(match <operand> [(comptime.Expr.Call callee args) body] ... [_ body])`:
+;; the operand's expression shape is probed as data, and a matching arm binds
+;; the callee expression and the argument list into session local slots, the
+;; same two values the interpreted `comptime.Expr.Call` pattern binds. Returns
+;; "" outside that shape. Refs #5602.
+(define (embedded-native-value-match-body
+  [params : (& params AstMacroParamList)]
+  [body-node : i64]) : String
+  (match (embedded-stdlib-tlci-unwrap-expr body-node)
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee arms)
+          (let
+            [param : i64 (embedded-native-var-param-index params scrutinee)]
+            (if (< param 0)
+              ""
+              (embedded-native-value-match-arms params (& arms) 0 param)))])]
+    [_ ""]))
+
+;: The `comptime.Expr.<name>` variant a pattern names, or "" for anything else.
+(define (embedded-native-expr-variant-name [name-id : i64]) : String
+  (let
+    [name : String (intern-str name-id)]
+    (cond
+      [(string.eq name "comptime.Expr.Call") "Call"]
+      [(string.eq name "Expr.Call") "Call"]
+      [else ""])))
+
+(define (embedded-native-value-match-arms
+  [params : (& params AstMacroParamList)]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [param : i64]) : String
+  (if (>= index (struct-get arms len))
+    "  0\n"
+    (match (array-ref (struct-get arms slots) index)
+      [(AstMatchArm.Arm pattern body-node)
+        (match pattern
+          [(AstPattern.Variant name-id args-box)
+            (let
+              [variant : String (embedded-native-expr-variant-name name-id)]
+              [pat-args : AstPatternList (box-get args-box)]
+              (if (or
+                (not (string.eq variant "Call"))
+                (not (= (struct-get (& pat-args) len) 2)))
+                ""
+                (let
+                  [name : String (embedded-native-temp-name!)]
+                  [saved : i64 (array-ref embedded-native-local-len 0)]
+                  [bind-code : String
+                    (embedded-native-value-match-bind (& pat-args) 0 param)]
+                  [arm-code : String
+                    (if (string.eq bind-code "\x01")
+                      ""
+                      (embedded-native-body-code params body-node))]
+                  [bound : i64
+                    (embedded-native-pattern-binder-count (& pat-args) 0)]
+                  (begin
+                    (array-set! embedded-native-local-len 0 saved)
+                    (let
+                      [rest : String
+                        (embedded-native-value-match-arms
+                          params
+                          arms
+                          (+ index 1)
+                          param)]
+                      (if (or (string.eq arm-code "") (string.eq rest ""))
+                        ""
+                        (str-cat
+                          "  (let ["
+                          name
+                          " : i64 (comptime-host-invoke host session 222 "
+                          (string.int->string param)
+                          " 0 0)]\n"
+                          "  (if (< "
+                          name
+                          " 0)\n  "
+                          (string.int->string
+                            tlci-host-callback-status-bad-request)
+                          "\n  (if (= "
+                          name
+                          " 1)\n"
+                          bind-code
+                          arm-code
+                          (embedded-native-closing-parens (* 2 bound))
+                          "\n"
+                          rest
+                          ")))\n")))))))]
+          [(AstPattern.Wildcard) (embedded-native-body-code params body-node)]
+          [_ ""])])))
+
+;: How many payload patterns bind a name (each opens one let/if pair).
+(define (embedded-native-pattern-binder-count
+  [pat-args : (& pat-args AstPatternList)]
+  [index : i64]) : i64
+  (if (>= index (struct-get pat-args len))
+    0
+    (+
+      (match (ast-pattern-list-get pat-args index (ast-pattern-fallback))
+        [(AstPattern.Binding _) 1]
+        [_ 0])
+      (embedded-native-pattern-binder-count pat-args (+ index 1)))))
+
+;; Emit the `(let [sN : i64 <accessor>] (if (not (= sN 0)) sN` opens that bind
+;; one arm's payload patterns to session local slots: a binder takes the value,
+;; a wildcard consumes nothing. Returns "\x01" on any unsupported piece.
+(define (embedded-native-value-match-bind
+  [pat-args : (& pat-args AstPatternList)]
+  [index : i64]
+  [param : i64]) : String
+  (if (>= index (struct-get pat-args len))
+    ""
+    (let
+      [op : i64
+        (if (= index 0)
+          223
+          224)]
+      [head : String
+        (match (ast-pattern-list-get pat-args index (ast-pattern-fallback))
+          [(AstPattern.Wildcard) ""]
+          [(AstPattern.Binding bind-id)
+            (let
+              [slot : i64 (embedded-native-local-push! (intern-str bind-id))]
+              (if (< slot 0)
+                "\x01"
+                (str-cat
+                  "  (let [s"
+                  (string.int->string slot)
+                  " : i64\n"
+                  (embedded-native-arm-block-with-final
+                    (embedded-native-single-op-ops
+                      op
+                      (string.int->string param)
+                      "0"
+                      "0")
+                    1
+                    1
+                    (embedded-native-local-set-final slot))
+                  "] (if (not (= s"
+                  (string.int->string slot)
+                  " 0)) s"
+                  (string.int->string slot)
+                  "\n")))]
+          [_ "\x01"])]
+      (if (string.eq head "\x01")
+        "\x01"
+        (let
+          [rest : String
+            (embedded-native-value-match-bind pat-args (+ index 1) param)]
+          (if (string.eq rest "\x01")
+            "\x01"
+            (str-cat head rest)))))))
+
 (define (embedded-native-int-match-arms
   [params : (& params AstMacroParamList)]
   [arms : (& arms AstMatchArmList)]
@@ -2454,22 +2607,27 @@
             (if (not (string.eq int-match-text ""))
               int-match-text
               (let
-                [if-text : String
-                  (embedded-native-computed-if-body params body-node)]
-                (if (not (string.eq if-text ""))
-                  if-text
+                [value-match-text : String
+                  (embedded-native-value-match-body params body-node)]
+                (if (not (string.eq value-match-text ""))
+                  value-match-text
                   (let
-                    [linear-text : String
-                      (embedded-native-linear-body-code params body-node)]
-                    (if (not (string.eq linear-text ""))
-                      linear-text
-                      ;; Computed string matches and string-eq ifs at body
-                      ;; level (the module-generator dispatch shapes) share
-                      ;; the commit final with template bodies. Refs #5603.
-                      (embedded-native-computed-expr-code
-                        params
-                        body-node
-                        "  (comptime-host-invoke host session 182 0 0 0)\n"))))))))))))
+                    [if-text : String
+                      (embedded-native-computed-if-body params body-node)]
+                    (if (not (string.eq if-text ""))
+                      if-text
+                      (let
+                        [linear-text : String
+                          (embedded-native-linear-body-code params body-node)]
+                        (if (not (string.eq linear-text ""))
+                          linear-text
+                          ;; Computed string matches and string-eq ifs at body
+                          ;; level (the module-generator dispatch shapes) share
+                          ;; the commit final with template bodies. Refs #5603.
+                          (embedded-native-computed-expr-code
+                            params
+                            body-node
+                            "  (comptime-host-invoke host session 182 0 0 0)\n"))))))))))))))
 
 (define (embedded-native-source
   [names : (Array String)]

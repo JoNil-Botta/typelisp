@@ -359,6 +359,42 @@
       (CompilerCtfeMaybeExprList.Some items)]
     [_ (CompilerCtfeMaybeExprList.None)]))
 
+;; The pools that own an operand's expression nodes: a captured operand keeps
+;; its caller pools, every other value reads the session pools. Refs #5602.
+(define (compiler-comptime-host-value-pools [value : CompilerCtfeValue]) : AstNodePoolContext
+  (match value
+    [(CompilerCtfeValue.CapturedExpr _ _ pools) pools]
+    [(CompilerCtfeValue.CapturedExprList _ pools) pools]
+    [_ (array-ref compiler-comptime-host-pools 0)]))
+
+;; The `Spanned`-unwrapped expression an operand denotes, mirroring
+;; `ctfe-match-expr-variant`'s `ctfe-expr-unspan` before it inspects a variant.
+(define (compiler-comptime-host-unspanned-expr
+  [pools : AstNodePoolContext]
+  [expr : AstExpr]) : AstExpr
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (compiler-comptime-host-unspanned-expr
+        pools
+        (ast-node-pool-context-expr-get pools inner))]
+    [_ expr]))
+
+;; The unspanned expression of operand `index`, or a unit literal when the
+;; operand is out of range or carries no expression node. Callers probe the
+;; range separately, so the fallback is only a total-function placeholder.
+(define (compiler-comptime-host-operand-expr [index : i64]) : AstExpr
+  (let
+    [value : CompilerCtfeValue
+      (array-ref compiler-comptime-host-operands index)]
+    [node : i64 (compiler-comptime-host-value-node value)]
+    (if (< node 0)
+      (AstExpr.Literal (AstLiteral.Unit))
+      (compiler-comptime-host-unspanned-expr
+        (compiler-comptime-host-value-pools value)
+        (ast-node-pool-context-expr-get
+          (compiler-comptime-host-value-pools value)
+          node)))))
+
 ;; Expression node id of a stack value, or -1 when the value does not carry
 ;; one. Captured operands keep their caller-pool node id; the pool-context
 ;; bridging refinement is tracked with the real-body slice. A type operand
@@ -1505,6 +1541,32 @@
               1)]
           [_ -3]))]
     ;; expr-int-from-data: push an int literal node for the value in `a`.
+    ;; Expression-shape probe and accessors for a computed body matching on
+    ;; `(comptime.Expr.Call callee args)`. The probe answers as data and
+    ;; bypasses the status latch; the accessors push exactly the two values
+    ;; the interpreted pattern binds. Refs #5602.
+    [(= operation tlci-host-callback-op-operand-expr-call?)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        -3
+        (match (compiler-comptime-host-operand-expr arg-a)
+          [(AstExpr.Call _ _) 1]
+          [_ 0]))]
+    [(= operation tlci-host-callback-op-operand-expr-call-callee)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        tlci-host-callback-status-bad-request
+        (match (compiler-comptime-host-operand-expr arg-a)
+          [(AstExpr.Call callee _)
+            (compiler-comptime-host-push!
+              (CompilerCtfeValue.Expr callee (ctfe-untyped-expr-type)))]
+          [_ tlci-host-callback-status-bad-request]))]
+    [(= operation tlci-host-callback-op-operand-expr-call-args)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        tlci-host-callback-status-bad-request
+        (match (compiler-comptime-host-operand-expr arg-a)
+          [(AstExpr.Call _ call-args)
+            (compiler-comptime-host-push!
+              (CompilerCtfeValue.ExprList call-args))]
+          [_ tlci-host-callback-status-bad-request]))]
     [(= operation tlci-host-callback-op-expr-int-from-data)
       (compiler-comptime-host-push!
         (CompilerCtfeValue.Expr
@@ -1819,6 +1881,7 @@
               (not (= operation tlci-host-callback-op-string-eq))
               (not (= operation tlci-host-callback-op-array-length))
               (not (= operation tlci-host-callback-op-array-dynamic?))
+              (not (= operation tlci-host-callback-op-operand-expr-call?))
               (not (= status tlci-host-callback-status-ok)))
             (set! compiler-comptime-host-session-status status))
           status)))))

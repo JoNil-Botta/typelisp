@@ -2820,39 +2820,6 @@
       (array-set! embedded-native-data-local-len 0 saved)
       code)))
 
-;; Compile `(if (cmp (comptime.expr-list-length p) lit) then else)` when both
-;; branches are supported bodies; returns "" outside that shape. A negative
-;; probe (a non-list operand) unwinds as the public bad-request status, the
-;; same contract the type-kind probe uses.
-(define (embedded-native-computed-if-body
-  [params : (& params AstMacroParamList)]
-  [body-node : i64]) : String
-  (match (embedded-stdlib-tlci-unwrap-expr body-node)
-    [(AstExpr.If cond-node then-node else-node)
-      (match (embedded-native-length-probe params cond-node)
-        [(EmbeddedNativeLengthProbe.LengthProbe param ordinal literal)
-          (let
-            [then-code : String (embedded-native-body-code params then-node)]
-            [else-code : String (embedded-native-body-code params else-node)]
-            (if (or (string.eq then-code "") (string.eq else-code ""))
-              ""
-              (str-cat
-                "  (let [t0 : i64 (comptime-host-invoke host session 155 "
-                (string.int->string param)
-                " 0 0)]\n"
-                "  (if (< t0 0)\n  "
-                (string.int->string tlci-host-callback-status-bad-request)
-                "\n  (if ("
-                (embedded-native-comparison-spelling ordinal)
-                " t0 "
-                (string.int->string literal)
-                ")\n"
-                then-code
-                else-code
-                ")))\n")))]
-        [(EmbeddedNativeLengthProbe.NoLengthProbe) ""])]
-    [_ ""]))
-
 ;; Compile a linear op-chain body (template, fold, or plain builder) into a
 ;; complete arm block; returns "" when the body is outside the supported
 ;; subset or would overflow the per-entry op budget (a dropped op can never
@@ -2898,24 +2865,17 @@
                     (if (not (string.eq data-if-text ""))
                       data-if-text
                       (let
-                        [if-text : String
-                          (embedded-native-computed-if-body params body-node)]
-                        (if (not (string.eq if-text ""))
-                          if-text
-                          (let
-                            [linear-text : String
-                              (embedded-native-linear-body-code
-                                params
-                                body-node)]
-                            (if (not (string.eq linear-text ""))
-                              linear-text
-                              ;; Computed string matches and string-eq ifs at body
-                              ;; level (the module-generator dispatch shapes) share
-                              ;; the commit final with template bodies. Refs #5603.
-                              (embedded-native-computed-expr-code
-                                params
-                                body-node
-                                "  (comptime-host-invoke host session 182 0 0 0)\n"))))))))))))))))
+                        [linear-text : String
+                          (embedded-native-linear-body-code params body-node)]
+                        (if (not (string.eq linear-text ""))
+                          linear-text
+                          ;; Computed string matches and string-eq ifs at body
+                          ;; level (the module-generator dispatch shapes) share
+                          ;; the commit final with template bodies. Refs #5603.
+                          (embedded-native-computed-expr-code
+                            params
+                            body-node
+                            "  (comptime-host-invoke host session 182 0 0 0)\n"))))))))))))))
 
 (define (embedded-native-source
   [names : (Array String)]

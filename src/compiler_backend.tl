@@ -14942,6 +14942,7 @@
                       (>= le h)
                       (< synth-count synth-cap)
                       (compiler-backend-const-hoist-region-leaf? orig h le))
+                      ;; lint-allow: nested-let
                       (let
                         [h-label : String
                           (compiler-backend-const-hoist-block-label

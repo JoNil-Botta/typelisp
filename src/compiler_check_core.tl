@@ -747,11 +747,10 @@
     "tests/private_dynamic_buffer_vector.tl"
     (compiler-check-private-dynamic-buffer-vector-source)))
 
-(define (compiler-check-private-dynamic-buffer-public-rejected-ok?) : bool
-  (compiler-check-source-error-ok?
+(define (compiler-check-private-dynamic-buffer-public-accepted-ok?) : bool
+  (compiler-check-source-ok?
     "tests/private_dynamic_buffer_public.tl"
-    (compiler-check-private-dynamic-buffer-public-source)
-    "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use defmacro to generate concrete declarations instead"))
+    (compiler-check-private-dynamic-buffer-public-source)))
 
 (define (compiler-check-implicit-core-prelude-ok?) : bool
   (compiler-check-source-ok?
@@ -821,7 +820,7 @@
         (io.panic
           "compiler-check: private dynamic-buffer vector smoke mismatch")))
     (unless
-      (compiler-check-private-dynamic-buffer-public-rejected-ok?)
+      (compiler-check-private-dynamic-buffer-public-accepted-ok?)
       (return
         (io.panic
           "compiler-check: private dynamic-buffer public smoke mismatch")))

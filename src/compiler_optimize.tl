@@ -37894,12 +37894,17 @@
 ;; `loop-cluster-verified?` invariant, and reusing the caller's context here
 ;; changes optimizer decisions), and so is the rejection path, which reports the
 ;; context the caller used to build for the unchanged input.
-(define (opt-successor-sink-function-result [func : CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-function func)
+(define (opt-successor-sink-function-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s blocks: the entry verify runs against
+  ;; it instead of building an identical one, and the rejection paths report it
+  ;; unchanged. The check itself is still a full verify -- this pass is NOT
+  ;; covered by the `loop-cluster-verified?` invariant and skipping the check
+  ;; crashes the self-compile.
+  (match (opt-verify-function-with-context func context)
     [(ResultCompilerOptimizeVerify.Err _)
-      (OptFunctionCtxResult.Result
-        func
-        (opt-cfg-context-build (opt-function-blocks func)))]
+      (OptFunctionCtxResult.Result func context)]
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -37920,12 +37925,12 @@
               [(ResultCompilerOptimizeVerify.Ok)
                 (OptFunctionCtxResult.Result next next-context)]
               [(ResultCompilerOptimizeVerify.Err _)
-                (OptFunctionCtxResult.Result
-                  func
-                  (opt-cfg-context-build blocks))]))])]))
+                (OptFunctionCtxResult.Result func context)]))])]))
 
 (define (opt-successor-sink-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-successor-sink-function-result func)
+  (match (opt-successor-sink-function-with-context-result
+    (opt-cfg-context-build (opt-function-blocks func))
+    func)
     [(OptFunctionCtxResult.Result f _) f]))
 
 ;; ---------------------------------------------------------------------------
@@ -38658,7 +38663,9 @@
                       ;; rematerialization chain.
                       [pre-induction-sink-result : OptFunctionCtxResult
                         (if run-loop?
-                          (opt-successor-sink-function-result licm)
+                          (opt-successor-sink-function-with-context-result
+                            licm-context
+                            licm)
                           licm-result)]
                       [pre-induction-sink : CompilerIrFunction
                         (compiler-opt-debug-observe-function

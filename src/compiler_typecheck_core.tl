@@ -61346,11 +61346,6 @@
 (define (macro-expr-to-spanned-sexpr [expr : AstExpr] [origin : AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span expr (macro-zero-source-span) origin))
 
-(define (macro-parse-dispatch-for-macro
-  [macro-name : String]
-  [definition-module : String]) : sym_i64_env.SymI64Env
-  (compiler-parse-dispatch-env))
-
 (define (macro-parse-decl-sexpr
   [dispatch : sym_i64_env.SymI64Env]
   [form : reader.SpannedSexpr]
@@ -69275,12 +69270,7 @@
                                 [(ResultMacroValueEnv.Ok value macro-env)
                                   (let
                                     [parse-dispatch : sym_i64_env.SymI64Env
-                                      (macro-parse-dispatch-for-macro
-                                        (macro-decl-name-display
-                                          macro-name
-                                          definition-module)
-                                        (macro-decl-module-display
-                                          definition-module))]
+                                      (compiler-parse-dispatch-env)]
                                     (match (macro-decls-from-ctfe-value
                                       (macro-hygiene-ctfe-output
                                         value
@@ -69503,12 +69493,7 @@
                                       [(ResultMacroValueEnv.Ok value macro-env)
                                         (let
                                           [parse-dispatch : sym_i64_env.SymI64Env
-                                            (macro-parse-dispatch-for-macro
-                                              (macro-decl-name-display
-                                                macro-name
-                                                definition-module)
-                                              (macro-decl-module-display
-                                                definition-module))]
+                                            (compiler-parse-dispatch-env)]
                                           (match (macro-module-decls-from-ctfe-value
                                             (macro-hygiene-ctfe-output
                                               value

@@ -24397,7 +24397,152 @@
             (CompilerIrValue.Var cur))))]
     [_ value]))
 
+;; --- dominating comparison facts --------------------------------------------
+;;
+;; A conditional branch decides its condition for the whole subtree dominated by
+;; the edge it takes, so a later comparison of the same operands is a
+;; compile-time constant. Both spellings count: `gt b a` canonicalizes to
+;; `lt a b`, and `le a b` is the negation of `lt b a`. Restricted to integer
+;; comparisons -- float negation is not a total order under NaN -- and to edge
+;; targets whose only entry is that edge, so the fact really does hold
+;; everywhere below.
+(defenum OptDomCmpFact
+  (Fact CompilerIrBinOp CompilerIrValue CompilerIrValue AstType bool))
+
+(defenum OptDomCmpFacts
+  (Nil)
+  (Cons OptDomCmpFact (Box OptDomCmpFacts)))
+
+(defenum OptDomCmpLookup
+  (No)
+  (Some bool))
+
+(define (opt-dom-cmp-foldable-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Eq) true]
+    [(CompilerIrBinOp.Ne) true]
+    [(CompilerIrBinOp.Lt) true]
+    [(CompilerIrBinOp.Le) true]
+    [(CompilerIrBinOp.Gt) true]
+    [(CompilerIrBinOp.Ge) true]
+    [_ false]))
+
+;; `gt`/`ge` are `lt`/`le` with the operands read the other way round.
+(define (opt-dom-cmp-swapped? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Gt) true]
+    [(CompilerIrBinOp.Ge) true]
+    [_ false]))
+
+(define (opt-dom-cmp-canon-op [op : CompilerIrBinOp]) : CompilerIrBinOp
+  (match op
+    [(CompilerIrBinOp.Gt) (CompilerIrBinOp.Lt)]
+    [(CompilerIrBinOp.Ge) (CompilerIrBinOp.Le)]
+    [_ op]))
+
+(define (opt-dom-cmp-canon-lhs
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : CompilerIrValue
+  (if (opt-dom-cmp-swapped? op)
+    rhs
+    lhs))
+
+(define (opt-dom-cmp-canon-rhs
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]) : CompilerIrValue
+  (if (opt-dom-cmp-swapped? op)
+    lhs
+    rhs))
+
+;; Canonical negations: `not (lt a b)` is `le b a`, `not (le a b)` is `lt b a`,
+;; and eq/ne negate in place.
+(define (opt-dom-cmp-negated-op [op : CompilerIrBinOp]) : CompilerIrBinOp
+  (match op
+    [(CompilerIrBinOp.Lt) (CompilerIrBinOp.Le)]
+    [(CompilerIrBinOp.Le) (CompilerIrBinOp.Lt)]
+    [(CompilerIrBinOp.Eq) (CompilerIrBinOp.Ne)]
+    [(CompilerIrBinOp.Ne) (CompilerIrBinOp.Eq)]
+    [_ op]))
+
+(define (opt-dom-cmp-negation-swaps? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(CompilerIrBinOp.Lt) true]
+    [(CompilerIrBinOp.Le) true]
+    [_ false]))
+
+(define (opt-dom-cmp-lookup
+  [facts : OptDomCmpFacts]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : OptDomCmpLookup
+  (match facts
+    [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
+    [(OptDomCmpFacts.Cons fact rest)
+      (match fact
+        [(OptDomCmpFact.Fact fact-op fact-lhs fact-rhs fact-ty fact-value)
+          (if (and
+            (opt-type-eq ty fact-ty)
+            (opt-binop-eq op fact-op)
+            (opt-value-eq lhs fact-lhs)
+            (opt-value-eq rhs fact-rhs))
+            (OptDomCmpLookup.Some fact-value)
+            (if (and
+              (opt-type-eq ty fact-ty)
+              (opt-binop-eq op (opt-dom-cmp-negated-op fact-op))
+              (if (opt-dom-cmp-negation-swaps? fact-op)
+                (and (opt-value-eq lhs fact-rhs) (opt-value-eq rhs fact-lhs))
+                (and (opt-value-eq lhs fact-lhs) (opt-value-eq rhs fact-rhs))))
+              (OptDomCmpLookup.Some (not fact-value))
+              (opt-dom-cmp-lookup (box-get rest) op lhs rhs ty)))])]))
+
+;; The fact an edge into `taken?` establishes, given the branch condition's
+;; defining comparison. Operands are resolved through the same copy map the
+;; bounds facts use so both sides speak one spelling.
+(define (opt-dom-cmp-edge-fact
+  [defs : (Array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
+  [cond : CompilerIrValue]
+  [taken? : bool]
+  [facts : OptDomCmpFacts]) : OptDomCmpFacts
+  (match cond
+    [(CompilerIrValue.Var var)
+      (match (opt-bool-branch-def defs var)
+        [(OptBoolBranchDef.No) facts]
+        [(OptBoolBranchDef.Some instr _)
+          (match instr
+            [(CompilerIrInstr.BinOp _ op lhs rhs ty)
+              (let
+                [clhs : CompilerIrValue
+                  (opt-bounds-dom-resolve
+                    copies
+                    (opt-dom-cmp-canon-lhs op lhs rhs))]
+                [crhs : CompilerIrValue
+                  (opt-bounds-dom-resolve
+                    copies
+                    (opt-dom-cmp-canon-rhs op lhs rhs))]
+                (if (and
+                  (opt-dom-cmp-foldable-op? op)
+                  (opt-integer-type? ty)
+                  (opt-gvn-value-stable? sources clhs)
+                  (opt-gvn-value-stable? sources crhs))
+                  (OptDomCmpFacts.Cons
+                    (OptDomCmpFact.Fact
+                      (opt-dom-cmp-canon-op op)
+                      clhs
+                      crhs
+                      ty
+                      taken?)
+                    (box facts))
+                  facts))]
+            [_ facts])])]
+    [_ facts]))
+
 (define (opt-bounds-dom-instrs-from
+  [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
@@ -24414,6 +24559,7 @@
             [clen : CompilerIrValue (opt-bounds-dom-resolve copies len)]
             (if (opt-bounds-contains facts cidx clen)
               (opt-bounds-dom-instrs-from
+                cmp-facts
                 facts
                 sources
                 copies
@@ -24427,6 +24573,7 @@
                     (opt-bounds-add facts cidx clen)
                     facts)]
                 (match (opt-bounds-dom-instrs-from
+                  cmp-facts
                   next-facts
                   sources
                   copies
@@ -24438,6 +24585,7 @@
                       out-facts)]))))]
         [_
           (match (opt-bounds-dom-instrs-from
+            cmp-facts
             facts
             sources
             copies
@@ -24445,14 +24593,44 @@
             (+ index 1))
             [(OptBoundsDomWalk.Walk tail out-facts)
               (OptBoundsDomWalk.Walk
-                (compiler-ir-instr-cons instr tail)
+                (compiler-ir-instr-cons
+                  (opt-bounds-dom-fold-compare cmp-facts copies instr)
+                  tail)
                 out-facts)])]))))
+
+;; Replace a comparison a dominating branch already decided with its constant.
+;; The move keeps the destination and bool type, so every consumer -- branch,
+;; select, phi input -- sees an ordinary constant and the later fold/cfg passes
+;; collapse the control flow.
+(define (opt-bounds-dom-fold-compare
+  [cmp-facts : OptDomCmpFacts]
+  [copies : opt_i64_i64_map.Map]
+  [instr : CompilerIrInstr]) : CompilerIrInstr
+  (match instr
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
+      (if (and (opt-dom-cmp-foldable-op? op) (opt-integer-type? ty))
+        (match (opt-dom-cmp-lookup
+          cmp-facts
+          (opt-dom-cmp-canon-op op)
+          (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-lhs op lhs rhs))
+          (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))
+          ty)
+          [(OptDomCmpLookup.No) instr]
+          [(OptDomCmpLookup.Some value)
+            (CompilerIrInstr.Mov
+              dst
+              (CompilerIrValue.Bool value)
+              (AstType.Bool))])
+        instr)]
+    [_ instr]))
 
 (define (opt-bounds-dom-rewrite-id
   [context : OptCfgContext]
   [children : OptCfgCsr]
+  [defs : (Array OptBoolBranchDef)]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
@@ -24469,6 +24647,7 @@
             (match block
               [(CompilerIrBlock.Block _ instrs)
                 (match (opt-bounds-dom-instrs-from
+                  cmp-facts
                   facts
                   sources
                   copies
@@ -24484,24 +24663,71 @@
                       (opt-bounds-dom-rewrite-children
                         context
                         children
+                        defs
                         sources
                         copies
+                        cmp-facts
                         out-facts
                         blocks
                         out
-                        id))])])]))
+                        id
+                        instrs))])])]))
       unit)))
+
+;; The number of predecessors a block has, straight off the CFG index rows.
+(define (opt-bounds-dom-pred-count [index : OptCfgIndex] [id : i64]) : i64
+  (let
+    [preds : OptCfgCsr (struct-get index preds)]
+    [offsets : (Array i64) (struct-get preds offsets)]
+    (if (or (< id 0) (>= (+ id 1) (array-length offsets)))
+      -1
+      (- (array-ref offsets (+ id 1)) (array-ref offsets id)))))
+
+;; Facts to carry into one dominator child: the parent's branch decides its
+;; condition for a target the branch is the ONLY way into. A target with more
+;; than one predecessor is reachable without taking this edge, so it keeps the
+;; parent's facts unchanged.
+(define (opt-bounds-dom-child-cmp-facts
+  [index : OptCfgIndex]
+  [defs : (Array OptBoolBranchDef)]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
+  [parent-instrs : CompilerIrInstrSeq]
+  [child-id : i64]) : OptDomCmpFacts
+  (let
+    [count : i64 (compiler-ir-instr-seq-count parent-instrs)]
+    (if (or (< count 1) (not (= (opt-bounds-dom-pred-count index child-id) 1)))
+      cmp-facts
+      (match (compiler-ir-instr-seq-ref parent-instrs (- count 1))
+        [(CompilerIrInstr.Branch cond true-label false-label)
+          (let
+            [child-label : String
+              (array-ref (struct-get index labels) child-id)]
+            (cond
+              ;; A branch whose edges share one label decides nothing about it.
+              [(string.eq true-label false-label) cmp-facts]
+              [(string.eq child-label true-label)
+                (opt-dom-cmp-edge-fact defs copies sources cond true cmp-facts)]
+              [(string.eq child-label false-label)
+                (opt-dom-cmp-edge-fact defs copies sources cond false cmp-facts)]
+              [else cmp-facts]))]
+        [_ cmp-facts]))))
 
 (define (opt-bounds-dom-rewrite-children
   [context : OptCfgContext]
   [children : OptCfgCsr]
+  [defs : (Array OptBoolBranchDef)]
   [sources : opt_i64_i64_map.Map]
   [copies : opt_i64_i64_map.Map]
+  [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
-  [parent-id : i64]) : unit
+  [parent-id : i64]
+  [parent-instrs : CompilerIrInstrSeq]) : unit
   (let
+    [index : OptCfgIndex (struct-get context index)]
     [offsets : (Array i64) (struct-get children offsets)]
     [edges : (Array i64) (struct-get children edges)]
     [edge : i64 (array-ref offsets parent-id)]
@@ -24509,21 +24735,33 @@
     (begin
       (while (< edge end)
         (begin
-          (opt-bounds-dom-rewrite-id
-            context
-            children
-            sources
-            copies
-            facts
-            blocks
-            out
-            (array-ref edges edge))
+          (let
+            [child-id : i64 (array-ref edges edge)]
+            (opt-bounds-dom-rewrite-id
+              context
+              children
+              defs
+              sources
+              copies
+              (opt-bounds-dom-child-cmp-facts
+                index
+                defs
+                sources
+                copies
+                cmp-facts
+                parent-instrs
+                child-id)
+              facts
+              blocks
+              out
+              child-id))
           (set! edge (+ edge 1))))
       unit)))
 
 (define (opt-bounds-dom-blocks-with-context
   [context : OptCfgContext]
   [params : CompilerIrParamList]
+  [frame : i64]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [sources : opt_i64_i64_map.Map
@@ -24539,6 +24777,7 @@
     [index : OptCfgIndex (struct-get context index)]
     [count : i64 (opt-cfg-index-block-count index)]
     [children : OptCfgCsr (opt-gvn-dom-children doms)]
+    [defs : (Array OptBoolBranchDef) (opt-bool-branch-defs frame blocks)]
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
     (begin
       (opt-gvn-block-results-fill-empty! out 0)
@@ -24550,8 +24789,10 @@
             (opt-bounds-dom-rewrite-id
               context
               children
+              defs
               sources
               copies
+              (OptDomCmpFacts.Nil)
               (OptBoundsFacts.Nil)
               blocks
               out
@@ -38638,6 +38879,7 @@
                             (opt-bounds-dom-blocks-with-context
                               ssa-context
                               params
+                              ssa-frame
                               gvn)
                             gvn))]
                       [_p-bounds-dom : unit

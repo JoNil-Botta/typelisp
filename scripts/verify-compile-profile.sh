@@ -1087,6 +1087,11 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"
 else
+    # #5634: the macro-detail fixture's last interpreted shells are going
+    # native (#5596's zero-shell end state), so a non-zero fallback count can
+    # no longer be required here. Assert the catalog route is live and exact
+    # instead (same shape as the routing fixture below); the row-exists
+    # assertion above keeps the fallback counter's plumbing covered.
     assert_profile_counter_at_least_in \
         "$CHECK_STDERR" \
         "typecheck.macro.stdlib_tlci_catalog_hits" \
@@ -1095,8 +1100,14 @@ else
         "$CHECK_STDERR"
     assert_profile_counter_at_least_in \
         "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+        "typecheck.macro.stdlib_tlci_native_dispatches" \
         1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_eq_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_catalog_misses" \
+        0 \
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"
 fi

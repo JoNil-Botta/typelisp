@@ -46170,15 +46170,24 @@
           compiler-tc-macro-abstract-proofs-recorded
           (+ compiler-tc-macro-abstract-proofs-recorded 1))))))
 
+;; The probes must not insert: the lane classification runs only under the
+;; compile-profile cfg, and inserting here would shift intern ids between the
+;; profile and normal compiler builds, breaking emitted-assembly parity.
 (define (tc-macro-abstract-proof-lookup
   [macro-key : String]
   [param-name : String]) : i64
-  (let
-    [index : i64
-      (tc-macro-abstract-proof-find (intern macro-key) (intern param-name) 0)]
-    (if (>= index 0)
-      (array-ref tc-macro-abstract-proof-kind-masks index)
-      -1)))
+  (match (intern-lookup macro-key)
+    [(InternLookupFound macro-key-id)
+      (match (intern-lookup param-name)
+        [(InternLookupFound param-name-id)
+          (let
+            [index : i64
+              (tc-macro-abstract-proof-find macro-key-id param-name-id 0)]
+            (if (>= index 0)
+              (array-ref tc-macro-abstract-proof-kind-masks index)
+              -1))]
+        [(InternLookupMissing) -1])]
+    [(InternLookupMissing) -1]))
 
 (define (tc-macro-abstract-proof-exists-at? [macro-key-id : i64] [index : i64]) : bool
   (if (>= index tc-macro-abstract-proof-count)
@@ -46188,7 +46197,10 @@
       (tc-macro-abstract-proof-exists-at? macro-key-id (+ index 1)))))
 
 (define (tc-macro-abstract-proof-exists-for-macro? [macro-key : String]) : bool
-  (tc-macro-abstract-proof-exists-at? (intern macro-key) 0))
+  (match (intern-lookup macro-key)
+    [(InternLookupFound macro-key-id)
+      (tc-macro-abstract-proof-exists-at? macro-key-id 0)]
+    [(InternLookupMissing) false]))
 
 (define (tc-macro-abstract-call-id [func : AstExpr] [bound : TcStringList]) : i64
   (let

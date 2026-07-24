@@ -15,7 +15,6 @@
 ;#     [needle : String "ph"]
 ;#     (string.contains (& haystack) (& needle))))
 ;# ```
-
 ;: Runtime bounds-check trap shared with array/string indexing.
 (extern (tl_oob_abort) : never)
 

@@ -78,6 +78,65 @@ validate_published_release() {
     fi
 }
 
+select_single_release_id() {
+    release_ids=$1
+    tag=$2
+
+    if [ -z "$release_ids" ]; then
+        fail "no release (published or draft) found for tag $tag"
+        return 1
+    fi
+    if [ "$(printf '%s\n' "$release_ids" | wc -l | tr -d ' ')" -ne 1 ]; then
+        fail "multiple releases found for tag $tag: $release_ids"
+        return 1
+    fi
+    printf '%s\n' "$release_ids"
+}
+
+# Retry a release-discovery command inside the propagation budget and print the
+# ids it found. Only a command that both succeeds and prints something is
+# promoted: a command that fails never leaves its output behind as a release id
+# (an API error body would otherwise satisfy the single-id check and be spliced
+# into the next request path), and its own diagnostic is surfaced instead of
+# being reported as an absent release. A clean empty result is the real "not
+# visible yet" case and prints nothing, so the caller reports it as absent.
+retry_release_discovery() {
+    discovery_tag=$1
+    shift
+
+    discovery_err=${TMPDIR:-/tmp}/stage0-release-discovery.$$
+    discovery_found=
+    discovery_failed=0
+    discovery_attempt=1
+    while [ "$discovery_attempt" -le "$ATTEMPTS" ]; do
+        discovery_failed=0
+        if discovery_candidate=$("$@" 2>"$discovery_err"); then
+            if [ -n "$discovery_candidate" ]; then
+                discovery_found=$discovery_candidate
+                break
+            fi
+        else
+            discovery_failed=1
+        fi
+        if [ "$discovery_attempt" -lt "$ATTEMPTS" ]; then
+            echo "[stage0-release] authenticated release list not ready for tag $discovery_tag (attempt $discovery_attempt/$ATTEMPTS); retrying in ${DELAY}s" >&2
+            sleep "$DELAY"
+        fi
+        discovery_attempt=$((discovery_attempt + 1))
+    done
+
+    if [ -z "$discovery_found" ] && [ "$discovery_failed" -eq 1 ]; then
+        if [ -s "$discovery_err" ]; then
+            cat "$discovery_err" >&2
+        fi
+        rm -f "$discovery_err"
+        fail "release discovery command failed for tag $discovery_tag"
+        return 1
+    fi
+    rm -f "$discovery_err"
+    printf '%s\n' "$discovery_found"
+}
+
 expect_failure() {
     expected=$1
     shift
@@ -97,6 +156,32 @@ expect_failure() {
             return 1
             ;;
     esac
+}
+
+# Self-test discovery stubs. Each runs in the command substitution inside
+# retry_release_discovery, so the attempt counter lives in a file rather than a
+# variable.
+self_test_lagging_discovery() {
+    count=$(cat "$SELF_TEST_DISCOVERY_COUNTER")
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$SELF_TEST_DISCOVERY_COUNTER"
+    # Succeeds with no match until the release becomes visible on attempt 3.
+    if [ "$count" -ge 3 ]; then
+        echo 100
+    fi
+}
+
+self_test_absent_discovery() {
+    count=$(cat "$SELF_TEST_DISCOVERY_COUNTER")
+    printf '%s\n' "$((count + 1))" > "$SELF_TEST_DISCOVERY_COUNTER"
+}
+
+self_test_failing_discovery() {
+    # Mirrors `gh api` on an auth failure: an error body on stdout, the
+    # actionable message on stderr, and a non-zero status.
+    echo '{"message":"Bad credentials","status":"401"}'
+    echo "gh: Bad credentials (HTTP 401)" >&2
+    return 1
 }
 
 self_test() {
@@ -121,6 +206,60 @@ self_test() {
         echo "self-test release record projection mismatch: $release_record" >&2
         return 1
     fi
+    release_id=$(select_single_release_id 100 stage0-latest)
+    [ "$release_id" = 100 ] || {
+        echo "self-test release id selection mismatch: $release_id" >&2
+        return 1
+    }
+    expect_failure "no release (published or draft) found" \
+        select_single_release_id "" stage0-latest
+    expect_failure "multiple releases found" \
+        select_single_release_id "100
+101" stage0-latest
+
+    ATTEMPTS=4
+    DELAY=0
+    SELF_TEST_DISCOVERY_COUNTER=${TMPDIR:-/tmp}/stage0-self-test-discovery.$$
+    printf '0\n' > "$SELF_TEST_DISCOVERY_COUNTER"
+    discovered=$(retry_release_discovery stage0-latest \
+        self_test_lagging_discovery 2>/dev/null)
+    [ "$discovered" = 100 ] || {
+        echo "self-test lagging discovery mismatch: $discovered" >&2
+        rm -f "$SELF_TEST_DISCOVERY_COUNTER"
+        return 1
+    }
+    [ "$(cat "$SELF_TEST_DISCOVERY_COUNTER")" = 3 ] || {
+        echo "self-test lagging discovery attempt count mismatch:" \
+            "$(cat "$SELF_TEST_DISCOVERY_COUNTER")" >&2
+        rm -f "$SELF_TEST_DISCOVERY_COUNTER"
+        return 1
+    }
+    printf '0\n' > "$SELF_TEST_DISCOVERY_COUNTER"
+    discovered=$(retry_release_discovery stage0-latest \
+        self_test_absent_discovery 2>/dev/null)
+    [ -z "$discovered" ] || {
+        echo "self-test absent discovery should print nothing: $discovered" >&2
+        rm -f "$SELF_TEST_DISCOVERY_COUNTER"
+        return 1
+    }
+    rm -f "$SELF_TEST_DISCOVERY_COUNTER"
+
+    # A failing discovery command must not have its output adopted as a release
+    # id: an API error body is a single line and would otherwise pass
+    # select_single_release_id and be spliced into the next request path.
+    expect_failure "release discovery command failed" \
+        retry_release_discovery stage0-latest self_test_failing_discovery
+    expect_failure "Bad credentials" \
+        retry_release_discovery stage0-latest self_test_failing_discovery
+    set +e
+    leaked=$(retry_release_discovery stage0-latest \
+        self_test_failing_discovery 2>/dev/null)
+    set -e
+    [ -z "$leaked" ] || {
+        echo "self-test failing discovery leaked output as a release id:" \
+            "$leaked" >&2
+        return 1
+    }
 
     validate_published_release \
         100 false "$expected_sha" 2026-07-23T00:00:00Z \
@@ -183,18 +322,16 @@ for command in gh curl; do
 done
 
 # The tag endpoint hides drafts. Search the authenticated list first so a
-# complete draft can be recovered and its id can be reported actionably.
-release_ids=$(gh api "repos/$REPO/releases?per_page=100" \
-    --jq ".[] | select(.tag_name == \"$TAG\") | .id")
-if [ -z "$release_ids" ]; then
-    echo "[stage0-release] no release (published or draft) found for tag $TAG" >&2
-    exit 1
-fi
-if [ "$(printf '%s\n' "$release_ids" | wc -l | tr -d ' ')" -ne 1 ]; then
-    echo "[stage0-release] multiple releases found for tag $TAG: $release_ids" >&2
-    exit 1
-fi
-release_id=$release_ids
+# complete draft can be recovered and its id can be reported actionably. A
+# newly created release can take a few seconds to appear in this list, so bound
+# the discovery race with the same propagation retry budget used below.
+list_release_ids() {
+    gh api "repos/$REPO/releases?per_page=100" \
+        --jq ".[] | select(.tag_name == \"$TAG\") | .id"
+}
+
+release_ids=$(retry_release_discovery "$TAG" list_release_ids) || exit 1
+release_id=$(select_single_release_id "$release_ids" "$TAG") || exit 1
 
 release_record=$(gh api "repos/$REPO/releases/$release_id" \
     --jq "$RELEASE_RECORD_JQ")

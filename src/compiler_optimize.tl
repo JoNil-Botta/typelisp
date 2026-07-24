@@ -7918,21 +7918,61 @@
           predecessor-id))]
     [(option_i64.None) false]))
 
+;; One entry per reachable block, deduped through a hash set rather than
+;; `opt-label-add`'s linear `string.eq` scan. `opt-label-add` prepends only on
+;; first occurrence, and this applies the same rule, so the list -- including
+;; its descending-id order -- is unchanged even when two blocks somehow share a
+;; label. That case is a verifier error rather than something this function may
+;; assume away, which is why the dedup is kept instead of dropped.
+(define (opt-cfg-index-reachable-labels-from-seen
+  [index : OptCfgIndex]
+  [id : i64]
+  [labels : OptLabelSet]
+  [seen : opt_string_i64_map.Map]) : OptLabelSet
+  (if (>= id (opt-cfg-index-block-count index))
+    labels
+    (opt-cfg-index-reachable-labels-from-seen
+      index
+      (+ id 1)
+      (if (array-ref (struct-get index reachable) id)
+        (let
+          [label : String (opt-cfg-index-label index id)]
+          (if (opt_string_i64_map.contains? (& seen) label)
+            labels
+            (begin
+              (opt_string_i64_map.insert-ref! (&mut seen) label 1)
+              (OptLabelSet.Cons label (box labels)))))
+        labels)
+      seen)))
+
 (define (opt-cfg-index-reachable-labels-from
   [index : OptCfgIndex]
   [id : i64]
   [labels : OptLabelSet]) : OptLabelSet
-  (if (>= id (opt-cfg-index-block-count index))
+  (opt-cfg-index-reachable-labels-from-seen
+    index
+    id
     labels
-    (opt-cfg-index-reachable-labels-from
-      index
-      (+ id 1)
-      (if (array-ref (struct-get index reachable) id)
-        (opt-label-add labels (opt-cfg-index-label index id))
-        labels))))
+    (opt-cfg-index-reachable-seen-seed
+      labels
+      (opt_string_i64_map.with-capacity 64))))
+
+(define (opt-cfg-index-reachable-seen-seed
+  [labels : OptLabelSet]
+  [seen : opt_string_i64_map.Map]) : opt_string_i64_map.Map
+  (match labels
+    [(OptLabelSet.Nil) seen]
+    [(OptLabelSet.Cons head rest)
+      (begin
+        (opt_string_i64_map.insert-ref! (&mut seen) head 1)
+        (opt-cfg-index-reachable-seen-seed (box-get rest) seen))]))
 
 (define (opt-cfg-index-reachable-labels [index : OptCfgIndex]) : OptLabelSet
-  (opt-cfg-index-reachable-labels-from index 0 (OptLabelSet.Nil)))
+  (opt-cfg-index-reachable-labels-from-seen
+    index
+    0
+    (OptLabelSet.Nil)
+    (opt_string_i64_map.with-capacity 64)))
 
 (define (opt-cfg-index-rpo-id [index : OptCfgIndex] [slot : i64]) : i64
   (if (and (>= slot 0) (< slot (struct-get index reach-count)))

@@ -184,6 +184,10 @@ run_gate \
     --self-test \
     --output target/instruction-count-c-region-self-test
 run_gate \
+    "instruction-count comparison self-tests" \
+    scripts/check-instruction-counts.sh \
+    --self-test
+run_gate \
     "stage0 release publication verifier self-tests" \
     scripts/verify-stage0-release.sh \
     --self-test

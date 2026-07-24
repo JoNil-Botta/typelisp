@@ -2985,8 +2985,13 @@ Example:
   code-bearing images and one registration-table record per macro. Supported
   expression/value transformer bodies execute compiled template (nested calls,
   literals, plain symbols, unquoted operands, unquote-splicing), literal,
-  computed-if, and fold operations through the host callback ABI; unsupported
-  bodies retain an explicit registered shell and interpreted fallback. General
+  computed-if, and fold operations through the host callback ABI; supported
+  let-rooted bodies evaluate their computed binding inits (expression
+  variables from string append/type-key chains and scalar/string computed
+  expressions) through session locals and then emit compiled template,
+  bracket-clause, borrow, array, match, and let declarations the same way;
+  unsupported bodies retain an explicit registered shell and interpreted
+  fallback. General
   consumer catalog
   discovery/dispatch is a separate integration layer. The tlci path is
   target-independent in v1: cross-target builds keep target runtime artifacts
@@ -5082,6 +5087,23 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 201 | `expr-unary-op` (native template construction) |
 | 202 | `expr-char-literal` (native template construction) |
 | 203 | `expr-unit-literal` (native template construction) |
+| 204 | `local-set` (computed-body locals) |
+| 205 | `local-get` (computed-body locals) |
+| 206 | `expr-var-from-value` (computed-body construction) |
+| 207 | `expr-bracket-clause` (native template construction) |
+| 208 | `expr-borrow` (native template construction) |
+| 209 | `string-value` (computed-body construction) |
+| 210 | `diagnostic-from-value` (computed-body diagnostic) |
+| 211 | `pattern-var` (native pattern construction) |
+| 212 | `expr-array-set` (native template construction) |
+| 213 | `let-binding` (native template construction) |
+| 214 | `let-binding-list-empty` (native template construction) |
+| 215 | `let-binding-list-cons` (native template construction) |
+| 216 | `expr-let` (native template construction) |
+| 218 | `type-var` (native type construction) |
+| 219 | `let-binding-typed` (native template construction) |
+| 220 | `type-scalar` (native type construction) |
+| 221 | `expr-int-from-data` (computed-body construction) |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned

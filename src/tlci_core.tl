@@ -614,6 +614,78 @@
   202)
 (define tlci-host-callback-op-expr-unit-literal : i64
   203)
+
+;; Computed-body locals and declaration-template construction (refs #5603).
+;; local-set pops one value into the session local slot named by immediate `a`;
+;; local-get pushes the slot's value. expr-var-from-value pops a comptime
+;; String or Name value and pushes the variable node the interpreted
+;; `(comptime.)expr-var` builtin produces (syntax-name resolution over the
+;; source-name session included). expr-bracket-clause pops an expression list
+;; and pushes the bracket-clause node the parser produces for `[item ...]` in
+;; templates. expr-borrow pops the place expression and pushes a borrow node:
+;; immediate `a` is 1 for `&mut` and 0 for `&`; the lifetime is inferred.
+;; All are additive ABI v1 ops -- the embedded image and its consumer are
+;; always the same source-bound binary.
+(define tlci-host-callback-op-local-set : i64
+  204)
+(define tlci-host-callback-op-local-get : i64
+  205)
+(define tlci-host-callback-op-expr-var-from-value : i64
+  206)
+(define tlci-host-callback-op-expr-bracket-clause : i64
+  207)
+(define tlci-host-callback-op-expr-borrow : i64
+  208)
+
+;; Computed-body support (refs #5603): string-value pushes the comptime String
+;; value for caller bytes (a parsed-source string identity like the lexer's);
+;; diagnostic-from-value pops a comptime String into the session diagnostic
+;; and answers with the diagnostic status; pattern-var pushes a unit/variable
+;; pattern for caller bytes with the template-source mark. All are additive
+;; ABI v1 ops.
+(define tlci-host-callback-op-string-value : i64
+  209)
+(define tlci-host-callback-op-diagnostic-from-value : i64
+  210)
+(define tlci-host-callback-op-pattern-var : i64
+  211)
+
+;; More template construction (refs #5603): expr-array-set pops the value,
+;; index, and target expressions and pushes the array-set! node; let-binding
+;; pops the init expression and pushes a named let binding (template-source
+;; marked like the interpreted quote); let-binding-list-empty/cons build the
+;; binding list; expr-let pops the body and the binding list and pushes the
+;; let node. All are additive ABI v1 ops.
+(define tlci-host-callback-op-expr-array-set : i64
+  212)
+(define tlci-host-callback-op-let-binding : i64
+  213)
+(define tlci-host-callback-op-let-binding-list-empty : i64
+  214)
+(define tlci-host-callback-op-let-binding-list-cons : i64
+  215)
+(define tlci-host-callback-op-expr-let : i64
+  216)
+
+;; Typed template bindings (refs #5603): type-var pushes the AstType.Var for
+;; caller bytes (unmarked, matching the interpreted type quote); let-binding-
+;; typed pops the type value then the init expression and pushes a binding
+;; carrying both. Additive ABI v1 ops.
+(define tlci-host-callback-op-type-var : i64
+  218)
+(define tlci-host-callback-op-let-binding-typed : i64
+  219)
+
+;; type-scalar pushes the scalar AstType variant named by immediate ordinal
+;; (the primitive type constructors; additive ABI v1 op, refs #5603).
+(define tlci-host-callback-op-type-scalar : i64
+  220)
+
+;; expr-int-from-data pushes an int literal expression whose value is the
+;; data i64 in immediate `a` (used when a computed reflection yields a
+;; runtime count, refs #5603). Additive ABI v1 op.
+(define tlci-host-callback-op-expr-int-from-data : i64
+  221)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

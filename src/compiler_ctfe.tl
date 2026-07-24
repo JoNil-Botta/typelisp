@@ -518,6 +518,8 @@
   (PatternList AstPatternList)
   (MatchArm AstMatchArm)
   (MatchArmList AstMatchArmList)
+  (LetBinding AstLetBinding)
+  (LetBindingList AstLetBindingList)
   (TypeInfo AstType)
   (TypeInfoBox AstType)
   (TypeInfoList AstTypeList)
@@ -1969,6 +1971,8 @@
     [(CompilerCtfeValue.PatternList _) "PatternList"]
     [(CompilerCtfeValue.MatchArm _) "MatchArm"]
     [(CompilerCtfeValue.MatchArmList _) "MatchArmList"]
+    [(CompilerCtfeValue.LetBinding _) "LetBinding"]
+    [(CompilerCtfeValue.LetBindingList _) "LetBindingList"]
     [(CompilerCtfeValue.TypeInfo _) "TypeInfo"]
     [(CompilerCtfeValue.TypeInfoBox _) "Box"]
     [(CompilerCtfeValue.TypeInfoList _) "TypeInfoList"]
@@ -2542,6 +2546,10 @@
       (ctfe-eval-bin-comptime-metadata "MatchArm" expr)]
     [(CompilerCtfeValue.MatchArmList _)
       (ctfe-eval-bin-comptime-metadata "MatchArmList" expr)]
+    [(CompilerCtfeValue.LetBinding _)
+      (ctfe-eval-bin-comptime-metadata "LetBinding" expr)]
+    [(CompilerCtfeValue.LetBindingList _)
+      (ctfe-eval-bin-comptime-metadata "LetBindingList" expr)]
     [(CompilerCtfeValue.TypeInfo a)
       (match rv
         [(CompilerCtfeValue.TypeInfo b)
@@ -13172,6 +13180,8 @@
     [(CompilerCtfeValue.PatternList _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.MatchArm _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.MatchArmList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.LetBinding _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.LetBindingList _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.TypeInfo _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.TypeInfoBox _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.TypeInfoList _) (AstLiteral.Unit)]

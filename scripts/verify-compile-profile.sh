@@ -1218,6 +1218,41 @@ if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM"; then
     diff -u "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM" >&2 || true
     fail "comment-modified stdlib root changed generated assembly"
 fi
+
+# #5454 regression: the same modified root reached by a non-`stdlib` path
+# spelling from a working directory without a `stdlib/` fallback must still
+# typecheck the root's own modules against that root's core-macros prelude
+# (previously: 'unbound name cond' unless the root was literally `stdlib`).
+STDLIB_TLCI_PATHROOT_ASM="$STDLIB_TLCI_DIR/pathroot.s"
+STDLIB_TLCI_PATHROOT_STDOUT="$STDLIB_TLCI_DIR/pathroot.stdout"
+STDLIB_TLCI_PATHROOT_STDERR="$STDLIB_TLCI_DIR/pathroot.stderr"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
+        -o "$STDLIB_TLCI_PATHROOT_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root modified-root/stdlib
+) > "$STDLIB_TLCI_PATHROOT_STDOUT" 2> "$STDLIB_TLCI_PATHROOT_STDERR"; then
+    show_failure_logs "$STDLIB_TLCI_PATHROOT_STDOUT" "$STDLIB_TLCI_PATHROOT_STDERR"
+    fail "path-spelled modified stdlib root failed to typecheck (#5454)"
+fi
+assert_profile_counter_eq_in \
+    "$STDLIB_TLCI_PATHROOT_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$STDLIB_TLCI_PATHROOT_STDOUT" \
+    "$STDLIB_TLCI_PATHROOT_STDERR"
+assert_profile_counter_at_least_in \
+    "$STDLIB_TLCI_PATHROOT_STDERR" \
+    "typecheck.macro.stdlib_source_interpreted" \
+    1 \
+    "$STDLIB_TLCI_PATHROOT_STDOUT" \
+    "$STDLIB_TLCI_PATHROOT_STDERR"
+if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_PATHROOT_ASM"; then
+    diff -u "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_PATHROOT_ASM" >&2 || true
+    fail "path-spelled modified stdlib root changed generated assembly (#5454)"
+fi
 fi
 
 echo "[compile-profile] compare compact and full canonical vector modules"

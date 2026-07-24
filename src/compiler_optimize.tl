@@ -7945,17 +7945,45 @@
         labels)
       seen)))
 
+;; The linear original, kept for small functions. `opt-label-add` prepends only
+;; on first occurrence, which is exactly what the hashed variant above does, so
+;; the two build the identical list and the choice between them is invisible.
+(define (opt-cfg-index-reachable-labels-from-linear
+  [index : OptCfgIndex]
+  [id : i64]
+  [labels : OptLabelSet]) : OptLabelSet
+  (if (>= id (opt-cfg-index-block-count index))
+    labels
+    (opt-cfg-index-reachable-labels-from-linear
+      index
+      (+ id 1)
+      (if (array-ref (struct-get index reachable) id)
+        (opt-label-add labels (opt-cfg-index-label index id))
+        labels))))
+
+;; Which dedup to use is a size question. The map is not reclaimed, so building
+;; one per CFG index build costs real peak memory in the optimizer, while the
+;; linear scan it replaces only becomes expensive once a function has many
+;; blocks. Below the threshold the scan is cheaper than the allocation; above
+;; it, the O(blocks^2) comparisons dominate and the map pays for itself.
+(define (opt-cfg-index-reachable-hash-threshold) : i64
+  32)
+
 (define (opt-cfg-index-reachable-labels-from
   [index : OptCfgIndex]
   [id : i64]
   [labels : OptLabelSet]) : OptLabelSet
-  (opt-cfg-index-reachable-labels-from-seen
-    index
-    id
-    labels
-    (opt-cfg-index-reachable-seen-seed
+  (if (<
+    (opt-cfg-index-block-count index)
+    (opt-cfg-index-reachable-hash-threshold))
+    (opt-cfg-index-reachable-labels-from-linear index id labels)
+    (opt-cfg-index-reachable-labels-from-seen
+      index
+      id
       labels
-      (opt_string_i64_map.with-capacity 64))))
+      (opt-cfg-index-reachable-seen-seed
+        labels
+        (opt_string_i64_map.with-capacity (opt-cfg-index-block-count index))))))
 
 (define (opt-cfg-index-reachable-seen-seed
   [labels : OptLabelSet]
@@ -7968,11 +7996,15 @@
         (opt-cfg-index-reachable-seen-seed (box-get rest) seen))]))
 
 (define (opt-cfg-index-reachable-labels [index : OptCfgIndex]) : OptLabelSet
-  (opt-cfg-index-reachable-labels-from-seen
-    index
-    0
-    (OptLabelSet.Nil)
-    (opt_string_i64_map.with-capacity 64)))
+  (if (<
+    (opt-cfg-index-block-count index)
+    (opt-cfg-index-reachable-hash-threshold))
+    (opt-cfg-index-reachable-labels-from-linear index 0 (OptLabelSet.Nil))
+    (opt-cfg-index-reachable-labels-from-seen
+      index
+      0
+      (OptLabelSet.Nil)
+      (opt_string_i64_map.with-capacity (opt-cfg-index-block-count index)))))
 
 (define (opt-cfg-index-rpo-id [index : OptCfgIndex] [slot : i64]) : i64
   (if (and (>= slot 0) (< slot (struct-get index reach-count)))

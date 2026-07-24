@@ -47665,7 +47665,9 @@
                                       ;; and stay accounted separately below.
                                       (if (or
                                         compiler-backend-frame-slot-referenced
-                                        (> outgoing-frame-space 0))
+                                        (> outgoing-frame-space 0)
+                                        (compiler-backend-blocks-have-call?
+                                          emit-blocks-list))
                                         (compiler-backend-frame-slots-with-groups
                                           slot-vars
                                           assignments

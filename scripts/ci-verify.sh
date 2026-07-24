@@ -166,6 +166,14 @@ run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh -
 # verification uses the branch-built compiler because compression is part of
 # the new loader surface.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
+# The tlci host callback ops are additive ABI constants dispatched by number
+# through a `cond`; nothing in the type system rejects two constants sharing a
+# value, and branches adding ops in different regions of the file merge without
+# a textual conflict, leaving a silently dead second arm.
+run_gate \
+    "tlci host callback op numbers" \
+    scripts/check-tlci-op-numbers.sh \
+    --self-test
 run_gate \
     "CI timing budget self-tests" \
     scripts/check-ci-timing-budgets.sh \

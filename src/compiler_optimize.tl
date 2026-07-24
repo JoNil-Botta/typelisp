@@ -13687,9 +13687,16 @@
             (not (array-ref marks pred-id)))
             (begin
               (array-set! marks pred-id true)
+              ;; `marks` is the authoritative dedup here: it is seeded with the
+              ;; header and the latch, this branch runs only when
+              ;; `marks[pred-id]` is clear, and it is set immediately above. So
+              ;; `pred` is provably absent from both sets and `opt-label-add`'s
+              ;; `string.eq` membership scan always returns false. Prepending
+              ;; directly builds the identical lists and drops an O(body^2)
+              ;; scan per natural loop.
               (OptNaturalLoopCollectState.State
-                (opt-label-add body pred)
-                (opt-label-add worklist pred)))
+                (OptLabelSet.Cons pred (box body))
+                (OptLabelSet.Cons pred (box worklist))))
             state)]
         [(option_i64.None) state])]))
 

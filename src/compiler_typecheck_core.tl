@@ -3836,6 +3836,18 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-generated-decl-checks-invariant-eligible : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-generated-decl-checks-concrete-required : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-abstract-proofs-recorded : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-generated-module-memo-hits : i64
     0))
 (cfg
@@ -4047,6 +4059,9 @@
     (begin
       (set! compiler-tc-macro-generated-module-materializations 0)
       (set! compiler-tc-macro-generated-decl-checks 0)
+      (set! compiler-tc-macro-generated-decl-checks-invariant-eligible 0)
+      (set! compiler-tc-macro-generated-decl-checks-concrete-required 0)
+      (set! compiler-tc-macro-abstract-proofs-recorded 0)
       (set! compiler-tc-macro-generated-module-memo-hits 0)
       (set! compiler-tc-macro-generated-module-catalog-builds 0)
       (set! compiler-tc-macro-generated-module-catalog-hits 0)
@@ -4453,13 +4468,28 @@
 
 (cfg
   compile-profile
-  (define (compiler-tc-decl-profile-record [decl : AstDecl]) : unit
+  (define (compiler-tc-decl-profile-record [ctx : TcContext] [decl : AstDecl]) : unit
     (begin
       (match (ast-decl-generated-meta decl)
-        [(AstGeneratedDeclMeta.Some _ _ _ _)
-          (set!
-            compiler-tc-macro-generated-decl-checks
-            (+ compiler-tc-macro-generated-decl-checks 1))]
+        [(AstGeneratedDeclMeta.Some generator _ _ _)
+          (begin
+            (set!
+              compiler-tc-macro-generated-decl-checks
+              (+ compiler-tc-macro-generated-decl-checks 1))
+            ;; Report-only lane split for #5296: a generated declaration is an
+            ;; invariant-eligible candidate when its generator has a persisted
+            ;; abstract-validation proof and the declaration itself is free of
+            ;; substitution-dependent constructs. Checking behavior is
+            ;; unchanged; the totals still sum to generated_decl_checks.
+            (if (and
+              (tc-macro-abstract-proof-exists-for-macro? generator)
+              (not (tc-generated-decl-dependent-construct? ctx decl)))
+              (set!
+                compiler-tc-macro-generated-decl-checks-invariant-eligible
+                (+ compiler-tc-macro-generated-decl-checks-invariant-eligible 1))
+              (set!
+                compiler-tc-macro-generated-decl-checks-concrete-required
+                (+ compiler-tc-macro-generated-decl-checks-concrete-required 1))))]
         [(AstGeneratedDeclMeta.No) unit])
       (match decl
         [(AstDecl.Def decl-meta _ _ _)
@@ -4697,6 +4727,15 @@
       (compiler-tc-macro-counter-profile-line
         "generated_decl_checks"
         compiler-tc-macro-generated-decl-checks)
+      (compiler-tc-macro-counter-profile-line
+        "generated_decl_checks_invariant_eligible"
+        compiler-tc-macro-generated-decl-checks-invariant-eligible)
+      (compiler-tc-macro-counter-profile-line
+        "generated_decl_checks_concrete_required"
+        compiler-tc-macro-generated-decl-checks-concrete-required)
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_abstract_proofs"
+        compiler-tc-macro-abstract-proofs-recorded)
       (compiler-tc-macro-counter-profile-line
         "generated_module_memo_hits"
         compiler-tc-macro-generated-module-memo-hits)
@@ -46052,6 +46091,105 @@
     (set! tc-macro-abstract-param-name (struct-get state param-name))
     (set! tc-macro-abstract-kind-mask (struct-get state kind-mask))))
 
+;; --- persisted abstract-validation proofs (#5296) -----------------------------
+;;
+;; Report-only instrumentation for the future generated-module skip lane.
+;; `tc-check-defmacro-abstract-param` validates every kind-constrained macro
+;; type operand abstractly at definition time; this table keeps the successful
+;; results instead of discarding them: one entry per (macro-key, param-name)
+;; holding the validated kind mask. Keys are interned ids of the same qualified
+;; display string `macro-wrap-generated-decl` stamps into generated declaration
+;; metadata (`macro-decl-name-display` over the definition module), so a
+;; generated declaration can test whether its generator owns any persisted
+;; proof without re-resolving the macro. Entries hold only intern-table ids in
+;; startup-allocated arrays: nothing here points into per-compile arenas, so
+;; the table stays readable across the arena rewinds that end a typecheck. A
+;; repeated proof for the same key overwrites in place. The table resets at
+;; every per-program macro-expansion boundary next to
+;; `macro-generated-module-memo-reset!`; entries past the fixed capacity are
+;; dropped, which is the conservative direction (the generator then reports no
+;; proof and its declarations land in the concrete-required lane).
+(define tc-macro-abstract-proof-capacity : i64
+  4096)
+(define tc-macro-abstract-proof-macro-keys : (Array i64)
+  (array.make-array i64 4096))
+(define tc-macro-abstract-proof-param-keys : (Array i64)
+  (array.make-array i64 4096))
+(define tc-macro-abstract-proof-kind-masks : (Array i64)
+  (array.make-array i64 4096))
+(define tc-macro-abstract-proof-count : i64
+  0)
+
+(define (tc-macro-abstract-proof-reset!) : unit
+  (set! tc-macro-abstract-proof-count 0))
+
+(define (tc-macro-abstract-proof-find
+  [macro-key-id : i64]
+  [param-name-id : i64]
+  [index : i64]) : i64
+  (if (>= index tc-macro-abstract-proof-count)
+    -1
+    (if (and
+      (= (array-ref tc-macro-abstract-proof-macro-keys index) macro-key-id)
+      (= (array-ref tc-macro-abstract-proof-param-keys index) param-name-id))
+      index
+      (tc-macro-abstract-proof-find macro-key-id param-name-id (+ index 1)))))
+
+(define (tc-macro-abstract-proof-note!
+  [macro-key : String]
+  [param-name : String]
+  [kind-mask : i64]) : unit
+  (let
+    [macro-key-id : i64 (intern macro-key)]
+    [param-name-id : i64 (intern param-name)]
+    [existing : i64 (tc-macro-abstract-proof-find macro-key-id param-name-id 0)]
+    (begin
+      (if (>= existing 0)
+        (array-set! tc-macro-abstract-proof-kind-masks existing kind-mask)
+        (if (>= tc-macro-abstract-proof-count tc-macro-abstract-proof-capacity)
+          unit
+          (begin
+            (array-set!
+              tc-macro-abstract-proof-macro-keys
+              tc-macro-abstract-proof-count
+              macro-key-id)
+            (array-set!
+              tc-macro-abstract-proof-param-keys
+              tc-macro-abstract-proof-count
+              param-name-id)
+            (array-set!
+              tc-macro-abstract-proof-kind-masks
+              tc-macro-abstract-proof-count
+              kind-mask)
+            (set!
+              tc-macro-abstract-proof-count
+              (+ tc-macro-abstract-proof-count 1)))))
+      (cfg
+        compile-profile
+        (set!
+          compiler-tc-macro-abstract-proofs-recorded
+          (+ compiler-tc-macro-abstract-proofs-recorded 1))))))
+
+(define (tc-macro-abstract-proof-lookup
+  [macro-key : String]
+  [param-name : String]) : i64
+  (let
+    [index : i64
+      (tc-macro-abstract-proof-find (intern macro-key) (intern param-name) 0)]
+    (if (>= index 0)
+      (array-ref tc-macro-abstract-proof-kind-masks index)
+      -1)))
+
+(define (tc-macro-abstract-proof-exists-at? [macro-key-id : i64] [index : i64]) : bool
+  (if (>= index tc-macro-abstract-proof-count)
+    false
+    (if (= (array-ref tc-macro-abstract-proof-macro-keys index) macro-key-id)
+      true
+      (tc-macro-abstract-proof-exists-at? macro-key-id (+ index 1)))))
+
+(define (tc-macro-abstract-proof-exists-for-macro? [macro-key : String]) : bool
+  (tc-macro-abstract-proof-exists-at? (intern macro-key) 0))
+
 (define (tc-macro-abstract-call-id [func : AstExpr] [bound : TcStringList]) : i64
   (let
     [raw-id : i64 (tc-expr-var-name-id func)]
@@ -46416,18 +46554,18 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [macro-name : String]
+  [macro-key : String]
   [param-name : String]
   [kinds : AstMacroTypeKindList]
   [body : AstExpr]) : ResultTcUnit
   (let
     [saved : TcMacroAbstractState (tc-macro-abstract-state-save)]
+    [checked-mask : i64 (tc-macro-abstract-kind-list-mask kinds)]
     (begin
       (set! tc-macro-abstract-active true)
       (set! tc-macro-abstract-macro-name (string.copy (& macro-name)))
-      (set! tc-macro-abstract-param-name param-name)
-      (set!
-        tc-macro-abstract-kind-mask
-        (tc-macro-abstract-kind-list-mask kinds))
+      (set! tc-macro-abstract-param-name (string.copy (& param-name)))
+      (set! tc-macro-abstract-kind-mask checked-mask)
       (let
         [result : ResultTcUnit
           (tc-comptime-purity-expr
@@ -46441,12 +46579,19 @@
             body)]
         (begin
           (tc-macro-abstract-state-restore! saved)
+          ;; Persist the validated proof (#5296 report-only instrumentation);
+          ;; the abstract result itself still drives only acceptance here.
+          (match result
+            [(ResultTcUnit.Ok)
+              (tc-macro-abstract-proof-note! macro-key param-name checked-mask)]
+            [(ResultTcUnit.Err _) unit])
           result)))))
 
 (define (tc-check-defmacro-abstract-type-params-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [macro-name : String]
+  [macro-key : String]
   [params : (& params AstMacroParamList)]
   [index : i64]
   [body : AstExpr]) : ResultTcUnit
@@ -46464,6 +46609,7 @@
             ctx
             env
             macro-name
+            macro-key
             (tc-env-key-name-text param-name)
             type-kinds
             body)
@@ -46473,6 +46619,7 @@
               ctx
               env
               macro-name
+              macro-key
               params
               (+ index 1)
               body)]
@@ -46484,13 +46631,802 @@
   [name : i64]
   [params : AstMacroParamList]
   [body : AstExpr]) : ResultTcUnit
+  ;; The proof key is the same qualified display string the generated-module
+  ;; wrapper stamps into AstGeneratedDeclMeta, so the report-only
+  ;; classification lane can join a generated declaration back to this
+  ;; definition (#5296).
   (tc-check-defmacro-abstract-type-params-at
     ctx
     env
     (tc-env-key-name-text name)
+    (macro-decl-name-display name (tc-context-module-id ctx))
     (& params)
     0
     body))
+
+;; --- generated-decl dependent-construct scan (#5296) --------------------------
+;;
+;; Conservative syntactic scan backing the report-only lane split in
+;; `compiler-tc-decl-profile-record`. It answers one question: may this
+;; generated declaration depend on the concrete substitution that produced it?
+;; Returning true (dependent) means the declaration is counted
+;; concrete-required; false means invariant-eligible candidate. The scan flags:
+;;   - a fixed-size array type anywhere (signatures, fields, let annotations,
+;;     cast targets) -- its length is substitution-chosen,
+;;   - a cleanup/ownership annotation (AstFieldCleanup.Fn/Owned,
+;;     AstStructCleanup.Fn, and the enum-level equivalents),
+;;   - a reference or raw-pointer type (Ref, MutRef, Ptr, MutPtr),
+;;   - a lifetime-parameterized nominal type with non-empty lifetime args
+;;     (StructArgs/EnumArgs/VarArgs),
+;;   - a cast expression anywhere in a body,
+;;   - a nested generated-module import declaration (nested generator families
+;;     keep their own concrete checks).
+;; A `make-array` element type in expression position is NOT dependent: the
+;; produced value is a length-erased dynamic array.
+;;
+;; v1 soundness note: the scan deliberately does not track kind-polymorphic
+;; value operations (clone/eq/arithmetic) applied to arg-typed values, so
+;; eligibility is an over-approximation to be tightened by the future skip lane
+;; (first-instance isomorphism verification).
+(define (tc-generated-type-dependent-construct?
+  [ctx : TcContext]
+  [ty : AstType]) : bool
+  (match ty
+    [(AstType.Func args ret)
+      (or
+        (tc-generated-type-list-dependent-construct? ctx (box-get args))
+        (tc-generated-type-dependent-construct?
+          ctx
+          (tc-context-type-get ctx ret)))]
+    [(AstType.Tuple elems)
+      (tc-generated-type-list-dependent-construct? ctx (box-get elems))]
+    [(AstType.Array _ _) true]
+    [(AstType.DynArray elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
+    [(AstType.Box elem)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx elem))]
+    [(AstType.Region _ inner)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx inner))]
+    [(AstType.Ref _ _) true]
+    [(AstType.MutRef _ _) true]
+    [(AstType.Ptr _) true]
+    [(AstType.MutPtr _) true]
+    [(AstType.EnumArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstType.StructArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstType.VarArgs _ lifetimes)
+      (> (tc-lifetime-list-count (box-get lifetimes)) 0)]
+    [(AstType.Consume inner)
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get ctx inner))]
+    [_ false]))
+
+(define (tc-generated-type-list-dependent-construct?
+  [ctx : TcContext]
+  [types : AstTypeList]) : bool
+  (tc-generated-type-list-dependent-construct-at? ctx (& types) 0))
+
+(define (tc-generated-type-list-dependent-construct-at?
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [index : i64]) : bool
+  (if (>= index (ast-type-list-len types))
+    false
+    (or
+      (tc-generated-type-dependent-construct?
+        ctx
+        (tc-context-type-get
+          ctx
+          (ast-type-list-get types index (ast-type-id-fallback))))
+      (tc-generated-type-list-dependent-construct-at? ctx types (+ index 1)))))
+
+(define (tc-generated-maybe-type-dependent-construct?
+  [ctx : TcContext]
+  [maybe : AstMaybeType]) : bool
+  (match maybe
+    [(AstMaybeType.Some ty) (tc-generated-type-dependent-construct? ctx ty)]
+    [(AstMaybeType.No) false]))
+
+(define (tc-generated-param-list-dependent-construct?
+  [ctx : TcContext]
+  [params : AstParamList]) : bool
+  (tc-generated-param-list-dependent-construct-at? ctx (& params) 0))
+
+(define (tc-generated-param-list-dependent-construct-at?
+  [ctx : TcContext]
+  [params : (& params AstParamList)]
+  [index : i64]) : bool
+  (if (>= index (ast-param-list-len params))
+    false
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _ _)
+        (or
+          (tc-generated-type-dependent-construct? ctx ty)
+          (tc-generated-param-list-dependent-construct-at?
+            ctx
+            params
+            (+ index 1)))])))
+
+(define (tc-generated-pattern-dependent-construct?
+  [ctx : TcContext]
+  [pattern : AstPattern]) : bool
+  (match pattern
+    [(AstPattern.Var _ maybe-ty)
+      (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)]
+    [(AstPattern.Tuple items)
+      (tc-generated-pattern-list-dependent-construct? ctx (box-get items))]
+    [(AstPattern.Variant _ items)
+      (tc-generated-pattern-list-dependent-construct? ctx (box-get items))]
+    [_ false]))
+
+(define (tc-generated-pattern-list-dependent-construct?
+  [ctx : TcContext]
+  [items : AstPatternList]) : bool
+  (tc-generated-pattern-list-dependent-construct-at? ctx (& items) 0))
+
+(define (tc-generated-pattern-list-dependent-construct-at?
+  [ctx : TcContext]
+  [items : (& items AstPatternList)]
+  [index : i64]) : bool
+  (if (>= index (ast-pattern-list-len items))
+    false
+    (or
+      (tc-generated-pattern-dependent-construct?
+        ctx
+        (ast-pattern-list-get items index (ast-pattern-fallback)))
+      (tc-generated-pattern-list-dependent-construct-at? ctx items (+ index 1)))))
+
+(define (tc-generated-expr-list-dependent-construct?
+  [ctx : TcContext]
+  [exprs : AstExprList]) : bool
+  (tc-generated-expr-list-dependent-construct-at? ctx (& exprs) 0))
+
+(define (tc-generated-expr-list-dependent-construct-at?
+  [ctx : TcContext]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : bool
+  (if (>= index (ast-expr-list-len exprs))
+    false
+    (or
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx (ast-expr-list-get exprs index 0)))
+      (tc-generated-expr-list-dependent-construct-at? ctx exprs (+ index 1)))))
+
+(define (tc-generated-let-bindings-dependent-construct?
+  [ctx : TcContext]
+  [bindings : AstLetBindingList]) : bool
+  (tc-generated-let-bindings-dependent-construct-at? ctx (& bindings) 0))
+
+(define (tc-generated-let-bindings-dependent-construct-at?
+  [ctx : TcContext]
+  [bindings : (& bindings AstLetBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-let-binding-list-len bindings))
+    false
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding _ maybe-ty init-id)
+        (or
+          (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx init-id))
+          (tc-generated-let-bindings-dependent-construct-at?
+            ctx
+            bindings
+            (+ index 1)))])))
+
+(define (tc-generated-match-arms-dependent-construct?
+  [ctx : TcContext]
+  [arms : AstMatchArmList]) : bool
+  (tc-generated-match-arms-dependent-construct-at? ctx (& arms) 0))
+
+(define (tc-generated-match-arms-dependent-construct-at?
+  [ctx : TcContext]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]) : bool
+  (if (>= index (ast-match-arm-list-len arms))
+    false
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body-id)
+        (or
+          (tc-generated-pattern-dependent-construct? ctx pattern)
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx body-id))
+          (tc-generated-match-arms-dependent-construct-at? ctx arms (+ index 1)))])))
+
+(define (tc-generated-resource-bindings-dependent-construct?
+  [ctx : TcContext]
+  [bindings : AstResourceBindingList]) : bool
+  (tc-generated-resource-bindings-dependent-construct-at? ctx (& bindings) 0))
+
+(define (tc-generated-resource-bindings-dependent-construct-at?
+  [ctx : TcContext]
+  [bindings : (& bindings AstResourceBindingList)]
+  [index : i64]) : bool
+  (if (>= index (ast-resource-binding-list-len bindings))
+    false
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding _ init-id cleanup-id _)
+        (or
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx init-id))
+          (tc-generated-expr-dependent-construct?
+            ctx
+            (tc-context-expr-get ctx cleanup-id))
+          (tc-generated-resource-bindings-dependent-construct-at?
+            ctx
+            bindings
+            (+ index 1)))])))
+
+(define (tc-generated-expr-dependent-construct?
+  [ctx : TcContext]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-id _)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.Literal _) false]
+    [(AstExpr.Var _) false]
+    [(AstExpr.Binary _ left-id right-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx left-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx right-id)))]
+    [(AstExpr.Unary _ inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.Call func-id args)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx func-id))
+        (tc-generated-expr-list-dependent-construct? ctx args))]
+    [(AstExpr.If cond-id then-id else-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx cond-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx then-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx else-id)))]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body-id)
+          (or
+            (tc-generated-let-bindings-dependent-construct? ctx bindings)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx body-id)))])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda params ret body-id)
+          (or
+            (tc-generated-param-list-dependent-construct? ctx params)
+            (tc-generated-maybe-type-dependent-construct? ctx ret)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx body-id)))])]
+    [(AstExpr.Tuple items)
+      (tc-generated-expr-list-dependent-construct? ctx items)]
+    [(AstExpr.TupleRef tuple-id _)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx tuple-id))]
+    [(AstExpr.Array items)
+      (tc-generated-expr-list-dependent-construct? ctx items)]
+    [(AstExpr.DynArray items)
+      (tc-generated-expr-list-dependent-construct? ctx items)]
+    ;; A make-array element type in expression position is not dependent; the
+    ;; produced value is a length-erased dynamic array.
+    [(AstExpr.MakeArray _ len-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx len-id))]
+    [(AstExpr.ArrayRef array-id index-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx array-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx index-id)))]
+    [(AstExpr.ArraySet array-id index-id value-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx array-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx index-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id)))]
+    [(AstExpr.ArrayTake array-id live-id index-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx array-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx live-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx index-id)))]
+    [(AstExpr.ArrayPush array-id value-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx array-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id)))]
+    [(AstExpr.StringRef str-id index-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx str-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx index-id)))]
+    [(AstExpr.While cond-id body-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx cond-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx body-id)))]
+    [(AstExpr.Begin items)
+      (tc-generated-expr-list-dependent-construct? ctx items)]
+    [(AstExpr.Unsafe items)
+      (tc-generated-expr-list-dependent-construct? ctx items)]
+    [(AstExpr.Set _ value-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx value-id))]
+    [(AstExpr.Ann inner-id ty)
+      (or
+        (tc-generated-type-dependent-construct? ctx ty)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id)))]
+    [(AstExpr.Cast _ _) true]
+    [(AstExpr.Borrow _ _ place-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx place-id))]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee-id arms)
+          (or
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx scrutinee-id))
+            (tc-generated-match-arms-dependent-construct? ctx arms))])]
+    [(AstExpr.Foreach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach.Foreach _ elem-ty start-id end-id body-id)
+          (or
+            (tc-generated-type-dependent-construct? ctx elem-ty)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx start-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx end-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx body-id)))])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ _ elem-ty start-id end-id init-id value-id)
+          (or
+            (tc-generated-type-dependent-construct? ctx elem-ty)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx start-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx end-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx init-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx value-id)))])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan
+            _
+            _
+            elem-ty
+            start-id
+            end-id
+            _
+            init-ty
+            init-id
+            value-id
+            body-id)
+          (or
+            (tc-generated-type-dependent-construct? ctx elem-ty)
+            (tc-generated-type-dependent-construct? ctx init-ty)
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx start-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx end-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx init-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx value-id))
+            (tc-generated-expr-dependent-construct?
+              ctx
+              (tc-context-expr-get ctx body-id)))])]
+    [(AstExpr.SpmdBroadcast value-id lane-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx lane-id)))]
+    [(AstExpr.SpmdShuffle value-id lane-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx lane-id)))]
+    [(AstExpr.SpmdProgramIndex) false]
+    [(AstExpr.SpmdProgramCount) false]
+    [(AstExpr.StructGet receiver-id _)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx receiver-id))]
+    [(AstExpr.StructSet receiver-id _ value-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx receiver-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id)))]
+    [(AstExpr.WithRegion _ body)
+      (tc-generated-expr-list-dependent-construct? ctx body)]
+    [(AstExpr.WithEscape scratch-id body)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx scratch-id))
+        (tc-generated-expr-list-dependent-construct? ctx body))]
+    [(AstExpr.WithScratch body)
+      (tc-generated-expr-list-dependent-construct? ctx body)]
+    [(AstExpr.InArena arena-id body)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx arena-id))
+        (tc-generated-expr-list-dependent-construct? ctx body))]
+    [(AstExpr.WithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource.WithResource bindings body)
+          (or
+            (tc-generated-resource-bindings-dependent-construct? ctx bindings)
+            (tc-generated-expr-list-dependent-construct? ctx body))])]
+    [(AstExpr.Box inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.BoxGet inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.BoxTake inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.BoxSet inner-id value-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx inner-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id)))]
+    [(AstExpr.TypeLiteral ty) (tc-generated-type-dependent-construct? ctx ty)]
+    [(AstExpr.Init maybe-ty)
+      (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)]
+    [(AstExpr.Comptime inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.Quote inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.Quasiquote inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.Unquote inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.UnquoteSplicing inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.BracketClause items)
+      (tc-generated-expr-list-dependent-construct? ctx items)]
+    [(AstExpr.Try inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.Return inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.Break) false]
+    [(AstExpr.Continue) false]
+    [(AstExpr.PtrNull ty) (tc-generated-type-dependent-construct? ctx ty)]
+    [(AstExpr.PtrNullCheck inner-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx inner-id))]
+    [(AstExpr.PtrAddrOf place-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx place-id))]
+    [(AstExpr.PtrRead ptr-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx ptr-id))]
+    [(AstExpr.PtrWrite ptr-id value-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx ptr-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id)))]
+    [(AstExpr.PtrOffset ptr-id offset-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx ptr-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx offset-id)))]
+    [(AstExpr.PtrCast ptr-id ty)
+      (or
+        (tc-generated-type-dependent-construct? ctx ty)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx ptr-id)))]
+    [(AstExpr.PtrToInt ptr-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx ptr-id))]
+    [(AstExpr.IntToPtr value-id ty)
+      (or
+        (tc-generated-type-dependent-construct? ctx ty)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx value-id)))]
+    [(AstExpr.StringData str-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx str-id))]
+    [(AstExpr.StringFromBytes ptr-id len-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx ptr-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx len-id)))]
+    [(AstExpr.ArrayData array-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx array-id))]
+    [(AstExpr.BinaryData _) false]
+    [(AstExpr.ProgramArgc) false]
+    [(AstExpr.ProgramArgv) false]
+    [(AstExpr.ProgramEnvp) false]
+    [(AstExpr.CpuIdEax leaf-id subleaf-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx leaf-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx subleaf-id)))]
+    [(AstExpr.CpuIdEbx leaf-id subleaf-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx leaf-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx subleaf-id)))]
+    [(AstExpr.CpuIdEcx leaf-id subleaf-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx leaf-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx subleaf-id)))]
+    [(AstExpr.CpuIdEdx leaf-id subleaf-id)
+      (or
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx leaf-id))
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx subleaf-id)))]
+    [(AstExpr.Xgetbv index-id)
+      (tc-generated-expr-dependent-construct?
+        ctx
+        (tc-context-expr-get ctx index-id))]
+    [(AstExpr.Syscall args)
+      (tc-generated-expr-list-dependent-construct? ctx args)]))
+
+(define (tc-generated-field-cleanup-dependent? [cleanup : AstFieldCleanup]) : bool
+  (match cleanup
+    [(AstFieldCleanup.No) false]
+    [_ true]))
+
+(define (tc-generated-struct-cleanup-dependent? [cleanup : AstStructCleanup]) : bool
+  (match cleanup
+    [(AstStructCleanup.No) false]
+    [_ true]))
+
+(define (tc-generated-enum-cleanup-dependent? [cleanup : AstEnumCleanup]) : bool
+  (match cleanup
+    [(AstEnumCleanup.No) false]
+    [_ true]))
+
+(define (tc-generated-fields-dependent-construct?
+  [ctx : TcContext]
+  [fields : AstFieldDefList]) : bool
+  (tc-generated-fields-dependent-construct-at? ctx (& fields) 0))
+
+(define (tc-generated-fields-dependent-construct-at?
+  [ctx : TcContext]
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]) : bool
+  (if (>= index (ast-field-def-list-len fields))
+    false
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty cleanup)
+        (or
+          (tc-generated-field-cleanup-dependent? cleanup)
+          (tc-generated-type-dependent-construct? ctx ty)
+          (tc-generated-fields-dependent-construct-at? ctx fields (+ index 1)))])))
+
+(define (tc-generated-payload-cleanups-dependent-at?
+  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-payload-cleanup-list-len cleanups))
+    false
+    (match (ast-variant-payload-cleanup-list-get
+      cleanups
+      index
+      (ast-variant-payload-cleanup-fallback))
+      [(AstVariantPayloadCleanup.No)
+        (tc-generated-payload-cleanups-dependent-at? cleanups (+ index 1))]
+      [_ true])))
+
+(define (tc-generated-variants-dependent-construct?
+  [ctx : TcContext]
+  [variants : AstVariantDefList]) : bool
+  (tc-generated-variants-dependent-construct-at? ctx (& variants) 0))
+
+(define (tc-generated-variants-dependent-construct-at?
+  [ctx : TcContext]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    false
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ payload-types payload-cleanups)
+        (or
+          (tc-generated-type-list-dependent-construct? ctx payload-types)
+          (tc-generated-payload-cleanups-dependent-at? (& payload-cleanups) 0)
+          (tc-generated-variants-dependent-construct-at?
+            ctx
+            variants
+            (+ index 1)))])))
+
+(define (tc-generated-decl-dependent-construct?
+  [ctx : TcContext]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Def _ _ maybe-ty body-id)
+      (or
+        (tc-generated-maybe-type-dependent-construct? ctx maybe-ty)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx body-id)))]
+    [(AstDecl.DefFn _ _ params ret body-id _)
+      (or
+        (tc-generated-param-list-dependent-construct? ctx params)
+        (tc-generated-type-dependent-construct? ctx ret)
+        (tc-generated-expr-dependent-construct?
+          ctx
+          (tc-context-expr-get ctx body-id)))]
+    ;; Macro declarations are compile-time only; they never reach the runtime
+    ;; checking lane this classification feeds.
+    [(AstDecl.DefMacro _ _ _ _ _) false]
+    [(AstDecl.Extern _ _ _ _ ty)
+      (tc-generated-type-dependent-construct? ctx ty)]
+    [(AstDecl.DefEnum _ _ cleanup variants)
+      (or
+        (tc-generated-enum-cleanup-dependent? cleanup)
+        (tc-generated-variants-dependent-construct? ctx variants))]
+    [(AstDecl.DefEnumLifetimes _ _ _ cleanup variants)
+      (or
+        (tc-generated-enum-cleanup-dependent? cleanup)
+        (tc-generated-variants-dependent-construct? ctx variants))]
+    [(AstDecl.DefStruct _ _ _ cleanup fields)
+      (or
+        (tc-generated-struct-cleanup-dependent? cleanup)
+        (tc-generated-fields-dependent-construct? ctx fields))]
+    [(AstDecl.DefStructLifetimes _ _ _ _ cleanup fields)
+      (or
+        (tc-generated-struct-cleanup-dependent? cleanup)
+        (tc-generated-fields-dependent-construct? ctx fields))]
+    ;; Nested generated-module imports keep their own concrete checks.
+    [(AstDecl.Import _ _) true]
+    [(AstDecl.Unsafe inner-box)
+      (tc-generated-decl-dependent-construct? ctx (box-get inner-box))]
+    [(AstDecl.ModuleBody _ decls-box)
+      (tc-generated-decl-list-dependent-construct? ctx (box-get decls-box))]
+    [_ false]))
+
+(define (tc-generated-decl-list-dependent-construct?
+  [ctx : TcContext]
+  [decls : AstDeclList]) : bool
+  (tc-generated-decl-list-dependent-construct-at? ctx (& decls) 0))
+
+(define (tc-generated-decl-list-dependent-construct-at?
+  [ctx : TcContext]
+  [decls : (& decls AstDeclList)]
+  [index : i64]) : bool
+  (if (>= index (ast-decl-list-len decls))
+    false
+    (or
+      (tc-generated-decl-dependent-construct?
+        ctx
+        (ast-decl-list-get decls index (ast-decl-fallback)))
+      (tc-generated-decl-list-dependent-construct-at? ctx decls (+ index 1)))))
 
 (define (tc-macro-param-list-needs-call-context? [params : AstMacroParamList]) : bool
   (tc-macro-param-list-needs-call-context-at? (& params) 0))
@@ -56382,6 +57318,7 @@
     (set! macro-live-prescan-visible-names (TcNameIdList.Nil))
     (ctfe-module-macro-export-reset!)
     (macro-generated-module-memo-reset!)
+    (tc-macro-abstract-proof-reset!)
     (macro-generated-decls-memo-reset!)
     (tc-macro-helper-env-cache-reset!)
     (tc-nominal-owner-cache-reset!)
@@ -71725,6 +72662,7 @@
     (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
     (tc-stdlib-comptime-macro-surface-ok-reset!)
     (macro-generated-module-memo-reset!)
+    (tc-macro-abstract-proof-reset!)
     (macro-generated-decls-memo-reset!)
     ;; Reset the CTFE base-env cache once per program (plan P2). The pass
     ;; rebuilds it via macro-expand-ctfe-env-build-once!; it is then reused by
@@ -73763,7 +74701,7 @@
                               (tc-unused-unsafe-restore-current-path! prev-path)
                               (cfg
                                 compile-profile
-                                (compiler-tc-decl-profile-record decl))
+                                (compiler-tc-decl-profile-record decl-ctx decl))
                               (set! cur-decls rest)
                               (set! cur-paths rest-paths)
                               (set!
@@ -74094,6 +75032,7 @@
     (ctfe-module-value-reset!)
     (set! ctfe-needs-metadata true)
     (macro-generated-module-memo-reset!)
+    (tc-macro-abstract-proof-reset!)
     (macro-generated-decls-memo-reset!)))
 
 (define (compiler-typecheck-reset-file-state!) : unit

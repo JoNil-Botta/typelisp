@@ -37847,8 +37847,14 @@
     [initial-uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
     [ready : CompilerIrBlockList
       (opt-successor-sink-strip-dead-packs frame initial-uses blocks)]
-    [cfg : OptCfgIndex (opt-cfg-index-build ready)]
-    [loops : OptNaturalLoopList (opt-cfg-natural-loops ready)]
+    ;; The natural-loop scan needs the pred-map/reachable/dominator view of the
+    ;; SAME block list this pass already indexes, and `opt-cfg-natural-loops`
+    ;; builds a whole context (index included) internally. Build the context
+    ;; once and take its index instead of indexing `ready` twice.
+    [cfg-context : OptCfgContext (opt-cfg-context-build ready)]
+    [cfg : OptCfgIndex (struct-get cfg-context index)]
+    [loops : OptNaturalLoopList
+      (opt-cfg-natural-loops-with-context ready cfg-context)]
     [all-defs : (Array i64) (opt-used-array-new frame)]
     [_all-defs : unit (opt-successor-sink-fill-all-defs! frame ready all-defs)]
     [total-uses : (Array i64) (opt-collect-blocks-uses-array frame ready)]

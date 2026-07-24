@@ -8,6 +8,13 @@ set -eu
 # -fno-vectorize/-fno-slp-vectorize rows. The self-compile metric carries a small
 # cross-runner tolerance because cachegrind counts differ between WSL and GitHub
 # hosted Linux runners even with fixed paths and a clean measured environment.
+#
+# That tolerance absorbs real drift as well as noise, and a tolerated result
+# never refreshes the baseline. Drift is therefore cumulative against a fixed
+# baseline: once it approaches the tolerance, the next change to cross the line
+# reports the accumulated total rather than its own cost, and gets blamed for it.
+# Rows using a large share of their budget are flagged so that is visible before
+# it happens rather than after. Refs #5641.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -19,6 +26,7 @@ BASELINE=${TYPELISP_IR_CHECK_BASELINE:-$DEFAULT_BASELINE}
 RUNS=${TYPELISP_IR_CHECK_RUNS:-1}
 BENCHMARKS=${TYPELISP_IR_CHECK_BENCHMARKS:-$DEFAULT_BENCHMARKS}
 SELF_COMPILE_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-5000}
+STALE_BUDGET_PCT=${TYPELISP_IR_STALE_BUDGET_PCT:-60}
 WORKDIR=${TYPELISP_IR_CHECK_OUT:-$DEFAULT_WORKDIR}
 UPDATE_BASELINE=0
 BENCHMARKS_ONLY=0
@@ -54,6 +62,9 @@ Environment:
   TYPELISP_IR_CHECK_BASELINE    Default --baseline
   TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM
                                 Default self_compile tolerance in ppm (5000 = 0.5%)
+  TYPELISP_IR_STALE_BUDGET_PCT  Warn when a tolerated row uses this share of its
+                                tolerance (default 60), so accumulated drift is
+                                visible before it lands on an unrelated change
   TYPELISP_IR_CHECK_OUT         Default --output
 EOF
 }
@@ -141,6 +152,13 @@ esac
 case "$SELF_COMPILE_TOLERANCE_PPM" in
     "" | *[!0-9]*)
         echo "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must be a non-negative integer: $SELF_COMPILE_TOLERANCE_PPM" >&2
+        exit 2
+        ;;
+esac
+
+case "$STALE_BUDGET_PCT" in
+    "" | *[!0-9]* | 0)
+        echo "TYPELISP_IR_STALE_BUDGET_PCT must be a positive integer: $STALE_BUDGET_PCT" >&2
         exit 2
         ;;
 esac
@@ -334,7 +352,8 @@ fi
 if awk -F '\t' \
     -v self_compile_tolerance_ppm="$SELF_COMPILE_TOLERANCE_PPM" \
     -v benchmarks_only="$BENCHMARKS_ONLY" \
-    -v self_compile_only="$SELF_COMPILE_ONLY" '
+    -v self_compile_only="$SELF_COMPILE_ONLY" \
+    -v stale_budget_pct="$STALE_BUDGET_PCT" '
 function signed(n,    s) {
     s = sprintf("%.0f", n)
     if (n > 0) {
@@ -354,8 +373,18 @@ function pct(delta, base) {
     }
     return sprintf("%+.6f%%", (delta * 100.0) / base)
 }
+# Share of a row's tolerance consumed by `delta`, as a percentage. Rows with a
+# zero tolerance are exact and can never be partially consumed.
+function budget_used(delta, tolerance,    d) {
+    if (tolerance <= 0) {
+        return 0
+    }
+    d = delta < 0 ? -delta : delta
+    return (d * 100.0) / tolerance
+}
 BEGIN {
     print "metric | baseline | current | delta | pct | tolerance | status"
+    stale = 0
 }
 NR == FNR {
     if (FNR == 1 && $1 == "name") {
@@ -407,6 +436,11 @@ END {
         } else if (delta != 0) {
             status = "within-tolerance"
         }
+        used = budget_used(delta, tolerance)
+        if (used >= stale_budget_pct) {
+            status = status " (" sprintf("%d", used) "% of tolerance)"
+            stale = 1
+        }
         print name " | " base " | " now " | " signed(delta) " | " pct(delta, base + 0) " | " tolerance " | " status
     }
     for (i = 1; i <= current_count; i++) {
@@ -415,6 +449,15 @@ END {
             print name " | <missing> | " current[name] " | n/a | n/a | n/a | extra-current"
             failed = 1
         }
+    }
+    if (stale) {
+        print ""
+        print "[ir-check] a tolerance-carrying row is at " stale_budget_pct "%+ of its budget."
+        print "[ir-check] the tolerance absorbs cross-runner noise, but it also absorbs real"
+        print "[ir-check] drift, and a tolerated result never refreshes the baseline. Once"
+        print "[ir-check] the baseline lags main, the next change to cross the line reports"
+        print "[ir-check] the accumulated total rather than its own cost. Refresh the row"
+        print "[ir-check] against main before attributing a regression to a change. Refs #5641."
     }
     exit failed ? 1 : 0
 }

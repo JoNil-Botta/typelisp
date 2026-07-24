@@ -3,9 +3,10 @@
 ;;
 ;; The producer captures checked defmacro identities, parameters, and bodies,
 ;; desugars eligible bodies (general quasiquote templates -- nested calls,
-;; literals, plain symbols, unquoted operands, and unquote-splicing -- array
-;; intrinsic nodes, literal templates, match-on-type-kind computed bodies,
-;; list-length computed ifs, and the expr-list fold intrinsics) into ordinary
+;; literals, plain symbols, unquoted operands and computed unquotes, and
+;; unquote-splicing -- array intrinsic nodes, literal templates,
+;; match-on-type-kind computed bodies, operand-count computed ifs and integer
+;; matches, indexed operand access, and the expr-list fold intrinsics) into ordinary
 ;; TypeLisp entry functions whose comptime primitives are host callback calls,
 ;; and resolves the compiled entries by the compact function-symbol contract.
 ;; Bodies outside the supported subset compile to ok-with-no-result shells so
@@ -46,8 +47,63 @@
 (define embedded-native-local-len : (Array i64)
   (make-array 0))
 
+;; Compile-time i64 locals for the body currently compiling: a binder arm of a
+;; computed integer match binds the scrutinee's generated i64 variable, so a
+;; later `(comptime.expr-int n)` reads the count as data instead of a literal.
+;; Refs #5617.
+(define embedded-native-data-locals-cap : i64
+  8)
+(define embedded-native-data-local-names : (Array String)
+  (array.make-array String embedded-native-data-locals-cap))
+(define embedded-native-data-local-texts : (Array String)
+  (array.make-array String embedded-native-data-locals-cap))
+(define embedded-native-data-local-len : (Array i64)
+  (make-array 0))
+
+;; Serial number for generated i64 temporaries; unique names keep an arm body's
+;; own temporaries from shadowing a scrutinee its default arm still reads.
+(define embedded-native-temp-seq : (Array i64)
+  (make-array 0))
+
 (define (embedded-native-locals-reset!) : unit
-  (array-set! embedded-native-local-len 0 0))
+  (begin
+    (array-set! embedded-native-local-len 0 0)
+    (array-set! embedded-native-data-local-len 0 0)
+    (array-set! embedded-native-temp-seq 0 0)))
+
+(define (embedded-native-temp-name!) : String
+  (let
+    [seq : i64 (array-ref embedded-native-temp-seq 0)]
+    (begin
+      (array-set! embedded-native-temp-seq 0 (+ seq 1))
+      (str-cat "k" (string.int->string seq)))))
+
+;; The generated i64 variable of a compile-time data local, or "" when unbound.
+(define (embedded-native-data-local-text [name : String]) : String
+  (let
+    [index : i64 (- (array-ref embedded-native-data-local-len 0) 1)]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (>= index 0))
+        (if (string.eq (array-ref embedded-native-data-local-names index) name)
+          (set! found index)
+          (set! index (- index 1))))
+      (if (< found 0)
+        ""
+        (array-ref embedded-native-data-local-texts found)))))
+
+;; Bind `name` to the generated i64 variable `text`; false when the slot budget
+;; is exhausted (the caller then keeps the fallback shell).
+(define (embedded-native-data-local-push! [name : String] [text : String]) : bool
+  (let
+    [slot : i64 (array-ref embedded-native-data-local-len 0)]
+    (if (>= slot embedded-native-data-locals-cap)
+      false
+      (begin
+        (array-set! embedded-native-data-local-names slot name)
+        (array-set! embedded-native-data-local-texts slot text)
+        (array-set! embedded-native-data-local-len 0 (+ slot 1))
+        true))))
 
 ;; The session-slot index of a let-bound local, or -1 when unbound.
 (define (embedded-native-local-index [name : String]) : i64
@@ -586,7 +642,10 @@
       (match (embedded-stdlib-tlci-unwrap-expr inner)
         [(AstExpr.Var pname)
           (embedded-native-unquote-ops params pname ops ops-count)]
-        [_ -1])]
+        ;; Any other unquoted operand is a computed comptime expression whose
+        ;; value substitutes into the template, matching the interpreted
+        ;; quote's unquote step. Refs #5617.
+        [_ (embedded-native-computed-expr-ops params inner ops ops-count)])]
     [(AstExpr.Literal lit)
       (match lit
         [(AstLiteral.Bool flag)
@@ -1554,10 +1613,68 @@
                           "0")
                         1)
                       -1)]
+                  ;; A compile-time data local (a computed match binder) flows
+                  ;; into the literal builder as data. Refs #5617.
+                  [(AstExpr.Var value-name)
+                    (let
+                      [text : String
+                        (embedded-native-data-local-text
+                          (intern-str value-name))]
+                      (if (string.eq text "")
+                        -1
+                        (begin
+                          (embedded-native-template-push!
+                            ops
+                            ops-count
+                            221
+                            text
+                            "0"
+                            "0")
+                          1)))]
                   [_ -1])]
+              ;; `(comptime.expr-list-nth p index)` over a variadic operand:
+              ;; the host op indexes the operand list exactly like the
+              ;; interpreted builtin. Refs #5617.
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-list-nth")
+                    (string.eq head "expr-list-nth"))
+                  (= argc 2))
+                (let
+                  [list-param : i64
+                    (embedded-native-var-param-index
+                      params
+                      (ast-expr-list-get (& args) 0 0))]
+                  [index-text : String
+                    (embedded-native-data-index-text
+                      (ast-expr-list-get (& args) 1 0))]
+                  (if (or (< list-param 0) (string.eq index-text ""))
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        156
+                        (string.int->string list-param)
+                        index-text
+                        "0")
+                      1)))]
               [else -1]))]
         [_ -1])]
     [_ -1]))
+
+;: The generated i64 text of a canonical int literal or a compile-time data
+;: local; "" for anything else. Refs #5617.
+(define (embedded-native-data-index-text [node : i64]) : String
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Literal (AstLiteral.Int value text))
+      (if (or
+        (= (string.string-length text) 0)
+        (string.eq text (string.int->string value)))
+        (string.int->string value)
+        "")]
+    [(AstExpr.Var name) (embedded-native-data-local-text (intern-str name))]
+    [_ ""]))
 
 ;; Two computed expressions then one binary host op over their session values.
 (define (embedded-native-computed-binary-ops
@@ -2131,6 +2248,27 @@
   (LengthProbe i64 i64 i64)
   (NoLengthProbe))
 
+;: The variadic-operand index of a `(comptime.expr-list-length p)` call; -1 for
+;: any other expression. Refs #5617.
+(define (embedded-native-expr-list-length-param
+  [params : (& params AstMacroParamList)]
+  [node : i64]) : i64
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Call length-func length-args)
+      (match (embedded-stdlib-tlci-unwrap-expr length-func)
+        [(AstExpr.Var length-head)
+          (if (and
+            (or
+              (string.eq (intern-str length-head) "comptime.expr-list-length")
+              (string.eq (intern-str length-head) "expr-list-length"))
+            (= (ast-expr-list-len (& length-args)) 1))
+            (embedded-native-var-param-index
+              params
+              (ast-expr-list-get (& length-args) 0 0))
+            -1)]
+        [_ -1])]
+    [_ -1]))
+
 ;; Extract `(cmp (comptime.expr-list-length p) lit)` with the length call on
 ;; the left and a canonical int literal on the right. Anything else is not a
 ;; length probe.
@@ -2141,41 +2279,112 @@
     [(AstExpr.Binary op left-node right-node)
       (let
         [ordinal : i64 (embedded-native-binop-ordinal op)]
-        (if (or (< ordinal 5) (> ordinal 10))
+        [param : i64 (embedded-native-expr-list-length-param params left-node)]
+        (if (or (< ordinal 5) (> ordinal 10) (< param 0))
           (EmbeddedNativeLengthProbe.NoLengthProbe)
-          (match (embedded-stdlib-tlci-unwrap-expr left-node)
-            [(AstExpr.Call length-func length-args)
-              (match (embedded-stdlib-tlci-unwrap-expr length-func)
-                [(AstExpr.Var length-head)
-                  (if (and
-                    (or
-                      (string.eq
-                        (intern-str length-head)
-                        "comptime.expr-list-length")
-                      (string.eq (intern-str length-head) "expr-list-length"))
-                    (= (ast-expr-list-len (& length-args)) 1))
-                    (let
-                      [param : i64
-                        (embedded-native-var-param-index
-                          params
-                          (ast-expr-list-get (& length-args) 0 0))]
-                      (match (embedded-stdlib-tlci-unwrap-expr right-node)
-                        [(AstExpr.Literal (AstLiteral.Int value text))
-                          (if (and
-                            (>= param 0)
-                            (or
-                              (= (string.string-length text) 0)
-                              (string.eq text (string.int->string value))))
-                            (EmbeddedNativeLengthProbe.LengthProbe
-                              param
-                              ordinal
-                              value)
-                            (EmbeddedNativeLengthProbe.NoLengthProbe))]
-                        [_ (EmbeddedNativeLengthProbe.NoLengthProbe)]))
-                    (EmbeddedNativeLengthProbe.NoLengthProbe))]
-                [_ (EmbeddedNativeLengthProbe.NoLengthProbe)])]
+          (match (embedded-stdlib-tlci-unwrap-expr right-node)
+            [(AstExpr.Literal (AstLiteral.Int value text))
+              (if (or
+                (= (string.string-length text) 0)
+                (string.eq text (string.int->string value)))
+                (EmbeddedNativeLengthProbe.LengthProbe param ordinal value)
+                (EmbeddedNativeLengthProbe.NoLengthProbe))]
             [_ (EmbeddedNativeLengthProbe.NoLengthProbe)])))]
     [_ (EmbeddedNativeLengthProbe.NoLengthProbe)]))
+
+;; Compile `(match (comptime.expr-list-length p) [<int> body] ... [n body])`:
+;; the operand count is probed once into a fresh i64 temporary, each integer
+;; arm compares against it, and a trailing binder or wildcard arm is the
+;; default. A binder also binds the count as a compile-time data local so the
+;; arm can rebuild it with `(comptime.expr-int n)`. Returns "" outside that
+;; shape. Refs #5617.
+(define (embedded-native-int-match-body
+  [params : (& params AstMacroParamList)]
+  [body-node : i64]) : String
+  (match (embedded-stdlib-tlci-unwrap-expr body-node)
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee arms)
+          (let
+            [param : i64
+              (embedded-native-expr-list-length-param params scrutinee)]
+            (if (< param 0)
+              ""
+              (let
+                [name : String (embedded-native-temp-name!)]
+                [arms-code : String
+                  (embedded-native-int-match-arms params (& arms) 0 name)]
+                (if (string.eq arms-code "")
+                  ""
+                  (str-cat
+                    "  (let ["
+                    name
+                    " : i64 (comptime-host-invoke host session 155 "
+                    (string.int->string param)
+                    " 0 0)]\n"
+                    "  (if (< "
+                    name
+                    " 0)\n  "
+                    (string.int->string tlci-host-callback-status-bad-request)
+                    "\n"
+                    arms-code
+                    "))\n")))))])]
+    [_ ""]))
+
+(define (embedded-native-int-match-arms
+  [params : (& params AstMacroParamList)]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [name : String]) : String
+  (if (>= index (struct-get arms len))
+    "  0\n"
+    (match (array-ref (struct-get arms slots) index)
+      [(AstMatchArm.Arm pattern body-node)
+        (match pattern
+          [(AstPattern.Literal (AstLiteral.Int value text))
+            (if (and
+              (> (string.string-length text) 0)
+              (not (string.eq text (string.int->string value))))
+              ""
+              (let
+                [arm-code : String (embedded-native-body-code params body-node)]
+                [rest : String
+                  (embedded-native-int-match-arms params arms (+ index 1) name)]
+                (if (or (string.eq arm-code "") (string.eq rest ""))
+                  ""
+                  (str-cat
+                    "  (if (= "
+                    name
+                    " "
+                    (string.int->string value)
+                    ")\n"
+                    arm-code
+                    rest
+                    ")\n"))))]
+          [(AstPattern.Wildcard) (embedded-native-body-code params body-node)]
+          [(AstPattern.Binding binder)
+            (embedded-native-int-match-default params body-node binder name)]
+          [(AstPattern.Var binder (AstMaybeType.No))
+            (embedded-native-int-match-default params body-node binder name)]
+          [_ ""])])))
+
+;; The default arm of a computed integer match: the binder names the probed
+;; count for the arm body, and the binding is dropped again afterwards.
+(define (embedded-native-int-match-default
+  [params : (& params AstMacroParamList)]
+  [body-node : i64]
+  [binder : i64]
+  [name : String]) : String
+  (let
+    [saved : i64 (array-ref embedded-native-data-local-len 0)]
+    [bound : bool (embedded-native-data-local-push! (intern-str binder) name)]
+    [code : String
+      (if bound
+        (embedded-native-body-code params body-node)
+        "")]
+    (begin
+      (array-set! embedded-native-data-local-len 0 saved)
+      code)))
 
 ;; Compile `(if (cmp (comptime.expr-list-length p) lit) then else)` when both
 ;; branches are supported bodies; returns "" outside that shape. A negative
@@ -2240,22 +2449,27 @@
         (if (not (string.eq match-text ""))
           match-text
           (let
-            [if-text : String
-              (embedded-native-computed-if-body params body-node)]
-            (if (not (string.eq if-text ""))
-              if-text
+            [int-match-text : String
+              (embedded-native-int-match-body params body-node)]
+            (if (not (string.eq int-match-text ""))
+              int-match-text
               (let
-                [linear-text : String
-                  (embedded-native-linear-body-code params body-node)]
-                (if (not (string.eq linear-text ""))
-                  linear-text
-                  ;; Computed string matches and string-eq ifs at body level
-                  ;; (the module-generator dispatch shapes) share the commit
-                  ;; final with template bodies. Refs #5603.
-                  (embedded-native-computed-expr-code
-                    params
-                    body-node
-                    "  (comptime-host-invoke host session 182 0 0 0)\n"))))))))))
+                [if-text : String
+                  (embedded-native-computed-if-body params body-node)]
+                (if (not (string.eq if-text ""))
+                  if-text
+                  (let
+                    [linear-text : String
+                      (embedded-native-linear-body-code params body-node)]
+                    (if (not (string.eq linear-text ""))
+                      linear-text
+                      ;; Computed string matches and string-eq ifs at body
+                      ;; level (the module-generator dispatch shapes) share
+                      ;; the commit final with template bodies. Refs #5603.
+                      (embedded-native-computed-expr-code
+                        params
+                        body-node
+                        "  (comptime-host-invoke host session 182 0 0 0)\n"))))))))))))
 
 (define (embedded-native-source
   [names : (Array String)]

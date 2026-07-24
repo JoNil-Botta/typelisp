@@ -694,6 +694,23 @@
   223)
 (define tlci-host-callback-op-operand-expr-call-args : i64
   224)
+
+;; The `comptime.Expr.Int` half of the same destructuring (refs #5602).
+;; operand-expr-int? answers 1/0 as data with a negative malformed-request
+;; sentinel; operand-expr-int-value answers the literal's i64 value as data and
+;; is only issued after the probe, so it has no error channel of its own. Both
+;; unwrap `Spanned` first. local-expr-list-length and local-expr-list-nth are
+;; the local-slot twins of ops 155/156, which address operands only: a
+;; destructured `ExprList` payload lives in a session local, and the fold
+;; bodies index it there. Additive ABI v1 ops.
+(define tlci-host-callback-op-operand-expr-int? : i64
+  225)
+(define tlci-host-callback-op-operand-expr-int-value : i64
+  226)
+(define tlci-host-callback-op-local-expr-list-length : i64
+  227)
+(define tlci-host-callback-op-local-expr-list-nth : i64
+  228)
 (define tlci-host-callback-stdlib-op-count : i64
   99)
 (define tlci-header-size : i64

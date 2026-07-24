@@ -9082,14 +9082,31 @@
 ;; ABSOLUTE address as the rbp world, so the rebase bias is unchanged. The
 ;; matching epilogue (`addq $(frame+8), %rsp`) is produced by the rebase
 ;; pass's `leave` rewrite.
+;; The `+8` in the no-CSR FPO prologue exists only to keep call alignment (the
+;; total displacement D % 16 == 8). A function that makes no call has nothing to
+;; align for, and one that never names a frame slot has nothing for the rebase
+;; pass to bias, so its stack adjustment is dead weight and both the prologue
+;; sub and the epilogue fold disappear. Set per function, just before the rebase.
+(define compiler-backend-fpo-bare-frame : bool
+  false)
+
+(define (compiler-backend-fpo-no-push-sub [frame : i64]) : i64
+  (if compiler-backend-fpo-bare-frame
+    0
+    (+ frame 8)))
+
 (define (compiler-backend-emit-function-entry-fpo
   [symbol : String]
   [frame : i64]) : String
-  (str_cat.str-cat
-    symbol
-    ":\n    subq $"
-    (string.int->string (+ frame 8))
-    ", %rsp\n"))
+  (let
+    [sub : i64 (compiler-backend-fpo-no-push-sub frame)]
+    (if (= sub 0)
+      (str_cat.str-cat symbol ":\n" "")
+      (str_cat.str-cat
+        symbol
+        ":\n    subq $"
+        (string.int->string sub)
+        ", %rsp\n"))))
 
 ;; GAP1: push-style FPO prologue -- the plan-saved CSRs are pushed (slot-idx
 ;; order r12..rbp; the pop-run epilogue pops the reverse) and the subq shrinks
@@ -44686,6 +44703,20 @@
     0
     0))
 
+;; True when any block holds a call or syscall: such a function keeps the FPO
+;; alignment adjustment.
+(define (compiler-backend-blocks-have-call? [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (if (compiler-reg-loop-split-seq-has-call-or-syscall? instrs)
+            true
+            (compiler-backend-blocks-have-call? (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-blocks-have-call? (compiler-ir-block-seq-to-list seq))]))
+
 (define (compiler-backend-rsp-rebase-full
   [text : String]
   [frame : i64]
@@ -44912,7 +44943,10 @@
                                                 "")
                                               nl))))
                                       (let
-                                        [amount : i64 (+ (+ frame 8) delta)]
+                                        [amount : i64
+                                          (if compiler-backend-fpo-bare-frame
+                                            delta
+                                            (+ (+ frame 8) delta))]
                                         (if (< amount 0)
                                           (set! ok false)
                                           (if (= amount 0)
@@ -47755,6 +47789,17 @@
                                     (compiler-backend-plan-uses-win64-xmm-callee-regs?
                                       assignments)))
                                 (= (bit-and push-count 1) 1)))]
+                          [_fpo-bare : unit
+                            (set!
+                              compiler-backend-fpo-bare-frame
+                              (and
+                                fpo-attempt
+                                (= push-count 0)
+                                (= frame 0)
+                                (not compiler-backend-frame-slot-referenced)
+                                (not
+                                  (compiler-backend-blocks-have-call?
+                                    emit-blocks-list))))]
                           [rebased : String
                             (compiler-backend-rsp-rebase-full
                               post-prologue

@@ -47794,6 +47794,13 @@
                               compiler-backend-fpo-bare-frame
                               (and
                                 fpo-attempt
+                                ;; Only the SysV no-push FPO prologue honours
+                                ;; the bare frame; the Win64 prologue describes
+                                ;; its allocation with SEH unwind codes, so
+                                ;; skipping the sub there would leave the
+                                ;; epilogue fold disagreeing with the unwind
+                                ;; data.
+                                (not (compiler-backend-target-windows? target))
                                 (= push-count 0)
                                 (= frame 0)
                                 (not compiler-backend-frame-slot-referenced)

@@ -1,0 +1,12 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"foldingRangeProvider\":true"},
+    {"jsonpath_id": 2, "json_contains": "\"result\":[{\"startLine\":0,\"startCharacter\":1,\"endLine\":2,\"endCharacter\":7},{\"startLine\":1,\"startCharacter\":3,\"endLine\":2,\"endCharacter\":6},{\"startLine\":3,\"startCharacter\":9,\"endLine\":4,\"endCharacter\":9,\"kind\":\"comment\"}]"},
+    {"jsonpath_id": 3, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 4, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 5, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 6, "json_contains": "\"result\":null", "jsonpath_result": null}
+  ]
+}

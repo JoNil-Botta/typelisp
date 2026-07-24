@@ -691,7 +691,8 @@ scalar/AVX2/AVX-512 backends and runtime dispatch, comptime macros with type
 reflection, packages with lockfiles, inline tests, doctests, fmt, lint, doc
 generation, a docs site, and a stdio language server with diagnostics,
 definition lookup, document symbols/highlights, completion, inferred-type
-inlay hints, hover, import links, formatting, and structural-edit extensions.
+inlay hints, hover, import links, formatting, structural folding ranges, and
+structural-edit extensions.
 
 Not yet (see [SPEC.md §8](SPEC.md) for the authoritative matrix): general
 GC/`free` (deferred by design in favor of arenas), vectorized SPMD

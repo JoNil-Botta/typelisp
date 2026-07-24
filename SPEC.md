@@ -6633,7 +6633,8 @@ in documentation passes.
   doctests, `fmt`, `lint`, `doc` generation, the published docs site, a
   stdio LSP server with diagnostics, definition, completion, inlay hints,
   formatting, hover, document links, flat top-level document-symbol outlines,
-  lexical document highlights, and TypeLisp structural-edit/query extensions,
+  lexical document highlights, lexical folding ranges for multiline forms and
+  comment blocks, and TypeLisp structural-edit/query extensions,
   structured source locations for source-authored semantic diagnostics, plus
   a REPL that evaluates through the real compile/link/run pipeline.
 

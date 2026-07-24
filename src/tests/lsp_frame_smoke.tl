@@ -4,6 +4,7 @@
 (import stdlib.arena)
 (import stdlib.json)
 (import stdlib.string)
+(import stdlib.text_buf)
 (import stdlib.vector)
 (import (vector.vector String) as lsp_svec)
 (import "../lsp_frame_core.tl")
@@ -541,6 +542,156 @@
         (lsp-code-symbol-at-offset source (lsp-offset-at-position source 5 24))
         ""))))
 
+(define (lsp-fold-render [source : String]) : String
+  (json.stringify (lsp-json-array (lsp-folding-ranges-in-text source))))
+
+;; Multiline forms fold from just after the opener to just before the closer;
+;; single-line forms produce nothing.
+(define (lsp-folding-range-forms-smoke-ok?) : bool
+  (let
+    [source : String
+      "(define (fun) : i64\n  (+ 1\n     2))\n(define small : i64 1)"]
+    [want : String
+      "[{\"startLine\":0,\"startCharacter\":1,\"endLine\":2,\"endCharacter\":7},{\"startLine\":1,\"startCharacter\":3,\"endLine\":2,\"endCharacter\":6}]"]
+    [capabilities : String (json.stringify (lsp-initialize-result))]
+    [capability : String "\"foldingRangeProvider\":true"]
+    (and
+      (string.contains (& capabilities) (& capability))
+      (string.eq (lsp-fold-render source) want))))
+
+;; Adjacent comment-only lines fold as one `comment` region. A lone comment
+;; line, a trailing comment after code, and a run broken by a blank or code
+;; line never produce one.
+(define (lsp-folding-range-comments-smoke-ok?) : bool
+  (let
+    [source : String
+      ";; alpha\n;; beta\n\n;; lonely\n(define x : i64 1) ; trailing\n;; gamma\n;; delta"]
+    [want : String
+      "[{\"startLine\":0,\"startCharacter\":8,\"endLine\":1,\"endCharacter\":7,\"kind\":\"comment\"},{\"startLine\":5,\"startCharacter\":8,\"endLine\":6,\"endCharacter\":8,\"kind\":\"comment\"}]"]
+    (string.eq (lsp-fold-render source) want)))
+
+;; Delimiters inside string literals, character literals, and comments neither
+;; open nor close a fold, so each form still ends at its real closer.
+(define (lsp-folding-range-literals-smoke-ok?) : bool
+  (let
+    [source : String
+      "(define a : String\n  \")))\")\n(define b : char\n  ')')\n(define c : i64\n  ;; )))\n  1)"]
+    [want : String
+      "[{\"startLine\":0,\"startCharacter\":1,\"endLine\":1,\"endCharacter\":7},{\"startLine\":2,\"startCharacter\":1,\"endLine\":3,\"endCharacter\":5},{\"startLine\":4,\"startCharacter\":1,\"endLine\":6,\"endCharacter\":3}]"]
+    (string.eq (lsp-fold-render source) want)))
+
+;; Malformed buffers stay in-bounds: never-closed forms drop out entirely and
+;; unmatched closers are ignored instead of producing negative coordinates.
+(define (lsp-folding-range-malformed-smoke-ok?) : bool
+  (let
+    [unclosed : String "(define broken : i64\n  (+ 1\n"]
+    [extra-closers : String ")))\n(define ok : i64\n  1)"]
+    [want-extra : String
+      "[{\"startLine\":1,\"startCharacter\":1,\"endLine\":2,\"endCharacter\":3}]"]
+    (and
+      (string.eq (lsp-fold-render unclosed) "[]")
+      (string.eq (lsp-fold-render "") "[]")
+      (string.eq (lsp-fold-render extra-closers) want-extra))))
+
+;; Characters are UTF-16 code units: a 2- or 3-byte codepoint counts as one and
+;; a 4-byte codepoint as a surrogate pair, never as its UTF-8 byte length.
+(define (lsp-folding-range-utf16-smoke-ok?) : bool
+  (let
+    [source : String
+      ";; λ€𝄞\n;; ok\n(define s : String\n  \"λ€𝄞\")"]
+    [want : String
+      "[{\"startLine\":0,\"startCharacter\":7,\"endLine\":1,\"endCharacter\":5,\"kind\":\"comment\"},{\"startLine\":2,\"startCharacter\":1,\"endLine\":3,\"endCharacter\":8}]"]
+    (string.eq (lsp-fold-render source) want)))
+
+;; `depth` nested one-per-line opens followed by `depth` closes.
+(define (lsp-fold-nested-source [depth : i64]) : String
+  (let
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    [i : i64 0]
+    (begin
+      (while (< i depth)
+        (begin
+          (text_buf.append! buf "(a\n")
+          (set! i (+ i 1))))
+      (set! i 0)
+      (while (< i depth)
+        (begin
+          (text_buf.append! buf ")\n")
+          (set! i (+ i 1))))
+      (text_buf.render buf))))
+
+;; `count` sibling two-line forms.
+(define (lsp-fold-wide-source [count : i64]) : String
+  (let
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (text_buf.append! buf "(a\n)\n")
+          (set! i (+ i 1))))
+      (text_buf.render buf))))
+
+(define (lsp-fold-first-json [ranges : json.JsonList]) : String
+  (match ranges
+    [(json.JsonListNil) ""]
+    [(json.JsonListCons value _) (json.stringify value)]))
+
+;; Deep nesting and wide documents run through the iterative scan and the
+;; iterative result walk, so neither costs host recursion proportional to the
+;; document.
+(define (lsp-folding-range-scale-smoke-ok?) : bool
+  (let
+    [depth : i64 2000]
+    [nested : json.JsonList
+      (lsp-folding-ranges-in-text (lsp-fold-nested-source depth))]
+    [wide : json.JsonList
+      (lsp-folding-ranges-in-text (lsp-fold-wide-source depth))]
+    [outermost : String
+      "{\"startLine\":0,\"startCharacter\":1,\"endLine\":3999,\"endCharacter\":0}"]
+    [first-sibling : String
+      "{\"startLine\":0,\"startCharacter\":1,\"endLine\":1,\"endCharacter\":0}"]
+    (and
+      (= (json.list-count nested) depth)
+      (string.eq (lsp-fold-first-json nested) outermost)
+      (= (json.list-count wide) depth)
+      (string.eq (lsp-fold-first-json wide) first-sibling))))
+
+(define (lsp-transcript-folding-range [uri : String] [id : i64]) : String
+  (lsp-str5
+    "{\"jsonrpc\":\"2.0\",\"id\":"
+    (string.int->string id)
+    ",\"method\":\"textDocument/foldingRange\",\"params\":{\"textDocument\":{\"uri\":\""
+    uri
+    "\"}}}"))
+
+;; End-to-end dispatch: an opened document answers foldingRange, an unknown
+;; document answers with an empty array rather than an error.
+(define (lsp-folding-range-transcript-smoke-ok?) : bool
+  (let
+    [path : String "target/lsp_folding_range_doc.tl"]
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [missing-uri : String
+      (lsp-resolved-path-to-file-uri "target/lsp_folding_range_absent.tl")]
+    [source : String "(define (fun) : i64\\n  1)\\n"]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [input : String
+      (string.append
+        (lsp-transcript-frame (lsp-transcript-did-open uri source))
+        (string.append
+          (lsp-transcript-frame (lsp-transcript-folding-range uri 81))
+          (string.append
+            (lsp-transcript-frame (lsp-transcript-folding-range missing-uri 82))
+            (lsp-transcript-frame exit))))]
+    [result : LspTranscriptResult (lsp-transcript-run input)]
+    [found : String
+      "\"id\":81,\"result\":[{\"startLine\":0,\"startCharacter\":1,\"endLine\":1,\"endCharacter\":3}]"]
+    [empty : String "\"id\":82,\"result\":[]"]
+    (and
+      (= (struct-get result status) 0)
+      (lsp-transcript-result-contains? result found)
+      (lsp-transcript-result-contains? result empty))))
+
 (define (main) : i64
   (let
     [base-result : i64 (lsp-diagnostic-metadata-smoke)]
@@ -560,6 +711,13 @@
         (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 13))
         (unless (lsp-document-symbol-smoke-ok?) (return 17))
         (unless (lsp-document-highlight-smoke-ok?) (return 22))
+        (unless (lsp-folding-range-forms-smoke-ok?) (return 23))
+        (unless (lsp-folding-range-comments-smoke-ok?) (return 24))
+        (unless (lsp-folding-range-literals-smoke-ok?) (return 25))
+        (unless (lsp-folding-range-malformed-smoke-ok?) (return 26))
+        (unless (lsp-folding-range-utf16-smoke-ok?) (return 27))
+        (unless (lsp-folding-range-scale-smoke-ok?) (return 28))
+        (unless (lsp-folding-range-transcript-smoke-ok?) (return 29))
         (unless (lsp-transcript-framing-smoke-ok?) (return 18))
         (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
         (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))

@@ -22,10 +22,7 @@
 ;# imports would resolve to different path keys than a relative prelude load).
 ;: Windows kernel32 `GetStdHandle` binding for mapping fds 0/1/2 to handles.
 (define (string-length [text : String]) : i64
-  (cfg
-    feature-compiler-private-string-intrinsics
-    (__tl_string_length text)
-    (string-length text)))
+  (__tl_string_length text))
 
 (cfg
   windows
@@ -158,35 +155,20 @@
 (define (os-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
   (cfg
     windows
-    (cfg
-      feature-ptr-addr-of
-      (let
-        [handle : i64 (runtime-windows-fd-handle fd)]
-        [written-cell : i32 (cast 0 : i32)]
-        [written : (MutPtr i32)
+    (let
+      [handle : i64 (runtime-windows-fd-handle fd)]
+      [written-cell : i32 (cast 0 : i32)]
+      [written : (MutPtr i32)
+        (unsafe
+          (ptr-addr-of written-cell))]
+      [ok : i32
+        (runtime-windows-write-file handle buf (cast count : i32) written 0)]
+      (if (= ok (cast 0 : i32))
+        -1
+        (cast
           (unsafe
-            (ptr-addr-of written-cell))]
-        [ok : i32
-          (runtime-windows-write-file handle buf (cast count : i32) written 0)]
-        (if (= ok (cast 0 : i32))
-          -1
-          (cast
-            (unsafe
-              (ptr-read (ptr-cast written : (Ptr i32))))
-            : i64)))
-      (let
-        [handle : i64 (runtime-windows-fd-handle fd)]
-        [written : (MutPtr i32)
-          (unsafe
-            (ptr-cast (runtime-alloc 4) : (MutPtr i32)))]
-        [ok : i32
-          (runtime-windows-write-file handle buf (cast count : i32) written 0)]
-        (if (= ok (cast 0 : i32))
-          -1
-          (cast
-            (unsafe
-              (ptr-read (ptr-cast written : (Ptr i32))))
-            : i64))))
+            (ptr-read (ptr-cast written : (Ptr i32))))
+          : i64)))
     (unsafe
       (syscall 1 fd (ptr-arg buf) count))))
 
@@ -521,42 +503,13 @@
           (set! i (+ i 1))))
       unit)))
 
-;: Zero `byte-count` bytes starting at `buf`. With `feature-tl-array-zero` the
-;; backend provides the body as a qword `rep stosq` plus a byte `rep stosb`
-;; tail (see compiler-backend-runtime-array-zero-functions), which costs one
-;; instruction per eight bytes under the deterministic instruction-count gate.
-;; The fallback keeps the compiled word-at-a-time loop for seed compilers
-;; without the feature; the byte-at-a-time loop before it was the single
-;; largest zeroing cost in the self-compile (every `array.make-array`
-;; zero-fills its backing storage).
-(cfg
-  feature-tl-array-zero
-  (extern (array-zero [buf : (MutPtr u8)] [byte-count : i64]) : unit (:symbol "tl_array_zero")))
-
-(cfg
-  (not feature-tl-array-zero)
-  (define (array-zero [buf : (MutPtr u8)] [byte-count : i64])
-    (:export-symbol "tl_array_zero") : unit
-    (let
-      [word-count : i64 (/ byte-count 8)]
-      [tail-start : i64 (* word-count 8)]
-      [slots : (MutPtr u64)
-        (unsafe
-          (ptr-cast buf : (MutPtr u64)))]
-      [w : i64 0]
-      [i : i64 tail-start]
-      (begin
-        (while (< w word-count)
-          (begin
-            (unsafe
-              (ptr-write! (ptr-offset slots w) (cast 0 : u64)))
-            (set! w (+ w 1))))
-        (while (< i byte-count)
-          (begin
-            (unsafe
-              (ptr-write! (ptr-offset buf i) (cast 0 : u8)))
-            (set! i (+ i 1))))
-        unit))))
+;: Zero `byte-count` bytes starting at `buf`. The backend provides the body
+;; as a qword `rep stosq` plus a byte `rep stosb` tail (see
+;; compiler-backend-runtime-array-zero-functions), which costs one instruction
+;; per eight bytes under the deterministic instruction-count gate. The
+;; byte-at-a-time loop before it was the single largest zeroing cost in the
+;; self-compile (every `array.make-array` zero-fills its backing storage).
+(extern (array-zero [buf : (MutPtr u8)] [byte-count : i64]) : unit (:symbol "tl_array_zero"))
 
 ;: Abort handler for an invalid arena/region mark, exported as `tl_region_abort`.
 ;: Reached from the allocator's region-reset validation (not the out-of-memory

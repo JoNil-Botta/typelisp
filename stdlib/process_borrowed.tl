@@ -651,50 +651,44 @@
 
 (cfg
   test
-  (cfg
-    (all feature-str-view feature-runtime-str-view-extern)
-    (define (process-borrowed-test-ordered-builders-check) : unit
-      (let
-        [exe : String "echo"]
-        [argv-pack : String "firstsecondthird"]
-        [env-pack : String "TL_DUPfirstsecond"]
-        [first-arg : (& argv-pack str)
-          (string.substring-view (& argv-pack) 0 5)]
-        [second-arg : (& argv-pack str)
-          (string.substring-view (& argv-pack) 5 6)]
-        [third-arg : (& argv-pack str)
-          (string.substring-view (& argv-pack) 11 5)]
-        [env-name : (& env-pack str) (string.substring-view (& env-pack) 0 6)]
-        [env-first : (& env-pack str) (string.substring-view (& env-pack) 6 5)]
-        [env-second : (& env-pack str)
-          (string.substring-view (& env-pack) 11 6)]
-        [tail-argv : (ProcessBorrowedStringList argv-pack)
-          (args-append (args-single second-arg) (args-single third-arg))]
-        [env : (ProcessBorrowedEnvList env-pack)
-          (env-append
-            (env-single env-name env-first)
-            (env-single env-name env-second))]
-        [cmd : (ProcessBorrowedCommand exe argv-pack exe env-pack exe)
-          (command-with-env-list
-            (command-with-args
-              (command (& exe) (args-single first-arg))
-              tail-argv)
-            env)]
-        [owned : process.ProcessCommand (command-owned cmd)]
-        (begin
-          (test-assert-i64-eq (args-count (command-argv cmd)) 3)
-          (test-assert-process-string-list3
-            (process.command-argv owned)
-            "first"
-            "second"
-            "third")
-          (test-assert-i64-eq (env-count (command-env cmd)) 2)
-          (test-assert-process-env-list2
-            (process.command-env owned)
-            "TL_DUP"
-            "first"
-            "TL_DUP"
-            "second"))))))
+  (define (process-borrowed-test-ordered-builders-check) : unit
+    (let
+      [exe : String "echo"]
+      [argv-pack : String "firstsecondthird"]
+      [env-pack : String "TL_DUPfirstsecond"]
+      [first-arg : (& argv-pack str) (string.substring-view (& argv-pack) 0 5)]
+      [second-arg : (& argv-pack str) (string.substring-view (& argv-pack) 5 6)]
+      [third-arg : (& argv-pack str) (string.substring-view (& argv-pack) 11 5)]
+      [env-name : (& env-pack str) (string.substring-view (& env-pack) 0 6)]
+      [env-first : (& env-pack str) (string.substring-view (& env-pack) 6 5)]
+      [env-second : (& env-pack str) (string.substring-view (& env-pack) 11 6)]
+      [tail-argv : (ProcessBorrowedStringList argv-pack)
+        (args-append (args-single second-arg) (args-single third-arg))]
+      [env : (ProcessBorrowedEnvList env-pack)
+        (env-append
+          (env-single env-name env-first)
+          (env-single env-name env-second))]
+      [cmd : (ProcessBorrowedCommand exe argv-pack exe env-pack exe)
+        (command-with-env-list
+          (command-with-args
+            (command (& exe) (args-single first-arg))
+            tail-argv)
+          env)]
+      [owned : process.ProcessCommand (command-owned cmd)]
+      (begin
+        (test-assert-i64-eq (args-count (command-argv cmd)) 3)
+        (test-assert-process-string-list3
+          (process.command-argv owned)
+          "first"
+          "second"
+          "third")
+        (test-assert-i64-eq (env-count (command-env cmd)) 2)
+        (test-assert-process-env-list2
+          (process.command-env owned)
+          "TL_DUP"
+          "first"
+          "TL_DUP"
+          "second")))))
 
 ;: Inline test body for borrowed process validation helpers.
 (define (test-validation-check) : unit
@@ -741,8 +735,5 @@
   process-borrowed-api
   (begin
     (test-api-check)
-    (cfg
-      (all feature-str-view feature-runtime-str-view-extern)
-      (process-borrowed-test-ordered-builders-check)
-      unit)
+    (process-borrowed-test-ordered-builders-check)
     (test-validation-check)))

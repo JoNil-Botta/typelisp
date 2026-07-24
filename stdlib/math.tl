@@ -2,9 +2,7 @@
 ;#
 ;# This module provides runtime-zero-dependency helpers for scalar integer and
 ;# IEEE-754 float values. Float bit reinterpretation uses private compiler
-;# intrinsics when `feature-compiler-float-bitcast-intrinsics` is available.
-;# The inactive compatibility branches keep published stage0 compilers able to
-;# build a compiler that introduces those intrinsics.
+;# intrinsics.
 ;# Square root lowers through the private compiler float-sqrt intrinsic to
 ;# scalar SSE2 on both supported targets.
 ;#
@@ -26,51 +24,19 @@
 
 ;: Reinterpret an `f64` as its exact IEEE-754 binary64 bits.
 (define (f64-to-bits [value : f64]) : u64
-  (cfg
-    feature-compiler-float-bitcast-intrinsics
-    (__tl_float_to_bits value)
-    (let
-      [buf : (Array f64) (make-array f64 1)]
-      (begin
-        (array-set! buf 0 value)
-        (unsafe
-          (ptr-read (ptr-cast (array-data buf) : (Ptr u64))))))))
+  (__tl_float_to_bits value))
 
 ;: Reinterpret IEEE-754 binary64 `bits` as an `f64`.
 (define (f64-from-bits [bits : u64]) : f64
-  (cfg
-    feature-compiler-float-bitcast-intrinsics
-    (__tl_float_from_bits bits)
-    (let
-      [buf : (Array u64) (make-array u64 1)]
-      (begin
-        (array-set! buf 0 bits)
-        (unsafe
-          (ptr-read (ptr-cast (array-data buf) : (Ptr f64))))))))
+  (__tl_float_from_bits bits))
 
 ;: Reinterpret an `f32` as its exact IEEE-754 binary32 bits.
 (define (f32-to-bits [value : f32]) : u32
-  (cfg
-    feature-compiler-float-bitcast-intrinsics
-    (__tl_float_to_bits value)
-    (let
-      [buf : (Array f32) (make-array f32 1)]
-      (begin
-        (array-set! buf 0 value)
-        (unsafe
-          (ptr-read (ptr-cast (array-data buf) : (Ptr u32))))))))
+  (__tl_float_to_bits value))
 
 ;: Reinterpret IEEE-754 binary32 `bits` as an `f32`.
 (define (f32-from-bits [bits : u32]) : f32
-  (cfg
-    feature-compiler-float-bitcast-intrinsics
-    (__tl_float_from_bits bits)
-    (let
-      [buf : (Array u32) (make-array u32 1)]
-      (begin
-        (array-set! buf 0 bits)
-        (unsafe
-          (ptr-read (ptr-cast (array-data buf) : (Ptr f32))))))))
+  (__tl_float_from_bits bits))
 
 ;: Construct positive infinity.
 (define (f64-positive-infinity) : f64

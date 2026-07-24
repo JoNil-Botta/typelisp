@@ -31,6 +31,23 @@
 
 (import (vector.vector LspDocument core) as lsp_document_vec)
 
+;; One candidate `textDocument/foldingRange` result. Positions stay 1-based
+;; internally like every other LSP scanner here; `kind` is 0 for an unlabelled
+;; region and 1 for a comment block. `parent` links an open form to the form
+;; that encloses it while the scan is inside it, so the scanner needs no
+;; separate delimiter stack. `emit` stays false until the range is known to be
+;; multiline, which also drops never-closed forms in malformed buffers.
+(defstruct LspFoldRange
+  (start-line i64)
+  (start-char i64)
+  (end-line i64)
+  (end-char i64)
+  (kind i64)
+  (parent i64)
+  (emit bool))
+
+(import (vector.vector LspFoldRange core) as lsp_fold_vec)
+
 (define (lsp-documents-drop-last! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
   (if (> (struct-get docs len) 0)
     (set! (struct-get docs len) (- (struct-get docs len) 1))

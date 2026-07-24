@@ -20,6 +20,7 @@
 (import "lsp_vector_families.tl")
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector LspDocument core) as lsp_document_vec)
+(import (vector.vector LspFoldRange core) as lsp_fold_vec)
 (import stdlib.string)
 (import token)
 (import sym_i64_env)
@@ -117,6 +118,13 @@
   (offset i64)
   (line i64)
   (col i64))
+
+;; Folding-range scan position: 1-based line, 1-based UTF-16 column, and
+;; whether anything other than whitespace has been seen on the current line.
+(defstruct LspFoldCursor
+  (line i64)
+  (col i64)
+  (code bool))
 
 (defenum LspDefLocation
   (Found String i64 i64 i64)
@@ -672,7 +680,10 @@
                         (lsp-json-object1
                           "resolveProvider"
                           (json.JsonBool false))
-                        json.JsonMemberListNil))))))))))
+                        (lsp-json-member
+                          "foldingRangeProvider"
+                          (json.JsonBool true)
+                          json.JsonMemberListNil)))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -5848,6 +5859,289 @@
     [(LspDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
+;; --------------------------------------------------------------------------
+;; Folding ranges (textDocument/foldingRange).
+;;
+;; One linear lexical pass over the document, sharing the skip rules used by
+;; definition/document-symbol/highlight discovery, so delimiters inside
+;; strings, character literals, and comments never open or close a fold.
+;;
+;; A multiline `(`/`[` form folds from just after its opening delimiter to just
+;; before its matching closer, which keeps the closer visible in clients that
+;; honour range characters (Lisp stacks closers on the last content line, so a
+;; whole-line range would hide it). Single-line forms are dropped, and a form
+;; that is never closed simply never produces a range.
+;;
+;; A run of two or more adjacent comment-only lines folds as a `comment`
+;; region from the end of its first line to the end of its last. Trailing
+;; comments after code do not start a run.
+;;
+;; Ranges come out sorted by start position because every range reserves its
+;; slot in the result vector at the moment its start is scanned, and the scan
+;; only moves forward. Nesting is expressed through `parent`, so no separate
+;; delimiter stack is needed and deep nesting costs no host recursion.
+;;
+;; Characters are UTF-16 code units, the LSP default position encoding. The
+;; older position-producing paths in this server still report byte columns;
+;; converging them behind a negotiated encoding is tracked by #5623.
+;; --------------------------------------------------------------------------
+(define lsp-fold-kind-region : i64
+  0)
+(define lsp-fold-kind-comment : i64
+  1)
+
+(define (lsp-fold-range-fallback) : LspFoldRange
+  (LspFoldRange 0 0 0 0 lsp-fold-kind-region -1 false))
+
+;; UTF-16 code units contributed by one UTF-8 byte: continuation bytes add
+;; nothing, a 4-byte lead byte spans a surrogate pair, and every other byte is
+;; one unit. Summing this over a line yields the LSP column directly.
+(define (lsp-fold-utf16-units [c : char]) : i64
+  (let
+    [b : i64 (cast c : i64)]
+    (cond [(= (bit-and b 192) 128) 0] [(>= b 240) 2] [else 1])))
+
+;; Advance the cursor across `[from, to)`. Used for spans the lexical skips
+;; consume in one step (comments, strings, character literals), which may cross
+;; line boundaries.
+(define (lsp-fold-cursor-advance!
+  [cursor : (&mut LspFoldCursor)]
+  [text : String]
+  [from : i64]
+  [to : i64]) : unit
+  (let
+    [i : i64 from]
+    (while (< i to)
+      (let
+        [c : char (string.string-ref text i)]
+        (begin
+          (if (= c '\n')
+            (begin
+              (set! (struct-get cursor line) (+ (struct-get cursor line) 1))
+              (set! (struct-get cursor col) 1)
+              (set! (struct-get cursor code) false))
+            (begin
+              (set!
+                (struct-get cursor col)
+                (+ (struct-get cursor col) (lsp-fold-utf16-units c)))
+              (if (lsp-ws? c)
+                unit
+                (set! (struct-get cursor code) true))))
+          (set! i (+ i 1)))))))
+
+(define (lsp-fold-clamp [value : i64] [limit : i64]) : i64
+  (if (> value limit)
+    limit
+    value))
+
+;; Extend the running comment block, or open a new one when the previous
+;; comment-only line was not the immediately preceding line.
+(define (lsp-fold-comment-line!
+  [folds : (&mut lsp_fold_vec.Vec)]
+  [slot : i64]
+  [previous-line : i64]
+  [line : i64]
+  [end-col : i64]) : i64
+  (if (and (>= slot 0) (= line (+ previous-line 1)))
+    (let
+      [open : LspFoldRange
+        (lsp_fold_vec.get folds slot (lsp-fold-range-fallback))]
+      (begin
+        (lsp_fold_vec.set
+          folds
+          slot
+          (LspFoldRange
+            (struct-get open start-line)
+            (struct-get open start-char)
+            line
+            end-col
+            lsp-fold-kind-comment
+            -1
+            true))
+        slot))
+    (let
+      [fresh : i64 (lsp_fold_vec.len folds)]
+      (begin
+        (lsp_fold_vec.push
+          folds
+          (LspFoldRange
+            line
+            end-col
+            line
+            end-col
+            lsp-fold-kind-comment
+            -1
+            false))
+        fresh))))
+
+(define (lsp-fold-ranges-scan [text : String]) : lsp_fold_vec.Vec
+  (let
+    [n : i64 (string.string-length text)]
+    [folds : lsp_fold_vec.Vec (lsp_fold_vec.new)]
+    [cursor : LspFoldCursor (LspFoldCursor 1 1 false)]
+    [i : i64 0]
+    [top : i64 -1]
+    [comment-slot : i64 -1]
+    [comment-line : i64 -2]
+    (begin
+      (while (< i n)
+        (let
+          [c : char (string.string-ref text i)]
+          (cond
+            [(= c '\n')
+              (begin
+                (set! (struct-get cursor line) (+ (struct-get cursor line) 1))
+                (set! (struct-get cursor col) 1)
+                (set! (struct-get cursor code) false)
+                (set! i (+ i 1)))]
+            [(= c ';')
+              (let
+                [own-line? : bool (not (struct-get cursor code))]
+                [line : i64 (struct-get cursor line)]
+                [past : i64 (lsp-fold-clamp (lsp-skip-line text i n) n)]
+                [eol : i64
+                  (if (and
+                    (> past i)
+                    (= (string.string-ref text (- past 1)) '\n'))
+                    (- past 1)
+                    past)]
+                (begin
+                  (lsp-fold-cursor-advance! (&mut cursor) text i eol)
+                  (if own-line?
+                    (begin
+                      (set!
+                        comment-slot
+                        (lsp-fold-comment-line!
+                          (&mut folds)
+                          comment-slot
+                          comment-line
+                          line
+                          (struct-get cursor col)))
+                      (set! comment-line line))
+                    unit)
+                  (lsp-fold-cursor-advance! (&mut cursor) text eol past)
+                  (set! i past)))]
+            [(= c '"')
+              (let
+                [past : i64 (lsp-fold-clamp (lsp-skip-string text i n) n)]
+                (begin
+                  (lsp-fold-cursor-advance! (&mut cursor) text i past)
+                  (set! (struct-get cursor code) true)
+                  (set! i past)))]
+            [(= c '\'')
+              (let
+                [past : i64
+                  (lsp-fold-clamp (lsp-skip-apostrophe-char-literal text i n) n)]
+                (begin
+                  (lsp-fold-cursor-advance! (&mut cursor) text i past)
+                  (set! (struct-get cursor code) true)
+                  (set! i past)))]
+            [(or (= c '(') (= c '['))
+              (begin
+                (lsp_fold_vec.push
+                  (&mut folds)
+                  (LspFoldRange
+                    (struct-get cursor line)
+                    (+ (struct-get cursor col) 1)
+                    0
+                    0
+                    lsp-fold-kind-region
+                    top
+                    false))
+                (set! top (- (lsp_fold_vec.len (& folds)) 1))
+                (set! (struct-get cursor col) (+ (struct-get cursor col) 1))
+                (set! (struct-get cursor code) true)
+                (set! i (+ i 1)))]
+            [(or (= c ')') (= c ']'))
+              (begin
+                (if (>= top 0)
+                  (let
+                    [open : LspFoldRange
+                      (lsp_fold_vec.get (& folds) top (lsp-fold-range-fallback))]
+                    [parent : i64 (struct-get open parent)]
+                    (begin
+                      (if (>
+                        (struct-get cursor line)
+                        (struct-get open start-line))
+                        (lsp_fold_vec.set
+                          (&mut folds)
+                          top
+                          (LspFoldRange
+                            (struct-get open start-line)
+                            (struct-get open start-char)
+                            (struct-get cursor line)
+                            (struct-get cursor col)
+                            lsp-fold-kind-region
+                            -1
+                            true))
+                        unit)
+                      (set! top parent)))
+                  unit)
+                (set! (struct-get cursor col) (+ (struct-get cursor col) 1))
+                (set! (struct-get cursor code) true)
+                (set! i (+ i 1)))]
+            [else
+              (begin
+                (set!
+                  (struct-get cursor col)
+                  (+ (struct-get cursor col) (lsp-fold-utf16-units c)))
+                (if (lsp-ws? c)
+                  unit
+                  (set! (struct-get cursor code) true))
+                (set! i (+ i 1)))])))
+      folds)))
+
+(define (lsp-fold-range-json [fold : LspFoldRange]) : json.Json
+  (lsp-json-object
+    (lsp-json-member
+      "startLine"
+      (lsp-json-number (lsp-zero-based (struct-get fold start-line)))
+      (lsp-json-member
+        "startCharacter"
+        (lsp-json-number (lsp-zero-based (struct-get fold start-char)))
+        (lsp-json-member
+          "endLine"
+          (lsp-json-number (lsp-zero-based (struct-get fold end-line)))
+          (lsp-json-member
+            "endCharacter"
+            (lsp-json-number (lsp-zero-based (struct-get fold end-char)))
+            (if (= (struct-get fold kind) lsp-fold-kind-comment)
+              (lsp-json-member
+                "kind"
+                (json.JsonString "comment")
+                json.JsonMemberListNil)
+              json.JsonMemberListNil)))))))
+
+;; Start-ordered folding ranges. The result vector is already in start order,
+;; so a reverse walk cons'd onto an accumulator emits forward order without
+;; recursion over the document.
+(define (lsp-folding-ranges-in-text [text : String]) : json.JsonList
+  (let
+    [folds : lsp_fold_vec.Vec (lsp-fold-ranges-scan text)]
+    [i : i64 (- (lsp_fold_vec.len (& folds)) 1)]
+    [acc : json.JsonList json.JsonListNil]
+    (begin
+      (while (>= i 0)
+        (let
+          [fold : LspFoldRange
+            (lsp_fold_vec.get (& folds) i (lsp-fold-range-fallback))]
+          (begin
+            (if (struct-get fold emit)
+              (set! acc (lsp-json-list-cons (lsp-fold-range-json fold) acc))
+              unit)
+            (set! i (- i 1)))))
+      acc)))
+
+(define (lsp-handle-folding-range
+  [id : json.Json]
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]) : unit
+  (match (lsp-get-document params docs)
+    [(LspDocumentLookup.Found _ text _)
+      (lsp-write-response id (lsp-json-array (lsp-folding-ranges-in-text text)))]
+    [(LspDocumentLookup.Missing)
+      (lsp-write-response id (lsp-json-array json.JsonListNil))]))
+
 ;; tl/findReferences - All uses of a name
 (define (lsp-handle-tl-find-references
   [id : json.Json]
@@ -6344,6 +6638,25 @@
                       (match (json.object-get message (& params-key))
                         [(json.JsonFound params)
                           (lsp-handle-document-link id params docs stdlib-roots)]
+                        [(json.JsonMissing)
+                          (lsp-write-response
+                            id
+                            (lsp-json-array json.JsonListNil))]))]
+                  [(json.JsonMissing) unit]))
+              (set! result (LspHandleResult.Continue docs)))
+            unit)
+          (if (and (not handled) (string.eq method "textDocument/foldingRange"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json.object-get message (& id-key))
+                  [(json.JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json.object-get message (& params-key))
+                        [(json.JsonFound params)
+                          (lsp-handle-folding-range id params docs)]
                         [(json.JsonMissing)
                           (lsp-write-response
                             id

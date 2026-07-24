@@ -1388,6 +1388,56 @@ if ! cmp -s "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
     diff -u "$STDLIB_TLCI_FOLDS_EMBEDDED_ASM" \
         "$STDLIB_TLCI_FOLDS_MODIFIED_ASM" >&2 || true
     fail "native and interpreted index folds produced different assembly"
+# Native-vs-interpreted parity over the computed string-dispatch scrutinees
+# (#5604): `(type-kind (comptime.expr-type e))` and `(type-key T)` probes pick
+# an arm inside the native entry, so a wrong probe result silently selects a
+# different expansion instead of failing. The array fixture above has no such
+# dispatch, and neither does the #5605 template-node fixture.
+echo "[compile-profile] verify computed scrutinee routing differential (#5604)"
+SCRUTINEE_SOURCE="$ROOT/tests/integration/tlci_native_computed_scrutinee.tl"
+SCRUTINEE_EMBEDDED_ASM="$STDLIB_TLCI_DIR/scrutinee-embedded.s"
+SCRUTINEE_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/scrutinee-embedded.stdout"
+SCRUTINEE_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/scrutinee-embedded.stderr"
+SCRUTINEE_INTERPRETED_ASM="$STDLIB_TLCI_DIR/scrutinee-interpreted.s"
+SCRUTINEE_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/scrutinee-interpreted.stdout"
+SCRUTINEE_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/scrutinee-interpreted.stderr"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$SCRUTINEE_SOURCE" \
+        -o "$SCRUTINEE_EMBEDDED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$SCRUTINEE_EMBEDDED_STDOUT" 2> "$SCRUTINEE_EMBEDDED_STDERR"; then
+    show_failure_logs "$SCRUTINEE_EMBEDDED_STDOUT" "$SCRUTINEE_EMBEDDED_STDERR"
+    fail "computed scrutinee fixture failed on the embedded route"
+fi
+if ! (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" compile "$SCRUTINEE_SOURCE" \
+        -o "$SCRUTINEE_INTERPRETED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib
+) > "$SCRUTINEE_INTERPRETED_STDOUT" 2> "$SCRUTINEE_INTERPRETED_STDERR"; then
+    show_failure_logs \
+        "$SCRUTINEE_INTERPRETED_STDOUT" "$SCRUTINEE_INTERPRETED_STDERR"
+    fail "computed scrutinee fixture failed on the interpreted route"
+fi
+assert_profile_counter_at_least_in \
+    "$SCRUTINEE_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_dispatches" \
+    1 \
+    "$SCRUTINEE_EMBEDDED_STDOUT" \
+    "$SCRUTINEE_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$SCRUTINEE_INTERPRETED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$SCRUTINEE_INTERPRETED_STDOUT" \
+    "$SCRUTINEE_INTERPRETED_STDERR"
+if ! cmp -s "$SCRUTINEE_EMBEDDED_ASM" "$SCRUTINEE_INTERPRETED_ASM"; then
+    diff -u "$SCRUTINEE_INTERPRETED_ASM" "$SCRUTINEE_EMBEDDED_ASM" >&2 || true
+    fail "native and interpreted computed scrutinees changed generated assembly"
 fi
 # #5658: `stdlib.hash/hash` generates its module in the wildcard arm of a
 # type-kind match, so every type except `unit` goes through an arm that was

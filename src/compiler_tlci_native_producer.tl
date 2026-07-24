@@ -1067,6 +1067,22 @@
                       (string.int->string (string.string-length field-name))
                       "0")
                     (+ target-opened value-opened 1))))))))]
+    ;; `(cast e : T)`: the operand template then the type template, matching
+    ;; the interpreted quote's cast reconstruction. Refs #5604.
+    [(AstExpr.Cast value-node ty)
+      (let
+        [value-opened : i64
+          (embedded-native-template-ops params value-node ops ops-count)]
+        (if (< value-opened 0)
+          -1
+          (let
+            [type-opened : i64
+              (embedded-native-template-type-ops ty ops ops-count)]
+            (if (< type-opened 0)
+              -1
+              (begin
+                (embedded-native-template-push! ops ops-count 235 "0" "0" "0")
+                (+ value-opened type-opened 1))))))]
     [(AstExpr.Set name-id value-node)
       (let
         [value-opened : i64
@@ -2015,7 +2031,25 @@
               "0")
             (embedded-native-template-push! ops ops-count op "0" "0" "0")
             2)))]
-    [_ -1]))
+    ;; `(type-kind (comptime.expr-type e))` in value position: push the Expr
+    ;; operand, project its produced type, then run the query. Refs #5604.
+    [_
+      (let
+        [expr-index : i64
+          (embedded-native-expr-type-param-index params arg-node)]
+        (if (< expr-index 0)
+          -1
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              180
+              (string.int->string expr-index)
+              "0"
+              "0")
+            (embedded-native-template-push! ops ops-count 125 "0" "0" "0")
+            (embedded-native-template-push! ops ops-count op "0" "0" "0")
+            3)))]))
 
 ;; The `(comptime-host-invoke host session 204 N 0 0)` local-set final text
 ;; for one binding slot.
@@ -2461,11 +2495,16 @@
 ;; Returns "" when the body is outside the supported shape.
 (define (embedded-native-match-arms
   [params : (& params AstMacroParamList)]
+  [probe-op : i64]
   [type-index : i64]
   [arms : (& arms AstMatchArmList)]
   [index : i64]) : String
+  ;; Falling off the end of the arm chain is itself an interpreted-arm site: it
+  ;; is reached at run time whenever no arm's probe matched, which only happens
+  ;; for a dispatch with no wildcard default. Mark it so the coverage report
+  ;; counts it; a dispatch that does end in a wildcard never reaches here.
   (if (>= index (struct-get arms len))
-    "  0\n"
+    embedded-native-interpreted-arm-code
     (match (array-ref (struct-get arms slots) index)
       [(AstMatchArm.Arm pattern body-node)
         (match pattern
@@ -2474,13 +2513,20 @@
               [kind : String (intern-str sid)]
               [arm-code : String (embedded-native-body-code params body-node)]
               [rest : String
-                (embedded-native-match-arms params type-index arms (+ index 1))]
+                (embedded-native-match-arms
+                  params
+                  probe-op
+                  type-index
+                  arms
+                  (+ index 1))]
               (if (string.eq rest "")
                 ""
                 (str-cat
                   "  (let [t"
                   (string.int->string index)
-                  " : i64 (comptime-host-invoke host session 186 "
+                  " : i64 (comptime-host-invoke host session "
+                  (string.int->string probe-op)
+                  " "
                   (string.int->string type-index)
                   " "
                   (embedded-native-name-arg kind)
@@ -2516,6 +2562,82 @@
                 arm-code))]
           [_ embedded-native-interpreted-arm-code])])))
 
+;; One recognized string-dispatch scrutinee: the data probe op and the operand
+;; index it reads. Refs #5604.
+(defenum EmbeddedNativeScrutineeProbe
+  (ScrutineeProbe i64 i64)
+  (NoScrutineeProbe))
+
+;; Recognize the three string-valued scrutinee shapes the stdlib dispatches
+;; on: `(type-kind T)` over a type operand, `(type-kind (comptime.expr-type
+;; e))` over an Expr operand's produced type, and `(type-key T)`. Each maps to
+;; a probe with the same 1/0-as-data contract, so the arm chain is identical.
+(define (embedded-native-scrutinee-probe
+  [params : (& params AstMacroParamList)]
+  [scrutinee : i64]) : EmbeddedNativeScrutineeProbe
+  (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
+    [(AstExpr.Call head-id args)
+      (match (embedded-stdlib-tlci-unwrap-expr head-id)
+        [(AstExpr.Var head-name)
+          (let
+            [head : String (intern-str head-name)]
+            [kind? : bool
+              (or
+                (string.eq head "type-kind")
+                (string.eq head "comptime.type-kind"))]
+            [key? : bool
+              (or
+                (string.eq head "type-key")
+                (string.eq head "comptime.type-key"))]
+            (if (or
+              (not (or kind? key?))
+              (not (= (ast-expr-list-len (& args)) 1)))
+              (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)
+              (let
+                [arg-node : i64 (ast-expr-list-get (& args) 0 0)]
+                [direct : i64 (embedded-native-var-param-index params arg-node)]
+                (if (>= direct 0)
+                  (EmbeddedNativeScrutineeProbe.ScrutineeProbe
+                    (if kind?
+                      186
+                      234)
+                    direct)
+                  ;; `(type-kind (comptime.expr-type e))` is the only nested
+                  ;; operand form in the dispatch set; `type-key` never wraps
+                  ;; one.
+                  (if key?
+                    (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)
+                    (let
+                      [expr-index : i64
+                        (embedded-native-expr-type-param-index params arg-node)]
+                      (if (< expr-index 0)
+                        (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)
+                        (EmbeddedNativeScrutineeProbe.ScrutineeProbe
+                          233
+                          expr-index))))))))]
+        [_ (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)])]
+    [_ (EmbeddedNativeScrutineeProbe.NoScrutineeProbe)]))
+
+;; The operand index behind `(comptime.expr-type <param>)`, or -1.
+(define (embedded-native-expr-type-param-index
+  [params : (& params AstMacroParamList)]
+  [node : i64]) : i64
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Call head-id args)
+      (match (embedded-stdlib-tlci-unwrap-expr head-id)
+        [(AstExpr.Var head-name)
+          (if (and
+            (or
+              (string.eq (intern-str head-name) "comptime.expr-type")
+              (string.eq (intern-str head-name) "expr-type"))
+            (= (ast-expr-list-len (& args)) 1))
+            (embedded-native-var-param-index
+              params
+              (ast-expr-list-get (& args) 0 0))
+            -1)]
+        [_ -1])]
+    [_ -1]))
+
 (define (embedded-native-match-body
   [params : (& params AstMacroParamList)]
   [body-node : i64]) : String
@@ -2523,27 +2645,16 @@
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee arms)
-          (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
-            [(AstExpr.Call head-id args)
-              (match (embedded-stdlib-tlci-unwrap-expr head-id)
-                [(AstExpr.Var head-name)
-                  (if (and
-                    (string.eq (intern-str head-name) "type-kind")
-                    (= (ast-expr-list-len (& args)) 1))
-                    (let
-                      [type-index : i64
-                        (embedded-native-var-param-index
-                          params
-                          (ast-expr-list-get (& args) 0 0))]
-                      (if (< type-index 0)
-                        ""
-                        (embedded-native-match-arms
-                          params
-                          type-index
-                          (& arms)
-                          0)))
-                    "")]
-                [_ ""])]
+          (match (embedded-native-scrutinee-probe params scrutinee)
+            [(EmbeddedNativeScrutineeProbe.ScrutineeProbe
+                probe-op
+                operand-index)
+              (embedded-native-match-arms
+                params
+                probe-op
+                operand-index
+                (& arms)
+                0)]
             [_ ""])])]
     [_ ""]))
 

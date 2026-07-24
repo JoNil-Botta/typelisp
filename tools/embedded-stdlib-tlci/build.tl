@@ -217,6 +217,26 @@
             (string.int->string
               (array-ref embedded-stdlib-tlci-native-report-count 0))
             " native)\n"))
+        ;; The native entry count is an upper bound on coverage: a native entry
+        ;; may still route single arms back to the interpreter. Report the arm
+        ;; sites separately so #5596's zero-fallback goal is measurable.
+        (io.print-string
+          (str-cat
+            "embedded stdlib tlci: coverage native-entries="
+            (string.int->string
+              (array-ref embedded-stdlib-tlci-native-report-count 0))
+            " shell-entries="
+            (string.int->string
+              (-
+                (array-length names)
+                (array-ref embedded-stdlib-tlci-native-report-count 0)))
+            " partial-entries="
+            (string.int->string
+              (array-ref embedded-stdlib-tlci-native-report-partial-count 0))
+            " interpreted-arms="
+            (string.int->string
+              (array-ref embedded-stdlib-tlci-native-report-interpreted-arms 0))
+            "\n"))
         0)]))
 
 (define (main) : i64

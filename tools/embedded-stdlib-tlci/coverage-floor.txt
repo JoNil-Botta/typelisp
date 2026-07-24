@@ -1,0 +1,24 @@
+# Native-coverage ratchet for the embedded stdlib tlci image. Refs #5596.
+#
+# scripts/verify-embedded-stdlib-tlci.sh reads these bounds and fails when the
+# image built from the checked-in stdlib sources drops below the floor. Nothing
+# else pins the coverage numbers, so without this file a producer change can
+# silently move macros back onto the interpreted route and only a compile-time
+# profile row would notice.
+#
+# native-entries-min   entries whose transformer body compiles to a native
+#                      entry function rather than a registration shell.
+# interpreted-arms-max native entries still route single match arms back to the
+#                      interpreter (ok-with-no-result). Each such site counts,
+#                      so the native entry count alone overstates coverage.
+#
+# These are a ratchet, not a target: raise the floor and lower the ceiling as
+# families land, never the other way around. #5596 is done when
+# native-entries-min equals the entry total and interpreted-arms-max is 0.
+#
+# Improving past the ratchet is not a failure -- macro families land
+# concurrently and an exact expectation would collide on every merge -- but the
+# verify script prints the numbers to paste here, and re-ratcheting is part of
+# each family's acceptance criteria.
+native-entries-min 38
+interpreted-arms-max 2

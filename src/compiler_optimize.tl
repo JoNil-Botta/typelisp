@@ -11763,10 +11763,25 @@
 
 (define (opt-ssa-construct-function-with-context-result
   [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (opt-ssa-construct-function-from-context-result
+    func
+    (opt-cfg-context-empty)
+    false))
+
+;; `entry-context` is consumed only when `entry-context-valid?` reports that it
+;; was built for `func`'s current blocks; otherwise this builds its own, exactly
+;; as before. The pre-SSA rotation pass hands its context down this way.
+(define (opt-ssa-construct-function-from-context-result
+  [func : CompilerIrFunction]
+  [entry-context : OptCfgContext]
+  [entry-context-valid? : bool]) : OptFunctionCtxResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
-        [context : OptCfgContext (opt-cfg-context-build blocks)]
+        [context : OptCfgContext
+          (if entry-context-valid?
+            entry-context
+            (opt-cfg-context-build blocks))]
         (if (opt-verify-single-defs? params frame blocks)
           (OptFunctionCtxResult.Result func context)
           (let
@@ -14887,33 +14902,64 @@
             (OptLoopRotationResult.Result next true)
             (opt-loop-rotation-loops blocks context loops (box-get rest)))])]))
 
-(define (opt-loop-rotation-blocks-once [blocks : CompilerIrBlockList]) : OptLoopRotationResult
+;; The step already builds a CFG context for `blocks`. Carry it out so the
+;; fixpoint below can hand the LAST step's context -- the one built for the
+;; blocks that did not rotate, i.e. exactly the blocks this pass returns -- to
+;; the next pass instead of making it build an identical one.
+(defenum OptLoopRotationCtxResult
+  (Result CompilerIrBlockList bool OptCfgContext))
+
+(define (opt-loop-rotation-blocks-once-result [blocks : CompilerIrBlockList]) : OptLoopRotationCtxResult
   (let
     [context : OptCfgContext (opt-cfg-context-build blocks)]
     [loops : OptNaturalLoopList
       (opt-cfg-natural-loops-with-context blocks context)]
-    (opt-loop-rotation-loops blocks context loops loops)))
+    (match (opt-loop-rotation-loops blocks context loops loops)
+      [(OptLoopRotationResult.Result next changed)
+        (OptLoopRotationCtxResult.Result next changed context)])))
+
+(define (opt-loop-rotation-blocks-once [blocks : CompilerIrBlockList]) : OptLoopRotationResult
+  (match (opt-loop-rotation-blocks-once-result blocks)
+    [(OptLoopRotationCtxResult.Result next changed _)
+      (OptLoopRotationResult.Result next changed)]))
+
+(define (opt-loop-rotation-blocks-fixed-result
+  [blocks : CompilerIrBlockList]
+  [remaining : i64]) : OptBlockCtxResult
+  (if (<= remaining 0)
+    (OptBlockCtxResult.Result blocks (opt-cfg-context-empty) false)
+    (match (opt-loop-rotation-blocks-once-result blocks)
+      [(OptLoopRotationCtxResult.Result next changed context)
+        (if changed
+          (opt-loop-rotation-blocks-fixed-result next (- remaining 1))
+          ;; Every arm of `opt-loop-rotation-loops` returns its input verbatim
+          ;; when it reports no change, so `context` is valid for `next`.
+          (OptBlockCtxResult.Result next context true))])))
 
 (define (opt-loop-rotation-blocks-fixed
   [blocks : CompilerIrBlockList]
   [remaining : i64]) : CompilerIrBlockList
-  (if (<= remaining 0)
-    blocks
-    (match (opt-loop-rotation-blocks-once blocks)
-      [(OptLoopRotationResult.Result next changed)
-        (if changed
-          (opt-loop-rotation-blocks-fixed next (- remaining 1))
-          next)])))
+  (match (opt-loop-rotation-blocks-fixed-result blocks remaining)
+    [(OptBlockCtxResult.Result out _ _) out]))
 
-(define (opt-loop-rotation-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define (opt-loop-rotation-blocks-result [blocks : CompilerIrBlockList]) : OptBlockCtxResult
   ;; The natural-loop finder is dominance based, so let it decide whether the
   ;; CFG contains a loop. Textual block order is not a loop property: inlining
   ;; and block layout may put a latch before its header.
   (if (opt-ssa-blocks-have-phi? blocks)
-    blocks
-    (opt-loop-rotation-blocks-fixed
+    (OptBlockCtxResult.Result blocks (opt-cfg-context-empty) false)
+    (opt-loop-rotation-blocks-fixed-result
       blocks
       (+ 1 (compiler-ir-block-list-count blocks)))))
+
+(define (opt-loop-rotation-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match (opt-loop-rotation-blocks-result blocks)
+    [(OptBlockCtxResult.Result out _ _) out]))
+
+(define (opt-loop-rotation-function-result [func : CompilerIrFunction]) : OptBlockCtxResult
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (opt-loop-rotation-blocks-result blocks)]))
 
 (define (opt-loop-rotation-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -38280,23 +38326,35 @@
                       [run-loop? : bool true]
                       [_t-rotation : i64
                         (cfg compile-profile (profile.now-ms) 0)]
-                      [rotated : CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          "rotation"
-                          (if run-loop?
-                            (opt-loop-rotation-function
-                              (CompilerIrFunction.Function
-                                name
-                                params
-                                ret-ty
-                                promoted-frame
-                                sroa-blocks))
+                      [rotation-result : OptBlockCtxResult
+                        (if run-loop?
+                          (opt-loop-rotation-function-result
                             (CompilerIrFunction.Function
                               name
                               params
                               ret-ty
                               promoted-frame
-                              sroa-blocks)))]
+                              sroa-blocks))
+                          (OptBlockCtxResult.Result
+                            sroa-blocks
+                            (opt-cfg-context-empty)
+                            false))]
+                      [rotated : CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          "rotation"
+                          (CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            promoted-frame
+                            (match rotation-result
+                              [(OptBlockCtxResult.Result b _ _) b])))]
+                      [rotation-context : OptCfgContext
+                        (match rotation-result
+                          [(OptBlockCtxResult.Result _ ctx _) ctx])]
+                      [rotation-context-valid? : bool
+                        (match rotation-result
+                          [(OptBlockCtxResult.Result _ _ valid) valid])]
                       [_p-rotation : unit
                         (cfg
                           compile-profile
@@ -38311,8 +38369,10 @@
                       [_t-ssa : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [ssa-result : OptFunctionCtxResult
                         (if run-loop?
-                          (opt-ssa-construct-function-with-context-result
-                            rotated)
+                          (opt-ssa-construct-function-from-context-result
+                            rotated
+                            rotation-context
+                            rotation-context-valid?)
                           (OptFunctionCtxResult.Result
                             rotated
                             (opt-cfg-context-empty)))]

@@ -1870,72 +1870,6 @@
           0
           (svec.len (& effective-roots)))))))
 
-(define (compiler-load-stdlib-private-path?
-  [path : String]
-  [stdlib-roots : svec.Vec]) : bool
-  (if (compiler-load-string-contains? path "vector")
-    (let
-      [normalized : String (compiler-load-normalize-path path)]
-      [stdlib-path : String
-        (if (compiler-load-stdlib-import? normalized)
-          normalized
-          (compiler-load-stdlib-owned-path-from-roots normalized stdlib-roots))]
-      (string.eq stdlib-path "stdlib/vector.tl"))
-    false))
-
-(define (compiler-load-stdlib-private-module? [module : String]) : bool
-  (string.eq module "stdlib.vector"))
-
-(define (compiler-load-stdlib-comptime-path?
-  [path : String]
-  [stdlib-roots : svec.Vec]) : bool
-  (if (compiler-load-string-contains? path "comptime")
-    (let
-      [normalized : String (compiler-load-normalize-path path)]
-      [stdlib-path : String
-        (if (compiler-load-stdlib-import? normalized)
-          normalized
-          (compiler-load-stdlib-owned-path-from-roots normalized stdlib-roots))]
-      (string.eq stdlib-path "stdlib/comptime.tl"))
-    false))
-
-(define (compiler-load-stdlib-comptime-module? [module : String]) : bool
-  (string.eq module "stdlib.comptime"))
-
-(define (compiler-load-stdlib-private-cfgs
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
-  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (let
-      [private-cfgs : sym_i64_env.SymI64Env
-        (if (compiler-cfg-private-dynamic-buffer-enabled? cfgs)
-          cfgs
-          (match expected-module
-            [(AstMaybeModuleName.Some module)
-              (if (compiler-load-stdlib-private-module? (intern-str module))
-                (compiler-cfg-enable-private-dynamic-buffer cfgs)
-                cfgs)]
-            [(AstMaybeModuleName.No)
-              (if (compiler-load-stdlib-private-path? path stdlib-roots)
-                (compiler-cfg-enable-private-dynamic-buffer cfgs)
-                cfgs)]))]
-      (match expected-module
-        [(AstMaybeModuleName.Some module)
-          (if (compiler-load-stdlib-comptime-module? (intern-str module))
-            (compiler-cfg-enable-id
-              private-cfgs
-              cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
-            private-cfgs)]
-        [(AstMaybeModuleName.No)
-          (if (compiler-load-stdlib-comptime-path? path stdlib-roots)
-            (compiler-cfg-enable-id
-              private-cfgs
-              cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
-            private-cfgs)]))))
-
 (define (compiler-load-resolve-stdlib-root-raw
   [suffix : String]
   [roots : svec.Vec]) : CompilerLoadMaybePath
@@ -3006,11 +2940,7 @@
     seen
     stdlib-roots
     AstMaybeModuleName.No
-    (compiler-load-stdlib-private-cfgs
-      path
-      stdlib-roots
-      AstMaybeModuleName.No
-      cfgs)))
+    cfgs))
 
 (define (compiler-load-stdlib-prelude-file-with-roots-cfg
   [path : String]
@@ -3066,11 +2996,7 @@
     seen
     stdlib-roots
     AstMaybeModuleName.No
-    (compiler-load-stdlib-private-cfgs
-      path
-      stdlib-roots
-      AstMaybeModuleName.No
-      cfgs)
+    cfgs
     pools))
 
 (define (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
@@ -4024,8 +3950,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
   (let
-    [parse-cfgs : sym_i64_env.SymI64Env
-      (compiler-load-stdlib-private-cfgs path stdlib-roots expected-module cfgs)]
+    [parse-cfgs : sym_i64_env.SymI64Env cfgs]
     [source-path-id : i64 (struct-get parse-identity source-path-id)]
     [fallback-id : i64 (struct-get parse-identity module-fallback-id)]
     (match (if (io.file-exists? path)
@@ -9269,12 +9194,7 @@
                 fallback
                 expected-module)
               cbi.compiler-builtin-id-fix-empty)]
-          [parse-cfgs : sym_i64_env.SymI64Env
-            (compiler-load-stdlib-private-cfgs
-              path
-              stdlib-roots
-              expected-module
-              cfgs)]
+          [parse-cfgs : sym_i64_env.SymI64Env cfgs]
           (if (io.file-exists? path)
             (match (if cache-current
               (compiler-load-parse-file-diagnostic-session-id
@@ -9421,12 +9341,7 @@
                 module-id-fallback-id]
               [else
                 (compiler-load-parse-context-name-id source-module-fallback)])]
-          [parse-cfgs : sym_i64_env.SymI64Env
-            (compiler-load-stdlib-private-cfgs
-              path
-              stdlib-roots
-              expected-module
-              cfgs)]
+          [parse-cfgs : sym_i64_env.SymI64Env cfgs]
           (if (io.file-exists? path)
             (match (if cache-current
               (compiler-load-parse-file-diagnostic-session-id-with-pools
@@ -11108,8 +11023,7 @@
   [source-module-fallback : String]
   [source-module-fallback-id-hint : i64]) : ResultCompilerLoadWithPaths
   (let
-    [parse-cfgs : sym_i64_env.SymI64Env
-      (compiler-load-stdlib-private-cfgs path stdlib-roots expected-module cfgs)]
+    [parse-cfgs : sym_i64_env.SymI64Env cfgs]
     [parse-identity : CompilerLoadParseIdentity
       (CompilerLoadParseIdentity
         source-path-id
@@ -11284,12 +11198,7 @@
   [deps : CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
-    [parse-cfgs : sym_i64_env.SymI64Env
-      (compiler-load-stdlib-private-cfgs
-        path
-        stdlib-roots
-        AstMaybeModuleName.No
-        cfgs)]
+    [parse-cfgs : sym_i64_env.SymI64Env cfgs]
     [parse-identity : CompilerLoadParseIdentity
       (compiler-load-parse-identity
         path

@@ -253,10 +253,7 @@
 (import (stdlib.vector.vector i64) as vec)
 (define (main) : i64 42)")
     (let
-      [cfgs : sym_i64_env.SymI64Env
-        (compiler-cfg-enable
-          (compiler-cfg-empty)
-          "feature-compiler-private-string-intrinsics")]
+      [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
       (match (compiler-load-file-with-paths-and-roots-cfg
         "target/cl_lazy_stdlib_vector_module_macro/entry.tl"
         (sym_i64_env.sym-i64-empty)

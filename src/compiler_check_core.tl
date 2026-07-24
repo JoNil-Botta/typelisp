@@ -43,7 +43,7 @@
               "|0|0|0\n")))))))
 
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable-compiler-language-features (compiler-cfg-empty)))
+  (compiler-cfg-empty))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]

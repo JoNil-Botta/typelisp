@@ -283,7 +283,9 @@ allocation rejects negative lengths, traps if `length * sizeof(type)` would
 overflow an `i64` byte count, and initializes every live element according to
 the ZII `init` rules in section 5.12.1. It is not valid as a global
 initializer, and public APIs must not expose it as a growable collection
-type.
+type. Its internal spelling `__tl_dyn-array` names the same compatibility
+buffer and is accepted unconditionally in compiler and stdlib sources; it is
+not a public source type in either form.
 
 **Owned string:** `String`
 - `String` is an owned, immutable byte-string handle. The handle is a

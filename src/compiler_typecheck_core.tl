@@ -61346,27 +61346,10 @@
 (define (macro-expr-to-spanned-sexpr [expr : AstExpr] [origin : AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span expr (macro-zero-source-span) origin))
 
-(define (macro-stdlib-private-dynamic-buffer-macro?
-  [macro-name : String]
-  [definition-module : String]) : bool
-  (and
-    (or
-      (string.eq definition-module "stdlib.vector")
-      (string.eq definition-module "stdlib/vector"))
-    (or
-      (string.eq macro-name "vector")
-      (string.eq macro-name "stdlib.vector/vector")
-      (string.eq macro-name "stdlib/vector/vector")
-      (string.eq macro-name "vector-family")
-      (string.eq macro-name "stdlib.vector/vector-family")
-      (string.eq macro-name "stdlib/vector/vector-family"))))
-
 (define (macro-parse-dispatch-for-macro
   [macro-name : String]
   [definition-module : String]) : sym_i64_env.SymI64Env
-  (if (macro-stdlib-private-dynamic-buffer-macro? macro-name definition-module)
-    (compiler-parse-dispatch-private-types (compiler-parse-dispatch-env))
-    (compiler-parse-dispatch-env)))
+  (compiler-parse-dispatch-env))
 
 (define (macro-parse-decl-sexpr
   [dispatch : sym_i64_env.SymI64Env]

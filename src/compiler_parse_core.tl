@@ -1018,12 +1018,6 @@
 (define (compiler-cfg-name [key-id : i64]) : String
   (ci.intern-str (compiler-cfg-name-id key-id)))
 
-(define (compiler-cfg-private-dynamic-buffer-key-id) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (compiler-cfg-key-id
-      cbi.compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer)))
-
 (define (compiler-cfg-empty) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
 
@@ -1056,45 +1050,6 @@
     cfgs
     (ci.intern-compat-state-intern intern-state name)))
 
-(define (compiler-cfg-enable-private-dynamic-buffer
-  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (sym_i64_env.sym-i64-bind-id
-    cfgs
-    (compiler-cfg-private-dynamic-buffer-key-id)
-    1))
-
-(define (compiler-cfg-enable-compiler-language-features
-  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (compiler-cfg-enable
-      (compiler-cfg-enable
-        (compiler-cfg-enable-id
-          (compiler-cfg-enable-id
-            (compiler-cfg-enable-id
-              (compiler-cfg-enable-id
-                (compiler-cfg-enable-id
-                  (compiler-cfg-enable-id
-                    (compiler-cfg-enable-id
-                      (compiler-cfg-enable-id
-                        (compiler-cfg-enable-id
-                          (compiler-cfg-enable-id
-                            (compiler-cfg-enable-id
-                              cfgs
-                              cbi.compiler-builtin-id-cfg-feature-ptr-addr-of)
-                            cbi.compiler-builtin-id-cfg-feature-str-view)
-                          cbi.compiler-builtin-id-cfg-feature-runtime-str-view-extern)
-                        cbi.compiler-builtin-id-cfg-feature-private-string-intrinsics)
-                      cbi.compiler-builtin-id-cfg-feature-compiler-private-string-intrinsics)
-                    cbi.compiler-builtin-id-cfg-array-helper-intrinsics)
-                  cbi.compiler-builtin-id-cfg-feature-tl-memchr)
-                cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
-              cbi.compiler-builtin-id-cfg-feature-comptime-public-fields)
-            cbi.compiler-builtin-id-cfg-feature-cleanup-owner-reflection)
-          cbi.compiler-builtin-id-cfg-feature-tl-array-zero)
-        "feature-compiler-float-sqrt-intrinsic")
-      "feature-compiler-float-bitcast-intrinsics")))
-
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
@@ -1110,12 +1065,6 @@
   [dispatch : sym_i64_env.SymI64Env]
   [name-id : i64]) : bool
   (sym_i64_env.sym-i64-contains-id dispatch (compiler-cfg-key-id name-id)))
-
-(define (compiler-cfg-private-dynamic-buffer-enabled?
-  [cfgs : sym_i64_env.SymI64Env]) : bool
-  (sym_i64_env.sym-i64-contains-id
-    cfgs
-    (compiler-cfg-private-dynamic-buffer-key-id)))
 
 (define (compiler-cfg-eval-list-all
   [dispatch : sym_i64_env.SymI64Env]
@@ -2172,14 +2121,6 @@
           out
           "__tl_dyn-array"
           (compiler-parse-tag-ty-dyn-array)))
-      out)))
-
-(define (compiler-parse-dispatch-private-types [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (let
-    [indexed : bool (compiler-parse-dispatch-indexed? e)]
-    [out : sym_i64_env.SymI64Env (compiler-cfg-enable-private-dynamic-buffer e)]
-    (if indexed
-      (compiler-parse-dispatch-index-mark out)
       out)))
 
 (define (compiler-parse-dispatch-exprs [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
@@ -3253,27 +3194,22 @@
                       [_ (ResultAstType.Err "parse: malformed array type")])]
                   [_ (ResultAstType.Err "parse: malformed array type")])]
               [(= tag (compiler-parse-tag-ty-dyn-array))
-                (if (not
-                  (compiler-cfg-private-dynamic-buffer-enabled? dispatch))
-                  (ResultAstType.Err
-                    (compiler-parse-generic-type-policy-message
-                      "__tl_dyn-array"))
-                  (match rest
-                    [(reader.Sexpr.Cons elem tail)
-                      (match (box-get tail)
-                        [(reader.Sexpr.Nil)
-                          (match (parse-ast-type dispatch pools (box-get elem))
-                            [(ResultAstType.Ok elem-ty)
-                              (ResultAstType.Ok
-                                (ast-ty-dyn-array-with-pools pools elem-ty))]
-                            [(ResultAstType.Err message)
-                              (ResultAstType.Err message)])]
-                        [_
-                          (ResultAstType.Err
-                            "parse: __tl_dyn-array expects exactly one type")])]
-                    [_
-                      (ResultAstType.Err
-                        "parse: __tl_dyn-array expects exactly one type")]))]
+                (match rest
+                  [(reader.Sexpr.Cons elem tail)
+                    (match (box-get tail)
+                      [(reader.Sexpr.Nil)
+                        (match (parse-ast-type dispatch pools (box-get elem))
+                          [(ResultAstType.Ok elem-ty)
+                            (ResultAstType.Ok
+                              (ast-ty-dyn-array-with-pools pools elem-ty))]
+                          [(ResultAstType.Err message)
+                            (ResultAstType.Err message)])]
+                      [_
+                        (ResultAstType.Err
+                          "parse: __tl_dyn-array expects exactly one type")])]
+                  [_
+                    (ResultAstType.Err
+                      "parse: __tl_dyn-array expects exactly one type")])]
               [(= tag (compiler-parse-tag-ty-ptr))
                 (match rest
                   [(reader.Sexpr.Cons elem tail)
@@ -13004,31 +12940,21 @@
       "parse: malformed binary expression")))
 
 (define (compiler-parse-type-literal-tests-ok?) : bool
-  (let
-    [private-cfg : sym_i64_env.SymI64Env
-      (compiler-cfg-enable
-        (compiler-cfg-empty)
-        "feature-compiler-private-dynamic-buffer")]
-    (and
-      (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
-      (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
-      (compiler-parse-error-ok?
-        "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
-        "parse: unknown type constructor __tl_dyn-array; TypeLisp has no source-level generic type constructors; use defmacro to generate concrete declarations instead")
-      (compiler-parse-ok-with-cfg?
-        "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))"
-        private-cfg)
-      (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
-      (compiler-parse-error-ok-with-cfg?
-        "(define (main) : i64 (begin (type (__tl_dyn-array i64 4)) 0))"
-        private-cfg
-        "parse: __tl_dyn-array expects exactly one type")
-      (compiler-parse-error-ok?
-        "(define (main) : i64 (type))"
-        "parse: type expects exactly one type")
-      (compiler-parse-error-ok?
-        "(define (main) : i64 (type i64 bool))"
-        "parse: type expects exactly one type"))))
+  (and
+    (compiler-parse-ok? "(define (main) : i64 (begin (type i64) 0))")
+    (compiler-parse-ok? "(define (main) : i64 (begin (type (Array i64)) 0))")
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (type (__tl_dyn-array i64)) 0))")
+    (compiler-parse-ok? "(define (main) : i64 (begin (type (-> i64 i64)) 0))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (type (__tl_dyn-array i64 4)) 0))"
+      "parse: __tl_dyn-array expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (type))"
+      "parse: type expects exactly one type")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (type i64 bool))"
+      "parse: type expects exactly one type")))
 
 ;; region parsing: `(with-arena <ident> body+)` accepts (basic,
 ;; multi-expression body, nested region) and rejects missing binder,
@@ -13739,8 +13665,6 @@
       (compiler-cfg-enable (compiler-cfg-empty) "dispatch-index-test")]
     [configured : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
-    [private : sym_i64_env.SymI64Env
-      (compiler-parse-dispatch-private-types full)]
     (and
       (compiler-parse-dispatch-index-env-matches? full)
       (=
@@ -13763,9 +13687,7 @@
       (compiler-parse-dispatch-indexed? configured)
       (compiler-cfg-enabled?
         configured
-        (reader.read-stable-symbol-id "dispatch-index-test"))
-      (compiler-parse-dispatch-indexed? private)
-      (compiler-cfg-private-dynamic-buffer-enabled? private))))
+        (reader.read-stable-symbol-id "dispatch-index-test")))))
 
 (define (compiler-parse-shape-tests-front-ok? [program : AstProgram]) : bool
   (and

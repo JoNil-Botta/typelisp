@@ -37882,9 +37882,24 @@
 ;; Public pass boundary used by self-tests and by the opt2 pipeline. Both the
 ;; entry and rewritten functions are verified so this scheduling rule never
 ;; runs on mutable-var IR and rejects any unexpected dominance regression.
-(define (opt-successor-sink-function [func : CompilerIrFunction]) : CompilerIrFunction
+;; `context` must be valid for `func`'s blocks (its entry verify reuses it), and
+;; the returned context is valid for the returned function's blocks. Joining the
+;; post-verify context with the one the caller needs afterwards removes the
+;; duplicate `opt-cfg-context-build` the pipeline used to run on the rewritten
+;; blocks.
+;; The post-verify context for the rewritten blocks is handed back to the
+;; caller, which previously rebuilt exactly the same context for the same block
+;; list right after this pass returned. Entry verification is unchanged: it
+;; still builds its own context (this pass is NOT covered by the
+;; `loop-cluster-verified?` invariant, and reusing the caller's context here
+;; changes optimizer decisions), and so is the rejection path, which reports the
+;; context the caller used to build for the unchanged input.
+(define (opt-successor-sink-function-result [func : CompilerIrFunction]) : OptFunctionCtxResult
   (match (opt-verify-function func)
-    [(ResultCompilerOptimizeVerify.Err _) func]
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptFunctionCtxResult.Result
+        func
+        (opt-cfg-context-build (opt-function-blocks func)))]
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
@@ -37900,9 +37915,18 @@
                 ret-ty
                 (array-ref frame-cell 0)
                 next-blocks)]
-            (match (opt-verify-function next)
-              [(ResultCompilerOptimizeVerify.Ok) next]
-              [(ResultCompilerOptimizeVerify.Err _) func]))])]))
+            [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+            (match (opt-verify-function-with-context next next-context)
+              [(ResultCompilerOptimizeVerify.Ok)
+                (OptFunctionCtxResult.Result next next-context)]
+              [(ResultCompilerOptimizeVerify.Err _)
+                (OptFunctionCtxResult.Result
+                  func
+                  (opt-cfg-context-build blocks))]))])]))
+
+(define (opt-successor-sink-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-successor-sink-function-result func)
+    [(OptFunctionCtxResult.Result f _) f]))
 
 ;; ---------------------------------------------------------------------------
 (defstruct OptIfConvertBlockFact
@@ -38632,17 +38656,18 @@
                       ;; may replace the retained header address with a pointer
                       ;; phi, but the fresh arm clone remains an ordinary bounded
                       ;; rematerialization chain.
+                      [pre-induction-sink-result : OptFunctionCtxResult
+                        (if run-loop?
+                          (opt-successor-sink-function-result licm)
+                          licm-result)]
                       [pre-induction-sink : CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           "pre_induction_sink"
-                          (if run-loop?
-                            (opt-successor-sink-function licm)
-                            licm))]
+                          (match pre-induction-sink-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [pre-induction-sink-context : OptCfgContext
-                        (if run-loop?
-                          (opt-cfg-context-build
-                            (opt-function-blocks pre-induction-sink))
-                          licm-context)]
+                        (match pre-induction-sink-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_t-induction : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [induction-result : OptFunctionCtxResult

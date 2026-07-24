@@ -721,6 +721,45 @@ assert_contains "$err" "typecheck: integer operator expects matching integer ope
 assert_contains "$err" "compile: batch source failed: $INLINE_BAD_BATCH_INPUT"
 [ ! -f "$INLINE_BAD_BATCH_ASM" ] || fail "normal-inline-compile-batch wrote assembly despite inline test failure"
 
+# #5448: a batch entry that fails during macro expansion must fail the entry
+# and exit nonzero cleanly -- the driver must not segfault (exit 139) while
+# retiring the entry's checked pool storage.
+MACRO_BAD="$INLINE_NORMAL/macro-bad.tl"
+MACRO_BAD_CLEAN="$INLINE_NORMAL/macro-bad-clean.tl"
+MACRO_BAD_SENTINEL="$INLINE_NORMAL/macro-bad-sentinel.tl"
+cat > "$MACRO_BAD_CLEAN" <<'EOF'
+(define (main) : i64 42)
+EOF
+cat > "$MACRO_BAD" <<'EOF'
+(define (main) : i64
+  (begin
+    (for [] 0)
+    0))
+EOF
+cat > "$MACRO_BAD_SENTINEL" <<'EOF'
+(define (main) : i64 7)
+EOF
+MACRO_BAD_BATCH_LIST="$INLINE_NORMAL/macro-bad-batch.txt"
+MACRO_BAD_CLEAN_ASM="$INLINE_NORMAL/macro-bad-clean.s"
+MACRO_BAD_ASM="$INLINE_NORMAL/macro-bad.s"
+MACRO_BAD_SENTINEL_ASM="$INLINE_NORMAL/macro-bad-sentinel.s"
+{
+    printf '%s|%s\n' "$(native_arg_path "$MACRO_BAD_CLEAN")" "$(native_arg_path "$MACRO_BAD_CLEAN_ASM")"
+    printf '%s|%s\n' "$(native_arg_path "$MACRO_BAD")" "$(native_arg_path "$MACRO_BAD_ASM")"
+    printf '%s|%s\n' "$(native_arg_path "$MACRO_BAD_SENTINEL")" "$(native_arg_path "$MACRO_BAD_SENTINEL_ASM")"
+} > "$MACRO_BAD_BATCH_LIST"
+# cli-gate-case normal-macro-error-compile-batch wrapper run_cmd
+run_cmd normal-macro-error-compile-batch "$COMPILER" compile --batch "$MACRO_BAD_BATCH_LIST" --target "$HOST_TARGET"
+assert_failure
+if [ "$code" -eq 139 ]; then
+    fail "normal-macro-error-compile-batch segfaulted after a macro-expansion error (#5448)"
+fi
+assert_contains "$out" "Wrote "
+assert_not_contains "$out" "$MACRO_BAD_SENTINEL_ASM"
+assert_contains "$err" "macro operand expects bracket clause"
+assert_contains "$err" "compile: batch source failed: $(native_arg_path "$MACRO_BAD")"
+[ ! -f "$MACRO_BAD_SENTINEL_ASM" ] || fail "normal-macro-error-compile-batch compiled the sentinel after the macro error"
+
 INLINE_BAD_EXE="$INLINE_NORMAL/bad-inline$HOST_EXE_SUFFIX"
 # cli-gate-case normal-inline-build wrapper run_cmd
 run_cmd normal-inline-build "$COMPILER" build "$INLINE_BAD" --target "$HOST_TARGET" -o "$INLINE_BAD_EXE"

@@ -3097,6 +3097,17 @@
                         result-pools))))]
               [(ResultCompilerLower.Err diag)
                 (begin
+                  ;; A lower-phase failure can leave the state's checked pool
+                  ;; storage already retired by the checked-lower choreography
+                  ;; (the rollover/commit paths retire source storage during
+                  ;; macro expansion). Re-own a fresh, live pool context so the
+                  ;; batch/file release path never retires that dead storage
+                  ;; again. Refs #5448.
+                  (if release-source-pools?
+                    (compiler-driver-state-adopt-pools!
+                      state
+                      (compiler-driver-state-new-checked-lower-pools))
+                    unit)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
@@ -3306,6 +3317,16 @@
                         result-pools))))]
               [(ResultCompilerLower.Err diag)
                 (begin
+                  ;; See the matching note in
+                  ;; compiler-driver-load-and-lower-escaping-with-state-and-retirement:
+                  ;; a lower-phase failure can leave checked pool storage
+                  ;; already retired; re-own a live context before release.
+                  ;; Refs #5448.
+                  (if release-source-pools?
+                    (compiler-driver-state-adopt-pools!
+                      state
+                      (compiler-driver-state-new-checked-lower-pools))
+                    unit)
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))

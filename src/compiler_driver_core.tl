@@ -2902,7 +2902,7 @@
             ;; chain, not the make() root handle: the chain is reachable only from
             ;; its head, so destroying the root leaks every overflow segment (the
             ;; whole-program parsed AST), which accumulates across batch entries.
-            [source-pools-arena : i64 (compiler-driver-node-pool-base-arena)]
+            [source-pools-arena : i64 (ast-node-pool-context-base-arena pools)]
             ;; `compiler-driver-state-adopt-pools!` mutates the state's shared
             ;; cells. Preserve the retiring storage handles before adoption so
             ;; the type-literal deferred path cannot mistake the new pool for
@@ -3012,7 +3012,7 @@
                     state
                     "lower")
                   (compiler-driver-allocation-profile-snapshot! "lower")
-                  (if (ast-node-pool-reader-type-exhausted?)
+                  (if (ast-node-pool-context-type-exhausted? pools)
                     (ResultCompilerDriverLowered.Err
                       (box
                         (compiler-driver-ty-node-pool-exhausted-diagnostic
@@ -3156,7 +3156,7 @@
             ;; chain, not the make() root handle: the chain is reachable only from
             ;; its head, so destroying the root leaks every overflow segment (the
             ;; whole-program parsed AST), which accumulates across batch entries.
-            [source-pools-arena : i64 (compiler-driver-node-pool-base-arena)]
+            [source-pools-arena : i64 (ast-node-pool-context-base-arena pools)]
             ;; These must remain source identities after the state cells adopt
             ;; the compacted destination below.
             [source-expr-storage-arena : i64
@@ -3250,7 +3250,7 @@
                     compile-profile
                     (compiler-lower-profile-pools "macro_detach" result-pools)
                     unit)
-                  (if (ast-node-pool-reader-type-exhausted?)
+                  (if (ast-node-pool-context-type-exhausted? pools)
                     (ResultCompilerDriverLowered.Err
                       (box
                         (compiler-driver-ty-node-pool-exhausted-diagnostic

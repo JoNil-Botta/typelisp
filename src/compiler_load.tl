@@ -342,7 +342,12 @@
   (surface-summaries (Array CompilerLoadSurfaceSummaryList))
   (surface-summary-load-depth (Array i64))
   (lazy-import-skip-record-count (Array i64))
-  (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState))
+  (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState)
+  ;; Intern table this session's floor bookkeeping is bound to once
+  ;; `compiler-load-session-state-use-with-intern-state!` installs it; the
+  ;; ready flag keeps legacy sessions on the compatibility-global floor path.
+  (intern-state (Array ci.InternCompatState))
+  (intern-state-ready (Array bool)))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
 ;; declaration-loader call for each independently owned field.
@@ -419,7 +424,9 @@
       surface-summaries
       surface-summary-load-depth
       lazy-import-skip-record-count
-      lazy-qualified-observer)))
+      lazy-qualified-observer
+      (array.make-array ci.InternCompatState 1)
+      (compiler-load-session-state-bool-cell false))))
 
 (define compiler-load-default-session-state : (Array CompilerLoadSessionState)
   (make-array (compiler-load-session-state-new)))
@@ -907,28 +914,54 @@
     compiler-load-active-session-state
     key))
 
-(define (compiler-load-session-state-note-persistent!
-  [state : CompilerLoadSessionState]) : unit
-  (let
-    [old-intern-floor : i64
-      (compiler-load-session-state-intern-floor-value state)]
-    [new-intern-floor : i64 (intern-pool-len)]
-    (begin
-      (if (>
-        (ast-node-pool-len)
-        (compiler-load-session-state-ast-floor-value state))
-        (array-set! (struct-get state ast-floor) 0 (ast-node-pool-len))
-        unit)
-      (if (>
-        (ty-node-pool-len)
-        (compiler-load-session-state-ty-floor-value state))
-        (array-set! (struct-get state ty-floor) 0 (ty-node-pool-len))
-        unit)
+;; Refresh the session's intern floor when the bound table grew past it. A
+;; session wired to an intern state reads that state's own cells, so floor
+;; bookkeeping for a non-installed state never consults whichever table is
+;; globally active; when the wired state is the installed one the live
+;; compatibility count is authoritative for it, matching the legacy path
+;; exactly. Legacy (unwired) sessions keep the compatibility-global path.
+(define (compiler-load-session-state-intern-floor-refresh!
+  [state : CompilerLoadSessionState]
+  [old-intern-floor : i64]) : unit
+  (if (array-ref (struct-get state intern-state-ready) 0)
+    (let
+      [interns : ci.InternCompatState
+        (array-ref (struct-get state intern-state) 0)]
+      [new-intern-floor : i64
+        (if (=
+          (intern-active-table-id)
+          (ci.intern-compat-state-table-id interns))
+          (intern-pool-len)
+          (ci.intern-compat-state-pool-len interns))]
+      (if (> new-intern-floor old-intern-floor)
+        (begin
+          (ci.intern-compat-state-persistent-arena-floor-refresh! interns)
+          (array-set! (struct-get state intern-floor) 0 new-intern-floor))
+        unit))
+    (let
+      [new-intern-floor : i64 (intern-pool-len)]
       (if (> new-intern-floor old-intern-floor)
         (begin
           (intern-persistent-arena-floor-refresh!)
           (array-set! (struct-get state intern-floor) 0 new-intern-floor))
         unit))))
+
+(define (compiler-load-session-state-note-persistent!
+  [state : CompilerLoadSessionState]) : unit
+  (begin
+    (if (>
+      (ast-node-pool-len)
+      (compiler-load-session-state-ast-floor-value state))
+      (array-set! (struct-get state ast-floor) 0 (ast-node-pool-len))
+      unit)
+    (if (>
+      (ty-node-pool-len)
+      (compiler-load-session-state-ty-floor-value state))
+      (array-set! (struct-get state ty-floor) 0 (ty-node-pool-len))
+      unit)
+    (compiler-load-session-state-intern-floor-refresh!
+      state
+      (compiler-load-session-state-intern-floor-value state))))
 
 (define (compiler-load-session-note-persistent!) : unit
   (compiler-load-session-state-note-persistent!
@@ -936,15 +969,9 @@
 
 (define (compiler-load-session-state-note-persistent-interns!
   [state : CompilerLoadSessionState]) : unit
-  (let
-    [old-intern-floor : i64
-      (compiler-load-session-state-intern-floor-value state)]
-    [new-intern-floor : i64 (intern-pool-len)]
-    (if (> new-intern-floor old-intern-floor)
-      (begin
-        (intern-persistent-arena-floor-refresh!)
-        (array-set! (struct-get state intern-floor) 0 new-intern-floor))
-      unit)))
+  (compiler-load-session-state-intern-floor-refresh!
+    state
+    (compiler-load-session-state-intern-floor-value state)))
 
 (define (compiler-load-session-note-persistent-interns!) : unit
   (compiler-load-session-state-note-persistent-interns!
@@ -953,32 +980,26 @@
 (define (compiler-load-session-state-note-persistent-with-pools!
   [state : CompilerLoadSessionState]
   [pools : AstNodePoolContext]) : unit
-  (let
-    [old-intern-floor : i64
-      (compiler-load-session-state-intern-floor-value state)]
-    [new-intern-floor : i64 (intern-pool-len)]
-    (begin
-      (if (>
-        (ast-node-pool-context-expr-len pools)
-        (compiler-load-session-state-ast-floor-value state))
-        (array-set!
-          (struct-get state ast-floor)
-          0
-          (ast-node-pool-context-expr-len pools))
-        unit)
-      (if (>
-        (ast-node-pool-context-type-len pools)
-        (compiler-load-session-state-ty-floor-value state))
-        (array-set!
-          (struct-get state ty-floor)
-          0
-          (ast-node-pool-context-type-len pools))
-        unit)
-      (if (> new-intern-floor old-intern-floor)
-        (begin
-          (intern-persistent-arena-floor-refresh!)
-          (array-set! (struct-get state intern-floor) 0 new-intern-floor))
-        unit))))
+  (begin
+    (if (>
+      (ast-node-pool-context-expr-len pools)
+      (compiler-load-session-state-ast-floor-value state))
+      (array-set!
+        (struct-get state ast-floor)
+        0
+        (ast-node-pool-context-expr-len pools))
+      unit)
+    (if (>
+      (ast-node-pool-context-type-len pools)
+      (compiler-load-session-state-ty-floor-value state))
+      (array-set!
+        (struct-get state ty-floor)
+        0
+        (ast-node-pool-context-type-len pools))
+      unit)
+    (compiler-load-session-state-intern-floor-refresh!
+      state
+      (compiler-load-session-state-intern-floor-value state))))
 
 (define (compiler-load-session-note-persistent-with-pools!
   [pools : AstNodePoolContext]) : unit
@@ -1031,12 +1052,17 @@
     intern-floor))
 
 (define (compiler-load-session-state-use! [state : CompilerLoadSessionState]) : unit
-  (set! compiler-load-active-session-state state))
+  (begin
+    (array-set! (struct-get state intern-state-ready) 0 false)
+    (set! compiler-load-active-session-state state)))
 
 (define (compiler-load-session-state-use-with-intern-state!
   [state : CompilerLoadSessionState]
-  [_intern-state : ci.InternCompatState]) : unit
-  (set! compiler-load-active-session-state state))
+  [intern-state : ci.InternCompatState]) : unit
+  (begin
+    (array-set! (struct-get state intern-state) 0 intern-state)
+    (array-set! (struct-get state intern-state-ready) 0 true)
+    (set! compiler-load-active-session-state state)))
 
 (define (compiler-load-session-cache-enable!) : unit
   (array-set!

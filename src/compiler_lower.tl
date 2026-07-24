@@ -19741,7 +19741,9 @@
         [expected-id : i64
           (ast-type-list-get types index (ast-type-id-fallback))]
         [expected : AstType
-          (ast-type-strip-consuming-param (tc-context-type-get ctx expected-id))]
+          (ast-type-strip-consuming-param-with-pools
+            (tc-context-pools ctx)
+            (tc-context-type-get ctx expected-id))]
         [arg-ty : AstType
           (tc-type-without-regions (tc-resolve-type ctx expected))]
         (match (lower-call-arg-as ctx state env type-env arg expected arg-ty)
@@ -19859,7 +19861,9 @@
         [expected-id : i64
           (ast-type-list-get types index (ast-type-id-fallback))]
         [expected : AstType
-          (ast-type-strip-consuming-param (tc-context-type-get ctx expected-id))]
+          (ast-type-strip-consuming-param-with-pools
+            (tc-context-pools ctx)
+            (tc-context-type-get ctx expected-id))]
         [arg-ty : AstType
           (tc-type-without-regions (tc-resolve-type ctx expected))]
         (match (tc-call-effective-arg-expr ctx type-env arg expected)
@@ -44687,7 +44691,10 @@
                                               (AstType.Unit)))]
                                         [_
                                           (if (and
-                                            (ast-type-eq? then-ty else-ty)
+                                            (ast-type-eq-with-pools?
+                                              (tc-context-pools ctx)
+                                              then-ty
+                                              else-ty)
                                             (lower-type-bool? then-ty))
                                             (ResultLowerExpr.Ok
                                               (lower-emit-mask-select
@@ -44698,7 +44705,10 @@
                                                 else-value
                                                 lanes))
                                             (if (and
-                                              (ast-type-eq? then-ty else-ty)
+                                              (ast-type-eq-with-pools?
+                                                (tc-context-pools ctx)
+                                                then-ty
+                                                else-ty)
                                               (lower-avx512-masked-select-result-supported?
                                                 else-state
                                                 lanes
@@ -53349,7 +53359,10 @@
         (array-ref lower-variant-arm-memo-stamps slot)
         lower-variant-arm-memo-generation)
       (= (array-ref lower-variant-arm-memo-keys slot) variant-name-id)
-      (ast-type-eq? (array-ref lower-variant-arm-memo-scrut-tys slot) scrut-ty))
+      (ast-type-eq-with-pools?
+        (tc-context-pools ctx)
+        (array-ref lower-variant-arm-memo-scrut-tys slot)
+        scrut-ty))
       (array-ref lower-variant-arm-memo-outcomes slot)
       (let
         [result : LowerVariantArmResolution

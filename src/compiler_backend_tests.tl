@@ -13754,10 +13754,12 @@
     (= (compiler-backend-string-count asm "    lock ") 11)
     (if (compiler-backend-target-windows? target)
       (and
-        (= (compiler-backend-string-count asm "%gs:0x28") 22)
+        ;; tl_array_zero reads the current arena once for its virgin-arena
+        ;; zero-fill skip; the remaining reads are the allocator/region paths.
+        (= (compiler-backend-string-count asm "%gs:0x28") 23)
         (= (compiler-backend-string-count asm "%fs:tl_current_arena@tpoff") 0))
       (and
-        (= (compiler-backend-string-count asm "%fs:tl_current_arena@tpoff") 20)
+        (= (compiler-backend-string-count asm "%fs:tl_current_arena@tpoff") 21)
         (= (compiler-backend-string-count asm "%gs:0x28") 0)))))
 
 (define (compiler-backend-test-runtime-functions-for-target

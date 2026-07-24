@@ -902,6 +902,9 @@ tl_alloc:
 
 ")))
 
+;; Rewinding a non-atomic arena marks it as reused with flags bit 2 (bit 0 is
+;; the atomic flag, which runs a 1/3 lock protocol and is left untouched);
+;; tl_array_zero consults that bit to skip its fill only for virgin arenas.
 (define (compiler-backend-runtime-windows-region-reset-functions
   [profile : bool]) : String
   (string.append
@@ -1006,6 +1009,10 @@ tl_region_reset:
     movq %rbx, 64(%r13)
 .L_tl_region_reset_win_decommit_done:
     movq 40(%r13), %r11
+    testq $1, 48(%r13)
+    jnz .L_tl_region_reset_win_reused_ready
+    orq $4, 48(%r13)
+.L_tl_region_reset_win_reused_ready:
     movq %r12, 16(%r13)
     movq %r13, 56(%r11)
     movq %r13, %gs:0x28
@@ -1215,9 +1222,25 @@ tl_memchr:
     ret
 ")
 
+;; Arena pages arrive zeroed from the OS and the bump allocator only moves
+;; forward until tl_region_reset marks the arena as reused (flags bit 2).
+;; While the current arena has never been rewound (and is not atomic, whose
+;; flags word runs the 1/3 lock protocol), every allocation is already
+;; all-zero and the fill is a no-op. The reused/atomic cases keep the fill.
+;; Small fills are cheaper to run than to vet, so the virgin check only
+;; gates fills of 64 bytes or more.
 (define (compiler-backend-runtime-array-zero-functions) : String
   "    .globl tl_array_zero
 tl_array_zero:
+    cmpq $64, %rdx
+    jb .Ltl_array_zero_fill
+    movq %gs:0x28, %r8
+    testq %r8, %r8
+    jz .Ltl_array_zero_fill
+    testq $5, 48(%r8)
+    jnz .Ltl_array_zero_fill
+    ret
+.Ltl_array_zero_fill:
     pushq %rdi
     movq %rcx, %rdi
     movq %rdx, %rcx

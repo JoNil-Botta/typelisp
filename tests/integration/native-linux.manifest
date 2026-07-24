@@ -339,6 +339,7 @@ register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|4
 struct_match_pattern|tests/integration/struct_match_pattern.tl|42|-|-|struct_match_pattern_geom.tl
 in_arena|tests/integration/in_arena.tl|42|-|-|-
 arena_phase_rewind_destroy|tests/integration/arena_phase_rewind_destroy.tl|42|-|-|-
+arena_rewind_make_array_zero|tests/integration/arena_rewind_make_array_zero.tl|42|-|-|-
 arena_atomic_rewind_destroy_safe|tests/integration/arena_atomic_rewind_destroy_safe.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 resource_with_order|tests/integration/resource_with_order.tl|42|-|-|-
 resource_with_arg_cycle|tests/integration/resource_with_arg_cycle.tl|42|-|-|-

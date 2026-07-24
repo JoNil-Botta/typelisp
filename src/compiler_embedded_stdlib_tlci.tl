@@ -344,6 +344,21 @@
         (+ compiler-comptime-host-stack-len 1))
       tlci-host-callback-status-ok)))
 
+;; Expression list of a variadic operand or stack value. Captured lists carry
+;; the caller's pools; the session's pools are the caller's, so they project
+;; the same way the interpreted quote accepts a storage-sharing capture.
+;; Refs #5617.
+(defenum CompilerCtfeMaybeExprList
+  (Some AstExprList)
+  (None))
+
+(define (compiler-comptime-host-value-expr-list [value : CompilerCtfeValue]) : CompilerCtfeMaybeExprList
+  (match value
+    [(CompilerCtfeValue.ExprList items) (CompilerCtfeMaybeExprList.Some items)]
+    [(CompilerCtfeValue.CapturedExprList items _)
+      (CompilerCtfeMaybeExprList.Some items)]
+    [_ (CompilerCtfeMaybeExprList.None)]))
+
 ;; Expression node id of a stack value, or -1 when the value does not carry
 ;; one. Captured operands keep their caller-pool node id; the pool-context
 ;; bridging refinement is tracked with the real-body slice. A type operand
@@ -686,8 +701,8 @@
               (- compiler-comptime-host-stack-len 2))]
           (match list-value
             [(CompilerCtfeValue.ExprList items)
-              (match splice-value
-                [(CompilerCtfeValue.ExprList splice-items)
+              (match (compiler-comptime-host-value-expr-list splice-value)
+                [(CompilerCtfeMaybeExprList.Some splice-items)
                   (let
                     [next : AstExprList
                       (ctfe-expr-list-append items splice-items)]
@@ -697,7 +712,8 @@
                         (- compiler-comptime-host-stack-len 2))
                       (compiler-comptime-host-push!
                         (CompilerCtfeValue.ExprList next))))]
-                [_ tlci-host-callback-status-bad-request])]
+                [(CompilerCtfeMaybeExprList.None)
+                  tlci-host-callback-status-bad-request])]
             [_ tlci-host-callback-status-bad-request])))]
     ;; Pop else, then, and cond expressions and push the if node the parser
     ;; produces, matching the interpreted quote.
@@ -740,9 +756,38 @@
     [(= operation tlci-host-callback-op-expr-list-length)
       (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
         -3
-        (match (array-ref compiler-comptime-host-operands arg-a)
-          [(CompilerCtfeValue.ExprList items) (ctfe-expr-list-length items)]
-          [_ -3]))]
+        (match (compiler-comptime-host-value-expr-list
+          (array-ref compiler-comptime-host-operands arg-a))
+          [(CompilerCtfeMaybeExprList.Some items) (ctfe-expr-list-length items)]
+          [(CompilerCtfeMaybeExprList.None) -3]))]
+    ;; Index a variadic ExprList operand: `a` names the operand and `b` the
+    ;; element, mirroring the interpreted `expr-list-nth` builtin (an
+    ;; out-of-range index is a bad request, and a captured operand keeps its
+    ;; caller pools on the pushed element). Refs #5617.
+    [(= operation tlci-host-callback-op-expr-list-nth)
+      (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
+        tlci-host-callback-status-bad-request
+        (let
+          [operand : CompilerCtfeValue
+            (array-ref compiler-comptime-host-operands arg-a)]
+          (match (compiler-comptime-host-value-expr-list operand)
+            [(CompilerCtfeMaybeExprList.Some items)
+              (if (or (< arg-b 0) (>= arg-b (ctfe-expr-list-length items)))
+                tlci-host-callback-status-bad-request
+                (let
+                  [node : i64 (ctfe-expr-list-nth items arg-b)]
+                  (match operand
+                    [(CompilerCtfeValue.CapturedExprList _ pools)
+                      (compiler-comptime-host-push!
+                        (CompilerCtfeValue.CapturedExpr
+                          node
+                          (ctfe-untyped-expr-type)
+                          pools))]
+                    [_
+                      (compiler-comptime-host-push!
+                        (CompilerCtfeValue.Expr node (ctfe-untyped-expr-type)))])))]
+            [(CompilerCtfeMaybeExprList.None)
+              tlci-host-callback-status-bad-request])))]
     ;; Pop an expression list and push the begin node the parser produces.
     [(= operation tlci-host-callback-op-expr-begin)
       (if (< compiler-comptime-host-stack-len 1)

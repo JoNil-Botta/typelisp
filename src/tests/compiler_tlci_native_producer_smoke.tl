@@ -2,7 +2,10 @@
 ;; Native template shapes beyond the original splice-only subset (nested
 ;; calls, literals, splices, if/begin/binary/unary forms, plain symbols,
 ;; computed list-length ifs, and identity bodies) are covered here too
-;; (#5596); a let-rooted body keeps the counted interpreted-fallback shell.
+;; (#5596), along with the `str-cat` shape -- an operand-count integer match
+;; with indexed operand access and a count-binding default arm (#5617).
+;; A body outside the supported subset keeps the counted interpreted-fallback
+;; shell.
 (import "../compiler_tlci_native_producer.tl")
 (import "../compiler_embedded_stdlib_tlci.tl")
 (import "../tlci_loader.tl")
@@ -344,6 +347,136 @@
         [_ false])]
     [_ false]))
 
+;; The `catlike` fixture (the `str-cat` shape): an operand-count match whose
+;; integer arms index operands with `expr-list-nth` and whose binder arm
+;; splices the whole operand list and rebuilds the count as a literal.
+;; Refs #5617.
+(define (producer-test-catlike-result-ok?
+  [pools : AstNodePoolContext]
+  [count : i64]
+  [first : i64]
+  [second : i64]
+  [third : i64]) : bool
+  (match (compiler-comptime-host-result-value)
+    [(CompilerCtfeValue.Expr node _)
+      (cond
+        [(= count 0)
+          (match (ast-node-pool-context-expr-get pools node)
+            [(AstExpr.Literal (AstLiteral.String sid))
+              (string.eq (intern-str sid) "")]
+            [_ false])]
+        [(= count 1) (= node first)]
+        [(= count 2)
+          (match (ast-node-pool-context-expr-get pools node)
+            [(AstExpr.Call callee args)
+              (and
+                (match (ast-node-pool-context-expr-get pools callee)
+                  [(AstExpr.Var name)
+                    (= name (producer-test-name-id "concat2"))]
+                  [_ false])
+                (= (ast-expr-list-len (& args)) 2)
+                (= (ast-expr-list-get (& args) 0 -1) first)
+                (= (ast-expr-list-get (& args) 1 -1) second))]
+            [_ false])]
+        [else (producer-test-catlike-packed-ok? pools node first second third)])]
+    [_ false]))
+
+;; `(concat-all (pack (__args a b c) 3))` for the three-operand binder arm.
+(define (producer-test-catlike-packed-ok?
+  [pools : AstNodePoolContext]
+  [node : i64]
+  [first : i64]
+  [second : i64]
+  [third : i64]) : bool
+  (match (ast-node-pool-context-expr-get pools node)
+    [(AstExpr.Call callee args)
+      (and
+        (match (ast-node-pool-context-expr-get pools callee)
+          [(AstExpr.Var name) (= name (producer-test-name-id "concat-all"))]
+          [_ false])
+        (= (ast-expr-list-len (& args)) 1)
+        (match (ast-node-pool-context-expr-get
+          pools
+          (ast-expr-list-get (& args) 0 -1))
+          [(AstExpr.Call pack-callee pack-args)
+            (and
+              (match (ast-node-pool-context-expr-get pools pack-callee)
+                [(AstExpr.Var name) (= name (producer-test-name-id "pack"))]
+                [_ false])
+              (= (ast-expr-list-len (& pack-args)) 2)
+              (match (ast-node-pool-context-expr-get
+                pools
+                (ast-expr-list-get (& pack-args) 0 -1))
+                [(AstExpr.Call carrier-callee carrier-args)
+                  (and
+                    (match (ast-node-pool-context-expr-get pools carrier-callee)
+                      [(AstExpr.Var name)
+                        (= name (producer-test-name-id "__args"))]
+                      [_ false])
+                    (= (ast-expr-list-len (& carrier-args)) 3)
+                    (= (ast-expr-list-get (& carrier-args) 0 -1) first)
+                    (= (ast-expr-list-get (& carrier-args) 1 -1) second)
+                    (= (ast-expr-list-get (& carrier-args) 2 -1) third))]
+                [_ false])
+              (match (ast-node-pool-context-expr-get
+                pools
+                (ast-expr-list-get (& pack-args) 1 -1))
+                [(AstExpr.Literal (AstLiteral.Int value _)) (= value 3)]
+                [_ false]))]
+          [_ false]))]
+    [_ false]))
+
+;; Dispatch the `str-cat`-shaped fixture with `count` String operands.
+(define (producer-test-dispatch-catlike?
+  [loaded : (& loaded TlciLoadedImage)]
+  [identity : String]
+  [count : i64]) : bool
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [first : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "alpha")))]
+    [second : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "beta")))]
+    [third : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern "gamma")))]
+    [items : AstExprList (ast-expr-list-new)]
+    [operands : (Array CompilerCtfeValue)
+      (array.make-array CompilerCtfeValue 1)]
+    (begin
+      (when (>= count 1) (ast-expr-list-push (&mut items) first))
+      (when (>= count 2) (ast-expr-list-push (&mut items) second))
+      (when (>= count 3) (ast-expr-list-push (&mut items) third))
+      (array-set! operands 0 (CompilerCtfeValue.ExprList items))
+      (compiler-comptime-host-session-open!
+        pools
+        operands
+        1
+        64
+        producer-test-cookie
+        (ctfe-reflect-info-list-empty))
+      (let
+        [ok : bool
+          (match (tlci-loader-dispatch-macro
+            loaded
+            identity
+            producer-test-cookie
+            (array.make-array i64 0)
+            0)
+            [(ResultTlciMacroDispatch.Err _) false]
+            [(ResultTlciMacroDispatch.Ok dispatch)
+              (and
+                (= (struct-get dispatch status) tlci-host-callback-status-ok)
+                (compiler-comptime-host-result-ready?)
+                (producer-test-catlike-result-ok?
+                  pools
+                  count
+                  first
+                  second
+                  third))])]
+        (begin
+          (compiler-comptime-host-session-close!)
+          ok)))))
+
 (define (producer-test-dispatch-shape?
   [loaded : (& loaded TlciLoadedImage)]
   [identity : String]
@@ -637,7 +770,7 @@
 (define (producer-test-package-native-image-ok?) : bool
   (let
     [source : String
-      "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.Int n) value] [_ value]))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n"]
+      "(module package.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (fold [items : Expr ...]) : bool (comptime.expr-list-fold-if items (comptime.expr-bool true) (comptime.expr-bool false) true))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.Int n) value] [_ value]))\n(defmacro (nest [value : Expr]) : Expr `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))\n(defmacro (ident [value : Expr]) : Expr value)\n(defmacro (whenlike [condition : bool] [body : unit ...]) : unit (if (= (comptime.expr-list-length body) 0) (comptime.expr-var \"core-when-missing-body\") `(if ,condition (begin ,@body) unit)))\n(defmacro (lits [value : Expr]) : Expr `(f \"a\\tb\" 'x' -7 true))\n(defmacro (qqvar [value : Expr]) : Expr `some.nil)\n(defmacro (tytpl [T : type] [value : Expr]) : Expr `(stdlib.eq.struct-eq-fields ,T 0 ,value))\n(defmacro (gen [T : type] [value : Expr]) : Module (let [module-name : Expr (expr-var (comptime.string-append \"test.gen.\" (type-key T)))] `(begin (module ,module-name) (define (id [x : ,T]) : ,T x))))\n(defmacro (classify [value : Expr]) : Expr `(match value [(Some _) true] [None false]))\n(defmacro (twice [value : Expr]) : Expr `(begin (set! flag 1) (set! flag 2)))\n(defmacro (catlike [args : String ...]) : String (match (comptime.expr-list-length args) [0 `\"\"] [1 (comptime.expr-list-nth args 0)] [2 `(concat2 ,(comptime.expr-list-nth args 0) ,(comptime.expr-list-nth args 1))] [n `(concat-all (pack (__args ,@args) ,(comptime.expr-int n)))]))\n"]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : TlciNativeMacroCaptures (tlci-native-macro-captures-new)]
     (match (parse-ast-source source)
@@ -672,13 +805,13 @@
                         (let
                           [ok : bool
                             (and
-                              (= (array-length name-array) 12)
-                              (= (struct-get captures len) 12)
+                              (= (array-length name-array) 13)
+                              (= (struct-get captures len) 13)
                               (=
                                 (array-ref
                                   embedded-stdlib-tlci-native-report-count
                                   0)
-                                11)
+                                12)
                               (producer-test-dispatch-shape?
                                 (& loaded)
                                 "package.macros/wrap"
@@ -738,6 +871,22 @@
                                 "value"
                                 4
                                 "some.nil")
+                              (producer-test-dispatch-catlike?
+                                (& loaded)
+                                "package.macros/catlike"
+                                0)
+                              (producer-test-dispatch-catlike?
+                                (& loaded)
+                                "package.macros/catlike"
+                                1)
+                              (producer-test-dispatch-catlike?
+                                (& loaded)
+                                "package.macros/catlike"
+                                2)
+                              (producer-test-dispatch-catlike?
+                                (& loaded)
+                                "package.macros/catlike"
+                                3)
                               (let
                                 [fallback-operands : (Array CompilerCtfeValue)
                                   (array.make-array CompilerCtfeValue 1)]

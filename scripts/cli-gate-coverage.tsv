@@ -1,12 +1,12 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	476
-# count	total	all	annotations	476
+# count	total	all	rows	477
+# count	total	all	annotations	477
 # count	total	all	sources	3
-# count	total	all	source-sites	350
+# count	total	all	source-sites	351
 # count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	297
-# count	gate	public-tools	source-sites	188
+# count	gate	public-tools	rows	298
+# count	gate	public-tools	source-sites	189
 # count	gate	public-tools	expanded-cases	125
 # count	gate	selfhost-cli	rows	77
 # count	gate	selfhost-cli	source-sites	76
@@ -14,15 +14,15 @@
 # count	gate	stage1-wrapper	rows	102
 # count	gate	stage1-wrapper	source-sites	86
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	353
+# count	host	all	rows	354
 # count	host	linux	rows	120
 # count	host	windows	rows	3
-# count	platform	linux	rows	473
-# count	platform	windows	rows	356
+# count	platform	linux	rows	474
+# count	platform	windows	rows	357
 # count	kind	delegated	rows	8
 # count	kind	direct	rows	51
-# count	kind	wrapper	rows	417
-# count	process	compiler	rows	308
+# count	kind	wrapper	rows	418
+# count	process	compiler	rows	309
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2
@@ -218,6 +218,7 @@ schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	env
 1	normal-inline-compile-batch	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile --batch <inline-bad-batch-list> --target <host-target>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr <inline-bad-diag>:3:;assert_contains stderr typecheck: integer operator expects matching integer operands;assert_contains stderr compile: batch source failed: <inline-bad-batch-input>	[ ! -f <inline-bad-batch-asm> ] || fail normal-inline-compile-batch wrote assembly despite inline test failure	normal-inline-compile-batch	-
 1	normal-inline-build	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp build <inline-bad> --target <host-target> -o <inline-bad-exe>	prepared-by-gate	inherited	repository	compiler+native-tools	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr <inline-bad-diag>:3:;assert_contains stderr typecheck: integer operator expects matching integer operands;selfhost: assert_contains stderr error[E0200];assert_contains stderr source line;assert_contains stderr caret	[ ! -f <inline-bad-exe> ] || fail normal-inline-build wrote an executable despite inline test failure	normal-inline-build	-
 1	normal-inline-run	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp run <inline-bad> --target <host-target>	prepared-by-gate	inherited	repository	compiler+native-tools+program	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr <inline-bad-diag>:3:;assert_contains stderr typecheck: integer operator expects matching integer operands;selfhost: assert_contains stderr error[E0200];assert_contains stderr source line;assert_contains stderr caret	none	normal-inline-run	-
+1	normal-macro-error-compile-batch	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile --batch <macro-bad-batch-list> --target <host-target>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr macro operand expects bracket clause;assert_contains stderr compile: batch source failed: <macro-bad>	[ "$code" -eq 139 ] && fail normal-macro-error-compile-batch segfaulted after a macro-expansion error (#5448);[ ! -f <macro-bad-sentinel-asm> ] || fail normal-macro-error-compile-batch compiled the sentinel after the macro error	normal-macro-error-compile-batch	-
 1	normal-inline-cfg-helper-production-use	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp check <inline-cfg-prod>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero	empty	assert_contains stderr <inline-cfg-prod-diag>:5:;assert_contains stderr typecheck: unbound name inline-helper	none	normal-inline-cfg-helper-production-use	-
 1	normal-inline-codegen-scalar-opt0-with-tests	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile <inline-same> --target <host-target> --backend-mode scalar --opt-level 0 -o <with-asm>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero;0	empty	assert_contains stderr compile: --backend-mode scalar requires the Rust compile driver until selfhost SIMD support (#1014);empty	none	normal-inline-codegen-scalar-opt0-with-tests	-
 1	normal-inline-codegen-scalar-opt1-with-tests	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage2/run_cmd	typelisp compile <inline-same> --target <host-target> --backend-mode scalar --opt-level 1 -o <with-asm>	prepared-by-gate	inherited	repository	compiler	TYPELISP_STAGE1_HEARTBEAT_FD=3;fd3=parent-stderr	nonzero;0	empty	assert_contains stderr compile: --backend-mode scalar requires the Rust compile driver until selfhost SIMD support (#1014);empty	none	normal-inline-codegen-scalar-opt1-with-tests	-

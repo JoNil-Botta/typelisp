@@ -6,7 +6,13 @@
 ;; through the embedded (native) and the interpreted macro routes and requires
 ;; byte-identical assembly, so a divergence in the probe results, the arm
 ;; selection, or the reconstructed cast fails the build.
+;; `stdlib.format` must precede `stdlib.json` here: the reverse order makes
+;; `format.format`'s expansion fail to resolve `str_cat.str-cat` (#5648).
 (import stdlib.format)
+
+;; Referenced only as the serialize strategy module in the generated import
+;; below, which the unused-import rule does not count as a reference.
+;; lint-allow: unused-import
 (import stdlib.json)
 (import stdlib.math)
 (import stdlib.serialize)
@@ -55,8 +61,8 @@
     [rendered : String (describe "n=" 7 true '/' 1.5 0.5)]
     (if (and
       (string.eq rendered "n=7true/1.50.5")
-      (and
-        (= (round-trip widths) 9)
-        (and (> (math-f64 2.0) 0.0) (> (math-f32 2.0) 0.0))))
+      (= (round-trip widths) 9)
+      (> (math-f64 2.0) 0.0)
+      (> (math-f32 2.0) 0.0))
       42
       1)))

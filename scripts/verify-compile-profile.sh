@@ -1068,11 +1068,21 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_cat
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_load_failures|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_tlci_interpreted_fallbacks|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.stdlib_source_interpreted|"
-# The repo's own stdlib is content-identical to the embedded payload, so
-# the catalog dispatches here too; shell entries keep the counted
-# interpreted fallback (and their per-identity profile rows above). On
-# Windows the route is gated off until #5460 closes, so the stand-down
-# shape is asserted instead.
+# The repo's own stdlib is content-identical to the embedded payload, so the
+# catalog dispatches here too. On Windows the route is gated off until #5460
+# closes, so the stand-down shape is asserted instead.
+#
+# This asserts that the catalog route is *live* (hits, and at least one entry
+# committing natively) rather than that some entry still falls back. #5596 is
+# driving the interpreted-fallback count to zero, and requiring a non-zero
+# fallback here would turn the last family to land into a CI failure in an
+# unrelated-looking gate: as of #5625 the only shell this fixture still reaches
+# is `str_cat_runtime/str-cat-pack`, which #5602 makes native. The routing
+# fixture below already switched to this shape for the same reason. Refs #5634.
+#
+# A native-dispatch floor is also the stronger regression check: a silent mass
+# fall-back to interpretation drives dispatches to zero and fails, where a
+# fallback floor would happily pass. Refs #5596.
 if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_counter_eq_in \
         "$CHECK_STDERR" \
@@ -1095,8 +1105,14 @@ else
         "$CHECK_STDERR"
     assert_profile_counter_at_least_in \
         "$CHECK_STDERR" \
-        "typecheck.macro.stdlib_tlci_interpreted_fallbacks" \
+        "typecheck.macro.stdlib_tlci_native_dispatches" \
         1 \
+        "$CHECK_STDOUT" \
+        "$CHECK_STDERR"
+    assert_profile_counter_eq_in \
+        "$CHECK_STDERR" \
+        "typecheck.macro.stdlib_tlci_load_failures" \
+        0 \
         "$CHECK_STDOUT" \
         "$CHECK_STDERR"
 fi

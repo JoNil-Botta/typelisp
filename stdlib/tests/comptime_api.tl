@@ -26,36 +26,27 @@
         (comptime.expr-int 42)
         (comptime.expr-int 0)))))
 
-(cfg
-  feature-comptime-public-fields
-  (defmacro (stdlib-comptime-public-field-count [args : comptime.Expr ...]) : i64
-    (comptime.expr-int (struct-get args len))))
+(defmacro (stdlib-comptime-public-field-count [args : comptime.Expr ...]) : i64
+  (comptime.expr-int (struct-get args len)))
 
-(cfg
-  feature-comptime-public-fields
-  (defmacro (stdlib-comptime-public-field-second [args : comptime.Expr ...]) : i64
-    (if (> (struct-get args len) 1)
-      (__tl_array-ref (struct-get args items) 1)
-      (comptime.expr-int 0))))
+(defmacro (stdlib-comptime-public-field-second [args : comptime.Expr ...]) : i64
+  (if (> (struct-get args len) 1)
+    (__tl_array-ref (struct-get args items) 1)
+    (comptime.expr-int 0)))
 
 (defmacro (stdlib-comptime-clause-count [arms : comptime.ExprClause ...]) : i64
   (comptime.expr-int
     (comptime.expr-list-length (comptime.expr-clause-list->expr-list arms))))
 
-(cfg
-  feature-comptime-public-fields
-  (defmacro (stdlib-comptime-public-clause-count
-    [arms : comptime.ExprClause ...]) : i64
-    (comptime.expr-int (struct-get arms len))))
+(defmacro (stdlib-comptime-public-clause-count [arms : comptime.ExprClause ...]) : i64
+  (comptime.expr-int (struct-get arms len)))
 
-(cfg
-  feature-comptime-public-fields
-  (defmacro (stdlib-comptime-public-clause-first-result
-    [arms : comptime.ExprClause ...]) : i64
-    (if (> (struct-get arms len) 0)
-      (match (__tl_array-ref (struct-get arms items) 0)
-        [(ExprClause _ result) result])
-      (comptime.expr-int 0))))
+(defmacro (stdlib-comptime-public-clause-first-result
+  [arms : comptime.ExprClause ...]) : i64
+  (if (> (struct-get arms len) 0)
+    (match (__tl_array-ref (struct-get arms items) 0)
+      [(ExprClause _ result) result])
+    (comptime.expr-int 0)))
 
 (defmacro (stdlib-comptime-clause-else-value [arm : comptime.ExprClause]) : i64
   (match arm
@@ -83,18 +74,16 @@
         (comptime.expr-int 0))]
     [_ (comptime.expr-int 0)]))
 
-(cfg
-  feature-comptime-public-fields
-  (defmacro (stdlib-comptime-public-binding-init
-    [bindings : comptime.ExprBindingClause ...]) : i64
-    (if (> (struct-get bindings len) 0)
-      (let
-        [first : comptime.ExprBindingClause
-          (__tl_array-ref (struct-get bindings items) 0)]
-        (if (string.eq (struct-get first name) "value")
-          (struct-get first init)
-          (comptime.expr-int 0)))
-      (comptime.expr-int 0))))
+(defmacro (stdlib-comptime-public-binding-init
+  [bindings : comptime.ExprBindingClause ...]) : i64
+  (if (> (struct-get bindings len) 0)
+    (let
+      [first : comptime.ExprBindingClause
+        (__tl_array-ref (struct-get bindings items) 0)]
+      (if (string.eq (struct-get first name) "value")
+        (struct-get first init)
+        (comptime.expr-int 0)))
+    (comptime.expr-int 0)))
 
 (defmacro (stdlib-comptime-derived-name [prefix : comptime.Expr]) : i64
   (match prefix
@@ -163,24 +152,18 @@
 (define (stdlib-comptime-type-list-item-shape) : i64
   (stdlib-comptime-type-list-item (type i64)))
 
-(cfg
-  feature-comptime-public-fields
-  (define (stdlib-comptime-public-field-shape) : i64
-    (+
-      (stdlib-comptime-public-field-count 1 2 3)
-      (+ (stdlib-comptime-public-field-second 1 20) 19))))
+(define (stdlib-comptime-public-field-shape) : i64
+  (+
+    (stdlib-comptime-public-field-count 1 2 3)
+    (+ (stdlib-comptime-public-field-second 1 20) 19)))
 
-(cfg
-  feature-comptime-public-fields
-  (define (stdlib-comptime-public-clause-field-shape) : i64
-    (+
-      (stdlib-comptime-public-clause-count [false 40] [true 0])
-      (stdlib-comptime-public-clause-first-result [false 40] [true 0]))))
+(define (stdlib-comptime-public-clause-field-shape) : i64
+  (+
+    (stdlib-comptime-public-clause-count [false 40] [true 0])
+    (stdlib-comptime-public-clause-first-result [false 40] [true 0])))
 
-(cfg
-  feature-comptime-public-fields
-  (define (stdlib-comptime-public-binding-field-shape) : i64
-    (stdlib-comptime-public-binding-init [value 42])))
+(define (stdlib-comptime-public-binding-field-shape) : i64
+  (stdlib-comptime-public-binding-init [value 42]))
 
 (define (stdlib-comptime-clause-match-shape) : i64
   (+ (stdlib-comptime-clause-else-value [else 6]) 36))
@@ -239,35 +222,29 @@
       (/ 1 0)
       unit)))
 
-(cfg
-  feature-comptime-public-fields
-  (test
-    comptime-public-field-shape
-    (if (= (stdlib-comptime-public-field-shape) 42)
-      unit
-      (begin
-        (/ 1 0)
-        unit))))
+(test
+  comptime-public-field-shape
+  (if (= (stdlib-comptime-public-field-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
 
-(cfg
-  feature-comptime-public-fields
-  (test
-    comptime-public-clause-field-shape
-    (if (= (stdlib-comptime-public-clause-field-shape) 42)
-      unit
-      (begin
-        (/ 1 0)
-        unit))))
+(test
+  comptime-public-clause-field-shape
+  (if (= (stdlib-comptime-public-clause-field-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
 
-(cfg
-  feature-comptime-public-fields
-  (test
-    comptime-public-binding-field-shape
-    (if (= (stdlib-comptime-public-binding-field-shape) 42)
-      unit
-      (begin
-        (/ 1 0)
-        unit))))
+(test
+  comptime-public-binding-field-shape
+  (if (= (stdlib-comptime-public-binding-field-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
 
 (test
   comptime-clause-match-shape

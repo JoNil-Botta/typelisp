@@ -72,9 +72,10 @@
           out)))))
 
 (define (prelude-surface-target-cfgs [windows-target : bool]) : sym_i64_env.SymI64Env
-  (let
-    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
-    (compiler-cfg-enable-compiler-language-features
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
       (if windows-target
         (compiler-cfg-enable
           (compiler-cfg-enable

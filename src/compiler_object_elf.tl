@@ -5,16 +5,10 @@
 (cfg test (import stdlib.test))
 
 (define (compiler-object-elf-string-length [text : String]) : i64
-  (cfg
-    feature-compiler-private-string-intrinsics
-    (__tl_string_length text)
-    (string.string-length text)))
+  (__tl_string_length text))
 
 (define (compiler-object-elf-string-ref [text : String] [index : i64]) : char
-  (cfg
-    feature-compiler-private-string-intrinsics
-    (__tl_string_ref text index)
-    (string.string-ref text index)))
+  (__tl_string_ref text index))
 
 (defenum ResultCompilerObjectElf
   (Ok String)

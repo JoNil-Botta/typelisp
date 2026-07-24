@@ -107,11 +107,10 @@
             "stdlib.vector.generated.core."
             "stdlib.vector.generated.")
           (type-key T)))]
-    [cleanup-owning : bool
-      (cfg feature-cleanup-owner-reflection (type-cleanup-owning? T) false)]
+    [cleanup-owning : bool (type-cleanup-owning? T)]
     [cleanup-function : String
       (if cleanup-owning
-        (cfg feature-cleanup-owner-reflection (type-cleanup-function T) "")
+        (type-cleanup-function T)
         "")]
     [cleanup-function-expr : Expr (expr-var cleanup-function)]
     [cleanup-extra-decls : ExprList
@@ -279,19 +278,12 @@
             v))
         ,@cleanup-extra-decls)]
     ;; Construct the append/read/mutate core once, then splice that exact
-    ;; declaration list into either capability mode.
+    ;; declaration list into the generated module.
     [core-decls : Expr
       `(begin
-        (cfg
-          feature-compiler-private-dynamic-buffer
-          (defstruct Vec
-            (slots (__tl_dyn-array ,T))
-            (len i64)))
-        (cfg
-          (not feature-compiler-private-dynamic-buffer)
-          (defstruct Vec
-            (slots (Array ,T))
-            (len i64)))
+        (defstruct Vec
+          (slots (__tl_dyn-array ,T))
+          (len i64))
         (define (slots [v : (& v Vec)]) : (& v (Array ,T))
           (& (struct-get v slots)))
         (define (len [v : (& v Vec)]) : i64

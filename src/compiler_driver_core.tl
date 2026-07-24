@@ -1372,57 +1372,11 @@
     "os-windows"
     intern-state))
 
-(define (compiler-driver-enable-language-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable-compiler-language-features cfgs))
-
-(define (compiler-driver-enable-language-cfgs-with-intern-state
-  [cfgs : sym_i64_env.SymI64Env]
-  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable-with-intern-state
-    (compiler-cfg-enable-with-intern-state
-      (compiler-cfg-enable-with-intern-state
-        (compiler-cfg-enable-with-intern-state
-          (compiler-cfg-enable-with-intern-state
-            (compiler-cfg-enable-with-intern-state
-              (compiler-cfg-enable-with-intern-state
-                (compiler-cfg-enable-with-intern-state
-                  (compiler-cfg-enable-with-intern-state
-                    (compiler-cfg-enable-with-intern-state
-                      (compiler-cfg-enable-with-intern-state
-                        (compiler-cfg-enable-with-intern-state
-                          (compiler-cfg-enable-with-intern-state
-                            cfgs
-                            "feature-ptr-addr-of"
-                            intern-state)
-                          "feature-str-view"
-                          intern-state)
-                        "feature-runtime-str-view-extern"
-                        intern-state)
-                      "feature-private-string-intrinsics"
-                      intern-state)
-                    "feature-compiler-private-string-intrinsics"
-                    intern-state)
-                  "array-helper-intrinsics"
-                  intern-state)
-                "feature-tl-memchr"
-                intern-state)
-              "feature-plain-comptime-well-known"
-              intern-state)
-            "feature-comptime-public-fields"
-            intern-state)
-          "feature-cleanup-owner-reflection"
-          intern-state)
-        "feature-tl-array-zero"
-        intern-state)
-      "feature-compiler-float-sqrt-intrinsic"
-      intern-state)
-    "feature-compiler-float-bitcast-intrinsics"
-    intern-state))
-
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-driver-enable-language-cfgs
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
     (match target
       [(CompilerBackendTarget.Linux) (compiler-driver-enable-linux-cfgs cfgs)]
       [(CompilerBackendTarget.Windows)
@@ -1435,17 +1389,13 @@
   (let
     [intern-state : ci.InternCompatState
       (array-ref (struct-get state intern-state) 0)]
-    (compiler-driver-enable-language-cfgs-with-intern-state
-      (match target
-        [(CompilerBackendTarget.Linux)
-          (compiler-driver-enable-linux-cfgs-with-intern-state
-            cfgs
-            intern-state)]
-        [(CompilerBackendTarget.Windows)
-          (compiler-driver-enable-windows-cfgs-with-intern-state
-            cfgs
-            intern-state)])
-      intern-state)))
+    (match target
+      [(CompilerBackendTarget.Linux)
+        (compiler-driver-enable-linux-cfgs-with-intern-state cfgs intern-state)]
+      [(CompilerBackendTarget.Windows)
+        (compiler-driver-enable-windows-cfgs-with-intern-state
+          cfgs
+          intern-state)])))
 
 (define (compiler-driver-emit-lowered-with-level
   [input-path : String]

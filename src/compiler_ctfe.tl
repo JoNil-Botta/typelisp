@@ -469,16 +469,10 @@
       (ctfe-builtin-expr-binding-clause-list-inspector-id? name-id))))
 
 (defmacro (ctfe-private-string-length [text : Expr]) : i64
-  (cfg
-    feature-compiler-private-string-intrinsics
-    `(__tl_string_length ,text)
-    `(string.string-length ,text)))
+  `(__tl_string_length ,text))
 
 (defmacro (ctfe-private-string-ref [text : Expr] [index : Expr]) : char
-  (cfg
-    feature-compiler-private-string-intrinsics
-    `(__tl_string_ref ,text ,index)
-    `(string.string-ref ,text ,index)))
+  `(__tl_string_ref ,text ,index))
 
 ;; A compile-time value. Scalars; Expr / ExprList aggregates
 ;; for macro transformers; TypeInfo pseudo-values back the

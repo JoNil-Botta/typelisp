@@ -29,13 +29,11 @@
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 
-(cfg
-  feature-tl-memchr
-  (unsafe
-    (extern (compiler-backend-runtime-index-of-byte
-      [ptr : (Ptr u8)]
-      [len : i64]
-      [byte : u8]) : i64 (:symbol "tl_memchr"))))
+(unsafe
+  (extern (compiler-backend-runtime-index-of-byte
+    [ptr : (Ptr u8)]
+    [len : i64]
+    [byte : u8]) : i64 (:symbol "tl_memchr")))
 
 (cfg
   compile-profile
@@ -44119,63 +44117,39 @@
               [else compiler-backend-control-mnemonic-none]))]
         [else compiler-backend-control-mnemonic-none]))))
 
-;; Index of the first "(%rbp" occurrence in [start,end), or -1. The memchr
-;; variant jumps between '(' bytes instead of stepping every byte; both
-;; variants return the same index.
-(cfg
-  feature-tl-memchr
-  (define (compiler-backend-rsp-rebase-find-rbp
-    [data : (Ptr u8)]
-    [start : i64]
-    [end : i64]) : i64
-    (let
-      [i : i64 start]
-      [found : i64 -1]
-      [done : bool false]
-      (begin
-        (while (and (not done) (<= (+ i 5) end))
-          (let
-            [offset : i64
-              (unsafe
-                (compiler-backend-runtime-index-of-byte
-                  (ptr-offset data i)
-                  (- (- end 4) i)
-                  (cast 40 : u8)))]
-            (if (< offset 0)
-              (set! done true)
-              (let
-                [pos : i64 (+ i offset)]
-                (if (and
-                  (= (compiler-backend-peephole-byte-at data (+ pos 1)) 37)
-                  (= (compiler-backend-peephole-byte-at data (+ pos 2)) 114)
-                  (= (compiler-backend-peephole-byte-at data (+ pos 3)) 98)
-                  (= (compiler-backend-peephole-byte-at data (+ pos 4)) 112))
-                  (begin
-                    (set! found pos)
-                    (set! done true))
-                  (set! i (+ pos 1)))))))
-        found))))
-
-(cfg
-  (not feature-tl-memchr)
-  (define (compiler-backend-rsp-rebase-find-rbp
-    [data : (Ptr u8)]
-    [start : i64]
-    [end : i64]) : i64
-    (let
-      [i : i64 start]
-      [found : i64 -1]
-      (begin
-        (while (and (< found 0) (<= (+ i 5) end))
-          (if (and
-            (= (compiler-backend-peephole-byte-at data i) 40)
-            (= (compiler-backend-peephole-byte-at data (+ i 1)) 37)
-            (= (compiler-backend-peephole-byte-at data (+ i 2)) 114)
-            (= (compiler-backend-peephole-byte-at data (+ i 3)) 98)
-            (= (compiler-backend-peephole-byte-at data (+ i 4)) 112))
-            (set! found i)
-            (set! i (+ i 1))))
-        found))))
+;; Index of the first "(%rbp" occurrence in [start,end), or -1. Jumps between
+;; '(' bytes with memchr instead of stepping every byte.
+(define (compiler-backend-rsp-rebase-find-rbp
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 start]
+    [found : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (<= (+ i 5) end))
+        (let
+          [offset : i64
+            (unsafe
+              (compiler-backend-runtime-index-of-byte
+                (ptr-offset data i)
+                (- (- end 4) i)
+                (cast 40 : u8)))]
+          (if (< offset 0)
+            (set! done true)
+            (let
+              [pos : i64 (+ i offset)]
+              (if (and
+                (= (compiler-backend-peephole-byte-at data (+ pos 1)) 37)
+                (= (compiler-backend-peephole-byte-at data (+ pos 2)) 114)
+                (= (compiler-backend-peephole-byte-at data (+ pos 3)) 98)
+                (= (compiler-backend-peephole-byte-at data (+ pos 4)) 112))
+                (begin
+                  (set! found pos)
+                  (set! done true))
+                (set! i (+ pos 1)))))))
+      found)))
 
 ;; Start index of the signed decimal immediately preceding `pos`, or -1 when
 ;; there is none (a bare/indexed form the audit must reject).
@@ -45313,68 +45287,29 @@
 ;; Conservative byte width of the memory access on line [m,end): 16/32/64 when
 ;; a %xmm/%ymm/%zmm operand appears, 64 for unmatched vector/mask mnemonics
 ;; (v*/k*), else 8 (GP memory operands never exceed 8 bytes).
-;; The memchr variant jumps between '%' bytes instead of stepping every
-;; byte; both variants classify the same positions in the same order.
-(cfg
-  feature-tl-memchr
-  (define (compiler-backend-sweep-line-width
-    [data : (Ptr u8)]
-    [m : i64]
-    [end : i64]) : i64
-    (let
-      [w : i64 0]
-      [j : i64 m]
-      [b0 : i64 (compiler-backend-peephole-byte-at data m)]
-      [done : bool false]
-      (begin
-        (while (and (not done) (< (+ j 1) end))
-          (let
-            [offset : i64
-              (unsafe
-                (compiler-backend-runtime-index-of-byte
-                  (ptr-offset data j)
-                  (- (- end 1) j)
-                  (cast 37 : u8)))]
-            (if (< offset 0)
-              (set! done true)
-              (begin
-                (set! j (+ j offset))
-                (let
-                  [nb : i64 (compiler-backend-peephole-byte-at data (+ j 1))]
-                  ;; lint-allow: nested-if-ladder
-                  (if (= nb 122)
-                    (set! w 64)
-                    (if (= nb 121)
-                      (if (< w 32)
-                        (set! w 32)
-                        unit)
-                      (if (= nb 120)
-                        (if (< w 16)
-                          (set! w 16)
-                          unit)
-                        unit))))
-                (set! j (+ j 1))))))
-        ;; lint-allow: nested-if-ladder
-        (if (> w 0)
-          w
-          (if (or (= b0 118) (= b0 107))
-            64
-            8))))))
-
-(cfg
-  (not feature-tl-memchr)
-  (define (compiler-backend-sweep-line-width
-    [data : (Ptr u8)]
-    [m : i64]
-    [end : i64]) : i64
-    (let
-      [w : i64 0]
-      [j : i64 m]
-      [b0 : i64 (compiler-backend-peephole-byte-at data m)]
-      (begin
-        (while (< (+ j 1) end)
-          (begin
-            (if (= (compiler-backend-peephole-byte-at data j) 37)
+;; Jumps between '%' bytes with memchr instead of stepping every byte.
+(define (compiler-backend-sweep-line-width
+  [data : (Ptr u8)]
+  [m : i64]
+  [end : i64]) : i64
+  (let
+    [w : i64 0]
+    [j : i64 m]
+    [b0 : i64 (compiler-backend-peephole-byte-at data m)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< (+ j 1) end))
+        (let
+          [offset : i64
+            (unsafe
+              (compiler-backend-runtime-index-of-byte
+                (ptr-offset data j)
+                (- (- end 1) j)
+                (cast 37 : u8)))]
+          (if (< offset 0)
+            (set! done true)
+            (begin
+              (set! j (+ j offset))
               (let
                 [nb : i64 (compiler-backend-peephole-byte-at data (+ j 1))]
                 ;; lint-allow: nested-if-ladder
@@ -45389,49 +45324,30 @@
                         (set! w 16)
                         unit)
                       unit))))
-              unit)
-            (set! j (+ j 1))))
-        ;; lint-allow: nested-if-ladder
-        (if (> w 0)
-          w
-          (if (or (= b0 118) (= b0 107))
-            64
-            8))))))
+              (set! j (+ j 1))))))
+      ;; lint-allow: nested-if-ladder
+      (if (> w 0)
+        w
+        (if (or (= b0 118) (= b0 107))
+          64
+          8)))))
 
 ;; First '%' index in [start, end-4], or -1: every position that can start a
-;; four-byte "%rsp" reference. The memchr variant jumps straight to it.
-(cfg
-  feature-tl-memchr
-  (define (compiler-backend-sweep-next-percent
-    [data : (Ptr u8)]
-    [start : i64]
-    [end : i64]) : i64
-    (let
-      [offset : i64
-        (unsafe
-          (compiler-backend-runtime-index-of-byte
-            (ptr-offset data start)
-            (- (- end 3) start)
-            (cast 37 : u8)))]
-      (if (< offset 0)
-        -1
-        (+ start offset)))))
-
-(cfg
-  (not feature-tl-memchr)
-  (define (compiler-backend-sweep-next-percent
-    [data : (Ptr u8)]
-    [start : i64]
-    [end : i64]) : i64
-    (let
-      [i : i64 start]
-      [found : i64 -1]
-      (begin
-        (while (and (< found 0) (<= (+ i 4) end))
-          (if (= (compiler-backend-peephole-byte-at data i) 37)
-            (set! found i)
-            (set! i (+ i 1))))
-        found))))
+;; four-byte "%rsp" reference. Jumps straight to it with memchr.
+(define (compiler-backend-sweep-next-percent
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [offset : i64
+      (unsafe
+        (compiler-backend-runtime-index-of-byte
+          (ptr-offset data start)
+          (- (- end 3) start)
+          (cast 37 : u8)))]
+    (if (< offset 0)
+      -1
+      (+ start offset))))
 
 ;; If line [m,end) (mnemonic token ending at te) is exactly
 ;; `movq SRC, N(%rsp)` with SRC a single %reg (not %rsp) or $imm token and a
@@ -54735,40 +54651,22 @@
       (ptr-read (ptr-offset data index)))
     : i64))
 
-(cfg
-  feature-tl-memchr
-  (define (compiler-backend-peephole-line-end
-    [asm-data : (Ptr u8)]
-    [start : i64]
-    [n : i64]) : i64
-    (let
-      [offset : i64
-        (if (< start n)
-          (unsafe
-            (compiler-backend-runtime-index-of-byte
-              (ptr-offset asm-data start)
-              (- n start)
-              (cast 10 : u8)))
-          -1)]
-      (if (< offset 0)
-        n
-        (+ start offset)))))
-
-(cfg
-  (not feature-tl-memchr)
-  (define (compiler-backend-peephole-line-end
-    [asm-data : (Ptr u8)]
-    [start : i64]
-    [n : i64]) : i64
-    (let
-      [i : i64 start]
-      [done : bool false]
-      (begin
-        (while (and (not done) (< i n))
-          (if (= (compiler-backend-peephole-byte-at asm-data i) 10)
-            (set! done true)
-            (set! i (+ i 1))))
-        i))))
+(define (compiler-backend-peephole-line-end
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [n : i64]) : i64
+  (let
+    [offset : i64
+      (if (< start n)
+        (unsafe
+          (compiler-backend-runtime-index-of-byte
+            (ptr-offset asm-data start)
+            (- n start)
+            (cast 10 : u8)))
+        -1)]
+    (if (< offset 0)
+      n
+      (+ start offset))))
 
 (define (compiler-backend-peephole-append-line
   [buf : (text_buf_borrowed.TextBufBorrowed asm)]
@@ -54873,63 +54771,35 @@
       (= (compiler-backend-peephole-byte-at asm-data (+ start 7)) 113)
       (= (compiler-backend-peephole-byte-at asm-data (+ start 8)) 32))))
 
-;; First ", " in [start, end), or -1. The memchr variant jumps between ','
-;; bytes instead of stepping every byte; both variants return the same
-;; first-match index.
-(cfg
-  feature-tl-memchr
-  (define (compiler-backend-peephole-find-comma-space-range
-    [asm-data : (Ptr u8)]
-    [start : i64]
-    [end : i64]) : i64
-    (let
-      [i : i64 start]
-      [found : i64 -1]
-      [done : bool false]
-      (begin
-        (while (and (not done) (< (+ i 1) end))
-          (let
-            [offset : i64
-              (unsafe
-                (compiler-backend-runtime-index-of-byte
-                  (ptr-offset asm-data i)
-                  (- (- end 1) i)
-                  (cast 44 : u8)))]
-            (if (< offset 0)
-              (set! done true)
-              (let
-                [pos : i64 (+ i offset)]
-                (if (=
-                  (compiler-backend-peephole-byte-at asm-data (+ pos 1))
-                  32)
-                  (begin
-                    (set! found pos)
-                    (set! done true))
-                  (set! i (+ pos 1)))))))
-        found))))
-
-(cfg
-  (not feature-tl-memchr)
-  (define (compiler-backend-peephole-find-comma-space-range
-    [asm-data : (Ptr u8)]
-    [start : i64]
-    [end : i64]) : i64
-    (let
-      [i : i64 start]
-      [found : i64 -1]
-      [done : bool false]
-      (begin
-        (while (not done)
-          (if (< (+ i 1) end)
-            (if (and
-              (= (compiler-backend-peephole-byte-at asm-data i) 44)
-              (= (compiler-backend-peephole-byte-at asm-data (+ i 1)) 32))
-              (begin
-                (set! found i)
-                (set! done true))
-              (set! i (+ i 1)))
-            (set! done true)))
-        found))))
+;; First ", " in [start, end), or -1. Jumps between ',' bytes with memchr
+;; instead of stepping every byte.
+(define (compiler-backend-peephole-find-comma-space-range
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 start]
+    [found : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< (+ i 1) end))
+        (let
+          [offset : i64
+            (unsafe
+              (compiler-backend-runtime-index-of-byte
+                (ptr-offset asm-data i)
+                (- (- end 1) i)
+                (cast 44 : u8)))]
+          (if (< offset 0)
+            (set! done true)
+            (let
+              [pos : i64 (+ i offset)]
+              (if (= (compiler-backend-peephole-byte-at asm-data (+ pos 1)) 32)
+                (begin
+                  (set! found pos)
+                  (set! done true))
+                (set! i (+ pos 1)))))))
+      found)))
 
 (define (compiler-backend-peephole-movq-range
   [asm : String]
@@ -55776,43 +55646,25 @@
       (compiler-backend-peephole-owners-set-reg-index owners dst-reg src-key)]
     [else (compiler-backend-peephole-owners-empty)]))
 
-;; Length of the leading non-space token (the mnemonic) starting at `i`.
 ;; Length of the leading token at `i`: bytes up to the next space or `end`.
-;; The memchr variant jumps straight to the next space byte instead of
-;; stepping every byte; both return the same span length.
-(cfg
-  feature-tl-memchr
-  (define (compiler-backend-peephole-token-len
-    [data : (Ptr u8)]
-    [i : i64]
-    [end : i64]) : i64
-    (if (>= i end)
-      0
-      (let
-        [offset : i64
-          (unsafe
-            (compiler-backend-runtime-index-of-byte
-              (ptr-offset data i)
-              (- end i)
-              (cast 32 : u8)))]
-        (if (< offset 0)
-          (- end i)
-          offset)))))
-
-(cfg
-  (not feature-tl-memchr)
-  (define (compiler-backend-peephole-token-len
-    [data : (Ptr u8)]
-    [i : i64]
-    [end : i64]) : i64
+;; Uses memchr to jump straight to the next space byte instead of stepping
+;; every byte.
+(define (compiler-backend-peephole-token-len
+  [data : (Ptr u8)]
+  [i : i64]
+  [end : i64]) : i64
+  (if (>= i end)
+    0
     (let
-      [j : i64 i]
-      (begin
-        (while (and
-          (< j end)
-          (not (= (compiler-backend-peephole-byte-at data j) 32)))
-          (set! j (+ j 1)))
-        (- j i)))))
+      [offset : i64
+        (unsafe
+          (compiler-backend-runtime-index-of-byte
+            (ptr-offset data i)
+            (- end i)
+            (cast 32 : u8)))]
+      (if (< offset 0)
+        (- end i)
+        offset))))
 
 ;; True iff byte `b` is a movq-style size suffix: q, l, w, or b.
 (define (compiler-backend-peephole-size-suffix-byte? [b : i64]) : bool

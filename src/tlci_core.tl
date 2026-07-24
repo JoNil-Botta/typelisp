@@ -15,16 +15,10 @@
   (reader.read-symbol-text-for-id name-id))
 
 (define (tlci-string-length [text : String]) : i64
-  (cfg
-    feature-compiler-private-string-intrinsics
-    (__tl_string_length text)
-    (string.string-length text)))
+  (__tl_string_length text))
 
 (define (tlci-string-ref [text : String] [index : i64]) : char
-  (cfg
-    feature-compiler-private-string-intrinsics
-    (__tl_string_ref text index)
-    (string.string-ref text index)))
+  (__tl_string_ref text index))
 
 (defstruct TlciSpmdSpecialization
   (abi String)

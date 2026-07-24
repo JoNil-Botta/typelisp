@@ -1,11 +1,8 @@
 ;# String utility library for TypeLisp.
 ;#
-;# Provides string operations built on compiler/runtime primitives. New
-;# compilers enable `feature-private-string-intrinsics`, where public helpers
-;# route through `__tl_string_length`, `__tl_string_ref`, `__tl_string_eq`, and
-;# `__tl_string_to_int`. The `feature-compiler-private-string-intrinsics`
-;# capability means the compiling seed can typecheck those private names; without
-;# it, the checked-in stdlib stays bootstrap-compatible with published stage0.
+;# Provides string operations built on compiler/runtime primitives. Public
+;# helpers route through the compiler intrinsics `__tl_string_length`,
+;# `__tl_string_ref`, `__tl_string_eq`, and `__tl_string_to_int`.
 ;#
 ;# Usage: `(import stdlib.string)`
 ;#
@@ -18,22 +15,15 @@
 ;#     [needle : String "ph"]
 ;#     (string.contains (& haystack) (& needle))))
 ;# ```
-(import stdlib.comptime)
-
 ;: Runtime bounds-check trap shared with array/string indexing.
 (extern (tl_oob_abort) : never)
 
 ;: Runtime helper that builds a borrowed string view record without copying
 ;: bytes. The public wrappers below perform bounds checks before calling it.
-;: `feature-runtime-str-view-extern` keeps published stage0 compilers from
-;: declaring this extern before they understand the renamed stdlib.runtime
-;: helper as the same fixed ABI symbol.
-(cfg
-  (all feature-str-view feature-runtime-str-view-extern)
-  (unsafe
-    (extern (tl_str_view [text : (& text str)] [start : i64] [len : i64]) : (&
-      text
-      str))))
+(unsafe
+  (extern (tl_str_view [text : (& text str)] [start : i64] [len : i64]) : (&
+    text
+    str)))
 
 ;: Runtime active-arena allocator used by integer rendering.
 (extern (string-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
@@ -52,55 +42,23 @@
 
 ;; Internal raw byte-search primitive backed by the always-emitted runtime
 ;; helper. Returns the zero-based offset in `ptr[0..len)` or -1 when absent.
-(cfg
-  feature-tl-memchr
-  (unsafe
-    (extern (string-runtime-index-of-byte
-      [ptr : (Ptr u8)]
-      [len : i64]
-      [byte : u8]) : i64 (:symbol "tl_memchr"))))
-
-;: Bootstrap compatibility aliases for compiler sources that call private
-;: intrinsics directly. Published stage0 compilers only have the legacy public
-;: primitive names, so map the private spellings back until the compiler
-;: capability cfg is enabled.
-(cfg
-  (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_length [text : comptime.Expr]) : i64
-    `(string-length ,text)))
-
-(cfg
-  (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_ref [text : comptime.Expr] [index : comptime.Expr]) : char
-    `(string-ref ,text ,index)))
-
-(cfg
-  (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_eq [left : comptime.Expr] [right : comptime.Expr]) : bool
-    `(eq ,left ,right)))
-
-(cfg
-  (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_to_int [text : comptime.Expr]) : i64
-    `(>int ,text)))
+(unsafe
+  (extern (string-runtime-index-of-byte
+    [ptr : (Ptr u8)]
+    [len : i64]
+    [byte : u8]) : i64 (:symbol "tl_memchr")))
 
 ;: Return the byte length of borrowed or owned text without allocating.
-(cfg
-  feature-compiler-private-string-intrinsics
-  (define (string-length [text : (& text str)]) : i64
-    (__tl_string_length text)))
+(define (string-length [text : (& text str)]) : i64
+  (__tl_string_length text))
 
 ;: Read one byte from borrowed or owned text as a `char` with bounds checking.
-(cfg
-  feature-compiler-private-string-intrinsics
-  (define (string-ref [text : (& text str)] [index : i64]) : char
-    (__tl_string_ref text index)))
+(define (string-ref [text : (& text str)] [index : i64]) : char
+  (__tl_string_ref text index))
 
 ;: Alias for `string-ref`.
-(cfg
-  feature-compiler-private-string-intrinsics
-  (define (char-at [text : (& text str)] [index : i64]) : char
-    (__tl_string_ref text index)))
+(define (char-at [text : (& text str)] [index : i64]) : char
+  (__tl_string_ref text index))
 
 ;: Write one ASCII byte into an active-arena buffer.
 (define (int->string-write-byte!
@@ -513,23 +471,19 @@
     (substring-copy-checked text start len)))
 
 ;: Return a checked borrowed substring view without copying bytes.
-(cfg
-  (all feature-str-view feature-runtime-str-view-extern)
-  (define (substring-view [text : (& text str)] [start : i64] [len : i64]) : (&
-      text
-      str)
-    (begin
-      (substring-bounds-check text start len)
-      (unsafe
-        (tl_str_view text start len)))))
+(define (substring-view [text : (& text str)] [start : i64] [len : i64]) : (&
+    text
+    str)
+  (begin
+    (substring-bounds-check text start len)
+    (unsafe
+      (tl_str_view text start len))))
 
 ;: Borrowed alias for `substring-view`.
-(cfg
-  (all feature-str-view feature-runtime-str-view-extern)
-  (define (slice-view [text : (& text str)] [start : i64] [len : i64]) : (&
-      text
-      str)
-    (substring-view text start len)))
+(define (slice-view [text : (& text str)] [start : i64] [len : i64]) : (&
+    text
+    str)
+  (substring-view text start len))
 
 ;: Alias for `substring`.
 (define (slice [text : (& text str)] [start : i64] [len : i64]) : String
@@ -548,46 +502,21 @@
     [else (char-eq c '\r')]))
 
 ;: Return the first byte index at or after start, or -1 when absent.
-(cfg
-  feature-tl-memchr
-  (define (index-of-byte [text : (& text str)] [start : i64] [byte : u8]) : i64
-    (let
-      [n : i64 (__tl_string_length text)]
-      (if (or (< start 0) (>= start n))
-        -1
-        (let
-          [offset : i64
-            (unsafe
-              (string-runtime-index-of-byte
-                (ptr-offset (string-data text) start)
-                (- n start)
-                byte))]
-          (if (< offset 0)
-            -1
-            (+ start offset)))))))
-
-;: Return the first byte index at or after start, or -1 when absent.
-(cfg
-  (not feature-tl-memchr)
-  (define (index-of-byte [text : (& text str)] [start : i64] [byte : u8]) : i64
-    (let
-      [n : i64 (__tl_string_length text)]
-      [i : i64 start]
-      [found : i64 -1]
-      [done : bool false]
-      (begin
-        (if (or (< start 0) (>= start n))
-          (set! done true)
-          unit)
-        (while (not done)
-          (if (< i n)
-            (if (= (cast (__tl_string_ref text i) : u8) byte)
-              (begin
-                (set! found i)
-                (set! done true))
-              (set! i (+ i 1)))
-            (set! done true)))
-        found))))
+(define (index-of-byte [text : (& text str)] [start : i64] [byte : u8]) : i64
+  (let
+    [n : i64 (__tl_string_length text)]
+    (if (or (< start 0) (>= start n))
+      -1
+      (let
+        [offset : i64
+          (unsafe
+            (string-runtime-index-of-byte
+              (ptr-offset (string-data text) start)
+              (- n start)
+              byte))]
+        (if (< offset 0)
+          -1
+          (+ start offset))))))
 
 ;: Compare two borrowed strings byte-for-byte without allocating.
 (define (eq [left : (& left str)] [right : (& right str)]) : bool
@@ -633,44 +562,20 @@
 
 ;: Parse a decimal integer from borrowed text using the legacy compatibility rules.
 (define (>int [text : (& text str)]) : i64
-  (cfg
-    feature-compiler-private-string-intrinsics
-    (__tl_string_to_int text)
-    (let
-      [n : i64 (string-length text)]
-      [i : i64 0]
-      [negative : bool false]
-      [value : i64 0]
-      (begin
-        (if (and (> n 0) (= (cast (string-ref text 0) : i64) 45))
-          (begin
-            (set! negative true)
-            (set! i 1))
-          unit)
-        (while (< i n)
-          (begin
-            (set!
-              value
-              (+ (* value 10) (- (cast (string-ref text i) : i64) 48)))
-            (set! i (+ i 1))))
-        (if negative
-          (- 0 value)
-          value)))))
+  (__tl_string_to_int text))
 
 ;: Return a borrowed view of text with leading whitespace removed.
-(cfg
-  (all feature-str-view feature-runtime-str-view-extern)
-  (define (trim-left-view [s : (& s str)]) : (& s str)
-    (let
-      [n : i64 (__tl_string_length s)]
-      [i : i64 0]
-      [done : bool false]
-      (begin
-        (while (and (not done) (< i n))
-          (if (is-char-whitespace (__tl_string_ref s i))
-            (set! i (+ i 1))
-            (set! done true)))
-        (substring-view s i (- n i))))))
+(define (trim-left-view [s : (& s str)]) : (& s str)
+  (let
+    [n : i64 (__tl_string_length s)]
+    [i : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (not done) (< i n))
+        (if (is-char-whitespace (__tl_string_ref s i))
+          (set! i (+ i 1))
+          (set! done true)))
+      (substring-view s i (- n i)))))
 
 ;: Trim leading whitespace from borrowed text.
 (define (trim-left [s : (& s str)]) : String
@@ -686,19 +591,17 @@
       (substring s i (- n i)))))
 
 ;: Return a borrowed view of text with trailing whitespace removed.
-(cfg
-  (all feature-str-view feature-runtime-str-view-extern)
-  (define (trim-right-view [s : (& s str)]) : (& s str)
-    (let
-      [n : i64 (__tl_string_length s)]
-      [i : i64 (- n 1)]
-      [done : bool false]
-      (begin
-        (while (and (not done) (>= i 0))
-          (if (is-char-whitespace (__tl_string_ref s i))
-            (set! i (- i 1))
-            (set! done true)))
-        (substring-view s 0 (+ i 1))))))
+(define (trim-right-view [s : (& s str)]) : (& s str)
+  (let
+    [n : i64 (__tl_string_length s)]
+    [i : i64 (- n 1)]
+    [done : bool false]
+    (begin
+      (while (and (not done) (>= i 0))
+        (if (is-char-whitespace (__tl_string_ref s i))
+          (set! i (- i 1))
+          (set! done true)))
+      (substring-view s 0 (+ i 1)))))
 
 ;: Trim trailing whitespace from borrowed text.
 (define (trim-right [s : (& s str)]) : String
@@ -714,25 +617,23 @@
       (substring s 0 (+ i 1)))))
 
 ;: Return a borrowed view of text with leading and trailing whitespace removed.
-(cfg
-  (all feature-str-view feature-runtime-str-view-extern)
-  (define (trim-view [s : (& s str)]) : (& s str)
-    (let
-      [n : i64 (__tl_string_length s)]
-      [start : i64 0]
-      [end : i64 (- n 1)]
-      [done-left : bool false]
-      [done-right : bool false]
-      (begin
-        (while (and (not done-left) (< start n))
-          (if (is-char-whitespace (__tl_string_ref s start))
-            (set! start (+ start 1))
-            (set! done-left true)))
-        (while (and (not done-right) (>= end start))
-          (if (is-char-whitespace (__tl_string_ref s end))
-            (set! end (- end 1))
-            (set! done-right true)))
-        (substring-view s start (- (+ end 1) start))))))
+(define (trim-view [s : (& s str)]) : (& s str)
+  (let
+    [n : i64 (__tl_string_length s)]
+    [start : i64 0]
+    [end : i64 (- n 1)]
+    [done-left : bool false]
+    [done-right : bool false]
+    (begin
+      (while (and (not done-left) (< start n))
+        (if (is-char-whitespace (__tl_string_ref s start))
+          (set! start (+ start 1))
+          (set! done-left true)))
+      (while (and (not done-right) (>= end start))
+        (if (is-char-whitespace (__tl_string_ref s end))
+          (set! end (- end 1))
+          (set! done-right true)))
+      (substring-view s start (- (+ end 1) start)))))
 
 ;: Trim whitespace from both ends of borrowed text.
 (define (trim [s : (& s str)]) : String
@@ -1056,56 +957,44 @@
 
 (cfg
   test
-  (cfg
-    (all feature-str-view feature-runtime-str-view-extern)
-    (define (string-test-substring-view-eq
-      [text : String]
-      [start : i64]
-      [len : i64]
-      [expected : String]) : bool
-      (eq (substring-view (& text) start len) (& expected)))))
+  (define (string-test-substring-view-eq
+    [text : String]
+    [start : i64]
+    [len : i64]
+    [expected : String]) : bool
+    (eq (substring-view (& text) start len) (& expected))))
 
 (cfg
   test
-  (cfg
-    (all feature-str-view feature-runtime-str-view-extern)
-    (define (string-test-substring-view-len
-      [text : String]
-      [start : i64]
-      [len : i64]) : i64
-      (__tl_string_length (substring-view (& text) start len)))))
+  (define (string-test-substring-view-len
+    [text : String]
+    [start : i64]
+    [len : i64]) : i64
+    (__tl_string_length (substring-view (& text) start len))))
 
 (cfg
   test
-  (cfg
-    (all feature-str-view feature-runtime-str-view-extern)
-    (define (string-test-slice-view-eq
-      [text : String]
-      [start : i64]
-      [len : i64]
-      [expected : String]) : bool
-      (eq (slice-view (& text) start len) (& expected)))))
+  (define (string-test-slice-view-eq
+    [text : String]
+    [start : i64]
+    [len : i64]
+    [expected : String]) : bool
+    (eq (slice-view (& text) start len) (& expected))))
 
 (cfg
   test
-  (cfg
-    (all feature-str-view feature-runtime-str-view-extern)
-    (define (string-test-trim-left-view-eq [s : String] [expected : String]) : bool
-      (eq (trim-left-view (& s)) (& expected)))))
+  (define (string-test-trim-left-view-eq [s : String] [expected : String]) : bool
+    (eq (trim-left-view (& s)) (& expected))))
 
 (cfg
   test
-  (cfg
-    (all feature-str-view feature-runtime-str-view-extern)
-    (define (string-test-trim-right-view-eq [s : String] [expected : String]) : bool
-      (eq (trim-right-view (& s)) (& expected)))))
+  (define (string-test-trim-right-view-eq [s : String] [expected : String]) : bool
+    (eq (trim-right-view (& s)) (& expected))))
 
 (cfg
   test
-  (cfg
-    (all feature-str-view feature-runtime-str-view-extern)
-    (define (string-test-trim-view-eq [s : String] [expected : String]) : bool
-      (eq (trim-view (& s)) (& expected)))))
+  (define (string-test-trim-view-eq [s : String] [expected : String]) : bool
+    (eq (trim-view (& s)) (& expected))))
 
 (cfg
   test
@@ -1270,20 +1159,17 @@
           40)
         "klmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
         "borrowed substring copies long slice")
-      (cfg
-        (all feature-str-view feature-runtime-str-view-extern)
-        (begin
-          (test.assert-true
-            (string-test-substring-view-eq "abcdef" 2 3 "cde")
-            "substring-view borrows middle slice")
-          (test.assert-i64-eq
-            (string-test-substring-view-len "abcdef" 6 0)
-            0
-            "substring-view borrows empty boundary slice")
-          (test.assert-true
-            (string-test-slice-view-eq "abcdef" 5 1 "f")
-            "string-slice-view aliases borrowed substring view"))
-        unit)
+      (begin
+        (test.assert-true
+          (string-test-substring-view-eq "abcdef" 2 3 "cde")
+          "substring-view borrows middle slice")
+        (test.assert-i64-eq
+          (string-test-substring-view-len "abcdef" 6 0)
+          0
+          "substring-view borrows empty boundary slice")
+        (test.assert-true
+          (string-test-slice-view-eq "abcdef" 5 1 "f")
+          "string-slice-view aliases borrowed substring view"))
       (string-test-assert-owned-string-eq
         (string-test-trim-left "  hello")
         "hello"
@@ -1308,22 +1194,19 @@
         (string-test-trim "")
         ""
         "trim handles empty strings")
-      (cfg
-        (all feature-str-view feature-runtime-str-view-extern)
-        (begin
-          (test.assert-true
-            (string-test-trim-left-view-eq "  hello" "hello")
-            "trim-left-view removes leading spaces")
-          (test.assert-true
-            (string-test-trim-right-view-eq "hello  " "hello")
-            "trim-right-view removes trailing spaces")
-          (test.assert-true
-            (string-test-trim-view-eq "  hello  " "hello")
-            "trim-view removes both sides")
-          (test.assert-true
-            (string-test-trim-view-eq "   " "")
-            "trim-view handles all-space strings"))
-        unit)
+      (begin
+        (test.assert-true
+          (string-test-trim-left-view-eq "  hello" "hello")
+          "trim-left-view removes leading spaces")
+        (test.assert-true
+          (string-test-trim-right-view-eq "hello  " "hello")
+          "trim-right-view removes trailing spaces")
+        (test.assert-true
+          (string-test-trim-view-eq "  hello  " "hello")
+          "trim-view removes both sides")
+        (test.assert-true
+          (string-test-trim-view-eq "   " "")
+          "trim-view handles all-space strings"))
       (test.assert-true
         (string-test-contains "hello" "ell")
         "contains finds middle needle")

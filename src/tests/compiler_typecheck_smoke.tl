@@ -906,7 +906,7 @@
       "typecheck: cannot mutably borrow borrowed place")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-immut-after-mut-source)
-      "typecheck: cannot read mutably borrowed place `items.#array.0`")
+      "typecheck: cannot read mutably borrowed place `items[0]`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-borrow-returned-call-source)
       "typecheck: cannot move borrowed place `text`")
@@ -923,18 +923,18 @@
       "typecheck: cannot read mutably borrowed place `bags.left`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-borrow-ancestor-descendant-source)
-      "typecheck: cannot read mutably borrowed place `bags.left.#array.0`")
+      "typecheck: cannot read mutably borrowed place `bags.left[0]`")
     (compiler-typecheck-ok?
       (compiler-typecheck-mut-reborrow-bound-subscope-source))
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-reborrow-same-scope-use-source)
-      "typecheck: cannot assign to borrowed place `items.#array.0`")
+      "typecheck: cannot assign to borrowed place `items[0]`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-borrow-read-array-length-source)
       "typecheck: cannot read mutably borrowed place `items`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-borrow-read-array-ref-source)
-      "typecheck: cannot read mutably borrowed place `items.#array.0`")
+      "typecheck: cannot read mutably borrowed place `items[0]`")
     (compiler-typecheck-labeled-borrow-error-ok?
       (compiler-typecheck-mut-borrow-read-struct-get-source)
       "typecheck: cannot read mutably borrowed place `bag.left`")

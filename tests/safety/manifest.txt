@@ -72,13 +72,13 @@ unimported_string_to_int_reject|check-fail|tests/safety/unimported_string_to_int
 result_macro_try_error_mismatch_reject|check-fail|tests/safety/result_macro_try_error_mismatch_reject.tl|-|typecheck: try error type mismatch
 generated_match_pattern_non_exhaustive_reject|check-fail|tests/safety/generated_match_pattern_non_exhaustive_reject.tl|-|match missing arm for variant GeneratedPair
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
-mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items.#array.0`
+mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items[0]`
 mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot read mutably borrowed place `bags.left`
-mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot read mutably borrowed place `bags.left.#array.0`
-mutable_reference_reborrow_outer_live_reject|check-fail|tests/safety/mutable_reference_reborrow_outer_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
+mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot read mutably borrowed place `bags.left[0]`
+mutable_reference_reborrow_outer_live_reject|check-fail|tests/safety/mutable_reference_reborrow_outer_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 mut_to_immut_reborrow_return_live_reject|check-fail|tests/safety/mut_to_immut_reborrow_return_live_reject.tl|-|cannot assign to borrowed place
 mutable_reference_read_array_length_reject|check-fail|tests/safety/mutable_reference_read_array_length_reject.tl|-|cannot read mutably borrowed place `items`
-mutable_reference_read_array_ref_reject|check-fail|tests/safety/mutable_reference_read_array_ref_reject.tl|-|cannot read mutably borrowed place `items.#array.0`
+mutable_reference_read_array_ref_reject|check-fail|tests/safety/mutable_reference_read_array_ref_reject.tl|-|cannot read mutably borrowed place `items[0]`
 mutable_reference_read_struct_get_reject|check-fail|tests/safety/mutable_reference_read_struct_get_reject.tl|-|cannot read mutably borrowed place `bag.left`
 global_mutable_reference_alias_reject|check-fail|tests/safety/global_mutable_reference_alias_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
 global_shared_mutable_borrow_reject|check-fail|tests/safety/global_shared_mutable_borrow_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
@@ -116,10 +116,10 @@ vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_esca
 vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact/pop
 vector_full_unsupported_equality_nested_reject|check-fail|tests/safety/vector_full_unsupported_equality_nested_reject.tl|-|eq: unsupported type mutptr_i64
 clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper
-reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
-reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
-reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
-reborrow_stored_nested_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
+reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
+reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
+reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
+reborrow_stored_nested_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
 reborrow_stored_generated_vector_item_source_live_reject|check-fail|tests/safety/reborrow_stored_generated_vector_item_source_live_reject.tl|-|cannot read mutably borrowed place `values`
 borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`

@@ -33555,32 +33555,64 @@
                   (match (opt-cfg-find-block blocks preheader-label)
                     [(OptMaybeBlock.No) (OptLateBoundsPairResult.No)]
                     [(OptMaybeBlock.Some preheader)
-                      (let
-                        [cell : (Array i64) (array.make-array i64 1)]
-                        [_cell : unit (array-set! cell 0 frame)]
-                        [nonempty : i64 (opt-bce-version-alloc-var cell)]
-                        [nonempty-i64 : i64 (opt-bce-version-alloc-var cell)]
-                        [short-length : i64 (opt-bce-version-alloc-var cell)]
-                        (match (opt-late-bounds-pair-preheader
-                          preheader
-                          (opt-natural-loop-header loop)
-                          length
-                          nonempty
-                          nonempty-i64
-                          short-length)
-                          [(OptLateBoundsPairPreheader.No)
-                            (OptLateBoundsPairResult.No)]
-                          [(OptLateBoundsPairPreheader.Some rewritten-preheader)
+                      (match (opt-late-bounds-pair-const-short-length length)
+                        [(CompilerIrMaybeValue.Some const-short-length)
+                          (let
+                            [cell : (Array i64) (array.make-array i64 1)]
+                            [_cell : unit (array-set! cell 0 frame)]
                             (OptLateBoundsPairResult.Some
                               (opt-late-bounds-pair-rewrite-blocks
                                 blocks
                                 body-blocks
                                 preheader-label
-                                rewritten-preheader
+                                preheader
                                 (struct-get collected plans)
-                                (CompilerIrValue.Var short-length)
+                                const-short-length
                                 cell)
-                              (array-ref cell 0))]))])])))]))))
+                              (array-ref cell 0)))]
+                        [(CompilerIrMaybeValue.No)
+                          (let
+                            [cell : (Array i64) (array.make-array i64 1)]
+                            [_cell : unit (array-set! cell 0 frame)]
+                            [nonempty : i64 (opt-bce-version-alloc-var cell)]
+                            [nonempty-i64 : i64
+                              (opt-bce-version-alloc-var cell)]
+                            [short-length : i64
+                              (opt-bce-version-alloc-var cell)]
+                            (match (opt-late-bounds-pair-preheader
+                              preheader
+                              (opt-natural-loop-header loop)
+                              length
+                              nonempty
+                              nonempty-i64
+                              short-length)
+                              [(OptLateBoundsPairPreheader.No)
+                                (OptLateBoundsPairResult.No)]
+                              [(OptLateBoundsPairPreheader.Some
+                                  rewritten-preheader)
+                                (OptLateBoundsPairResult.Some
+                                  (opt-late-bounds-pair-rewrite-blocks
+                                    blocks
+                                    body-blocks
+                                    preheader-label
+                                    rewritten-preheader
+                                    (struct-get collected plans)
+                                    (CompilerIrValue.Var short-length)
+                                    cell)
+                                  (array-ref cell 0))]))])])])))]))))
+
+;; A literal length needs no preheader arithmetic: `length - (length >= 1)` is a
+;; compile-time constant, so the paired check takes it as an immediate and the
+;; preheader keeps its original instruction sequence.
+(define (opt-late-bounds-pair-const-short-length [length : CompilerIrValue]) : CompilerIrMaybeValue
+  (match length
+    [(CompilerIrValue.I64 count)
+      (CompilerIrMaybeValue.Some
+        (CompilerIrValue.I64
+          (if (>= count 1)
+            (- count 1)
+            count)))]
+    [_ (CompilerIrMaybeValue.No)]))
 
 (define (opt-late-bounds-pair-scan-loops
   [blocks : CompilerIrBlockList]

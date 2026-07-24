@@ -18047,6 +18047,45 @@
           (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")))]
     [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
 
+;; The three-operand form for `dst = lhs OP imm` when the destination is not the
+;; source's home: `add` is `leaq K(src), dst` and `sub` is the same instruction
+;; with the displacement negated, which replaces a `mov` + arithmetic pair. Only
+;; a displacement that still encodes as imm32 qualifies (i64 MIN has no
+;; negation, so it falls out here).
+(define (compiler-backend-binop-immediate-lea-asm
+  [op : CompilerIrBinOp]
+  [lhs-reg : String]
+  [dst-home : String]
+  [imm : String]
+  [rhs : CompilerIrValue]) : CompilerBackendMaybeAsm
+  (match op
+    [(CompilerIrBinOp.Add)
+      (CompilerBackendMaybeAsm.Some
+        (str_cat.str-cat
+          "    leaq "
+          (compiler-backend-immediate-displacement imm)
+          "("
+          lhs-reg
+          "), "
+          dst-home
+          "\n"))]
+    [(CompilerIrBinOp.Sub)
+      (match (compiler-backend-value-as-i64 rhs)
+        [(option_i64.Some value)
+          (if (compiler-backend-imm32? (- 0 value))
+            (CompilerBackendMaybeAsm.Some
+              (str_cat.str-cat
+                "    leaq "
+                (string.int->string (- 0 value))
+                "("
+                lhs-reg
+                "), "
+                dst-home
+                "\n"))
+            (CompilerBackendMaybeAsm.No))]
+        [(option_i64.None) (CompilerBackendMaybeAsm.No)])]
+    [_ (CompilerBackendMaybeAsm.No)]))
+
 (define (compiler-backend-emit-binop-direct-immediate
   [assignments : CompilerRegAssignmentList]
   [dst-home : String]
@@ -18066,7 +18105,7 @@
         [_ false]))
       (ResultCompilerBackend.Ok
         (compiler-backend-mul-immediate-direct-asm lhs-reg dst-home imm rhs))
-      (if (and
+      (match (if (and
         (not (string.eq lhs-reg ""))
         ;; #rbp-base: `leaq K(%rbp)` would be textually IDENTICAL to a frame
         ;; reference and silently rebased by the FPO rsp-rebase pass
@@ -18074,41 +18113,34 @@
         (not (string.eq lhs-reg "%rbp"))
         (not (string.eq lhs-reg dst-home))
         (not (string.eq imm "$0"))
-        (= (compiler-backend-type-size ty) 8)
-        (match op
-          [(CompilerIrBinOp.Add) true]
-          [_ false]))
-        (ResultCompilerBackend.Ok
-          (str_cat.str-cat
-            "    leaq "
-            (compiler-backend-immediate-displacement imm)
-            "("
-            lhs-reg
-            "), "
-            dst-home
-            "\n"))
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          lhs
-          dst-home)
-          [(ResultCompilerBackend.Ok lhs-asm)
-            ;; op-asm bound to a local (behavior-neutral) so the seed
-            ;; typechecker resolves the string.append operand without a
-            ;; spurious match-arm mismatch.
-            (let
-              [op-asm : String
-                (match (compiler-backend-binop-immediate-direct-reg-asm
-                  mnem
-                  op
-                  ty
-                  imm
-                  dst-home
-                  (compiler-backend-value-integer-zero? rhs))
-                  [(CompilerBackendMaybeAsm.Some asm) asm]
-                  [(CompilerBackendMaybeAsm.No) ""])]
-              (ResultCompilerBackend.Ok (string.append lhs-asm op-asm)))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackend.Err message)])))))
+        (= (compiler-backend-type-size ty) 8))
+        (compiler-backend-binop-immediate-lea-asm op lhs-reg dst-home imm rhs)
+        (CompilerBackendMaybeAsm.No))
+        [(CompilerBackendMaybeAsm.Some lea-asm)
+          (ResultCompilerBackend.Ok lea-asm)]
+        [(CompilerBackendMaybeAsm.No)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            lhs
+            dst-home)
+            [(ResultCompilerBackend.Ok lhs-asm)
+              ;; op-asm bound to a local (behavior-neutral) so the seed
+              ;; typechecker resolves the string.append operand without a
+              ;; spurious match-arm mismatch.
+              (let
+                [op-asm : String
+                  (match (compiler-backend-binop-immediate-direct-reg-asm
+                    mnem
+                    op
+                    ty
+                    imm
+                    dst-home
+                    (compiler-backend-value-integer-zero? rhs))
+                    [(CompilerBackendMaybeAsm.Some asm) asm]
+                    [(CompilerBackendMaybeAsm.No) ""])]
+                (ResultCompilerBackend.Ok (string.append lhs-asm op-asm)))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]))))
 
 (define (compiler-backend-binop-direct-immediate-ok?
   [mnem : String]

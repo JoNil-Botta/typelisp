@@ -35,6 +35,7 @@
           (compiler-load-session-state-note-persistent-interns! session-b)
           (and
             (= (driver-state-smoke-global-floor-mark) mark-a)
+            (= (ci.intern-compat-state-table-id a) (intern-active-table-id))
             (= (ci.intern-compat-state-pool-len b) 9)
             (=
               (compiler-load-session-state-intern-floor-value session-b)

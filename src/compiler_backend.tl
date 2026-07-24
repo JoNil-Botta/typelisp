@@ -8678,11 +8678,27 @@
 (define (compiler-backend-frame-size [vars : i64]) : i64
   (compiler-backend-round-up-16 (* vars 8)))
 
+;; Set by the two helpers below, the only spellings of an %rbp-relative frame
+;; reference the emitter produces. The frame size is computed after the body and
+;; the parameter spills are emitted (the same ordering the emergency/cycle-temp
+;; flags rely on), so a function that never names a slot can drop its slot
+;; region. Planning-time calls set it too, which costs the optimization but
+;; never correctness.
+(define compiler-backend-frame-slot-referenced : bool
+  false)
+
+(define (compiler-backend-frame-slot-referenced-reset!) : unit
+  (set! compiler-backend-frame-slot-referenced false))
+
 (define (compiler-backend-slot [var-id : i64]) : String
-  (string.append (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)"))
+  (begin
+    (set! compiler-backend-frame-slot-referenced true)
+    (string.append (string.int->string (- 0 (* 8 (+ var-id 1)))) "(%rbp)")))
 
 (define (compiler-backend-frame-offset [offset : i64]) : String
-  (string.append (string.int->string offset) "(%rbp)"))
+  (begin
+    (set! compiler-backend-frame-slot-referenced true)
+    (string.append (string.int->string offset) "(%rbp)")))
 
 (define (compiler-backend-plan-uses-reg?
   [assignments : CompilerRegAssignmentList]
@@ -9969,7 +9985,7 @@
 
 (define (compiler-backend-emergency-reg-save-asm [reg : String] [offset : i64]) : String
   (let
-    [slot : String (str-cat (int->string offset) "(%rbp)")]
+    [slot : String (compiler-backend-frame-offset offset)]
     (if (>= (compiler-reg-xmm-family-index reg) 0)
       (match compiler-backend-current-mode
         [(CompilerBackendMode.Scalar)
@@ -9994,7 +10010,7 @@
   [reg : String]
   [offset : i64]) : String
   (let
-    [slot : String (str-cat (int->string offset) "(%rbp)")]
+    [slot : String (compiler-backend-frame-offset offset)]
     (if (>= (compiler-reg-xmm-family-index reg) 0)
       (match compiler-backend-current-mode
         [(CompilerBackendMode.Scalar)
@@ -13349,11 +13365,8 @@
         vars)
         [(ResultCompilerBackend.Ok dst)
           (compiler-backend-emit-group-word-copy
-            (str_cat.str-cat
-              (int->string
-                (compiler-backend-incoming-stack-arg-offset target stack-idx))
-              "(%rbp)"
-              "")
+            (compiler-backend-frame-offset
+              (compiler-backend-incoming-stack-arg-offset target stack-idx))
             dst
             sse?)]
         [(ResultCompilerBackend.Err message)
@@ -28129,10 +28142,8 @@
 (define (compiler-backend-tail-final-stack-slot
   [target : CompilerBackendTarget]
   [stack-idx : i64]) : String
-  (string.append
-    (string.int->string
-      (compiler-backend-incoming-stack-arg-offset target stack-idx))
-    "(%rbp)"))
+  (compiler-backend-frame-offset
+    (compiler-backend-incoming-stack-arg-offset target stack-idx)))
 
 (define (compiler-backend-emit-direct-tail-stack-call-arg
   [target : CompilerBackendTarget]
@@ -33684,10 +33695,8 @@
   (let
     [target-idx : i64 compiler-backend-emergency-pending-count]
     [target-slot : String
-      (str-cat
-        (int->string (compiler-backend-emergency-reg-offset target-idx))
-        "(%rbp)"
-        "")]
+      (compiler-backend-frame-offset
+        (compiler-backend-emergency-reg-offset target-idx))]
     [_reserve-target-slot : unit
       (if (< compiler-backend-emergency-used-count (+ target-idx 1))
         (set! compiler-backend-emergency-used-count (+ target-idx 1))
@@ -41802,13 +41811,10 @@
                 (ResultCompilerBackend.Ok
                   (let
                     [addr : String
-                      (str_cat.str-cat
-                        (int->string
-                          (compiler-backend-incoming-stack-arg-offset
-                            target
-                            stack-idx))
-                        "(%rbp)"
-                        "")]
+                      (compiler-backend-frame-offset
+                        (compiler-backend-incoming-stack-arg-offset
+                          target
+                          stack-idx))]
                     (if is-float
                       (compiler-backend-emit-load-float-address-to-var
                         assignments
@@ -42038,13 +42044,10 @@
                     (ResultCompilerBackend.Ok
                       (let
                         [addr : String
-                          (str_cat.str-cat
-                            (int->string
-                              (compiler-backend-incoming-stack-arg-offset
-                                target
-                                stack-idx))
-                            "(%rbp)"
-                            "")]
+                          (compiler-backend-frame-offset
+                            (compiler-backend-incoming-stack-arg-offset
+                              target
+                              stack-idx))]
                         [exclude-n : i64
                           (compiler-backend-param-register-exclude-count
                             all-params
@@ -47474,6 +47477,10 @@
               (set!
                 compiler-backend-current-phi-targets
                 (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
+            ;; Must precede the parameter spills: those store incoming registers
+            ;; into frame slots, and their references have to count.
+            [_frame-slot-flag : unit
+              (compiler-backend-frame-slot-referenced-reset!)]
             (match (if identity-tail-forwarder?
               (ResultCompilerBackend.Ok "")
               (if (compiler-backend-spmd-private-function? name)
@@ -47617,10 +47624,19 @@
                                       (compiler-backend-frame-slots-emergency-max
                                         slot-vars
                                         has-group-vars)
-                                      (compiler-backend-frame-slots-with-groups
-                                        slot-vars
-                                        assignments
-                                        has-group-vars))
+                                      ;; Nothing named a frame slot: the slot
+                                      ;; region is dead. Leaf helpers stop paying
+                                      ;; sub/add for a frame they never touch.
+                                      ;; Outgoing stack args are %rsp-relative
+                                      ;; and stay accounted separately below.
+                                      (if (or
+                                        compiler-backend-frame-slot-referenced
+                                        (> outgoing-frame-space 0))
+                                        (compiler-backend-frame-slots-with-groups
+                                          slot-vars
+                                          assignments
+                                          has-group-vars)
+                                        0))
                                     compiler-backend-const-hoist-frame-count))
                                 outgoing-frame-space)
                               dynamic-frame-extra)]

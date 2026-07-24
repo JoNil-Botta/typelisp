@@ -743,6 +743,24 @@
         (match (array-ref compiler-comptime-host-operands arg-a)
           [(CompilerCtfeValue.ExprList items) (ctfe-expr-list-length items)]
           [_ -3]))]
+    ;; Nth element of a variadic ExprList operand as an Expr value. Out-of-range
+    ;; indices and non-list operands report a bad request without touching
+    ;; session state, mirroring the length probe's contract.
+    [(= operation tlci-host-callback-op-expr-list-nth)
+      (if (or
+        (< arg-a 0)
+        (>= arg-a compiler-comptime-host-operand-count)
+        (< arg-b 0))
+        tlci-host-callback-status-bad-request
+        (match (array-ref compiler-comptime-host-operands arg-a)
+          [(CompilerCtfeValue.ExprList items)
+            (if (>= arg-b (ctfe-expr-list-length items))
+              tlci-host-callback-status-bad-request
+              (compiler-comptime-host-push!
+                (CompilerCtfeValue.Expr
+                  (ctfe-expr-list-nth items arg-b)
+                  (AstType.Expr))))]
+          [_ tlci-host-callback-status-bad-request]))]
     ;; Pop an expression list and push the begin node the parser produces.
     [(= operation tlci-host-callback-op-expr-begin)
       (if (< compiler-comptime-host-stack-len 1)

@@ -586,6 +586,10 @@
       (match (embedded-stdlib-tlci-unwrap-expr inner)
         [(AstExpr.Var pname)
           (embedded-native-unquote-ops params pname ops ops-count)]
+        ;; Computed call operands (`expr-list-nth`, `expr-var`, `expr-int`)
+        ;; build through the same host-op chains as computed body positions.
+        [(AstExpr.Call _ _)
+          (embedded-native-computed-expr-ops params inner ops ops-count)]
         [_ -1])]
     [(AstExpr.Literal lit)
       (match lit
@@ -1554,7 +1558,54 @@
                           "0")
                         1)
                       -1)]
+                  ;; A match/let-bound local already holds the count as an
+                  ;; int-literal expression (bind-time op 221 wrap), so
+                  ;; `expr-int` of it is the plain local-get.
+                  [(AstExpr.Var local-id)
+                    (let
+                      [slot : i64
+                        (embedded-native-local-index (intern-str local-id))]
+                      (if (< slot 0)
+                        -1
+                        (begin
+                          (embedded-native-template-push!
+                            ops
+                            ops-count
+                            205
+                            (string.int->string slot)
+                            "0"
+                            "0")
+                          1)))]
                   [_ -1])]
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-list-nth")
+                    (string.eq head "expr-list-nth"))
+                  (= argc 2))
+                (let
+                  [param : i64
+                    (embedded-native-var-param-index
+                      params
+                      (ast-expr-list-get (& args) 0 0))]
+                  (if (< param 0)
+                    -1
+                    (match (embedded-stdlib-tlci-unwrap-expr
+                      (ast-expr-list-get (& args) 1 0))
+                      [(AstExpr.Literal (AstLiteral.Int value text))
+                        (if (or
+                          (= (string.string-length text) 0)
+                          (string.eq text (string.int->string value)))
+                          (begin
+                            (embedded-native-template-push!
+                              ops
+                              ops-count
+                              156
+                              (string.int->string param)
+                              (string.int->string value)
+                              "0")
+                            1)
+                          -1)]
+                      [_ -1])))]
               [else -1]))]
         [_ -1])]
     [_ -1]))
@@ -1864,9 +1915,199 @@
                     [_ ""])]
                 [_ ""])]))))))
 
+;; A computed `(match (comptime.expr-list-length p) [K arm] ... [name else])`:
+;; the operand count flows out of op 155 as data, literal arms compare in
+;; generated code, and a trailing binding/wildcard arm is the catch-all. A
+;; binding arm receives the count wrapped as an int-literal expression local
+;; (op 221 then local-set), so `expr-int` of the bound name is the plain
+;; local-get. An unmatched count falls through with ok/no-result, the same
+;; interpreted-fallback contract the string match uses. Returns "" outside
+;; that shape. Refs #5617.
+(define (embedded-native-length-match-arms-code
+  [params : (& params AstMacroParamList)]
+  [arms : (& arms AstMatchArmList)]
+  [index : i64]
+  [scrut-name : String]
+  [final : String]) : String
+  (if (>= index (struct-get arms len))
+    "  0\n"
+    (match (array-ref (struct-get arms slots) index)
+      [(AstMatchArm.Arm pattern body-node)
+        (match pattern
+          [(AstPattern.Literal (AstLiteral.Int value text))
+            ;; Canonical int arm: empty text or the canonical decimal spelling.
+            (if (and
+              (not (= (string.string-length text) 0))
+              (not (string.eq text (string.int->string value))))
+              ""
+              (let
+                [arm-code : String
+                  (embedded-native-computed-expr-code params body-node final)]
+                [rest-code : String
+                  (embedded-native-length-match-arms-code
+                    params
+                    arms
+                    (+ index 1)
+                    scrut-name
+                    final)]
+                (if (or (string.eq arm-code "") (string.eq rest-code ""))
+                  ""
+                  (str-cat
+                    "  (if (= "
+                    scrut-name
+                    " "
+                    (string.int->string value)
+                    ")\n"
+                    arm-code
+                    rest-code
+                    ")\n"))))]
+          [(AstPattern.Wildcard)
+            (embedded-native-computed-expr-code params body-node final)]
+          [(AstPattern.Binding name-id)
+            (if (not (= index (- (struct-get arms len) 1)))
+              ""
+              (let
+                [saved : i64 (array-ref embedded-native-local-len 0)]
+                [slot : i64 (embedded-native-local-push! (intern-str name-id))]
+                (if (< slot 0)
+                  ""
+                  (let
+                    [arm-code : String
+                      (embedded-native-computed-expr-code
+                        params
+                        body-node
+                        final)]
+                    (begin
+                      (array-set! embedded-native-local-len 0 saved)
+                      (if (string.eq arm-code "")
+                        ""
+                        (str-cat
+                          "  (let [b0 : i64 (comptime-host-invoke host session 221 "
+                          scrut-name
+                          " 0 0)] (if (not (= b0 0)) b0\n"
+                          "  (let [b1 : i64 (comptime-host-invoke host session 204 "
+                          (string.int->string slot)
+                          " 0 0)] (if (not (= b1 0)) b1\n"
+                          arm-code
+                          "))))\n")))))))]
+          [(AstPattern.Var name-id _)
+            (if (not (= index (- (struct-get arms len) 1)))
+              ""
+              (let
+                [saved : i64 (array-ref embedded-native-local-len 0)]
+                [slot : i64 (embedded-native-local-push! (intern-str name-id))]
+                (if (< slot 0)
+                  ""
+                  (let
+                    [arm-code : String
+                      (embedded-native-computed-expr-code
+                        params
+                        body-node
+                        final)]
+                    (begin
+                      (array-set! embedded-native-local-len 0 saved)
+                      (if (string.eq arm-code "")
+                        ""
+                        (str-cat
+                          "  (let [b0 : i64 (comptime-host-invoke host session 221 "
+                          scrut-name
+                          " 0 0)] (if (not (= b0 0)) b0\n"
+                          "  (let [b1 : i64 (comptime-host-invoke host session 204 "
+                          (string.int->string slot)
+                          " 0 0)] (if (not (= b1 0)) b1\n"
+                          arm-code
+                          "))))\n")))))))]
+          [_ ""])])))
+
+(define (embedded-native-length-match-code
+  [params : (& params AstMacroParamList)]
+  [scrutinee : i64]
+  [arms : (& arms AstMatchArmList)]
+  [final : String]) : String
+  (match (embedded-stdlib-tlci-unwrap-expr scrutinee)
+    [(AstExpr.Call length-func length-args)
+      (match (embedded-stdlib-tlci-unwrap-expr length-func)
+        [(AstExpr.Var length-head)
+          (if (and
+            (or
+              (string.eq (intern-str length-head) "comptime.expr-list-length")
+              (string.eq (intern-str length-head) "expr-list-length"))
+            (= (ast-expr-list-len (& length-args)) 1))
+            (let
+              [param : i64
+                (embedded-native-var-param-index
+                  params
+                  (ast-expr-list-get (& length-args) 0 0))]
+              (if (< param 0)
+                ""
+                (let
+                  [arms-code : String
+                    (embedded-native-length-match-arms-code
+                      params
+                      arms
+                      0
+                      "t0"
+                      final)]
+                  (if (string.eq arms-code "")
+                    ""
+                    (str-cat
+                      "  (let [t0 : i64 (comptime-host-invoke host session 155 "
+                      (string.int->string param)
+                      " 0 0)]\n"
+                      "  (if (< t0 0)\n  "
+                      (string.int->string tlci-host-callback-status-bad-request)
+                      "\n"
+                      arms-code
+                      "))\n")))))
+            "")]
+        [_ ""])]
+    [_ ""]))
+
 ;; A computed `(match scrutinee ["literal" arm] ... [_ else])` over a String
 ;; scrutinee: the scrutinee is computed into a fresh session slot, then each
 ;; literal arm compares with raw local-get/string-value/string-eq chains.
+(define (embedded-native-computed-string-match-code
+  [params : (& params AstMacroParamList)]
+  [scrutinee : i64]
+  [arms : (& arms AstMatchArmList)]
+  [final : String]) : String
+  (let
+    [slot : i64 (embedded-native-local-push! "__tlci_match")]
+    (if (< slot 0)
+      ""
+      (let
+        [scrut-code : String
+          (embedded-native-computed-expr-code
+            params
+            scrutinee
+            (embedded-native-local-set-final slot))]
+        (if (string.eq scrut-code "")
+          ""
+          (let
+            [arms-code : String
+              (embedded-native-computed-match-arms-code
+                params
+                arms
+                0
+                slot
+                final)]
+            (if (string.eq arms-code "")
+              ""
+              (str-cat
+                "  (let [m"
+                (string.int->string slot)
+                " : i64\n"
+                scrut-code
+                "] (if (not (= m"
+                (string.int->string slot)
+                " 0)) m"
+                (string.int->string slot)
+                "\n"
+                arms-code
+                "))\n"))))))))
+
+;; Computed match bodies: an operand-count literal match (op 155 data
+;; scrutinee) first, then the String-scrutinee slot path.
 (define (embedded-native-computed-match-code
   [params : (& params AstMacroParamList)]
   [match-box : (Box AstMatch)]
@@ -1874,39 +2115,15 @@
   (match (box-get match-box)
     [(AstMatch.Match scrutinee arms)
       (let
-        [slot : i64 (embedded-native-local-push! "__tlci_match")]
-        (if (< slot 0)
-          ""
-          (let
-            [scrut-code : String
-              (embedded-native-computed-expr-code
-                params
-                scrutinee
-                (embedded-native-local-set-final slot))]
-            (if (string.eq scrut-code "")
-              ""
-              (let
-                [arms-code : String
-                  (embedded-native-computed-match-arms-code
-                    params
-                    (& arms)
-                    0
-                    slot
-                    final)]
-                (if (string.eq arms-code "")
-                  ""
-                  (str-cat
-                    "  (let [m"
-                    (string.int->string slot)
-                    " : i64\n"
-                    scrut-code
-                    "] (if (not (= m"
-                    (string.int->string slot)
-                    " 0)) m"
-                    (string.int->string slot)
-                    "\n"
-                    arms-code
-                    "))\n")))))))]))
+        [length-text : String
+          (embedded-native-length-match-code params scrutinee (& arms) final)]
+        (if (not (string.eq length-text ""))
+          length-text
+          (embedded-native-computed-string-match-code
+            params
+            scrutinee
+            (& arms)
+            final)))]))
 
 (define (embedded-native-computed-match-arms-code
   [params : (& params AstMacroParamList)]

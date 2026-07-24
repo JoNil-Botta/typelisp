@@ -1177,6 +1177,39 @@ if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_SOURCE_ASM"; then
     fail "embedded and source stdlib routing changed generated assembly"
 fi
 
+# Native str-cat arity dispatch (#5617): the length-match body must expand
+# byte-identically on both routes for every operand-count arm. Both compiles
+# run from the repository root with a relative stdlib root so module
+# identities match the embedded canonical spellings.
+echo "[compile-profile] verify str-cat arity route parity"
+STDLIB_TLCI_STRCAT_EMBEDDED_ASM="$STDLIB_TLCI_DIR/strcat-embedded.s"
+STDLIB_TLCI_STRCAT_SOURCE_ASM="$STDLIB_TLCI_DIR/strcat-source.s"
+if ! (
+    cd "$ROOT"
+    "$PROFILE_BIN" compile "$ROOT/tests/integration/str_cat_native_arities.tl" \
+        -o "$STDLIB_TLCI_STRCAT_EMBEDDED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$STDLIB_TLCI_STRCAT_EMBEDDED_ASM.stdout" 2> "$STDLIB_TLCI_STRCAT_EMBEDDED_ASM.stderr"; then
+    show_failure_logs "$STDLIB_TLCI_STRCAT_EMBEDDED_ASM.stdout" "$STDLIB_TLCI_STRCAT_EMBEDDED_ASM.stderr"
+    fail "str-cat arities embedded-route compile failed"
+fi
+if ! (
+    cd "$ROOT"
+    "$PROFILE_BIN" compile "$ROOT/tests/integration/str_cat_native_arities.tl" \
+        -o "$STDLIB_TLCI_STRCAT_SOURCE_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib
+) > "$STDLIB_TLCI_STRCAT_SOURCE_ASM.stdout" 2> "$STDLIB_TLCI_STRCAT_SOURCE_ASM.stderr"; then
+    show_failure_logs "$STDLIB_TLCI_STRCAT_SOURCE_ASM.stdout" "$STDLIB_TLCI_STRCAT_SOURCE_ASM.stderr"
+    fail "str-cat arities source-route compile failed"
+fi
+if ! cmp -s "$STDLIB_TLCI_STRCAT_EMBEDDED_ASM" "$STDLIB_TLCI_STRCAT_SOURCE_ASM"; then
+    diff -u "$STDLIB_TLCI_STRCAT_SOURCE_ASM" "$STDLIB_TLCI_STRCAT_EMBEDDED_ASM" >&2 || true
+    fail "str-cat arity routing changed generated assembly"
+fi
+
 # A modified stdlib root must keep every one of its modules on source
 # interpretation (the catalog may never shadow user stdlib), and a
 # comment-only modification must still produce byte-identical output.

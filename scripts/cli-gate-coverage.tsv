@@ -1,12 +1,12 @@
 # cli-gate-coverage-schema	1
 # cli-gate-coverage-counts	1
-# count	total	all	rows	476
-# count	total	all	annotations	476
+# count	total	all	rows	477
+# count	total	all	annotations	477
 # count	total	all	sources	3
-# count	total	all	source-sites	350
+# count	total	all	source-sites	351
 # count	total	all	expanded-cases	159
-# count	gate	public-tools	rows	297
-# count	gate	public-tools	source-sites	188
+# count	gate	public-tools	rows	298
+# count	gate	public-tools	source-sites	189
 # count	gate	public-tools	expanded-cases	125
 # count	gate	selfhost-cli	rows	77
 # count	gate	selfhost-cli	source-sites	76
@@ -14,15 +14,15 @@
 # count	gate	stage1-wrapper	rows	102
 # count	gate	stage1-wrapper	source-sites	86
 # count	gate	stage1-wrapper	expanded-cases	18
-# count	host	all	rows	353
+# count	host	all	rows	354
 # count	host	linux	rows	120
 # count	host	windows	rows	3
-# count	platform	linux	rows	473
-# count	platform	windows	rows	356
+# count	platform	linux	rows	474
+# count	platform	windows	rows	357
 # count	kind	delegated	rows	8
 # count	kind	direct	rows	51
-# count	kind	wrapper	rows	417
-# count	process	compiler	rows	308
+# count	kind	wrapper	rows	418
+# count	process	compiler	rows	309
 # count	process	compiler+assembler+archiver	rows	1
 # count	process	compiler+assembler+archiver+linker	rows	4
 # count	process	compiler+assembler+linker	rows	2

@@ -3494,7 +3494,8 @@
     (= name (cbi.compiler-builtin-ctfe-ref 230))
     (= name (cbi.compiler-builtin-ctfe-ref 231))
     (= name (cbi.compiler-builtin-ctfe-ref 232))
-    (= name (cbi.compiler-builtin-ctfe-ref 233))))
+    (= name (cbi.compiler-builtin-ctfe-ref 233))
+    (= name (cbi.compiler-builtin-ctfe-ref 132))))
 
 (define (parse-ast-macro-type-kind-error
   [operand-name : String]
@@ -13435,6 +13436,10 @@
     (and
       (parse-ast-macro-type-kind-known? source-kind)
       (not (parse-ast-macro-type-kind-known? generated-kind))
+      (parse-ast-macro-type-kind-known? (reader.read-stable-symbol-id "box"))
+      (not
+        (parse-ast-macro-type-kind-known?
+          (ci.intern-generated-canonical-name "box")))
       (= source-all (cbi.compiler-builtin-ctfe-ref 219))
       (not (= generated-all (cbi.compiler-builtin-ctfe-ref 219)))
       (= source-dots (cbi.compiler-builtin-ctfe-ref 222))
@@ -13475,6 +13480,8 @@
       "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool (expr-if lhs rhs (expr-bool false)))")
     (compiler-parse-ok?
       "(defmacro (binding-body [bindings : ExprBindingClause ...] [body : Expr ...]) : Expr (expr-list-nth body 0))")
+    (compiler-parse-ok?
+      "(defmacro (box-elem [T : type (:kind box)]) : Module unit)")
     (compiler-parse-error-ok?
       "(defmacro (bad [rest : bool ...] [x : bool]) : bool rest)"
       "parse: only ExprBindingClause macro operands may be variadic before a later operand")

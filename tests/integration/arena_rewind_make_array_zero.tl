@@ -5,7 +5,7 @@
 ;# array allocated after a rewind to an earlier mark reuses memory dirtied
 ;# before the rewind, so the zero fill must run again: if it were wrongly
 ;# skipped, `fresh` would alias the nonzero contents dirtied below and main
-;# would return 1 instead of zero.
+;# would return 1 instead of the expected 42.
 (import stdlib.array)
 (import stdlib.arena)
 
@@ -41,5 +41,5 @@
       (let
         [fresh : (Array i64) (array.make-array i64 1024)]
         (if (= (sum-range fresh 1024) 0)
-          0
+          42
           1)))))

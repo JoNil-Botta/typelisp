@@ -37839,10 +37839,10 @@
         (compiler-ir-block-seq-to-list seq)
         leaves)]))
 
-(define (opt-successor-sink-blocks
+(define (opt-successor-sink-blocks-result
   [frame : i64]
   [frame-cell : (Array i64)]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  [blocks : CompilerIrBlockList]) : OptBlockCtxResult
   (let
     [initial-uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
     [ready : CompilerIrBlockList
@@ -37875,33 +37875,40 @@
         allowed-uses
         ready
         (OptSuccessorSinkMoves.Nil))]
+    ;; The no-move path returns `ready` verbatim, and `cfg-context` was built
+    ;; for exactly that block list, so report it as valid for the result. This
+    ;; pass runs on every function every iteration but only plans moves for a
+    ;; few hundred of them, so the reuse covers the overwhelming majority of
+    ;; runs and saves the caller a whole CFG context build.
     (match moves
-      [(OptSuccessorSinkMoves.Nil) ready]
-      [_ (opt-successor-sink-rewrite-blocks moves ready)])))
+      [(OptSuccessorSinkMoves.Nil)
+        (OptBlockCtxResult.Result ready cfg-context true)]
+      [_
+        (OptBlockCtxResult.Result
+          (opt-successor-sink-rewrite-blocks moves ready)
+          cfg-context
+          false)])))
+
+(define (opt-successor-sink-blocks
+  [frame : i64]
+  [frame-cell : (Array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match (opt-successor-sink-blocks-result frame frame-cell blocks)
+    [(OptBlockCtxResult.Result out _ _) out]))
 
 ;; Public pass boundary used by self-tests and by the opt2 pipeline. Both the
-;; entry and rewritten functions are verified so this scheduling rule never
-;; runs on mutable-var IR and rejects any unexpected dominance regression.
-;; `context` must be valid for `func`'s blocks (its entry verify reuses it), and
-;; the returned context is valid for the returned function's blocks. Joining the
-;; post-verify context with the one the caller needs afterwards removes the
-;; duplicate `opt-cfg-context-build` the pipeline used to run on the rewritten
-;; blocks.
-;; The post-verify context for the rewritten blocks is handed back to the
-;; caller, which previously rebuilt exactly the same context for the same block
-;; list right after this pass returned. Entry verification is unchanged: it
-;; still builds its own context (this pass is NOT covered by the
-;; `loop-cluster-verified?` invariant, and reusing the caller's context here
-;; changes optimizer decisions), and so is the rejection path, which reports the
-;; context the caller used to build for the unchanged input.
+;; entry and rewritten functions are verified so this scheduling rule never runs
+;; on mutable-var IR and rejects any unexpected dominance regression.
+;;
+;; `context` must be valid for `func`'s blocks: the entry verify runs against it
+;; instead of building an identical one, and both rejection paths report it
+;; unchanged. The returned context is valid for the returned function's blocks,
+;; which spares the caller the rebuild it used to do right after this returned.
 (define (opt-successor-sink-function-with-context-result
   [context : OptCfgContext]
   [func : CompilerIrFunction]) : OptFunctionCtxResult
-  ;; `context` must be valid for `func`'s blocks: the entry verify runs against
-  ;; it instead of building an identical one, and the rejection paths report it
-  ;; unchanged. The check itself is still a full verify -- this pass is NOT
-  ;; covered by the `loop-cluster-verified?` invariant and skipping the check
-  ;; crashes the self-compile.
+  ;; The check itself is still a full verify: this pass is NOT covered by the
+  ;; `loop-cluster-verified?` invariant and skipping it crashes the self-compile.
   (match (opt-verify-function-with-context func context)
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]
@@ -37911,8 +37918,11 @@
           (let
             [frame-cell : (Array i64) (opt-used-array-new 1)]
             [_frame-init : unit (array-set! frame-cell 0 frame)]
+            [sink-result : OptBlockCtxResult
+              (opt-successor-sink-blocks-result frame frame-cell blocks)]
             [next-blocks : CompilerIrBlockList
-              (opt-successor-sink-blocks frame frame-cell blocks)]
+              (match sink-result
+                [(OptBlockCtxResult.Result b _ _) b])]
             [next : CompilerIrFunction
               (CompilerIrFunction.Function
                 name
@@ -37920,7 +37930,12 @@
                 ret-ty
                 (array-ref frame-cell 0)
                 next-blocks)]
-            [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+            [next-context : OptCfgContext
+              (match sink-result
+                [(OptBlockCtxResult.Result _ ctx reusable)
+                  (if reusable
+                    ctx
+                    (opt-cfg-context-build next-blocks))])]
             (match (opt-verify-function-with-context next next-context)
               [(ResultCompilerOptimizeVerify.Ok)
                 (OptFunctionCtxResult.Result next next-context)]

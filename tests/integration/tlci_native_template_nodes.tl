@@ -23,12 +23,22 @@
 (define (abs-score [value : f64]) : f64
   (math.abs value))
 
+;; Capture regression: the caller binds the exact names both templates
+;; introduce (`__math_abs_value` and `text-buf-append-chunk`). Template-source
+;; marking must keep the expansions referring to their own binders, so these
+;; callers still observe their own values on either route.
+(define (abs-score-shadowed [value : f64]) : f64
+  (let
+    [__math_abs_value : f64 100.0]
+    (+ (math.abs value) (- __math_abs_value 100.0))))
+
 ;; `text_buf/append!` expands `(set! (struct-get ,buf chunks) ...)` twice.
 (define (label-of [sample : Sample]) : String
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
+    [text-buf-append-chunk : String (struct-get sample label)]
     (begin
-      (text_buf.append! buf (struct-get sample label))
+      (text_buf.append! buf text-buf-append-chunk)
       (text_buf.append! buf "!")
       (text_buf.render buf))))
 
@@ -55,6 +65,8 @@
     [rendered : String (label-of sample)]
     (if (and
       (string.eq rendered "tag!")
-      (and (= (round-trip sample) 3) (= (abs-score -1.5) 1.5)))
+      (and
+        (= (round-trip sample) 3)
+        (and (= (abs-score -1.5) 1.5) (= (abs-score-shadowed -2.5) 2.5))))
       42
       1)))

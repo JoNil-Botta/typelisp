@@ -8071,8 +8071,9 @@
   [set : CompilerLiveI64Set]
   [start : i64]
   [end : i64]
-  [word-index : i64]) : bool
-  (if (>= word-index (compiler-live-set-word-count set))
+  [word-index : i64]
+  [last-word : i64]) : bool
+  (if (> word-index last-word)
     false
     (if (compiler-reg-call-word-in-range?
       (compiler-live-set-word-at-bounded set word-index)
@@ -8080,13 +8081,48 @@
       start
       end)
       true
-      (compiler-reg-call-set-in-range-words? set start end (+ word-index 1)))))
+      (compiler-reg-call-set-in-range-words?
+        set
+        start
+        end
+        (+ word-index 1)
+        last-word))))
 
+;; Only the words holding positions inside `(start, end)` can answer yes, so the
+;; scan starts and stops at those words instead of walking the whole set. Word
+;; `w` holds global positions `w * word-bits .. w * word-bits + word-bits - 1`,
+;; and the positions of interest are `start + 1 .. end - 1`, which gives the
+;; bounds directly. Words outside that span contain no position the predicate
+;; could accept, so skipping them cannot change the answer.
 (define (compiler-reg-call-set-in-range?
   [set : CompilerLiveI64Set]
   [start : i64]
   [end : i64]) : bool
-  (compiler-reg-call-set-in-range-words? set start end 0))
+  (let
+    [bits : i64 (compiler-live-set-word-bits)]
+    [last-pos : i64 (- end 1)]
+    [first-pos : i64
+      (if (< (+ start 1) 0)
+        0
+        (+ start 1))]
+    (if (> first-pos last-pos)
+      false
+      (let
+        [count : i64 (compiler-live-set-word-count set)]
+        [first-word : i64 (/ first-pos bits)]
+        [raw-last-word : i64 (/ last-pos bits)]
+        [last-word : i64
+          (if (>= raw-last-word count)
+            (- count 1)
+            raw-last-word)]
+        (if (> first-word last-word)
+          false
+          (compiler-reg-call-set-in-range-words?
+            set
+            start
+            end
+            first-word
+            last-word))))))
 
 (define (compiler-reg-clobber-word-in-range-inclusive-start?
   [bits : i64]

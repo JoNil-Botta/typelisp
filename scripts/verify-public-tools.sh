@@ -2956,7 +2956,7 @@ cat > "$SPLIT_PKG/src/lib.tl" <<'EOF'
     (comptime.expr-bool false)
     true))
 (defmacro (split-unsupported [value : Expr]) : Expr
-  `(return ,value))
+  (match value [(comptime.Expr.Var n) value] [_ value]))
 EOF
 cat > "$SPLIT_PKG/vendor/math/typelisp.pkg" <<'EOF'
 (package

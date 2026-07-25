@@ -664,6 +664,25 @@
     [(= ordinal 10) ">="]
     [else "="]))
 
+;; Emit the op chain for a template node that wraps exactly one subexpression
+;; (`return`, `box`, `box-get`): the operand's chain followed by `op`. Returns
+;; the opened op-let count or -1 when the operand is outside the supported
+;; subset. Refs #5605.
+(define (embedded-native-template-unary-node-ops
+  [params : (& params AstMacroParamList)]
+  [inner-node : i64]
+  [op : i64]
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
+  (let
+    [inner-opened : i64
+      (embedded-native-template-ops params inner-node ops ops-count)]
+    (if (< inner-opened 0)
+      -1
+      (begin
+        (embedded-native-template-push! ops ops-count op "0" "0" "0")
+        (+ inner-opened 1)))))
+
 ;; Emit the op chain that pushes exactly one session-stack value for one
 ;; quasiquoted template node, mirroring the interpreted quote's reconstruction
 ;; of calls, if/begin/binary/unary forms, literals, plain symbols, unquoted
@@ -737,6 +756,16 @@
         [(AstLiteral.Unit)
           (begin
             (embedded-native-template-push! ops ops-count 203 "0" "0" "0")
+            1)]
+        [(AstLiteral.Float text)
+          (begin
+            (embedded-native-template-push!
+              ops
+              ops-count
+              232
+              (embedded-native-name-arg (embedded-native-escape-string text))
+              (string.int->string (string.string-length text))
+              "0")
             1)]
         [_ -1])]
     [(AstExpr.Var name-id)
@@ -989,6 +1018,55 @@
               "0"
               "0")
             (+ inner-opened 1))))]
+    [(AstExpr.Return inner-node)
+      (embedded-native-template-unary-node-ops
+        params
+        inner-node
+        229
+        ops
+        ops-count)]
+    [(AstExpr.Box inner-node)
+      (embedded-native-template-unary-node-ops
+        params
+        inner-node
+        230
+        ops
+        ops-count)]
+    [(AstExpr.BoxGet inner-node)
+      (embedded-native-template-unary-node-ops
+        params
+        inner-node
+        231
+        ops
+        ops-count)]
+    ;; `(set! (struct-get target field) value)`. The parser folds the place into
+    ;; the node, so the field name travels as an immediate like struct-get's.
+    ;; The sentinel field id marks `(set! ,place value)`, whose place shape is
+    ;; only known once the unquoted operand is evaluated; that stays a fallback.
+    [(AstExpr.StructSet target-node field value-node)
+      (if (= field (ast-expr-unquote-set-target-field-id))
+        -1
+        (let
+          [target-opened : i64
+            (embedded-native-template-ops params target-node ops ops-count)]
+          (if (< target-opened 0)
+            -1
+            (let
+              [value-opened : i64
+                (embedded-native-template-ops params value-node ops ops-count)]
+              (if (< value-opened 0)
+                -1
+                (let
+                  [field-name : String (intern-str field)]
+                  (begin
+                    (embedded-native-template-push!
+                      ops
+                      ops-count
+                      106
+                      (embedded-native-name-arg field-name)
+                      (string.int->string (string.string-length field-name))
+                      "0")
+                    (+ target-opened value-opened 1))))))))]
     [(AstExpr.Set name-id value-node)
       (let
         [value-opened : i64

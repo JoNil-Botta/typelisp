@@ -1230,6 +1230,62 @@ if ! cmp -s "$STDLIB_TLCI_EMBEDDED_ASM" "$STDLIB_TLCI_MODIFIED_ASM"; then
     fail "comment-modified stdlib root changed generated assembly"
 fi
 
+# The same native-vs-interpreted comparison over the template node kinds the
+# json/serialize/text_buf/math hooks use (#5605): `return`, `box`/`box-get`,
+# `(set! (struct-get ...) ...)`, and float literals inside quasiquotes. The
+# array fixture above exercises none of them, so a reconstruction divergence
+# in those node kinds would otherwise reach the bootstrap unchecked.
+echo "[compile-profile] verify template node kind routing differential (#5605)"
+TEMPLATE_NODES_SOURCE="$ROOT/tests/integration/tlci_native_template_nodes.tl"
+TEMPLATE_NODES_EMBEDDED_ASM="$STDLIB_TLCI_DIR/template-nodes-embedded.s"
+TEMPLATE_NODES_EMBEDDED_STDOUT="$STDLIB_TLCI_DIR/template-nodes-embedded.stdout"
+TEMPLATE_NODES_EMBEDDED_STDERR="$STDLIB_TLCI_DIR/template-nodes-embedded.stderr"
+TEMPLATE_NODES_INTERPRETED_ASM="$STDLIB_TLCI_DIR/template-nodes-interpreted.s"
+TEMPLATE_NODES_INTERPRETED_STDOUT="$STDLIB_TLCI_DIR/template-nodes-interpreted.stdout"
+TEMPLATE_NODES_INTERPRETED_STDERR="$STDLIB_TLCI_DIR/template-nodes-interpreted.stderr"
+if ! (
+    cd "$STDLIB_TLCI_DIR"
+    "$PROFILE_BIN" compile "$TEMPLATE_NODES_SOURCE" \
+        -o "$TEMPLATE_NODES_EMBEDDED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args)
+) > "$TEMPLATE_NODES_EMBEDDED_STDOUT" 2> "$TEMPLATE_NODES_EMBEDDED_STDERR"; then
+    show_failure_logs \
+        "$TEMPLATE_NODES_EMBEDDED_STDOUT" "$TEMPLATE_NODES_EMBEDDED_STDERR"
+    fail "template node kind fixture failed on the embedded route"
+fi
+if ! (
+    cd "$STDLIB_TLCI_MODIFIED_DIR"
+    "$PROFILE_BIN" compile "$TEMPLATE_NODES_SOURCE" \
+        -o "$TEMPLATE_NODES_INTERPRETED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib
+) > "$TEMPLATE_NODES_INTERPRETED_STDOUT" \
+    2> "$TEMPLATE_NODES_INTERPRETED_STDERR"; then
+    show_failure_logs \
+        "$TEMPLATE_NODES_INTERPRETED_STDOUT" \
+        "$TEMPLATE_NODES_INTERPRETED_STDERR"
+    fail "template node kind fixture failed on the interpreted route"
+fi
+assert_profile_counter_at_least_in \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR" \
+    "typecheck.macro.stdlib_tlci_native_dispatches" \
+    1 \
+    "$TEMPLATE_NODES_EMBEDDED_STDOUT" \
+    "$TEMPLATE_NODES_EMBEDDED_STDERR"
+assert_profile_counter_eq_in \
+    "$TEMPLATE_NODES_INTERPRETED_STDERR" \
+    "typecheck.macro.stdlib_tlci_catalog_hits" \
+    0 \
+    "$TEMPLATE_NODES_INTERPRETED_STDOUT" \
+    "$TEMPLATE_NODES_INTERPRETED_STDERR"
+if ! cmp -s "$TEMPLATE_NODES_EMBEDDED_ASM" "$TEMPLATE_NODES_INTERPRETED_ASM"; then
+    diff -u "$TEMPLATE_NODES_INTERPRETED_ASM" "$TEMPLATE_NODES_EMBEDDED_ASM" >&2 \
+        || true
+    fail "native and interpreted template node kinds changed generated assembly"
+fi
+
 # #5454 regression: the same modified root reached by a non-`stdlib` path
 # spelling from a working directory without a `stdlib/` fallback must still
 # typecheck the root's own modules against that root's core-macros prelude

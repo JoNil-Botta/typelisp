@@ -502,7 +502,10 @@
                   program
                   (ast-decl-path-list-new))
                   [(ResultTcSourcePolicyDiagnostic.Ok)
-                    (match (tc-source-expr-policy-ok ctx expr)
+                    (match (tc-source-expr-policy-ok
+                      ctx
+                      (tc-context-expr-bases ctx)
+                      expr)
                       [(ResultTcUnit.Ok)
                         (match (tc-build-top-env ctx program)
                           [(ResultTcEnv.Ok top-env)

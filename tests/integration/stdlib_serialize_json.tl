@@ -33,14 +33,14 @@
 (define (serialize-json-member
   [key : String]
   [value : json.Json]
-  [rest : json.JsonMemberList]) : json.JsonMemberList
-  (json.JsonMemberListCons key value (box rest)))
+  [rest : json.JsonMemberSeq]) : json.JsonMemberSeq
+  (json.member-cons key value rest))
 
-(define (serialize-json-item [value : json.Json] [rest : json.JsonList]) : json.JsonList
-  (json.JsonListCons value (box rest)))
+(define (serialize-json-item [value : json.Json] [rest : json.JsonSeq]) : json.JsonSeq
+  (json.list-cons value rest))
 
 (define (serialize-json-empty-array) : json.Json
-  (json.JsonArray (box json.JsonListNil)))
+  (json.JsonArray (box (json.list-empty))))
 
 (define (serialize-json-enum-json [tag : String] [payload : json.Json]) : json.Json
   (json.JsonObject
@@ -48,7 +48,7 @@
       (serialize-json-member
         "tag"
         (json.JsonString tag)
-        (serialize-json-member "payload" payload json.JsonMemberListNil)))))
+        (serialize-json-member "payload" payload (json.member-list-empty))))))
 
 (define (serialize-json-enum-missing-tag) : json.Json
   (json.JsonObject
@@ -56,7 +56,7 @@
       (serialize-json-member
         "payload"
         (serialize-json-empty-array)
-        json.JsonMemberListNil))))
+        (json.member-list-empty)))))
 
 (define (serialize-json-enum-missing-payload) : json.Json
   (json.JsonObject
@@ -64,7 +64,7 @@
       (serialize-json-member
         "tag"
         (json.JsonString "Idle")
-        json.JsonMemberListNil))))
+        (json.member-list-empty)))))
 
 (define (serialize-json-address-json [zip : String] [city : String]) : json.Json
   (json.JsonObject
@@ -75,7 +75,7 @@
         (serialize-json-member
           "city"
           (json.JsonString city)
-          json.JsonMemberListNil)))))
+          (json.member-list-empty))))))
 
 (define (serialize-json-home-json) : json.Json
   (serialize-json-address-json "12345" "London"))
@@ -87,14 +87,14 @@
         (json.JsonNumber "4")
         (serialize-json-item
           (json.JsonNumber "5")
-          (serialize-json-item (json.JsonNumber "6") json.JsonListNil))))))
+          (serialize-json-item (json.JsonNumber "6") (json.list-empty)))))))
 
 (define (serialize-json-samples-json) : json.Json
   (json.JsonArray
     (box
       (serialize-json-item
         (json.JsonNumber "7")
-        (serialize-json-item (json.JsonNumber "8") json.JsonListNil)))))
+        (serialize-json-item (json.JsonNumber "8") (json.list-empty))))))
 
 (define (serialize-json-previous-json) : json.Json
   (json.JsonArray
@@ -103,7 +103,7 @@
         (serialize-json-address-json "111" "Oxford")
         (serialize-json-item
           (serialize-json-address-json "222" "Paris")
-          json.JsonListNil)))))
+          (json.list-empty))))))
 
 (define (serialize-json-combo-json) : json.Json
   (json.JsonArray
@@ -117,7 +117,7 @@
               (box
                 (serialize-json-item
                   (json.JsonNumber "9")
-                  (serialize-json-item (json.JsonNumber "10") json.JsonListNil))))
+                  (serialize-json-item (json.JsonNumber "10") (json.list-empty)))))
             (serialize-json-item
               (serialize-json-samples-json)
               (serialize-json-item
@@ -127,8 +127,8 @@
                       (json.JsonString "inner")
                       (serialize-json-item
                         (json.JsonBool true)
-                        json.JsonListNil))))
-                json.JsonListNil))))))))
+                        (json.list-empty)))))
+                (json.list-empty)))))))))
 
 (define (serialize-json-person-json [age : json.Json]) : json.Json
   (json.JsonObject
@@ -163,7 +163,7 @@
                         (serialize-json-member
                           "combo"
                           (serialize-json-combo-json)
-                          json.JsonMemberListNil)))))))))))))
+                          (json.member-list-empty))))))))))))))
 
 (define (serialize-json-person-missing-age) : json.Json
   (json.JsonObject
@@ -192,7 +192,7 @@
                     (serialize-json-member
                       "samples"
                       (serialize-json-samples-json)
-                      json.JsonMemberListNil)))))))))))
+                      (json.member-list-empty))))))))))))
 
 (define (serialize-json-address-eq?
   [home : Address]

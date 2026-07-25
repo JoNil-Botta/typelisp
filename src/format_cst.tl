@@ -15,10 +15,13 @@
   (BracketList (Box FormatCstList))
   (Forms (Box FormatCstList)))
 
-(defenum FormatCstList
-  (Nil)
-  (Cons FormatCst (Box FormatCstList))
-  (Dense (Array FormatCst) i64 i64))
+;; A list is a contiguous slice `slots[start .. start + len)`. Tails share the
+;; backing array, so stepping is index arithmetic instead of a pointer chase,
+;; and every walker can also take the whole run at once.
+(defstruct FormatCstList
+  (slots (Array FormatCst))
+  (start i64)
+  (len i64))
 
 (defstruct FormatCstVec
   (slots (Array FormatCst))
@@ -92,37 +95,45 @@
         (array-set! (struct-get v slots) index value)
         (set! (struct-get v len) (+ index 1))))))
 
+(define (fmt-cst-list-nil) : FormatCstList
+  (FormatCstList (make-array FormatCst 0) 0 0))
+
 (define (fmt-cst-list-from-vec [items : FormatCstVec]) : FormatCstList
+  (FormatCstList (struct-get items slots) 0 (struct-get items len)))
+
+(define (fmt-cst-vec-push-list!
+  [v : (&mut v FormatCstVec)]
+  [items : FormatCstList]) : unit
+  (match (fmt-cst-list-step items)
+    [(FormatCstListStep.Empty) unit]
+    [(FormatCstListStep.Item node rest)
+      (begin
+        (format-cst-vec-push! v node)
+        (fmt-cst-vec-push-list! v rest))]))
+
+(define (fmt-cst-list-cons [head : FormatCst] [rest : FormatCstList]) : FormatCstList
   (let
-    [count : i64 (struct-get items len)]
-    (if (<= count 0)
-      FormatCstList.Nil
-      (FormatCstList.Dense (struct-get items slots) 0 count))))
+    [out : FormatCstVec (format-cst-vec-new)]
+    (begin
+      (format-cst-vec-push! (&mut out) head)
+      (fmt-cst-vec-push-list! (&mut out) rest)
+      (fmt-cst-list-from-vec out))))
 
 (define (fmt-cst-list-step [items : FormatCstList]) : FormatCstListStep
-  (match items
-    [(FormatCstList.Nil) (FormatCstListStep.Empty)]
-    [(FormatCstList.Cons head rest)
-      (FormatCstListStep.Item head (box-get rest))]
-    [(FormatCstList.Dense slots start count)
-      (if (<= count 0)
-        (FormatCstListStep.Empty)
-        (FormatCstListStep.Item
-          (array-ref slots start)
-          (if (<= count 1)
-            FormatCstList.Nil
-            (FormatCstList.Dense slots (+ start 1) (- count 1)))))]))
+  (let
+    [start : i64 (struct-get items start)]
+    [count : i64 (struct-get items len)]
+    (if (<= count 0)
+      (FormatCstListStep.Empty)
+      (FormatCstListStep.Item
+        (array-ref (struct-get items slots) start)
+        (FormatCstList (struct-get items slots) (+ start 1) (- count 1))))))
 
 (define (fmt-cst-list-empty? [items : FormatCstList]) : bool
-  (match items
-    [(FormatCstList.Nil) true]
-    [(FormatCstList.Cons _ _) false]
-    [(FormatCstList.Dense _ _ count) (<= count 0)]))
+  (<= (struct-get items len) 0))
 
 (define (fmt-list-count [items : FormatCstList]) : i64
-  (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) 0]
-    [(FormatCstListStep.Item _ rest) (+ 1 (fmt-list-count rest))]))
+  (struct-get items len))
 
 (define (fmt-cst-count [node : FormatCst]) : i64
   (match node
@@ -222,14 +233,14 @@
       [(= tag (fmt-tag-end))
         (if (= stop-tag 0)
           (ResultFormatParsedCstList.Ok
-            (FormatParsedCstList.ParsedList FormatCstList.Nil idx))
+            (FormatParsedCstList.ParsedList (fmt-cst-list-nil) idx))
           (ResultFormatParsedCstList.Err
             (FormatSourceError
               "format cst: unclosed delimiter"
               (format-token-span stream idx))))]
       [(and (!= stop-tag 0) (= tag stop-tag))
         (ResultFormatParsedCstList.Ok
-          (FormatParsedCstList.ParsedList FormatCstList.Nil (+ idx 1)))]
+          (FormatParsedCstList.ParsedList (fmt-cst-list-nil) (+ idx 1)))]
       [(fmt-unexpected-closing tag)
         (ResultFormatParsedCstList.Err
           (FormatSourceError
@@ -417,20 +428,14 @@
 (define (format-cst-dense-storage-ok?) : bool
   (match (parse-format-source "(a b c)")
     [(FormatCst.Forms forms)
-      (match (box-get forms)
-        [(FormatCstList.Dense _ _ form-count)
-          (and
-            (= form-count 1)
-            (match (fmt-cst-list-step (box-get forms))
-              [(FormatCstListStep.Item node _)
-                (match node
-                  [(FormatCst.List items)
-                    (match (box-get items)
-                      [(FormatCstList.Dense _ _ item-count) (= item-count 3)]
-                      [_ false])]
-                  [_ false])]
-              [_ false]))]
-        [_ false])]
+      (and
+        (= (fmt-list-count (box-get forms)) 1)
+        (match (fmt-cst-list-step (box-get forms))
+          [(FormatCstListStep.Item node _)
+            (match node
+              [(FormatCst.List items) (= (fmt-list-count (box-get items)) 3)]
+              [_ false])]
+          [_ false]))]
     [_ false]))
 
 (define (format-cst-self-test) : i64

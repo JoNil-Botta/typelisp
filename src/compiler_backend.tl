@@ -186,21 +186,65 @@
 (defenum CompilerBackendPhiCopy
   (Copy i64 CompilerBackendPhiSource AstType))
 
-(defenum CompilerBackendPhiCopyList
-  (Nil)
-  (Cons CompilerBackendPhiCopy (Box CompilerBackendPhiCopyList)))
+(defstruct CompilerBackendPhiCopySeq
+  (slots (Array CompilerBackendPhiCopy))
+  (len i64))
 
-(define (compiler-backend-phi-copy-cons
-  [copy : CompilerBackendPhiCopy]
-  [rest : CompilerBackendPhiCopyList]) : CompilerBackendPhiCopyList
-  (CompilerBackendPhiCopyList.Cons copy (box rest)))
+(define (compiler-backend-phi-copy-seq-with-capacity [capacity : i64]) : CompilerBackendPhiCopySeq
+  (CompilerBackendPhiCopySeq
+    (array.make-array CompilerBackendPhiCopy capacity)
+    0))
+
+(define (compiler-backend-phi-copy-copy-range!
+  [dst : (&mut dst (Array CompilerBackendPhiCopy))]
+  [src : (& src (Array CompilerBackendPhiCopy))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-backend-phi-copy-push!
+  [seq : (&mut seq CompilerBackendPhiCopySeq)]
+  [copy : CompilerBackendPhiCopy]) : unit
+  (begin
+    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+      unit
+      (let
+        [bigger : (Array CompilerBackendPhiCopy)
+          (array.make-array
+            CompilerBackendPhiCopy
+            (compiler-backend-seq-capacity
+              (array-length (struct-get seq slots))))]
+        (begin
+          (compiler-backend-phi-copy-copy-range!
+            (&mut bigger)
+            (& (struct-get seq slots))
+            (struct-get seq len))
+          (set! (struct-get seq slots) bigger))))
+    (let
+      [index : i64 (struct-get seq len)]
+      (begin
+        (array-set! (struct-get seq slots) index copy)
+        (set! (struct-get seq len) (+ index 1))))))
+
+;; The object path stages an edge's copies in REVERSE instruction order (the old
+;; cons scan prepended); this keeps that visit order byte-identical.
+(defmacro (compiler-backend-phi-copy-seq-rev-ref
+  [copies : CompilerBackendPhiCopySeq]
+  [index : i64]) : CompilerBackendPhiCopy
+  `(array-ref
+    (struct-get ,copies slots)
+    (- (- (struct-get ,copies len) 1) ,index)))
 
 (defenum CompilerBackendMaybePhiCopy
   (No)
   (Some CompilerBackendPhiCopy))
 
 (defenum ResultBackendPhiCopies
-  (Ok CompilerBackendPhiCopyList)
+  (Ok CompilerBackendPhiCopySeq)
   (Err String))
 
 (defenum CompilerBackendPhiReturnMatch
@@ -712,25 +756,94 @@
   (Ok CompilerBackendRuntimePlanWithIndex)
   (Err String))
 
-(defenum BackendStringList
-  (Nil)
-  (Cons String (Box BackendStringList)))
+(defstruct BackendStringSeq
+  (slots (Array String))
+  (len i64))
 
-(defenum BackendSymbolList
-  (Nil)
-  (Cons i64 (Box BackendSymbolList)))
+(defstruct BackendSymbolSeq
+  (slots (Array i64))
+  (len i64))
 
 (defenum BackendFloatList
   (Nil)
   (Cons AstType u64 (Box BackendFloatList)))
 
-(define (compiler-backend-string-cons
-  [head : String]
-  [rest : BackendStringList]) : BackendStringList
-  (BackendStringList.Cons head (box rest)))
+;; Capacity-doubling growth for the array-backed backend sequences (same shape as
+;; compiler-ir-instr-builder-*): copy the live prefix into a doubled array.
+(define (compiler-backend-seq-capacity [cap : i64]) : i64
+  (if (< cap 1)
+    4
+    (* cap 2)))
 
-(define (compiler-backend-symbol-cons [head : i64] [rest : BackendSymbolList]) : BackendSymbolList
-  (BackendSymbolList.Cons head (box rest)))
+(define (compiler-backend-string-copy-range!
+  [dst : (&mut dst (Array String))]
+  [src : (& src (Array String))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-backend-string-push!
+  [seq : (&mut seq BackendStringSeq)]
+  [head : String]) : unit
+  (begin
+    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+      unit
+      (let
+        [bigger : (Array String)
+          (array.make-array
+            String
+            (compiler-backend-seq-capacity
+              (array-length (struct-get seq slots))))]
+        (begin
+          (compiler-backend-string-copy-range!
+            (&mut bigger)
+            (& (struct-get seq slots))
+            (struct-get seq len))
+          (set! (struct-get seq slots) bigger))))
+    (let
+      [index : i64 (struct-get seq len)]
+      (begin
+        (array-set! (struct-get seq slots) index head)
+        (set! (struct-get seq len) (+ index 1))))))
+
+(define (compiler-backend-symbol-copy-range!
+  [dst : (&mut dst (Array i64))]
+  [src : (& src (Array i64))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-backend-symbol-push!
+  [seq : (&mut seq BackendSymbolSeq)]
+  [head : i64]) : unit
+  (begin
+    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+      unit
+      (let
+        [bigger : (Array i64)
+          (array.make-array
+            i64
+            (compiler-backend-seq-capacity
+              (array-length (struct-get seq slots))))]
+        (begin
+          (compiler-backend-symbol-copy-range!
+            (&mut bigger)
+            (& (struct-get seq slots))
+            (struct-get seq len))
+          (set! (struct-get seq slots) bigger))))
+    (let
+      [index : i64 (struct-get seq len)]
+      (begin
+        (array-set! (struct-get seq slots) index head)
+        (set! (struct-get seq len) (+ index 1))))))
 
 (define (compiler-backend-float-cons
   [ty : AstType]
@@ -738,10 +851,10 @@
   [rest : BackendFloatList]) : BackendFloatList
   (BackendFloatList.Cons ty bits (box rest)))
 
-(define (compiler-backend-empty-string-list) : BackendStringList
-  BackendStringList.Nil)
+(define (compiler-backend-empty-string-list) : BackendStringSeq
+  (BackendStringSeq (array.make-array String 0) 0))
 
-(define compiler-backend-current-phi-targets : BackendStringList
+(define compiler-backend-current-phi-targets : BackendStringSeq
   (compiler-backend-empty-string-list))
 (define compiler-backend-current-phi-target-count : i64
   0)
@@ -932,32 +1045,44 @@
       false)))
 
 (define (compiler-backend-string-list-contains?
-  [items : BackendStringList]
+  [items : BackendStringSeq]
   [needle : String]) : bool
-  (match items
-    [(BackendStringList.Nil) false]
-    [(BackendStringList.Cons head rest)
-      (if (string.eq head needle)
-        true
-        (compiler-backend-string-list-contains? (box-get rest) needle))]))
+  (let
+    [i : i64 0]
+    [n : i64 (struct-get items len)]
+    (begin
+      (while (< i n)
+        (begin
+          (when
+            (string.eq (array-ref (struct-get items slots) i) needle)
+            (return true))
+          (set! i (+ i 1))))
+      false)))
 
 (define (compiler-backend-symbol-list-contains-id?
-  [items : BackendSymbolList]
+  [items : BackendSymbolSeq]
   [needle-id : i64]) : bool
-  (match items
-    [(BackendSymbolList.Nil) false]
-    [(BackendSymbolList.Cons head rest)
-      (if (= (compiler-ir-symbol-id head) needle-id)
-        true
-        (compiler-backend-symbol-list-contains-id? (box-get rest) needle-id))]))
+  (let
+    [i : i64 0]
+    [n : i64 (struct-get items len)]
+    (begin
+      (while (< i n)
+        (begin
+          (when
+            (=
+              (compiler-ir-symbol-id (array-ref (struct-get items slots) i))
+              needle-id)
+            (return true))
+          (set! i (+ i 1))))
+      false)))
 
 (defstruct BackendStringSet
   (seen backend_string_i64_map.Map)
-  (items BackendStringList))
+  (items BackendStringSeq))
 
 (defstruct BackendSymbolSet
   (seen backend_i64_i64_map.Map)
-  (items BackendSymbolList))
+  (items BackendSymbolSeq))
 
 (defstruct BackendFloatSet
   (seen backend_string_i64_map.Map)
@@ -980,12 +1105,12 @@
 (define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
   (BackendStringSet
     (backend_string_i64_map.with-capacity capacity)
-    BackendStringList.Nil))
+    (BackendStringSeq (array.make-array String 0) 0)))
 
 (define (compiler-backend-symbol-set-new [capacity : i64]) : BackendSymbolSet
   (BackendSymbolSet
     (backend_i64_i64_map.with-capacity capacity)
-    BackendSymbolList.Nil))
+    (BackendSymbolSeq (array.make-array i64 0) 0)))
 
 (define (compiler-backend-float-payload-bits [ty : AstType] [bits : u64]) : u64
   (if (compiler-backend-f64-type? ty)
@@ -1011,13 +1136,13 @@
   [text : String]) : BackendStringSet
   (let
     [seen : backend_string_i64_map.Map (struct-get set seen)]
+    [items : BackendStringSeq (struct-get set items)]
     (if (backend_string_i64_map.contains? (& seen) text)
       set
       (begin
         (backend_string_i64_map.insert-ref! (&mut seen) text 1)
-        (BackendStringSet
-          seen
-          (compiler-backend-string-cons text (struct-get set items)))))))
+        (compiler-backend-string-push! (&mut items) text)
+        (BackendStringSet seen items)))))
 
 (define (compiler-backend-symbol-set-add
   [set : BackendSymbolSet]
@@ -1025,13 +1150,13 @@
   (let
     [seen : backend_i64_i64_map.Map (struct-get set seen)]
     [id : i64 (compiler-ir-symbol-id symbol)]
+    [items : BackendSymbolSeq (struct-get set items)]
     (if (backend_i64_i64_map.contains? (& seen) id)
       set
       (begin
         (backend_i64_i64_map.insert-ref! (&mut seen) id 1)
-        (BackendSymbolSet
-          seen
-          (compiler-backend-symbol-cons symbol (struct-get set items)))))))
+        (compiler-backend-symbol-push! (&mut items) symbol)
+        (BackendSymbolSet seen items)))))
 
 (define (compiler-backend-float-set-add
   [set : BackendFloatSet]
@@ -27259,9 +27384,49 @@
 (defenum CompilerBackendArgMove
   (BackendArgMove String CompilerBackendArgMoveSource))
 
-(defenum CompilerBackendArgMoveList
-  (BackendArgMoveNil)
-  (BackendArgMoveCons CompilerBackendArgMove (Box CompilerBackendArgMoveList)))
+(defstruct CompilerBackendArgMoveSeq
+  (slots (Array CompilerBackendArgMove))
+  (len i64))
+
+(define (compiler-backend-arg-move-seq-with-capacity [capacity : i64]) : CompilerBackendArgMoveSeq
+  (CompilerBackendArgMoveSeq
+    (array.make-array CompilerBackendArgMove capacity)
+    0))
+
+(define (compiler-backend-arg-move-copy-range!
+  [dst : (&mut dst (Array CompilerBackendArgMove))]
+  [src : (& src (Array CompilerBackendArgMove))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-backend-arg-move-push!
+  [seq : (&mut seq CompilerBackendArgMoveSeq)]
+  [move : CompilerBackendArgMove]) : unit
+  (begin
+    (if (< (struct-get seq len) (array-length (struct-get seq slots)))
+      unit
+      (let
+        [bigger : (Array CompilerBackendArgMove)
+          (array.make-array
+            CompilerBackendArgMove
+            (compiler-backend-seq-capacity
+              (array-length (struct-get seq slots))))]
+        (begin
+          (compiler-backend-arg-move-copy-range!
+            (&mut bigger)
+            (& (struct-get seq slots))
+            (struct-get seq len))
+          (set! (struct-get seq slots) bigger))))
+    (let
+      [index : i64 (struct-get seq len)]
+      (begin
+        (array-set! (struct-get seq slots) index move)
+        (set! (struct-get seq len) (+ index 1))))))
 
 (defenum CompilerBackendMaybeArgMove
   (BackendNoArgMove)
@@ -27322,78 +27487,97 @@
 
 (define (compiler-backend-arg-move-parallel-edges
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]) : pmove.CompilerParallelMoveEdgeList
-  (match moves
-    [(BackendArgMoveNil) pmove.CompilerParallelMoveNil]
-    [(BackendArgMoveCons move rest)
-      (pmove.compiler-parallel-move-edge-cons
-        (compiler-backend-arg-move-parallel-edge assignments move)
-        (compiler-backend-arg-move-parallel-edges assignments (box-get rest)))]))
+  [moves : CompilerBackendArgMoveSeq]
+  [index : i64]) : pmove.CompilerParallelMoveEdgeList
+  (if (>= index (struct-get moves len))
+    pmove.CompilerParallelMoveNil
+    (pmove.compiler-parallel-move-edge-cons
+      (compiler-backend-arg-move-parallel-edge
+        assignments
+        (array-ref (struct-get moves slots) index))
+      (compiler-backend-arg-move-parallel-edges assignments moves (+ index 1)))))
 
 (define (compiler-backend-arg-move-decision
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]) : pmove.CompilerParallelMoveDecision
+  [moves : CompilerBackendArgMoveSeq]) : pmove.CompilerParallelMoveDecision
   (let
     [edges : pmove.CompilerParallelMoveEdgeList
-      (compiler-backend-arg-move-parallel-edges assignments moves)]
+      (compiler-backend-arg-move-parallel-edges assignments moves 0)]
     (pmove.compiler-parallel-move-decision edges edges)))
 
 (define (compiler-backend-arg-moves-conflict?
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]
-  [all : CompilerBackendArgMoveList]) : bool
+  [moves : CompilerBackendArgMoveSeq]
+  [all : CompilerBackendArgMoveSeq]) : bool
   (pmove.compiler-parallel-move-list-has-blocked?
-    (compiler-backend-arg-move-parallel-edges assignments moves)
-    (compiler-backend-arg-move-parallel-edges assignments all)))
+    (compiler-backend-arg-move-parallel-edges assignments moves 0)
+    (compiler-backend-arg-move-parallel-edges assignments all 0)))
 
 (define (compiler-backend-arg-move-list-find
-  [moves : CompilerBackendArgMoveList]
+  [moves : CompilerBackendArgMoveSeq]
   [want : i64]) : CompilerBackendMaybeArgMove
-  (match moves
-    [(BackendArgMoveNil) BackendNoArgMove]
-    [(BackendArgMoveCons move rest)
-      (match move
-        [(BackendArgMove dest _)
-          (if (= (compiler-backend-parallel-reg-resource dest) want)
-            (BackendSomeArgMove move)
-            (compiler-backend-arg-move-list-find (box-get rest) want))])]))
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get moves len))
+        (begin
+          (match (array-ref (struct-get moves slots) i)
+            [(BackendArgMove dest _)
+              (when
+                (= (compiler-backend-parallel-reg-resource dest) want)
+                (return
+                  (BackendSomeArgMove (array-ref (struct-get moves slots) i))))])
+          (set! i (+ i 1))))
+      BackendNoArgMove)))
 
+;; Drops the FIRST move with this dest (the cons form returned the untouched
+;; tail on a match); any later same-dest move stays.
 (define (compiler-backend-arg-move-list-remove
-  [moves : CompilerBackendArgMoveList]
-  [dest : String]) : CompilerBackendArgMoveList
-  (match moves
-    [(BackendArgMoveNil) BackendArgMoveNil]
-    [(BackendArgMoveCons move rest)
-      (match move
-        [(BackendArgMove d _)
-          (if (string.eq d dest)
-            (box-get rest)
-            (BackendArgMoveCons
-              move
-              (box (compiler-backend-arg-move-list-remove (box-get rest) dest))))])]))
+  [moves : CompilerBackendArgMoveSeq]
+  [dest : String]) : CompilerBackendArgMoveSeq
+  (let
+    [out : CompilerBackendArgMoveSeq
+      (compiler-backend-arg-move-seq-with-capacity (struct-get moves len))]
+    [i : i64 0]
+    [removed : bool false]
+    (begin
+      (while (< i (struct-get moves len))
+        (begin
+          (match (array-ref (struct-get moves slots) i)
+            [(BackendArgMove d _)
+              (if (and (not removed) (string.eq d dest))
+                (set! removed true)
+                (compiler-backend-arg-move-push!
+                  (&mut out)
+                  (array-ref (struct-get moves slots) i)))])
+          (set! i (+ i 1))))
+      out)))
 
 (define (compiler-backend-arg-move-list-redirect
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]
+  [moves : CompilerBackendArgMoveSeq]
   [oldreg : String]
-  [newreg : String]) : CompilerBackendArgMoveList
-  (match moves
-    [(BackendArgMoveNil) BackendArgMoveNil]
-    [(BackendArgMoveCons move rest)
-      (match move
-        [(BackendArgMove dest source)
-          (BackendArgMoveCons
-            (if (string.eq
-              (compiler-backend-arg-move-source-reg assignments source)
-              oldreg)
-              (BackendArgMove dest (BackendArgMoveReg newreg))
-              move)
-            (box
-              (compiler-backend-arg-move-list-redirect
-                assignments
-                (box-get rest)
-                oldreg
-                newreg)))])]))
+  [newreg : String]) : CompilerBackendArgMoveSeq
+  (let
+    [out : CompilerBackendArgMoveSeq
+      (compiler-backend-arg-move-seq-with-capacity (struct-get moves len))]
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get moves len))
+        (let
+          [move : CompilerBackendArgMove (array-ref (struct-get moves slots) i)]
+          (begin
+            (match move
+              [(BackendArgMove dest source)
+                (compiler-backend-arg-move-push!
+                  (&mut out)
+                  (if (string.eq
+                    (compiler-backend-arg-move-source-reg assignments source)
+                    oldreg)
+                    (BackendArgMove dest (BackendArgMoveReg newreg))
+                    move))])
+            (set! i (+ i 1)))))
+      out)))
 
 ;; Redirect variant for the register-free (stack) cycle break: every move whose
 ;; source register is `oldreg` (exactly one in a permutation cycle) reads the
@@ -27401,24 +27585,28 @@
 ;; stack slot rather than a scavenged register.
 (define (compiler-backend-arg-move-list-redirect-to-stack
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]
-  [oldreg : String]) : CompilerBackendArgMoveList
-  (match moves
-    [(BackendArgMoveNil) BackendArgMoveNil]
-    [(BackendArgMoveCons move rest)
-      (match move
-        [(BackendArgMove dest source)
-          (BackendArgMoveCons
-            (if (string.eq
-              (compiler-backend-arg-move-source-reg assignments source)
-              oldreg)
-              (BackendArgMove dest (BackendArgMoveStackPop))
-              move)
-            (box
-              (compiler-backend-arg-move-list-redirect-to-stack
-                assignments
-                (box-get rest)
-                oldreg)))])]))
+  [moves : CompilerBackendArgMoveSeq]
+  [oldreg : String]) : CompilerBackendArgMoveSeq
+  (let
+    [out : CompilerBackendArgMoveSeq
+      (compiler-backend-arg-move-seq-with-capacity (struct-get moves len))]
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get moves len))
+        (let
+          [move : CompilerBackendArgMove (array-ref (struct-get moves slots) i)]
+          (begin
+            (match move
+              [(BackendArgMove dest source)
+                (compiler-backend-arg-move-push!
+                  (&mut out)
+                  (if (string.eq
+                    (compiler-backend-arg-move-source-reg assignments source)
+                    oldreg)
+                    (BackendArgMove dest (BackendArgMoveStackPop))
+                    move))])
+            (set! i (+ i 1)))))
+      out)))
 
 (define (compiler-backend-emit-arg-move
   [assignments : CompilerRegAssignmentList]
@@ -27459,20 +27647,25 @@
 ;; the same mask as the legacy candidate registers.
 (define (compiler-backend-arg-move-list-exclude-mask
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]) : i64
-  (match moves
-    [(BackendArgMoveNil) 0]
-    [(BackendArgMoveCons first rest)
-      (match first
-        [(BackendArgMove dest source)
-          (bit-or
-            (bit-or
-              (compiler-backend-scavenge-reg-bit dest)
-              (compiler-backend-scavenge-reg-bit
-                (compiler-backend-arg-move-source-reg assignments source)))
-            (compiler-backend-arg-move-list-exclude-mask
-              assignments
-              (box-get rest)))])]))
+  [moves : CompilerBackendArgMoveSeq]) : i64
+  (let
+    [mask : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get moves len))
+        (begin
+          (match (array-ref (struct-get moves slots) i)
+            [(BackendArgMove dest source)
+              (set!
+                mask
+                (bit-or
+                  mask
+                  (bit-or
+                    (compiler-backend-scavenge-reg-bit dest)
+                    (compiler-backend-scavenge-reg-bit
+                      (compiler-backend-arg-move-source-reg assignments source)))))])
+          (set! i (+ i 1))))
+      mask)))
 
 ;; Scavenge a GP register for the arg parallel-move cycle-break Temp instead of
 ;; hardcoding %r11: free in the occupancy mask at the call-setup point and not a
@@ -27484,8 +27677,8 @@
 ;; saturation guard reached only under --cfg arg-cycle-stack for the forcing test.
 (define (compiler-backend-arg-temp-pick-reg
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]
-  [all : CompilerBackendArgMoveList]) : String
+  [moves : CompilerBackendArgMoveSeq]
+  [all : CompilerBackendArgMoveSeq]) : String
   (let
     [point : i64
       (*
@@ -27522,7 +27715,7 @@
 
 (define (compiler-backend-emit-arg-move-list
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]) : ResultCompilerBackend
+  [moves : CompilerBackendArgMoveSeq]) : ResultCompilerBackend
   (compiler-backend-emit-arg-move-list-with-all assignments moves moves))
 
 ;; `all` is the ORIGINAL (top-level) move list, carried unchanged through the
@@ -27531,8 +27724,8 @@
 ;; still hold placed argument values that must survive to the call.
 (define (compiler-backend-emit-arg-move-list-with-all
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]
-  [all : CompilerBackendArgMoveList]) : ResultCompilerBackend
+  [moves : CompilerBackendArgMoveSeq]
+  [all : CompilerBackendArgMoveSeq]) : ResultCompilerBackend
   (match (compiler-backend-arg-move-decision assignments moves)
     [(pmove.CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
     [(pmove.CompilerParallelMoveUnblocked move-id)
@@ -27641,37 +27834,34 @@
   [arg-index : i64]
   [count : i64]
   [int-idx : i64]
-  [position : i64]) : CompilerBackendArgMoveList
-  (if (>= arg-index count)
-    BackendArgMoveNil
-    (match (compiler-backend-target-arg-reg-for-banks target int-idx position)
-      [(ResultBackendReg.Ok reg)
-        (BackendArgMoveCons
-          (BackendArgMove
-            reg
-            (BackendArgMoveValue (compiler-backend-call-arg-at args arg-index)))
-          (box
-            (compiler-backend-arg-moves-build-from
-              target
-              args
-              (+ arg-index 1)
-              count
-              (+ int-idx 1)
-              (+ position 1))))]
-      [(ResultBackendReg.Err _)
-        (compiler-backend-arg-moves-build-from
-          target
-          args
-          (+ arg-index 1)
-          count
-          (+ int-idx 1)
-          (+ position 1))])))
+  [position : i64]) : CompilerBackendArgMoveSeq
+  (let
+    [out : CompilerBackendArgMoveSeq
+      (compiler-backend-arg-move-seq-with-capacity 0)]
+    [i : i64 arg-index]
+    [ints : i64 int-idx]
+    [pos : i64 position]
+    (begin
+      (while (< i count)
+        (begin
+          (match (compiler-backend-target-arg-reg-for-banks target ints pos)
+            [(ResultBackendReg.Ok reg)
+              (compiler-backend-arg-move-push!
+                (&mut out)
+                (BackendArgMove
+                  reg
+                  (BackendArgMoveValue (compiler-backend-call-arg-at args i))))]
+            [(ResultBackendReg.Err _) unit])
+          (set! i (+ i 1))
+          (set! ints (+ ints 1))
+          (set! pos (+ pos 1))))
+      out)))
 
 (define (compiler-backend-arg-moves-build-at
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
   [int-idx : i64]
-  [position : i64]) : CompilerBackendArgMoveList
+  [position : i64]) : CompilerBackendArgMoveSeq
   (compiler-backend-arg-moves-build-from
     target
     args
@@ -28464,49 +28654,64 @@
 
 (define (compiler-backend-phi-copy-list-parallel-edges
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]) : pmove.CompilerParallelMoveEdgeList
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) pmove.CompilerParallelMoveNil]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (pmove.compiler-parallel-move-edge-cons
-        (compiler-backend-phi-copy-parallel-edge assignments copy)
-        (compiler-backend-phi-copy-list-parallel-edges
-          assignments
-          (box-get rest)))]))
+  [copies : CompilerBackendPhiCopySeq]
+  [index : i64]) : pmove.CompilerParallelMoveEdgeList
+  (if (>= index (struct-get copies len))
+    pmove.CompilerParallelMoveNil
+    (pmove.compiler-parallel-move-edge-cons
+      (compiler-backend-phi-copy-parallel-edge
+        assignments
+        (array-ref (struct-get copies slots) index))
+      (compiler-backend-phi-copy-list-parallel-edges
+        assignments
+        copies
+        (+ index 1)))))
 
 (define (compiler-backend-phi-copy-list-decision
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]) : pmove.CompilerParallelMoveDecision
+  [copies : CompilerBackendPhiCopySeq]) : pmove.CompilerParallelMoveDecision
   (let
     [edges : pmove.CompilerParallelMoveEdgeList
-      (compiler-backend-phi-copy-list-parallel-edges assignments copies)]
+      (compiler-backend-phi-copy-list-parallel-edges assignments copies 0)]
     (pmove.compiler-parallel-move-decision edges edges)))
 
 (define (compiler-backend-phi-copy-list-find-id
-  [copies : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
   [want : i64]) : CompilerBackendMaybePhiCopy
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) CompilerBackendMaybePhiCopy.No]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (match copy
-        [(CompilerBackendPhiCopy.Copy dst _ _)
-          (if (= dst want)
-            (CompilerBackendMaybePhiCopy.Some copy)
-            (compiler-backend-phi-copy-list-find-id (box-get rest) want))])]))
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get copies len))
+        (begin
+          (match (array-ref (struct-get copies slots) i)
+            [(CompilerBackendPhiCopy.Copy dst _ _)
+              (when
+                (= dst want)
+                (return
+                  (CompilerBackendMaybePhiCopy.Some
+                    (array-ref (struct-get copies slots) i))))])
+          (set! i (+ i 1))))
+      CompilerBackendMaybePhiCopy.No)))
 
 (define (compiler-backend-phi-copy-list-remove-dst
-  [copies : CompilerBackendPhiCopyList]
-  [dst : i64]) : CompilerBackendPhiCopyList
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) CompilerBackendPhiCopyList.Nil]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (match copy
-        [(CompilerBackendPhiCopy.Copy found-dst _ _)
-          (if (= found-dst dst)
-            (compiler-backend-phi-copy-list-remove-dst (box-get rest) dst)
-            (compiler-backend-phi-copy-cons
-              copy
-              (compiler-backend-phi-copy-list-remove-dst (box-get rest) dst)))])]))
+  [copies : CompilerBackendPhiCopySeq]
+  [dst : i64]) : CompilerBackendPhiCopySeq
+  (let
+    [out : CompilerBackendPhiCopySeq
+      (compiler-backend-phi-copy-seq-with-capacity (struct-get copies len))]
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get copies len))
+        (begin
+          (match (array-ref (struct-get copies slots) i)
+            [(CompilerBackendPhiCopy.Copy found-dst _ _)
+              (if (= found-dst dst)
+                unit
+                (compiler-backend-phi-copy-push!
+                  (&mut out)
+                  (array-ref (struct-get copies slots) i)))])
+          (set! i (+ i 1))))
+      out)))
 
 ;; `loc` is the staging location threaded into the Temp this break creates: ""
 ;; for the stack, or a register name when the outermost break scavenged one.
@@ -28527,28 +28732,30 @@
 
 (define (compiler-backend-phi-copy-list-replace-source-home
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
   [dst-home-var : i64]
-  [loc : String]) : CompilerBackendPhiCopyList
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) CompilerBackendPhiCopyList.Nil]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (match copy
-        [(CompilerBackendPhiCopy.Copy dst source ty)
-          (compiler-backend-phi-copy-cons
-            (CompilerBackendPhiCopy.Copy
-              dst
-              (compiler-backend-phi-source-replace-home
-                assignments
-                source
-                dst-home-var
-                loc)
-              ty)
-            (compiler-backend-phi-copy-list-replace-source-home
-              assignments
-              (box-get rest)
-              dst-home-var
-              loc))])]))
+  [loc : String]) : CompilerBackendPhiCopySeq
+  (let
+    [out : CompilerBackendPhiCopySeq
+      (compiler-backend-phi-copy-seq-with-capacity (struct-get copies len))]
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get copies len))
+        (begin
+          (match (array-ref (struct-get copies slots) i)
+            [(CompilerBackendPhiCopy.Copy dst source ty)
+              (compiler-backend-phi-copy-push!
+                (&mut out)
+                (CompilerBackendPhiCopy.Copy
+                  dst
+                  (compiler-backend-phi-source-replace-home
+                    assignments
+                    source
+                    dst-home-var
+                    loc)
+                  ty))])
+          (set! i (+ i 1))))
+      out)))
 
 (define (compiler-backend-phi-source-is-var?
   [source : CompilerBackendPhiSource]
@@ -28569,16 +28776,20 @@
     source))
 
 (define (compiler-backend-phi-copy-list-has-source-var?
-  [copies : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
   [var : i64]) : bool
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) false]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (match copy
-        [(CompilerBackendPhiCopy.Copy _ source _)
-          (or
-            (compiler-backend-phi-source-is-var? source var)
-            (compiler-backend-phi-copy-list-has-source-var? (box-get rest) var))])]))
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get copies len))
+        (begin
+          (match (array-ref (struct-get copies slots) i)
+            [(CompilerBackendPhiCopy.Copy _ source _)
+              (when
+                (compiler-backend-phi-source-is-var? source var)
+                (return true))])
+          (set! i (+ i 1))))
+      false)))
 
 ;; #orphan-push: drop copies whose source is homed at their OWN dst home. The
 ;; build-time filter (leading-phi-copies' phi-same-home? check) guarantees no
@@ -28593,40 +28804,52 @@
 ;; blocked check uses, so everything it would self-block is dropped here.
 (define (compiler-backend-phi-copy-list-drop-same-home
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]) : CompilerBackendPhiCopyList
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) CompilerBackendPhiCopyList.Nil]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (match copy
-        [(CompilerBackendPhiCopy.Copy dst _ _)
-          (if (compiler-backend-phi-copy-source-uses-home? assignments copy dst)
-            (compiler-backend-phi-copy-list-drop-same-home
-              assignments
-              (box-get rest))
-            (compiler-backend-phi-copy-cons
-              copy
-              (compiler-backend-phi-copy-list-drop-same-home
-                assignments
-                (box-get rest))))])]))
+  [copies : CompilerBackendPhiCopySeq]) : CompilerBackendPhiCopySeq
+  (let
+    [out : CompilerBackendPhiCopySeq
+      (compiler-backend-phi-copy-seq-with-capacity (struct-get copies len))]
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get copies len))
+        (let
+          [copy : CompilerBackendPhiCopy
+            (array-ref (struct-get copies slots) i)]
+          (begin
+            (match copy
+              [(CompilerBackendPhiCopy.Copy dst _ _)
+                (if (compiler-backend-phi-copy-source-uses-home?
+                  assignments
+                  copy
+                  dst)
+                  unit
+                  (compiler-backend-phi-copy-push! (&mut out) copy))])
+            (set! i (+ i 1)))))
+      out)))
 
 (define (compiler-backend-phi-copy-list-replace-source-var
-  [copies : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
   [var : i64]
-  [replacement : CompilerIrValue]) : CompilerBackendPhiCopyList
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) CompilerBackendPhiCopyList.Nil]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (match copy
-        [(CompilerBackendPhiCopy.Copy dst source ty)
-          (compiler-backend-phi-copy-cons
-            (CompilerBackendPhiCopy.Copy
-              dst
-              (compiler-backend-phi-source-replace-var source var replacement)
-              ty)
-            (compiler-backend-phi-copy-list-replace-source-var
-              (box-get rest)
-              var
-              replacement))])]))
+  [replacement : CompilerIrValue]) : CompilerBackendPhiCopySeq
+  (let
+    [out : CompilerBackendPhiCopySeq
+      (compiler-backend-phi-copy-seq-with-capacity (struct-get copies len))]
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get copies len))
+        (begin
+          (match (array-ref (struct-get copies slots) i)
+            [(CompilerBackendPhiCopy.Copy dst source ty)
+              (compiler-backend-phi-copy-push!
+                (&mut out)
+                (CompilerBackendPhiCopy.Copy
+                  dst
+                  (compiler-backend-phi-source-replace-var
+                    source
+                    var
+                    replacement)
+                  ty))])
+          (set! i (+ i 1))))
+      out)))
 
 ;; #phi-temp-pool: the phi parallel-copy cycle break no longer ties up %r10/%r11.
 ;; find-unblocked drains the acyclic "trees" first, so the remaining core is a
@@ -29009,18 +29232,23 @@
 ;; contributes its ordinary scavenge bit and cannot be picked as the temp.
 (define (compiler-backend-phi-copy-list-dst-home-mask
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]) : i64
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) 0]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (match copy
-        [(CompilerBackendPhiCopy.Copy dst _ _)
-          (bit-or
-            (compiler-backend-scavenge-reg-bit
-              (compiler-backend-var-register-home assignments dst))
-            (compiler-backend-phi-copy-list-dst-home-mask
-              assignments
-              (box-get rest)))])]))
+  [copies : CompilerBackendPhiCopySeq]) : i64
+  (let
+    [mask : i64 0]
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get copies len))
+        (begin
+          (match (array-ref (struct-get copies slots) i)
+            [(CompilerBackendPhiCopy.Copy dst _ _)
+              (set!
+                mask
+                (bit-or
+                  mask
+                  (compiler-backend-scavenge-reg-bit
+                    (compiler-backend-var-register-home assignments dst))))])
+          (set! i (+ i 1))))
+      mask)))
 
 (define (compiler-backend-phi-temp-pick-reg-iter
   [occupied-mask : i64]
@@ -29053,8 +29281,8 @@
 ;; the emit position is a valid scavenge point.
 (define (compiler-backend-phi-temp-pick-reg
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]
-  [all : CompilerBackendPhiCopyList]) : String
+  [copies : CompilerBackendPhiCopySeq]
+  [all : CompilerBackendPhiCopySeq]) : String
   (if (not (string.eq compiler-backend-current-phi-planned-cycle ""))
     compiler-backend-current-phi-planned-cycle
     (let
@@ -29145,20 +29373,21 @@
 
 (define (compiler-backend-phi-copy-list-reg-swappable?
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]) : bool
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) true]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (and
-        (compiler-backend-phi-copy-reg-swappable?
-          assignments
-          copy
-          program-index)
-        (compiler-backend-phi-copy-list-reg-swappable?
-          assignments
-          (box-get rest)
-          program-index))]))
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get copies len))
+        (begin
+          (unless
+            (compiler-backend-phi-copy-reg-swappable?
+              assignments
+              (array-ref (struct-get copies slots) i)
+              program-index)
+            (return false))
+          (set! i (+ i 1))))
+      true)))
 
 ;; A scalar-float register cycle has the same direct-move property in the XMM
 ;; bank. Register groups and spills retain the frame-slot path. The scratch
@@ -29192,20 +29421,21 @@
 
 (define (compiler-backend-phi-copy-list-xmm-swappable?
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]) : bool
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) true]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (and
-        (compiler-backend-phi-copy-xmm-swappable?
-          assignments
-          copy
-          program-index)
-        (compiler-backend-phi-copy-list-xmm-swappable?
-          assignments
-          (box-get rest)
-          program-index))]))
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i (struct-get copies len))
+        (begin
+          (unless
+            (compiler-backend-phi-copy-xmm-swappable?
+              assignments
+              (array-ref (struct-get copies slots) i)
+              program-index)
+            (return false))
+          (set! i (+ i 1))))
+      true)))
 
 (define (compiler-backend-emit-phi-source-load-store
   [assignments : CompilerRegAssignmentList]
@@ -29527,7 +29757,7 @@
 ;; break sets it true for the rest of the edge.
 (define (compiler-backend-emit-phi-copy-list
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [outer-active : bool]) : ResultCompilerBackend
@@ -29545,8 +29775,8 @@
 ;; still hold placed phi values that must survive to the merge block entry.
 (define (compiler-backend-emit-phi-copy-list-with-all
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]
-  [all : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
+  [all : CompilerBackendPhiCopySeq]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [outer-active : bool]) : ResultCompilerBackend
@@ -29688,32 +29918,38 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [from-label : String]) : ResultBackendPhiCopies
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (ResultBackendPhiCopies.Ok CompilerBackendPhiCopyList.Nil)
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.Phi dst inputs ty)
-        (match (compiler-backend-phi-input-value inputs from-label)
-          [(ResultBackendValue.Ok value)
-            (match (compiler-backend-leading-phi-copies-seq-from
-              assignments
-              instrs
-              (+ index 1)
-              from-label)
-              [(ResultBackendPhiCopies.Ok tail)
-                (if (compiler-backend-phi-same-home? assignments dst value)
-                  (ResultBackendPhiCopies.Ok tail)
-                  (ResultBackendPhiCopies.Ok
-                    (compiler-backend-phi-copy-cons
+  (let
+    [out : CompilerBackendPhiCopySeq
+      (compiler-backend-phi-copy-seq-with-capacity 0)]
+    [i : i64 index]
+    [n : i64 (compiler-ir-instr-seq-count instrs)]
+    [message : String ""]
+    [failed : bool false]
+    (begin
+      (while (< i n)
+        (match (compiler-ir-instr-seq-ref instrs i)
+          [(CompilerIrInstr.Phi dst inputs ty)
+            (match (compiler-backend-phi-input-value inputs from-label)
+              [(ResultBackendValue.Ok value)
+                (begin
+                  (if (compiler-backend-phi-same-home? assignments dst value)
+                    unit
+                    (compiler-backend-phi-copy-push!
+                      (&mut out)
                       (CompilerBackendPhiCopy.Copy
                         dst
                         (CompilerBackendPhiSource.Value value)
-                        ty)
-                      tail)))]
-              [(ResultBackendPhiCopies.Err message)
-                (ResultBackendPhiCopies.Err message)])]
-          [(ResultBackendValue.Err message)
-            (ResultBackendPhiCopies.Err message)])]
-      [_ (ResultBackendPhiCopies.Ok CompilerBackendPhiCopyList.Nil)])))
+                        ty)))
+                  (set! i (+ i 1)))]
+              [(ResultBackendValue.Err text)
+                (begin
+                  (set! failed true)
+                  (set! message text)
+                  (set! i n))])]
+          [_ (set! i n)]))
+      (if failed
+        (ResultBackendPhiCopies.Err message)
+        (ResultBackendPhiCopies.Ok out)))))
 
 (define (compiler-backend-leading-phi-copies-seq
   [assignments : CompilerRegAssignmentList]
@@ -30006,9 +30242,21 @@
       [(CompilerIrInstr.Phi _ _ _) true]
       [_ false])))
 
+(define (compiler-backend-phi-target-labels-add
+  [out : BackendStringSeq]
+  [label : String]) : BackendStringSeq
+  (let
+    [acc : BackendStringSeq out]
+    (begin
+      (set!
+        compiler-backend-current-phi-target-count
+        (+ compiler-backend-current-phi-target-count 1))
+      (compiler-backend-string-push! (&mut acc) label)
+      acc)))
+
 (define (compiler-backend-phi-target-labels
   [blocks : CompilerIrBlockList]
-  [out : BackendStringList]) : BackendStringList
+  [out : BackendStringSeq]) : BackendStringSeq
   (match blocks
     [(CompilerIrBlockList.Nil) out]
     [(CompilerIrBlockList.Cons block rest)
@@ -30017,11 +30265,7 @@
           (compiler-backend-phi-target-labels
             (box-get rest)
             (if (compiler-backend-instr-seq-starts-with-phi? instrs)
-              (begin
-                (set!
-                  compiler-backend-current-phi-target-count
-                  (+ compiler-backend-current-phi-target-count 1))
-                (compiler-backend-string-cons label out))
+              (compiler-backend-phi-target-labels-add out label)
               out))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-backend-phi-target-labels-seq seq 0 out)]))
@@ -30029,7 +30273,7 @@
 (define (compiler-backend-phi-target-labels-seq
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [out : BackendStringList]) : BackendStringList
+  [out : BackendStringSeq]) : BackendStringSeq
   (if (>= index (compiler-ir-block-seq-count blocks))
     out
     (match (compiler-ir-block-seq-ref blocks index)
@@ -30038,15 +30282,11 @@
           blocks
           (+ index 1)
           (if (compiler-backend-instr-seq-starts-with-phi? instrs)
-            (begin
-              (set!
-                compiler-backend-current-phi-target-count
-                (+ compiler-backend-current-phi-target-count 1))
-              (compiler-backend-string-cons label out))
+            (compiler-backend-phi-target-labels-add out label)
             out))])))
 
 (define (compiler-backend-phi-target-labels-for-blocks
-  [blocks : CompilerIrBlockList]) : BackendStringList
+  [blocks : CompilerIrBlockList]) : BackendStringSeq
   (begin
     (set! compiler-backend-current-phi-target-count 0)
     (compiler-backend-phi-target-labels
@@ -33166,24 +33406,31 @@
 (define (compiler-backend-syscall-arg-moves-build-from
   [args : CompilerIrCallArgs]
   [index : i64]
-  [count : i64]) : CompilerBackendArgMoveList
-  (if (>= index count)
-    ;; Number-last: position 0 -> %rax is the final move in the list.
-    (BackendArgMoveCons
-      (BackendArgMove
-        (compiler-backend-syscall-reg 0)
-        (BackendArgMoveValue (compiler-backend-call-arg-at args 0)))
-      (box BackendArgMoveNil))
-    (BackendArgMoveCons
-      (BackendArgMove
-        (compiler-backend-syscall-reg index)
-        (BackendArgMoveValue (compiler-backend-call-arg-at args index)))
-      (box
-        (compiler-backend-syscall-arg-moves-build-from args (+ index 1) count)))))
+  [count : i64]) : CompilerBackendArgMoveSeq
+  (let
+    [out : CompilerBackendArgMoveSeq
+      (compiler-backend-arg-move-seq-with-capacity 0)]
+    [i : i64 index]
+    (begin
+      (while (< i count)
+        (begin
+          (compiler-backend-arg-move-push!
+            (&mut out)
+            (BackendArgMove
+              (compiler-backend-syscall-reg i)
+              (BackendArgMoveValue (compiler-backend-call-arg-at args i))))
+          (set! i (+ i 1))))
+      ;; Number-last: position 0 -> %rax is the final move in the list.
+      (compiler-backend-arg-move-push!
+        (&mut out)
+        (BackendArgMove
+          (compiler-backend-syscall-reg 0)
+          (BackendArgMoveValue (compiler-backend-call-arg-at args 0))))
+      out)))
 
 (define (compiler-backend-syscall-arg-moves-build
   [args : CompilerIrCallArgs]
-  [count : i64]) : CompilerBackendArgMoveList
+  [count : i64]) : CompilerBackendArgMoveSeq
   (compiler-backend-syscall-arg-moves-build-from args 1 count))
 
 ;; `syscall` clobbers %rcx/%r11 and uses Linux syscall arg registers. The primary
@@ -48034,7 +48281,9 @@
     (compiler-backend-group-vars-disable!)
     (compiler-backend-fuse-need-disable!)
     (compiler-backend-gep-fold-disable!)
-    (set! compiler-backend-current-phi-targets BackendStringList.Nil)
+    (set!
+      compiler-backend-current-phi-targets
+      (compiler-backend-empty-string-list))
     (set! compiler-backend-current-phi-target-count 0)
     (set! compiler-backend-emit-instr-post-base 0)
     (set! compiler-backend-emit-current-count 0)
@@ -48607,41 +48856,42 @@
     [(CompilerBackendMaybeSignature.No) buf]))
 
 (define (compiler-backend-emit-closure-descriptor-entries-into
-  [names : BackendSymbolList]
+  [names : BackendSymbolSeq]
+  [index : i64]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match names
-    [(BackendSymbolList.Nil) buf]
-    [(BackendSymbolList.Cons name rest)
-      (compiler-backend-emit-closure-descriptor-entries-into
-        (box-get rest)
+  (if (>= index (struct-get names len))
+    buf
+    (compiler-backend-emit-closure-descriptor-entries-into
+      names
+      (+ index 1)
+      functions
+      externs
+      program-index
+      (compiler-backend-emit-closure-descriptor-entry-into
+        (array-ref (struct-get names slots) index)
         functions
         externs
         program-index
-        (compiler-backend-emit-closure-descriptor-entry-into
-          name
-          functions
-          externs
-          program-index
-          buf))]))
+        buf))))
 
 (define (compiler-backend-emit-closure-descriptors-into
-  [names : BackendSymbolList]
+  [names : BackendSymbolSeq]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match names
-    [(BackendSymbolList.Nil) buf]
-    [_
-      (compiler-backend-emit-closure-descriptor-entries-into
-        names
-        functions
-        externs
-        program-index
-        (text_buf.append buf "    .section .rodata\n    .balign 8\n"))]))
+  (if (= (struct-get names len) 0)
+    buf
+    (compiler-backend-emit-closure-descriptor-entries-into
+      names
+      0
+      functions
+      externs
+      program-index
+      (text_buf.append buf "    .section .rodata\n    .balign 8\n"))))
 
 (define (compiler-backend-closure-adapter-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -48792,15 +49042,17 @@
 
 (define (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
   [target : CompilerBackendTarget]
-  [names : BackendSymbolList]
+  [names : BackendSymbolSeq]
+  [index : i64]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (match names
-    [(BackendSymbolList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
-    [(BackendSymbolList.Cons name rest)
+  (if (>= index (struct-get names len))
+    (ResultCompilerBackendBuffer.Ok buf)
+    (let
+      [name : i64 (array-ref (struct-get names slots) index)]
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (match (compiler-backend-emit-closure-entry-adapter
@@ -48815,7 +49067,8 @@
             [(ResultCompilerBackend.Ok head)
               (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
                 target
-                (box-get rest)
+                names
+                (+ index 1)
                 functions
                 externs
                 plan
@@ -48826,24 +49079,27 @@
         [(CompilerBackendMaybeSignature.No)
           (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
             target
-            (box-get rest)
+            names
+            (+ index 1)
             functions
             externs
             plan
             program-index
-            buf)])]))
+            buf)]))))
 
 (define (compiler-backend-emit-closure-entry-adapters-stream-into
   [target : CompilerBackendTarget]
-  [names : BackendSymbolList]
+  [names : BackendSymbolSeq]
+  [index : i64]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (match names
-    [(BackendSymbolList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
-    [(BackendSymbolList.Cons name rest)
+  (if (>= index (struct-get names len))
+    (ResultCompilerBackendBuffer.Ok buf)
+    (let
+      [name : i64 (array-ref (struct-get names slots) index)]
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (let
@@ -48868,7 +49124,8 @@
                       (arena.set! caller-arena))
                     (compiler-backend-emit-closure-entry-adapters-stream-into
                       target
-                      (box-get rest)
+                      names
+                      (+ index 1)
                       functions
                       externs
                       plan
@@ -48882,16 +49139,17 @@
         [(CompilerBackendMaybeSignature.No)
           (compiler-backend-emit-closure-entry-adapters-stream-into
             target
-            (box-get rest)
+            names
+            (+ index 1)
             functions
             externs
             plan
             program-index
-            buf)])]))
+            buf)]))))
 
 (define (compiler-backend-emit-closure-entry-adapters-buffer-into
   [target : CompilerBackendTarget]
-  [names : BackendSymbolList]
+  [names : BackendSymbolSeq]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -48901,6 +49159,7 @@
     (compiler-backend-emit-closure-entry-adapters-stream-into
       target
       names
+      0
       functions
       externs
       plan
@@ -48909,37 +49168,12 @@
     (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
       target
       names
+      0
       functions
       externs
       plan
       program-index
       buf)))
-
-(define (compiler-backend-string-list-reverse-into
-  [strings : BackendStringList]
-  [out : BackendStringList]) : BackendStringList
-  (match strings
-    [(BackendStringList.Nil) out]
-    [(BackendStringList.Cons head rest)
-      (compiler-backend-string-list-reverse-into
-        (box-get rest)
-        (compiler-backend-string-cons head out))]))
-
-(define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
-  (compiler-backend-string-list-reverse-into strings BackendStringList.Nil))
-
-(define (compiler-backend-symbol-list-reverse-into
-  [symbols : BackendSymbolList]
-  [out : BackendSymbolList]) : BackendSymbolList
-  (match symbols
-    [(BackendSymbolList.Nil) out]
-    [(BackendSymbolList.Cons head rest)
-      (compiler-backend-symbol-list-reverse-into
-        (box-get rest)
-        (compiler-backend-symbol-cons head out))]))
-
-(define (compiler-backend-symbol-list-reverse [symbols : BackendSymbolList]) : BackendSymbolList
-  (compiler-backend-symbol-list-reverse-into symbols BackendSymbolList.Nil))
 
 (define (compiler-backend-float-list-reverse-into
   [floats : BackendFloatList]
@@ -48954,21 +49188,21 @@
 (define (compiler-backend-float-list-reverse [floats : BackendFloatList]) : BackendFloatList
   (compiler-backend-float-list-reverse-into floats BackendFloatList.Nil))
 
-(define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringList
-  (compiler-backend-string-list-reverse (struct-get set items)))
+(define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringSeq
+  (struct-get set items))
 
-(define (compiler-backend-symbol-set-list [set : BackendSymbolSet]) : BackendSymbolList
-  (compiler-backend-symbol-list-reverse (struct-get set items)))
+(define (compiler-backend-symbol-set-list [set : BackendSymbolSet]) : BackendSymbolSeq
+  (struct-get set items))
 
 (define (compiler-backend-float-set-list [set : BackendFloatSet]) : BackendFloatList
   (compiler-backend-float-list-reverse (struct-get set items)))
 
 (define (compiler-backend-program-collections-functions
-  [collections : CompilerBackendProgramCollections]) : BackendSymbolList
+  [collections : CompilerBackendProgramCollections]) : BackendSymbolSeq
   (compiler-backend-symbol-set-list (struct-get collections functions)))
 
 (define (compiler-backend-program-collections-strings
-  [collections : CompilerBackendProgramCollections]) : BackendStringList
+  [collections : CompilerBackendProgramCollections]) : BackendStringSeq
   (compiler-backend-string-set-list (struct-get collections strings)))
 
 (define (compiler-backend-program-collections-floats
@@ -48976,7 +49210,7 @@
   (compiler-backend-float-set-list (struct-get collections floats)))
 
 (define (compiler-backend-program-collections-bytes
-  [collections : CompilerBackendProgramCollections]) : BackendStringList
+  [collections : CompilerBackendProgramCollections]) : BackendStringSeq
   (compiler-backend-string-set-list (struct-get collections bytes)))
 
 (define (compiler-backend-program-collections-uses-avx2-i64-lane-id?
@@ -49452,26 +49686,29 @@
       "")))
 
 (define (compiler-backend-emit-string-entries-into
-  [strings : BackendStringList]
+  [strings : BackendStringSeq]
+  [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match strings
-    [(BackendStringList.Nil) buf]
-    [(BackendStringList.Cons text rest)
-      (compiler-backend-emit-string-entries-into
-        (box-get rest)
-        (compiler-backend-emit-string-entry-into text buf))]))
+  (if (>= index (struct-get strings len))
+    buf
+    (compiler-backend-emit-string-entries-into
+      strings
+      (+ index 1)
+      (compiler-backend-emit-string-entry-into
+        (array-ref (struct-get strings slots) index)
+        buf))))
 
 (define (compiler-backend-emit-string-rodata-into
-  [strings : BackendStringList]
+  [strings : BackendStringSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match strings
-    [(BackendStringList.Nil) buf]
-    [_
-      (text_buf.append
-        (compiler-backend-emit-string-entries-into
-          strings
-          (text_buf.append buf "    .section .rodata\n"))
-        "\n")]))
+  (if (= (struct-get strings len) 0)
+    buf
+    (text_buf.append
+      (compiler-backend-emit-string-entries-into
+        strings
+        0
+        (text_buf.append buf "    .section .rodata\n"))
+      "\n")))
 
 (define (compiler-backend-emit-byte-directives-into
   [bytes : String]
@@ -49530,26 +49767,29 @@
       (string.append len-text "\n"))))
 
 (define (compiler-backend-emit-bytes-entries-into
-  [items : BackendStringList]
+  [items : BackendStringSeq]
+  [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match items
-    [(BackendStringList.Nil) buf]
-    [(BackendStringList.Cons bytes rest)
-      (compiler-backend-emit-bytes-entries-into
-        (box-get rest)
-        (compiler-backend-emit-bytes-entry-into bytes buf))]))
+  (if (>= index (struct-get items len))
+    buf
+    (compiler-backend-emit-bytes-entries-into
+      items
+      (+ index 1)
+      (compiler-backend-emit-bytes-entry-into
+        (array-ref (struct-get items slots) index)
+        buf))))
 
 (define (compiler-backend-emit-bytes-data-into
-  [items : BackendStringList]
+  [items : BackendStringSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (match items
-    [(BackendStringList.Nil) buf]
-    [_
-      (text_buf.append
-        (compiler-backend-emit-bytes-entries-into
-          items
-          (text_buf.append buf "    .data\n"))
-        "\n")]))
+  (if (= (struct-get items len) 0)
+    buf
+    (text_buf.append
+      (compiler-backend-emit-bytes-entries-into
+        items
+        0
+        (text_buf.append buf "    .data\n"))
+      "\n")))
 
 (define (compiler-backend-float-bits-directive [ty : AstType] [bits : u64]) : String
   (if (compiler-backend-f64-type? ty)
@@ -50432,7 +50672,7 @@
 
 (define (compiler-backend-extern-symbol-referenced?
   [runtime-index : CompilerBackendRuntimeIndex]
-  [referenced-functions : BackendSymbolList]
+  [referenced-functions : BackendSymbolSeq]
   [extern-name-id : i64]
   [link-symbol-id : i64]) : bool
   (let
@@ -50456,7 +50696,7 @@
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
-  [referenced-functions : BackendSymbolList]
+  [referenced-functions : BackendSymbolSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match externs
     [(CompilerIrExternList.Nil) buf]
@@ -50840,9 +51080,9 @@
     : (& features runtime_common.CompilerBackendRuntimeFeatures)]
   [program-index : CompilerBackendProgramIndex]
   [runtime-index : CompilerBackendRuntimeIndex]
-  [closure-names : BackendSymbolList]
-  [strings : BackendStringList]
-  [bytes : BackendStringList]
+  [closure-names : BackendSymbolSeq]
+  [strings : BackendStringSeq]
+  [bytes : BackendStringSeq]
   [floats : BackendFloatList]
   [uses-avx2-i64-lane-id : bool]
   [uses-avx512-i64-lane-id : bool]
@@ -50978,11 +51218,11 @@
   (let
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-program-collections program)]
-    [closure-names : BackendSymbolList
+    [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
-    [strings : BackendStringList
+    [strings : BackendStringSeq
       (compiler-backend-program-collections-strings collections)]
-    [bytes : BackendStringList
+    [bytes : BackendStringSeq
       (compiler-backend-program-collections-bytes collections)]
     [floats : BackendFloatList
       (compiler-backend-program-collections-floats collections)]
@@ -52715,60 +52955,53 @@
 ;; (copy-group) phis keep the previous materialize-only behavior; the tlci
 ;; image path never lowers those.
 (define (compiler-backend-object-phi-copy-list-count
-  [copies : CompilerBackendPhiCopyList]) : i64
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) 0]
-    [(CompilerBackendPhiCopyList.Cons _ rest)
-      (+ 1 (compiler-backend-object-phi-copy-list-count (box-get rest)))]))
+  [copies : CompilerBackendPhiCopySeq]) : i64
+  (struct-get copies len))
 
 (define (compiler-backend-object-phi-copy-list-nil?
-  [copies : CompilerBackendPhiCopyList]) : bool
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) true]
-    [_ false]))
+  [copies : CompilerBackendPhiCopySeq]) : bool
+  (= (struct-get copies len) 0))
 
+;; Collected in instruction order; the stage/store walkers read it back to front
+;; (compiler-backend-phi-copy-seq-rev-ref) to keep the old prepend order.
 (define (compiler-backend-object-edge-phi-copies-scan
   [instrs : CompilerIrInstrSeq]
   [program-index : CompilerBackendProgramIndex]
   [from-label : String]
-  [index : i64]
-  [acc : CompilerBackendPhiCopyList]) : CompilerBackendPhiCopyList
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    acc
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.Phi dst inputs ty)
-        (match (compiler-backend-phi-input-value inputs from-label)
-          [(ResultBackendValue.Ok value)
-            (compiler-backend-object-edge-phi-copies-scan
-              instrs
-              program-index
-              from-label
-              (+ index 1)
-              (if (compiler-backend-copy-group? program-index ty dst value)
-                acc
-                (compiler-backend-phi-copy-cons
-                  (CompilerBackendPhiCopy.Copy
-                    dst
-                    (CompilerBackendPhiSource.Value value)
-                    ty)
-                  acc)))]
-          [(ResultBackendValue.Err _)
-            (compiler-backend-object-edge-phi-copies-scan
-              instrs
-              program-index
-              from-label
-              (+ index 1)
-              acc)])]
-      [_ acc])))
+  [index : i64]) : CompilerBackendPhiCopySeq
+  (let
+    [out : CompilerBackendPhiCopySeq
+      (compiler-backend-phi-copy-seq-with-capacity 0)]
+    [i : i64 index]
+    [n : i64 (compiler-ir-instr-seq-count instrs)]
+    (begin
+      (while (< i n)
+        (match (compiler-ir-instr-seq-ref instrs i)
+          [(CompilerIrInstr.Phi dst inputs ty)
+            (begin
+              (match (compiler-backend-phi-input-value inputs from-label)
+                [(ResultBackendValue.Ok value)
+                  (if (compiler-backend-copy-group? program-index ty dst value)
+                    unit
+                    (compiler-backend-phi-copy-push!
+                      (&mut out)
+                      (CompilerBackendPhiCopy.Copy
+                        dst
+                        (CompilerBackendPhiSource.Value value)
+                        ty)))]
+                [(ResultBackendValue.Err _) unit])
+              (set! i (+ i 1)))]
+          [_ (set! i n)]))
+      out)))
 
 (define (compiler-backend-object-edge-phi-copies-seq
   [blocks : CompilerIrBlockSeq]
   [program-index : CompilerBackendProgramIndex]
   [target-label : String]
   [from-label : String]
-  [index : i64]) : CompilerBackendPhiCopyList
+  [index : i64]) : CompilerBackendPhiCopySeq
   (if (>= index (compiler-ir-block-seq-count blocks))
-    CompilerBackendPhiCopyList.Nil
+    (compiler-backend-phi-copy-seq-with-capacity 0)
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block label instrs)
         (if (string.eq label target-label)
@@ -52776,8 +53009,7 @@
             instrs
             program-index
             from-label
-            0
-            CompilerBackendPhiCopyList.Nil)
+            0)
           (compiler-backend-object-edge-phi-copies-seq
             blocks
             program-index
@@ -52789,9 +53021,9 @@
   [blocks : CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]
   [target-label : String]
-  [from-label : String]) : CompilerBackendPhiCopyList
+  [from-label : String]) : CompilerBackendPhiCopySeq
   (match blocks
-    [(CompilerIrBlockList.Nil) CompilerBackendPhiCopyList.Nil]
+    [(CompilerIrBlockList.Nil) (compiler-backend-phi-copy-seq-with-capacity 0)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label instrs)
@@ -52800,8 +53032,7 @@
               instrs
               program-index
               from-label
-              0
-              CompilerBackendPhiCopyList.Nil)
+              0)
             (compiler-backend-object-edge-phi-copies
               (box-get rest)
               program-index
@@ -52818,57 +53049,55 @@
 (define (compiler-backend-object-emit-phi-copies-stage
   [parts : CompilerBackendObjectParts]
   [site : String]
-  [copies : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
   [index : i64]) : CompilerBackendObjectParts
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) parts]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (match copy
-        [(CompilerBackendPhiCopy.Copy _ source ty)
-          (match source
-            [(CompilerBackendPhiSource.Value value)
-              (compiler-backend-object-emit-phi-copies-stage
-                (compiler-backend-object-add-nonempty-bytes
-                  (compiler-backend-object-load-value-to-reg-with-type
-                    parts
-                    site
-                    value
-                    ty
-                    "%rax")
-                  (compiler-backend-object-store-rax-rsp-bytes (* index 8)))
-                site
-                (box-get rest)
-                (+ index 1))]
-            [(CompilerBackendPhiSource.Temp _)
-              (compiler-backend-object-emit-phi-copies-stage
-                parts
-                site
-                (box-get rest)
-                (+ index 1))])])]))
+  (if (>= index (struct-get copies len))
+    parts
+    (match (compiler-backend-phi-copy-seq-rev-ref copies index)
+      [(CompilerBackendPhiCopy.Copy _ source ty)
+        (match source
+          [(CompilerBackendPhiSource.Value value)
+            (compiler-backend-object-emit-phi-copies-stage
+              (compiler-backend-object-add-nonempty-bytes
+                (compiler-backend-object-load-value-to-reg-with-type
+                  parts
+                  site
+                  value
+                  ty
+                  "%rax")
+                (compiler-backend-object-store-rax-rsp-bytes (* index 8)))
+              site
+              copies
+              (+ index 1))]
+          [(CompilerBackendPhiSource.Temp _)
+            (compiler-backend-object-emit-phi-copies-stage
+              parts
+              site
+              copies
+              (+ index 1))])])))
 
 (define (compiler-backend-object-emit-phi-copies-store
   [parts : CompilerBackendObjectParts]
-  [copies : CompilerBackendPhiCopyList]
+  [copies : CompilerBackendPhiCopySeq]
   [index : i64]) : CompilerBackendObjectParts
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) parts]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (match copy
-        [(CompilerBackendPhiCopy.Copy dst _ _)
-          (compiler-backend-object-emit-phi-copies-store
-            (compiler-backend-object-store-reg-to-var
-              (compiler-backend-object-add-nonempty-bytes
-                parts
-                (compiler-backend-object-load-rax-rsp-bytes (* index 8)))
-              dst
-              "%rax")
-            (box-get rest)
-            (+ index 1))])]))
+  (if (>= index (struct-get copies len))
+    parts
+    (match (compiler-backend-phi-copy-seq-rev-ref copies index)
+      [(CompilerBackendPhiCopy.Copy dst _ _)
+        (compiler-backend-object-emit-phi-copies-store
+          (compiler-backend-object-store-reg-to-var
+            (compiler-backend-object-add-nonempty-bytes
+              parts
+              (compiler-backend-object-load-rax-rsp-bytes (* index 8)))
+            dst
+            "%rax")
+          copies
+          (+ index 1))])))
 
 (define (compiler-backend-object-emit-phi-copies
   [parts : CompilerBackendObjectParts]
   [site : String]
-  [copies : CompilerBackendPhiCopyList]) : CompilerBackendObjectParts
+  [copies : CompilerBackendPhiCopySeq]) : CompilerBackendObjectParts
   (let
     [count : i64 (compiler-backend-object-phi-copy-list-count copies)]
     (if (= count 0)
@@ -53056,13 +53285,13 @@
           (compiler-backend-asm-label label-scope true-label)]
         [false-symbol : String
           (compiler-backend-asm-label label-scope false-label)]
-        [true-copies : CompilerBackendPhiCopyList
+        [true-copies : CompilerBackendPhiCopySeq
           (compiler-backend-object-edge-phi-copies
             blocks
             program-index
             true-label
             current-label)]
-        [false-copies : CompilerBackendPhiCopyList
+        [false-copies : CompilerBackendPhiCopySeq
           (compiler-backend-object-edge-phi-copies
             blocks
             program-index
@@ -53786,81 +54015,85 @@
 
 (define (compiler-backend-object-strings
   [parts : CompilerBackendObjectParts]
-  [strings : BackendStringList]) : CompilerBackendObjectParts
-  (match strings
-    [(BackendStringList.Nil) parts]
-    [(BackendStringList.Cons text rest)
-      (let
-        [data-symbol : String (compiler-backend-string-data-label text)]
-        [fat-symbol : String (compiler-backend-string-fat-label text)]
-        (compiler-backend-object-strings
+  [strings : BackendStringSeq]
+  [index : i64]) : CompilerBackendObjectParts
+  (if (>= index (struct-get strings len))
+    parts
+    (let
+      [text : String (array-ref (struct-get strings slots) index)]
+      [data-symbol : String (compiler-backend-string-data-label text)]
+      [fat-symbol : String (compiler-backend-string-fat-label text)]
+      (compiler-backend-object-strings
+        (compiler-backend-object-add-rodata
           (compiler-backend-object-add-rodata
             (compiler-backend-object-add-rodata
-              (compiler-backend-object-add-rodata
-                (compiler-backend-object-add-rodata-relocation
-                  (compiler-backend-object-add-rodata
-                    (compiler-backend-object-symbol-local-section
+              (compiler-backend-object-add-rodata-relocation
+                (compiler-backend-object-add-rodata
+                  (compiler-backend-object-symbol-local-section
+                    (compiler-backend-object-add-rodata
                       (compiler-backend-object-add-rodata
-                        (compiler-backend-object-add-rodata
-                          (compiler-backend-object-symbol-local-section
-                            parts
-                            data-symbol
-                            (cobj.CompilerObjectSectionKind.Rodata)
-                            (cobj.CompilerObjectSymbolKind.Data))
-                          (cobj.CompilerObjectDataRecord.Label data-symbol))
-                        (cobj.CompilerObjectDataRecord.String text))
-                      fat-symbol
-                      (cobj.CompilerObjectSectionKind.Rodata)
-                      (cobj.CompilerObjectSymbolKind.Data))
-                    (cobj.CompilerObjectDataRecord.Align 8))
-                  fat-symbol
-                  (cobj.CompilerObjectRelocationKind.Abs64)
-                  data-symbol)
-                (cobj.CompilerObjectDataRecord.Label fat-symbol))
-              (cobj.CompilerObjectDataRecord.SymbolAddress data-symbol))
-            (cobj.CompilerObjectDataRecord.I64 (string.string-length text)))
-          (box-get rest)))]))
+                        (compiler-backend-object-symbol-local-section
+                          parts
+                          data-symbol
+                          (cobj.CompilerObjectSectionKind.Rodata)
+                          (cobj.CompilerObjectSymbolKind.Data))
+                        (cobj.CompilerObjectDataRecord.Label data-symbol))
+                      (cobj.CompilerObjectDataRecord.String text))
+                    fat-symbol
+                    (cobj.CompilerObjectSectionKind.Rodata)
+                    (cobj.CompilerObjectSymbolKind.Data))
+                  (cobj.CompilerObjectDataRecord.Align 8))
+                fat-symbol
+                (cobj.CompilerObjectRelocationKind.Abs64)
+                data-symbol)
+              (cobj.CompilerObjectDataRecord.Label fat-symbol))
+            (cobj.CompilerObjectDataRecord.SymbolAddress data-symbol))
+          (cobj.CompilerObjectDataRecord.I64 (string.string-length text)))
+        strings
+        (+ index 1)))))
 
 (define (compiler-backend-object-bytes
   [parts : CompilerBackendObjectParts]
-  [items : BackendStringList]) : CompilerBackendObjectParts
-  (match items
-    [(BackendStringList.Nil) parts]
-    [(BackendStringList.Cons bytes rest)
-      (let
-        [data-symbol : String (compiler-backend-bytes-data-label bytes)]
-        [fat-symbol : String (compiler-backend-bytes-fat-label bytes)]
-        (compiler-backend-object-bytes
+  [items : BackendStringSeq]
+  [index : i64]) : CompilerBackendObjectParts
+  (if (>= index (struct-get items len))
+    parts
+    (let
+      [bytes : String (array-ref (struct-get items slots) index)]
+      [data-symbol : String (compiler-backend-bytes-data-label bytes)]
+      [fat-symbol : String (compiler-backend-bytes-fat-label bytes)]
+      (compiler-backend-object-bytes
+        (compiler-backend-object-add-data
           (compiler-backend-object-add-data
             (compiler-backend-object-add-data
               (compiler-backend-object-add-data
-                (compiler-backend-object-add-data
-                  (compiler-backend-object-add-data-relocation
+                (compiler-backend-object-add-data-relocation
+                  (compiler-backend-object-add-data
                     (compiler-backend-object-add-data
                       (compiler-backend-object-add-data
-                        (compiler-backend-object-add-data
+                        (compiler-backend-object-symbol-local-section
                           (compiler-backend-object-symbol-local-section
-                            (compiler-backend-object-symbol-local-section
-                              parts
-                              data-symbol
-                              (cobj.CompilerObjectSectionKind.Data)
-                              (cobj.CompilerObjectSymbolKind.Data))
-                            fat-symbol
+                            parts
+                            data-symbol
                             (cobj.CompilerObjectSectionKind.Data)
                             (cobj.CompilerObjectSymbolKind.Data))
-                          (cobj.CompilerObjectDataRecord.Align 8))
-                        (cobj.CompilerObjectDataRecord.Label data-symbol))
-                      (if (= (string.string-length bytes) 0)
-                        (cobj.CompilerObjectDataRecord.Zero 1)
-                        (cobj.CompilerObjectDataRecord.Bytes bytes)))
-                    fat-symbol
-                    (cobj.CompilerObjectRelocationKind.Abs64)
-                    data-symbol)
-                  (cobj.CompilerObjectDataRecord.Align 8))
-                (cobj.CompilerObjectDataRecord.Label fat-symbol))
-              (cobj.CompilerObjectDataRecord.SymbolAddress data-symbol))
-            (cobj.CompilerObjectDataRecord.I64 (string.string-length bytes)))
-          (box-get rest)))]))
+                          fat-symbol
+                          (cobj.CompilerObjectSectionKind.Data)
+                          (cobj.CompilerObjectSymbolKind.Data))
+                        (cobj.CompilerObjectDataRecord.Align 8))
+                      (cobj.CompilerObjectDataRecord.Label data-symbol))
+                    (if (= (string.string-length bytes) 0)
+                      (cobj.CompilerObjectDataRecord.Zero 1)
+                      (cobj.CompilerObjectDataRecord.Bytes bytes)))
+                  fat-symbol
+                  (cobj.CompilerObjectRelocationKind.Abs64)
+                  data-symbol)
+                (cobj.CompilerObjectDataRecord.Align 8))
+              (cobj.CompilerObjectDataRecord.Label fat-symbol))
+            (cobj.CompilerObjectDataRecord.SymbolAddress data-symbol))
+          (cobj.CompilerObjectDataRecord.I64 (string.string-length bytes)))
+        items
+        (+ index 1)))))
 
 (define (compiler-backend-object-floats
   [parts : CompilerBackendObjectParts]
@@ -53910,50 +54143,52 @@
 
 (define (compiler-backend-object-closure-descriptors
   [parts : CompilerBackendObjectParts]
-  [names : BackendSymbolList]
+  [names : BackendSymbolSeq]
+  [index : i64]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
-  (match names
-    [(BackendSymbolList.Nil) parts]
-    [(BackendSymbolList.Cons name rest)
-      (let
-        [name-text : String (compiler-ir-symbol-text name)]
-        [descriptor : String
-          (compiler-backend-closure-descriptor-label name-text)]
-        [entry : String (compiler-backend-closure-entry-label name-text)]
-        (compiler-backend-object-closure-descriptors
-          (match (compiler-backend-index-signature program-index name)
-            [(CompilerBackendMaybeSignature.Some _ _)
+  (if (>= index (struct-get names len))
+    parts
+    (let
+      [name : i64 (array-ref (struct-get names slots) index)]
+      [name-text : String (compiler-ir-symbol-text name)]
+      [descriptor : String
+        (compiler-backend-closure-descriptor-label name-text)]
+      [entry : String (compiler-backend-closure-entry-label name-text)]
+      (compiler-backend-object-closure-descriptors
+        (match (compiler-backend-index-signature program-index name)
+          [(CompilerBackendMaybeSignature.Some _ _)
+            (compiler-backend-object-add-rodata
               (compiler-backend-object-add-rodata
-                (compiler-backend-object-add-rodata
-                  (compiler-backend-object-add-rodata-relocation
+                (compiler-backend-object-add-rodata-relocation
+                  (compiler-backend-object-add-rodata
                     (compiler-backend-object-add-rodata
-                      (compiler-backend-object-add-rodata
+                      (compiler-backend-object-symbol-local-section
                         (compiler-backend-object-symbol-local-section
-                          (compiler-backend-object-symbol-local-section
-                            parts
-                            descriptor
-                            (cobj.CompilerObjectSectionKind.Rodata)
-                            (cobj.CompilerObjectSymbolKind.Data))
-                          entry
-                          (cobj.CompilerObjectSectionKind.Text)
-                          (cobj.CompilerObjectSymbolKind.Function))
-                        (cobj.CompilerObjectDataRecord.Align 8))
-                      (cobj.CompilerObjectDataRecord.Label descriptor))
-                    descriptor
-                    (cobj.CompilerObjectRelocationKind.Abs64)
-                    entry)
-                  (cobj.CompilerObjectDataRecord.SymbolAddress entry))
-                (cobj.CompilerObjectDataRecord.I64 0))]
-            [(CompilerBackendMaybeSignature.No) parts])
-          (box-get rest)
-          program-index))]))
+                          parts
+                          descriptor
+                          (cobj.CompilerObjectSectionKind.Rodata)
+                          (cobj.CompilerObjectSymbolKind.Data))
+                        entry
+                        (cobj.CompilerObjectSectionKind.Text)
+                        (cobj.CompilerObjectSymbolKind.Function))
+                      (cobj.CompilerObjectDataRecord.Align 8))
+                    (cobj.CompilerObjectDataRecord.Label descriptor))
+                  descriptor
+                  (cobj.CompilerObjectRelocationKind.Abs64)
+                  entry)
+                (cobj.CompilerObjectDataRecord.SymbolAddress entry))
+              (cobj.CompilerObjectDataRecord.I64 0))]
+          [(CompilerBackendMaybeSignature.No) parts])
+        names
+        (+ index 1)
+        program-index))))
 
 (define (compiler-backend-object-externs
   [parts : CompilerBackendObjectParts]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
-  [referenced-functions : BackendSymbolList]) : CompilerBackendObjectParts
+  [referenced-functions : BackendSymbolSeq]) : CompilerBackendObjectParts
   (match externs
     [(CompilerIrExternList.Nil) parts]
     [(CompilerIrExternList.Cons item rest)
@@ -53992,31 +54227,25 @@
         runtime-index
         referenced-functions)]))
 
-(define (compiler-backend-object-runtime-symbols-list) : BackendStringList
+;; Emitted in this order (the old cons chain was built back-to-front).
+(define (compiler-backend-object-runtime-symbols-list) : BackendStringSeq
   (let
-    [symbols : BackendStringList BackendStringList.Nil]
+    [symbols : BackendStringSeq
+      (BackendStringSeq (array.make-array String 13) 0)]
     (begin
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_tlci_call_image_entry" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_tlci_call_macro_entry" symbols))
-      (set! symbols (compiler-backend-string-cons "tl_memchr" symbols))
-      (set! symbols (compiler-backend-string-cons "tl_memcpy" symbols))
-      (set! symbols (compiler-backend-string-cons "tl_shift_abort" symbols))
-      (set! symbols (compiler-backend-string-cons "tl_div_abort" symbols))
-      (set! symbols (compiler-backend-string-cons "tl_region_reset" symbols))
-      (set! symbols (compiler-backend-string-cons "tl_region_mark" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_arena_make_atomic" symbols))
-      (set!
-        symbols
-        (compiler-backend-string-cons "tl_arena_make_small" symbols))
-      (set! symbols (compiler-backend-string-cons "tl_arena_set" symbols))
-      (set! symbols (compiler-backend-string-cons "tl_arena_current" symbols))
-      (set! symbols (compiler-backend-string-cons "tl_alloc" symbols))
+      (compiler-backend-string-push! (&mut symbols) "tl_alloc")
+      (compiler-backend-string-push! (&mut symbols) "tl_arena_current")
+      (compiler-backend-string-push! (&mut symbols) "tl_arena_set")
+      (compiler-backend-string-push! (&mut symbols) "tl_arena_make_small")
+      (compiler-backend-string-push! (&mut symbols) "tl_arena_make_atomic")
+      (compiler-backend-string-push! (&mut symbols) "tl_region_mark")
+      (compiler-backend-string-push! (&mut symbols) "tl_region_reset")
+      (compiler-backend-string-push! (&mut symbols) "tl_div_abort")
+      (compiler-backend-string-push! (&mut symbols) "tl_shift_abort")
+      (compiler-backend-string-push! (&mut symbols) "tl_memcpy")
+      (compiler-backend-string-push! (&mut symbols) "tl_memchr")
+      (compiler-backend-string-push! (&mut symbols) "tl_tlci_call_macro_entry")
+      (compiler-backend-string-push! (&mut symbols) "tl_tlci_call_image_entry")
       symbols)))
 
 (define (compiler-backend-object-runtime-symbol-provided?
@@ -54086,10 +54315,12 @@
 (define (compiler-backend-object-runtime-symbols
   [parts : CompilerBackendObjectParts]
   [plan : CompilerBackendRuntimePlan]
-  [names : BackendStringList]) : CompilerBackendObjectParts
-  (match names
-    [(BackendStringList.Nil) parts]
-    [(BackendStringList.Cons name rest)
+  [names : BackendStringSeq]
+  [index : i64]) : CompilerBackendObjectParts
+  (if (>= index (struct-get names len))
+    parts
+    (let
+      [name : String (array-ref (struct-get names slots) index)]
       (compiler-backend-object-runtime-symbols
         (if (compiler-backend-object-runtime-symbol-provided? plan name)
           (compiler-backend-object-symbol-local-section
@@ -54099,7 +54330,8 @@
             (cobj.CompilerObjectSymbolKind.Runtime))
           parts)
         plan
-        (box-get rest))]))
+        names
+        (+ index 1)))))
 
 (define (compiler-backend-object-hex-value [c : char]) : i64
   (cond
@@ -54781,11 +55013,11 @@
   (let
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-program-collections program)]
-    [closure-names : BackendSymbolList
+    [closure-names : BackendSymbolSeq
       (compiler-backend-program-collections-functions collections)]
-    [strings : BackendStringList
+    [strings : BackendStringSeq
       (compiler-backend-program-collections-strings collections)]
-    [bytes : BackendStringList
+    [bytes : BackendStringSeq
       (compiler-backend-program-collections-bytes collections)]
     [floats : BackendFloatList
       (compiler-backend-program-collections-floats collections)]
@@ -54813,9 +55045,12 @@
                           target
                           globals)
                         closure-names
+                        0
                         program-index)
-                      strings)
-                    bytes)
+                      strings
+                      0)
+                    bytes
+                    0)
                   floats)
                 uses-f64-neg)
               externs
@@ -54823,7 +55058,8 @@
               runtime-index
               closure-names)
             plan
-            (compiler-backend-object-runtime-symbols-list))
+            (compiler-backend-object-runtime-symbols-list)
+            0)
           target
           (compiler-backend-runtime-tail-tlci-macro-entry?
             (compiler-backend-runtime-plan-tail plan)))

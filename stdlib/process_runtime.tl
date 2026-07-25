@@ -23,34 +23,26 @@
 (import stdlib.byte_buf_core)
 (import stdlib.env)
 
-;: Private runtime argv list. `tl` converts the public process model to
+;: Private runtime argv sequence. `tl` converts the public process model to
 ;: this no-cycle representation before invoking the OS runtime.
-(defenum ProcessRuntimeStringList
-  (ProcessRuntimeStringNil)
-  (ProcessRuntimeStringCons String (Box ProcessRuntimeStringList)))
+(defstruct ProcessRuntimeStringList
+  (slots (Array String))
+  (len i64))
 
 ;: Private runtime optional string value.
 (defstruct ProcessRuntimeMaybeString
   (present bool)
   (value String))
 
-;: Private runtime environment override list.
-(defenum ProcessRuntimeEnvList
-  (ProcessRuntimeEnvNil)
-  (ProcessRuntimeEnvCons String String (Box ProcessRuntimeEnvList)))
-
-;: Private argv step used by the runtime's linear scans.
-(defstruct ProcessRuntimeStringStep
-  (present bool)
-  (value String)
-  (rest ProcessRuntimeStringList))
-
-;: Private environment-list step used by the runtime's linear scans.
-(defstruct ProcessRuntimeEnvStep
-  (present bool)
+;: Private runtime environment override entry.
+(defstruct ProcessRuntimeEnvEntry
   (name String)
-  (value String)
-  (rest ProcessRuntimeEnvList))
+  (value String))
+
+;: Private runtime environment override sequence.
+(defstruct ProcessRuntimeEnvList
+  (slots (Array ProcessRuntimeEnvEntry))
+  (len i64))
 
 ;: Private optional string view.
 (defstruct ProcessRuntimeMaybeStringInfo
@@ -114,22 +106,50 @@
 
 ;: Return an empty runtime argv list.
 (define (args-empty) : ProcessRuntimeStringList
-  ProcessRuntimeStringNil)
+  (ProcessRuntimeStringList (array.make-array String 0) 0))
 
-;: Prepend an owned argv string to a runtime argv list.
+;: Prepend an owned argv string, copying `rest` into a right-sized array.
 (define (args-cons [value : String] [rest : ProcessRuntimeStringList]) : ProcessRuntimeStringList
-  (ProcessRuntimeStringCons value (box rest)))
+  (let
+    [len : i64 (struct-get rest len)]
+    [slots : (Array String) (array.make-array String (+ len 1))]
+    [index : i64 0]
+    (begin
+      (array-set! slots 0 value)
+      (while (< index len)
+        (begin
+          (array-set!
+            slots
+            (+ index 1)
+            (array-ref (struct-get rest slots) index))
+          (set! index (+ index 1))))
+      (ProcessRuntimeStringList slots (+ len 1)))))
 
 ;: Return an empty runtime environment override list.
 (define (env-empty) : ProcessRuntimeEnvList
-  ProcessRuntimeEnvNil)
+  (ProcessRuntimeEnvList (array.make-array ProcessRuntimeEnvEntry 0) 0))
 
-;: Prepend an owned environment override to a runtime env list.
+;: Prepend an owned environment override, copying `rest` into a right-sized
+;: array.
 (define (env-cons
   [name : String]
   [value : String]
   [rest : ProcessRuntimeEnvList]) : ProcessRuntimeEnvList
-  (ProcessRuntimeEnvCons name value (box rest)))
+  (let
+    [len : i64 (struct-get rest len)]
+    [slots : (Array ProcessRuntimeEnvEntry)
+      (array.make-array ProcessRuntimeEnvEntry (+ len 1))]
+    [index : i64 0]
+    (begin
+      (array-set! slots 0 (ProcessRuntimeEnvEntry name value))
+      (while (< index len)
+        (begin
+          (array-set!
+            slots
+            (+ index 1)
+            (array-ref (struct-get rest slots) index))
+          (set! index (+ index 1))))
+      (ProcessRuntimeEnvList slots (+ len 1)))))
 
 ;: Return a missing runtime optional string.
 (define (no-string) : ProcessRuntimeMaybeString
@@ -152,56 +172,9 @@
 (define (child [pid : i64] [stdout-handle : i64] [stderr-handle : i64]) : ProcessRuntimeChild
   (ProcessRuntimeChild pid stdout-handle stderr-handle))
 
-;: Return a destructured argv step.
-(define (string-step [args : ProcessRuntimeStringList]) : ProcessRuntimeStringStep
-  (match args
-    [(ProcessRuntimeStringNil)
-      (ProcessRuntimeStringStep false "" ProcessRuntimeStringNil)]
-    [(ProcessRuntimeStringCons value rest)
-      (ProcessRuntimeStringStep true value (box-get rest))]))
-
-;: Return whether a destructured argv step contains an item.
-(define (string-step-present? [step : ProcessRuntimeStringStep]) : bool
-  (struct-get step present))
-
-;: Return the argv value from a destructured step.
-(define (string-step-value [step : ProcessRuntimeStringStep]) : String
-  (struct-get step value))
-
-;: Return the argv tail from a destructured step.
-(define (string-step-rest [step : ProcessRuntimeStringStep]) : ProcessRuntimeStringList
-  (struct-get step rest))
-
 ;: Return the number of runtime argv entries.
 (define (args-count [args : ProcessRuntimeStringList]) : i64
-  (match args
-    [(ProcessRuntimeStringNil) 0]
-    [(ProcessRuntimeStringCons _ rest)
-      (+ 1 (stdlib.process_runtime.args-count (box-get rest)))]))
-
-;: Return a destructured environment step.
-(define (env-step [env : ProcessRuntimeEnvList]) : ProcessRuntimeEnvStep
-  (match env
-    [(ProcessRuntimeEnvNil)
-      (ProcessRuntimeEnvStep false "" "" ProcessRuntimeEnvNil)]
-    [(ProcessRuntimeEnvCons name value rest)
-      (ProcessRuntimeEnvStep true name value (box-get rest))]))
-
-;: Return whether a destructured env step contains an item.
-(define (env-step-present? [step : ProcessRuntimeEnvStep]) : bool
-  (struct-get step present))
-
-;: Return the env name from a destructured step.
-(define (env-step-name [step : ProcessRuntimeEnvStep]) : String
-  (struct-get step name))
-
-;: Return the env value from a destructured step.
-(define (env-step-value [step : ProcessRuntimeEnvStep]) : String
-  (struct-get step value))
-
-;: Return the env tail from a destructured step.
-(define (env-step-rest [step : ProcessRuntimeEnvStep]) : ProcessRuntimeEnvList
-  (struct-get step rest))
+  (struct-get args len))
 
 ;: Return a destructured optional string.
 (define (maybe-string-info [value : ProcessRuntimeMaybeString]) : ProcessRuntimeMaybeStringInfo
@@ -628,30 +601,27 @@
 ;: resulting array can be scanned repeatedly without further moves.
 (define (build-override-cstrings [env : ProcessRuntimeEnvList]) : (Array u64)
   (let
-    [ov : (Array u64) (array.make-array u64 0)]
-    [cur : ProcessRuntimeEnvList env]
-    [continue : bool true]
+    [count : i64 (struct-get env len)]
+    [ov : (Array u64) (array.make-array u64 count)]
+    [index : i64 0]
     (begin
-      (while continue
+      (while (< index count)
         (let
-          [step : ProcessRuntimeEnvStep (stdlib.process_runtime.env-step cur)]
-          (if (stdlib.process_runtime.env-step-present? step)
-            (let
-              [name : String (stdlib.process_runtime.env-step-name step)]
-              [value : String (stdlib.process_runtime.env-step-value step)]
-              [rest : ProcessRuntimeEnvList
-                (stdlib.process_runtime.env-step-rest step)]
-              (begin
-                (array-push!
-                  ov
-                  (unsafe
-                    (cast
-                      (ptr->int
-                        (io.array-const-ptr
-                          (stdlib.process_runtime.env-cstring name value)))
-                      : u64)))
-                (set! cur rest)))
-            (set! continue false))))
+          [entry : ProcessRuntimeEnvEntry
+            (array-ref (struct-get env slots) index)]
+          (begin
+            (array-set!
+              ov
+              index
+              (unsafe
+                (cast
+                  (ptr->int
+                    (io.array-const-ptr
+                      (stdlib.process_runtime.env-cstring
+                        (struct-get entry name)
+                        (struct-get entry value))))
+                  : u64)))
+            (set! index (+ index 1)))))
       ov)))
 
 ;: Return the integer address of an optional command path C string, or 0.
@@ -747,32 +717,20 @@
   (let
     [argc : i64 (stdlib.process_runtime.args-count argv)]
     [arr : (Array u64) (array.make-array u64 (+ argc 2))]
-    [w : i64 1]
-    [cur : ProcessRuntimeStringList argv]
-    [continue : bool true]
+    [index : i64 0]
     (begin
       (array-set! arr 0 (cast exec-addr : u64))
-      (while continue
+      (while (< index argc)
         (let
-          [step : ProcessRuntimeStringStep
-            (stdlib.process_runtime.string-step cur)]
-          (if (stdlib.process_runtime.string-step-present? step)
-            (let
-              [text : String (stdlib.process_runtime.string-step-value step)]
-              [rest : ProcessRuntimeStringList
-                (stdlib.process_runtime.string-step-rest step)]
-              (begin
-                (array-set!
-                  arr
-                  w
-                  (unsafe
-                    (cast
-                      (ptr->int (io.array-const-ptr (io.c-string text)))
-                      : u64)))
-                (set! w (+ w 1))
-                (set! cur rest)))
-            (set! continue false))))
-      (array-set! arr w (cast 0 : u64))
+          [text : String (array-ref (struct-get argv slots) index)]
+          (begin
+            (array-set!
+              arr
+              (+ index 1)
+              (unsafe
+                (cast (ptr->int (io.array-const-ptr (io.c-string text))) : u64)))
+            (set! index (+ index 1)))))
+      (array-set! arr (+ argc 1) (cast 0 : u64))
       (stdlib.process_runtime.array-u64-addr arr))))
 
 ;: Count inherited environment entries not overridden by `ov`.
@@ -1561,24 +1519,17 @@
         (text_buf.empty)
         (stdlib.process_runtime.quote-arg
           (stdlib.process_runtime.command-executable command)))]
-    [cur : ProcessRuntimeStringList
+    [argv : ProcessRuntimeStringList
       (stdlib.process_runtime.command-argv command)]
-    [continue : bool true]
+    [index : i64 0]
     (begin
-      (while continue
+      (while (< index (struct-get argv len))
         (let
-          [step : ProcessRuntimeStringStep
-            (stdlib.process_runtime.string-step cur)]
-          (if (stdlib.process_runtime.string-step-present? step)
-            (let
-              [text : String (stdlib.process_runtime.string-step-value step)]
-              [rest : ProcessRuntimeStringList
-                (stdlib.process_runtime.string-step-rest step)]
-              (begin
-                (text_buf.append! line " ")
-                (text_buf.append! line (stdlib.process_runtime.quote-arg text))
-                (set! cur rest)))
-            (set! continue false))))
+          [text : String (array-ref (struct-get argv slots) index)]
+          (begin
+            (text_buf.append! line " ")
+            (text_buf.append! line (stdlib.process_runtime.quote-arg text))
+            (set! index (+ index 1)))))
       (text_buf.render line))))
 
 ;: Append the NUL-terminated C string at `addr` (including its NUL) onto a block.

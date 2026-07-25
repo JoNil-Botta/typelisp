@@ -243,6 +243,19 @@
           (compiler-diagnostic-text-edit-replacement edit)
           (string.substring source end (- source-len end)))))))
 
+;; The compiler itself never emits a multi-edit fix, so the shipped module keeps
+;; only the single-edit constructor and this fixture builds the pair locally.
+(define (compiler-diagnostic-test-edit-pair
+  [first : CompilerDiagnosticTextEdit]
+  [second : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEditSeq
+  (let
+    [slots : (Array CompilerDiagnosticTextEdit)
+      (make-array CompilerDiagnosticTextEdit 2)]
+    (begin
+      (array-set! slots 0 first)
+      (array-set! slots 1 second)
+      (CompilerDiagnosticTextEditSeq slots 2))))
+
 (define (compiler-diagnostic-fix-model-ok?) : bool
   (let
     [plain : CompilerDiagnostic
@@ -251,68 +264,56 @@
       (compiler-diagnostic-fix-new
         "Apply both edits"
         CompilerDiagnosticMachineApplicable
-        (CompilerDiagnosticTextEditCons
+        (compiler-diagnostic-test-edit-pair
           (compiler-diagnostic-text-edit-new
             (CompilerDiagnosticSpan "" 1 2 1 4)
             "first")
-          (box
-            (CompilerDiagnosticTextEditCons
-              (compiler-diagnostic-text-edit-new
-                (CompilerDiagnosticSpan "other.tl" 2 3 2 5)
-                "λ")
-              (box CompilerDiagnosticTextEditNil)))))]
+          (compiler-diagnostic-text-edit-new
+            (CompilerDiagnosticSpan "other.tl" 2 3 2 5)
+            "λ")))]
     [diag : CompilerDiagnostic (compiler-diagnostic-with-fix plain fix)]
     [copied : CompilerDiagnostic (compiler-diagnostic-copy diag)]
     [moved : CompilerDiagnostic
       (compiler-diagnostic-with-primary-span
         (compiler-diagnostic-with-path copied "new.tl")
         (CompilerDiagnosticSpan "new.tl" 4 5 4 6))]
+    [fixes : CompilerDiagnosticFixSeq (compiler-diagnostic-fixes moved)]
     (and
-      (match (compiler-diagnostic-fixes plain)
-        [CompilerDiagnosticFixNil true]
-        [(CompilerDiagnosticFixCons _ _) false])
-      (match (compiler-diagnostic-fixes moved)
-        [(CompilerDiagnosticFixCons copied-fix fix-rest)
-          (and
-            (string.eq
-              (compiler-diagnostic-fix-title copied-fix)
-              "Apply both edits")
-            (match (compiler-diagnostic-fix-applicability copied-fix)
-              [CompilerDiagnosticMachineApplicable true]
-              [_ false])
-            (match (compiler-diagnostic-fix-edits copied-fix)
-              [(CompilerDiagnosticTextEditCons first first-rest)
-                (match (box-get first-rest)
-                  [(CompilerDiagnosticTextEditCons second second-rest)
-                    (let
-                      [first-span : CompilerDiagnosticSpan
-                        (compiler-diagnostic-text-edit-span first)]
-                      [second-span : CompilerDiagnosticSpan
-                        (compiler-diagnostic-text-edit-span second)]
-                      (and
-                        (string.eq
-                          (compiler-diagnostic-span-path first-span)
-                          "new.tl")
-                        (string.eq
-                          (compiler-diagnostic-text-edit-replacement first)
-                          "first")
-                        (string.eq
-                          (compiler-diagnostic-span-path second-span)
-                          "other.tl")
-                        (= (compiler-diagnostic-span-start-line second-span) 2)
-                        (= (compiler-diagnostic-span-start-col second-span) 3)
-                        (string.eq
-                          (compiler-diagnostic-text-edit-replacement second)
-                          "λ")
-                        (match (box-get second-rest)
-                          [CompilerDiagnosticTextEditNil true]
-                          [(CompilerDiagnosticTextEditCons _ _) false])))]
-                  [CompilerDiagnosticTextEditNil false])]
-              [CompilerDiagnosticTextEditNil false])
-            (match (box-get fix-rest)
-              [CompilerDiagnosticFixNil true]
-              [(CompilerDiagnosticFixCons _ _) false]))]
-        [CompilerDiagnosticFixNil false]))))
+      (= (struct-get (compiler-diagnostic-fixes plain) len) 0)
+      (= (struct-get fixes len) 1)
+      (let
+        [copied-fix : CompilerDiagnosticFix
+          (array-ref (struct-get fixes slots) 0)]
+        [edits : CompilerDiagnosticTextEditSeq
+          (compiler-diagnostic-fix-edits copied-fix)]
+        (and
+          (string.eq
+            (compiler-diagnostic-fix-title copied-fix)
+            "Apply both edits")
+          (match (compiler-diagnostic-fix-applicability copied-fix)
+            [CompilerDiagnosticMachineApplicable true]
+            [_ false])
+          (= (struct-get edits len) 2)
+          (let
+            [first : CompilerDiagnosticTextEdit
+              (array-ref (struct-get edits slots) 0)]
+            [second : CompilerDiagnosticTextEdit
+              (array-ref (struct-get edits slots) 1)]
+            [first-span : CompilerDiagnosticSpan
+              (compiler-diagnostic-text-edit-span first)]
+            [second-span : CompilerDiagnosticSpan
+              (compiler-diagnostic-text-edit-span second)]
+            (and
+              (string.eq (compiler-diagnostic-span-path first-span) "new.tl")
+              (string.eq
+                (compiler-diagnostic-text-edit-replacement first)
+                "first")
+              (string.eq (compiler-diagnostic-span-path second-span) "other.tl")
+              (= (compiler-diagnostic-span-start-line second-span) 2)
+              (= (compiler-diagnostic-span-start-col second-span) 3)
+              (string.eq
+                (compiler-diagnostic-text-edit-replacement second)
+                "λ"))))))))
 
 (define (compiler-diagnostic-invalid-fixes-rejected-ok?) : bool
   (let
@@ -334,22 +335,16 @@
         (compiler-diagnostic-fix-new
           "Overlapping edits"
           CompilerDiagnosticMachineApplicable
-          (CompilerDiagnosticTextEditCons
+          (compiler-diagnostic-test-edit-pair
             (compiler-diagnostic-text-edit-new
               (CompilerDiagnosticSpan "" 1 2 1 6)
               "left")
-            (box
-              (compiler-diagnostic-text-edit-single
-                (compiler-diagnostic-text-edit-new
-                  (CompilerDiagnosticSpan "" 1 4 1 7)
-                  "right"))))))]
+            (compiler-diagnostic-text-edit-new
+              (CompilerDiagnosticSpan "" 1 4 1 7)
+              "right"))))]
     (and
-      (match (compiler-diagnostic-fixes unknown)
-        [CompilerDiagnosticFixNil true]
-        [(CompilerDiagnosticFixCons _ _) false])
-      (match (compiler-diagnostic-fixes overlap)
-        [CompilerDiagnosticFixNil true]
-        [(CompilerDiagnosticFixCons _ _) false]))))
+      (= (struct-get (compiler-diagnostic-fixes unknown) len) 0)
+      (= (struct-get (compiler-diagnostic-fixes overlap) len) 0))))
 
 (define (compiler-diagnostic-unicode-byte-edit-ok?) : bool
   (let

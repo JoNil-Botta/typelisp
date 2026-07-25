@@ -265,9 +265,10 @@
 (defenum CompilerRegActive
   (Active i64 i64 String))
 
-(defenum CompilerRegActiveList
-  (Nil)
-  (Cons CompilerRegActive (Box CompilerRegActiveList)))
+;; Linear-scan active set: a contiguous run sorted by (end, var) ascending.
+(defstruct CompilerRegActiveSeq
+  (slots (Array CompilerRegActive))
+  (len i64))
 
 ;; One accepted per-call-region placement (M-G2b): a spilled call-spanning
 ;; root `var` is homed in its shadow caller-saved register over the point
@@ -282,11 +283,11 @@
 (defenum CompilerRegCallRegion
   (CompilerRegCallRegion i64 i64 i64 i64 i64))
 
-(defenum CompilerRegCallRegionList
-  (CompilerRegCallRegionNil)
-  (CompilerRegCallRegionCons
-    CompilerRegCallRegion
-    (Box CompilerRegCallRegionList)))
+;; Accepted placements in ACCEPT order; consumers walk it back to front, which
+;; is the order the former prepend-built cons list presented.
+(defstruct CompilerRegCallRegionSeq
+  (slots (Array CompilerRegCallRegion))
+  (len i64))
 
 ;; Call-spanning split result: the shadow (split) var set, a per-var map
 ;; (var-id -> caller-saved register for its call-free regions, "" = none),
@@ -298,7 +299,7 @@
   (CompilerRegCallSplit
     CompilerLiveI64Set
     (Array String)
-    CompilerRegCallRegionList))
+    CompilerRegCallRegionSeq))
 
 (define (compiler-reg-call-split-shadows [s : CompilerRegCallSplit]) : CompilerLiveI64Set
   (match s
@@ -309,15 +310,18 @@
   (match s
     [(CompilerRegCallSplit _ regs _) regs]))
 
-(define (compiler-reg-call-split-regions [s : CompilerRegCallSplit]) : CompilerRegCallRegionList
+(define (compiler-reg-call-split-regions [s : CompilerRegCallSplit]) : CompilerRegCallRegionSeq
   (match s
     [(CompilerRegCallSplit _ _ regions) regions]))
+
+(define (compiler-reg-call-region-seq-empty) : CompilerRegCallRegionSeq
+  (CompilerRegCallRegionSeq (array.make-array CompilerRegCallRegion 0) 0))
 
 (define (compiler-reg-call-split-empty) : CompilerRegCallSplit
   (CompilerRegCallSplit
     (compiler-live-set-empty)
     (array.make-array String 0)
-    CompilerRegCallRegionNil))
+    (compiler-reg-call-region-seq-empty)))
 
 ;; SplitKit occupant-liberation record (design 3.2): to free a callee-saved
 ;; register R for a call-spanning value V across its crossing region, a cold
@@ -325,16 +329,10 @@
 ;; reloaded after -- so R is free over [region-start,region-end). Fields:
 ;;   occupant var O, region start, region end (point coords), the freed CSR
 ;;   register, and O's stack slot offset (store-before / reload-after home).
-;; Carried by the split plan; the list stays Nil until M5 turns the
+;; Carried by the split plan; the array stays empty until M5 turns the
 ;; live-occupant lever on.
 (defenum CompilerRegOccupantSplit
   (CompilerRegOccupantSplit i64 i64 i64 String i64))
-
-(defenum CompilerRegOccupantSplitList
-  (CompilerRegOccupantSplitNil)
-  (CompilerRegOccupantSplitCons
-    CompilerRegOccupantSplit
-    (Box CompilerRegOccupantSplitList)))
 
 ;; SplitKit per-sub-range value model (design 1.2). Produced by the greedy and
 ;; threaded through CompilerRegPlan: a spilled call-spanning value V keeps its
@@ -354,7 +352,7 @@
   (piece-end (Array i64))
   (piece-reg (Array String))
   (piece-writeback (Array i64))
-  (occupant-split CompilerRegOccupantSplitList))
+  (occupant-split (Array CompilerRegOccupantSplit)))
 
 (defenum CompilerRegPlan
   (Plan
@@ -366,7 +364,7 @@
     CompilerRegSplitPlan))
 
 (defenum CompilerRegAssignState
-  (State CompilerRegActiveList CompilerRegAssignmentTable))
+  (State CompilerRegActiveSeq CompilerRegAssignmentTable))
 
 (defenum CompilerRegCallSaveAssignState
   (State CompilerRegAssignmentTable CompilerRegCallSplit))
@@ -456,16 +454,18 @@
     CompilerRegEdgeCopyDirection
     CompilerRegEdgeCopyPlacement))
 
-(defenum CompilerRegEdgeCopyList
-  (Nil)
-  (Cons CompilerRegEdgeCopy (Box CompilerRegEdgeCopyList)))
+;; Boundary copies in plan order (the order the former reverse-at-the-end cons
+;; accumulator produced), so consumers walk it front to back.
+(defstruct CompilerRegEdgeCopySeq
+  (slots (Array CompilerRegEdgeCopy))
+  (len i64))
 
 (defenum CompilerRegEdgeCopyPlacementResult
   (Ok CompilerRegEdgeCopyPlacement)
   (Refused String))
 
 (defenum CompilerRegEdgeCopyPlan
-  (Plan CompilerRegEdgeCopyList)
+  (Plan CompilerRegEdgeCopySeq)
   (Refused String))
 
 (defenum CompilerRegEdgeCopyRewrite
@@ -484,7 +484,7 @@
     CompilerRegStringList
     AstType
     String
-    CompilerRegEdgeCopyList
+    CompilerRegEdgeCopySeq
     i64))
 
 (defenum CompilerRegLoopSplitRewriteResult
@@ -508,9 +508,13 @@
 (defenum CompilerRegMove
   (Move i64 i64 bool))
 
-(defenum CompilerRegMoveList
-  (Nil)
-  (Cons CompilerRegMove (Box CompilerRegMoveList)))
+;; Coalesce move candidates in ADD order. The former cons list was built by
+;; prepending, so its head was the newest entry: every order-sensitive consumer
+;; below (mark-strict, class merging, first-wins copy hints) walks index
+;; `len - 1` down to 0.
+(defstruct CompilerRegMoveSeq
+  (slots (Array CompilerRegMove))
+  (len i64))
 
 ;; Deterministic move-copy classes used by scalar home coalescing. Roots are the
 ;; lowest var id in each class; allocation then reuses any assigned class home.
@@ -553,20 +557,122 @@
   [rest : CompilerRegVarTypeList]) : CompilerRegVarTypeList
   (CompilerRegVarTypeList.Cons head (box rest)))
 
-(define (compiler-reg-edge-copy-cons
-  [head : CompilerRegEdgeCopy]
-  [rest : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyList
-  (CompilerRegEdgeCopyList.Cons head (box rest)))
+;; Capacity for a seq that must hold `len + 1` elements; the caller copies the
+;; live prefix into a fresh array of this size when the current one is full.
+(define (compiler-reg-seq-grown-capacity [cap : i64]) : i64
+  (if (< cap 4)
+    4
+    (* cap 2)))
 
-(define (compiler-reg-active-cons
-  [head : CompilerRegActive]
-  [rest : CompilerRegActiveList]) : CompilerRegActiveList
-  (CompilerRegActiveList.Cons head (box rest)))
+(define (compiler-reg-edge-copy-seq-empty) : CompilerRegEdgeCopySeq
+  (CompilerRegEdgeCopySeq (array.make-array CompilerRegEdgeCopy 0) 0))
 
-(define (compiler-reg-move-cons
-  [head : CompilerRegMove]
-  [rest : CompilerRegMoveList]) : CompilerRegMoveList
-  (CompilerRegMoveList.Cons head (box rest)))
+(define (compiler-reg-edge-copy-seq-push
+  [copies : CompilerRegEdgeCopySeq]
+  [item : CompilerRegEdgeCopy]) : CompilerRegEdgeCopySeq
+  (let
+    [slots : (Array CompilerRegEdgeCopy) (struct-get copies slots)]
+    [len : i64 (struct-get copies len)]
+    (begin
+      (if (< len (array-length slots))
+        unit
+        (let
+          [bigger : (Array CompilerRegEdgeCopy)
+            (array.make-array
+              CompilerRegEdgeCopy
+              (compiler-reg-seq-grown-capacity (array-length slots)))]
+          [i : i64 0]
+          (begin
+            (while (< i len)
+              (begin
+                (array-set! bigger i (array-ref slots i))
+                (set! i (+ i 1))))
+            (set! slots bigger))))
+      (array-set! slots len item)
+      (CompilerRegEdgeCopySeq slots (+ len 1)))))
+
+(define (compiler-reg-active-seq-empty) : CompilerRegActiveSeq
+  (CompilerRegActiveSeq (array.make-array CompilerRegActive 0) 0))
+
+(define (compiler-reg-move-seq-empty) : CompilerRegMoveSeq
+  (CompilerRegMoveSeq (array.make-array CompilerRegMove 0) 0))
+
+(define (compiler-reg-move-seq-push
+  [moves : CompilerRegMoveSeq]
+  [item : CompilerRegMove]) : CompilerRegMoveSeq
+  (let
+    [slots : (Array CompilerRegMove) (struct-get moves slots)]
+    [len : i64 (struct-get moves len)]
+    (begin
+      (if (< len (array-length slots))
+        unit
+        (let
+          [bigger : (Array CompilerRegMove)
+            (array.make-array
+              CompilerRegMove
+              (compiler-reg-seq-grown-capacity (array-length slots)))]
+          [i : i64 0]
+          (begin
+            (while (< i len)
+              (begin
+                (array-set! bigger i (array-ref slots i))
+                (set! i (+ i 1))))
+            (set! slots bigger))))
+      (array-set! slots len item)
+      (CompilerRegMoveSeq slots (+ len 1)))))
+
+(define (compiler-reg-call-region-seq-push
+  [regions : CompilerRegCallRegionSeq]
+  [item : CompilerRegCallRegion]) : CompilerRegCallRegionSeq
+  (let
+    [slots : (Array CompilerRegCallRegion) (struct-get regions slots)]
+    [len : i64 (struct-get regions len)]
+    (begin
+      (if (< len (array-length slots))
+        unit
+        (let
+          [bigger : (Array CompilerRegCallRegion)
+            (array.make-array
+              CompilerRegCallRegion
+              (compiler-reg-seq-grown-capacity (array-length slots)))]
+          [i : i64 0]
+          (begin
+            (while (< i len)
+              (begin
+                (array-set! bigger i (array-ref slots i))
+                (set! i (+ i 1))))
+            (set! slots bigger))))
+      (array-set! slots len item)
+      (CompilerRegCallRegionSeq slots (+ len 1)))))
+
+(define (compiler-reg-call-region-stat-seq-empty) : CompilerRegCallRegionStatSeq
+  (CompilerRegCallRegionStatSeq
+    (array.make-array CompilerRegCallRegionStat 0)
+    0))
+
+(define (compiler-reg-call-region-stat-seq-push
+  [rows : CompilerRegCallRegionStatSeq]
+  [item : CompilerRegCallRegionStat]) : CompilerRegCallRegionStatSeq
+  (let
+    [slots : (Array CompilerRegCallRegionStat) (struct-get rows slots)]
+    [len : i64 (struct-get rows len)]
+    (begin
+      (if (< len (array-length slots))
+        unit
+        (let
+          [bigger : (Array CompilerRegCallRegionStat)
+            (array.make-array
+              CompilerRegCallRegionStat
+              (compiler-reg-seq-grown-capacity (array-length slots)))]
+          [i : i64 0]
+          (begin
+            (while (< i len)
+              (begin
+                (array-set! bigger i (array-ref slots i))
+                (set! i (+ i 1))))
+            (set! slots bigger))))
+      (array-set! slots len item)
+      (CompilerRegCallRegionStatSeq slots (+ len 1)))))
 
 (define (compiler-reg-max [a : i64] [b : i64]) : i64
   (if (> a b)
@@ -1248,37 +1354,47 @@
           (CompilerRegVarTypes present types)))]))
 
 (define (compiler-reg-move-list-contains?
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [src : i64]
   [dst : i64]) : bool
-  (match moves
-    [(CompilerRegMoveList.Nil) false]
-    [(CompilerRegMoveList.Cons move rest)
-      (match move
-        [(CompilerRegMove.Move found-src found-dst _)
-          (if (and (= found-src src) (= found-dst dst))
-            true
-            (compiler-reg-move-list-contains? (box-get rest) src dst))])]))
+  (let
+    [slots : (Array CompilerRegMove) (struct-get moves slots)]
+    [index : i64 (- (struct-get moves len) 1)]
+    [found : bool false]
+    (begin
+      (while (and (>= index 0) (not found))
+        (begin
+          (match (array-ref slots index)
+            [(CompilerRegMove.Move found-src found-dst _)
+              (if (and (= found-src src) (= found-dst dst))
+                (set! found true)
+                unit)])
+          (set! index (- index 1))))
+      found)))
 
 (define (compiler-reg-move-list-contains-undirected?
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [src : i64]
   [dst : i64]) : bool
-  (match moves
-    [(CompilerRegMoveList.Nil) false]
-    [(CompilerRegMoveList.Cons move rest)
-      (match move
-        [(CompilerRegMove.Move found-src found-dst _)
-          (if (or
-            (and (= found-src src) (= found-dst dst))
-            (and (= found-src dst) (= found-dst src)))
-            true
-            (compiler-reg-move-list-contains-undirected? (box-get rest) src dst))])]))
+  (let
+    [slots : (Array CompilerRegMove) (struct-get moves slots)]
+    [index : i64 (- (struct-get moves len) 1)]
+    [found : bool false]
+    (begin
+      (while (and (>= index 0) (not found))
+        (begin
+          (match (array-ref slots index)
+            [(CompilerRegMove.Move found-src found-dst _)
+              (if (or
+                (and (= found-src src) (= found-dst dst))
+                (and (= found-src dst) (= found-dst src)))
+                (set! found true)
+                unit)])
+          (set! index (- index 1))))
+      found)))
 
-(define (compiler-reg-move-list-empty? [moves : CompilerRegMoveList]) : bool
-  (match moves
-    [(CompilerRegMoveList.Nil) true]
-    [_ false]))
+(define (compiler-reg-move-list-empty? [moves : CompilerRegMoveSeq]) : bool
+  (= (struct-get moves len) 0))
 
 (define (compiler-reg-move-parallel-resource [var : i64]) : i64
   (+ var 1))
@@ -1296,15 +1412,24 @@
         (compiler-reg-move-parallel-resource src)
         0)]))
 
-(define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveList]) : pmove.CompilerParallelMoveEdgeList
-  (match moves
-    [(CompilerRegMoveList.Nil) pmove.CompilerParallelMoveNil]
-    [(CompilerRegMoveList.Cons move rest)
-      (pmove.compiler-parallel-move-edge-cons
-        (compiler-reg-move-parallel-edge move)
-        (compiler-reg-move-list-parallel-edges (box-get rest)))]))
+(define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveSeq]) : pmove.CompilerParallelMoveEdgeList
+  (let
+    [slots : (Array CompilerRegMove) (struct-get moves slots)]
+    [count : i64 (struct-get moves len)]
+    [index : i64 0]
+    [edges : pmove.CompilerParallelMoveEdgeList pmove.CompilerParallelMoveNil]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            edges
+            (pmove.compiler-parallel-move-edge-cons
+              (compiler-reg-move-parallel-edge (array-ref slots index))
+              edges))
+          (set! index (+ index 1))))
+      edges)))
 
-(define (compiler-reg-move-list-parallel-decision [moves : CompilerRegMoveList]) : pmove.CompilerParallelMoveDecision
+(define (compiler-reg-move-list-parallel-decision [moves : CompilerRegMoveSeq]) : pmove.CompilerParallelMoveDecision
   (let
     [edges : pmove.CompilerParallelMoveEdgeList
       (compiler-reg-move-list-parallel-edges moves)]
@@ -1312,18 +1437,18 @@
 
 (define (compiler-reg-move-list-parallel-decision-ok?) : bool
   (let
-    [chain : CompilerRegMoveList
-      (compiler-reg-move-cons
-        (CompilerRegMove.Move 0 1 false)
-        (compiler-reg-move-cons
-          (CompilerRegMove.Move 1 2 false)
-          CompilerRegMoveList.Nil))]
-    [cycle : CompilerRegMoveList
-      (compiler-reg-move-cons
-        (CompilerRegMove.Move 0 1 false)
-        (compiler-reg-move-cons
-          (CompilerRegMove.Move 1 0 false)
-          CompilerRegMoveList.Nil))]
+    [chain : CompilerRegMoveSeq
+      (compiler-reg-move-seq-push
+        (compiler-reg-move-seq-push
+          (compiler-reg-move-seq-empty)
+          (CompilerRegMove.Move 1 2 false))
+        (CompilerRegMove.Move 0 1 false))]
+    [cycle : CompilerRegMoveSeq
+      (compiler-reg-move-seq-push
+        (compiler-reg-move-seq-push
+          (compiler-reg-move-seq-empty)
+          (CompilerRegMove.Move 1 0 false))
+        (CompilerRegMove.Move 0 1 false))]
     (and
       (match (compiler-reg-move-list-parallel-decision chain)
         [(pmove.CompilerParallelMoveUnblocked id)
@@ -1334,31 +1459,36 @@
           (= id (compiler-reg-move-parallel-id 0 1))]
         [_ false]))))
 
+;; Marks the NEWEST undirected match (the head of the former cons list) strict.
 (define (compiler-reg-move-list-mark-strict
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [src : i64]
-  [dst : i64]) : CompilerRegMoveList
-  (match moves
-    [(CompilerRegMoveList.Nil) CompilerRegMoveList.Nil]
-    [(CompilerRegMoveList.Cons move rest)
-      (match move
-        [(CompilerRegMove.Move found-src found-dst strict)
-          (if (or
-            (and (= found-src src) (= found-dst dst))
-            (and (= found-src dst) (= found-dst src)))
-            (compiler-reg-move-cons
-              (CompilerRegMove.Move found-src found-dst true)
-              (box-get rest))
-            (compiler-reg-move-cons
-              (CompilerRegMove.Move found-src found-dst strict)
-              (compiler-reg-move-list-mark-strict (box-get rest) src dst)))])]))
+  [dst : i64]) : CompilerRegMoveSeq
+  (let
+    [slots : (Array CompilerRegMove) (struct-get moves slots)]
+    [index : i64 (- (struct-get moves len) 1)]
+    (begin
+      (while (>= index 0)
+        (match (array-ref slots index)
+          [(CompilerRegMove.Move found-src found-dst _)
+            (if (or
+              (and (= found-src src) (= found-dst dst))
+              (and (= found-src dst) (= found-dst src)))
+              (begin
+                (array-set!
+                  slots
+                  index
+                  (CompilerRegMove.Move found-src found-dst true))
+                (set! index (- 0 1)))
+              (set! index (- index 1)))]))
+      moves)))
 
 (define (compiler-reg-move-list-add
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [src : i64]
   [dst : i64]
   [strict : bool]
-  [undirected : bool]) : CompilerRegMoveList
+  [undirected : bool]) : CompilerRegMoveSeq
   (if (= src dst)
     moves
     (if (if undirected
@@ -1367,13 +1497,13 @@
       (if strict
         (compiler-reg-move-list-mark-strict moves src dst)
         moves)
-      (compiler-reg-move-cons (CompilerRegMove.Move src dst strict) moves))))
+      (compiler-reg-move-seq-push moves (CompilerRegMove.Move src dst strict)))))
 
 (define (compiler-reg-phi-input-moves
   [dst : i64]
   [inputs : CompilerIrPhiInputList]
-  [moves : CompilerRegMoveList]
-  [strict-pairs : bool]) : CompilerRegMoveList
+  [moves : CompilerRegMoveSeq]
+  [strict-pairs : bool]) : CompilerRegMoveSeq
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) moves]
     [(CompilerIrPhiInputList.Array seq)
@@ -1384,7 +1514,7 @@
         strict-pairs)]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (let
-        [tail : CompilerRegMoveList
+        [tail : CompilerRegMoveSeq
           (compiler-reg-phi-input-moves dst (box-get rest) moves strict-pairs)]
         (match value
           [(CompilerIrValue.Var src)
@@ -1393,8 +1523,8 @@
 
 (define (compiler-reg-instr-moves
   [instr : CompilerIrInstr]
-  [moves : CompilerRegMoveList]
-  [strict-pairs : bool]) : CompilerRegMoveList
+  [moves : CompilerRegMoveSeq]
+  [strict-pairs : bool]) : CompilerRegMoveSeq
   (match instr
     [(CompilerIrInstr.Mov dst src _)
       (match src
@@ -1407,12 +1537,12 @@
 
 (define (compiler-reg-instr-seq-moves
   [instrs : CompilerIrInstrSeq]
-  [moves : CompilerRegMoveList]
-  [strict-pairs : bool]) : CompilerRegMoveList
+  [moves : CompilerRegMoveSeq]
+  [strict-pairs : bool]) : CompilerRegMoveSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [index : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerRegMoveList moves]
+    [out : CompilerRegMoveSeq moves]
     (begin
       (while (>= index 0)
         (begin
@@ -1424,8 +1554,8 @@
 
 (define (compiler-reg-block-list-moves
   [blocks : CompilerIrBlockList]
-  [moves : CompilerRegMoveList]
-  [strict-pairs : bool]) : CompilerRegMoveList
+  [moves : CompilerRegMoveSeq]
+  [strict-pairs : bool]) : CompilerRegMoveSeq
   (match blocks
     [(CompilerIrBlockList.Nil) moves]
     [(CompilerIrBlockList.Cons block rest)
@@ -1439,7 +1569,7 @@
       (let
         [i : i64 0]
         [count : i64 (compiler-ir-block-seq-count seq)]
-        [out : CompilerRegMoveList moves]
+        [out : CompilerRegMoveSeq moves]
         (begin
           (while (< i count)
             (begin
@@ -1453,12 +1583,12 @@
 
 (define (compiler-reg-function-moves
   [func : CompilerIrFunction]
-  [strict-pairs : bool]) : CompilerRegMoveList
+  [strict-pairs : bool]) : CompilerRegMoveSeq
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-block-list-moves
         blocks
-        CompilerRegMoveList.Nil
+        (compiler-reg-move-seq-empty)
         strict-pairs)]))
 
 ;; M-C (part 1): a 64-bit-width integer cast (i64 <-> u64) is a pure register
@@ -1505,7 +1635,7 @@
 ;; existing first-wins copy-hint priorities are unchanged).
 (define (compiler-reg-cast-move-instr
   [instr : CompilerIrInstr]
-  [moves : CompilerRegMoveList]) : CompilerRegMoveList
+  [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
   (match instr
     [(CompilerIrInstr.Cast dst src from-ty to-ty)
       (match src
@@ -1518,11 +1648,11 @@
 
 (define (compiler-reg-cast-moves-seq
   [instrs : CompilerIrInstrSeq]
-  [moves : CompilerRegMoveList]) : CompilerRegMoveList
+  [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [index : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerRegMoveList moves]
+    [out : CompilerRegMoveSeq moves]
     (begin
       (while (>= index 0)
         (begin
@@ -1532,7 +1662,7 @@
 
 (define (compiler-reg-cast-moves-blocks
   [blocks : CompilerIrBlockList]
-  [moves : CompilerRegMoveList]) : CompilerRegMoveList
+  [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
   (match blocks
     [(CompilerIrBlockList.Nil) moves]
     [(CompilerIrBlockList.Cons block rest)
@@ -1545,7 +1675,7 @@
       (let
         [i : i64 0]
         [count : i64 (compiler-ir-block-seq-count seq)]
-        [out : CompilerRegMoveList moves]
+        [out : CompilerRegMoveSeq moves]
         (begin
           (while (< i count)
             (begin
@@ -1563,13 +1693,15 @@
 ;; operation. This covers straight-line chains and phi-carried reductions while
 ;; skipping isolated arithmetic.
 (define (compiler-reg-destructive-mark-move-vars!
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [anchors : (Array i64)]) : unit
-  (match moves
-    [(CompilerRegMoveList.Nil) unit]
-    [(CompilerRegMoveList.Cons move rest)
+  (let
+    [slots : (Array CompilerRegMove) (struct-get moves slots)]
+    [count : i64 (struct-get moves len)]
+    [index : i64 0]
+    (while (< index count)
       (begin
-        (match move
+        (match (array-ref slots index)
           [(CompilerRegMove.Move src dst _)
             (begin
               (if (and (>= src 0) (< src (array-length anchors)))
@@ -1578,7 +1710,7 @@
               (if (and (>= dst 0) (< dst (array-length anchors)))
                 (array-set! anchors dst 1)
                 unit))])
-        (compiler-reg-destructive-mark-move-vars! (box-get rest) anchors))]))
+        (set! index (+ index 1))))))
 
 (define (compiler-reg-destructive-shape-instr!
   [instr : CompilerIrInstr]
@@ -1672,11 +1804,11 @@
 (define (compiler-reg-destructive-add-value-tie
   [value : CompilerIrValue]
   [dst : i64]
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [anchors : (Array i64)]
   [defs : (Array i64)]
   [uses : (Array i64)]
-  [eligible : (Array i64)]) : CompilerRegMoveList
+  [eligible : (Array i64)]) : CompilerRegMoveSeq
   (match value
     [(CompilerIrValue.Var src)
       (if (compiler-reg-destructive-candidate?
@@ -1704,11 +1836,11 @@
 
 (define (compiler-reg-destructive-tie-instr
   [instr : CompilerIrInstr]
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [anchors : (Array i64)]
   [defs : (Array i64)]
   [uses : (Array i64)]
-  [eligible : (Array i64)]) : CompilerRegMoveList
+  [eligible : (Array i64)]) : CompilerRegMoveSeq
   (match instr
     [(CompilerIrInstr.BinOp dst op lhs rhs _)
       (if (compiler-reg-binop-destructive-tie? op)
@@ -1766,15 +1898,15 @@
 
 (define (compiler-reg-destructive-tie-moves-seq
   [instrs : CompilerIrInstrSeq]
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [anchors : (Array i64)]
   [defs : (Array i64)]
   [uses : (Array i64)]
-  [eligible : (Array i64)]) : CompilerRegMoveList
+  [eligible : (Array i64)]) : CompilerRegMoveSeq
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [index : i64 (- (struct-get instrs len) 1)]
-    [out : CompilerRegMoveList moves]
+    [out : CompilerRegMoveSeq moves]
     (begin
       (while (>= index 0)
         (begin
@@ -1792,11 +1924,11 @@
 
 (define (compiler-reg-destructive-tie-moves-blocks
   [blocks : CompilerIrBlockList]
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [anchors : (Array i64)]
   [defs : (Array i64)]
   [uses : (Array i64)]
-  [eligible : (Array i64)]) : CompilerRegMoveList
+  [eligible : (Array i64)]) : CompilerRegMoveSeq
   (match blocks
     [(CompilerIrBlockList.Nil) moves]
     [(CompilerIrBlockList.Cons block rest)
@@ -1819,7 +1951,7 @@
       (let
         [i : i64 0]
         [count : i64 (compiler-ir-block-seq-count seq)]
-        [out : CompilerRegMoveList moves]
+        [out : CompilerRegMoveSeq moves]
         (begin
           (while (< i count)
             (begin
@@ -1839,8 +1971,8 @@
 
 (define (compiler-reg-function-destructive-tie-moves
   [func : CompilerIrFunction]
-  [moves : CompilerRegMoveList]
-  [eligible : (Array i64)]) : CompilerRegMoveList
+  [moves : CompilerRegMoveSeq]
+  [eligible : (Array i64)]) : CompilerRegMoveSeq
   (match func
     [(CompilerIrFunction.Function _ _ _ vars blocks)
       (let
@@ -1869,31 +2001,31 @@
 ;; copy-hints and the coalesce pass sees the cast pairs last.
 (define (compiler-reg-function-moves-with-casts
   [func : CompilerIrFunction]
-  [strict-pairs : bool]) : CompilerRegMoveList
+  [strict-pairs : bool]) : CompilerRegMoveSeq
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-block-list-moves
         blocks
-        (compiler-reg-cast-moves-blocks blocks CompilerRegMoveList.Nil)
+        (compiler-reg-cast-moves-blocks blocks (compiler-reg-move-seq-empty))
         strict-pairs)]))
 
 (define (compiler-reg-function-moves-with-destructive-and-casts-eligible
   [func : CompilerIrFunction]
   [strict-pairs : bool]
-  [eligible : (Array i64)]) : CompilerRegMoveList
+  [eligible : (Array i64)]) : CompilerRegMoveSeq
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-reg-block-list-moves
         blocks
         (compiler-reg-function-destructive-tie-moves
           func
-          (compiler-reg-cast-moves-blocks blocks CompilerRegMoveList.Nil)
+          (compiler-reg-cast-moves-blocks blocks (compiler-reg-move-seq-empty))
           eligible)
         strict-pairs)]))
 
 (define (compiler-reg-function-moves-with-destructive-and-casts
   [func : CompilerIrFunction]
-  [strict-pairs : bool]) : CompilerRegMoveList
+  [strict-pairs : bool]) : CompilerRegMoveSeq
   (match func
     [(CompilerIrFunction.Function _ _ _ vars _)
       (let
@@ -1906,23 +2038,27 @@
             eligible)))]))
 
 (define (compiler-reg-move-list-filter-storage-identity
-  [moves : CompilerRegMoveList]
-  [storage-vars : CompilerLiveI64Set]) : CompilerRegMoveList
-  (match moves
-    [(CompilerRegMoveList.Nil) CompilerRegMoveList.Nil]
-    [(CompilerRegMoveList.Cons move rest)
-      (match move
-        [(CompilerRegMove.Move src dst _)
-          (let
-            [tail : CompilerRegMoveList
-              (compiler-reg-move-list-filter-storage-identity
-                (box-get rest)
-                storage-vars)]
-            (if (or
-              (compiler-live-set-contains? storage-vars src)
-              (compiler-live-set-contains? storage-vars dst))
-              tail
-              (compiler-reg-move-cons move tail)))])]))
+  [moves : CompilerRegMoveSeq]
+  [storage-vars : CompilerLiveI64Set]) : CompilerRegMoveSeq
+  (let
+    [slots : (Array CompilerRegMove) (struct-get moves slots)]
+    [count : i64 (struct-get moves len)]
+    [index : i64 0]
+    [out : CompilerRegMoveSeq (compiler-reg-move-seq-empty)]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array-ref slots index)
+            [(CompilerRegMove.Move src dst _)
+              (if (or
+                (compiler-live-set-contains? storage-vars src)
+                (compiler-live-set-contains? storage-vars dst))
+                unit
+                (set!
+                  out
+                  (compiler-reg-move-seq-push out (array-ref slots index))))])
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-reg-fill-i64-array [items : (Array i64)] [value : i64]) : unit
   (let
@@ -5325,32 +5461,64 @@
               false
               (< left-var right-var)))])]))
 
+;; Place `item` after every element it does not strictly precede -- the position
+;; the former cons walk chose -- shifting the suffix up one slot.
 (define (compiler-reg-active-insert
-  [active : CompilerRegActiveList]
-  [item : CompilerRegActive]) : CompilerRegActiveList
-  (match active
-    [(CompilerRegActiveList.Nil)
-      (compiler-reg-active-cons item CompilerRegActiveList.Nil)]
-    [(CompilerRegActiveList.Cons head rest)
-      (if (compiler-reg-active-before? item head)
-        (compiler-reg-active-cons item active)
-        (compiler-reg-active-cons
-          head
-          (compiler-reg-active-insert (box-get rest) item)))]))
+  [active : CompilerRegActiveSeq]
+  [item : CompilerRegActive]) : CompilerRegActiveSeq
+  (let
+    [slots : (Array CompilerRegActive) (struct-get active slots)]
+    [len : i64 (struct-get active len)]
+    [at : i64 0]
+    (begin
+      (while (and
+        (< at len)
+        (not (compiler-reg-active-before? item (array-ref slots at))))
+        (set! at (+ at 1)))
+      (if (< len (array-length slots))
+        unit
+        (let
+          [bigger : (Array CompilerRegActive)
+            (array.make-array
+              CompilerRegActive
+              (compiler-reg-seq-grown-capacity (array-length slots)))]
+          [i : i64 0]
+          (begin
+            (while (< i len)
+              (begin
+                (array-set! bigger i (array-ref slots i))
+                (set! i (+ i 1))))
+            (set! slots bigger))))
+      (let
+        [j : i64 len]
+        (while (> j at)
+          (begin
+            (array-set! slots j (array-ref slots (- j 1)))
+            (set! j (- j 1)))))
+      (array-set! slots at item)
+      (CompilerRegActiveSeq slots (+ len 1)))))
 
+;; Drop everything that ended at or before `start`. Survivors are re-inserted
+;; from the back so the result matches the former tail-first cons rebuild.
 (define (compiler-reg-expire-active
-  [active : CompilerRegActiveList]
-  [start : i64]) : CompilerRegActiveList
-  (match active
-    [(CompilerRegActiveList.Nil) CompilerRegActiveList.Nil]
-    [(CompilerRegActiveList.Cons item rest)
-      (match item
-        [(CompilerRegActive.Active _ end _)
-          (if (<= end start)
-            (compiler-reg-expire-active (box-get rest) start)
-            (compiler-reg-active-insert
-              (compiler-reg-expire-active (box-get rest) start)
-              item))])]))
+  [active : CompilerRegActiveSeq]
+  [start : i64]) : CompilerRegActiveSeq
+  (let
+    [slots : (Array CompilerRegActive) (struct-get active slots)]
+    [index : i64 (- (struct-get active len) 1)]
+    [out : CompilerRegActiveSeq (compiler-reg-active-seq-empty)]
+    (begin
+      (while (>= index 0)
+        (begin
+          (match (array-ref slots index)
+            [(CompilerRegActive.Active _ end _)
+              (if (<= end start)
+                unit
+                (set!
+                  out
+                  (compiler-reg-active-insert out (array-ref slots index))))])
+          (set! index (- index 1))))
+      out)))
 
 ;; General hole-filling: is `reg` held by an active value that
 ;; conflicts with `var`? Two same-register values conflict iff their live
@@ -5364,38 +5532,35 @@
 ;; are not, so the restriction is dropped. (`hole-aware-vars` is retained on the
 ;; signature for the call sites but no longer gates the decision.)
 (define (compiler-reg-active-register-conflicts?
-  [active : CompilerRegActiveList]
+  [active : CompilerRegActiveSeq]
   [reg : String]
   [index : CompilerRegIntervalIndex]
   [var : i64]
+  ;; lint-allow: unused-variable
   [hole-aware-vars : CompilerLiveI64Set]) : bool
-  (match active
-    [(CompilerRegActiveList.Nil) false]
-    [(CompilerRegActiveList.Cons item rest)
-      (match item
-        [(CompilerRegActive.Active aid _ areg)
-          (if (compiler-reg-registers-overlap? reg areg)
-            (if (not
-              (compiler-reg-vars-interfere-segmented-index? index var aid))
-              (compiler-reg-active-register-conflicts?
-                (box-get rest)
-                reg
-                index
-                var
-                hole-aware-vars)
-              true)
-            (compiler-reg-active-register-conflicts?
-              (box-get rest)
-              reg
-              index
-              var
-              hole-aware-vars))])]))
+  (let
+    [slots : (Array CompilerRegActive) (struct-get active slots)]
+    [count : i64 (struct-get active len)]
+    [at : i64 0]
+    [conflict : bool false]
+    (begin
+      (while (and (< at count) (not conflict))
+        (begin
+          (match (array-ref slots at)
+            [(CompilerRegActive.Active aid _ areg)
+              (if (and
+                (compiler-reg-registers-overlap? reg areg)
+                (compiler-reg-vars-interfere-segmented-index? index var aid))
+                (set! conflict true)
+                unit)])
+          (set! at (+ at 1))))
+      conflict)))
 
 ;; First register not in conflict with `var` over its live segments
 ;; (CompilerRegMaybeString.No if every register is occupied by an interfering value).
 (define (compiler-reg-first-free-register-holes
   [regs : CompilerRegStringList]
-  [active : CompilerRegActiveList]
+  [active : CompilerRegActiveSeq]
   [index : CompilerRegIntervalIndex]
   [var : i64]
   [hole-aware-vars : CompilerLiveI64Set]) : CompilerRegMaybeString
@@ -7095,49 +7260,45 @@
   [sizes : (Array i64)]
   [root-start : (Array i64)]
   [root-end : (Array i64)]
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
   [changed : bool]
   [sv-parents : (Array i64)]) : bool
-  (match moves
-    [(CompilerRegMoveList.Nil) changed]
-    [(CompilerRegMoveList.Cons move rest)
-      (match move
-        [(CompilerRegMove.Move src dst strict)
-          (let
-            [did-merge : bool
-              (compiler-reg-coalesce-map-try-merge!
-                parents
-                sizes
-                root-start
-                root-end
-                intervals
-                types
-                group-vars
-                src
-                dst
-                strict
-                sv-parents)]
-            (compiler-reg-coalesce-map-merge-moves!
-              parents
-              sizes
-              root-start
-              root-end
-              (box-get rest)
-              intervals
-              types
-              group-vars
-              (or changed did-merge)
-              sv-parents))])]))
+  (let
+    [slots : (Array CompilerRegMove) (struct-get moves slots)]
+    [index : i64 (- (struct-get moves len) 1)]
+    [out : bool changed]
+    (begin
+      (while (>= index 0)
+        (begin
+          (match (array-ref slots index)
+            [(CompilerRegMove.Move src dst strict)
+              (let
+                [did-merge : bool
+                  (compiler-reg-coalesce-map-try-merge!
+                    parents
+                    sizes
+                    root-start
+                    root-end
+                    intervals
+                    types
+                    group-vars
+                    src
+                    dst
+                    strict
+                    sv-parents)]
+                (set! out (or out did-merge)))])
+          (set! index (- index 1))))
+      out)))
 
 (define (compiler-reg-coalesce-map-fixpoint!
   [parents : (Array i64)]
   [sizes : (Array i64)]
   [root-start : (Array i64)]
   [root-end : (Array i64)]
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
@@ -7157,7 +7318,7 @@
     unit))
 
 (define (compiler-reg-coalesce-map-build
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [intervals : CompilerRegIntervalIndex]
   [types : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
@@ -7313,15 +7474,16 @@
 (define (compiler-reg-copy-hints-from-moves!
   [hints : (Array i64)]
   [parents : (Array i64)]
-  [moves : CompilerRegMoveList]) : unit
-  (match moves
-    [(CompilerRegMoveList.Nil) unit]
-    [(CompilerRegMoveList.Cons move rest)
+  [moves : CompilerRegMoveSeq]) : unit
+  (let
+    [slots : (Array CompilerRegMove) (struct-get moves slots)]
+    [index : i64 (- (struct-get moves len) 1)]
+    (while (>= index 0)
       (begin
-        (match move
+        (match (array-ref slots index)
           [(CompilerRegMove.Move src dst _)
             (compiler-reg-copy-hints-add-move! hints parents src dst)])
-        (compiler-reg-copy-hints-from-moves! hints parents (box-get rest)))]))
+        (set! index (- index 1))))))
 
 ;; Two-address binop dst<->operand coalesce hints (LLVM TwoAddressInstructionPass).
 ;; The backend lowers a two-address binop as `movq lhs,staging; op rhs,staging`,
@@ -7426,7 +7588,7 @@
 ;; endpoint to its coalesce root. Moves are added first (first-wins), then binops
 ;; fill the rest, biasing each binop dst toward an operand's register.
 (define (compiler-reg-function-copy-hints
-  [moves : CompilerRegMoveList]
+  [moves : CompilerRegMoveSeq]
   [coalesce : CompilerRegCoalesceMap]
   [n : i64]
   [func : CompilerIrFunction]) : (Array i64)
@@ -7441,7 +7603,7 @@
 
 (define (compiler-reg-fixed-preferred-register
   [assignments : CompilerRegAssignmentTable]
-  [active : CompilerRegActiveList]
+  [active : CompilerRegActiveSeq]
   [regs : CompilerRegStringList]
   [preferences : (Array i64)]
   [interval-index : CompilerRegIntervalIndex]
@@ -7489,14 +7651,14 @@
   [interval-index : CompilerRegIntervalIndex]
   [regs : CompilerRegStringList]
   [index : i64]
-  [active : CompilerRegActiveList]) : CompilerRegActiveList
+  [active : CompilerRegActiveSeq]) : CompilerRegActiveSeq
   (let
     [present : (Array i64) (struct-get assignments present)]
     [items : (Array CompilerRegLocation) (struct-get assignments items)]
     (if (>= index (array-length present))
       active
       (let
-        [next : CompilerRegActiveList
+        [next : CompilerRegActiveSeq
           (if (= (array-ref present index) 0)
             active
             (match (array-ref items index)
@@ -7529,7 +7691,7 @@
 ;; than rescanning the full scalar table for every register choice.
 (define (compiler-reg-first-free-fixed-register
   [regs : CompilerRegStringList]
-  [active : CompilerRegActiveList]
+  [active : CompilerRegActiveSeq]
   [interval-index : CompilerRegIntervalIndex]
   [var : i64]) : CompilerRegMaybeString
   (match regs
@@ -7551,7 +7713,7 @@
 (define (compiler-reg-assign-fixed-candidates-from
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
-  [active : CompilerRegActiveList]
+  [active : CompilerRegActiveSeq]
   [assignments : CompilerRegAssignmentTable]
   [preferences : (Array i64)]
   [interval-index : CompilerRegIntervalIndex]) : CompilerRegAssignState
@@ -7562,7 +7724,7 @@
       (match interval
         [(CompilerRegInterval.Interval var start end)
           (let
-            [expired : CompilerRegActiveList
+            [expired : CompilerRegActiveSeq
               (compiler-reg-expire-active active start)]
             [preferred : CompilerRegMaybeString
               (compiler-reg-fixed-preferred-register
@@ -7618,7 +7780,7 @@
 (define (compiler-reg-assign-fixed-candidates
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
-  [active : CompilerRegActiveList]
+  [active : CompilerRegActiveSeq]
   [assignments : CompilerRegAssignmentTable]
   [preferences : (Array i64)]
   [interval-index : CompilerRegIntervalIndex]) : CompilerRegAssignState
@@ -9232,21 +9394,8 @@
       (< var (array-length segments))
       (not (compiler-reg-interval-list-empty? (array-ref segments var))))))
 
-(define (compiler-reg-edge-copy-list-reverse-onto
-  [copies : CompilerRegEdgeCopyList]
-  [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyList
-  (match copies
-    [(CompilerRegEdgeCopyList.Nil) acc]
-    [(CompilerRegEdgeCopyList.Cons copy rest)
-      (compiler-reg-edge-copy-list-reverse-onto
-        (box-get rest)
-        (compiler-reg-edge-copy-cons copy acc))]))
-
-(define (compiler-reg-edge-copy-list-count [copies : CompilerRegEdgeCopyList]) : i64
-  (match copies
-    [(CompilerRegEdgeCopyList.Nil) 0]
-    [(CompilerRegEdgeCopyList.Cons _ rest)
-      (+ 1 (compiler-reg-edge-copy-list-count (box-get rest)))]))
+(define (compiler-reg-edge-copy-list-count [copies : CompilerRegEdgeCopySeq]) : i64
+  (struct-get copies len))
 
 (define (compiler-reg-region-label-map-from
   [labels : CompilerRegStringList]
@@ -9393,7 +9542,7 @@
   [ty : AstType]
   [members : CompilerLiveI64Set]
   [to-label : String]
-  [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
+  [acc : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyPlan
   (let
     [to-index : i64 (compiler-live-function-block-index liveness to-label)]
     (if (>= to-index 0)
@@ -9425,7 +9574,8 @@
             [(CompilerRegEdgeCopyPlacementResult.Ok placement)
               (if to-inside
                 (CompilerRegEdgeCopyPlan.Plan
-                  (compiler-reg-edge-copy-cons
+                  (compiler-reg-edge-copy-seq-push
+                    acc
                     (CompilerRegEdgeCopy.Copy
                       from-label
                       to-label
@@ -9433,10 +9583,10 @@
                       region-var
                       ty
                       CompilerRegEdgeCopyDirection.IntoRegion
-                      placement)
-                    acc))
+                      placement)))
                 (CompilerRegEdgeCopyPlan.Plan
-                  (compiler-reg-edge-copy-cons
+                  (compiler-reg-edge-copy-seq-push
+                    acc
                     (CompilerRegEdgeCopy.Copy
                       from-label
                       to-label
@@ -9444,8 +9594,7 @@
                       stack-var
                       ty
                       CompilerRegEdgeCopyDirection.OutOfRegion
-                      placement)
-                    acc)))]
+                      placement))))]
             [(CompilerRegEdgeCopyPlacementResult.Refused message)
               (CompilerRegEdgeCopyPlan.Refused message)])))
       (CompilerRegEdgeCopyPlan.Refused
@@ -9468,7 +9617,7 @@
   [ty : AstType]
   [members : CompilerLiveI64Set]
   [succs : CompilerLiveLabelSet]
-  [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
+  [acc : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyPlan
   (match succs
     [(CompilerLiveLabelSet.Nil) (CompilerRegEdgeCopyPlan.Plan acc)]
     [(CompilerLiveLabelSet.Cons to-label rest)
@@ -9516,10 +9665,9 @@
   [ty : AstType]
   [members : CompilerLiveI64Set]
   [index : i64]
-  [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
+  [acc : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyPlan
   (if (>= index (array-length blocks))
-    (CompilerRegEdgeCopyPlan.Plan
-      (compiler-reg-edge-copy-list-reverse-onto acc CompilerRegEdgeCopyList.Nil))
+    (CompilerRegEdgeCopyPlan.Plan acc)
     (let
       [block : CompilerLiveBlock (array-ref blocks index)]
       [label : String (compiler-reg-edge-copy-live-block-label block)]
@@ -9638,7 +9786,7 @@
           ty
           members
           0
-          CompilerRegEdgeCopyList.Nil))]))
+          (compiler-reg-edge-copy-seq-empty)))]))
 
 (define (compiler-reg-edge-copy-instr [copy : CompilerRegEdgeCopy]) : CompilerIrInstr
   (match copy
@@ -9766,15 +9914,30 @@
 
 (define (compiler-reg-edge-copy-apply
   [blocks : CompilerIrBlockList]
-  [copies : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyRewrite
-  (match copies
-    [(CompilerRegEdgeCopyList.Nil) (CompilerRegEdgeCopyRewrite.Rewrite blocks)]
-    [(CompilerRegEdgeCopyList.Cons copy rest)
-      (match (compiler-reg-edge-copy-insert-one blocks copy)
-        [(CompilerRegEdgeCopyRewrite.Rewrite rewritten)
-          (compiler-reg-edge-copy-apply rewritten (box-get rest))]
-        [(CompilerRegEdgeCopyRewrite.Refused message)
-          (CompilerRegEdgeCopyRewrite.Refused message)])]))
+  [copies : CompilerRegEdgeCopySeq]) : CompilerRegEdgeCopyRewrite
+  (let
+    [slots : (Array CompilerRegEdgeCopy) (struct-get copies slots)]
+    [count : i64 (struct-get copies len)]
+    [index : i64 0]
+    [current : CompilerIrBlockList blocks]
+    [refusal : String ""]
+    [refused : bool false]
+    (begin
+      (while (and (< index count) (not refused))
+        (begin
+          (match (compiler-reg-edge-copy-insert-one
+            current
+            (array-ref slots index))
+            [(CompilerRegEdgeCopyRewrite.Rewrite rewritten)
+              (set! current rewritten)]
+            [(CompilerRegEdgeCopyRewrite.Refused message)
+              (begin
+                (set! refusal message)
+                (set! refused true))])
+          (set! index (+ index 1))))
+      (if refused
+        (CompilerRegEdgeCopyRewrite.Refused refusal)
+        (CompilerRegEdgeCopyRewrite.Rewrite current)))))
 
 (define (compiler-reg-loop-split-noop
   [blocks : CompilerIrBlockList]
@@ -9787,23 +9950,28 @@
     CompilerRegVarTypeList.Nil))
 
 (define (compiler-reg-loop-split-direction-present?
-  [copies : CompilerRegEdgeCopyList]
+  [copies : CompilerRegEdgeCopySeq]
   [want-into : bool]) : bool
-  (match copies
-    [(CompilerRegEdgeCopyList.Nil) false]
-    [(CompilerRegEdgeCopyList.Cons copy rest)
-      (match copy
-        [(CompilerRegEdgeCopy.Copy _ _ _ _ _ direction _)
-          (if (match direction
-            [(CompilerRegEdgeCopyDirection.IntoRegion) want-into]
-            [(CompilerRegEdgeCopyDirection.OutOfRegion) (not want-into)])
-            true
-            (compiler-reg-loop-split-direction-present?
-              (box-get rest)
-              want-into))])]))
+  (let
+    [slots : (Array CompilerRegEdgeCopy) (struct-get copies slots)]
+    [count : i64 (struct-get copies len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (match (array-ref slots index)
+            [(CompilerRegEdgeCopy.Copy _ _ _ _ _ direction _)
+              (if (match direction
+                [(CompilerRegEdgeCopyDirection.IntoRegion) want-into]
+                [(CompilerRegEdgeCopyDirection.OutOfRegion) (not want-into)])
+                (set! found true)
+                unit)])
+          (set! index (+ index 1))))
+      found)))
 
 (define (compiler-reg-loop-split-copies-bidirectional?
-  [copies : CompilerRegEdgeCopyList]) : bool
+  [copies : CompilerRegEdgeCopySeq]) : bool
   (and
     (compiler-reg-loop-split-direction-present? copies true)
     (compiler-reg-loop-split-direction-present? copies false)))
@@ -11457,7 +11625,7 @@
   [region-labels : CompilerRegStringList]
   [ty : AstType]
   [reg : String]
-  [copies : CompilerRegEdgeCopyList]
+  [copies : CompilerRegEdgeCopySeq]
   [evicted-var : i64]
   [parents : (Array i64)]) : CompilerRegCallSaveRewrite
   (let
@@ -12769,11 +12937,11 @@
 (defenum CompilerRegCallRegionStat
   (CompilerRegCallRegionStat i64 i64 i64 i64 i64 i64 i64))
 
-(defenum CompilerRegCallRegionStatList
-  (CompilerRegCallRegionStatNil)
-  (CompilerRegCallRegionStatCons
-    CompilerRegCallRegionStat
-    (Box CompilerRegCallRegionStatList)))
+;; One bucket of candidate rows in FLUSH order; the picker walks it back to
+;; front, which is the order the former prepend-built cons bucket presented.
+(defstruct CompilerRegCallRegionStatSeq
+  (slots (Array CompilerRegCallRegionStat))
+  (len i64))
 
 (defenum CompilerRegCallRegionMaybeStat
   (CompilerRegCallRegionNoStat)
@@ -13803,7 +13971,7 @@
 ;; be selected: >= 2 uses) and close it.
 (define (compiler-reg-call-region-flush-root!
   [root : i64]
-  [buckets : (Array CompilerRegCallRegionStatList)]
+  [buckets : (Array CompilerRegCallRegionStatSeq)]
   [cur-lo : (Array i64)]
   [cur-hi : (Array i64)]
   [cur-uses : (Array i64)]
@@ -13815,7 +13983,8 @@
       (array-set!
         buckets
         root
-        (CompilerRegCallRegionStatCons
+        (compiler-reg-call-region-stat-seq-push
+          (array-ref buckets root)
           (CompilerRegCallRegionStat
             root
             (array-ref cur-lo root)
@@ -13823,8 +13992,7 @@
             (array-ref cur-uses root)
             (array-ref cur-defs root)
             (array-ref cur-firstdef root)
-            (array-ref cur-depth root))
-          (box (array-ref buckets root))))
+            (array-ref cur-depth root))))
       unit)
     (array-set! cur-lo root (- 0 1))))
 
@@ -13851,7 +14019,7 @@
   [rid : i64]
   [p : i64]
   [depth : i64]
-  [buckets : (Array CompilerRegCallRegionStatList)]
+  [buckets : (Array CompilerRegCallRegionStatSeq)]
   [cur-region : (Array i64)]
   [cur-lo : (Array i64)]
   [cur-hi : (Array i64)]
@@ -13915,7 +14083,7 @@
   [depths : (Array i64)]
   [cand : (Array i64)]
   [n : i64]
-  [buckets : (Array CompilerRegCallRegionStatList)]) : unit
+  [buckets : (Array CompilerRegCallRegionStatSeq)]) : unit
   (let
     [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
     [bslots : (Array CompilerIrBlock) (struct-get seq slots)]
@@ -14116,37 +14284,35 @@
 ;; Best not-yet-picked eligible row by score (region lo is unique per root,
 ;; so it doubles as the picked-row key).
 (define (compiler-reg-call-region-best-from
-  [rows : CompilerRegCallRegionStatList]
+  [rows : CompilerRegCallRegionStatSeq]
   [ends : (Array i64)]
   [picked-lo : (Array i64)]
   [k : i64]
   [best-score : i64]
   [best : CompilerRegCallRegionMaybeStat]) : CompilerRegCallRegionMaybeStat
-  (match rows
-    [(CompilerRegCallRegionStatNil) best]
-    [(CompilerRegCallRegionStatCons stat rest)
-      (match stat
-        [(CompilerRegCallRegionStat _ lo _ _ _ _ _)
-          (let
-            [score : i64 (compiler-reg-call-region-stat-score stat ends)]
-            (if (and
-              (compiler-reg-call-region-stat-eligible? stat ends)
-              (not (compiler-reg-call-region-picked? picked-lo k lo))
-              (> score best-score))
-              (compiler-reg-call-region-best-from
-                (box-get rest)
-                ends
-                picked-lo
-                k
-                score
-                (CompilerRegCallRegionSomeStat stat))
-              (compiler-reg-call-region-best-from
-                (box-get rest)
-                ends
-                picked-lo
-                k
-                best-score
-                best)))])]))
+  (let
+    [slots : (Array CompilerRegCallRegionStat) (struct-get rows slots)]
+    [index : i64 (- (struct-get rows len) 1)]
+    [top-score : i64 best-score]
+    [top : CompilerRegCallRegionMaybeStat best]
+    (begin
+      (while (>= index 0)
+        (let
+          [stat : CompilerRegCallRegionStat (array-ref slots index)]
+          [score : i64 (compiler-reg-call-region-stat-score stat ends)]
+          (begin
+            (match stat
+              [(CompilerRegCallRegionStat _ lo _ _ _ _ _)
+                (if (and
+                  (compiler-reg-call-region-stat-eligible? stat ends)
+                  (not (compiler-reg-call-region-picked? picked-lo k lo))
+                  (> score top-score))
+                  (begin
+                    (set! top-score score)
+                    (set! top (CompilerRegCallRegionSomeStat stat)))
+                  unit)])
+            (set! index (- index 1)))))
+      top)))
 
 ;; Segment-precise occupancy: does var overlap point range [lo,hi]?
 ;; CLOSED-interval overlap (inclusive at both ends, unlike the allocator's
@@ -14413,8 +14579,8 @@
                 (let
                   [depths : (Array i64)
                     (compiler-reg-function-loop-depths blocks)]
-                  [buckets : (Array CompilerRegCallRegionStatList)
-                    (array.make-array CompilerRegCallRegionStatList an)]
+                  [buckets : (Array CompilerRegCallRegionStatSeq)
+                    (array.make-array CompilerRegCallRegionStatSeq an)]
                   [pool : (Array String) (compiler-reg-call-region-pool abi)]
                   [pool-count : i64 (array-length pool)]
                   [present : (Array i64) (struct-get assignments present)]
@@ -14428,7 +14594,8 @@
                   [occ-n : i64 0]
                   [shadows : CompilerLiveI64Set (compiler-live-set-empty)]
                   [shadow-regs : (Array String) (array.make-array String an)]
-                  [regions : CompilerRegCallRegionList CompilerRegCallRegionNil]
+                  [regions : CompilerRegCallRegionSeq
+                    (compiler-reg-call-region-seq-empty)]
                   [budget : i64 (compiler-reg-call-region-function-cap)]
                   [root-cap : i64 (compiler-reg-call-region-root-cap)]
                   [picked-lo : (Array i64) (array.make-array i64 4)]
@@ -14442,7 +14609,10 @@
                       [bi : i64 0]
                       (while (< bi an)
                         (begin
-                          (array-set! buckets bi CompilerRegCallRegionStatNil)
+                          (array-set!
+                            buckets
+                            bi
+                            (compiler-reg-call-region-stat-seq-empty))
                           (set! bi (+ bi 1)))))
                     (compiler-reg-call-region-collect!
                       blocks
@@ -14498,7 +14668,7 @@
                     (while (and (< ci cand-count) (> budget 0))
                       (let
                         [root : i64 (array-ref order ci)]
-                        [rows : CompilerRegCallRegionStatList
+                        [rows : CompilerRegCallRegionStatSeq
                           (array-ref buckets root)]
                         [k : i64 0]
                         [cap : i64
@@ -14579,14 +14749,14 @@
                                         (begin
                                           (set!
                                             regions
-                                            (CompilerRegCallRegionCons
+                                            (compiler-reg-call-region-seq-push
+                                              regions
                                               (CompilerRegCallRegion
                                                 root
                                                 (array-ref picked-lo j)
                                                 (array-ref picked-hi j)
                                                 (array-ref picked-entry j)
-                                                (array-ref picked-exit j))
-                                              (box regions)))
+                                                (array-ref picked-exit j))))
                                           (set! j (+ j 1))))
                                       ;; occupancy is recorded on the coalesce
                                       ;; ROOT: members carry no eff-index
@@ -14896,18 +15066,19 @@
 (cfg
   regalloc-census
   (define (compiler-reg-move-census-record!
-    [moves : CompilerRegMoveList]
+    [moves : CompilerRegMoveSeq]
     [parents : (Array i64)]
     [interval-index : CompilerRegIntervalIndex]
     [eff-index : CompilerRegIntervalIndex]
     [types : CompilerRegVarTypes]
     [group-vars : CompilerLiveI64Set]
     [sv-parents : (Array i64)]) : unit
-    (match moves
-      [(CompilerRegMoveList.Nil) unit]
-      [(CompilerRegMoveList.Cons move rest)
+    (let
+      [slots : (Array CompilerRegMove) (struct-get moves slots)]
+      [index : i64 (- (struct-get moves len) 1)]
+      (while (>= index 0)
         (begin
-          (match move
+          (match (array-ref slots index)
             [(CompilerRegMove.Move src dst _)
               (begin
                 (compiler-reg-move-census-bump! 0)
@@ -14961,14 +15132,7 @@
                                     (compiler-reg-move-census-bump! 9)
                                     (compiler-reg-move-census-bump! 10)))))))
                         (compiler-reg-move-census-bump! 4))))))])
-          (compiler-reg-move-census-record!
-            (box-get rest)
-            parents
-            interval-index
-            eff-index
-            types
-            group-vars
-            sv-parents))])))
+          (set! index (- index 1)))))))
 
 (cfg
   regalloc-census
@@ -15649,7 +15813,7 @@
     (array.make-array i64 0)
     (array.make-array String 0)
     (array.make-array i64 0)
-    CompilerRegOccupantSplitNil))
+    (array.make-array CompilerRegOccupantSplit 0)))
 
 ;; The spill-weight eviction scores a candidate by its use count,
 ;; but a merged class root carries only its OWN var's weight -- which can be the
@@ -18128,7 +18292,9 @@
             caller-saved-count
             unspillable-from
             scratch-excluded)
-          (CompilerRegAssignState.State CompilerRegActiveList.Nil assignments))))))
+          (CompilerRegAssignState.State
+            (compiler-reg-active-seq-empty)
+            assignments))))))
 
 (define (compiler-reg-greedy-state
   [candidates : CompilerRegIntervalList]
@@ -18468,31 +18634,31 @@
   [members : (Array i64)]
   [count : i64]
   [shadow-regs : (Array String)]
-  [regions : CompilerRegCallRegionList]
+  [regions : CompilerRegCallRegionSeq]
   [reg : String]) : bool
-  (match regions
-    [(CompilerRegCallRegionNil) false]
-    [(CompilerRegCallRegionCons region rest)
-      (match region
-        [(CompilerRegCallRegion root lo hi _ _)
-          (if (and
-            (>= root 0)
-            (< root (array-length shadow-regs))
-            (string.eq (array-ref shadow-regs root) reg)
-            (compiler-reg-group-pair-component-live-over-range?
-              interval-index
-              members
-              count
-              lo
-              hi))
-            true
-            (compiler-reg-group-pair-shadow-reg-conflicts-regions?
-              interval-index
-              members
-              count
-              shadow-regs
-              (box-get rest)
-              reg))])]))
+  (let
+    [slots : (Array CompilerRegCallRegion) (struct-get regions slots)]
+    [index : i64 (- (struct-get regions len) 1)]
+    [conflict : bool false]
+    (begin
+      (while (and (>= index 0) (not conflict))
+        (begin
+          (match (array-ref slots index)
+            [(CompilerRegCallRegion root lo hi _ _)
+              (if (and
+                (>= root 0)
+                (< root (array-length shadow-regs))
+                (string.eq (array-ref shadow-regs root) reg)
+                (compiler-reg-group-pair-component-live-over-range?
+                  interval-index
+                  members
+                  count
+                  lo
+                  hi))
+                (set! conflict true)
+                unit)])
+          (set! index (- index 1))))
+      conflict)))
 
 (define (compiler-reg-group-pair-weight [weights : (Array i64)] [v : i64]) : i64
   (if (and (>= v 0) (< v (array-length weights)))
@@ -19319,7 +19485,7 @@
         destructive-clobber-points
         storage-identity-vars)]
     [raw-moves
-      : CompilerRegMoveList
+      : CompilerRegMoveSeq
       ;; Phi back-edge moves NON-strict so loop-carried phi/copy pairs coalesce
       ;; (then merge into one root via coalescing-by-rename). SIMD already
       ;; passed false here; only the scalar-opt2 plan gains the loop coalescing.
@@ -19332,7 +19498,7 @@
           false
           destructive-eligible)
         (compiler-reg-function-moves func false))]
-    [moves : CompilerRegMoveList
+    [moves : CompilerRegMoveSeq
       (compiler-reg-move-list-filter-storage-identity
         raw-moves
         storage-identity-vars)]
@@ -19388,32 +19554,31 @@
     ;; a precision error here can only mis-coalesce (caught by the fixpoint), never
     ;; under-approximate allocation interference.
     [coalesce-index : CompilerRegIntervalIndex
-      (match moves
-        [(CompilerRegMoveList.Nil) interval-index]
-        [_
-          (if allow-caller-saved-zero-call
-            ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
-            ;; by the coalescing segment index AND the live-out-input phi exclusion.
-            ;; Skipped entirely when there are no moves to coalesce (the Nil arm
-            ;; above): the map build below returns the empty map without reading
-            ;; this index, so the plan is unchanged and the EP interval
-            ;; selection + safe-mode exclusion are provably dead work for
-            ;; move-free functions.
-            (let
-              [ep-liveness : CompilerFunctionLiveness
-                (compiler-reg-liveness-handle-edge-precise liveness-handle)]
-              (compiler-reg-hybrid-coalesce-index
-                interval-index
-                (compiler-reg-live-interval-selection-ep func ep-liveness)
-                ;; Exclude unsafe live-out inputs while admitting proven self-loop
-                ;; back-edge-only values. Fixed div/mod or variable-shift functions
-                ;; retain the conservative guard: relaxing an otherwise unrelated
-                ;; carry can reshape fixed-home pressure differently on SysV/Win64.
-                (compiler-reg-function-phi-touched-safe-mode
-                  func
-                  ep-liveness
-                  (= (compiler-live-set-word-count destructive-fixed-points) 0))))
-            interval-index)])]
+      (if (compiler-reg-move-list-empty? moves)
+        interval-index
+        (if allow-caller-saved-zero-call
+          ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
+          ;; by the coalescing segment index AND the live-out-input phi exclusion.
+          ;; Skipped entirely when there are no moves to coalesce (the empty arm
+          ;; above): the map build below returns the empty map without reading
+          ;; this index, so the plan is unchanged and the EP interval
+          ;; selection + safe-mode exclusion are provably dead work for
+          ;; move-free functions.
+          (let
+            [ep-liveness : CompilerFunctionLiveness
+              (compiler-reg-liveness-handle-edge-precise liveness-handle)]
+            (compiler-reg-hybrid-coalesce-index
+              interval-index
+              (compiler-reg-live-interval-selection-ep func ep-liveness)
+              ;; Exclude unsafe live-out inputs while admitting proven self-loop
+              ;; back-edge-only values. Fixed div/mod or variable-shift functions
+              ;; retain the conservative guard: relaxing an otherwise unrelated
+              ;; carry can reshape fixed-home pressure differently on SysV/Win64.
+              (compiler-reg-function-phi-touched-safe-mode
+                func
+                ep-liveness
+                (= (compiler-live-set-word-count destructive-fixed-points) 0))))
+          interval-index))]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build
@@ -19699,7 +19864,7 @@
     [scratch-state : CompilerRegAssignState
       (if (= early-scratch-count 0)
         (CompilerRegAssignState.State
-          CompilerRegActiveList.Nil
+          (compiler-reg-active-seq-empty)
           scratch-input-assignments)
         (compiler-reg-greedy-state-with-scratch-exclusions
           scratch-candidates
@@ -19848,7 +20013,7 @@
       ;; save/restore sees the same physical N through the overlap helper.
       (if vector-mask-empty?
         (CompilerRegAssignState.State
-          CompilerRegActiveList.Nil
+          (compiler-reg-active-seq-empty)
           scalar-assignments)
         (compiler-reg-greedy-state
           vector-candidates
@@ -19872,7 +20037,7 @@
     [mask-state : CompilerRegAssignState
       (if vector-mask-empty?
         (CompilerRegAssignState.State
-          CompilerRegActiveList.Nil
+          (compiler-reg-active-seq-empty)
           vector-assignments)
         (compiler-reg-assign-fixed-candidates
           (compiler-reg-special-candidates
@@ -19880,7 +20045,7 @@
             mask-candidate-vars
             blocked)
           (compiler-reg-mask-registers)
-          CompilerRegActiveList.Nil
+          (compiler-reg-active-seq-empty)
           vector-assignments
           (array.make-array i64 0)
           interval-index))]
@@ -23255,7 +23420,7 @@
     [(CompilerRegPlan.Plan _ _ _ _ split _)
       (compiler-reg-call-split-regs split)]))
 
-(define (compiler-reg-plan-caller-save-regions [plan : CompilerRegPlan]) : CompilerRegCallRegionList
+(define (compiler-reg-plan-caller-save-regions [plan : CompilerRegPlan]) : CompilerRegCallRegionSeq
   (match plan
     [(CompilerRegPlan.Plan _ _ _ _ split _)
       (compiler-reg-call-split-regions split)]))
@@ -27070,39 +27235,34 @@
 ;; exactly the region -- the same soundness net the loop-split rescue uses.
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-call-region-list-count
-  [regions : CompilerRegCallRegionList]) : i64
-  (match regions
-    [(CompilerRegCallRegionNil) 0]
-    [(CompilerRegCallRegionCons _ rest)
-      (+ 1 (compiler-reg-call-region-list-count (box-get rest)))]))
+  [regions : CompilerRegCallRegionSeq]) : i64
+  (struct-get regions len))
 
+;; Newest-accepted region first, matching the walk order of the former list.
 (define (compiler-reg-call-region-fill-arrays!
-  [regions : CompilerRegCallRegionList]
+  [regions : CompilerRegCallRegionSeq]
   [r-var : (Array i64)]
   [r-lo : (Array i64)]
   [r-hi : (Array i64)]
   [r-entry : (Array i64)]
   [r-exit : (Array i64)]
   [i : i64]) : unit
-  (match regions
-    [(CompilerRegCallRegionNil) unit]
-    [(CompilerRegCallRegionCons region rest)
-      (match region
-        [(CompilerRegCallRegion var lo hi entry-flag exit-flag)
-          (begin
-            (array-set! r-var i var)
-            (array-set! r-lo i lo)
-            (array-set! r-hi i hi)
-            (array-set! r-entry i entry-flag)
-            (array-set! r-exit i exit-flag)
-            (compiler-reg-call-region-fill-arrays!
-              (box-get rest)
-              r-var
-              r-lo
-              r-hi
-              r-entry
-              r-exit
-              (+ i 1)))])]))
+  (let
+    [slots : (Array CompilerRegCallRegion) (struct-get regions slots)]
+    [index : i64 (- (struct-get regions len) 1)]
+    [at : i64 i]
+    (while (>= index 0)
+      (begin
+        (match (array-ref slots index)
+          [(CompilerRegCallRegion var lo hi entry-flag exit-flag)
+            (begin
+              (array-set! r-var at var)
+              (array-set! r-lo at lo)
+              (array-set! r-hi at hi)
+              (array-set! r-entry at entry-flag)
+              (array-set! r-exit at exit-flag))])
+        (set! at (+ at 1))
+        (set! index (- index 1))))))
 
 (define (compiler-reg-call-region-sort-swap!
   [arr : (Array i64)]
@@ -27188,7 +27348,7 @@
   [type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
   (let
-    [regions : CompilerRegCallRegionList
+    [regions : CompilerRegCallRegionSeq
       (compiler-reg-plan-caller-save-regions plan)]
     [count : i64 (compiler-reg-call-region-list-count regions)]
     (if (= count 0)
@@ -30512,10 +30672,10 @@
   (let
     [straight : CompilerIrFunction
       (compiler-reg-destructive-straight-chain-function)]
-    [straight-moves : CompilerRegMoveList
+    [straight-moves : CompilerRegMoveSeq
       (compiler-reg-function-moves-with-destructive-and-casts straight false)]
     [clobber-eligible : (Array i64) (array.make-array i64 3)]
-    [clobber-moves : CompilerRegMoveList
+    [clobber-moves : CompilerRegMoveSeq
       (begin
         (compiler-reg-fill-i64-array clobber-eligible 1)
         (array-set! clobber-eligible 1 0)
@@ -30525,13 +30685,13 @@
           clobber-eligible))]
     [noncomm : CompilerIrFunction
       (compiler-reg-destructive-noncommutative-function)]
-    [noncomm-moves : CompilerRegMoveList
+    [noncomm-moves : CompilerRegMoveSeq
       (compiler-reg-function-moves-with-destructive-and-casts noncomm false)]
-    [commutative-rhs-moves : CompilerRegMoveList
+    [commutative-rhs-moves : CompilerRegMoveSeq
       (compiler-reg-function-moves-with-destructive-and-casts
         (compiler-reg-destructive-commutative-rhs-function)
         false)]
-    [div-moves : CompilerRegMoveList
+    [div-moves : CompilerRegMoveSeq
       (compiler-reg-function-moves-with-destructive-and-casts
         (compiler-reg-destructive-div-exclusion-function)
         false)]
@@ -33606,40 +33766,42 @@
 (cfg
   test
   (define (compiler-reg-edge-copy-list-has?
-    [copies : CompilerRegEdgeCopyList]
+    [copies : CompilerRegEdgeCopySeq]
     [from-label : String]
     [to-label : String]
     [src : i64]
     [dst : i64]
     [want-pred-end : bool]) : bool
-    (match copies
-      [(CompilerRegEdgeCopyList.Nil) false]
-      [(CompilerRegEdgeCopyList.Cons copy rest)
-        (match copy
-          [(CompilerRegEdgeCopy.Copy
-              found-from
-              found-to
-              found-src
-              found-dst
-              _
-              _
-              placement)
-            (if (and
-              (string.eq found-from from-label)
-              (string.eq found-to to-label)
-              (= found-src src)
-              (= found-dst dst)
-              (match placement
-                [(CompilerRegEdgeCopyPlacement.PredEnd) want-pred-end]
-                [(CompilerRegEdgeCopyPlacement.SuccEntry) (not want-pred-end)]))
-              true
-              (compiler-reg-edge-copy-list-has?
-                (box-get rest)
-                from-label
-                to-label
-                src
-                dst
-                want-pred-end))])])))
+    (let
+      [slots : (Array CompilerRegEdgeCopy) (struct-get copies slots)]
+      [count : i64 (struct-get copies len)]
+      [index : i64 0]
+      [found : bool false]
+      (begin
+        (while (and (< index count) (not found))
+          (begin
+            (match (array-ref slots index)
+              [(CompilerRegEdgeCopy.Copy
+                  found-from
+                  found-to
+                  found-src
+                  found-dst
+                  _
+                  _
+                  placement)
+                (if (and
+                  (string.eq found-from from-label)
+                  (string.eq found-to to-label)
+                  (= found-src src)
+                  (= found-dst dst)
+                  (match placement
+                    [(CompilerRegEdgeCopyPlacement.PredEnd) want-pred-end]
+                    [(CompilerRegEdgeCopyPlacement.SuccEntry)
+                      (not want-pred-end)]))
+                  (set! found true)
+                  unit)])
+            (set! index (+ index 1))))
+        found))))
 
 (cfg
   test
@@ -34773,14 +34935,14 @@
       (CompilerRegIntervalIndex starts ends segments)]
     [one-reg : CompilerRegStringList
       (compiler-reg-string-cons "%r12" CompilerRegStringList.Nil)]
-    [active-root : CompilerRegActiveList
-      (compiler-reg-active-cons
-        (CompilerRegActive.Active 0 10 "%r12")
-        CompilerRegActiveList.Nil)]
-    [active-ordinary : CompilerRegActiveList
-      (compiler-reg-active-cons
-        (CompilerRegActive.Active 1 10 "%r12")
-        CompilerRegActiveList.Nil)]
+    [active-root : CompilerRegActiveSeq
+      (compiler-reg-active-insert
+        (compiler-reg-active-seq-empty)
+        (CompilerRegActive.Active 0 10 "%r12"))]
+    [active-ordinary : CompilerRegActiveSeq
+      (compiler-reg-active-insert
+        (compiler-reg-active-seq-empty)
+        (CompilerRegActive.Active 1 10 "%r12"))]
     [hole-aware : CompilerLiveI64Set (compiler-live-set3 0 2 3)]
     [parents : (Array i64) (array.make-array i64 5)]
     (begin
@@ -34964,9 +35126,14 @@
 (define (compiler-reg-coalesce-fixpoint-map-ok?) : bool
   (let
     [types : CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 3)]
-    [moves : CompilerRegMoveList
+    [moves : CompilerRegMoveSeq
       (compiler-reg-move-list-add
-        (compiler-reg-move-list-add CompilerRegMoveList.Nil 0 2 false true)
+        (compiler-reg-move-list-add
+          (compiler-reg-move-seq-empty)
+          0
+          2
+          false
+          true)
         2
         1
         false
@@ -35004,8 +35171,8 @@
 (define (compiler-reg-coalesce-interference-reject-ok?) : bool
   (let
     [types : CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 2)]
-    [moves : CompilerRegMoveList
-      (compiler-reg-move-list-add CompilerRegMoveList.Nil 0 1 false true)]
+    [moves : CompilerRegMoveSeq
+      (compiler-reg-move-list-add (compiler-reg-move-seq-empty) 0 1 false true)]
     [index : CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-overlap-index)]
     [coalesce : CompilerRegCoalesceMap
@@ -35028,8 +35195,8 @@
 (define (compiler-reg-coalesce-segmented-map-ok?) : bool
   (let
     [types : CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 2)]
-    [moves : CompilerRegMoveList
-      (compiler-reg-move-list-add CompilerRegMoveList.Nil 0 1 false true)]
+    [moves : CompilerRegMoveSeq
+      (compiler-reg-move-list-add (compiler-reg-move-seq-empty) 0 1 false true)]
     [index : CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-segment-index)]
     [coalesce : CompilerRegCoalesceMap
@@ -35052,8 +35219,8 @@
 (define (compiler-reg-coalesce-strict-segmented-reject-ok?) : bool
   (let
     [types : CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 2)]
-    [moves : CompilerRegMoveList
-      (compiler-reg-move-list-add CompilerRegMoveList.Nil 0 1 true true)]
+    [moves : CompilerRegMoveSeq
+      (compiler-reg-move-list-add (compiler-reg-move-seq-empty) 0 1 true true)]
     [index : CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-segment-index)]
     [coalesce : CompilerRegCoalesceMap
@@ -35266,7 +35433,7 @@
       (match (compiler-reg-assign-fixed-candidates
         candidates
         regs
-        CompilerRegActiveList.Nil
+        (compiler-reg-active-seq-empty)
         assignments
         (array.make-array i64 0)
         index)
@@ -36428,9 +36595,9 @@
             (CompilerRegCallSplit
               (compiler-live-set-empty)
               shadow-regs
-              (CompilerRegCallRegionCons
-                (CompilerRegCallRegion 1 0 10 0 0)
-                (box CompilerRegCallRegionNil)))]
+              (compiler-reg-call-region-seq-push
+                (compiler-reg-call-region-seq-empty)
+                (CompilerRegCallRegion 1 0 10 0 0)))]
           [phi-excluded : CompilerLiveI64Set
             (compiler-reg-group-pair-excluded-instr
               (compiler-live-set-empty)

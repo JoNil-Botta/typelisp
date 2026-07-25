@@ -66,9 +66,7 @@
   [message : String]) : unit
   (match value
     [(env.EnvSomeStringList items)
-      (match items
-        [(env.EnvStringNil) unit]
-        [_ (io.panic message)])]
+      (env-api-assert-i64-eq (env.string-list-count items) 0 message)]
     [(env.EnvNoStringList) (io.panic message)]))
 
 (define (env-api-assert-path-vec-empty
@@ -85,22 +83,11 @@
   [second : String]
   [third : String]
   [message : String]) : unit
-  (match items
-    [(env.EnvStringCons a rest)
-      (match (box-get rest)
-        [(env.EnvStringCons b tail)
-          (match (box-get tail)
-            [(env.EnvStringCons c end)
-              (match (box-get end)
-                [(env.EnvStringNil)
-                  (begin
-                    (env-api-assert-string-eq a first message)
-                    (env-api-assert-string-eq b second message)
-                    (env-api-assert-string-eq c third message))]
-                [_ (io.panic message)])]
-            [_ (io.panic message)])]
-        [_ (io.panic message)])]
-    [_ (io.panic message)]))
+  (begin
+    (env-api-assert-i64-eq (env.string-list-count items) 3 message)
+    (env-api-assert-string-eq (env.string-list-ref items 0) first message)
+    (env-api-assert-string-eq (env.string-list-ref items 1) second message)
+    (env-api-assert-string-eq (env.string-list-ref items 2) third message)))
 
 (define (env-api-assert-list5
   [items : env.EnvStringList]
@@ -110,30 +97,13 @@
   [fourth : String]
   [fifth : String]
   [message : String]) : unit
-  (match items
-    [(env.EnvStringCons a rest)
-      (match (box-get rest)
-        [(env.EnvStringCons b rest2)
-          (match (box-get rest2)
-            [(env.EnvStringCons c rest3)
-              (match (box-get rest3)
-                [(env.EnvStringCons d rest4)
-                  (match (box-get rest4)
-                    [(env.EnvStringCons e end)
-                      (match (box-get end)
-                        [(env.EnvStringNil)
-                          (begin
-                            (env-api-assert-string-eq a first message)
-                            (env-api-assert-string-eq b second message)
-                            (env-api-assert-string-eq c third message)
-                            (env-api-assert-string-eq d fourth message)
-                            (env-api-assert-string-eq e fifth message))]
-                        [_ (io.panic message)])]
-                    [_ (io.panic message)])]
-                [_ (io.panic message)])]
-            [_ (io.panic message)])]
-        [_ (io.panic message)])]
-    [_ (io.panic message)]))
+  (begin
+    (env-api-assert-i64-eq (env.string-list-count items) 5 message)
+    (env-api-assert-string-eq (env.string-list-ref items 0) first message)
+    (env-api-assert-string-eq (env.string-list-ref items 1) second message)
+    (env-api-assert-string-eq (env.string-list-ref items 2) third message)
+    (env-api-assert-string-eq (env.string-list-ref items 3) fourth message)
+    (env-api-assert-string-eq (env.string-list-ref items 4) fifth message)))
 
 (define (env-api-assert-vec3
   [items : svec.Vec]

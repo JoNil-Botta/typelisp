@@ -357,12 +357,18 @@
 (define (source-tool-string-list-contains?
   [items : process.ProcessStringList]
   [value : String]) : bool
-  (match items
-    [(process.ProcessStringNil) false]
-    [(process.ProcessStringCons head rest)
-      (or
-        (string.eq head value)
-        (source-tool-string-list-contains? (box-get rest) value))]))
+  (let
+    [n : i64 (process.args-count items)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (begin
+          (if (string.eq (process.args-ref items i) value)
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
 
 (define (source-tool-args-append-unique
   [items : process.ProcessStringList]
@@ -374,30 +380,34 @@
 (define (source-tool-string-list-merge-unique
   [left : process.ProcessStringList]
   [right : process.ProcessStringList]) : process.ProcessStringList
-  (match right
-    [(process.ProcessStringNil) left]
-    [(process.ProcessStringCons head rest)
-      (source-tool-string-list-merge-unique
-        (source-tool-args-append-unique left head)
-        (box-get rest))]))
+  (let
+    [n : i64 (process.args-count right)]
+    [i : i64 0]
+    [out : process.ProcessStringList left]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            out
+            (source-tool-args-append-unique out (process.args-ref right i)))
+          (set! i (+ i 1))))
+      out)))
 
 (define (source-tool-string-list-eq?
   [left : process.ProcessStringList]
   [right : process.ProcessStringList]) : bool
-  (match left
-    [(process.ProcessStringNil)
-      (match right
-        [(process.ProcessStringNil) true]
-        [_ false])]
-    [(process.ProcessStringCons left-head left-rest)
-      (match right
-        [(process.ProcessStringCons right-head right-rest)
-          (and
-            (string.eq left-head right-head)
-            (source-tool-string-list-eq?
-              (box-get left-rest)
-              (box-get right-rest)))]
-        [_ false])]))
+  (let
+    [n : i64 (process.args-count left)]
+    [i : i64 0]
+    [same : bool (= n (process.args-count right))]
+    (begin
+      (while (and same (< i n))
+        (begin
+          (if (string.eq (process.args-ref left i) (process.args-ref right i))
+            unit
+            (set! same false))
+          (set! i (+ i 1))))
+      same)))
 
 (define (source-tool-link-inputs-merge
   [left : SourceToolLinkInputs]
@@ -618,24 +628,29 @@
     (string.append candidate ".exe")
     candidate))
 
+(define (source-tool-find-command-on-path-from
+  [tool : String]
+  [paths : env.EnvStringList]
+  [index : i64]) : String
+  (if (>= index (env.string-list-count paths))
+    tool
+    (let
+      [candidate : String
+        (source-tool-path-entry-command (env.string-list-ref paths index) tool)]
+      (if (source-tool-path-command-exists? candidate)
+        candidate
+        (let
+          [exe-candidate : String (source-tool-windows-exe-candidate candidate)]
+          (if (and
+            (not (string.eq exe-candidate candidate))
+            (source-tool-path-command-exists? exe-candidate))
+            exe-candidate
+            (source-tool-find-command-on-path-from tool paths (+ index 1))))))))
+
 (define (source-tool-find-command-on-path
   [tool : String]
   [paths : env.EnvStringList]) : String
-  (match paths
-    [(env.EnvStringNil) tool]
-    [(env.EnvStringCons dir rest)
-      (let
-        [candidate : String (source-tool-path-entry-command dir tool)]
-        (if (source-tool-path-command-exists? candidate)
-          candidate
-          (let
-            [exe-candidate : String
-              (source-tool-windows-exe-candidate candidate)]
-            (if (and
-              (not (string.eq exe-candidate candidate))
-              (source-tool-path-command-exists? exe-candidate))
-              exe-candidate
-              (source-tool-find-command-on-path tool (box-get rest))))))]))
+  (source-tool-find-command-on-path-from tool paths 0))
 
 (define (source-tool-resolve-command [tool : String]) : String
   (if (source-tool-has-path-separator? tool)
@@ -1175,21 +1190,24 @@
             "-o"
             (process.args-cons obj-path (process.args-empty))))))))
 
+;; Map every entry of `items` to `prefix` + entry + `suffix`, preserving argv
+;; order.
+(define (source-tool-decorated-args
+  [items : process.ProcessStringList]
+  [prefix : String]
+  [suffix : String]
+  [index : i64]) : process.ProcessStringList
+  (if (>= index (process.args-count items))
+    (process.args-empty)
+    (process.args-cons
+      (str_cat.str-cat prefix (process.args-ref items index) suffix)
+      (source-tool-decorated-args items prefix suffix (+ index 1)))))
+
 (define (source-tool-linux-link-search-args [dirs : process.ProcessStringList]) : process.ProcessStringList
-  (match dirs
-    [(process.ProcessStringNil) (process.args-empty)]
-    [(process.ProcessStringCons dir rest)
-      (process.args-cons
-        (string.append "-L" dir)
-        (source-tool-linux-link-search-args (box-get rest)))]))
+  (source-tool-decorated-args dirs "-L" "" 0))
 
 (define (source-tool-linux-link-lib-args [libs : process.ProcessStringList]) : process.ProcessStringList
-  (match libs
-    [(process.ProcessStringNil) (process.args-empty)]
-    [(process.ProcessStringCons name rest)
-      (process.args-cons
-        (string.append "-l" name)
-        (source-tool-linux-link-lib-args (box-get rest)))]))
+  (source-tool-decorated-args libs "-l" "" 0))
 
 (define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (process.args-append
@@ -1253,20 +1271,10 @@
 
 (define (source-tool-windows-link-search-args
   [dirs : process.ProcessStringList]) : process.ProcessStringList
-  (match dirs
-    [(process.ProcessStringNil) (process.args-empty)]
-    [(process.ProcessStringCons dir rest)
-      (process.args-cons
-        (string.append "/LIBPATH:" dir)
-        (source-tool-windows-link-search-args (box-get rest)))]))
+  (source-tool-decorated-args dirs "/LIBPATH:" "" 0))
 
 (define (source-tool-windows-link-lib-args [libs : process.ProcessStringList]) : process.ProcessStringList
-  (match libs
-    [(process.ProcessStringNil) (process.args-empty)]
-    [(process.ProcessStringCons name rest)
-      (process.args-cons
-        (string.append name ".lib")
-        (source-tool-windows-link-lib-args (box-get rest)))]))
+  (source-tool-decorated-args libs "" ".lib" 0))
 
 (define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (process.args-append

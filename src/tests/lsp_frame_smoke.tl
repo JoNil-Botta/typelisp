@@ -230,7 +230,7 @@
         (tc-inlay-hint-record! 1 (+ typed-off 1) "i64")
         (tc-inlay-hint-record! 1 (+ next-off 1) "i64")
         (let
-          [hints : json.JsonList (lsp-inlay-build src 0 0)]
+          [hints : json.JsonSeq (lsp-inlay-build src 0 0)]
           [rendered : String (json.stringify (lsp-json-array hints))]
           [type-label : String "\": i64\""]
           [total-pos : String "\"character\":33"]
@@ -329,13 +329,13 @@
   (let
     [src : String
       "(define (foo [x : i64]) : i64 x) (define (bar) : i64 (foo 1))"]
-    [refs : json.JsonList
+    [refs : json.JsonSeq
       (lsp-find-references-in-text
         src
         "foo"
         0
         (string.string-length src)
-        json.JsonListNil)]
+        (json.list-empty))]
     [rendered : String (json.stringify (lsp-json-array refs))]
     [count-ok : bool (= (json.list-count refs) 2)]
     [needle0 : String "\"line\":0"]
@@ -632,10 +632,10 @@
           (set! i (+ i 1))))
       (text_buf.render buf))))
 
-(define (lsp-fold-first-json [ranges : json.JsonList]) : String
-  (match ranges
-    [(json.JsonListNil) ""]
-    [(json.JsonListCons value _) (json.stringify value)]))
+(define (lsp-fold-first-json [ranges : json.JsonSeq]) : String
+  (match (json.list-get-index ranges 0)
+    [(json.JsonFound value) (json.stringify value)]
+    [(json.JsonMissing) ""]))
 
 ;; Deep nesting and wide documents run through the iterative scan and the
 ;; iterative result walk, so neither costs host recursion proportional to the
@@ -643,9 +643,9 @@
 (define (lsp-folding-range-scale-smoke-ok?) : bool
   (let
     [depth : i64 2000]
-    [nested : json.JsonList
+    [nested : json.JsonSeq
       (lsp-folding-ranges-in-text (lsp-fold-nested-source depth))]
-    [wide : json.JsonList
+    [wide : json.JsonSeq
       (lsp-folding-ranges-in-text (lsp-fold-wide-source depth))]
     [outermost : String
       "{\"startLine\":0,\"startCharacter\":1,\"endLine\":3999,\"endCharacter\":0}"]

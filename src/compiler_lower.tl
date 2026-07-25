@@ -153,13 +153,22 @@
 (define lower-rvo-early-return-functions : lower_i64_i64_map.Map
   (lower_i64_i64_map.with-capacity 8))
 
-(defenum LowerIdSet
-  (Nil)
-  (Cons i64 (Box LowerIdSet)))
+;; Contiguous id set: `slots[0, len)` holds the members oldest first, so the old
+;; head-first cons walk is the descending index walk. `lower-id-set-insert` is
+;; persistent and copies into a right-sized array, because callers keep both a
+;; set and an extension of it live at the same time. Only the reach worklist,
+;; which threads one state linearly, uses the in-place push/pop pair.
+(defstruct LowerIdSet
+  (slots (Array i64))
+  (len i64))
 
-(defenum LowerSpmdInlineSubst
-  (Nil)
-  (Cons i64 AstExpr (Box LowerSpmdInlineSubst)))
+;; Parallel key/value arrays in cons order (oldest first). Lookup scans from the
+;; tail so the most recent binding still shadows, and both `cons` and `remove`
+;; build fresh arrays so every substitution value stays independent.
+(defstruct LowerSpmdInlineSubst
+  (names (Array i64))
+  (values (Array AstExpr))
+  (len i64))
 
 ;; Function reachability is ID-native. `all-functions` maps the canonical
 ;; logical ID to a dense slot, `reachable` is slot-keyed, and the worklist/body
@@ -5236,21 +5245,52 @@
             module
             module-id))])))
 
+(define (lower-id-set-empty) : LowerIdSet
+  (LowerIdSet (make-array i64 0) 0))
+
 (define (lower-id-set-contains? [items : LowerIdSet] [name : i64]) : bool
-  (match items
-    [(LowerIdSet.Nil) false]
-    [(LowerIdSet.Cons item rest)
-      (if (= item name)
-        true
-        (lower-id-set-contains? (box-get rest) name))]))
+  (let
+    [index : i64 (struct-get items len)]
+    [found : bool false]
+    (begin
+      (while (and (not found) (> index 0))
+        (begin
+          (set! index (- index 1))
+          (if (= (array-ref (struct-get items slots) index) name)
+            (set! found true)
+            unit)))
+      found)))
 
 (define (lower-id-set-insert [items : LowerIdSet] [name : i64]) : LowerIdSet
   (if (lower-id-set-contains? items name)
     items
-    (LowerIdSet.Cons name (box items))))
+    (let
+      [len : i64 (struct-get items len)]
+      [slots : (Array i64) (make-array i64 (+ len 1))]
+      [index : i64 0]
+      (begin
+        (while (< index len)
+          (begin
+            (array-set! slots index (array-ref (struct-get items slots) index))
+            (set! index (+ index 1))))
+        (array-set! slots len name)
+        (LowerIdSet slots (+ len 1))))))
+
+;; Stack push for the reach worklist only: that state is threaded linearly, so
+;; the backing array is reused instead of copied. Popping just shrinks `len`,
+;; which is why the spare tail slot is overwritten in place when it exists.
+(define (lower-id-set-push [items : LowerIdSet] [name : i64]) : LowerIdSet
+  (let
+    [slots : (Array i64) (struct-get items slots)]
+    [len : i64 (struct-get items len)]
+    (begin
+      (if (< len (array-length slots))
+        (array-set! slots len name)
+        (array-push! slots name))
+      (LowerIdSet slots (+ len 1)))))
 
 (define (lower-spmd-inline-empty-helper-stack) : LowerIdSet
-  LowerIdSet.Nil)
+  (lower-id-set-empty))
 
 (define lower-spmd-inline-helper-stack : LowerIdSet
   (lower-spmd-inline-empty-helper-stack))
@@ -5297,34 +5337,70 @@
         next
         (macro-hygiene-global-source-name-id-or source-name-id source-name-id)))))
 
+(define (lower-spmd-inline-subst-empty) : LowerSpmdInlineSubst
+  (LowerSpmdInlineSubst (make-array i64 0) (make-array AstExpr 0) 0))
+
 (define (lower-spmd-inline-subst-lookup
   [subs : LowerSpmdInlineSubst]
   [name : i64]) : LowerMaybeAstExpr
-  (match subs
-    [(LowerSpmdInlineSubst.Nil) (LowerMaybeAstExpr.No)]
-    [(LowerSpmdInlineSubst.Cons key value rest)
-      (if (= key name)
-        (LowerMaybeAstExpr.Some value)
-        (lower-spmd-inline-subst-lookup (box-get rest) name))]))
+  (let
+    [index : i64 (struct-get subs len)]
+    [found : i64 -1]
+    (begin
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (if (= (array-ref (struct-get subs names) index) name)
+            (begin
+              (set! found index)
+              (set! index 0))
+            unit)))
+      (if (< found 0)
+        (LowerMaybeAstExpr.No)
+        (LowerMaybeAstExpr.Some (array-ref (struct-get subs values) found))))))
 
 (define (lower-spmd-inline-subst-remove
   [subs : LowerSpmdInlineSubst]
   [name : i64]) : LowerSpmdInlineSubst
-  (match subs
-    [(LowerSpmdInlineSubst.Nil) LowerSpmdInlineSubst.Nil]
-    [(LowerSpmdInlineSubst.Cons key value rest)
-      (if (= key name)
-        (lower-spmd-inline-subst-remove (box-get rest) name)
-        (LowerSpmdInlineSubst.Cons
-          key
-          value
-          (box (lower-spmd-inline-subst-remove (box-get rest) name))))]))
+  (let
+    [len : i64 (struct-get subs len)]
+    [names : (Array i64) (make-array i64 len)]
+    [values : (Array AstExpr) (make-array AstExpr len)]
+    [index : i64 0]
+    [kept : i64 0]
+    (begin
+      (while (< index len)
+        (begin
+          (if (= (array-ref (struct-get subs names) index) name)
+            unit
+            (begin
+              (array-set! names kept (array-ref (struct-get subs names) index))
+              (array-set!
+                values
+                kept
+                (array-ref (struct-get subs values) index))
+              (set! kept (+ kept 1))))
+          (set! index (+ index 1))))
+      (LowerSpmdInlineSubst names values kept))))
 
 (define (lower-spmd-inline-subst-cons
   [name : i64]
   [value : AstExpr]
   [rest : LowerSpmdInlineSubst]) : LowerSpmdInlineSubst
-  (LowerSpmdInlineSubst.Cons name value (box rest)))
+  (let
+    [len : i64 (struct-get rest len)]
+    [names : (Array i64) (make-array i64 (+ len 1))]
+    [values : (Array AstExpr) (make-array AstExpr (+ len 1))]
+    [index : i64 0]
+    (begin
+      (while (< index len)
+        (begin
+          (array-set! names index (array-ref (struct-get rest names) index))
+          (array-set! values index (array-ref (struct-get rest values) index))
+          (set! index (+ index 1))))
+      (array-set! names len name)
+      (array-set! values len value)
+      (LowerSpmdInlineSubst names values (+ len 1)))))
 
 (define (lower-spmd-inline-helper-from-decl
   [ctx : TcContext]
@@ -5489,7 +5565,7 @@
     ctx
     params
     args
-    LowerSpmdInlineSubst.Nil
+    (lower-spmd-inline-subst-empty)
     origin))
 
 (define (lower-spmd-inline-expr-list
@@ -5585,10 +5661,7 @@
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
           [init : AstExpr (lower-context-expr-get ctx init-box)]
-          [renamed : bool
-            (match subst
-              [(LowerSpmdInlineSubst.Nil) false]
-              [_ true])]
+          [renamed : bool (> (struct-get subst len) 0)]
           [bind-id : i64
             (if renamed
               (lower-spmd-inline-fresh-local-id name)
@@ -5650,7 +5723,7 @@
               type-env
               body
               helper-subst
-              LowerIdSet.Nil))
+              (lower-id-set-empty)))
           (set! lower-spmd-inline-helper-stack previous)
           result))]
     [(ResultLowerSpmdInlineSubst.Err diag) (ResultLowerAstExpr.Err diag)]))
@@ -6354,7 +6427,7 @@
                 (lower_i64_i64_map.insert-ref! (&mut next-reachable) slot 1)
                 (LowerReachState.State
                   next-reachable
-                  (LowerIdSet.Cons logical-id (box worklist))))))])]))
+                  (lower-id-set-push worklist logical-id)))))])]))
 
 (define (lower-runtime-prelude-string-helper-id [source-id : i64]) : i64
   (let
@@ -8476,12 +8549,16 @@
   [state : LowerReachState]) : LowerReachState
   (match state
     [(LowerReachState.State reachable worklist)
-      (match worklist
-        [(LowerIdSet.Nil) state]
-        [(LowerIdSet.Cons name rest)
+      (let
+        [top : i64 (- (struct-get worklist len) 1)]
+        (if (< top 0)
+          state
           (let
+            [name : i64 (array-ref (struct-get worklist slots) top)]
             [popped : LowerReachState
-              (LowerReachState.State reachable (box-get rest))]
+              (LowerReachState.State
+                reachable
+                (LowerIdSet (struct-get worklist slots) top))]
             (match (lower-function-body-index-find body-index name)
               [(LowerMaybeFunctionBody.Some body body-names body-path-owner-id)
                 (begin
@@ -8513,7 +8590,7 @@
                   all-functions
                   names
                   body-index
-                  popped)]))])]))
+                  popped)]))))]))
 
 (define (lower-dispatch-variant-logical-name
   [module-id : i64]
@@ -10436,7 +10513,7 @@
                         all-functions
                         (LowerReachState.State
                           (lower_i64_i64_map.with-capacity 8192)
-                          LowerIdSet.Nil)
+                          (lower-id-set-empty))
                         main-id)]
                     [export-state : LowerReachState
                       (lower-reach-add-export-roots-in-module
@@ -13174,7 +13251,7 @@
       (lower-supported-reference-type-list-with-stack?
         ctx
         (box-get elems)
-        LowerIdSet.Nil)]
+        (lower-id-set-empty))]
     [(AstType.Array elem-ty _)
       (not (tc-type-contains-reference? (tc-context-type-get ctx elem-ty)))]
     [(AstType.DynArray elem-ty)
@@ -13184,25 +13261,25 @@
         ctx
         name
         (ast-lifetime-list-new)
-        LowerIdSet.Nil)]
+        (lower-id-set-empty))]
     [(AstType.StructArgs name lifetimes)
       (lower-supported-reference-struct-args-with-stack?
         ctx
         name
         (box-get lifetimes)
-        LowerIdSet.Nil)]
+        (lower-id-set-empty))]
     [(AstType.Enum name)
       (lower-supported-reference-enum-args-with-stack?
         ctx
         name
         (ast-lifetime-list-new)
-        LowerIdSet.Nil)]
+        (lower-id-set-empty))]
     [(AstType.EnumArgs name lifetimes)
       (lower-supported-reference-enum-args-with-stack?
         ctx
         name
         (box-get lifetimes)
-        LowerIdSet.Nil)]
+        (lower-id-set-empty))]
     [_ false]))
 
 (define (lower-borrow-place-value-reference? [ctx : TcContext] [ty : AstType]) : bool
@@ -13456,7 +13533,7 @@
         [_ false]))))
 
 (define (lower-supported-reference-type? [ctx : TcContext] [ty : AstType]) : bool
-  (lower-supported-reference-type-with-stack? ctx ty LowerIdSet.Nil))
+  (lower-supported-reference-type-with-stack? ctx ty (lower-id-set-empty)))
 
 (define (lower-borrowed-str-expr
   [ctx : TcContext]
@@ -28268,7 +28345,7 @@
         ctx
         env
         type-env
-        LowerIdSet.Nil
+        (lower-id-set-empty)
         func)
         [(ResultLowerSpmdInlineHelper.Ok helper)
           (match helper
@@ -35328,29 +35405,21 @@
 (define (lower-masked-vector-empty-lane-locals) : lower_i64_i64_map.Map
   (lower_i64_i64_map.with-capacity 16))
 
-(define (lower-masked-vector-lane-locals-from-set-at
-  [items : LowerIdSet]
-  [lanes : i64]
-  [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
-  (match items
-    [(LowerIdSet.Nil) out]
-    [(LowerIdSet.Cons name rest)
-      (let
-        [next-out : lower_i64_i64_map.Map out]
-        (begin
-          (lower_i64_i64_map.insert-ref! (&mut next-out) name lanes)
-          (lower-masked-vector-lane-locals-from-set-at
-            (box-get rest)
-            lanes
-            next-out)))]))
-
 (define (lower-masked-vector-lane-locals-from-set
   [items : LowerIdSet]
   [lanes : i64]) : lower_i64_i64_map.Map
-  (lower-masked-vector-lane-locals-from-set-at
-    items
-    lanes
-    (lower-masked-vector-empty-lane-locals)))
+  (let
+    [out : lower_i64_i64_map.Map (lower-masked-vector-empty-lane-locals)]
+    [index : i64 (struct-get items len)]
+    (begin
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (lower_i64_i64_map.insert-ref!
+            (&mut out)
+            (array-ref (struct-get items slots) index)
+            lanes)))
+      out)))
 
 (define (lower-masked-vector-lane-locals-bind-if-varying
   [lane-locals : lower_i64_i64_map.Map]
@@ -35879,7 +35948,7 @@
           ctx
           env
           type-env
-          LowerIdSet.Nil
+          (lower-id-set-empty)
           func)
           [(ResultLowerSpmdInlineHelper.Ok helper)
             (match helper
@@ -37839,7 +37908,7 @@
     env
     type-env
     index
-    LowerIdSet.Nil
+    (lower-id-set-empty)
     expr))
 
 (define (lower-masked-vector-bool-array-lane?
@@ -38206,7 +38275,7 @@
             ctx
             env
             type-env
-            LowerIdSet.Nil
+            (lower-id-set-empty)
             func)
             [(ResultLowerSpmdInlineHelper.Ok helper)
               (match helper
@@ -39033,7 +39102,12 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [func : AstExpr]) : bool
-  (match (lower-spmd-inline-helper-lookup ctx env type-env LowerIdSet.Nil func)
+  (match (lower-spmd-inline-helper-lookup
+    ctx
+    env
+    type-env
+    (lower-id-set-empty)
+    func)
     [(ResultLowerSpmdInlineHelper.Ok helper)
       (match helper
         [(LowerSpmdInlineHelper.Some name _ _ body)
@@ -46940,7 +47014,7 @@
 (define (lower-spmd-call-lane-locals
   [params : AstParamList]
   [args : CompilerIrSpmdCallArgList]) : LowerIdSet
-  (lower-spmd-call-lane-locals-at (& params) args 0 LowerIdSet.Nil))
+  (lower-spmd-call-lane-locals-at (& params) args 0 (lower-id-set-empty)))
 
 (define (lower-spmd-call-lane-locals-at
   [params : (& params AstParamList)]
@@ -49128,7 +49202,7 @@
     state
     (sym_i64_env.sym-i64-bind-id env index-id index-var)
     (tc-bind-id type-env index-id index-ty)
-    LowerIdSet.Nil
+    (lower-id-set-empty)
     index
     index-var
     active-mask
@@ -50004,8 +50078,8 @@
     env
     type-env
     body
-    LowerSpmdInlineSubst.Nil
-    (lower-id-set-insert LowerIdSet.Nil index-id))
+    (lower-spmd-inline-subst-empty)
+    (lower-id-set-insert (lower-id-set-empty) index-id))
     [(ResultLowerAstExpr.Ok inlined-body)
       (if (and
         (lower-mode-avx2? (lower-state-mode state))

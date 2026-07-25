@@ -667,27 +667,61 @@
   (name String)
   (requires-unsafe bool))
 
-(defenum SelfhostLintUnsafeSurfaceNames
-  (Nil)
-  (Cons SelfhostLintUnsafeSurfaceName (Box SelfhostLintUnsafeSurfaceNames)))
+;; Append-only and read front to back: contiguous slots with a doubling push.
+(defstruct SelfhostLintUnsafeSurfaceNames
+  (slots (Array SelfhostLintUnsafeSurfaceName))
+  (len i64))
+
+(define (selfhost-lint-unsafe-surface-names-empty) : SelfhostLintUnsafeSurfaceNames
+  (SelfhostLintUnsafeSurfaceNames
+    (make-array SelfhostLintUnsafeSurfaceName 8)
+    0))
+
+(define (selfhost-lint-unsafe-surface-names-add
+  [fact : SelfhostLintUnsafeSurfaceName]
+  [names : SelfhostLintUnsafeSurfaceNames]) : SelfhostLintUnsafeSurfaceNames
+  (let
+    [cells : (Array SelfhostLintUnsafeSurfaceName) (struct-get names slots)]
+    [n : i64 (struct-get names len)]
+    [index : i64 0]
+    (begin
+      (if (< n (array-length cells))
+        unit
+        (let
+          [bigger : (Array SelfhostLintUnsafeSurfaceName)
+            (make-array SelfhostLintUnsafeSurfaceName (* n 2))]
+          (begin
+            (while (< index n)
+              (begin
+                (array-set! bigger index (array-ref cells index))
+                (set! index (+ index 1))))
+            (set! cells bigger))))
+      (array-set! cells n fact)
+      (SelfhostLintUnsafeSurfaceNames cells (+ n 1)))))
 
 (defstruct SelfhostLintUnsafeSurfaceCacheEntry
   (path String)
   (valid bool)
   (names SelfhostLintUnsafeSurfaceNames))
 
-(defenum SelfhostLintUnsafeSurfaceCache
-  (Nil)
-  (Cons
-    SelfhostLintUnsafeSurfaceCacheEntry
-    (Box SelfhostLintUnsafeSurfaceCache)))
+(defstruct SelfhostLintUnsafeSurfaceCache
+  (slots (Array SelfhostLintUnsafeSurfaceCacheEntry))
+  (len i64))
 
 (defenum SelfhostLintUnsafeSurfaceLookup
   (Miss)
   (Hit bool SelfhostLintUnsafeSurfaceNames))
 
+(define (selfhost-lint-unsafe-surface-cache-empty) : SelfhostLintUnsafeSurfaceCache
+  (SelfhostLintUnsafeSurfaceCache
+    (make-array SelfhostLintUnsafeSurfaceCacheEntry 8)
+    0))
+
 (define selfhost-lint-unsafe-surface-cache : SelfhostLintUnsafeSurfaceCache
-  (SelfhostLintUnsafeSurfaceCache.Nil))
+  (selfhost-lint-unsafe-surface-cache-empty))
+
+(define (selfhost-lint-unsafe-surface-cache-entry [index : i64]) : SelfhostLintUnsafeSurfaceCacheEntry
+  (array-ref (struct-get selfhost-lint-unsafe-surface-cache slots) index))
 
 ;; The cache arena is the explicit batch's outer arena. Entries copy only path,
 ;; declaration name, and safety bits out of each file scratch; no AST nodes,
@@ -716,7 +750,7 @@
   (begin
     (set!
       selfhost-lint-unsafe-surface-cache
-      (SelfhostLintUnsafeSurfaceCache.Nil))
+      (selfhost-lint-unsafe-surface-cache-empty))
     (set! selfhost-lint-unsafe-surface-cache-arena (arena.tl_arena_current))
     (set! selfhost-lint-unsafe-surface-parse-count 0)
     (set! selfhost-lint-unsafe-surface-hit-count 0)
@@ -729,7 +763,7 @@
   (begin
     (set!
       selfhost-lint-unsafe-surface-cache
-      (SelfhostLintUnsafeSurfaceCache.Nil))
+      (selfhost-lint-unsafe-surface-cache-empty))
     (set! selfhost-lint-unsafe-surface-cache-arena 0)))
 
 (define (selfhost-lint-unsafe-surface-cache-ensure!) : unit
@@ -760,23 +794,28 @@
     selfhost-lint-unused-unsafe-surface-required-count
     selfhost-lint-unused-unsafe-surface-unused-count))
 
-(define (selfhost-lint-unsafe-surface-cache-lookup-from
-  [path : String]
-  [entries : SelfhostLintUnsafeSurfaceCache]) : SelfhostLintUnsafeSurfaceLookup
-  (match entries
-    [(SelfhostLintUnsafeSurfaceCache.Nil)
-      (SelfhostLintUnsafeSurfaceLookup.Miss)]
-    [(SelfhostLintUnsafeSurfaceCache.Cons entry rest)
-      (if (string.eq (struct-get entry path) path)
-        (SelfhostLintUnsafeSurfaceLookup.Hit
-          (struct-get entry valid)
-          (struct-get entry names))
-        (selfhost-lint-unsafe-surface-cache-lookup-from path (box-get rest)))]))
-
+;; Paths are stored at most once (only the miss path stores), so scanning the
+;; slots front to back returns the same entry the newest-first chain did.
 (define (selfhost-lint-unsafe-surface-cache-lookup [path : String]) : SelfhostLintUnsafeSurfaceLookup
-  (selfhost-lint-unsafe-surface-cache-lookup-from
-    path
-    selfhost-lint-unsafe-surface-cache))
+  (let
+    [n : i64 (struct-get selfhost-lint-unsafe-surface-cache len)]
+    [index : i64 0]
+    (begin
+      (while (and
+        (< index n)
+        (not
+          (string.eq
+            (struct-get (selfhost-lint-unsafe-surface-cache-entry index) path)
+            path)))
+        (set! index (+ index 1)))
+      (if (< index n)
+        (let
+          [entry : SelfhostLintUnsafeSurfaceCacheEntry
+            (selfhost-lint-unsafe-surface-cache-entry index)]
+          (SelfhostLintUnsafeSurfaceLookup.Hit
+            (struct-get entry valid)
+            (struct-get entry names)))
+        (SelfhostLintUnsafeSurfaceLookup.Miss)))))
 
 (define (selfhost-lint-unsafe-surface-value-kind?
   [kind : CompilerLoadSurfaceDeclKind]) : bool
@@ -790,23 +829,49 @@
 
 (define (selfhost-lint-unsafe-surface-copy-decls
   [decls : CompilerLoadSurfaceDeclList]
-  [root-module : i64]) : SelfhostLintUnsafeSurfaceNames
+  [root-module : i64]
+  [out : SelfhostLintUnsafeSurfaceNames]) : SelfhostLintUnsafeSurfaceNames
   (match decls
-    [(CompilerLoadSurfaceDeclNil) (SelfhostLintUnsafeSurfaceNames.Nil)]
+    [(CompilerLoadSurfaceDeclNil) out]
     [(CompilerLoadSurfaceDeclCons decl rest)
-      (let
-        [tail : SelfhostLintUnsafeSurfaceNames
-          (selfhost-lint-unsafe-surface-copy-decls (box-get rest) root-module)]
+      (selfhost-lint-unsafe-surface-copy-decls
+        (box-get rest)
+        root-module
         (if (and
           (= (struct-get decl module) root-module)
           (not (struct-get decl has-generated-meta))
           (selfhost-lint-unsafe-surface-value-kind? (struct-get decl kind)))
-          (SelfhostLintUnsafeSurfaceNames.Cons
+          (selfhost-lint-unsafe-surface-names-add
             (SelfhostLintUnsafeSurfaceName
               (string.copy (intern-str (struct-get decl name)))
               (struct-get decl was-unsafe))
-            (box tail))
-          tail))]))
+            out)
+          out))]))
+
+(define (selfhost-lint-unsafe-surface-cache-push!
+  [entry : SelfhostLintUnsafeSurfaceCacheEntry]) : unit
+  (let
+    [n : i64 (struct-get selfhost-lint-unsafe-surface-cache len)]
+    [index : i64 0]
+    (begin
+      (if (<
+        n
+        (array-length (struct-get selfhost-lint-unsafe-surface-cache slots)))
+        unit
+        (let
+          [bigger : (Array SelfhostLintUnsafeSurfaceCacheEntry)
+            (make-array SelfhostLintUnsafeSurfaceCacheEntry (* n 2))]
+          (begin
+            (while (< index n)
+              (begin
+                (array-set!
+                  bigger
+                  index
+                  (selfhost-lint-unsafe-surface-cache-entry index))
+                (set! index (+ index 1))))
+            (set! (struct-get selfhost-lint-unsafe-surface-cache slots) bigger))))
+      (array-set! (struct-get selfhost-lint-unsafe-surface-cache slots) n entry)
+      (set! (struct-get selfhost-lint-unsafe-surface-cache len) (+ n 1)))))
 
 (define (selfhost-lint-unsafe-surface-cache-store-summary!
   [path : String]
@@ -816,19 +881,14 @@
     (begin
       (unsafe
         (arena.tl_arena_set selfhost-lint-unsafe-surface-cache-arena))
-      (let
-        [entry : SelfhostLintUnsafeSurfaceCacheEntry
-          (SelfhostLintUnsafeSurfaceCacheEntry
-            (string.copy path)
-            true
-            (selfhost-lint-unsafe-surface-copy-decls
-              (struct-get summary decls)
-              (struct-get summary declaration-module-id)))]
-        (set!
-          selfhost-lint-unsafe-surface-cache
-          (SelfhostLintUnsafeSurfaceCache.Cons
-            entry
-            (box selfhost-lint-unsafe-surface-cache))))
+      (selfhost-lint-unsafe-surface-cache-push!
+        (SelfhostLintUnsafeSurfaceCacheEntry
+          (string.copy path)
+          true
+          (selfhost-lint-unsafe-surface-copy-decls
+            (struct-get summary decls)
+            (struct-get summary declaration-module-id)
+            (selfhost-lint-unsafe-surface-names-empty))))
       (unsafe
         (arena.tl_arena_set home)))))
 
@@ -838,17 +898,11 @@
     (begin
       (unsafe
         (arena.tl_arena_set selfhost-lint-unsafe-surface-cache-arena))
-      (let
-        [entry : SelfhostLintUnsafeSurfaceCacheEntry
-          (SelfhostLintUnsafeSurfaceCacheEntry
-            (string.copy path)
-            false
-            (SelfhostLintUnsafeSurfaceNames.Nil))]
-        (set!
-          selfhost-lint-unsafe-surface-cache
-          (SelfhostLintUnsafeSurfaceCache.Cons
-            entry
-            (box selfhost-lint-unsafe-surface-cache))))
+      (selfhost-lint-unsafe-surface-cache-push!
+        (SelfhostLintUnsafeSurfaceCacheEntry
+          (string.copy path)
+          false
+          (selfhost-lint-unsafe-surface-names-empty)))
       (unsafe
         (arena.tl_arena_set home)))))
 
@@ -910,17 +964,21 @@
 (define (selfhost-lint-unsafe-surface-add-names!
   [alias : String]
   [names : SelfhostLintUnsafeSurfaceNames]) : unit
-  (match names
-    [(SelfhostLintUnsafeSurfaceNames.Nil) unit]
-    [(SelfhostLintUnsafeSurfaceNames.Cons fact rest)
-      (begin
-        (lint-unused-unsafe-classifier-add-exact-name!
-          (string.append alias (string.append "." (struct-get fact name)))
-          (struct-get fact requires-unsafe))
-        (lint-unused-unsafe-classifier-add-exact-name!
-          (string.append alias (string.append "/" (struct-get fact name)))
-          (struct-get fact requires-unsafe))
-        (selfhost-lint-unsafe-surface-add-names! alias (box-get rest)))]))
+  (let
+    [n : i64 (struct-get names len)]
+    [index : i64 0]
+    (while (< index n)
+      (let
+        [fact : SelfhostLintUnsafeSurfaceName
+          (array-ref (struct-get names slots) index)]
+        (begin
+          (lint-unused-unsafe-classifier-add-exact-name!
+            (string.append alias (string.append "." (struct-get fact name)))
+            (struct-get fact requires-unsafe))
+          (lint-unused-unsafe-classifier-add-exact-name!
+            (string.append alias (string.append "/" (struct-get fact name)))
+            (struct-get fact requires-unsafe))
+          (set! index (+ index 1)))))))
 
 (define (selfhost-lint-unsafe-surface-add-local-decls!
   [decls : CompilerLoadSurfaceDeclList]

@@ -1413,10 +1413,10 @@
   (user.score
     (json.JsonObject
       (box
-        (json.JsonMemberListCons
+        (json.member-cons
           \"zip\"
           (json.JsonNumber \"42\")
-          (box json.JsonMemberListNil))))))")
+          (json.member-list-empty))))))")
 
 (define (compiler-typecheck-smoke-module-macro-generated-init-nested-root-source) : String
   "(defstruct InitAddress

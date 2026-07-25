@@ -5,7 +5,7 @@
 ;#
 ;# `var-exists?`, `var-value`, `set!`, `unset!`, and `path-separator`. Public
 ;# list-returning PATH helpers remain for compatibility; vector-returning
-;# variants avoid cons/reverse work for new internal callers.
+;# variants avoid the extra copy for new internal callers.
 ;#
 ;# Usage: `(import stdlib.env)`
 ;#
@@ -487,13 +487,16 @@
   (EnvNoString)
   (EnvSomeString String))
 
-;: Immutable list of strings used for PATH-style environment variables.
-(defenum EnvStringList
-  (EnvStringNil)
-  (EnvStringCons String (Box EnvStringList)))
+;: Immutable sequence of strings used for PATH-style environment variables.
+;: `slots` holds the `len` live entries in list order. Sequences are shared
+;: persistently, so helpers that extend one copy into a right-sized array
+;: instead of mutating storage another value still observes.
+(defstruct EnvStringList
+  (slots (Array String))
+  (len i64))
 
 ;: Optional PATH-style list result. Missing variables use `EnvNoStringList`;
-;: present empty variables use `EnvSomeStringList EnvStringNil`.
+;: present empty variables use `EnvSomeStringList` with an empty sequence.
 (defenum EnvMaybeStringList
   (EnvNoStringList)
   (EnvSomeStringList EnvStringList))
@@ -519,49 +522,56 @@
 
 ;: Return an empty environment string list.
 (define (string-list-empty) : EnvStringList
-  EnvStringNil)
+  (EnvStringList (array.make-array String 0) 0))
+
+;: Return the number of entries in `items`.
+(define (string-list-count [items : EnvStringList]) : i64
+  (struct-get items len))
+
+;: Return the entry at `index`, or the empty string when `index` is out of range.
+(define (string-list-ref [items : EnvStringList] [index : i64]) : String
+  (if (and (>= index 0) (< index (struct-get items len)))
+    (array-ref (struct-get items slots) index)
+    ""))
 
 ;: Prepend an owned string to an environment string list.
 (define (string-list-cons [value : String] [rest : EnvStringList]) : EnvStringList
-  (EnvStringCons value (box rest)))
-
-;: Reverse `items` onto `acc`, allocating a fresh active-arena list spine.
-(define (string-list-reverse-onto [items : EnvStringList] [acc : EnvStringList]) : EnvStringList
-  (match items
-    [(EnvStringNil) acc]
-    [(EnvStringCons head rest)
-      (string-list-reverse-onto (box-get rest) (EnvStringCons head (box acc)))]))
-
-;: Return `items` in reverse order.
-(define (string-list-reverse [items : EnvStringList]) : EnvStringList
-  (string-list-reverse-onto items EnvStringNil))
-
-;: Build an environment string list from `items`, preserving vector order.
-(define (string-list-from-vec-from
-  [items : (& items svec.Vec)]
-  [index : i64]
-  [acc : EnvStringList]) : EnvStringList
-  (if (< index 0)
-    acc
-    (string-list-from-vec-from
-      items
-      (- index 1)
-      (string-list-cons (svec.get items index "") acc))))
+  (let
+    [n : i64 (struct-get rest len)]
+    [slots : (Array String) (array.make-array String (+ n 1))]
+    [i : i64 0]
+    (begin
+      (array-set! slots 0 value)
+      (while (< i n)
+        (begin
+          (array-set! slots (+ i 1) (array-ref (struct-get rest slots) i))
+          (set! i (+ i 1))))
+      (EnvStringList slots (+ n 1)))))
 
 ;: Build an environment string list from `items`, preserving vector order.
 (define (string-list-from-vec [items : svec.Vec]) : EnvStringList
-  (string-list-from-vec-from (& items) (- (svec.len (& items)) 1) EnvStringNil))
+  (let
+    [n : i64 (svec.len (& items))]
+    [slots : (Array String) (array.make-array String n)]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! slots i (svec.get (& items) i ""))
+          (set! i (+ i 1))))
+      (EnvStringList slots n))))
 
 ;: Copy `items` into `out`, preserving list order.
 (define (string-list-to-vec-into
   [items : EnvStringList]
   [out : (&mut out svec.Vec)]) : unit
-  (match items
-    [(EnvStringNil) unit]
-    [(EnvStringCons head rest)
+  (let
+    [n : i64 (struct-get items len)]
+    [i : i64 0]
+    (while (< i n)
       (begin
-        (svec.push out head)
-        (string-list-to-vec-into (box-get rest) out))]))
+        (svec.push out (array-ref (struct-get items slots) i))
+        (set! i (+ i 1))))))
 
 ;: Copy `items` into a fresh generated string vector, preserving list order.
 (define (string-list-to-vec [items : EnvStringList]) : svec.Vec
@@ -642,15 +652,9 @@
   [acc : String]
   [items : EnvStringList]
   [separator : (& separator str)]) : String
-  (match items
-    [(EnvStringNil) acc]
-    [(EnvStringCons head rest)
-      (path-join-tail
-        (let
-          [acc-with-separator : String (str_cat.str-cat acc separator)]
-          (str_cat.str-cat acc-with-separator head))
-        (box-get rest)
-        separator)]))
+  (let
+    [vec : svec.Vec (string-list-to-vec items)]
+    (path-join-vec-tail acc (& vec) 0 separator)))
 
 ;: Join PATH-style items using the supplied separator.
 (define (path-join-vec-tail
@@ -751,9 +755,7 @@
   [_message : String]) : unit
   (match value
     [(EnvSomeStringList items)
-      (match items
-        [(EnvStringNil) unit]
-        [_ (test-fail)])]
+      (test-assert-true (= (string-list-count items) 0) _message)]
     [(EnvNoStringList) (test-fail)]))
 
 ;: Assert that an environment path-vector lookup returns an empty vector.
@@ -772,22 +774,11 @@
   [second : String]
   [third : String]
   [message : String]) : unit
-  (match items
-    [(EnvStringCons a rest)
-      (match (box-get rest)
-        [(EnvStringCons b tail)
-          (match (box-get tail)
-            [(EnvStringCons c end)
-              (match (box-get end)
-                [(EnvStringNil)
-                  (begin
-                    (test-assert-owned-string-eq a first message)
-                    (test-assert-owned-string-eq b second message)
-                    (test-assert-owned-string-eq c third message))]
-                [_ (test-fail)])]
-            [_ (test-fail)])]
-        [_ (test-fail)])]
-    [_ (test-fail)]))
+  (begin
+    (test-assert-i64-eq (string-list-count items) 3 message)
+    (test-assert-owned-string-eq (string-list-ref items 0) first message)
+    (test-assert-owned-string-eq (string-list-ref items 1) second message)
+    (test-assert-owned-string-eq (string-list-ref items 2) third message)))
 
 ;: Assert that an environment string list contains exactly five strings.
 (define (test-assert-list5
@@ -798,30 +789,13 @@
   [fourth : String]
   [fifth : String]
   [message : String]) : unit
-  (match items
-    [(EnvStringCons a rest)
-      (match (box-get rest)
-        [(EnvStringCons b rest2)
-          (match (box-get rest2)
-            [(EnvStringCons c rest3)
-              (match (box-get rest3)
-                [(EnvStringCons d rest4)
-                  (match (box-get rest4)
-                    [(EnvStringCons e end)
-                      (match (box-get end)
-                        [(EnvStringNil)
-                          (begin
-                            (test-assert-owned-string-eq a first message)
-                            (test-assert-owned-string-eq b second message)
-                            (test-assert-owned-string-eq c third message)
-                            (test-assert-owned-string-eq d fourth message)
-                            (test-assert-owned-string-eq e fifth message))]
-                        [_ (test-fail)])]
-                    [_ (test-fail)])]
-                [_ (test-fail)])]
-            [_ (test-fail)])]
-        [_ (test-fail)])]
-    [_ (test-fail)]))
+  (begin
+    (test-assert-i64-eq (string-list-count items) 5 message)
+    (test-assert-owned-string-eq (string-list-ref items 0) first message)
+    (test-assert-owned-string-eq (string-list-ref items 1) second message)
+    (test-assert-owned-string-eq (string-list-ref items 2) third message)
+    (test-assert-owned-string-eq (string-list-ref items 3) fourth message)
+    (test-assert-owned-string-eq (string-list-ref items 4) fifth message)))
 
 ;: Assert that a string vector contains exactly three strings.
 (define (test-assert-vec3

@@ -34,10 +34,6 @@
     CompilerLiveLabelSet
     CompilerLiveInstrSetVec))
 
-(defenum CompilerLiveBlockList
-  (Nil)
-  (Cons CompilerLiveBlock (Box CompilerLiveBlockList)))
-
 (defstruct CompilerLiveBlockGraph
   (ids live_label_map.Map)
   (blocks (Array CompilerLiveBlock))
@@ -62,19 +58,11 @@
 (defenum CompilerLiveUseDef
   (Def CompilerLiveI64Set CompilerLiveI64Set))
 
-(defenum CompilerLiveBlockListStep
-  (Step CompilerLiveBlockList bool))
-
 (defenum CompilerLiveInstrScan
   (Scan CompilerLiveInstrSetVec CompilerLiveI64Set))
 
 (define (compiler-live-instr-set-vec-empty) : CompilerLiveInstrSetVec
   (CompilerLiveInstrSetVec (make-array CompilerLiveI64Set 0)))
-
-(define (compiler-live-block-cons
-  [head : CompilerLiveBlock]
-  [rest : CompilerLiveBlockList]) : CompilerLiveBlockList
-  (CompilerLiveBlockList.Cons head (box rest)))
 
 (define (compiler-live-set-word-bits) : i64
   32)
@@ -1097,76 +1085,12 @@
         block
         (compiler-live-block-use-def-seq instrs))]))
 
-(define (compiler-live-build-blocks [blocks : CompilerIrBlockList]) : CompilerLiveBlockList
-  (match blocks
-    [(CompilerIrBlockList.Nil) CompilerLiveBlockList.Nil]
-    [(CompilerIrBlockList.Cons block rest)
-      (compiler-live-block-cons
-        (compiler-live-build-block block)
-        (compiler-live-build-blocks (box-get rest)))]
-    [(CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 (- (compiler-ir-block-seq-count seq) 1)]
-        [out : CompilerLiveBlockList CompilerLiveBlockList.Nil]
-        (begin
-          (while (>= i 0)
-            (begin
-              (set!
-                out
-                (compiler-live-block-cons
-                  (compiler-live-build-block (compiler-ir-block-seq-ref seq i))
-                  out))
-              (set! i (- i 1))))
-          out))]))
-
-(define (compiler-live-block-count [blocks : CompilerLiveBlockList]) : i64
-  (match blocks
-    [(CompilerLiveBlockList.Nil) 0]
-    [(CompilerLiveBlockList.Cons _ rest)
-      (+ 1 (compiler-live-block-count (box-get rest)))]))
-
 (define (compiler-live-label-id-map-get
   [ids : (& ids live_label_map.Map)]
   [label : String]) : i64
   (match (live_label_map.get-borrowed ids (& label))
     [(live_label_map.LookupFound slot) slot]
     [(live_label_map.LookupMissing) -1]))
-
-(define (compiler-live-block-graph-fill!
-  [blocks : CompilerLiveBlockList]
-  [ids : (&mut ids live_label_map.Map)]
-  [values : (Array CompilerLiveBlock)]
-  [index : i64]) : unit
-  (match blocks
-    [(CompilerLiveBlockList.Nil) unit]
-    [(CompilerLiveBlockList.Cons block rest)
-      (match block
-        [(CompilerLiveBlock.Block label _ _ _ _ _ _)
-          (begin
-            (array-set! values index block)
-            (if (live_label_map.insert-if-absent-ref! ids label index)
-              (compiler-live-block-graph-fill!
-                (box-get rest)
-                ids
-                values
-                (+ index 1))
-              (io.panic "liveness: duplicate block label")))])]))
-
-(define (compiler-live-block-graph-build [blocks : CompilerLiveBlockList]) : CompilerLiveBlockGraph
-  (let
-    [count : i64 (compiler-live-block-count blocks)]
-    [values : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
-    [successors : (Array CompilerLiveIndexVec)
-      (make-array CompilerLiveIndexVec count)]
-    [ids : live_label_map.Map (live_label_map.with-capacity (+ (* count 2) 1))]
-    (begin
-      (compiler-live-block-graph-fill! blocks (&mut ids) values 0)
-      (compiler-live-block-graph-fill-successors! blocks (& ids) successors 0)
-      (CompilerLiveBlockGraph
-        ids
-        values
-        successors
-        (compiler-live-predecessors-build successors)))))
 
 (define (compiler-live-i64-array-prefix-copy
   [items : (Array i64)]
@@ -1211,27 +1135,6 @@
       (make-array i64 (compiler-live-label-set-count labels))]
     [count : i64 (compiler-live-label-set-fill-indexes! labels ids items 0)]
     (CompilerLiveIndexVec (compiler-live-i64-array-prefix-copy items count))))
-
-(define (compiler-live-block-graph-fill-successors!
-  [blocks : CompilerLiveBlockList]
-  [ids : (& ids live_label_map.Map)]
-  [successors : (Array CompilerLiveIndexVec)]
-  [index : i64]) : unit
-  (match blocks
-    [(CompilerLiveBlockList.Nil) unit]
-    [(CompilerLiveBlockList.Cons block rest)
-      (match block
-        [(CompilerLiveBlock.Block _ _ _ _ _ block-successors _)
-          (begin
-            (array-set!
-              successors
-              index
-              (compiler-live-label-set-to-index-vec block-successors ids))
-            (compiler-live-block-graph-fill-successors!
-              (box-get rest)
-              ids
-              successors
-              (+ index 1)))])]))
 
 ;; Precompute reverse CFG edges once. The worklist below only reprocesses
 ;; predecessors of a changed block, preserving deterministic source/RPO order.
@@ -1431,17 +1334,6 @@
             (set! index (- index 1)))))
       changed)))
 
-(define (compiler-live-graph-to-list-from
-  [blocks : (Array CompilerLiveBlock)]
-  [index : i64]
-  [acc : CompilerLiveBlockList]) : CompilerLiveBlockList
-  (if (< index 0)
-    acc
-    (compiler-live-graph-to-list-from
-      blocks
-      (- index 1)
-      (compiler-live-block-cons (array-ref blocks index) acc))))
-
 (define (compiler-live-before-instr
   [live-after : CompilerLiveI64Set]
   [instr : CompilerIrInstr]) : CompilerLiveI64Set
@@ -1614,29 +1506,6 @@
           0
           (compiler-live-set-empty)
           (compiler-live-set-empty)))]))
-
-(define (compiler-live-build-blocks-nophi [blocks : CompilerIrBlockList]) : CompilerLiveBlockList
-  (match blocks
-    [(CompilerIrBlockList.Nil) CompilerLiveBlockList.Nil]
-    [(CompilerIrBlockList.Cons block rest)
-      (compiler-live-block-cons
-        (compiler-live-build-block-nophi block)
-        (compiler-live-build-blocks-nophi (box-get rest)))]
-    [(CompilerIrBlockList.Array seq)
-      (let
-        [i : i64 (- (compiler-ir-block-seq-count seq) 1)]
-        [out : CompilerLiveBlockList CompilerLiveBlockList.Nil]
-        (begin
-          (while (>= i 0)
-            (begin
-              (set!
-                out
-                (compiler-live-block-cons
-                  (compiler-live-build-block-nophi
-                    (compiler-ir-block-seq-ref seq i))
-                  out))
-              (set! i (- i 1))))
-          out))]))
 
 ;; Accumulate every phi input (V, predLabel) of one phi into phi-out[ids[predLabel]].
 (define (compiler-live-phi-out-add-inputs!
@@ -1936,14 +1805,6 @@
               (CompilerFunctionLiveness.Liveness
                 (struct-get graph ids)
                 (struct-get graph blocks))))))]))
-
-(define (compiler-live-function-blocks [liveness : CompilerFunctionLiveness]) : CompilerLiveBlockList
-  (match liveness
-    [(CompilerFunctionLiveness.Liveness _ blocks)
-      (compiler-live-graph-to-list-from
-        blocks
-        (- (array-length blocks) 1)
-        CompilerLiveBlockList.Nil)]))
 
 (define (compiler-live-function-block-count
   [liveness : CompilerFunctionLiveness]) : i64

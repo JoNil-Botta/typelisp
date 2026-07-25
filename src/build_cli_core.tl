@@ -169,12 +169,12 @@
   (Ok BuildResolvedPkgDeps)
   (Err String))
 
-;; This remains a recursive list intentionally: it is a DFS call stack used
-;; only for cycle diagnostics, where push/pop follows recursion depth rather
-;; than append-heavy builder behavior.
-(defenum BuildPackagePathList
-  (Nil)
-  (Cons String (Box BuildPackagePathList)))
+;; DFS call stack used only for cycle diagnostics. Pushes follow recursion
+;; depth and siblings keep the shallower stack alive, so each descent
+;; right-sizes a fresh array rather than sharing one growable buffer.
+(defstruct BuildPackagePathSeq
+  (slots (Array String))
+  (len i64))
 
 (defstruct BuildPackageWorkerConfig
   (manifest-path String)
@@ -872,7 +872,7 @@
           opt-level
           lock-policy
           stdlib-roots
-          (build-package-dep-list-reverse resolved-deps)))
+          resolved-deps))
       (ResultBuildPackageWorkerConfig.Err
         "build: --package-worker requires --manifest-path"))
     (let
@@ -1035,9 +1035,9 @@
                   has-opt-level
                   lock-policy
                   stdlib-roots
-                  (CompilerPkgDepCons
-                    (CompilerPkgDep (io.arg (+ idx 1)) (io.arg (+ idx 2)))
-                    (box resolved-deps))))]
+                  (compiler-pkg-dep-list-push
+                    resolved-deps
+                    (CompilerPkgDep (io.arg (+ idx 1)) (io.arg (+ idx 2))))))]
             [(host-plan-flag? current)
               (ResultBuildPackageWorkerConfig.Err
                 (str_cat.str-cat "build: unknown package worker flag " current))]
@@ -1060,7 +1060,7 @@
     false
     (BuildPackageLockPolicy.Default)
     (cli_svec.new)
-    CompilerPkgDepNil))
+    (compiler-pkg-dep-list-empty)))
 
 (define (build-source-plan-render [config : BuildConfig]) : String
   (match config
@@ -1344,19 +1344,6 @@
   (match kind
     [(CompilerPkgKindBin) true]
     [(CompilerPkgKindLib) false]))
-
-(define (build-package-dep-list-reverse-onto
-  [deps : CompilerPkgDepList]
-  [acc : CompilerPkgDepList]) : CompilerPkgDepList
-  (match deps
-    [(CompilerPkgDepNil) acc]
-    [(CompilerPkgDepCons dep rest)
-      (build-package-dep-list-reverse-onto
-        (box-get rest)
-        (CompilerPkgDepCons dep (box acc)))]))
-
-(define (build-package-dep-list-reverse [deps : CompilerPkgDepList]) : CompilerPkgDepList
-  (build-package-dep-list-reverse-onto deps CompilerPkgDepNil))
 
 (define (build-package-dep-root [manifest-dir : String] [dep : CompilerPkgDep]) : String
   (compiler-load-normalize-path
@@ -2221,48 +2208,48 @@
   [manifest-dir : String]
   [lock-entries : package_lock_entry_vec.Vec]
   [lock-policy : BuildPackageLockPolicy]
-  [deps : CompilerPkgDepList]) : ResultBuildResolvedPkgDeps
-  (match deps
-    [(CompilerPkgDepNil)
-      (ResultBuildResolvedPkgDeps.Ok
-        (BuildResolvedPkgDeps
-          CompilerPkgDepNil
-          (package_lock_entry_vec.new)
-          false))]
-    [(CompilerPkgDepCons dep rest)
-      (match (build-package-resolve-dep-with-lock
-        manifest-dir
-        lock-entries
-        lock-policy
-        dep)
-        [(ResultBuildResolvedPkgDep.Err message)
-          (ResultBuildResolvedPkgDeps.Err message)]
-        [(ResultBuildResolvedPkgDep.Ok resolved-dep)
-          (match (build-package-resolve-deps-with-lock
-            manifest-dir
-            lock-entries
-            lock-policy
-            (box-get rest))
-            [(ResultBuildResolvedPkgDeps.Err message)
-              (ResultBuildResolvedPkgDeps.Err message)]
-            [(ResultBuildResolvedPkgDeps.Ok resolved-rest)
-              (match (build-package-lock-entry-list-add
-                (struct-get resolved-rest lock-entries)
-                (struct-get resolved-dep lock-entry))
-                [(ResultPackageLockEntryList.Err message)
-                  (ResultBuildResolvedPkgDeps.Err message)]
-                [(ResultPackageLockEntryList.Ok next-lock-entries)
-                  (ResultBuildResolvedPkgDeps.Ok
-                    (BuildResolvedPkgDeps
-                      (CompilerPkgDepCons
-                        (struct-get resolved-dep dep)
-                        (box (struct-get resolved-rest deps)))
-                      next-lock-entries
-                      (or
-                        (struct-get resolved-rest has-remote)
-                        (match (struct-get resolved-dep lock-entry)
-                          [(BuildMaybeLockEntry.No) false]
-                          [(BuildMaybeLockEntry.Some _) true]))))])])])]))
+  [deps : CompilerPkgDepList]
+  [index : i64]) : ResultBuildResolvedPkgDeps
+  (if (>= index (compiler-pkg-dep-list-count deps))
+    (ResultBuildResolvedPkgDeps.Ok
+      (BuildResolvedPkgDeps
+        (compiler-pkg-dep-list-empty)
+        (package_lock_entry_vec.new)
+        false))
+    (match (build-package-resolve-dep-with-lock
+      manifest-dir
+      lock-entries
+      lock-policy
+      (compiler-pkg-dep-list-at deps index))
+      [(ResultBuildResolvedPkgDep.Err message)
+        (ResultBuildResolvedPkgDeps.Err message)]
+      [(ResultBuildResolvedPkgDep.Ok resolved-dep)
+        (match (build-package-resolve-deps-with-lock
+          manifest-dir
+          lock-entries
+          lock-policy
+          deps
+          (+ index 1))
+          [(ResultBuildResolvedPkgDeps.Err message)
+            (ResultBuildResolvedPkgDeps.Err message)]
+          [(ResultBuildResolvedPkgDeps.Ok resolved-rest)
+            (match (build-package-lock-entry-list-add
+              (struct-get resolved-rest lock-entries)
+              (struct-get resolved-dep lock-entry))
+              [(ResultPackageLockEntryList.Err message)
+                (ResultBuildResolvedPkgDeps.Err message)]
+              [(ResultPackageLockEntryList.Ok next-lock-entries)
+                (ResultBuildResolvedPkgDeps.Ok
+                  (BuildResolvedPkgDeps
+                    (compiler-pkg-dep-list-cons
+                      (struct-get resolved-dep dep)
+                      (struct-get resolved-rest deps))
+                    next-lock-entries
+                    (or
+                      (struct-get resolved-rest has-remote)
+                      (match (struct-get resolved-dep lock-entry)
+                        [(BuildMaybeLockEntry.No) false]
+                        [(BuildMaybeLockEntry.Some _) true]))))])])])))
 
 (define (build-package-resolve-manifest-deps
   [manifest-path : String]
@@ -2278,7 +2265,8 @@
           manifest-dir
           (struct-get lock-state entries)
           lock-policy
-          (compiler-pkg-deps-list (struct-get manifest deps)))
+          (compiler-pkg-deps-list (struct-get manifest deps))
+          0)
           [(ResultBuildResolvedPkgDeps.Err message)
             (ResultBuildManifest.Err message)]
           [(ResultBuildResolvedPkgDeps.Ok resolved)
@@ -2308,22 +2296,44 @@
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (compiler-load-normalize-path manifest-path))
 
-(define (build-package-path-list-render [paths : BuildPackagePathList]) : String
-  (match paths
-    [(BuildPackagePathList.Nil) ""]
-    [(BuildPackagePathList.Cons path rest)
-      (let
-        [tail : String (build-package-path-list-render (box-get rest))]
-        (if (= (string.string-length tail) 0)
-          path
-          (str_cat.str-cat tail " -> " path)))]))
+(define (build-package-path-seq-push
+  [paths : BuildPackagePathSeq]
+  [path : String]) : BuildPackagePathSeq
+  (let
+    [count : i64 (struct-get paths len)]
+    [slots : (Array String) (make-array String (+ count 1))]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! slots index (array-ref (struct-get paths slots) index))
+          (set! index (+ index 1))))
+      (array-set! slots count path)
+      (BuildPackagePathSeq slots (+ count 1)))))
+
+(define (build-package-path-seq-render [paths : BuildPackagePathSeq]) : String
+  (let
+    [out : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index (struct-get paths len))
+        (let
+          [path : String (array-ref (struct-get paths slots) index)]
+          (begin
+            (set!
+              out
+              (if (= index 0)
+                path
+                (str_cat.str-cat out " -> " path)))
+            (set! index (+ index 1)))))
+      out)))
 
 (define (build-package-cycle-message
-  [stack : BuildPackagePathList]
+  [stack : BuildPackagePathSeq]
   [manifest-path : String]) : String
   (str_cat.str-cat
     "build: dependency cycle: "
-    (build-package-path-list-render stack)
+    (build-package-path-seq-render stack)
     " -> "
     manifest-path))
 
@@ -2447,7 +2457,7 @@
 (define (build-package-graph-add-node
   [node : BuildPackageGraphNode]
   [state : BuildPackageGraphState]
-  [stack : BuildPackagePathList]
+  [stack : BuildPackagePathSeq]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
   (let
     [manifest-path : String (struct-get node manifest-path)]
@@ -2466,11 +2476,12 @@
               build-package-visit-visiting)]
           [manifest : CompilerPkgManifest (struct-get node manifest)]
           [manifest-dir : String (compiler-load-dirname manifest-path)]
-          [next-stack : BuildPackagePathList
-            (BuildPackagePathList.Cons manifest-path (box stack))]
+          [next-stack : BuildPackagePathSeq
+            (build-package-path-seq-push stack manifest-path)]
           (match (build-package-graph-add-deps
             manifest-dir
             (compiler-pkg-deps-list (struct-get manifest deps))
+            0
             visiting
             next-stack
             lock-policy)
@@ -2488,26 +2499,30 @@
 (define (build-package-graph-add-deps
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
+  [index : i64]
   [state : BuildPackageGraphState]
-  [stack : BuildPackagePathList]
+  [stack : BuildPackagePathSeq]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildPackageGraphState
-  (match deps
-    [(CompilerPkgDepNil) (ResultBuildPackageGraphState.Ok state)]
-    [(CompilerPkgDepCons dep rest)
-      (match (build-package-load-dep-node manifest-dir dep lock-policy)
-        [(ResultBuildPackageGraphNode.Err message)
-          (ResultBuildPackageGraphState.Err message)]
-        [(ResultBuildPackageGraphNode.Ok node)
-          (match (build-package-graph-add-node node state stack lock-policy)
-            [(ResultBuildPackageGraphState.Err message)
-              (ResultBuildPackageGraphState.Err message)]
-            [(ResultBuildPackageGraphState.Ok next-state)
-              (build-package-graph-add-deps
-                manifest-dir
-                (box-get rest)
-                next-state
-                stack
-                lock-policy)])])]))
+  (if (>= index (compiler-pkg-dep-list-count deps))
+    (ResultBuildPackageGraphState.Ok state)
+    (match (build-package-load-dep-node
+      manifest-dir
+      (compiler-pkg-dep-list-at deps index)
+      lock-policy)
+      [(ResultBuildPackageGraphNode.Err message)
+        (ResultBuildPackageGraphState.Err message)]
+      [(ResultBuildPackageGraphNode.Ok node)
+        (match (build-package-graph-add-node node state stack lock-policy)
+          [(ResultBuildPackageGraphState.Err message)
+            (ResultBuildPackageGraphState.Err message)]
+          [(ResultBuildPackageGraphState.Ok next-state)
+            (build-package-graph-add-deps
+              manifest-dir
+              deps
+              (+ index 1)
+              next-state
+              stack
+              lock-policy)])])))
 
 (define (build-package-dependency-graph
   [manifest-path : String]
@@ -2523,11 +2538,14 @@
           root-path
           build-package-visit-visiting)
         (build-package-graph-node-vec-new))]
-    [stack : BuildPackagePathList
-      (BuildPackagePathList.Cons root-path (box BuildPackagePathList.Nil))]
+    [stack : BuildPackagePathSeq
+      (build-package-path-seq-push
+        (BuildPackagePathSeq (make-array String 0) 0)
+        root-path)]
     (match (build-package-graph-add-deps
       root-dir
       (compiler-pkg-deps-list (struct-get manifest deps))
+      0
       initial
       stack
       lock-policy)
@@ -3107,7 +3125,8 @@
 (define (build-package-graph-scheduler-no-progress-smoke-ok?) : bool
   (let
     [dep : CompilerPkgDep (CompilerPkgDep "dep" "../dep")]
-    [deps : CompilerPkgDepList (CompilerPkgDepCons dep (box CompilerPkgDepNil))]
+    [deps : CompilerPkgDepList
+      (compiler-pkg-dep-list-push (compiler-pkg-dep-list-empty) dep)]
     [node : BuildPackageGraphNode
       (BuildPackageGraphNode
         "root/app/typelisp.pkg"
@@ -4452,17 +4471,20 @@
 
 (define (build-package-worker-append-resolved-deps
   [args : process.ProcessStringList]
-  [deps : CompilerPkgDepList]) : process.ProcessStringList
-  (match deps
-    [(CompilerPkgDepNil) args]
-    [(CompilerPkgDepCons dep rest)
+  [deps : CompilerPkgDepList]
+  [index : i64]) : process.ProcessStringList
+  (if (>= index (compiler-pkg-dep-list-count deps))
+    args
+    (let
+      [dep : CompilerPkgDep (compiler-pkg-dep-list-at deps index)]
       (build-package-worker-append-resolved-deps
         (source-tool-args-append
           (source-tool-args-append
             (source-tool-args-append args "--resolved-dep")
             (struct-get dep alias))
           (struct-get dep path))
-        (box-get rest))]))
+        deps
+        (+ index 1)))))
 
 (define (build-package-worker-resolved-deps-args-smoke-ok?) : bool
   (let
@@ -4470,11 +4492,11 @@
       (CompilerPkgDep "remote" "target/typelisp/git-deps/remote")]
     [local : CompilerPkgDep (CompilerPkgDep "local" "../local")]
     [deps : CompilerPkgDepList
-      (CompilerPkgDepCons
-        remote
-        (box (CompilerPkgDepCons local (box CompilerPkgDepNil))))]
+      (compiler-pkg-dep-list-push
+        (compiler-pkg-dep-list-push (compiler-pkg-dep-list-empty) remote)
+        local)]
     [actual : process.ProcessStringList
-      (build-package-worker-append-resolved-deps (process.args-empty) deps)]
+      (build-package-worker-append-resolved-deps (process.args-empty) deps 0)]
     [expected0 : process.ProcessStringList
       (source-tool-args-append (process.args-empty) "--resolved-dep")]
     [expected1 : process.ProcessStringList
@@ -4535,7 +4557,7 @@
     [args7 : process.ProcessStringList
       (build-package-lock-policy-arg args6 lock-policy)]
     [args8 : process.ProcessStringList
-      (build-package-worker-append-resolved-deps args7 resolved-deps)]
+      (build-package-worker-append-resolved-deps args7 resolved-deps 0)]
     (build-package-worker-append-stdlib-roots args8 stdlib-roots)))
 
 (define (build-package-worker-args
@@ -4554,7 +4576,7 @@
     profile
     mode
     lock-policy
-    CompilerPkgDepNil
+    (compiler-pkg-dep-list-empty)
     stdlib-roots))
 
 (define (build-package-worker-command
@@ -4679,21 +4701,19 @@
               [resolved-deps : CompilerPkgDepList
                 (struct-get config resolved-deps)]
               [resolved-manifest-result : ResultBuildManifest
-                (match resolved-deps
-                  [(CompilerPkgDepNil)
-                    (build-package-resolve-manifest-deps
-                      normalized-path
-                      manifest
-                      (struct-get config lock-policy))]
-                  [_
-                    (ResultBuildManifest.Ok
-                      (CompilerPkgManifest
-                        (struct-get manifest name)
-                        (struct-get manifest version)
-                        (struct-get manifest kind)
-                        (struct-get manifest entry)
-                        (compiler-pkg-deps-from-list resolved-deps)
-                        (struct-get manifest link)))])]
+                (if (= (compiler-pkg-dep-list-count resolved-deps) 0)
+                  (build-package-resolve-manifest-deps
+                    normalized-path
+                    manifest
+                    (struct-get config lock-policy))
+                  (ResultBuildManifest.Ok
+                    (CompilerPkgManifest
+                      (struct-get manifest name)
+                      (struct-get manifest version)
+                      (struct-get manifest kind)
+                      (struct-get manifest entry)
+                      (compiler-pkg-deps-from-list resolved-deps)
+                      (struct-get manifest link))))]
               (match resolved-manifest-result
                 [(ResultBuildManifest.Err message)
                   (begin
@@ -4740,21 +4760,19 @@
               [resolved-deps : CompilerPkgDepList
                 (struct-get config resolved-deps)]
               [resolved-manifest-result : ResultBuildManifest
-                (match resolved-deps
-                  [(CompilerPkgDepNil)
-                    (build-package-resolve-manifest-deps
-                      normalized-path
-                      manifest
-                      (struct-get config lock-policy))]
-                  [_
-                    (ResultBuildManifest.Ok
-                      (CompilerPkgManifest
-                        (struct-get manifest name)
-                        (struct-get manifest version)
-                        (struct-get manifest kind)
-                        (struct-get manifest entry)
-                        (compiler-pkg-deps-from-list resolved-deps)
-                        (struct-get manifest link)))])]
+                (if (= (compiler-pkg-dep-list-count resolved-deps) 0)
+                  (build-package-resolve-manifest-deps
+                    normalized-path
+                    manifest
+                    (struct-get config lock-policy))
+                  (ResultBuildManifest.Ok
+                    (CompilerPkgManifest
+                      (struct-get manifest name)
+                      (struct-get manifest version)
+                      (struct-get manifest kind)
+                      (struct-get manifest entry)
+                      (compiler-pkg-deps-from-list resolved-deps)
+                      (struct-get manifest link))))]
               (match resolved-manifest-result
                 [(ResultBuildManifest.Err message)
                   (begin
@@ -4784,17 +4802,19 @@
 (define (build-package-deps-built?
   [manifest-dir : String]
   [deps : CompilerPkgDepList]
+  [index : i64]
   [built : build_string_i64_map.Map]) : bool
-  (match deps
-    [(CompilerPkgDepNil) true]
-    [(CompilerPkgDepCons dep rest)
-      (let
-        [dep-manifest-path : String
-          (build-package-dep-manifest-path manifest-dir dep)]
-        (match (build_string_i64_map.get (& built) dep-manifest-path)
-          [(build_string_i64_map.LookupFound _)
-            (build-package-deps-built? manifest-dir (box-get rest) built)]
-          [(build_string_i64_map.LookupMissing) false]))]))
+  (if (>= index (compiler-pkg-dep-list-count deps))
+    true
+    (let
+      [dep-manifest-path : String
+        (build-package-dep-manifest-path
+          manifest-dir
+          (compiler-pkg-dep-list-at deps index))]
+      (match (build_string_i64_map.get (& built) dep-manifest-path)
+        [(build_string_i64_map.LookupFound _)
+          (build-package-deps-built? manifest-dir deps (+ index 1) built)]
+        [(build_string_i64_map.LookupMissing) false]))))
 
 (define (build-package-node-ready?
   [node : BuildPackageGraphNode]
@@ -4806,6 +4826,7 @@
     (build-package-deps-built?
       manifest-dir
       (compiler-pkg-deps-list (struct-get manifest deps))
+      0
       built)))
 
 (define (build-package-node-scheduled?

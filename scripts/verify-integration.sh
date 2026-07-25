@@ -1978,6 +1978,162 @@ if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
     exit 0
 fi
 
+# Batched compile pre-pass (#5555). Every manifest case is a compile-success
+# case -- the third field is the *program's* exit code, not a compile
+# expectation -- so the only thing that partitions them is whether the case
+# opted into the on-disk stdlib layout. That makes two argv groups per host, and
+# each group compiles in bounded `compile --batch` chunks instead of one
+# compiler process per case.
+#
+# The pre-pass only *populates* the per-case assembly. The loop below still owns
+# every assertion, and still compiles standalone whenever the assembly is
+# missing -- which is exactly what a failed chunk leaves behind, since a failing
+# chunk's outputs are removed. So failure isolation costs no new code path: a
+# bad chunk degrades to the per-case compile that was there before, with its
+# per-case diagnostics intact.
+INTEGRATION_BATCH_SIZE=${TYPELISP_INTEGRATION_BATCH_SIZE:-20}
+INTEGRATION_BATCH_CHUNKS=0
+INTEGRATION_BATCH_FAILED_CHUNKS=0
+INTEGRATION_BATCHED_CASES=0
+INTEGRATION_STANDALONE_COMPILES=0
+
+# Compile one chunk. On failure, drop its outputs so the case loop recompiles
+# them standalone and reports per-case diagnostics.
+integration_batch_run_chunk() {
+    _chunk_list=$1
+    _chunk_label=$2
+    shift 2
+    INTEGRATION_BATCH_CHUNKS=$((INTEGRATION_BATCH_CHUNKS + 1))
+    _chunk_stdout="$WORKDIR/batch-$_chunk_label.stdout"
+    _chunk_stderr="$WORKDIR/batch-$_chunk_label.stderr"
+    set +e
+    "$COMPILER" compile --batch "$_chunk_list" "$@" \
+        > "$_chunk_stdout" 2> "$_chunk_stderr"
+    _chunk_rc=$?
+    set -e
+    if [ "$_chunk_rc" -eq 0 ]; then
+        return 0
+    fi
+    INTEGRATION_BATCH_FAILED_CHUNKS=$((INTEGRATION_BATCH_FAILED_CHUNKS + 1))
+    echo "[integration] batch chunk $_chunk_label exited $_chunk_rc;" \
+        "replaying its entries standalone" >&2
+    sed 's/^/  /' "$_chunk_stderr" >&2 || true
+    while IFS='|' read -r _batch_src _batch_asm; do
+        [ -n "$_batch_asm" ] || continue
+        rm -f "$_batch_asm"
+    done < "$_chunk_list"
+    return 0
+}
+
+# Stage sources and emit one chunk list per group. Staging repeats what the case
+# loop does; both are plain file copies, so running them twice is idempotent.
+integration_batch_precompile() {
+    [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
+    _group0="$WORKDIR/batch-embedded.list"
+    _group1="$WORKDIR/batch-stage-stdlib.list"
+    : > "$_group0"
+    : > "$_group1"
+    while IFS='|' read -r _b_name _b_source _b_want _b_stdout _b_args _b_deps _b_extra _b_suite || [ -n "$_b_name" ]; do
+        case "$_b_name" in
+            "" | \#*) continue ;;
+        esac
+        _b_stage=0
+        case "${_b_extra:-}" in
+            stage-stdlib) _b_stage=1 ;;
+        esac
+        _b_case_dir="$WORKDIR/$_b_name"
+        mkdir -p "$_b_case_dir"
+        cp "$ROOT/$_b_source" "$_b_case_dir/$_b_name.tl"
+        for _b_dep in $(deps_or_empty "$_b_deps"); do
+            copy_dep "$_b_dep" "$(dirname -- "$ROOT/$_b_source")" "$_b_case_dir" "$_b_stage"
+        done
+        # Relative to ROOT, which is the working directory: the compiler reads
+        # these out of a file, so no shell path translation happens on Windows.
+        _b_rel="target/integration-verify/$HOST_OS/$_b_name/$_b_name"
+        if [ "$_b_stage" -eq 1 ]; then
+            printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_group1"
+        else
+            printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_group0"
+        fi
+    done < "$NORMALIZED_MANIFEST"
+
+    for _group in embedded stage-stdlib; do
+        if [ "$_group" = embedded ]; then
+            _group_list=$_group0
+        else
+            _group_list=$_group1
+        fi
+        [ -s "$_group_list" ] || continue
+        _total=$(wc -l < "$_group_list" | tr -d ' ')
+        _offset=0
+        _index=0
+        while [ "$_offset" -lt "$_total" ]; do
+            _index=$((_index + 1))
+            _chunk="$WORKDIR/batch-$_group-$_index.list"
+            sed -n "$((_offset + 1)),$((_offset + INTEGRATION_BATCH_SIZE))p" \
+                "$_group_list" > "$_chunk"
+            if [ "$_group" = embedded ]; then
+                integration_batch_run_chunk "$_chunk" "$_group-$_index" \
+                    $INTEGRATION_BATCH_TARGET_ARGS \
+                    --stdlib-root "$ROOT/src"
+            else
+                integration_batch_run_chunk "$_chunk" "$_group-$_index" \
+                    $INTEGRATION_BATCH_TARGET_ARGS \
+                    --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
+            fi
+            _offset=$((_offset + INTEGRATION_BATCH_SIZE))
+        done
+    done
+    echo "[integration] batched compile: $INTEGRATION_BATCH_CHUNKS chunk(s)" \
+        "of up to $INTEGRATION_BATCH_SIZE, $INTEGRATION_BATCH_FAILED_CHUNKS failed"
+}
+
+if [ "$HOST_OS" = windows ]; then
+    INTEGRATION_BATCH_TARGET_ARGS="--target windows-x86_64 --cfg windows"
+else
+    INTEGRATION_BATCH_TARGET_ARGS=
+fi
+
+# The batch route must produce the same assembly as the per-case route, or the
+# amortization is buying a different compile. Prove it on one case per group
+# rather than trusting the argv construction above.
+integration_batch_sentinel() {
+    [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
+    for _group in embedded stage-stdlib; do
+        _list="$WORKDIR/batch-$_group.list"
+        [ -s "$_list" ] || continue
+        _entry=$(sed -n '1p' "$_list")
+        _sent_src=${_entry%%|*}
+        _sent_asm=${_entry#*|}
+        [ -s "$_sent_asm" ] || continue
+        _sent_ref="$WORKDIR/batch-$_group.sentinel.s"
+        if [ "$_group" = embedded ]; then
+            # shellcheck disable=SC2086
+            "$COMPILER" compile "$_sent_src" $INTEGRATION_BATCH_TARGET_ARGS \
+                --stdlib-root "$ROOT/src" -o "$_sent_ref" \
+                > "$WORKDIR/batch-$_group.sentinel.stdout" \
+                2> "$WORKDIR/batch-$_group.sentinel.stderr"
+        else
+            # shellcheck disable=SC2086
+            "$COMPILER" compile "$_sent_src" $INTEGRATION_BATCH_TARGET_ARGS \
+                --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+                -o "$_sent_ref" \
+                > "$WORKDIR/batch-$_group.sentinel.stdout" \
+                2> "$WORKDIR/batch-$_group.sentinel.stderr"
+        fi
+        if ! cmp -s "$_sent_asm" "$_sent_ref"; then
+            echo "FAIL: batched and standalone assembly differ for $_sent_src" >&2
+            echo "  batch:      $_sent_asm" >&2
+            echo "  standalone: $_sent_ref" >&2
+            exit 1
+        fi
+        echo "[integration] batch/standalone assembly identical for $_sent_src"
+    done
+}
+
+ci_timing_run manifest batch-compile integration_batch_precompile
+integration_batch_sentinel
+
 failed=0
 ran=0
 
@@ -2003,11 +2159,16 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         stage_started=$CI_TIMING_NOW_MS
     fi
     work_src="$case_dir/$name.tl"
-    cp "$source_path" "$work_src"
+    # The batch pre-pass already staged every case, and staging is a
+    # deterministic file copy, so repeating it here would double the corpus's
+    # I/O for no change in inputs (#5555).
+    if [ ! -s "$work_src" ]; then
+        cp "$source_path" "$work_src"
 
-    for dep in $(deps_or_empty "$deps"); do
-        copy_dep "$dep" "$source_dir" "$case_dir" "$stage_stdlib"
-    done
+        for dep in $(deps_or_empty "$deps"); do
+            copy_dep "$dep" "$source_dir" "$case_dir" "$stage_stdlib"
+        done
+    fi
     if ci_timing_enabled; then
         ci_timing_set_now_ms
         stage_finished=$CI_TIMING_NOW_MS
@@ -2040,11 +2201,20 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         bin_win="$case_dir_win\\$name.exe"
         # Stdlib comes from the embedded payload unless the case opted into
         # the on-disk layout (stage-stdlib), matching the staged copies.
-        if [ "$stage_stdlib" -eq 1 ]; then
+        if [ -s "$asm" ]; then
+            # Produced by the batch pre-pass (#5555). A failed chunk removes its
+            # outputs, so reaching here with no assembly means compiling now.
+            INTEGRATION_BATCHED_CASES=$((INTEGRATION_BATCHED_CASES + 1))
+            build_rc=0
+            : > "$build_stdout"
+            : > "$build_stderr"
+        elif [ "$stage_stdlib" -eq 1 ]; then
+            INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             windows_timed_compile "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
                 > "$build_stdout" 2> "$build_stderr"
         else
+            INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             windows_timed_compile "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/src" -o "$asm" \
                 > "$build_stdout" 2> "$build_stderr"
@@ -2097,11 +2267,20 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         set +e
         # Stdlib comes from the embedded payload unless the case opted into
         # the on-disk layout (stage-stdlib), matching the staged copies.
-        if [ "$stage_stdlib" -eq 1 ]; then
+        if [ -s "$asm" ]; then
+            # Produced by the batch pre-pass (#5555). A failed chunk removes its
+            # outputs, so reaching here with no assembly means compiling now.
+            INTEGRATION_BATCHED_CASES=$((INTEGRATION_BATCHED_CASES + 1))
+            : > "$build_stdout"
+            : > "$build_stderr"
+            true
+        elif [ "$stage_stdlib" -eq 1 ]; then
+            INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             ci_timing_run "$name" compile "$COMPILER" compile "$work_src" \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
                 > "$build_stdout" 2> "$build_stderr"
         else
+            INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             ci_timing_run "$name" compile "$COMPILER" compile "$work_src" \
                 --stdlib-root "$ROOT/src" -o "$asm" \
                 > "$build_stdout" 2> "$build_stderr"
@@ -2213,4 +2392,5 @@ else
     run_windows_backend_fixtures
 fi
 
+echo "[integration] compile processes: $INTEGRATION_BATCH_CHUNKS batch chunk(s)"     "+ $INTEGRATION_STANDALONE_COMPILES standalone,"     "$INTEGRATION_BATCHED_CASES case(s) served from a batch"
 echo "All $ran integration case(s) passed for $HOST_OS."

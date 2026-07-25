@@ -2561,12 +2561,18 @@
     [word-count : i64 (compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
-        (compiler-reg-extend-set-word-bits
-          starts
-          ends
-          (compiler-live-set-word-at-bounded set index)
-          (* index (compiler-live-set-word-bits))
-          point)
+        ;; `compiler-reg-extend-set-word-bits` returns immediately for an empty
+        ;; word, so testing here skips the call setup for the common case.
+        (let
+          [bits : i64 (compiler-live-set-word-at-bounded set index)]
+          (if (= bits 0)
+            unit
+            (compiler-reg-extend-set-word-bits
+              starts
+              ends
+              bits
+              (* index (compiler-live-set-word-bits))
+              point)))
         (set! index (+ index 1))))))
 
 (define (compiler-reg-extend-set-word-bits

@@ -2417,15 +2417,24 @@
     [word-count : i64 (compiler-live-set-word-count set)]
     (while (< index word-count)
       (begin
-        (compiler-reg-extend-segment-set-word-bits!
-          starts
-          ends
-          segments
-          segment-starts
-          segment-ends
-          (compiler-live-set-word-at-bounded set index)
-          (* index (compiler-live-set-word-bits))
-          point)
+        ;; Empty words are the common case in a sparse live set, and
+        ;; `compiler-reg-extend-segment-set-word-bits!` does nothing for them --
+        ;; it tests `bits` against zero before anything else. Testing here
+        ;; instead skips setting up an eight-argument call per empty word;
+        ;; behaviour is unchanged because the callee was already a no-op.
+        (let
+          [bits : i64 (compiler-live-set-word-at-bounded set index)]
+          (if (= bits 0)
+            unit
+            (compiler-reg-extend-segment-set-word-bits!
+              starts
+              ends
+              segments
+              segment-starts
+              segment-ends
+              bits
+              (* index (compiler-live-set-word-bits))
+              point)))
         (set! index (+ index 1))))))
 
 ;; Note a live point into the per-var SEGMENTS only, WITHOUT

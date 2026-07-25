@@ -1896,7 +1896,10 @@
                         "0"
                         "0"
                         "0")
-                      1)
+                      ;; Two ops were pushed; the caller closes one op-let per
+                      ;; counted op, so returning 1 here leaves the generated
+                      ;; arm one paren short of balanced.
+                      2)
                     (let
                       [opened : i64
                         (embedded-native-computed-expr-ops
@@ -1914,7 +1917,7 @@
                             "0"
                             "0"
                             "0")
-                          opened)))))]
+                          (+ opened 1))))))]
               [(and
                   (or
                     (string.eq head "comptime.expr-var")

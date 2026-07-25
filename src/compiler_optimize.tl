@@ -24675,6 +24675,24 @@
       len
       (AstType.I64))
       [(OptDomCmpLookup.Some value) value]
+      [(OptDomCmpLookup.No) false])
+    ;; `(<= len 0)` guarding an empty-table early return is the other common way
+    ;; this gets written, and it decides positivity on its false edge.
+    (match (opt-dom-cmp-lookup
+      cmp-facts
+      (CompilerIrBinOp.Le)
+      len
+      (CompilerIrValue.I64 0)
+      (AstType.I64))
+      [(OptDomCmpLookup.Some value) (not value)]
+      [(OptDomCmpLookup.No) false])
+    (match (opt-dom-cmp-lookup
+      cmp-facts
+      (CompilerIrBinOp.Lt)
+      (CompilerIrValue.I64 0)
+      len
+      (AstType.I64))
+      [(OptDomCmpLookup.Some value) value]
       [(OptDomCmpLookup.No) false])))
 
 ;; `bit-and X m` lands in [0, m] for every nonnegative m: bit-and only clears
@@ -24719,29 +24737,77 @@
 ;; feeds `(cursor + 1) & mask`, so the phi is bounded even though neither the
 ;; seed nor the step is loop-invariant. Phi inputs are only ever tested as plain
 ;; masked values, so a phi of a phi answers false rather than recursing.
-(define (opt-bounds-dom-phi-inputs-masked?
+;; Masked directly, or a phi every input of which is masked against this same
+;; length. `depth` bounds the phi recursion: a loop-carried cursor is commonly a
+;; phi whose input is another phi (one per exit path of the match), and phis can
+;; reference each other cyclically, so the depth counter is what guarantees
+;; termination rather than any structural property of the graph.
+(define (opt-bounds-dom-masked-or-phi?
   [defs : (Array OptBoolBranchDef)]
+  [phi-defs : (Array OptBoolBranchDef)]
   [copies : opt_i64_i64_map.Map]
   [len : CompilerIrValue]
-  [inputs : CompilerIrPhiInputList]) : bool
+  [value : CompilerIrValue]
+  [depth : i64]) : bool
+  (or
+    (opt-bounds-dom-masked-value? defs copies len value)
+    (and
+      (> depth 0)
+      (match value
+        [(CompilerIrValue.Var var)
+          (match (opt-bool-branch-def phi-defs var)
+            [(OptBoolBranchDef.No) false]
+            [(OptBoolBranchDef.Some instr _)
+              (match instr
+                [(CompilerIrInstr.Phi _ inputs ty)
+                  (and
+                    (opt-integer-type? ty)
+                    (opt-bounds-dom-phi-inputs-masked?
+                      defs
+                      phi-defs
+                      copies
+                      len
+                      inputs
+                      (- depth 1)))]
+                [_ false])])]
+        [_ false]))))
+
+(define (opt-bounds-dom-phi-inputs-masked?
+  [defs : (Array OptBoolBranchDef)]
+  [phi-defs : (Array OptBoolBranchDef)]
+  [copies : opt_i64_i64_map.Map]
+  [len : CompilerIrValue]
+  [inputs : CompilerIrPhiInputList]
+  [depth : i64]) : bool
   (match inputs
     [(CompilerIrPhiInputList.Nil) false]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (and
-        (opt-bounds-dom-masked-value?
+        (opt-bounds-dom-masked-or-phi?
           defs
+          phi-defs
           copies
           len
-          (opt-bounds-dom-resolve copies value))
+          (opt-bounds-dom-resolve copies value)
+          depth)
         (match (box-get rest)
           [(CompilerIrPhiInputList.Nil) true]
-          [_ (opt-bounds-dom-phi-inputs-masked? defs copies len (box-get rest))]))]
+          [_
+            (opt-bounds-dom-phi-inputs-masked?
+              defs
+              phi-defs
+              copies
+              len
+              (box-get rest)
+              depth)]))]
     [(CompilerIrPhiInputList.Array seq)
       (opt-bounds-dom-phi-inputs-masked?
         defs
+        phi-defs
         copies
         len
-        (compiler-ir-phi-input-seq-to-list seq))]))
+        (compiler-ir-phi-input-seq-to-list seq)
+        depth)]))
 
 (define (opt-bounds-dom-mask-in-range?
   [defs : (Array OptBoolBranchDef)]
@@ -24757,20 +24823,7 @@
       (opt-bounds-dom-strip-int-cast phi-defs copies raw-len)]
     (and
       (opt-bounds-dom-len-positive? cmp-facts len)
-      (or
-        (opt-bounds-dom-masked-value? defs copies len idx)
-        (match idx
-          [(CompilerIrValue.Var var)
-            (match (opt-bool-branch-def phi-defs var)
-              [(OptBoolBranchDef.No) false]
-              [(OptBoolBranchDef.Some instr _)
-                (match instr
-                  [(CompilerIrInstr.Phi _ inputs ty)
-                    (and
-                      (opt-integer-type? ty)
-                      (opt-bounds-dom-phi-inputs-masked? defs copies len inputs))]
-                  [_ false])])]
-          [_ false])))))
+      (opt-bounds-dom-masked-or-phi? defs phi-defs copies len idx 4))))
 
 (define (opt-bounds-dom-instrs-from
   [defs : (Array OptBoolBranchDef)]

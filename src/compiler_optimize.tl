@@ -7586,23 +7586,27 @@
             (OptI64List.Cons idx (box tail))]
           [(opt_string_i64_map.LookupMissing) tail]))]))
 
-(define (opt-cfg-index-add-pred-edges!
+;; The successor row for this block already holds every resolved target id, in
+;; label-set order, with unresolvable labels dropped -- exactly the sequence the
+;; label-walking version produced. Reuse it instead of hashing each successor
+;; label a second time: `opt-cfg-index-label-set-to-ids` has already paid one
+;; `opt_string_i64_map.get` per edge.
+(define (opt-cfg-index-add-pred-edges-from-ids!
   [pred-rows : (Array OptI64List)]
-  [ids : opt_string_i64_map.Map]
   [source-id : i64]
-  [succs : OptLabelSet]) : unit
-  (match succs
-    [(OptLabelSet.Nil) unit]
-    [(OptLabelSet.Cons s rest)
+  [succ-ids : OptI64List]) : unit
+  (match succ-ids
+    [(OptI64List.Nil) unit]
+    [(OptI64List.Cons idx rest)
       (begin
-        (match (opt_string_i64_map.get (& ids) s)
-          [(opt_string_i64_map.LookupFound idx)
-            (array-set!
-              pred-rows
-              idx
-              (opt-i64-list-add (array-ref pred-rows idx) source-id))]
-          [(opt_string_i64_map.LookupMissing) unit])
-        (opt-cfg-index-add-pred-edges! pred-rows ids source-id (box-get rest)))]))
+        (array-set!
+          pred-rows
+          idx
+          (opt-i64-list-add (array-ref pred-rows idx) source-id))
+        (opt-cfg-index-add-pred-edges-from-ids!
+          pred-rows
+          source-id
+          (box-get rest)))]))
 
 (define (opt-cfg-index-fill-row-seq!
   [blocks : CompilerIrBlockSeq]
@@ -7624,9 +7628,10 @@
         [succs : OptLabelSet
           (opt-cfg-block-successors-with-next block next-label)]
         [row : i64 (+ base index)]
+        [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
         (begin
-          (array-set! succ-rows row (opt-cfg-index-label-set-to-ids succs ids))
-          (opt-cfg-index-add-pred-edges! pred-rows ids row succs)
+          (array-set! succ-rows row succ-ids)
+          (opt-cfg-index-add-pred-edges-from-ids! pred-rows row succ-ids)
           (set! index (+ index 1)))))))
 
 (define (opt-cfg-index-fill-rows!
@@ -7645,12 +7650,10 @@
               (opt-cfg-block-successors-with-next
                 block
                 (opt-cfg-entry-label (box-get rest)))]
+            [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
             (begin
-              (array-set!
-                succ-rows
-                index
-                (opt-cfg-index-label-set-to-ids succs ids))
-              (opt-cfg-index-add-pred-edges! pred-rows ids index succs)
+              (array-set! succ-rows index succ-ids)
+              (opt-cfg-index-add-pred-edges-from-ids! pred-rows index succ-ids)
               (opt-cfg-index-fill-rows!
                 (box-get rest)
                 ids
@@ -7915,21 +7918,93 @@
           predecessor-id))]
     [(option_i64.None) false]))
 
-(define (opt-cfg-index-reachable-labels-from
+;; One entry per reachable block, deduped through a hash set rather than
+;; `opt-label-add`'s linear `string.eq` scan. `opt-label-add` prepends only on
+;; first occurrence, and this applies the same rule, so the list -- including
+;; its descending-id order -- is unchanged even when two blocks somehow share a
+;; label. That case is a verifier error rather than something this function may
+;; assume away, which is why the dedup is kept instead of dropped.
+(define (opt-cfg-index-reachable-labels-from-seen
+  [index : OptCfgIndex]
+  [id : i64]
+  [labels : OptLabelSet]
+  [seen : opt_string_i64_map.Map]) : OptLabelSet
+  (if (>= id (opt-cfg-index-block-count index))
+    labels
+    (opt-cfg-index-reachable-labels-from-seen
+      index
+      (+ id 1)
+      (if (array-ref (struct-get index reachable) id)
+        (let
+          [label : String (opt-cfg-index-label index id)]
+          (if (opt_string_i64_map.contains? (& seen) label)
+            labels
+            (begin
+              (opt_string_i64_map.insert-ref! (&mut seen) label 1)
+              (OptLabelSet.Cons label (box labels)))))
+        labels)
+      seen)))
+
+;; The linear original, kept for small functions. `opt-label-add` prepends only
+;; on first occurrence, which is exactly what the hashed variant above does, so
+;; the two build the identical list and the choice between them is invisible.
+(define (opt-cfg-index-reachable-labels-from-linear
   [index : OptCfgIndex]
   [id : i64]
   [labels : OptLabelSet]) : OptLabelSet
   (if (>= id (opt-cfg-index-block-count index))
     labels
-    (opt-cfg-index-reachable-labels-from
+    (opt-cfg-index-reachable-labels-from-linear
       index
       (+ id 1)
       (if (array-ref (struct-get index reachable) id)
         (opt-label-add labels (opt-cfg-index-label index id))
         labels))))
 
+;; Which dedup to use is a size question. The map is not reclaimed, so building
+;; one per CFG index build costs real peak memory in the optimizer, while the
+;; linear scan it replaces only becomes expensive once a function has many
+;; blocks. Below the threshold the scan is cheaper than the allocation; above
+;; it, the O(blocks^2) comparisons dominate and the map pays for itself.
+(define (opt-cfg-index-reachable-hash-threshold) : i64
+  32)
+
+(define (opt-cfg-index-reachable-labels-from
+  [index : OptCfgIndex]
+  [id : i64]
+  [labels : OptLabelSet]) : OptLabelSet
+  (if (<
+    (opt-cfg-index-block-count index)
+    (opt-cfg-index-reachable-hash-threshold))
+    (opt-cfg-index-reachable-labels-from-linear index id labels)
+    (opt-cfg-index-reachable-labels-from-seen
+      index
+      id
+      labels
+      (opt-cfg-index-reachable-seen-seed
+        labels
+        (opt_string_i64_map.with-capacity (opt-cfg-index-block-count index))))))
+
+(define (opt-cfg-index-reachable-seen-seed
+  [labels : OptLabelSet]
+  [seen : opt_string_i64_map.Map]) : opt_string_i64_map.Map
+  (match labels
+    [(OptLabelSet.Nil) seen]
+    [(OptLabelSet.Cons head rest)
+      (begin
+        (opt_string_i64_map.insert-ref! (&mut seen) head 1)
+        (opt-cfg-index-reachable-seen-seed (box-get rest) seen))]))
+
 (define (opt-cfg-index-reachable-labels [index : OptCfgIndex]) : OptLabelSet
-  (opt-cfg-index-reachable-labels-from index 0 (OptLabelSet.Nil)))
+  (if (<
+    (opt-cfg-index-block-count index)
+    (opt-cfg-index-reachable-hash-threshold))
+    (opt-cfg-index-reachable-labels-from-linear index 0 (OptLabelSet.Nil))
+    (opt-cfg-index-reachable-labels-from-seen
+      index
+      0
+      (OptLabelSet.Nil)
+      (opt_string_i64_map.with-capacity (opt-cfg-index-block-count index)))))
 
 (define (opt-cfg-index-rpo-id [index : OptCfgIndex] [slot : i64]) : i64
   (if (and (>= slot 0) (< slot (struct-get index reach-count)))
@@ -11763,10 +11838,25 @@
 
 (define (opt-ssa-construct-function-with-context-result
   [func : CompilerIrFunction]) : OptFunctionCtxResult
+  (opt-ssa-construct-function-from-context-result
+    func
+    (opt-cfg-context-empty)
+    false))
+
+;; `entry-context` is consumed only when `entry-context-valid?` reports that it
+;; was built for `func`'s current blocks; otherwise this builds its own, exactly
+;; as before. The pre-SSA rotation pass hands its context down this way.
+(define (opt-ssa-construct-function-from-context-result
+  [func : CompilerIrFunction]
+  [entry-context : OptCfgContext]
+  [entry-context-valid? : bool]) : OptFunctionCtxResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
-        [context : OptCfgContext (opt-cfg-context-build blocks)]
+        [context : OptCfgContext
+          (if entry-context-valid?
+            entry-context
+            (opt-cfg-context-build blocks))]
         (if (opt-verify-single-defs? params frame blocks)
           (OptFunctionCtxResult.Result func context)
           (let
@@ -13383,7 +13473,49 @@
       (opt-cfg-switch-case-successors (opt-label-add set default-label) cases)]
     [_ set]))
 
-(define (opt-cfg-switch-case-successors
+;; Above this many cases, dedup through a hash set instead of `opt-label-add`'s
+;; linear `string.eq` scan. `opt-label-add` prepends only on first occurrence, so
+;; seeding the seen-set from `set` and applying the same first-occurrence rule
+;; reproduces the identical list, order included. Small switches keep the linear
+;; path: seeding and allocating a map is not worth it for a handful of arms, and
+;; leaving them alone keeps their output trivially unchanged.
+(define (opt-cfg-switch-case-hash-threshold) : i64
+  16)
+
+(define (opt-cfg-switch-seen-seed
+  [set : OptLabelSet]
+  [seen : opt_string_i64_map.Map]) : opt_string_i64_map.Map
+  (match set
+    [(OptLabelSet.Nil) seen]
+    [(OptLabelSet.Cons head rest)
+      (begin
+        (opt_string_i64_map.insert-ref! (&mut seen) head 1)
+        (opt-cfg-switch-seen-seed (box-get rest) seen))]))
+
+(define (opt-cfg-switch-case-successors-hashed
+  [set : OptLabelSet]
+  [cases : CompilerIrSwitchCaseList]
+  [seen : opt_string_i64_map.Map]) : OptLabelSet
+  (match cases
+    [(CompilerIrSwitchCaseList.Nil) set]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case _ label)
+          (if (opt_string_i64_map.contains? (& seen) label)
+            (opt-cfg-switch-case-successors-hashed set (box-get rest) seen)
+            (begin
+              (opt_string_i64_map.insert-ref! (&mut seen) label 1)
+              (opt-cfg-switch-case-successors-hashed
+                (OptLabelSet.Cons label (box set))
+                (box-get rest)
+                seen)))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-cfg-switch-case-successors-hashed
+        set
+        (compiler-ir-switch-case-seq-to-list seq)
+        seen)]))
+
+(define (opt-cfg-switch-case-successors-linear
   [set : OptLabelSet]
   [cases : CompilerIrSwitchCaseList]) : OptLabelSet
   (match cases
@@ -13391,13 +13523,25 @@
     [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
         [(CompilerIrSwitchCase.Case _ label)
-          (opt-cfg-switch-case-successors
+          (opt-cfg-switch-case-successors-linear
             (opt-label-add set label)
             (box-get rest))])]
     [(CompilerIrSwitchCaseList.Array seq)
-      (opt-cfg-switch-case-successors
+      (opt-cfg-switch-case-successors-linear
         set
         (compiler-ir-switch-case-seq-to-list seq))]))
+
+(define (opt-cfg-switch-case-successors
+  [set : OptLabelSet]
+  [cases : CompilerIrSwitchCaseList]) : OptLabelSet
+  (if (<
+    (compiler-ir-switch-case-list-count cases)
+    (opt-cfg-switch-case-hash-threshold))
+    (opt-cfg-switch-case-successors-linear set cases)
+    (opt-cfg-switch-case-successors-hashed
+      set
+      cases
+      (opt-cfg-switch-seen-seed set (opt_string_i64_map.with-capacity 64)))))
 
 (define (opt-cfg-instr-seq-successors
   [set : OptLabelSet]
@@ -13669,9 +13813,16 @@
             (not (array-ref marks pred-id)))
             (begin
               (array-set! marks pred-id true)
+              ;; `marks` is the authoritative dedup here: it is seeded with the
+              ;; header and the latch, this branch runs only when
+              ;; `marks[pred-id]` is clear, and it is set immediately above. So
+              ;; `pred` is provably absent from both sets and `opt-label-add`'s
+              ;; `string.eq` membership scan always returns false. Prepending
+              ;; directly builds the identical lists and drops an O(body^2)
+              ;; scan per natural loop.
               (OptNaturalLoopCollectState.State
-                (opt-label-add body pred)
-                (opt-label-add worklist pred)))
+                (OptLabelSet.Cons pred (box body))
+                (OptLabelSet.Cons pred (box worklist))))
             state)]
         [(option_i64.None) state])]))
 
@@ -13865,8 +14016,15 @@
             tail)]
         (match (opt-cfg-index-id (struct-get doms index) header)
           [(option_i64.Some header-id)
+            ;; `reachable` is the flattened form of this very index's
+            ;; `reachable` array (opt-cfg-index-reachable-labels builds one from
+            ;; the other), so testing the array at `header-id` decides exactly
+            ;; what scanning the set for `header` decided -- without the linear
+            ;; `string.eq` walk over every reachable label in the function.
             (if (and
-              (opt-label-contains reachable header)
+              (array-ref
+                (struct-get (struct-get doms index) reachable)
+                header-id)
               (opt-dom-info-dominates-id? doms header-id source-id))
               (OptNaturalLoopList.Cons
                 (opt-natural-loop-build blocks pred-map reachable header source)
@@ -13893,9 +14051,16 @@
                 pred-map
                 reachable
                 doms)]
-            (if (opt-label-contains reachable label)
-              (match (opt-cfg-index-id (struct-get doms index) label)
-                [(option_i64.Some source-id)
+            ;; Resolving the id first and then reading the index's reachable
+            ;; array replaces a linear scan of the reachable label set with one
+            ;; lookup. The order swap is safe: a label in the set necessarily
+            ;; has an id, so the None arm can only be reached in cases the scan
+            ;; would have rejected anyway.
+            (match (opt-cfg-index-id (struct-get doms index) label)
+              [(option_i64.Some source-id)
+                (if (array-ref
+                  (struct-get (struct-get doms index) reachable)
+                  source-id)
                   (opt-cfg-natural-loop-successors
                     all-blocks
                     pred-map
@@ -13906,9 +14071,9 @@
                     (opt-cfg-block-successors-with-next
                       block
                       (opt-cfg-entry-label (box-get rest)))
-                    tail)]
-                [(option_i64.None) tail])
-              tail))])]
+                    tail)
+                  tail)]
+              [(option_i64.None) tail]))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-natural-loop-blocks
         all-blocks
@@ -14887,33 +15052,64 @@
             (OptLoopRotationResult.Result next true)
             (opt-loop-rotation-loops blocks context loops (box-get rest)))])]))
 
-(define (opt-loop-rotation-blocks-once [blocks : CompilerIrBlockList]) : OptLoopRotationResult
+;; The step already builds a CFG context for `blocks`. Carry it out so the
+;; fixpoint below can hand the LAST step's context -- the one built for the
+;; blocks that did not rotate, i.e. exactly the blocks this pass returns -- to
+;; the next pass instead of making it build an identical one.
+(defenum OptLoopRotationCtxResult
+  (Result CompilerIrBlockList bool OptCfgContext))
+
+(define (opt-loop-rotation-blocks-once-result [blocks : CompilerIrBlockList]) : OptLoopRotationCtxResult
   (let
     [context : OptCfgContext (opt-cfg-context-build blocks)]
     [loops : OptNaturalLoopList
       (opt-cfg-natural-loops-with-context blocks context)]
-    (opt-loop-rotation-loops blocks context loops loops)))
+    (match (opt-loop-rotation-loops blocks context loops loops)
+      [(OptLoopRotationResult.Result next changed)
+        (OptLoopRotationCtxResult.Result next changed context)])))
+
+(define (opt-loop-rotation-blocks-once [blocks : CompilerIrBlockList]) : OptLoopRotationResult
+  (match (opt-loop-rotation-blocks-once-result blocks)
+    [(OptLoopRotationCtxResult.Result next changed _)
+      (OptLoopRotationResult.Result next changed)]))
+
+(define (opt-loop-rotation-blocks-fixed-result
+  [blocks : CompilerIrBlockList]
+  [remaining : i64]) : OptBlockCtxResult
+  (if (<= remaining 0)
+    (OptBlockCtxResult.Result blocks (opt-cfg-context-empty) false)
+    (match (opt-loop-rotation-blocks-once-result blocks)
+      [(OptLoopRotationCtxResult.Result next changed context)
+        (if changed
+          (opt-loop-rotation-blocks-fixed-result next (- remaining 1))
+          ;; Every arm of `opt-loop-rotation-loops` returns its input verbatim
+          ;; when it reports no change, so `context` is valid for `next`.
+          (OptBlockCtxResult.Result next context true))])))
 
 (define (opt-loop-rotation-blocks-fixed
   [blocks : CompilerIrBlockList]
   [remaining : i64]) : CompilerIrBlockList
-  (if (<= remaining 0)
-    blocks
-    (match (opt-loop-rotation-blocks-once blocks)
-      [(OptLoopRotationResult.Result next changed)
-        (if changed
-          (opt-loop-rotation-blocks-fixed next (- remaining 1))
-          next)])))
+  (match (opt-loop-rotation-blocks-fixed-result blocks remaining)
+    [(OptBlockCtxResult.Result out _ _) out]))
 
-(define (opt-loop-rotation-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define (opt-loop-rotation-blocks-result [blocks : CompilerIrBlockList]) : OptBlockCtxResult
   ;; The natural-loop finder is dominance based, so let it decide whether the
   ;; CFG contains a loop. Textual block order is not a loop property: inlining
   ;; and block layout may put a latch before its header.
   (if (opt-ssa-blocks-have-phi? blocks)
-    blocks
-    (opt-loop-rotation-blocks-fixed
+    (OptBlockCtxResult.Result blocks (opt-cfg-context-empty) false)
+    (opt-loop-rotation-blocks-fixed-result
       blocks
       (+ 1 (compiler-ir-block-list-count blocks)))))
+
+(define (opt-loop-rotation-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match (opt-loop-rotation-blocks-result blocks)
+    [(OptBlockCtxResult.Result out _ _) out]))
+
+(define (opt-loop-rotation-function-result [func : CompilerIrFunction]) : OptBlockCtxResult
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (opt-loop-rotation-blocks-result blocks)]))
 
 (define (opt-loop-rotation-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -37839,16 +38035,22 @@
         (compiler-ir-block-seq-to-list seq)
         leaves)]))
 
-(define (opt-successor-sink-blocks
+(define (opt-successor-sink-blocks-result
   [frame : i64]
   [frame-cell : (Array i64)]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  [blocks : CompilerIrBlockList]) : OptBlockCtxResult
   (let
     [initial-uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
     [ready : CompilerIrBlockList
       (opt-successor-sink-strip-dead-packs frame initial-uses blocks)]
-    [cfg : OptCfgIndex (opt-cfg-index-build ready)]
-    [loops : OptNaturalLoopList (opt-cfg-natural-loops ready)]
+    ;; The natural-loop scan needs the pred-map/reachable/dominator view of the
+    ;; SAME block list this pass already indexes, and `opt-cfg-natural-loops`
+    ;; builds a whole context (index included) internally. Build the context
+    ;; once and take its index instead of indexing `ready` twice.
+    [cfg-context : OptCfgContext (opt-cfg-context-build ready)]
+    [cfg : OptCfgIndex (struct-get cfg-context index)]
+    [loops : OptNaturalLoopList
+      (opt-cfg-natural-loops-with-context ready cfg-context)]
     [all-defs : (Array i64) (opt-used-array-new frame)]
     [_all-defs : unit (opt-successor-sink-fill-all-defs! frame ready all-defs)]
     [total-uses : (Array i64) (opt-collect-blocks-uses-array frame ready)]
@@ -37869,24 +38071,54 @@
         allowed-uses
         ready
         (OptSuccessorSinkMoves.Nil))]
+    ;; The no-move path returns `ready` verbatim, and `cfg-context` was built
+    ;; for exactly that block list, so report it as valid for the result. This
+    ;; pass runs on every function every iteration but only plans moves for a
+    ;; few hundred of them, so the reuse covers the overwhelming majority of
+    ;; runs and saves the caller a whole CFG context build.
     (match moves
-      [(OptSuccessorSinkMoves.Nil) ready]
-      [_ (opt-successor-sink-rewrite-blocks moves ready)])))
+      [(OptSuccessorSinkMoves.Nil)
+        (OptBlockCtxResult.Result ready cfg-context true)]
+      [_
+        (OptBlockCtxResult.Result
+          (opt-successor-sink-rewrite-blocks moves ready)
+          cfg-context
+          false)])))
+
+(define (opt-successor-sink-blocks
+  [frame : i64]
+  [frame-cell : (Array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match (opt-successor-sink-blocks-result frame frame-cell blocks)
+    [(OptBlockCtxResult.Result out _ _) out]))
 
 ;; Public pass boundary used by self-tests and by the opt2 pipeline. Both the
-;; entry and rewritten functions are verified so this scheduling rule never
-;; runs on mutable-var IR and rejects any unexpected dominance regression.
-(define (opt-successor-sink-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (match (opt-verify-function func)
-    [(ResultCompilerOptimizeVerify.Err _) func]
+;; entry and rewritten functions are verified so this scheduling rule never runs
+;; on mutable-var IR and rejects any unexpected dominance regression.
+;;
+;; `context` must be valid for `func`'s blocks: the entry verify runs against it
+;; instead of building an identical one, and both rejection paths report it
+;; unchanged. The returned context is valid for the returned function's blocks,
+;; which spares the caller the rebuild it used to do right after this returned.
+(define (opt-successor-sink-function-with-context-result
+  [context : OptCfgContext]
+  [func : CompilerIrFunction]) : OptFunctionCtxResult
+  ;; The check itself is still a full verify: this pass is NOT covered by the
+  ;; `loop-cluster-verified?` invariant and skipping it crashes the self-compile.
+  (match (opt-verify-function-with-context func context)
+    [(ResultCompilerOptimizeVerify.Err _)
+      (OptFunctionCtxResult.Result func context)]
     [(ResultCompilerOptimizeVerify.Ok)
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
           (let
             [frame-cell : (Array i64) (opt-used-array-new 1)]
             [_frame-init : unit (array-set! frame-cell 0 frame)]
+            [sink-result : OptBlockCtxResult
+              (opt-successor-sink-blocks-result frame frame-cell blocks)]
             [next-blocks : CompilerIrBlockList
-              (opt-successor-sink-blocks frame frame-cell blocks)]
+              (match sink-result
+                [(OptBlockCtxResult.Result b _ _) b])]
             [next : CompilerIrFunction
               (CompilerIrFunction.Function
                 name
@@ -37894,9 +38126,23 @@
                 ret-ty
                 (array-ref frame-cell 0)
                 next-blocks)]
-            (match (opt-verify-function next)
-              [(ResultCompilerOptimizeVerify.Ok) next]
-              [(ResultCompilerOptimizeVerify.Err _) func]))])]))
+            [next-context : OptCfgContext
+              (match sink-result
+                [(OptBlockCtxResult.Result _ ctx reusable)
+                  (if reusable
+                    ctx
+                    (opt-cfg-context-build next-blocks))])]
+            (match (opt-verify-function-with-context next next-context)
+              [(ResultCompilerOptimizeVerify.Ok)
+                (OptFunctionCtxResult.Result next next-context)]
+              [(ResultCompilerOptimizeVerify.Err _)
+                (OptFunctionCtxResult.Result func context)]))])]))
+
+(define (opt-successor-sink-function [func : CompilerIrFunction]) : CompilerIrFunction
+  (match (opt-successor-sink-function-with-context-result
+    (opt-cfg-context-build (opt-function-blocks func))
+    func)
+    [(OptFunctionCtxResult.Result f _) f]))
 
 ;; ---------------------------------------------------------------------------
 (defstruct OptIfConvertBlockFact
@@ -38230,23 +38476,35 @@
                       [run-loop? : bool true]
                       [_t-rotation : i64
                         (cfg compile-profile (profile.now-ms) 0)]
-                      [rotated : CompilerIrFunction
-                        (compiler-opt-debug-observe-function
-                          "rotation"
-                          (if run-loop?
-                            (opt-loop-rotation-function
-                              (CompilerIrFunction.Function
-                                name
-                                params
-                                ret-ty
-                                promoted-frame
-                                sroa-blocks))
+                      [rotation-result : OptBlockCtxResult
+                        (if run-loop?
+                          (opt-loop-rotation-function-result
                             (CompilerIrFunction.Function
                               name
                               params
                               ret-ty
                               promoted-frame
-                              sroa-blocks)))]
+                              sroa-blocks))
+                          (OptBlockCtxResult.Result
+                            sroa-blocks
+                            (opt-cfg-context-empty)
+                            false))]
+                      [rotated : CompilerIrFunction
+                        (compiler-opt-debug-observe-function
+                          "rotation"
+                          (CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            promoted-frame
+                            (match rotation-result
+                              [(OptBlockCtxResult.Result b _ _) b])))]
+                      [rotation-context : OptCfgContext
+                        (match rotation-result
+                          [(OptBlockCtxResult.Result _ ctx _) ctx])]
+                      [rotation-context-valid? : bool
+                        (match rotation-result
+                          [(OptBlockCtxResult.Result _ _ valid) valid])]
                       [_p-rotation : unit
                         (cfg
                           compile-profile
@@ -38261,8 +38519,10 @@
                       [_t-ssa : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [ssa-result : OptFunctionCtxResult
                         (if run-loop?
-                          (opt-ssa-construct-function-with-context-result
-                            rotated)
+                          (opt-ssa-construct-function-from-context-result
+                            rotated
+                            rotation-context
+                            rotation-context-valid?)
                           (OptFunctionCtxResult.Result
                             rotated
                             (opt-cfg-context-empty)))]
@@ -38626,17 +38886,20 @@
                       ;; may replace the retained header address with a pointer
                       ;; phi, but the fresh arm clone remains an ordinary bounded
                       ;; rematerialization chain.
+                      [pre-induction-sink-result : OptFunctionCtxResult
+                        (if run-loop?
+                          (opt-successor-sink-function-with-context-result
+                            licm-context
+                            licm)
+                          licm-result)]
                       [pre-induction-sink : CompilerIrFunction
                         (compiler-opt-debug-observe-function
                           "pre_induction_sink"
-                          (if run-loop?
-                            (opt-successor-sink-function licm)
-                            licm))]
+                          (match pre-induction-sink-result
+                            [(OptFunctionCtxResult.Result f _) f]))]
                       [pre-induction-sink-context : OptCfgContext
-                        (if run-loop?
-                          (opt-cfg-context-build
-                            (opt-function-blocks pre-induction-sink))
-                          licm-context)]
+                        (match pre-induction-sink-result
+                          [(OptFunctionCtxResult.Result _ ctx) ctx])]
                       [_t-induction : i64
                         (cfg compile-profile (profile.now-ms) 0)]
                       [induction-result : OptFunctionCtxResult

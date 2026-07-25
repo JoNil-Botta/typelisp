@@ -46953,13 +46953,27 @@
               compiler-backend-scalar-registers-enabled))]
         [fn-abi : CompilerRegTargetAbi (compiler-backend-regalloc-abi target)]
         [_fn-abi : unit (compiler-backend-set-current-fn-abi! fn-abi)]
+        ;; The scalar-opt2 plan and the caller-save rewrite below both need the
+        ;; var-type view of `walk-func`, and each used to walk the function for
+        ;; its own copy. Compute it once here, on exactly the path that takes
+        ;; both (`compiler-reg-plan-function-stack-only` and the SIMD plans do
+        ;; not need it, and the rewrites are off when scalar registers are).
+        [scalar-plan? : bool
+          (and
+            (compiler-backend-mode-scalar? mode)
+            compiler-backend-scalar-registers-enabled)]
+        [walk-types : CompilerRegVarTypes
+          (if scalar-plan?
+            (compiler-reg-function-var-types walk-func)
+            (compiler-reg-var-types-empty))]
         [reg-plan : CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if compiler-backend-scalar-registers-enabled
-              (compiler-reg-plan-function-scalar-cold-for-abi
+              (compiler-reg-plan-function-scalar-cold-for-abi-with-types
                 fn-abi
                 walk-func
-                cold-call-temp-start)
+                cold-call-temp-start
+                walk-types)
               (compiler-reg-plan-function-stack-only walk-func))
             (if (compiler-backend-mode-avx2? mode)
               (compiler-reg-plan-function-avx2-for-abi fn-abi walk-func)
@@ -46986,7 +47000,7 @@
             (compiler-reg-caller-save-rewrite-blocks
               blocks
               walk-vars
-              (compiler-reg-function-var-types walk-func)
+              walk-types
               reg-plan)
             (CompilerRegCallSaveRewrite.Rewrite
               blocks

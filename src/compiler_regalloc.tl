@@ -19075,10 +19075,18 @@
       (if ignore-single-cold-call?
         (compiler-live-set-empty)
         (compiler-reg-clobber-kind-points func 0))]
+    ;; Per-register clobber point sets (15c): kind 1 = idiv (rax:rdx), kind 2 =
+    ;; variable shift (rcx). Bound once here and reused both for the destructive
+    ;; tie exclusion below and for the GAP3c pin demotion / greedy further down;
+    ;; each was previously walked twice per function.
+    ;; `compiler-reg-clobber-kind-points` is a pure fold over the function's
+    ;; blocks and `compiler-live-set-union` never writes through its operands,
+    ;; so the shared sets are the same values the two walks produced.
+    [div-points : CompilerLiveI64Set (compiler-reg-clobber-kind-points func 1)]
+    [shift-points : CompilerLiveI64Set
+      (compiler-reg-clobber-kind-points func 2)]
     [destructive-fixed-points : CompilerLiveI64Set
-      (compiler-live-set-union
-        (compiler-reg-clobber-kind-points func 1)
-        (compiler-reg-clobber-kind-points func 2))]
+      (compiler-live-set-union div-points shift-points)]
     [destructive-clobber-points : CompilerLiveI64Set
       (compiler-live-set-union clobber-points destructive-fixed-points)]
     [destructive-eligible : (Array i64)
@@ -19201,13 +19209,8 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-merged-root-index coalesce interval-index)
         interval-index)]
-    ;; Per-register clobber point sets (15c): kind 0 = call-like sites (all
-    ;; caller-saved; == clobber-points above), kind 1 = idiv (rax:rdx),
-    ;; kind 2 = variable shift (rcx). Bound here (before the greedy) so the
-    ;; GAP3c pin demotion below and the greedy share one computation.
-    [div-points : CompilerLiveI64Set (compiler-reg-clobber-kind-points func 1)]
-    [shift-points : CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points func 2)]
+    ;; `div-points` / `shift-points` (kinds 1 and 2) are the sets bound above;
+    ;; the GAP3c pin demotion below and the greedy share that one computation.
     ;; GAP3c: validate every ABI pin against its coalesce-class hull now that
     ;; the coalesce map exists; unsound pins are unassigned and their params
     ;; fall through to the ordinary greedy CSR path (see
@@ -19921,14 +19924,35 @@
       (+ start 1)
       end)))
 
+;; An empty var-type view, for callers that must bind one on a path where the
+;; scalar plan is not taken and no types are needed.
+(define (compiler-reg-var-types-empty) : CompilerRegVarTypes
+  (CompilerRegVarTypes
+    CompilerRegVarTypeList.Nil
+    (array.make-array i64 0)
+    (array.make-array AstType 0)))
+
 (define (compiler-reg-plan-function-scalar-cold-for-abi
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [forced-spill-from : i64]) : CompilerRegPlan
+  (compiler-reg-plan-function-scalar-cold-for-abi-with-types
+    abi
+    func
+    forced-spill-from
+    (compiler-reg-function-var-types func)))
+
+;; `type-info` must be `(compiler-reg-function-var-types func)`. The backend
+;; already needs that view for its caller-save rewrite, so it computes it once
+;; and passes it in rather than having both walk the function.
+(define (compiler-reg-plan-function-scalar-cold-for-abi-with-types
+  [abi : CompilerRegTargetAbi]
+  [func : CompilerIrFunction]
+  [forced-spill-from : i64]
+  [type-info : CompilerRegVarTypes]) : CompilerRegPlan
   (let
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make func true)]
-    [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [vars : i64
       (match func

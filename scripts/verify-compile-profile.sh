@@ -1004,10 +1004,12 @@ fi
 # whole family, so the next step costs a one-number edit instead of the
 # archaeology that took (#5764).
 #
-# Current headroom, used against capacity, on a measured clean add5984b9:
-# expr macro_expand 2693353/2752512, expr typecheck 1610018/1638400,
-# type macro_expand 20013/20480, type typecheck 5887/6144. All four sit within
-# a few percent of their next step, so expect these to move.
+# Current headroom, used against capacity, measured on a clean 739968657:
+# expr macro_expand 2697530/2752512, expr typecheck 1611601/1638400,
+# type macro_expand 20018/20480, type typecheck 5887/6144. All four sit within a
+# few percent of their next step, so expect these to move. #5701 landed while
+# this was in review and consumed 4177 of the expr macro_expand headroom without
+# crossing, which is the normal case this shape is meant to make cheap.
 #
 # Keep both the logical
 # capacity and physical payload bytes exact so an accidental return to eager or

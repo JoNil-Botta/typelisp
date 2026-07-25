@@ -9091,9 +9091,7 @@
   false)
 
 (define (compiler-backend-fpo-no-push-sub [frame : i64]) : i64
-  (if compiler-backend-fpo-bare-frame
-    0
-    (+ frame 8)))
+  (compiler-backend-rsp-rebase-push-sub frame 0))
 
 (define (compiler-backend-emit-function-entry-fpo
   [symbol : String]
@@ -44518,11 +44516,13 @@
 ;; the total displacement (8n + S) % 16 == 8 (frame is a 16-multiple), i.e.
 ;; the same call alignment as the no-push `subq $(frame+8)`.
 (define (compiler-backend-rsp-rebase-push-sub [frame : i64] [push-count : i64]) : i64
-  (+
-    frame
-    (if (= (bit-and push-count 1) 1)
-      0
-      8)))
+  (if (and compiler-backend-fpo-bare-frame (= push-count 0))
+    0
+    (+
+      frame
+      (if (= (bit-and push-count 1) 1)
+        0
+        8))))
 
 ;; The popq run restoring the pushed CSRs: highest slot idx first (lowest
 ;; address = last pushed), matching the existing pop-run epilogue order.
@@ -47796,13 +47796,6 @@
                               compiler-backend-fpo-bare-frame
                               (and
                                 fpo-attempt
-                                ;; Only the SysV no-push FPO prologue honours
-                                ;; the bare frame; the Win64 prologue describes
-                                ;; its allocation with SEH unwind codes, so
-                                ;; skipping the sub there would leave the
-                                ;; epilogue fold disagreeing with the unwind
-                                ;; data.
-                                (not (compiler-backend-target-windows? target))
                                 (= push-count 0)
                                 (= frame 0)
                                 (not compiler-backend-frame-slot-referenced)

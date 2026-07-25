@@ -30453,6 +30453,27 @@
             [_ (OptUnrollMaybeShape.No)])]
         [_ (OptUnrollMaybeShape.No)]))))
 
+;; Fill-like store loops: StorePtr admitted only when the body has no Load
+;; at all, so the x4 clones hold scalar state only (no load->store chains,
+;; no container-pointer pressure). Probe/rehash loops have loads and stay
+;; excluded by the main whitelist; fills (zeroing, byte stores, recurrence
+;; stores) have none.
+(define (opt-unroll-body-fill-instr-ok? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Load _ _ _) false]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [_ (opt-unroll-body-instr-ok? instr)]))
+
+(define (opt-unroll-body-fill-ok?
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [last : i64]) : bool
+  (if (>= index last)
+    true
+    (and
+      (opt-unroll-body-fill-instr-ok? (array-ref slots index))
+      (opt-unroll-body-fill-ok? slots (+ index 1) last))))
+
 (define (opt-unroll-shape-scan
   [blocks : CompilerIrBlockList]
   [label : String]
@@ -30467,7 +30488,10 @@
       (< (- last phi-count) 2)
       (> (- last phi-count) 16)
       (not (opt-unroll-no-phi-from? instrs phi-count))
-      (not (opt-unroll-body-ok? (struct-get instrs slots) phi-count last))
+      (not
+        (or
+          (opt-unroll-body-ok? (struct-get instrs slots) phi-count last)
+          (opt-unroll-body-fill-ok? (struct-get instrs slots) phi-count last)))
       ;; the c-def is dropped from the clones, so the final branch must be c's
       ;; only use inside B.
       (opt-used-contains

@@ -2041,19 +2041,11 @@
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-dce-instrs-from set instrs -2))
 
-(define (opt-used-array-fill [items : (Array i64)] [index : i64] [value : i64]) : unit
-  (if (>= index (array-length items))
-    unit
-    (begin
-      (array-set! items index value)
-      (opt-used-array-fill items (+ index 1) value))))
-
+;; `make-array` already returns zeroed memory, so a fresh use-count array needs
+;; no initialising pass. The `opt-used-array-fill` helper existed only to run
+;; that pass and had no other caller, so it goes with it.
 (define (opt-used-array-new [count : i64]) : (Array i64)
-  (let
-    [items : (Array i64) (array.make-array i64 count)]
-    (begin
-      (opt-used-array-fill items 0 0)
-      items)))
+  (array.make-array i64 count))
 
 ;; Use counts (not booleans): `add` bumps the count, `contains` reports any live
 ;; use, and `dec` drops a single use when DCE deletes an instruction. Counting

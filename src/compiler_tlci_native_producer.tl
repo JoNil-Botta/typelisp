@@ -50,9 +50,11 @@
 ;; Compile-time i64 locals for the body currently compiling: a binder arm of a
 ;; computed integer match binds the scrutinee's generated i64 variable, so a
 ;; later `(comptime.expr-int n)` reads the count as data instead of a literal.
-;; Refs #5617.
+;; A scalar `let` binding over comptime data joins the same table, which is why
+;; the budget is well above the two binder arms #5617 needed: the scanner
+;; bodies bind six at once. Refs #5617, #5701.
 (define embedded-native-data-locals-cap : i64
-  8)
+  24)
 (define embedded-native-data-local-names : (Array String)
   (array.make-array String embedded-native-data-locals-cap))
 (define embedded-native-data-local-texts : (Array String)
@@ -2008,6 +2010,65 @@
                         "0"
                         "0")
                       1)))]
+              ;; `(comptime.expr-string e)`: the argument's comptime String
+              ;; value becomes a string-literal expression, carrying the same
+              ;; intern id the interpreted builder reuses. Refs #5701.
+              [(and
+                  (or
+                    (string.eq head "comptime.expr-string")
+                    (string.eq head "expr-string"))
+                  (= argc 1))
+                (let
+                  [inner-opened : i64
+                    (embedded-native-computed-expr-ops
+                      params
+                      (ast-expr-list-get (& args) 0 0)
+                      ops
+                      ops-count)]
+                  (if (< inner-opened 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        255
+                        "0"
+                        "0"
+                        "0")
+                      (+ inner-opened 1))))]
+              ;; `(comptime.string-slice <String local> start len)`: the host
+              ;; slices the bound local and pushes the generated String value,
+              ;; with start and length as computed data immediates. Refs #5701.
+              [(and
+                  (or
+                    (string.eq head "comptime.string-slice")
+                    (string.eq head "string-slice"))
+                  (= argc 3))
+                (let
+                  [slot : i64
+                    (embedded-native-string-local-slot
+                      params
+                      (ast-expr-list-get (& args) 0 0))]
+                  [start-text : String
+                    (embedded-native-data-index-text
+                      (ast-expr-list-get (& args) 1 0))]
+                  [len-text : String
+                    (embedded-native-data-index-text
+                      (ast-expr-list-get (& args) 2 0))]
+                  (if (or
+                    (< slot 0)
+                    (string.eq start-text "")
+                    (string.eq len-text ""))
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        254
+                        (string.int->string slot)
+                        start-text
+                        len-text)
+                      1)))]
               [(and
                   (or
                     (string.eq head "comptime.type-key")
@@ -2140,8 +2201,26 @@
               (embedded-stdlib-tlci-unwrap-expr node))))
         -1)]))
 
+;: The generated spelling of an arithmetic ordinal usable in data position, or
+;: "" for an operator that is not. Division and remainder are deliberately
+;: absent: the interpreted path reports a comptime diagnostic on a zero divisor
+;: and generated i64 code would trap instead. Refs #5617, #5701.
+(define (embedded-native-arithmetic-spelling [ordinal : i64]) : String
+  (cond [(= ordinal 0) "+"] [(= ordinal 1) "-"] [(= ordinal 2) "*"] [else ""]))
+
+;: True for a `(cast e : T)` whose target is an integral scalar the data
+;: representation is already exact for. Comptime `char` values travel as their
+;: i64 code, so `(cast ch : i64)` is the identity on the generated text.
+;: Refs #5701.
+(define (embedded-native-data-cast-type? [ty : AstType]) : bool
+  (match ty
+    [(AstType.I64) true]
+    [(AstType.Char) true]
+    [_ false]))
+
 ;: The generated i64 text of a canonical int literal, a compile-time data
-;: local, or their sums and differences; "" for anything else. Refs #5617.
+;: local, their sums, differences and products, or an identity cast over one;
+;: "" for anything else. Refs #5617, #5701.
 (define (embedded-native-data-index-text [node : i64]) : String
   (match (embedded-stdlib-tlci-unwrap-expr node)
     [(AstExpr.Literal (AstLiteral.Int value text))
@@ -2151,25 +2230,24 @@
         (string.int->string value)
         "")]
     [(AstExpr.Var name) (embedded-native-data-local-text (intern-str name))]
+    [(AstExpr.Cast inner ty)
+      (if (embedded-native-data-cast-type? ty)
+        (embedded-native-data-index-text inner)
+        "")]
     ;; `(+ i 1)` in an index or literal-builder position stays plain generated
     ;; i64 arithmetic over the data locals. Refs #5602.
     [(AstExpr.Binary op left-node right-node)
       (let
         [ordinal : i64 (embedded-native-binop-ordinal op)]
+        [spelling : String (embedded-native-arithmetic-spelling ordinal)]
         [left : String (embedded-native-data-index-text left-node)]
         [right : String (embedded-native-data-index-text right-node)]
-        (if (or (> ordinal 1) (string.eq left "") (string.eq right ""))
+        (if (or
+          (string.eq spelling "")
+          (string.eq left "")
+          (string.eq right ""))
           ""
-          (str-cat
-            "("
-            (if (= ordinal 0)
-              "+"
-              "-")
-            " "
-            left
-            " "
-            right
-            ")")))]
+          (str-cat "(" spelling " " left " " right ")")))]
     [_ ""]))
 
 ;; One i64-valued comptime expression rendered for the generated entry: `open`
@@ -2189,7 +2267,8 @@
 (define (embedded-native-data-probe-open
   [name : String]
   [op : i64]
-  [arg : String]) : String
+  [arg : String]
+  [arg-b : String]) : String
   (str-cat
     "  (let ["
     name
@@ -2197,15 +2276,32 @@
     (string.int->string op)
     " "
     arg
-    " 0 0)]\n"
+    " "
+    arg-b
+    " 0)]\n"
     "  (if (< "
     name
     " 0)\n  "
     (string.int->string tlci-host-callback-status-bad-request)
     "\n"))
 
-;; Literals, data locals, and arithmetic need no probe; an operand or local
-;; expression-list length hoists one.
+;; One probe bound to a fresh temporary, as a data value.
+(define (embedded-native-data-probe-value
+  [op : i64]
+  [arg : String]
+  [arg-b : String]) : EmbeddedNativeDataValue
+  (let
+    [name : String (embedded-native-temp-name!)]
+    (EmbeddedNativeDataValue
+      (embedded-native-data-probe-open name op arg arg-b)
+      name
+      1)))
+
+;; Literals, data locals, and arithmetic over them need no probe; an operand or
+;; local expression-list length, and the comptime string-scanner reads over a
+;; String session local, each hoist one. Arithmetic recurses so a probed
+;; sub-value can appear inside a sum -- the scanner bodies write
+;; `(- (cast (string.string-ref key i) : i64) 48)`. Refs #5602, #5701.
 (define (embedded-native-data-value
   [params : (& params AstMacroParamList)]
   [node : i64]) : EmbeddedNativeDataValue
@@ -2213,31 +2309,149 @@
     [plain : String (embedded-native-data-index-text node)]
     (if (not (string.eq plain ""))
       (EmbeddedNativeDataValue "" plain 0)
+      (match (embedded-stdlib-tlci-unwrap-expr node)
+        [(AstExpr.Cast inner ty)
+          (if (embedded-native-data-cast-type? ty)
+            (embedded-native-data-value params inner)
+            (embedded-native-data-value-none))]
+        [(AstExpr.Binary op left-node right-node)
+          (embedded-native-data-binary-value
+            params
+            (embedded-native-arithmetic-spelling
+              (embedded-native-binop-ordinal op))
+            left-node
+            right-node)]
+        [_ (embedded-native-data-call-value params node)]))))
+
+(define (embedded-native-data-binary-value
+  [params : (& params AstMacroParamList)]
+  [spelling : String]
+  [left-node : i64]
+  [right-node : i64]) : EmbeddedNativeDataValue
+  (if (string.eq spelling "")
+    (embedded-native-data-value-none)
+    (let
+      [left : EmbeddedNativeDataValue
+        (embedded-native-data-value params left-node)]
+      [right : EmbeddedNativeDataValue
+        (embedded-native-data-value params right-node)]
+      (if (or
+        (string.eq (struct-get left text) "")
+        (string.eq (struct-get right text) ""))
+        (embedded-native-data-value-none)
+        (EmbeddedNativeDataValue
+          (str-cat (struct-get left open) (struct-get right open))
+          (str-cat
+            "("
+            spelling
+            " "
+            (struct-get left text)
+            " "
+            (struct-get right text)
+            ")")
+          (+ (struct-get left opens) (struct-get right opens)))))))
+
+;; The probe-backed data calls: the two expression-list lengths and the two
+;; comptime string reads over a String session local. Refs #5602, #5701.
+(define (embedded-native-data-call-value
+  [params : (& params AstMacroParamList)]
+  [node : i64]) : EmbeddedNativeDataValue
+  (let
+    [operand : i64 (embedded-native-expr-list-length-param params node)]
+    (if (>= operand 0)
+      (embedded-native-data-probe-value 155 (string.int->string operand) "0")
       (let
-        [operand : i64 (embedded-native-expr-list-length-param params node)]
-        (if (>= operand 0)
+        [slot : i64 (embedded-native-expr-list-length-local params node)]
+        (if (>= slot 0)
+          (embedded-native-data-probe-value 227 (string.int->string slot) "0")
+          (embedded-native-string-scan-value params node))))))
+
+;; `(string.string-length <String local>)` and
+;; `(string.string-ref <String local> <data>)`: the stdlib string functions the
+;; comptime scanners call, evaluated by the host against the bound local rather
+;; than emitted as runtime code. The index is itself a data value, so a probed
+;; sub-expression can index the string. Refs #5701.
+(define (embedded-native-string-scan-value
+  [params : (& params AstMacroParamList)]
+  [node : i64]) : EmbeddedNativeDataValue
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Call func args)
+      (match (embedded-stdlib-tlci-unwrap-expr func)
+        [(AstExpr.Var head-id)
           (let
-            [name : String (embedded-native-temp-name!)]
-            (EmbeddedNativeDataValue
-              (embedded-native-data-probe-open
-                name
-                155
-                (string.int->string operand))
-              name
-              1))
-          (let
-            [slot : i64 (embedded-native-expr-list-length-local params node)]
-            (if (< slot 0)
-              (embedded-native-data-value-none)
-              (let
-                [name : String (embedded-native-temp-name!)]
-                (EmbeddedNativeDataValue
-                  (embedded-native-data-probe-open
-                    name
-                    227
-                    (string.int->string slot))
-                  name
-                  1)))))))))
+            [head : String (intern-str head-id)]
+            [argc : i64 (ast-expr-list-len (& args))]
+            [slot : i64
+              (if (= argc 0)
+                -1
+                (embedded-native-string-local-slot
+                  params
+                  (ast-expr-list-get (& args) 0 0)))]
+            (cond
+              [(< slot 0) (embedded-native-data-value-none)]
+              [(and
+                  (embedded-native-stdlib-string-call? head "string-length")
+                  (= argc 1))
+                (embedded-native-data-probe-value
+                  252
+                  (string.int->string slot)
+                  "0")]
+              [(and
+                  (or
+                    (embedded-native-stdlib-string-call? head "string-ref")
+                    (embedded-native-stdlib-string-call? head "char-at"))
+                  (= argc 2))
+                (let
+                  [index : EmbeddedNativeDataValue
+                    (embedded-native-data-value
+                      params
+                      (ast-expr-list-get (& args) 1 0))]
+                  (if (string.eq (struct-get index text) "")
+                    (embedded-native-data-value-none)
+                    (let
+                      [probe : EmbeddedNativeDataValue
+                        (embedded-native-data-probe-value
+                          253
+                          (string.int->string slot)
+                          (struct-get index text))]
+                      (EmbeddedNativeDataValue
+                        (str-cat
+                          (struct-get index open)
+                          (struct-get probe open))
+                        (struct-get probe text)
+                        (+ (struct-get index opens) 1)))))]
+              [else (embedded-native-data-value-none)]))]
+        [_ (embedded-native-data-value-none)])]
+    [_ (embedded-native-data-value-none)]))
+
+;: The session-local slot a `String`-valued name is bound to, or -1 when the
+;: node is not a plain name, names a macro parameter, or names nothing bound.
+;: Refs #5701.
+(define (embedded-native-string-local-slot
+  [params : (& params AstMacroParamList)]
+  [node : i64]) : i64
+  (match (embedded-stdlib-tlci-unwrap-expr node)
+    [(AstExpr.Var name)
+      (if (>= (embedded-stdlib-tlci-param-index params name) 0)
+        -1
+        (embedded-native-local-index (intern-str name)))]
+    [_ -1]))
+
+;: A `stdlib.string` helper call spelled the way the module-qualified imports
+;: reach the producer. This mirrors `ctfe-stdlib-string-helper-name?`, which is
+;: what decides the same call under interpretation: a module separator is
+;: required, so a local function named `string-length` is never mistaken for
+;: the stdlib one. Refs #5701.
+(define (embedded-native-stdlib-string-call? [head : String] [base : String]) : bool
+  (or
+    (string.eq head (str-cat "string." base))
+    (string.eq head (str-cat "string/" base))
+    (string.eq head (str-cat "stdlib.string." base))
+    (string.eq head (str-cat "stdlib.string/" base))
+    (string.eq head (str-cat "stdlib/string." base))
+    (string.eq head (str-cat "stdlib/string/" base))
+    (string.eq head (str-cat "stdlib/string.tl." base))
+    (string.eq head (str-cat "stdlib/string.tl/" base))))
 
 ;: The session-local slot of a `(comptime.expr-list-length <local>)` call, or
 ;: -1 for anything else. Refs #5602.
@@ -2417,50 +2631,36 @@
             (cond
               ;; `(comptime.expr-int (array-length T))`: the count flows as
               ;; data out of the reflection probe into the literal builder.
+              ;; Every other argument shape -- a data local, arithmetic over
+              ;; one -- is an ordinary computed expression, so it takes the
+              ;; linear path rather than declining the whole body. Refs #5701.
               [(and
                   (or
                     (string.eq head "comptime.expr-int")
                     (string.eq head "expr-int"))
-                  (= argc 1))
-                (match (embedded-stdlib-tlci-unwrap-expr
-                  (ast-expr-list-get (& args) 0 0))
-                  [(AstExpr.Call length-func length-args)
-                    (match (embedded-stdlib-tlci-unwrap-expr length-func)
-                      [(AstExpr.Var length-head)
-                        (if (and
-                          (or
-                            (string.eq
-                              (intern-str length-head)
-                              "comptime.array-length")
-                            (string.eq (intern-str length-head) "array-length"))
-                          (= (ast-expr-list-len (& length-args)) 1))
-                          (let
-                            [param : i64
-                              (embedded-native-var-param-index
-                                params
-                                (ast-expr-list-get (& length-args) 0 0))]
-                            (if (< param 0)
-                              ""
-                              (embedded-native-arm-block-with-final
-                                (embedded-native-single-op-ops
-                                  180
-                                  (string.int->string param)
-                                  "0"
-                                  "0")
-                                1
-                                1
-                                (str-cat
-                                  "  (let [d0 : i64 (comptime-host-invoke host session 142 0 0 0)]\n"
-                                  "  (if (< d0 0)\n  "
-                                  (string.int->string
-                                    tlci-host-callback-status-bad-request)
-                                  "\n"
-                                  "  (let [q0 : i64 (comptime-host-invoke host session 221 d0 0 0)] (if (not (= q0 0)) q0\n"
-                                  final
-                                  "))))\n"))))
-                          "")]
-                      [_ ""])]
-                  [_ ""])]
+                  (= argc 1)
+                  (>=
+                    (embedded-native-array-length-param-index params (& args))
+                    0))
+                (let
+                  [param : i64
+                    (embedded-native-array-length-param-index params (& args))]
+                  (embedded-native-arm-block-with-final
+                    (embedded-native-single-op-ops
+                      180
+                      (string.int->string param)
+                      "0"
+                      "0")
+                    1
+                    1
+                    (str-cat
+                      "  (let [d0 : i64 (comptime-host-invoke host session 142 0 0 0)]\n"
+                      "  (if (< d0 0)\n  "
+                      (string.int->string tlci-host-callback-status-bad-request)
+                      "\n"
+                      "  (let [q0 : i64 (comptime-host-invoke host session 221 d0 0 0)] (if (not (= q0 0)) q0\n"
+                      final
+                      "))))\n")))]
               ;; `(comptime.comptime-error msg)` / `(comptime.error msg)`:
               ;; the message flows to the session diagnostic with the
               ;; diagnostic status, ignoring `final`.
@@ -2515,6 +2715,30 @@
         (array-ref ops-count 0)
         opened
         final))))
+
+;: The type-operand index of `(comptime.expr-int (array-length T))` given the
+;: builder's argument list, or -1 when the argument is any other shape.
+;: Refs #5701.
+(define (embedded-native-array-length-param-index
+  [params : (& params AstMacroParamList)]
+  [args : (& args AstExprList)]) : i64
+  (if (not (= (ast-expr-list-len args) 1))
+    -1
+    (match (embedded-stdlib-tlci-unwrap-expr (ast-expr-list-get args 0 0))
+      [(AstExpr.Call length-func length-args)
+        (match (embedded-stdlib-tlci-unwrap-expr length-func)
+          [(AstExpr.Var length-head)
+            (if (and
+              (or
+                (string.eq (intern-str length-head) "comptime.array-length")
+                (string.eq (intern-str length-head) "array-length"))
+              (= (ast-expr-list-len (& length-args)) 1))
+              (embedded-native-var-param-index
+                params
+                (ast-expr-list-get (& length-args) 0 0))
+              -1)]
+          [_ -1])]
+      [_ -1])))
 
 ;; A one-entry ops array for a single host op.
 (define (embedded-native-single-op-ops
@@ -2594,6 +2818,31 @@
                                   then-code
                                   else-code
                                   ")))))\n")))]
+                          ;; `(comptime.expr-string? p)`: the literal-template
+                          ;; guard, probed as data on the operand the same way
+                          ;; `array-dynamic?` is. Refs #5701.
+                          [(and
+                              (or
+                                (string.eq cond-name "comptime.expr-string?")
+                                (string.eq cond-name "expr-string?"))
+                              (= (ast-expr-list-len (& cond-args)) 1))
+                            (let
+                              [str-param : i64
+                                (embedded-native-var-param-index
+                                  params
+                                  (ast-expr-list-get (& cond-args) 0 0))]
+                              (if (< str-param 0)
+                                ""
+                                (str-cat
+                                  "  (let [t0 : i64 (comptime-host-invoke host session 256 "
+                                  (string.int->string str-param)
+                                  " 0 0)] (if (< t0 0)\n  "
+                                  (string.int->string
+                                    tlci-host-callback-status-bad-request)
+                                  "\n  (if (= t0 1)\n"
+                                  then-code
+                                  else-code
+                                  ")))\n")))]
                           [(and
                               (or
                                 (string.eq cond-name "comptime.string-eq")
@@ -2741,10 +2990,11 @@
             (embedded-native-computed-expr-code params body-node final)]
           [_ ""])])))
 
-;; Compile a let-rooted body: each binding's init is a computed expression
-;; stored in a fresh session slot, then the body compiles with the new locals
-;; visible. let* scoping: binding inits see only earlier locals, and the
-;; local length is restored afterwards. Refs #5603.
+;; Compile a let-rooted body: each binding's init becomes either a compile-time
+;; data local (a scalar the host answers as data) or a session slot holding a
+;; comptime value, then the body compiles with the new locals visible. let*
+;; scoping: binding inits see only earlier locals, and both local tables are
+;; restored afterwards. Refs #5603, #5701.
 (define (embedded-native-let-body-code
   [params : (& params AstMacroParamList)]
   [body-node : i64]) : String
@@ -2754,63 +3004,121 @@
         [(AstLet.Let bindings body)
           (let
             [saved : i64 (array-ref embedded-native-local-len 0)]
+            [data-saved : i64 (array-ref embedded-native-data-local-len 0)]
+            [opens : (Array i64) (make-array 0)]
             [open-code : String
-              (embedded-native-let-bindings-open params (& bindings) 0)]
+              (embedded-native-let-bindings-open params (& bindings) 0 opens)]
             (if (string.eq open-code "\x01")
               (begin
                 (array-set! embedded-native-local-len 0 saved)
+                (array-set! embedded-native-data-local-len 0 data-saved)
                 "")
               (let
                 [body-code : String (embedded-native-body-code params body)]
                 (begin
                   (array-set! embedded-native-local-len 0 saved)
+                  (array-set! embedded-native-data-local-len 0 data-saved)
                   (if (string.eq body-code "")
                     ""
                     (str-cat
                       open-code
                       body-code
-                      (embedded-native-closing-parens
-                        (* 2 (struct-get (& bindings) len)))))))))]
+                      (embedded-native-closing-parens (array-ref opens 0))))))))]
         [_ ""])]
     [_ ""]))
 
-;; The `(let [sN : i64 <init>] (if (not (= sN 0)) sN` open chain for one or
-;; more bindings, or "\x01" on any failure (a sentinel that cannot appear in
-;; valid generated code).
+;; The open chain for one or more bindings, or "\x01" on any failure (a
+;; sentinel that cannot appear in valid generated code). `opens` accumulates
+;; the closing parens the chain owes, which is per binding neither fixed nor
+;; the same across the two binding kinds: a session binding always opens a
+;; let/if pair, a probed data binding opens one pair per probe, and a data
+;; binding that folds to plain arithmetic over names already in scope opens
+;; nothing at all.
 (define (embedded-native-let-bindings-open
   [params : (& params AstMacroParamList)]
   [bindings : (& bindings AstLetBindingList)]
-  [index : i64]) : String
+  [index : i64]
+  [opens : (Array i64)]) : String
   (if (>= index (struct-get bindings len))
     ""
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
       [(AstLetBinding.Binding name _ init)
         (let
-          [slot : i64 (embedded-native-local-push! (intern-str name))]
-          (if (< slot 0)
+          [binding-code : String
+            (embedded-native-let-binding-open params name init opens)]
+          (if (string.eq binding-code "\x01")
             "\x01"
             (let
-              [init-code : String
-                (embedded-native-computed-expr-code
+              [rest : String
+                (embedded-native-let-bindings-open
                   params
-                  init
-                  (embedded-native-local-set-final slot))]
-              (if (string.eq init-code "")
+                  bindings
+                  (+ index 1)
+                  opens)]
+              (if (string.eq rest "\x01")
                 "\x01"
-                (str-cat
-                  "  (let [s"
-                  (string.int->string slot)
-                  " : i64\n"
-                  init-code
-                  "] (if (not (= s"
-                  (string.int->string slot)
-                  " 0)) s"
-                  (string.int->string slot)
-                  "\n"
-                  (embedded-native-let-bindings-open
-                    params
-                    bindings
-                    (+ index 1)))))))])))
+                (str-cat binding-code rest)))))])))
+
+;; One binding: an i64-valued init joins the compile-time data table so later
+;; comparisons and index arithmetic read it directly; anything else is computed
+;; into a session slot. A name that would shadow a binding in the *other* table
+;; keeps the fallback shell: the two tables are searched independently, so the
+;; shadowed spelling would resolve to the data local in index position and to
+;; the stale session slot in template position. Refs #5603, #5701.
+(define (embedded-native-let-binding-open
+  [params : (& params AstMacroParamList)]
+  [name : i64]
+  [init : i64]
+  [opens : (Array i64)]) : String
+  (let
+    [data : EmbeddedNativeDataValue (embedded-native-data-value params init)]
+    (if (not (string.eq (struct-get data text) ""))
+      (if (and
+        (< (embedded-native-local-index (intern-str name)) 0)
+        (embedded-native-data-local-push!
+          (intern-str name)
+          (struct-get data text)))
+        (begin
+          (array-set!
+            opens
+            0
+            (+ (array-ref opens 0) (* 2 (struct-get data opens))))
+          (struct-get data open))
+        "\x01")
+      (if (not
+        (string.eq (embedded-native-data-local-text (intern-str name)) ""))
+        "\x01"
+        (embedded-native-let-session-binding-open params name init opens)))))
+
+(define (embedded-native-let-session-binding-open
+  [params : (& params AstMacroParamList)]
+  [name : i64]
+  [init : i64]
+  [opens : (Array i64)]) : String
+  (let
+    [slot : i64 (embedded-native-local-push! (intern-str name))]
+    (if (< slot 0)
+      "\x01"
+      (let
+        [init-code : String
+          (embedded-native-computed-expr-code
+            params
+            init
+            (embedded-native-local-set-final slot))]
+        (if (string.eq init-code "")
+          "\x01"
+          (begin
+            (array-set! opens 0 (+ (array-ref opens 0) 2))
+            (str-cat
+              "  (let [s"
+              (string.int->string slot)
+              " : i64\n"
+              init-code
+              "] (if (not (= s"
+              (string.int->string slot)
+              " 0)) s"
+              (string.int->string slot)
+              "\n")))))))
 
 (define (embedded-native-closing-parens [count : i64]) : String
   (if (<= count 0)

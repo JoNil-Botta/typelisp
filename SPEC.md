@@ -115,37 +115,59 @@ Native toolchain → executable (ELF on Linux, PE on Windows)
 
 ### 2.1 Tokens
 
+The lexer produces exactly fourteen token kinds (`Token` in `src/token.tl`).
+Keywords, booleans, `unit`, and identifiers are **not** distinct tokens: every
+one of them is a `Sym`, and the parser decides what a symbol means from its
+position. A token table that lists `define`, `if`, `true`, or `unit` as token
+kinds does not describe this lexer.
+
 | Token | Lexeme | Notes |
 |-------|--------|-------|
 | `LParen` | `(` | |
 | `RParen` | `)` | |
-| `LBracket` | `[` | Used in type annotations and parameter lists |
+| `LBracket` | `[` | Binding clauses, parameter lists, `cond` arms |
 | `RBracket` | `]` | |
-| `Define` | `define` | Top-level definition |
-| `Lambda` | `lambda` | Anonymous function |
-| `If` | `if` | Conditional |
-| `Let` | `let` | Local bindings |
-| `While` | `while` | Loop |
-| `Begin` | `begin` | Sequence |
-| `Set` | `set!` | Mutation |
-| `Extern` | `extern` | External symbol declaration |
-| `Ann` | `ann` | Type annotation expression |
-| `Import` | `import` | Module import |
-| `Int` | `[-]?([0-9]+|0[xX][0-9a-fA-F]+|0[bB][01]+)` | Integer literal, default type `i32` |
-| `Float` | `[-]?[0-9]+\.[0-9]+` | `f64` literal |
-| `Bool` | `true` / `false` | |
-| `Char` | `'x'` / `'\n'` / `'\''` | Single character literal |
-| `String` | `"..."` | ASCII string literal (type `String`) |
-| `Ident` | `[a-zA-Z_][a-zA-Z0-9_!?+-=*/<>:]*` | Identifier |
-| `Unit` | `unit` | The unit value |
-| `Colon` | `:` | Type separator |
-| `Arrow` | `->` | Function return type arrow |
-| `Quote` | `'` | |
-| `Backtick` | `` ` `` | |
-| `Comma` | `,` | |
-| `CommaAt` | `,@` | |
-| `Dot` | `.` | |
-| `Eof` | | End of file |
+| `Int` | `[-]?([0-9]+ \| 0[xX][0-9a-fA-F]+ \| 0[bB][01]+)` | Integer literal; carries the original text |
+| `Float` | `[-]?[0-9]+\.[0-9]+` | `f64` literal; carries the original text |
+| `Str` | `"..."` | String literal, interned |
+| `Char` | `'x'`, `'
+'`, `'''` | Character literal |
+| `Sym` | see below | Interned symbol: every keyword, identifier, `true`/`false`, `unit`, operator, and dotted path |
+| `Quote` | `'` | Only when not opening a character literal |
+| `Backtick` | `` ` `` | Quasiquote |
+| `Comma` | `,` | Unquote |
+| `CommaAt` | `,@` | Unquote-splicing |
+| `End` | | End of input |
+
+#### Symbols
+
+A symbol is a run of alphanumerics and these punctuation characters:
+
+```
+- + * / ? ! > < = & : _ . %
+```
+
+Punctuation may appear **at the start** of a symbol as well as inside it, so
+`&mut`, `->`, `<=`, `%`, `!`, and `set!` are all single `Sym` tokens. `.` is a
+symbol character rather than a token, which is why a dotted member access such as
+`string.eq` lexes as one symbol and is split later by name resolution.
+
+`:` is a symbol character with three additional rules:
+
+- a symbol beginning with `:` at the head of a list is a metadata keyword, as in
+  `(:symbol "printf")` and `(:lifetimes source)`;
+- `:as` is lexed as one whole symbol, for `(import stdlib.string as s)`;
+- a trailing `:` is kept attached in a package-qualified prefix such as `pkg:`,
+  which is an exception to the ordinary splitting of `:`.
+
+Elsewhere `:` separates a binder from its type, as in `[x : i64]`, where it is a
+`Sym` in its own right.
+
+#### Quote versus character literal
+
+`'` is ambiguous and resolved by lookahead: it opens a `Char` when the source
+matches a character literal, and is otherwise a `Quote` token. A legacy character
+spelling is still accepted for compatibility.
 
 ### 2.2 Comments
 

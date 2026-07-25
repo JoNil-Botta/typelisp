@@ -130,10 +130,23 @@ rows:
 TypeLisp-generated executables use `benchmark/typelisp/<name>`. The measurement
 report writes `ratios.tsv` with both
 `typelisp_over_clang_scalar_x` and `typelisp_over_clang_auto_x`; all three
-instruction-count rows are exact gate inputs in `perf/insn-exec-baseline.tsv`.
+instruction-count rows are exact gate inputs.
 A selected benchmark case must contain both `bench.tl` and `baseline.c`;
 unpaired benchmark directories are skipped only when no explicit benchmark
 filter or case list selected them.
+
+**Both baselines carry all three rows**, and this is enforced rather than
+described: `check-instruction-counts.sh` refuses to compare a baseline in which
+any `benchmark/typelisp/<name>` row lacks its `benchmark/c/<name>` or
+`benchmark/c-scalar/<name>` counterpart. That check exists because the contract
+above was true of `perf/insn-exec-baseline.tsv` and silently false of
+`perf/insn-exec-heavy-baseline.tsv` for as long as the heavy corpus was a
+required gate (#5678); scalar-fair measurement is a property of a benchmark leg,
+not of which baseline file it writes.
+
+`--self-compile-only` is the one leg that measures no benchmark rows, so it
+neither requests scalar-fair measurement nor checks for it, and its
+`--update-baseline` preserves every benchmark row untouched.
 
 Benchmark binaries are built at **opt-level 2** so the TypeLisp-vs-C rows are a
 release-vs-release comparison (TypeLisp opt2 against `clang -O2`). Override with

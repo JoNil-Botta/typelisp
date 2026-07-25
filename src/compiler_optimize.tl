@@ -34853,22 +34853,21 @@
           (let
             [walk : CompilerIrPhiInputList inputs]
             [hit : bool false]
-            (begin
-              (while (not hit)
-                (match (compiler-ir-phi-input-list-force-cons walk)
-                  [(CompilerIrPhiInputList.Nil) (set! hit true)]
-                  [(CompilerIrPhiInputList.Array seq)
-                    (begin
-                      (set! walk (compiler-ir-phi-input-seq-to-list seq))
-                      unit)]
-                  [(CompilerIrPhiInputList.Cons value label rest)
-                    (if (and
-                      (or
-                        (string.eq label preheader)
-                        (string.eq label guard-label))
-                      (opt-value-eq (opt-bce-mb-canon-value blocks value) cseed))
-                      (set! hit true)
-                      (set! walk (box-get rest)))])))
+            (while (not hit)
+              (match (compiler-ir-phi-input-list-force-cons walk)
+                [(CompilerIrPhiInputList.Nil) (set! hit true)]
+                [(CompilerIrPhiInputList.Array seq)
+                  (begin
+                    (set! walk (compiler-ir-phi-input-seq-to-list seq))
+                    unit)]
+                [(CompilerIrPhiInputList.Cons value label rest)
+                  (if (and
+                    (or
+                      (string.eq label preheader)
+                      (string.eq label guard-label))
+                    (opt-value-eq (opt-bce-mb-canon-value blocks value) cseed))
+                    (set! hit true)
+                    (set! walk (box-get rest)))]))
             hit))
           dst
           (opt-bce-mb-find-bounded-phi-instrs

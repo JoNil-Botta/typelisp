@@ -451,6 +451,7 @@ run_with_compiler "$STAGE2_BIN" "ISPC Mandelbrot corpus contract" scripts/verify
 run_with_compiler "$STAGE2_BIN" "ISPC point-transform corpus contract" scripts/verify-ispc-point-transform.sh
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
+run_with_compiler "$STAGE2_BIN" "stage2 prelude macro mutation guard" scripts/verify-prelude-mutation.sh
 run_with_compiler "$STAGE2_BIN" "stage2 compile-profile verifier" scripts/verify-compile-profile.sh
 run_with_compiler "$STAGE2_BIN" "stage2 compile-startup-profile verifier" scripts/verify-compile-startup-profile.sh
 run_with_compiler "$STAGE2_BIN" "stage2 allocation-profile verifier" scripts/verify-allocation-profile.sh

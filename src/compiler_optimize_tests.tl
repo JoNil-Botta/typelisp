@@ -2177,7 +2177,7 @@
         (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)
         instrs)]
     [bounds : CompilerIrInstrList
-      (opt-bounds-instrs (OptBoundsFacts.Nil) (OptBoundsCastEnv.Nil) instrs)]
+      (opt-bounds-instrs (opt-bounds-facts-empty) (OptBoundsCastEnv.Nil) instrs)]
     [vector-cse : CompilerIrInstrList
       (opt-cse-instrs (OptExprTable.Nil) (opt-vector-cse-instrs))]
     [vector-reduce-cse : CompilerIrInstrList
@@ -6664,32 +6664,32 @@
     [symbols : OptLoopBceTestSymbols (opt-loop-bce-test-symbols)]
     [duplicate : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-duplicate-instrs))]
     [different : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-different-instrs))]
     [redef : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-redef-instrs))]
     [call : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-call-instrs))]
     [branch : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-branch-instrs))]
     [copy : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (opt-copy-instrs (OptCopyEnv.Nil) (opt-bounds-copy-instrs)))]
     [dce : CompilerIrInstrList
@@ -6832,12 +6832,12 @@
         (opt-loop-bce-test-summaries symbols false false))]
     [index-cast : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-index-cast-instrs))]
     [index-cast-redef : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (opt-bounds-index-cast-redef-instrs))]
     (cond
@@ -11586,7 +11586,7 @@
     [buckets : (Array OptGvnBucket) (array.make-array OptGvnBucket 1)]
     [table : OptGvnMap (OptGvnMap buckets)]
     (begin
-      (array-set! buckets 0 (OptGvnBucket.Nil))
+      (array-set! buckets 0 (opt-gvn-bucket-empty))
       (opt-gvn-table-insert! table (OptGvnEntry.Entry key 7 0))
       (and
         (= (opt-gvn-lookup table key) 7)
@@ -20236,7 +20236,7 @@
       [store-blocked : OptScratchScopeReport
         (let
           [roots : OptScratchRootList
-            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+            (opt-scratch-root-list-add (opt-scratch-root-list-empty) 1)]
           [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
           (begin
             (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
@@ -20261,7 +20261,7 @@
       [return-blocked : OptScratchScopeReport
         (let
           [roots : OptScratchRootList
-            (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+            (opt-scratch-root-list-add (opt-scratch-root-list-empty) 1)]
           [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
           (begin
             (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)

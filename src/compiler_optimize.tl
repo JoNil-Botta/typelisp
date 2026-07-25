@@ -39,6 +39,21 @@
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 
+;; Shared generated-vector element families. Every optimizer sequence over a
+;; plain id or label reuses these two instantiations instead of adding a new
+;; one, and both element types are already instantiated elsewhere in the
+;; compiler.
+(import (vector.vector i64 core) as opt_i64_vec)
+(import (vector.vector String core) as opt_string_vec)
+
+;; Shared element for the id -> id environments below (loop-BCE aliases, the
+;; SSA rename env, and the switch copy env): one instantiation covers all
+;; three.
+(defenum OptI64Pair
+  (Pair i64 i64))
+
+(import (vector.vector OptI64Pair core) as opt_i64_pair_vec)
+
 (defenum ResultCompilerOptimizeLevel
   (Ok i64)
   (Err))
@@ -6400,9 +6415,23 @@
 (defenum OptBoundsFact
   (Fact CompilerIrValue CompilerIrValue))
 
-(defenum OptBoundsFacts
-  (Nil)
-  (Cons OptBoundsFact (Box OptBoundsFacts)))
+(import (vector.vector OptBoundsFact core) as opt_bounds_fact_vec)
+
+;; Redundant-bounds-check facts. The dominator walk extends one block's facts on
+;; several successors while the parent set stays live, so `add` copies into a
+;; right-sized buffer. Its membership scan was already O(n), so this costs no
+;; extra pass. Storage runs oldest-first; only membership reads it.
+(defstruct OptBoundsFacts
+  (items opt_bounds_fact_vec.Vec))
+
+(define (opt-bounds-facts-empty) : OptBoundsFacts
+  (OptBoundsFacts (opt_bounds_fact_vec.new)))
+
+(define (opt-bounds-facts-count [facts : OptBoundsFacts]) : i64
+  (opt_bounds_fact_vec.len (& (struct-get facts items))))
+
+(define (opt-bounds-facts-slot [facts : OptBoundsFacts] [slot : i64]) : OptBoundsFact
+  (array-ref (opt_bounds_fact_vec.slots (& (struct-get facts items))) slot))
 
 (defenum OptObjectLengthFact
   (None)
@@ -6443,18 +6472,22 @@
     [(OptBoundsFact.Fact fact-index fact-length)
       (and (opt-value-eq fact-index index) (opt-value-eq fact-length length))]))
 
+(define (opt-bounds-contains-from
+  [facts : OptBoundsFacts]
+  [index : CompilerIrValue]
+  [length : CompilerIrValue]
+  [slot : i64]) : bool
+  (if (>= slot (opt-bounds-facts-count facts))
+    false
+    (if (opt-bounds-fact-eq (opt-bounds-facts-slot facts slot) index length)
+      true
+      (opt-bounds-contains-from facts index length (+ slot 1)))))
+
 (define (opt-bounds-contains
   [facts : OptBoundsFacts]
   [index : CompilerIrValue]
   [length : CompilerIrValue]) : bool
-  (match facts
-    [(OptBoundsFacts.Nil) false]
-    [(OptBoundsFacts.Cons fact rest)
-      (let
-        [rest : OptBoundsFacts (box-get rest)]
-        (if (opt-bounds-fact-eq fact index length)
-          true
-          (opt-bounds-contains rest index length)))]))
+  (opt-bounds-contains-from facts index length 0))
 
 (define (opt-bounds-add
   [facts : OptBoundsFacts]
@@ -6462,7 +6495,20 @@
   [length : CompilerIrValue]) : OptBoundsFacts
   (if (opt-bounds-contains facts index length)
     facts
-    (OptBoundsFacts.Cons (OptBoundsFact.Fact index length) (box facts))))
+    (let
+      [count : i64 (opt-bounds-facts-count facts)]
+      [out : opt_bounds_fact_vec.Vec
+        (opt_bounds_fact_vec.with-capacity (+ count 1))]
+      [slot : i64 0]
+      (begin
+        (while (< slot count)
+          (begin
+            (opt_bounds_fact_vec.push
+              (&mut out)
+              (opt-bounds-facts-slot facts slot))
+            (set! slot (+ slot 1))))
+        (opt_bounds_fact_vec.push (&mut out) (OptBoundsFact.Fact index length))
+        (OptBoundsFacts out)))))
 
 (define (opt-bounds-fact-uses-var? [fact : OptBoundsFact] [var : i64]) : bool
   (match fact
@@ -6471,15 +6517,26 @@
         (opt-value-is-var? index var)
         (opt-bounds-length-uses-var? length var))]))
 
+(define (opt-bounds-invalidate-into
+  [facts : OptBoundsFacts]
+  [var : i64]
+  [slot : i64]
+  [out : opt_bounds_fact_vec.Vec]) : opt_bounds_fact_vec.Vec
+  (if (>= slot (opt-bounds-facts-count facts))
+    out
+    (begin
+      (if (opt-bounds-fact-uses-var? (opt-bounds-facts-slot facts slot) var)
+        unit
+        (opt_bounds_fact_vec.push (&mut out) (opt-bounds-facts-slot facts slot)))
+      (opt-bounds-invalidate-into facts var (+ slot 1) out))))
+
 (define (opt-bounds-invalidate-var [facts : OptBoundsFacts] [var : i64]) : OptBoundsFacts
-  (match facts
-    [(OptBoundsFacts.Nil) (OptBoundsFacts.Nil)]
-    [(OptBoundsFacts.Cons fact rest)
-      (let
-        [rest2 : OptBoundsFacts (opt-bounds-invalidate-var (box-get rest) var)]
-        (if (opt-bounds-fact-uses-var? fact var)
-          rest2
-          (OptBoundsFacts.Cons fact (box rest2))))]))
+  (OptBoundsFacts
+    (opt-bounds-invalidate-into
+      facts
+      var
+      0
+      (opt_bounds_fact_vec.with-capacity (opt-bounds-facts-count facts)))))
 
 ;; Index canonicalization: an array index is lowered to a fresh
 ;; `Cast(idx, I64->U64)` per access (see `lower-array-element-addr`), so two
@@ -6617,46 +6674,46 @@
     [(CompilerIrInstr.EntryArgc dst) (opt-bounds-invalidate-var facts dst)]
     [(CompilerIrInstr.EntryArgv dst) (opt-bounds-invalidate-var facts dst)]
     [(CompilerIrInstr.EntryEnvp dst) (opt-bounds-invalidate-var facts dst)]
-    [(CompilerIrInstr.CpuId _ _ _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.Xgetbv _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.Syscall _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.Call _ _ _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.CallIndirect _ _ _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.CallIndirectC _ _ _ _) (OptBoundsFacts.Nil)]
+    [(CompilerIrInstr.CpuId _ _ _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.Xgetbv _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.Syscall _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.Call _ _ _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.CallIndirect _ _ _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.CallIndirectC _ _ _ _) (opt-bounds-facts-empty)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _)
-          (OptBoundsFacts.Nil)])]
+          (opt-bounds-facts-empty)])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
-          (OptBoundsFacts.Nil)])]
+          (opt-bounds-facts-empty)])]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
-          (OptBoundsFacts.Nil)])]
-    [(CompilerIrInstr.VectorShuffle _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.TailCall _ _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.Store _ _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.StorePtr _ _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.CopyBytes _ _ _) (OptBoundsFacts.Nil)]
+          (opt-bounds-facts-empty)])]
+    [(CompilerIrInstr.VectorShuffle _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.TailCall _ _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.Store _ _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.StorePtr _ _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.CopyBytes _ _ _) (opt-bounds-facts-empty)]
     [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorStorePayload.Payload _ _ _ _ _)
-          (OptBoundsFacts.Nil)])]
+          (opt-bounds-facts-empty)])]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedStorePayload.Payload _ _ _ _ _ _)
-          (OptBoundsFacts.Nil)])]
-    [(CompilerIrInstr.Jump _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.Branch _ _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.Return _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.Phi _ _ _) (OptBoundsFacts.Nil)]
+          (opt-bounds-facts-empty)])]
+    [(CompilerIrInstr.Jump _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.Branch _ _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.Return _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.Phi _ _ _) (opt-bounds-facts-empty)]
     [(CompilerIrInstr.BoundsCheck _ _ _) facts]
     [(CompilerIrInstr.Pack dst _ _) (opt-bounds-invalidate-var facts dst)]
     [(CompilerIrInstr.Word dst _ _ _) (opt-bounds-invalidate-var facts dst)]
-    [(CompilerIrInstr.TailCallIndirect _ _ _) (OptBoundsFacts.Nil)]
-    [(CompilerIrInstr.Switch _ _ _ _) (OptBoundsFacts.Nil)]))
+    [(CompilerIrInstr.TailCallIndirect _ _ _) (opt-bounds-facts-empty)]
+    [(CompilerIrInstr.Switch _ _ _ _) (opt-bounds-facts-empty)]))
 
 (define (opt-bounds-instrs-with-object
   [facts : OptBoundsFacts]
@@ -6777,7 +6834,7 @@
                   (compiler-ir-instr-cons
                     instr
                     (opt-bounds-instrs
-                      (OptBoundsFacts.Nil)
+                      (opt-bounds-facts-empty)
                       casts
                       (box-get rest)))]
                 [(option_i64.None)
@@ -6792,7 +6849,10 @@
             [_
               (compiler-ir-instr-cons
                 instr
-                (opt-bounds-instrs (OptBoundsFacts.Nil) casts (box-get rest)))])]
+                (opt-bounds-instrs
+                  (opt-bounds-facts-empty)
+                  casts
+                  (box-get rest)))])]
         [_
           (let
             [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
@@ -6800,31 +6860,29 @@
               (match (opt-instr-def-var instr)
                 [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
                 [(option_i64.None) casts])]
-            (match next-facts
-              [(OptBoundsFacts.Nil)
-                (compiler-ir-instr-cons
-                  instr
-                  (opt-bounds-instrs next-facts casts2 (box-get rest)))]
-              [_
-                (match (opt-instr-def-var instr)
-                  [(option_i64.Some dst)
-                    (compiler-ir-instr-cons
-                      instr
-                      (opt-bounds-instrs-with-object
-                        next-facts
-                        (opt-object-length-invalidate-var lengths dst)
-                        (opt-object-length-invalidate-var ptrs dst)
-                        casts2
-                        (box-get rest)))]
-                  [(option_i64.None)
-                    (compiler-ir-instr-cons
-                      instr
-                      (opt-bounds-instrs-with-object
-                        next-facts
-                        lengths
-                        ptrs
-                        casts2
-                        (box-get rest)))])]))])]))
+            (if (= (opt-bounds-facts-count next-facts) 0)
+              (compiler-ir-instr-cons
+                instr
+                (opt-bounds-instrs next-facts casts2 (box-get rest)))
+              (match (opt-instr-def-var instr)
+                [(option_i64.Some dst)
+                  (compiler-ir-instr-cons
+                    instr
+                    (opt-bounds-instrs-with-object
+                      next-facts
+                      (opt-object-length-invalidate-var lengths dst)
+                      (opt-object-length-invalidate-var ptrs dst)
+                      casts2
+                      (box-get rest)))]
+                [(option_i64.None)
+                  (compiler-ir-instr-cons
+                    instr
+                    (opt-bounds-instrs-with-object
+                      next-facts
+                      lengths
+                      ptrs
+                      casts2
+                      (box-get rest)))])))])]))
 
 (define (opt-bounds-instrs
   [facts : OptBoundsFacts]
@@ -7050,7 +7108,7 @@
           (match (opt-object-length-lookup ptrs ptr-var)
             [(option_i64.Some _)
               (OptBoundsSeqStep.Step
-                (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) casts)
+                (OptBoundsSeqState.Plain (opt-bounds-facts-empty) casts)
                 true)]
             [(option_i64.None)
               (OptBoundsSeqStep.Step
@@ -7058,31 +7116,29 @@
                 true)])]
         [_
           (OptBoundsSeqStep.Step
-            (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) casts)
+            (OptBoundsSeqState.Plain (opt-bounds-facts-empty) casts)
             true)])]
     [_
       (let
         [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
         [next-casts : OptBoundsCastEnv (opt-bounds-casts-after casts instr)]
-        (match next-facts
-          [(OptBoundsFacts.Nil)
-            (OptBoundsSeqStep.Step
-              (OptBoundsSeqState.Plain next-facts next-casts)
-              true)]
-          [_
-            (match (opt-instr-def-var instr)
-              [(option_i64.Some dst)
-                (OptBoundsSeqStep.Step
-                  (OptBoundsSeqState.Object
-                    next-facts
-                    (opt-object-length-invalidate-var lengths dst)
-                    (opt-object-length-invalidate-var ptrs dst)
-                    next-casts)
-                  true)]
-              [(option_i64.None)
-                (OptBoundsSeqStep.Step
-                  (OptBoundsSeqState.Object next-facts lengths ptrs next-casts)
-                  true)])]))]))
+        (if (= (opt-bounds-facts-count next-facts) 0)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Plain next-facts next-casts)
+            true)
+          (match (opt-instr-def-var instr)
+            [(option_i64.Some dst)
+              (OptBoundsSeqStep.Step
+                (OptBoundsSeqState.Object
+                  next-facts
+                  (opt-object-length-invalidate-var lengths dst)
+                  (opt-object-length-invalidate-var ptrs dst)
+                  next-casts)
+                true)]
+            [(option_i64.None)
+              (OptBoundsSeqStep.Step
+                (OptBoundsSeqState.Object next-facts lengths ptrs next-casts)
+                true)])))]))
 
 (define (opt-bounds-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : unit
   (let
@@ -7090,7 +7146,7 @@
     [write : i64 0]
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     [state : OptBoundsSeqState
-      (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) (OptBoundsCastEnv.Nil))]
+      (OptBoundsSeqState.Plain (opt-bounds-facts-empty) (OptBoundsCastEnv.Nil))]
     (begin
       (while (< read count)
         (let
@@ -7438,9 +7494,12 @@
 ;; lookup. Existing callers still consume OptLabelSet adapters, but each CFG
 ;; snapshot is indexed once and rebuilt only after block-list-mutating
 ;; optimization passes.
-(defenum OptI64List
-  (Nil)
-  (Cons i64 (Box OptI64List)))
+;; CFG rows and the small pointer worklists below. The generated vector stores
+;; ids push-first, which is the reverse of the cons order the old list had, so
+;; `opt-i64-list-ref` takes the head-first index and the CSR fill -- which
+;; reversed the row before writing it -- is now a plain forward walk.
+(defstruct OptI64List
+  (items opt_i64_vec.Vec))
 
 (defstruct OptCfgCsr
   (offsets (Array i64))
@@ -7507,45 +7566,62 @@
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-index-fill-label-seq! seq ids labels index)]))
 
-(define (opt-i64-list-contains? [items : OptI64List] [value : i64]) : bool
-  (match items
-    [(OptI64List.Nil) false]
-    [(OptI64List.Cons head rest)
-      (if (= head value)
-        true
-        (opt-i64-list-contains? (box-get rest) value))]))
+(define (opt-i64-list-empty) : OptI64List
+  (OptI64List (opt_i64_vec.new)))
 
+(define (opt-i64-list-count [items : OptI64List]) : i64
+  (opt_i64_vec.len (& (struct-get items items))))
+
+(define (opt-i64-list-slot [items : OptI64List] [slot : i64]) : i64
+  (array-ref (opt_i64_vec.slots (& (struct-get items items))) slot))
+
+;; Head-first index: 0 is the newest id, matching the old cons walk.
+(define (opt-i64-list-ref [items : OptI64List] [index : i64]) : i64
+  (opt-i64-list-slot items (- (- (opt-i64-list-count items) 1) index)))
+
+(define (opt-i64-list-contains? [items : OptI64List] [value : i64]) : bool
+  (let
+    [count : i64 (opt-i64-list-count items)]
+    [slot : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< slot count))
+        (if (= (opt-i64-list-slot items slot) value)
+          (set! found true)
+          (set! slot (+ slot 1))))
+      found)))
+
+;; Rows branch: `opt-loop-bce-length-store-shape-instrs` can keep the
+;; pre-removal list alive alongside the extended one, so `add` copies into a
+;; right-sized buffer instead of appending to a vector another row still owns.
+;; The membership scan above was already O(n), so this costs no extra pass.
 (define (opt-i64-list-add [items : OptI64List] [value : i64]) : OptI64List
   (if (opt-i64-list-contains? items value)
     items
-    (OptI64List.Cons value (box items))))
+    (let
+      [count : i64 (opt-i64-list-count items)]
+      [out : opt_i64_vec.Vec (opt_i64_vec.with-capacity (+ count 1))]
+      [slot : i64 0]
+      (begin
+        (while (< slot count)
+          (begin
+            (opt_i64_vec.push (&mut out) (opt-i64-list-slot items slot))
+            (set! slot (+ slot 1))))
+        (opt_i64_vec.push (&mut out) value)
+        (OptI64List out)))))
 
-(define (opt-i64-list-reverse-onto [items : OptI64List] [acc : OptI64List]) : OptI64List
-  (match items
-    [(OptI64List.Nil) acc]
-    [(OptI64List.Cons head rest)
-      (opt-i64-list-reverse-onto
-        (box-get rest)
-        (OptI64List.Cons head (box acc)))]))
-
-(define (opt-i64-list-reverse [items : OptI64List]) : OptI64List
-  (opt-i64-list-reverse-onto items (OptI64List.Nil)))
-
-(define (opt-i64-list-count [items : OptI64List]) : i64
-  (match items
-    [(OptI64List.Nil) 0]
-    [(OptI64List.Cons _ rest) (+ 1 (opt-i64-list-count (box-get rest)))]))
-
+;; Push order is already the reverse of the cons order, so the old
+;; reverse-then-fill pair is one forward walk.
 (define (opt-i64-list-fill-edges!
   [items : OptI64List]
   [edges : (Array i64)]
-  [index : i64]) : i64
-  (match items
-    [(OptI64List.Nil) index]
-    [(OptI64List.Cons head rest)
-      (begin
-        (array-set! edges index head)
-        (opt-i64-list-fill-edges! (box-get rest) edges (+ index 1)))]))
+  [index : i64]
+  [slot : i64]) : i64
+  (if (>= slot (opt-i64-list-count items))
+    index
+    (begin
+      (array-set! edges index (opt-i64-list-slot items slot))
+      (opt-i64-list-fill-edges! items edges (+ index 1) (+ slot 1)))))
 
 (define (opt-cfg-row-list-total
   [rows : (Array OptI64List)]
@@ -7568,22 +7644,37 @@
     (begin
       (while (< i count)
         (begin
-          (array-set! rows i (OptI64List.Nil))
+          (array-set! rows i (opt-i64-list-empty))
           (set! i (+ i 1))))
       unit)))
+
+;; Fills the row deepest label first, so the stored order stays the reverse of
+;; the head-first label order -- the same sequence the cons version produced.
+(define (opt-cfg-index-label-set-to-ids-into
+  [labels : OptLabelSet]
+  [ids : opt_string_i64_map.Map]
+  [out : opt_i64_vec.Vec]) : opt_i64_vec.Vec
+  (match labels
+    [(OptLabelSet.Nil) out]
+    [(OptLabelSet.Cons label rest)
+      (let
+        [next : opt_i64_vec.Vec
+          (opt-cfg-index-label-set-to-ids-into (box-get rest) ids out)]
+        (begin
+          (match (opt_string_i64_map.get (& ids) label)
+            [(opt_string_i64_map.LookupFound idx)
+              (opt_i64_vec.push (&mut next) idx)]
+            [(opt_string_i64_map.LookupMissing) unit])
+          next))]))
 
 (define (opt-cfg-index-label-set-to-ids
   [labels : OptLabelSet]
   [ids : opt_string_i64_map.Map]) : OptI64List
-  (match labels
-    [(OptLabelSet.Nil) (OptI64List.Nil)]
-    [(OptLabelSet.Cons label rest)
-      (let
-        [tail : OptI64List (opt-cfg-index-label-set-to-ids (box-get rest) ids)]
-        (match (opt_string_i64_map.get (& ids) label)
-          [(opt_string_i64_map.LookupFound idx)
-            (OptI64List.Cons idx (box tail))]
-          [(opt_string_i64_map.LookupMissing) tail]))]))
+  (OptI64List
+    (opt-cfg-index-label-set-to-ids-into
+      labels
+      ids
+      (opt_i64_vec.with-capacity (opt-label-count labels)))))
 
 ;; The successor row for this block already holds every resolved target id, in
 ;; label-set order, with unresolvable labels dropped -- exactly the sequence the
@@ -7593,10 +7684,12 @@
 (define (opt-cfg-index-add-pred-edges-from-ids!
   [pred-rows : (Array OptI64List)]
   [source-id : i64]
-  [succ-ids : OptI64List]) : unit
-  (match succ-ids
-    [(OptI64List.Nil) unit]
-    [(OptI64List.Cons idx rest)
+  [succ-ids : OptI64List]
+  [index : i64]) : unit
+  (if (>= index (opt-i64-list-count succ-ids))
+    unit
+    (let
+      [idx : i64 (opt-i64-list-ref succ-ids index)]
       (begin
         (array-set!
           pred-rows
@@ -7605,7 +7698,8 @@
         (opt-cfg-index-add-pred-edges-from-ids!
           pred-rows
           source-id
-          (box-get rest)))]))
+          succ-ids
+          (+ index 1))))))
 
 ;; Returns whether every successor label resolved. `opt-cfg-index-label-set-to-ids`
 ;; drops the ones that miss, so a short row is exactly an unknown target -- the
@@ -7636,7 +7730,7 @@
           [succ-ids : OptI64List (opt-cfg-index-label-set-to-ids succs ids)]
           (begin
             (array-set! succ-rows row succ-ids)
-            (opt-cfg-index-add-pred-edges-from-ids! pred-rows row succ-ids)
+            (opt-cfg-index-add-pred-edges-from-ids! pred-rows row succ-ids 0)
             (unless
               (= (opt-label-count succs) (opt-i64-list-count succ-ids))
               (set! known false))
@@ -7664,7 +7758,11 @@
               (= (opt-label-count succs) (opt-i64-list-count succ-ids))]
             (begin
               (array-set! succ-rows index succ-ids)
-              (opt-cfg-index-add-pred-edges-from-ids! pred-rows index succ-ids)
+              (opt-cfg-index-add-pred-edges-from-ids!
+                pred-rows
+                index
+                succ-ids
+                0)
               ;; The recursion comes first: `and` short-circuits, and the rest of
               ;; the rows still have to be filled.
               (and
@@ -7689,10 +7787,7 @@
     (array-set! offsets count edge-index)
     (let
       [next-edge : i64
-        (opt-i64-list-fill-edges!
-          (opt-i64-list-reverse (array-ref rows row))
-          edges
-          edge-index)]
+        (opt-i64-list-fill-edges! (array-ref rows row) edges edge-index 0)]
       (begin
         (array-set! offsets row edge-index)
         (opt-cfg-csr-fill-rows! rows count offsets edges (+ row 1) next-edge)))))
@@ -8885,9 +8980,29 @@
 (defenum OptVarDef
   (Def i64 i64 i64))
 
-(defenum OptVarDefList
-  (Nil)
-  (Cons OptVarDef (Box OptVarDefList)))
+(import (vector.vector OptVarDef core) as opt_var_def_vec)
+
+;; Definition sites collected once per verified function and then only indexed
+;; into an array, so the generated vector appends and neither reader depends on
+;; the stored order.
+(defstruct OptVarDefList
+  (items opt_var_def_vec.Vec))
+
+(define (opt-var-def-list-empty) : OptVarDefList
+  (OptVarDefList (opt_var_def_vec.new)))
+
+(define (opt-var-def-list-count [defs : OptVarDefList]) : i64
+  (opt_var_def_vec.len (& (struct-get defs items))))
+
+(define (opt-var-def-list-slot [defs : OptVarDefList] [slot : i64]) : OptVarDef
+  (array-ref (opt_var_def_vec.slots (& (struct-get defs items))) slot))
+
+(define (opt-var-def-list-add [defs : OptVarDefList] [def : OptVarDef]) : OptVarDefList
+  (let
+    [items : opt_var_def_vec.Vec (struct-get defs items)]
+    (begin
+      (opt_var_def_vec.push (&mut items) def)
+      (OptVarDefList items))))
 
 (defenum OptMaybeVarDef
   (No)
@@ -9043,7 +9158,7 @@
         [(CompilerIrParam.Param _ _ var)
           (opt-var-defs-from-params
             (box-get rest)
-            (OptVarDefList.Cons (OptVarDef.Def var 0 0) (box defs)))])]))
+            (opt-var-def-list-add defs (OptVarDef.Def var 0 0)))])]))
 
 (define (opt-var-defs-from-instr-seq-from
   [instrs : CompilerIrInstrSeq]
@@ -9062,9 +9177,9 @@
             block-id
             (+ index 1)
             (+ pos 1)
-            (OptVarDefList.Cons
-              (OptVarDef.Def var block-id (opt-instr-def-position instr pos))
-              (box defs)))]
+            (opt-var-def-list-add
+              defs
+              (OptVarDef.Def var block-id (opt-instr-def-position instr pos))))]
         [(option_i64.None)
           (opt-var-defs-from-instr-seq-from
             instrs
@@ -9102,36 +9217,47 @@
   (opt-var-defs-from-blocks
     blocks
     0
-    (opt-var-defs-from-params params (OptVarDefList.Nil))))
+    (opt-var-defs-from-params params (opt-var-def-list-empty))))
 
 ;; The use verifier resolves every operand's defining block, so the
 ;; def list is indexed into a var-id-keyed array once per verification
 ;; (the list scan per use made the verifier quadratic on large functions).
-(define (opt-var-defs-max-id [defs : OptVarDefList] [highest : i64]) : i64
-  (match defs
-    [(OptVarDefList.Nil) highest]
-    [(OptVarDefList.Cons def rest)
-      (match def
-        [(OptVarDef.Def var _ _)
-          (opt-var-defs-max-id
-            (box-get rest)
-            (if (> var highest)
-              var
-              highest))])]))
+(define (opt-var-defs-max-id-from
+  [defs : OptVarDefList]
+  [highest : i64]
+  [slot : i64]) : i64
+  (if (>= slot (opt-var-def-list-count defs))
+    highest
+    (match (opt-var-def-list-slot defs slot)
+      [(OptVarDef.Def var _ _)
+        (opt-var-defs-max-id-from
+          defs
+          (if (> var highest)
+            var
+            highest)
+          (+ slot 1))])))
 
+(define (opt-var-defs-max-id [defs : OptVarDefList] [highest : i64]) : i64
+  (opt-var-defs-max-id-from defs highest 0))
+
+;; Fills newest-first, the order the head-first cons walk used, so a var with
+;; several definition sites keeps the same winning entry.
 (define (opt-var-defs-index-fill!
   [items : (Array OptMaybeVarDef)]
-  [defs : OptVarDefList]) : unit
-  (match defs
-    [(OptVarDefList.Nil) unit]
-    [(OptVarDefList.Cons def rest)
-      (begin
-        (match def
-          [(OptVarDef.Def var _ _)
-            (if (and (>= var 0) (< var (array-length items)))
-              (array-set! items var (OptMaybeVarDef.Some def))
-              unit)])
-        (opt-var-defs-index-fill! items (box-get rest)))]))
+  [defs : OptVarDefList]
+  [slot : i64]) : unit
+  (if (< slot 0)
+    unit
+    (begin
+      (match (opt-var-def-list-slot defs slot)
+        [(OptVarDef.Def var block-id pos)
+          (if (and (>= var 0) (< var (array-length items)))
+            (array-set!
+              items
+              var
+              (OptMaybeVarDef.Some (OptVarDef.Def var block-id pos)))
+            unit)])
+      (opt-var-defs-index-fill! items defs (- slot 1)))))
 
 (define (opt-var-defs-index [defs : OptVarDefList]) : (Array OptMaybeVarDef)
   (let
@@ -9143,7 +9269,7 @@
         (begin
           (array-set! items i (OptMaybeVarDef.No))
           (set! i (+ i 1))))
-      (opt-var-defs-index-fill! items defs)
+      (opt-var-defs-index-fill! items defs (- (opt-var-def-list-count defs) 1))
       items)))
 
 (define (opt-var-def-lookup [defs : (Array OptMaybeVarDef)] [var : i64]) : OptMaybeVarDef
@@ -9963,47 +10089,127 @@
   (No)
   (Some AstType))
 
-(defenum OptSsaVarTypes
-  (Nil)
-  (Cons i64 AstType (Box OptSsaVarTypes)))
+(defenum OptSsaVarType
+  (Bind i64 AstType))
+
+(import (vector.vector OptSsaVarType core) as opt_ssa_var_type_vec)
+
+;; Var -> scalar type table. Each collection walk owns the table it extends --
+;; the facts value it lives in is threaded straight through the walk -- so the
+;; generated vector appends in place. Storage runs oldest-first and lookup
+;; scans back to front, so the newest binding still wins.
+(defstruct OptSsaVarTypes
+  (items opt_ssa_var_type_vec.Vec))
 
 (defenum OptSsaFacts
   (Facts opt_i64_i64_map.Map opt_i64_i64_map.Map OptSsaVarTypes))
 
-(defenum OptSsaVarBlocks
-  (Nil)
-  (Cons i64 OptLabelSet (Array bool) (Box OptSsaVarBlocks)))
+(defenum OptSsaVarBlock
+  (Entry i64 OptLabelSet (Array bool)))
+
+(import (vector.vector OptSsaVarBlock core) as opt_ssa_var_block_vec)
+
+;; Var -> defining-block set. The cons version appended new vars at the tail and
+;; updated a matching entry in place, so the generated vector keeps insertion
+;; order and `add` rewrites the matching slot.
+(defstruct OptSsaVarBlocks
+  (items opt_ssa_var_block_vec.Vec))
 
 (defenum OptSsaPhiSite
   (Site i64 String AstType i64))
 
-(defenum OptSsaPhiSites
-  (Nil)
-  (Cons OptSsaPhiSite (Box OptSsaPhiSites)))
+(import (vector.vector OptSsaPhiSite core) as opt_ssa_phi_site_vec)
+
+;; Inserted phi sites for one variable. One insert walk owns the list, and both
+;; readers below visit it newest-first, which is the head-first cons order.
+(defstruct OptSsaPhiSites
+  (items opt_ssa_phi_site_vec.Vec))
 
 (defenum OptSsaPhiInsertState
   (State OptSsaPhiSites i64 OptLabelSet (Array bool) (Array bool)))
 
-(defenum OptSsaRenameEnv
-  (Nil)
-  (Cons i64 i64 (Box OptSsaRenameEnv)))
+;; SSA rename environment. Every dominator child extends the SAME parent
+;; environment and each block's out-env is retained for phi construction, so
+;; `bind` copies into a right-sized buffer instead of appending to a vector a
+;; sibling still owns. Storage runs oldest-first and lookup scans back to
+;; front, so the newest binding still wins.
+(defstruct OptSsaRenameEnv
+  (items opt_i64_pair_vec.Vec))
 
 (defenum OptSsaRenameBlock
   (Block String CompilerIrInstrList))
 
-(defenum OptSsaRenameBlocks
-  (Nil)
-  (Cons OptSsaRenameBlock (Box OptSsaRenameBlocks)))
+(import (vector.vector OptSsaRenameBlock core) as opt_ssa_rename_block_vec)
+
+;; Renamed block bodies, keyed by label. One rename walk owns the table and the
+;; lookups below scan newest-first, which is the head-first cons order.
+(defstruct OptSsaRenameBlocks
+  (items opt_ssa_rename_block_vec.Vec))
 
 (defenum OptSsaBlockOut
   (Out String OptSsaRenameEnv))
 
-(defenum OptSsaBlockOuts
-  (Nil)
-  (Cons OptSsaBlockOut (Box OptSsaBlockOuts)))
+(import (vector.vector OptSsaBlockOut core) as opt_ssa_block_out_vec)
+
+;; Per-block out-environments, keyed by label; same ownership and scan order as
+;; `OptSsaRenameBlocks` above.
+(defstruct OptSsaBlockOuts
+  (items opt_ssa_block_out_vec.Vec))
 
 (defenum OptSsaRenameState
   (State OptSsaRenameBlocks OptSsaBlockOuts i64))
+
+(define (opt-ssa-phi-sites-empty) : OptSsaPhiSites
+  (OptSsaPhiSites (opt_ssa_phi_site_vec.new)))
+
+(define (opt-ssa-phi-sites-count [sites : OptSsaPhiSites]) : i64
+  (opt_ssa_phi_site_vec.len (& (struct-get sites items))))
+
+(define (opt-ssa-phi-sites-slot [sites : OptSsaPhiSites] [slot : i64]) : OptSsaPhiSite
+  (array-ref (opt_ssa_phi_site_vec.slots (& (struct-get sites items))) slot))
+
+(define (opt-ssa-phi-sites-add [sites : OptSsaPhiSites] [site : OptSsaPhiSite]) : OptSsaPhiSites
+  (let
+    [items : opt_ssa_phi_site_vec.Vec (struct-get sites items)]
+    (begin
+      (opt_ssa_phi_site_vec.push (&mut items) site)
+      (OptSsaPhiSites items))))
+
+(define (opt-ssa-rename-blocks-empty) : OptSsaRenameBlocks
+  (OptSsaRenameBlocks (opt_ssa_rename_block_vec.new)))
+
+(define (opt-ssa-rename-blocks-count [blocks : OptSsaRenameBlocks]) : i64
+  (opt_ssa_rename_block_vec.len (& (struct-get blocks items))))
+
+(define (opt-ssa-rename-blocks-slot [blocks : OptSsaRenameBlocks] [slot : i64]) : OptSsaRenameBlock
+  (array-ref
+    (opt_ssa_rename_block_vec.slots (& (struct-get blocks items)))
+    slot))
+
+(define (opt-ssa-rename-blocks-add
+  [blocks : OptSsaRenameBlocks]
+  [block : OptSsaRenameBlock]) : OptSsaRenameBlocks
+  (let
+    [items : opt_ssa_rename_block_vec.Vec (struct-get blocks items)]
+    (begin
+      (opt_ssa_rename_block_vec.push (&mut items) block)
+      (OptSsaRenameBlocks items))))
+
+(define (opt-ssa-block-outs-empty) : OptSsaBlockOuts
+  (OptSsaBlockOuts (opt_ssa_block_out_vec.new)))
+
+(define (opt-ssa-block-outs-count [outs : OptSsaBlockOuts]) : i64
+  (opt_ssa_block_out_vec.len (& (struct-get outs items))))
+
+(define (opt-ssa-block-outs-slot [outs : OptSsaBlockOuts] [slot : i64]) : OptSsaBlockOut
+  (array-ref (opt_ssa_block_out_vec.slots (& (struct-get outs items))) slot))
+
+(define (opt-ssa-block-outs-add [outs : OptSsaBlockOuts] [out : OptSsaBlockOut]) : OptSsaBlockOuts
+  (let
+    [items : opt_ssa_block_out_vec.Vec (struct-get outs items)]
+    (begin
+      (opt_ssa_block_out_vec.push (&mut items) out)
+      (OptSsaBlockOuts items))))
 
 (defenum OptSsaDstResult
   (Result i64 OptSsaRenameEnv i64))
@@ -10047,13 +10253,39 @@
     [(AstType.MutRef _ _) true]
     [_ false]))
 
+(define (opt-ssa-var-types-empty) : OptSsaVarTypes
+  (OptSsaVarTypes (opt_ssa_var_type_vec.new)))
+
+(define (opt-ssa-var-types-count [types : OptSsaVarTypes]) : i64
+  (opt_ssa_var_type_vec.len (& (struct-get types items))))
+
+(define (opt-ssa-var-types-slot [types : OptSsaVarTypes] [slot : i64]) : OptSsaVarType
+  (array-ref (opt_ssa_var_type_vec.slots (& (struct-get types items))) slot))
+
+(define (opt-ssa-var-types-bind
+  [types : OptSsaVarTypes]
+  [var : i64]
+  [ty : AstType]) : OptSsaVarTypes
+  (let
+    [items : opt_ssa_var_type_vec.Vec (struct-get types items)]
+    (begin
+      (opt_ssa_var_type_vec.push (&mut items) (OptSsaVarType.Bind var ty))
+      (OptSsaVarTypes items))))
+
+(define (opt-ssa-var-type-lookup-from
+  [types : OptSsaVarTypes]
+  [var : i64]
+  [slot : i64]) : OptMaybeAstType
+  (if (< slot 0)
+    (OptMaybeAstType.No)
+    (match (opt-ssa-var-types-slot types slot)
+      [(OptSsaVarType.Bind id ty)
+        (if (= id var)
+          (OptMaybeAstType.Some ty)
+          (opt-ssa-var-type-lookup-from types var (- slot 1)))])))
+
 (define (opt-ssa-var-type-lookup [types : OptSsaVarTypes] [var : i64]) : OptMaybeAstType
-  (match types
-    [(OptSsaVarTypes.Nil) (OptMaybeAstType.No)]
-    [(OptSsaVarTypes.Cons id ty rest)
-      (if (= id var)
-        (OptMaybeAstType.Some ty)
-        (opt-ssa-var-type-lookup (box-get rest) var))]))
+  (opt-ssa-var-type-lookup-from types var (- (opt-ssa-var-types-count types) 1)))
 
 (define (opt-ssa-facts-bad-var [facts : OptSsaFacts] [var : i64]) : OptSsaFacts
   (match facts
@@ -10083,7 +10315,7 @@
               (OptSsaFacts.Facts
                 next-counts
                 bad
-                (OptSsaVarTypes.Cons var ty (box types)))]
+                (opt-ssa-var-types-bind types var ty))]
             [(OptMaybeAstType.Some old)
               (OptSsaFacts.Facts
                 next-counts
@@ -10229,7 +10461,7 @@
       (OptSsaFacts.Facts
         (opt_i64_i64_map.with-capacity 64)
         (opt_i64_i64_map.with-capacity 64)
-        (OptSsaVarTypes.Nil)))))
+        (opt-ssa-var-types-empty)))))
 
 (define (opt-ssa-candidate? [facts : OptSsaFacts] [var : i64]) : bool
   (match facts
@@ -10241,15 +10473,25 @@
           [(OptMaybeAstType.Some _) true]
           [(OptMaybeAstType.No) false]))]))
 
+(define (opt-ssa-any-candidate-types-from?
+  [facts : OptSsaFacts]
+  [types : OptSsaVarTypes]
+  [slot : i64]) : bool
+  (if (< slot 0)
+    false
+    (match (opt-ssa-var-types-slot types slot)
+      [(OptSsaVarType.Bind var _)
+        (if (opt-ssa-candidate? facts var)
+          true
+          (opt-ssa-any-candidate-types-from? facts types (- slot 1)))])))
+
 (define (opt-ssa-any-candidate-types?
   [facts : OptSsaFacts]
   [types : OptSsaVarTypes]) : bool
-  (match types
-    [(OptSsaVarTypes.Nil) false]
-    [(OptSsaVarTypes.Cons var _ rest)
-      (if (opt-ssa-candidate? facts var)
-        true
-        (opt-ssa-any-candidate-types? facts (box-get rest)))]))
+  (opt-ssa-any-candidate-types-from?
+    facts
+    types
+    (- (opt-ssa-var-types-count types) 1)))
 
 (define (opt-ssa-any-candidate? [facts : OptSsaFacts]) : bool
   (match facts
@@ -10293,38 +10535,66 @@
           [(option_i64.None) unit])
         (opt-ssa-label-mark-members! index members (box-get rest)))]))
 
+(define (opt-ssa-var-blocks-empty) : OptSsaVarBlocks
+  (OptSsaVarBlocks (opt_ssa_var_block_vec.new)))
+
+(define (opt-ssa-var-blocks-count [blocks : OptSsaVarBlocks]) : i64
+  (opt_ssa_var_block_vec.len (& (struct-get blocks items))))
+
+(define (opt-ssa-var-blocks-slot [blocks : OptSsaVarBlocks] [slot : i64]) : OptSsaVarBlock
+  (array-ref (opt_ssa_var_block_vec.slots (& (struct-get blocks items))) slot))
+
+(define (opt-ssa-var-blocks-find
+  [blocks : OptSsaVarBlocks]
+  [var : i64]
+  [slot : i64]) : i64
+  (if (>= slot (opt-ssa-var-blocks-count blocks))
+    (- 0 1)
+    (match (opt-ssa-var-blocks-slot blocks slot)
+      [(OptSsaVarBlock.Entry id _ _)
+        (if (= id var)
+          slot
+          (opt-ssa-var-blocks-find blocks var (+ slot 1)))])))
+
 (define (opt-ssa-var-blocks-add
   [index : OptCfgIndex]
   [blocks : OptSsaVarBlocks]
   [var : i64]
   [label : String]) : OptSsaVarBlocks
-  (match blocks
-    [(OptSsaVarBlocks.Nil)
-      (let
-        [members : (Array bool) (opt-ssa-label-members-new index)]
-        [labels : OptLabelSet
-          (opt-ssa-label-add-with-members index members (OptLabelSet.Nil) label)]
-        (OptSsaVarBlocks.Cons var labels members (box (OptSsaVarBlocks.Nil))))]
-    [(OptSsaVarBlocks.Cons id labels members rest)
-      (if (= id var)
-        (OptSsaVarBlocks.Cons
-          id
-          (opt-ssa-label-add-with-members index members labels label)
-          members
-          rest)
-        (OptSsaVarBlocks.Cons
-          id
-          labels
-          members
-          (box (opt-ssa-var-blocks-add index (box-get rest) var label))))]))
+  (let
+    [items : opt_ssa_var_block_vec.Vec (struct-get blocks items)]
+    [found : i64 (opt-ssa-var-blocks-find blocks var 0)]
+    (begin
+      (if (< found 0)
+        (let
+          [members : (Array bool) (opt-ssa-label-members-new index)]
+          [labels : OptLabelSet
+            (opt-ssa-label-add-with-members
+              index
+              members
+              (OptLabelSet.Nil)
+              label)]
+          (opt_ssa_var_block_vec.push
+            (&mut items)
+            (OptSsaVarBlock.Entry var labels members)))
+        (match (opt-ssa-var-blocks-slot blocks found)
+          [(OptSsaVarBlock.Entry id labels members)
+            (opt_ssa_var_block_vec.set
+              (&mut items)
+              found
+              (OptSsaVarBlock.Entry
+                id
+                (opt-ssa-label-add-with-members index members labels label)
+                members))]))
+      (OptSsaVarBlocks items))))
 
 (define (opt-ssa-var-blocks-lookup [blocks : OptSsaVarBlocks] [var : i64]) : OptLabelSet
-  (match blocks
-    [(OptSsaVarBlocks.Nil) (OptLabelSet.Nil)]
-    [(OptSsaVarBlocks.Cons id labels _ rest)
-      (if (= id var)
-        labels
-        (opt-ssa-var-blocks-lookup (box-get rest) var))]))
+  (let
+    [found : i64 (opt-ssa-var-blocks-find blocks var 0)]
+    (if (< found 0)
+      (OptLabelSet.Nil)
+      (match (opt-ssa-var-blocks-slot blocks found)
+        [(OptSsaVarBlock.Entry _ labels _) labels]))))
 
 (define (opt-ssa-def-blocks-add-param
   [index : OptCfgIndex]
@@ -10437,7 +10707,7 @@
       index
       facts
       (opt-cfg-entry-label blocks)
-      (OptSsaVarBlocks.Nil)
+      (opt-ssa-var-blocks-empty)
       params)))
 
 (define (opt-ssa-phi-add-site
@@ -10460,9 +10730,9 @@
             (begin
               (array-set! site-members id true)
               (OptSsaPhiInsertState.State
-                (OptSsaPhiSites.Cons
-                  (OptSsaPhiSite.Site var label ty next-var)
-                  (box sites))
+                (opt-ssa-phi-sites-add
+                  sites
+                  (OptSsaPhiSite.Site var label ty next-var))
                 (+ next-var 1)
                 (if (opt-ssa-label-member? work-members id)
                   worklist
@@ -10556,19 +10826,22 @@
   [blocks : CompilerIrBlockList]
   [defs : OptSsaVarBlocks]
   [types : OptSsaVarTypes]
-  [state : OptSsaPhiInsertState]) : OptSsaPhiInsertState
-  (match types
-    [(OptSsaVarTypes.Nil) state]
-    [(OptSsaVarTypes.Cons var ty rest)
-      (opt-ssa-insert-phis-types
-        facts
-        context
-        blocks
-        defs
-        (box-get rest)
-        (if (opt-ssa-candidate? facts var)
-          (opt-ssa-insert-phis-for-var context blocks defs state var ty)
-          state))]))
+  [state : OptSsaPhiInsertState]
+  [slot : i64]) : OptSsaPhiInsertState
+  (if (< slot 0)
+    state
+    (match (opt-ssa-var-types-slot types slot)
+      [(OptSsaVarType.Bind var ty)
+        (opt-ssa-insert-phis-types
+          facts
+          context
+          blocks
+          defs
+          types
+          (if (opt-ssa-candidate? facts var)
+            (opt-ssa-insert-phis-for-var context blocks defs state var ty)
+            state)
+          (- slot 1))])))
 
 (define (opt-ssa-insert-phis
   [facts : OptSsaFacts]
@@ -10589,25 +10862,52 @@
           (opt-ssa-def-blocks-from-function index facts params blocks)
           types
           (OptSsaPhiInsertState.State
-            (OptSsaPhiSites.Nil)
+            (opt-ssa-phi-sites-empty)
             frame
             (OptLabelSet.Nil)
             work-members
-            site-members)))]))
+            site-members)
+          (- (opt-ssa-var-types-count types) 1)))]))
+
+(define (opt-ssa-rename-env-empty) : OptSsaRenameEnv
+  (OptSsaRenameEnv (opt_i64_pair_vec.new)))
+
+(define (opt-ssa-rename-env-count [env : OptSsaRenameEnv]) : i64
+  (opt_i64_pair_vec.len (& (struct-get env items))))
+
+(define (opt-ssa-rename-env-slot [env : OptSsaRenameEnv] [slot : i64]) : OptI64Pair
+  (array-ref (opt_i64_pair_vec.slots (& (struct-get env items))) slot))
+
+(define (opt-ssa-env-lookup-from
+  [env : OptSsaRenameEnv]
+  [var : i64]
+  [slot : i64]) : option_i64.Option
+  (if (< slot 0)
+    (option_i64.None)
+    (match (opt-ssa-rename-env-slot env slot)
+      [(OptI64Pair.Pair original current)
+        (if (= original var)
+          (option_i64.Some current)
+          (opt-ssa-env-lookup-from env var (- slot 1)))])))
 
 (define (opt-ssa-env-lookup [env : OptSsaRenameEnv] [var : i64]) : option_i64.Option
-  (match env
-    [(OptSsaRenameEnv.Nil) (option_i64.None)]
-    [(OptSsaRenameEnv.Cons original current rest)
-      (if (= original var)
-        (option_i64.Some current)
-        (opt-ssa-env-lookup (box-get rest) var))]))
+  (opt-ssa-env-lookup-from env var (- (opt-ssa-rename-env-count env) 1)))
 
 (define (opt-ssa-env-bind
   [env : OptSsaRenameEnv]
   [original : i64]
   [current : i64]) : OptSsaRenameEnv
-  (OptSsaRenameEnv.Cons original current (box env)))
+  (let
+    [count : i64 (opt-ssa-rename-env-count env)]
+    [out : opt_i64_pair_vec.Vec (opt_i64_pair_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (opt_i64_pair_vec.push (&mut out) (opt-ssa-rename-env-slot env slot))
+          (set! slot (+ slot 1))))
+      (opt_i64_pair_vec.push (&mut out) (OptI64Pair.Pair original current))
+      (OptSsaRenameEnv out))))
 
 (define (opt-ssa-env-from-params
   [facts : OptSsaFacts]
@@ -10627,21 +10927,32 @@
               (opt-ssa-env-bind env var var)
               env))])]))
 
+(define (opt-ssa-env-bind-phis-from
+  [sites : OptSsaPhiSites]
+  [label : String]
+  [env : OptSsaRenameEnv]
+  [slot : i64]) : OptSsaRenameEnv
+  (if (< slot 0)
+    env
+    (match (opt-ssa-phi-sites-slot sites slot)
+      [(OptSsaPhiSite.Site var site-label _ phi-var)
+        (opt-ssa-env-bind-phis-from
+          sites
+          label
+          (if (string.eq label site-label)
+            (opt-ssa-env-bind env var phi-var)
+            env)
+          (- slot 1))])))
+
 (define (opt-ssa-env-bind-phis
   [sites : OptSsaPhiSites]
   [label : String]
   [env : OptSsaRenameEnv]) : OptSsaRenameEnv
-  (match sites
-    [(OptSsaPhiSites.Nil) env]
-    [(OptSsaPhiSites.Cons site rest)
-      (match site
-        [(OptSsaPhiSite.Site var site-label _ phi-var)
-          (opt-ssa-env-bind-phis
-            (box-get rest)
-            label
-            (if (string.eq label site-label)
-              (opt-ssa-env-bind env var phi-var)
-              env))])]))
+  (opt-ssa-env-bind-phis-from
+    sites
+    label
+    env
+    (- (opt-ssa-phi-sites-count sites) 1)))
 
 (define (opt-ssa-rewrite-value
   [env : OptSsaRenameEnv]
@@ -11280,39 +11591,63 @@
               out-env
               out-next)])])))
 
+(define (opt-ssa-rename-blocks-contains-from?
+  [blocks : OptSsaRenameBlocks]
+  [label : String]
+  [slot : i64]) : bool
+  (if (< slot 0)
+    false
+    (match (opt-ssa-rename-blocks-slot blocks slot)
+      [(OptSsaRenameBlock.Block block-label _)
+        (if (string.eq block-label label)
+          true
+          (opt-ssa-rename-blocks-contains-from? blocks label (- slot 1)))])))
+
 (define (opt-ssa-rename-blocks-contains?
   [blocks : OptSsaRenameBlocks]
   [label : String]) : bool
-  (match blocks
-    [(OptSsaRenameBlocks.Nil) false]
-    [(OptSsaRenameBlocks.Cons block rest)
-      (match block
-        [(OptSsaRenameBlock.Block block-label _)
-          (if (string.eq block-label label)
-            true
-            (opt-ssa-rename-blocks-contains? (box-get rest) label))])]))
+  (opt-ssa-rename-blocks-contains-from?
+    blocks
+    label
+    (- (opt-ssa-rename-blocks-count blocks) 1)))
+
+(define (opt-ssa-rename-blocks-lookup-from
+  [blocks : OptSsaRenameBlocks]
+  [label : String]
+  [slot : i64]) : CompilerIrInstrList
+  (if (< slot 0)
+    (CompilerIrInstrList.Nil)
+    (match (opt-ssa-rename-blocks-slot blocks slot)
+      [(OptSsaRenameBlock.Block block-label instrs)
+        (if (string.eq block-label label)
+          instrs
+          (opt-ssa-rename-blocks-lookup-from blocks label (- slot 1)))])))
 
 (define (opt-ssa-rename-blocks-lookup
   [blocks : OptSsaRenameBlocks]
   [label : String]) : CompilerIrInstrList
-  (match blocks
-    [(OptSsaRenameBlocks.Nil) (CompilerIrInstrList.Nil)]
-    [(OptSsaRenameBlocks.Cons block rest)
-      (match block
-        [(OptSsaRenameBlock.Block block-label instrs)
-          (if (string.eq block-label label)
-            instrs
-            (opt-ssa-rename-blocks-lookup (box-get rest) label))])]))
+  (opt-ssa-rename-blocks-lookup-from
+    blocks
+    label
+    (- (opt-ssa-rename-blocks-count blocks) 1)))
+
+(define (opt-ssa-block-out-lookup-from
+  [outs : OptSsaBlockOuts]
+  [label : String]
+  [slot : i64]) : OptSsaRenameEnv
+  (if (< slot 0)
+    (opt-ssa-rename-env-empty)
+    (match (opt-ssa-block-outs-slot outs slot)
+      [(OptSsaBlockOut.Out out-label env)
+        (if (string.eq out-label label)
+          env
+          (opt-ssa-block-out-lookup-from outs label (- slot 1)))])))
 
 (define (opt-ssa-block-out-lookup [outs : OptSsaBlockOuts] [label : String]) : OptSsaRenameEnv
-  (match outs
-    [(OptSsaBlockOuts.Nil) (OptSsaRenameEnv.Nil)]
-    [(OptSsaBlockOuts.Cons out rest)
-      (match out
-        [(OptSsaBlockOut.Out out-label env)
-          (if (string.eq out-label label)
-            env
-            (opt-ssa-block-out-lookup (box-get rest) label))])]))
+  (opt-ssa-block-out-lookup-from
+    outs
+    label
+    (- (opt-ssa-block-outs-count outs) 1)))
 
 (define (opt-ssa-rename-state-add-block
   [state : OptSsaRenameState]
@@ -11323,10 +11658,10 @@
   (match state
     [(OptSsaRenameState.State blocks outs _)
       (OptSsaRenameState.State
-        (OptSsaRenameBlocks.Cons
-          (OptSsaRenameBlock.Block label instrs)
-          (box blocks))
-        (OptSsaBlockOuts.Cons (OptSsaBlockOut.Out label env) (box outs))
+        (opt-ssa-rename-blocks-add
+          blocks
+          (OptSsaRenameBlock.Block label instrs))
+        (opt-ssa-block-outs-add outs (OptSsaBlockOut.Out label env))
         next-var)]))
 
 (define (opt-ssa-rename-id
@@ -11457,7 +11792,7 @@
   [blocks : CompilerIrBlockList]) : OptSsaRenameState
   (let
     [initial-env : OptSsaRenameEnv
-      (opt-ssa-env-from-params facts params (OptSsaRenameEnv.Nil))]
+      (opt-ssa-env-from-params facts params (opt-ssa-rename-env-empty))]
     [entry-label : String (opt-cfg-entry-label blocks)]
     (match (opt-cfg-index-id (struct-get context index) entry-label)
       [(option_i64.Some entry-id)
@@ -11474,13 +11809,13 @@
             entry-id
             initial-env
             (OptSsaRenameState.State
-              (OptSsaRenameBlocks.Nil)
-              (OptSsaBlockOuts.Nil)
+              (opt-ssa-rename-blocks-empty)
+              (opt-ssa-block-outs-empty)
               frame)))]
       [(option_i64.None)
         (OptSsaRenameState.State
-          (OptSsaRenameBlocks.Nil)
-          (OptSsaBlockOuts.Nil)
+          (opt-ssa-rename-blocks-empty)
+          (opt-ssa-block-outs-empty)
           frame)])))
 
 ;; Dead-path phi input: a candidate var can reach a phi over an edge on which
@@ -11520,31 +11855,45 @@
           pred
           (opt-ssa-phi-inputs (box-get rest) outs var ty)))]))
 
+(define (opt-ssa-phis-for-label-from
+  [pred-map : OptPredMap]
+  [outs : OptSsaBlockOuts]
+  [sites : OptSsaPhiSites]
+  [label : String]
+  [slot : i64]) : CompilerIrInstrList
+  (if (< slot 0)
+    (CompilerIrInstrList.Nil)
+    (let
+      [tail : CompilerIrInstrList
+        (opt-ssa-phis-for-label-from pred-map outs sites label (- slot 1))]
+      (match (opt-ssa-phi-sites-slot sites slot)
+        [(OptSsaPhiSite.Site var site-label ty phi-var)
+          (if (string.eq site-label label)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                phi-var
+                (opt-ssa-phi-inputs
+                  (opt-pred-map-lookup pred-map label)
+                  outs
+                  var
+                  ty)
+                ty)
+              tail)
+            tail)]))))
+
+;; Walks the sites newest-first so the emitted phi order matches the head-first
+;; cons walk this replaced.
 (define (opt-ssa-phis-for-label
   [pred-map : OptPredMap]
   [outs : OptSsaBlockOuts]
   [sites : OptSsaPhiSites]
   [label : String]) : CompilerIrInstrList
-  (match sites
-    [(OptSsaPhiSites.Nil) (CompilerIrInstrList.Nil)]
-    [(OptSsaPhiSites.Cons site rest)
-      (let
-        [tail : CompilerIrInstrList
-          (opt-ssa-phis-for-label pred-map outs (box-get rest) label)]
-        (match site
-          [(OptSsaPhiSite.Site var site-label ty phi-var)
-            (if (string.eq site-label label)
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Phi
-                  phi-var
-                  (opt-ssa-phi-inputs
-                    (opt-pred-map-lookup pred-map label)
-                    outs
-                    var
-                    ty)
-                  ty)
-                tail)
-              tail)]))]))
+  (opt-ssa-phis-for-label-from
+    pred-map
+    outs
+    sites
+    label
+    (- (opt-ssa-phi-sites-count sites) 1)))
 
 (define (opt-ssa-materialize-blocks
   [blocks : CompilerIrBlockList]
@@ -16034,9 +16383,33 @@
 (defstruct OptLicmRootEnv
   (map opt_i64_i64_map.Map))
 
-(defenum OptLicmStoreRootList
-  (Nil)
-  (Cons OptLicmRoot (Box OptLicmStoreRootList)))
+(import (vector.vector OptLicmRoot core) as opt_licm_store_root_vec)
+
+;; Roots of stores excluded from the loop summary. Only the disjointness scan
+;; reads them, so the generated vector appends and the stored order is never
+;; observed.
+(defstruct OptLicmStoreRootList
+  (items opt_licm_store_root_vec.Vec))
+
+(define (opt-licm-store-root-list-empty) : OptLicmStoreRootList
+  (OptLicmStoreRootList (opt_licm_store_root_vec.new)))
+
+(define (opt-licm-store-root-list-count [stores : OptLicmStoreRootList]) : i64
+  (opt_licm_store_root_vec.len (& (struct-get stores items))))
+
+(define (opt-licm-store-root-list-slot
+  [stores : OptLicmStoreRootList]
+  [slot : i64]) : OptLicmRoot
+  (array-ref (opt_licm_store_root_vec.slots (& (struct-get stores items))) slot))
+
+(define (opt-licm-store-root-list-add
+  [stores : OptLicmStoreRootList]
+  [root : OptLicmRoot]) : OptLicmStoreRootList
+  (let
+    [items : opt_licm_store_root_vec.Vec (struct-get stores items)]
+    (begin
+      (opt_licm_store_root_vec.push (&mut items) root)
+      (OptLicmStoreRootList items))))
 
 (defstruct OptLicmStoreState
   (summary OptLicmStoreSummary)
@@ -16128,15 +16501,22 @@
     [(OptLicmRoot.Shared _) false]
     [(OptLicmRoot.NoRoot) false]))
 
+(define (opt-licm-store-roots-safe-from?
+  [stores : OptLicmStoreRootList]
+  [load-root : OptLicmRoot]
+  [slot : i64]) : bool
+  (if (>= slot (opt-licm-store-root-list-count stores))
+    true
+    (and
+      (opt-licm-root-disjoint-store?
+        (opt-licm-store-root-list-slot stores slot)
+        load-root)
+      (opt-licm-store-roots-safe-from? stores load-root (+ slot 1)))))
+
 (define (opt-licm-store-roots-safe?
   [stores : OptLicmStoreRootList]
   [load-root : OptLicmRoot]) : bool
-  (match stores
-    [(OptLicmStoreRootList.Nil) true]
-    [(OptLicmStoreRootList.Cons store-root rest)
-      (and
-        (opt-licm-root-disjoint-store? store-root load-root)
-        (opt-licm-store-roots-safe? (box-get rest) load-root))]))
+  (opt-licm-store-roots-safe-from? stores load-root 0))
 
 (define (opt-licm-body-map-capacity [body-blocks : CompilerIrBlockList]) : i64
   (+ 1 (compiler-ir-block-list-instruction-count body-blocks)))
@@ -16287,7 +16667,7 @@
   [types : OptSsaVarTypes]
   [var : i64]
   [ty : AstType]) : OptSsaVarTypes
-  (OptSsaVarTypes.Cons var ty (box types)))
+  (opt-ssa-var-types-bind types var ty))
 
 (define (opt-licm-type-env-add-param
   [types : OptSsaVarTypes]
@@ -16363,7 +16743,7 @@
   [blocks : CompilerIrBlockList]) : OptSsaVarTypes
   (opt-licm-type-env-add-blocks
     blocks
-    (opt-licm-type-env-add-params params (OptSsaVarTypes.Nil))))
+    (opt-licm-type-env-add-params params (opt-ssa-var-types-empty))))
 
 (define (opt-licm-param-root [ty : AstType] [var : i64]) : OptLicmRoot
   (match ty
@@ -16534,7 +16914,7 @@
     (opt-licm-store-summary-empty)
     (OptLicmPtrEnv.Nil)
     (opt-licm-root-env-with-capacity 17)
-    (OptLicmStoreRootList.Nil)
+    (opt-licm-store-root-list-empty)
     false))
 
 (define (opt-licm-store-state-with-provenance
@@ -16545,7 +16925,7 @@
     (opt-licm-store-summary-empty)
     ptrs
     roots
-    (OptLicmStoreRootList.Nil)
+    (opt-licm-store-root-list-empty)
     false))
 
 (define (opt-licm-store-state-add-summary
@@ -16588,7 +16968,7 @@
     (opt-licm-store-summary-merge (struct-get state rooted-summary) summary)
     (struct-get state ptrs)
     (struct-get state roots)
-    (OptLicmStoreRootList.Cons root (box (struct-get state store-roots)))
+    (opt-licm-store-root-list-add (struct-get state store-roots) root)
     (struct-get state any-call?)))
 
 (define (opt-licm-store-state-mark-call [state : OptLicmStoreState]) : OptLicmStoreState
@@ -16877,7 +17257,7 @@
   (let
     [state : OptLicmStoreState
       (opt-licm-store-state-blocks
-        (OptSsaVarTypes.Nil)
+        (opt-ssa-var-types-empty)
         blocks
         (opt_i64_i64_map.with-capacity 1)
         true
@@ -16886,7 +17266,7 @@
           (opt-licm-store-summary-empty)
           (OptLicmPtrEnv.Nil)
           (opt-licm-root-env-with-capacity 17)
-          (OptLicmStoreRootList.Nil)
+          (opt-licm-store-root-list-empty)
           false))]
     (opt-licm-store-summary-merge
       (struct-get state summary)
@@ -19762,9 +20142,18 @@
   (No)
   (Some CompilerIrInstrList))
 
-(defenum OptBoolBranchLabelList
-  (Nil)
-  (Cons String (Box OptBoolBranchLabelList)))
+;; Fresh chain-block labels, in chain order. The generated vector keeps that
+;; order directly, so slot 0 is the first label.
+(defstruct OptBoolBranchLabelList
+  (items opt_string_vec.Vec))
+
+(define (opt-bool-branch-label-list-count [labels : OptBoolBranchLabelList]) : i64
+  (opt_string_vec.len (& (struct-get labels items))))
+
+(define (opt-bool-branch-label-list-slot
+  [labels : OptBoolBranchLabelList]
+  [slot : i64]) : String
+  (array-ref (opt_string_vec.slots (& (struct-get labels items))) slot))
 
 (defenum OptBoolBranchChainRewrite
   (No)
@@ -20048,60 +20437,93 @@
     source-label
     (string.append "__bool_and." (string.int->string suffix))))
 
-(define (opt-bool-branch-chain-labels
+(define (opt-bool-branch-chain-labels-into
   [blocks : CompilerIrBlockList]
   [source-label : String]
   [remaining : i64]
   [suffix : i64]
-  [made : OptLabelSet]) : OptBoolBranchLabelList
+  [made : OptLabelSet]
+  [out : opt_string_vec.Vec]) : opt_string_vec.Vec
   (if (<= remaining 0)
-    (OptBoolBranchLabelList.Nil)
+    out
     (let
       [candidate : String
         (opt-bool-branch-chain-label-candidate source-label suffix)]
       (if (or
         (opt-cfg-block-exists? blocks candidate)
         (opt-label-contains made candidate))
-        (opt-bool-branch-chain-labels
+        (opt-bool-branch-chain-labels-into
           blocks
           source-label
           remaining
           (+ suffix 1)
-          made)
-        (OptBoolBranchLabelList.Cons
-          candidate
-          (box
-            (opt-bool-branch-chain-labels
-              blocks
-              source-label
-              (- remaining 1)
-              (+ suffix 1)
-              (opt-label-add made candidate))))))))
+          made
+          out)
+        (begin
+          (opt_string_vec.push (&mut out) candidate)
+          (opt-bool-branch-chain-labels-into
+            blocks
+            source-label
+            (- remaining 1)
+            (+ suffix 1)
+            (opt-label-add made candidate)
+            out))))))
+
+(define (opt-bool-branch-chain-labels
+  [blocks : CompilerIrBlockList]
+  [source-label : String]
+  [remaining : i64]
+  [suffix : i64]
+  [made : OptLabelSet]) : OptBoolBranchLabelList
+  (OptBoolBranchLabelList
+    (opt-bool-branch-chain-labels-into
+      blocks
+      source-label
+      remaining
+      suffix
+      made
+      (opt_string_vec.with-capacity
+        (if (> remaining 0)
+          remaining
+          0)))))
+
+(define (opt-bool-branch-chain-label-set-from
+  [labels : OptBoolBranchLabelList]
+  [set : OptLabelSet]
+  [slot : i64]) : OptLabelSet
+  (if (>= slot (opt-bool-branch-label-list-count labels))
+    set
+    (opt-bool-branch-chain-label-set-from
+      labels
+      (opt-label-add set (opt-bool-branch-label-list-slot labels slot))
+      (+ slot 1))))
 
 (define (opt-bool-branch-chain-label-set
   [labels : OptBoolBranchLabelList]
   [set : OptLabelSet]) : OptLabelSet
-  (match labels
-    [(OptBoolBranchLabelList.Nil) set]
-    [(OptBoolBranchLabelList.Cons label rest)
-      (opt-bool-branch-chain-label-set (box-get rest) (opt-label-add set label))]))
+  (opt-bool-branch-chain-label-set-from labels set 0))
 
 (define (opt-bool-branch-chain-last-label
   [labels : OptBoolBranchLabelList]
   [fallback : String]) : String
-  (match labels
-    [(OptBoolBranchLabelList.Nil) fallback]
-    [(OptBoolBranchLabelList.Cons label rest)
-      (match (box-get rest)
-        [(OptBoolBranchLabelList.Nil) label]
-        [_ (opt-bool-branch-chain-last-label (box-get rest) label)])]))
+  (if (= (opt-bool-branch-label-list-count labels) 0)
+    fallback
+    (opt-bool-branch-label-list-slot
+      labels
+      (- (opt-bool-branch-label-list-count labels) 1))))
+
+(define (opt-bool-branch-chain-label-at
+  [labels : OptBoolBranchLabelList]
+  [slot : i64]
+  [fallback : String]) : String
+  (if (>= slot (opt-bool-branch-label-list-count labels))
+    fallback
+    (opt-bool-branch-label-list-slot labels slot)))
 
 (define (opt-bool-branch-chain-first-label
   [labels : OptBoolBranchLabelList]
   [fallback : String]) : String
-  (match labels
-    [(OptBoolBranchLabelList.Nil) fallback]
-    [(OptBoolBranchLabelList.Cons label _) label]))
+  (opt-bool-branch-chain-label-at labels 0 fallback))
 
 (define (opt-bool-branch-chain-prefix
   [instrs : CompilerIrInstrSeq]
@@ -20133,35 +20555,34 @@
   [conjs : CompilerIrInstrList]
   [labels : OptBoolBranchLabelList]
   [true-label : String]
-  [false-label : String]) : CompilerIrBlockList
+  [false-label : String]
+  [slot : i64]) : CompilerIrBlockList
   (match conjs
     [(CompilerIrInstrList.Nil) (CompilerIrBlockList.Nil)]
     [(CompilerIrInstrList.Cons conj conj-rest)
-      (match labels
-        [(OptBoolBranchLabelList.Nil) (CompilerIrBlockList.Nil)]
-        [(OptBoolBranchLabelList.Cons label label-rest)
-          (let
-            [next-label : String
-              (opt-bool-branch-chain-first-label
-                (box-get label-rest)
-                true-label)]
-            (compiler-ir-block-cons
-              (compiler-ir-block
-                label
+      (if (>= slot (opt-bool-branch-label-list-count labels))
+        (CompilerIrBlockList.Nil)
+        (let
+          [label : String (opt-bool-branch-label-list-slot labels slot)]
+          [next-label : String
+            (opt-bool-branch-chain-label-at labels (+ slot 1) true-label)]
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              label
+              (compiler-ir-instr-cons
+                conj
                 (compiler-ir-instr-cons
-                  conj
-                  (compiler-ir-instr-cons
-                    (CompilerIrInstr.Branch
-                      (CompilerIrValue.Var
-                        (opt-bool-branch-chain-conj-var conj))
-                      next-label
-                      false-label)
-                    (CompilerIrInstrList.Nil))))
-              (opt-bool-branch-chain-fresh-blocks
-                (box-get conj-rest)
-                (box-get label-rest)
-                true-label
-                false-label)))])]))
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var (opt-bool-branch-chain-conj-var conj))
+                    next-label
+                    false-label)
+                  (CompilerIrInstrList.Nil))))
+            (opt-bool-branch-chain-fresh-blocks
+              (box-get conj-rest)
+              labels
+              true-label
+              false-label
+              (+ slot 1)))))]))
 
 (define (opt-bool-branch-chain-prepend-blocks
   [prefix : CompilerIrBlockList]
@@ -20427,7 +20848,8 @@
                                                     (box-get rest)
                                                     labels
                                                     true-label
-                                                    false-label)]
+                                                    false-label
+                                                    0)]
                                                 (begin
                                                   (if same-target?
                                                     (opt-bool-branch-repair-target-phis!
@@ -22723,28 +23145,60 @@
 ;; through these facts unifies them onto one logical index var. A pair is
 ;; dropped as soon as its src is redefined (the copy no longer tracks it),
 ;; and a redefined dst simply shadows its earlier pair (newest-first lookup).
-(defenum OptSwitchCopyEnv
-  (Nil)
-  (Cons i64 i64 (Box OptSwitchCopyEnv)))
+(defstruct OptSwitchCopyEnv
+  (items opt_i64_pair_vec.Vec))
+
+(define (opt-switch-copy-env-empty) : OptSwitchCopyEnv
+  (OptSwitchCopyEnv (opt_i64_pair_vec.new)))
+
+(define (opt-switch-copy-env-count [env : OptSwitchCopyEnv]) : i64
+  (opt_i64_pair_vec.len (& (struct-get env items))))
+
+(define (opt-switch-copy-env-slot [env : OptSwitchCopyEnv] [slot : i64]) : OptI64Pair
+  (array-ref (opt_i64_pair_vec.slots (& (struct-get env items))) slot))
+
+(define (opt-switch-copy-env-resolve-from
+  [env : OptSwitchCopyEnv]
+  [var : i64]
+  [slot : i64]) : i64
+  (if (< slot 0)
+    var
+    (match (opt-switch-copy-env-slot env slot)
+      [(OptI64Pair.Pair dst src)
+        (if (= dst var)
+          src
+          (opt-switch-copy-env-resolve-from env var (- slot 1)))])))
 
 (define (opt-switch-copy-env-resolve [env : OptSwitchCopyEnv] [var : i64]) : i64
-  (match env
-    [(OptSwitchCopyEnv.Nil) var]
-    [(OptSwitchCopyEnv.Cons dst src rest)
-      (if (= dst var)
-        src
-        (opt-switch-copy-env-resolve (box-get rest) var))]))
+  (opt-switch-copy-env-resolve-from
+    env
+    var
+    (- (opt-switch-copy-env-count env) 1)))
 
+(define (opt-switch-copy-env-drop-src-into
+  [env : OptSwitchCopyEnv]
+  [var : i64]
+  [slot : i64]
+  [out : opt_i64_pair_vec.Vec]) : opt_i64_pair_vec.Vec
+  (if (>= slot (opt-switch-copy-env-count env))
+    out
+    (begin
+      (match (opt-switch-copy-env-slot env slot)
+        [(OptI64Pair.Pair dst src)
+          (if (= src var)
+            unit
+            (opt_i64_pair_vec.push (&mut out) (OptI64Pair.Pair dst src)))])
+      (opt-switch-copy-env-drop-src-into env var (+ slot 1) out))))
+
+;; Always builds a fresh buffer: the chain scan keeps the pre-drop env live on
+;; the sibling arm, so this must not append to a vector that env still owns.
 (define (opt-switch-copy-env-drop-src [env : OptSwitchCopyEnv] [var : i64]) : OptSwitchCopyEnv
-  (match env
-    [(OptSwitchCopyEnv.Nil) env]
-    [(OptSwitchCopyEnv.Cons dst src rest)
-      (if (= src var)
-        (opt-switch-copy-env-drop-src (box-get rest) var)
-        (OptSwitchCopyEnv.Cons
-          dst
-          src
-          (box (opt-switch-copy-env-drop-src (box-get rest) var))))]))
+  (OptSwitchCopyEnv
+    (opt-switch-copy-env-drop-src-into
+      env
+      var
+      0
+      (opt_i64_pair_vec.with-capacity (opt-switch-copy-env-count env)))))
 
 ;; Fold one prefix instruction into the copy facts: any definition of var D
 ;; invalidates pairs whose src is D; a `Mov dst, src` then records dst as a
@@ -22756,10 +23210,17 @@
     [(option_i64.Some dst)
       (match instr
         [(CompilerIrInstr.Mov _ (CompilerIrValue.Var src) _)
-          (OptSwitchCopyEnv.Cons
-            dst
-            src
-            (box (opt-switch-copy-env-drop-src env dst)))]
+          (let
+            [out : opt_i64_pair_vec.Vec
+              (opt-switch-copy-env-drop-src-into
+                env
+                dst
+                0
+                (opt_i64_pair_vec.with-capacity
+                  (+ (opt-switch-copy-env-count env) 1)))]
+            (begin
+              (opt_i64_pair_vec.push (&mut out) (OptI64Pair.Pair dst src))
+              (OptSwitchCopyEnv out)))]
         [_ (opt-switch-copy-env-drop-src env dst)])]
     [(option_i64.None) env]))
 
@@ -23296,7 +23757,7 @@
                           head-instrs
                           0
                           prefix
-                          (OptSwitchCopyEnv.Nil)))])])
+                          (opt-switch-copy-env-empty)))])])
               (opt-switch-finalize-chain
                 blocks
                 index-var
@@ -23410,7 +23871,7 @@
               (OptLabelSet.Nil)
               (OptSwitchCandidateList.Nil)
               0
-              (OptSwitchCopyEnv.Nil))
+              (opt-switch-copy-env-empty))
               [(OptMaybeSwitchChain.Some
                   index-var
                   min-tag
@@ -23579,9 +24040,14 @@
 (defenum OptGvnEntry
   (Entry OptExprKey i64 i64))
 
-(defenum OptGvnBucket
-  (Nil)
-  (Cons OptGvnEntry (Box OptGvnBucket)))
+(import (vector.vector OptGvnEntry core) as opt_gvn_entry_vec)
+
+;; One hash bucket of the scoped GVN table. A scope change snapshots the bucket
+;; before the push, and the snapshot keeps the shorter length, so pushing into
+;; the shared backing vector leaves the saved bucket readable and restore just
+;; puts the shorter value back.
+(defstruct OptGvnBucket
+  (items opt_gvn_entry_vec.Vec))
 
 (defstruct OptGvnMap
   (buckets (Array OptGvnBucket)))
@@ -23589,9 +24055,49 @@
 (defenum OptGvnScopeChange
   (Change i64 OptGvnBucket))
 
-(defenum OptGvnScopeChanges
-  (Nil)
-  (Cons OptGvnScopeChange (Box OptGvnScopeChanges)))
+(import (vector.vector OptGvnScopeChange core) as opt_gvn_scope_change_vec)
+
+;; Scope changes for one dominator-tree node. The walk starts each node with an
+;; empty list, threads it through the block, and restores newest-first, so the
+;; generated vector appends in place and `restore!` runs back to front.
+(defstruct OptGvnScopeChanges
+  (items opt_gvn_scope_change_vec.Vec))
+
+(define (opt-gvn-bucket-empty) : OptGvnBucket
+  (OptGvnBucket (opt_gvn_entry_vec.new)))
+
+(define (opt-gvn-bucket-count [bucket : OptGvnBucket]) : i64
+  (opt_gvn_entry_vec.len (& (struct-get bucket items))))
+
+(define (opt-gvn-bucket-slot [bucket : OptGvnBucket] [slot : i64]) : OptGvnEntry
+  (array-ref (opt_gvn_entry_vec.slots (& (struct-get bucket items))) slot))
+
+(define (opt-gvn-bucket-push [bucket : OptGvnBucket] [entry : OptGvnEntry]) : OptGvnBucket
+  (let
+    [items : opt_gvn_entry_vec.Vec (struct-get bucket items)]
+    (begin
+      (opt_gvn_entry_vec.push (&mut items) entry)
+      (OptGvnBucket items))))
+
+(define (opt-gvn-scope-changes-empty) : OptGvnScopeChanges
+  (OptGvnScopeChanges (opt_gvn_scope_change_vec.new)))
+
+(define (opt-gvn-scope-changes-count [changes : OptGvnScopeChanges]) : i64
+  (opt_gvn_scope_change_vec.len (& (struct-get changes items))))
+
+(define (opt-gvn-scope-changes-slot [changes : OptGvnScopeChanges] [slot : i64]) : OptGvnScopeChange
+  (array-ref
+    (opt_gvn_scope_change_vec.slots (& (struct-get changes items)))
+    slot))
+
+(define (opt-gvn-scope-changes-add
+  [changes : OptGvnScopeChanges]
+  [change : OptGvnScopeChange]) : OptGvnScopeChanges
+  (let
+    [items : opt_gvn_scope_change_vec.Vec (struct-get changes items)]
+    (begin
+      (opt_gvn_scope_change_vec.push (&mut items) change)
+      (OptGvnScopeChanges items))))
 
 (defenum OptGvnBlockResult
   (NoBlock)
@@ -23820,7 +24326,7 @@
   (if (>= index (array-length buckets))
     unit
     (begin
-      (array-set! buckets index (OptGvnBucket.Nil))
+      (array-set! buckets index (opt-gvn-bucket-empty))
       (opt-gvn-buckets-fill-empty! buckets (+ index 1)))))
 
 (define (opt-gvn-map-empty [record-count : i64]) : OptGvnMap
@@ -23854,31 +24360,40 @@
         ;; head and scoped dominance breaks (a dominated sibling reuses a value
         ;; that does not dominate it).
         [result : OptGvnScopeChanges
-          (OptGvnScopeChanges.Cons
-            (OptGvnScopeChange.Change bucket old-head)
-            (box changes))]
+          (opt-gvn-scope-changes-add
+            changes
+            (OptGvnScopeChange.Change bucket old-head))]
         (begin
-          (array-set! buckets bucket (OptGvnBucket.Cons entry (box old-head)))
+          (array-set! buckets bucket (opt-gvn-bucket-push old-head entry))
           result))]))
 
 (define (opt-gvn-table-insert! [table : OptGvnMap] [entry : OptGvnEntry]) : unit
   (begin
-    (opt-gvn-table-push! table entry (OptGvnScopeChanges.Nil))
+    (opt-gvn-table-push! table entry (opt-gvn-scope-changes-empty))
     unit))
+
+;; Restores newest-first, the order the head-first cons walk used.
+(define (opt-gvn-table-restore-from!
+  [table : OptGvnMap]
+  [changes : OptGvnScopeChanges]
+  [slot : i64]) : unit
+  (if (< slot 0)
+    unit
+    (match (opt-gvn-scope-changes-slot changes slot)
+      [(OptGvnScopeChange.Change bucket old-head)
+        (let
+          [buckets : (Array OptGvnBucket) (struct-get table buckets)]
+          (begin
+            (array-set! buckets bucket old-head)
+            (opt-gvn-table-restore-from! table changes (- slot 1))))])))
 
 (define (opt-gvn-table-restore!
   [table : OptGvnMap]
   [changes : OptGvnScopeChanges]) : unit
-  (match changes
-    [(OptGvnScopeChanges.Nil) unit]
-    [(OptGvnScopeChanges.Cons change rest)
-      (match change
-        [(OptGvnScopeChange.Change bucket old-head)
-          (let
-            [buckets : (Array OptGvnBucket) (struct-get table buckets)]
-            (begin
-              (array-set! buckets bucket old-head)
-              (opt-gvn-table-restore! table (box-get rest))))])]))
+  (opt-gvn-table-restore-from!
+    table
+    changes
+    (- (opt-gvn-scope-changes-count changes) 1)))
 
 ;; Record a `BinOp`/`UnOp`/CPU probe whose result and operands are all
 ;; single-source as an available value keyed by its expression and tagged with
@@ -23948,15 +24463,21 @@
 ;; Find the nearest scoped result var for `key`, or -1 if none qualifies.
 ;; Dominance is represented by the current table scope; the bucket walk only
 ;; handles hash collisions and older same-key ancestors.
+;; Scans newest-first so the nearest scoped entry still wins.
+(define (opt-gvn-lookup-bucket-from
+  [bucket : OptGvnBucket]
+  [key : OptExprKey]
+  [slot : i64]) : i64
+  (if (< slot 0)
+    (- 0 1)
+    (match (opt-gvn-bucket-slot bucket slot)
+      [(OptGvnEntry.Entry ekey evar def-block-id)
+        (if (and (>= def-block-id 0) (opt-expr-key-eq ekey key))
+          evar
+          (opt-gvn-lookup-bucket-from bucket key (- slot 1)))])))
+
 (define (opt-gvn-lookup-bucket [bucket : OptGvnBucket] [key : OptExprKey]) : i64
-  (match bucket
-    [(OptGvnBucket.Nil) (- 0 1)]
-    [(OptGvnBucket.Cons entry rest)
-      (match entry
-        [(OptGvnEntry.Entry ekey evar def-block-id)
-          (if (and (>= def-block-id 0) (opt-expr-key-eq ekey key))
-            evar
-            (opt-gvn-lookup-bucket (box-get rest) key))])]))
+  (opt-gvn-lookup-bucket-from bucket key (- (opt-gvn-bucket-count bucket) 1)))
 
 (define (opt-gvn-lookup [table : OptGvnMap] [key : OptExprKey]) : i64
   (let
@@ -24184,7 +24705,7 @@
                             instrs
                             0
                             table
-                            (OptGvnScopeChanges.Nil))]
+                            (opt-gvn-scope-changes-empty))]
                         [children-changed : i64
                           (opt-gvn-rewrite-children
                             context
@@ -24440,9 +24961,39 @@
 (defenum OptDomCmpFact
   (Fact CompilerIrBinOp CompilerIrValue CompilerIrValue AstType bool))
 
-(defenum OptDomCmpFacts
-  (Nil)
-  (Cons OptDomCmpFact (Box OptDomCmpFacts)))
+(import (vector.vector OptDomCmpFact core) as opt_dom_cmp_fact_vec)
+
+;; Dominating-comparison facts. Each branch edge extends the block's facts while
+;; the parent set stays live, so `add` copies into a right-sized buffer.
+;; Storage runs oldest-first and the lookup scans back to front, so the nearest
+;; fact still wins.
+(defstruct OptDomCmpFacts
+  (items opt_dom_cmp_fact_vec.Vec))
+
+(define (opt-dom-cmp-facts-empty) : OptDomCmpFacts
+  (OptDomCmpFacts (opt_dom_cmp_fact_vec.new)))
+
+(define (opt-dom-cmp-facts-count [facts : OptDomCmpFacts]) : i64
+  (opt_dom_cmp_fact_vec.len (& (struct-get facts items))))
+
+(define (opt-dom-cmp-facts-slot [facts : OptDomCmpFacts] [slot : i64]) : OptDomCmpFact
+  (array-ref (opt_dom_cmp_fact_vec.slots (& (struct-get facts items))) slot))
+
+(define (opt-dom-cmp-facts-add [facts : OptDomCmpFacts] [fact : OptDomCmpFact]) : OptDomCmpFacts
+  (let
+    [count : i64 (opt-dom-cmp-facts-count facts)]
+    [out : opt_dom_cmp_fact_vec.Vec
+      (opt_dom_cmp_fact_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (opt_dom_cmp_fact_vec.push
+            (&mut out)
+            (opt-dom-cmp-facts-slot facts slot))
+          (set! slot (+ slot 1))))
+      (opt_dom_cmp_fact_vec.push (&mut out) fact)
+      (OptDomCmpFacts out))))
 
 (defenum OptDomCmpLookup
   (No)
@@ -24508,26 +25059,26 @@
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
-  [ty : AstType]) : OptDomCmpLookup
-  (match facts
-    [(OptDomCmpFacts.Nil) (OptDomCmpLookup.No)]
-    [(OptDomCmpFacts.Cons fact rest)
-      (match fact
-        [(OptDomCmpFact.Fact fact-op fact-lhs fact-rhs fact-ty fact-value)
+  [ty : AstType]
+  [slot : i64]) : OptDomCmpLookup
+  (if (< slot 0)
+    (OptDomCmpLookup.No)
+    (match (opt-dom-cmp-facts-slot facts slot)
+      [(OptDomCmpFact.Fact fact-op fact-lhs fact-rhs fact-ty fact-value)
+        (if (and
+          (opt-type-eq ty fact-ty)
+          (opt-binop-eq op fact-op)
+          (opt-value-eq lhs fact-lhs)
+          (opt-value-eq rhs fact-rhs))
+          (OptDomCmpLookup.Some fact-value)
           (if (and
             (opt-type-eq ty fact-ty)
-            (opt-binop-eq op fact-op)
-            (opt-value-eq lhs fact-lhs)
-            (opt-value-eq rhs fact-rhs))
-            (OptDomCmpLookup.Some fact-value)
-            (if (and
-              (opt-type-eq ty fact-ty)
-              (opt-binop-eq op (opt-dom-cmp-negated-op fact-op))
-              (if (opt-dom-cmp-negation-swaps? fact-op)
-                (and (opt-value-eq lhs fact-rhs) (opt-value-eq rhs fact-lhs))
-                (and (opt-value-eq lhs fact-lhs) (opt-value-eq rhs fact-rhs))))
-              (OptDomCmpLookup.Some (not fact-value))
-              (opt-dom-cmp-lookup (box-get rest) op lhs rhs ty)))])]))
+            (opt-binop-eq op (opt-dom-cmp-negated-op fact-op))
+            (if (opt-dom-cmp-negation-swaps? fact-op)
+              (and (opt-value-eq lhs fact-rhs) (opt-value-eq rhs fact-lhs))
+              (and (opt-value-eq lhs fact-lhs) (opt-value-eq rhs fact-rhs))))
+            (OptDomCmpLookup.Some (not fact-value))
+            (opt-dom-cmp-lookup facts op lhs rhs ty (- slot 1))))])))
 
 ;; The fact an edge into `taken?` establishes, given the branch condition's
 ;; defining comparison. Operands are resolved through the same copy map the
@@ -24560,14 +25111,14 @@
                   (opt-integer-type? ty)
                   (opt-gvn-value-stable? sources clhs)
                   (opt-gvn-value-stable? sources crhs))
-                  (OptDomCmpFacts.Cons
+                  (opt-dom-cmp-facts-add
+                    facts
                     (OptDomCmpFact.Fact
                       (opt-dom-cmp-canon-op op)
                       clhs
                       crhs
                       ty
-                      taken?)
-                    (box facts))
+                      taken?))
                   facts))]
             [_ facts])])]
     [_ facts]))
@@ -24696,7 +25247,8 @@
       (CompilerIrBinOp.Lt)
       len
       (CompilerIrValue.I64 1)
-      (AstType.I64))
+      (AstType.I64)
+      (- (opt-dom-cmp-facts-count cmp-facts) 1))
       [(OptDomCmpLookup.Some value) (not value)]
       [(OptDomCmpLookup.No) false])
     (match (opt-dom-cmp-lookup
@@ -24704,7 +25256,8 @@
       (CompilerIrBinOp.Le)
       (CompilerIrValue.I64 1)
       len
-      (AstType.I64))
+      (AstType.I64)
+      (- (opt-dom-cmp-facts-count cmp-facts) 1))
       [(OptDomCmpLookup.Some value) value]
       [(OptDomCmpLookup.No) false])
     ;; `(<= len 0)` guarding an empty-table early return is the other common way
@@ -24714,7 +25267,8 @@
       (CompilerIrBinOp.Le)
       len
       (CompilerIrValue.I64 0)
-      (AstType.I64))
+      (AstType.I64)
+      (- (opt-dom-cmp-facts-count cmp-facts) 1))
       [(OptDomCmpLookup.Some value) (not value)]
       [(OptDomCmpLookup.No) false])
     (match (opt-dom-cmp-lookup
@@ -24722,7 +25276,8 @@
       (CompilerIrBinOp.Lt)
       (CompilerIrValue.I64 0)
       len
-      (AstType.I64))
+      (AstType.I64)
+      (- (opt-dom-cmp-facts-count cmp-facts) 1))
       [(OptDomCmpLookup.Some value) value]
       [(OptDomCmpLookup.No) false])))
 
@@ -24864,7 +25419,8 @@
           (CompilerIrBinOp.Lt)
           (CompilerIrValue.I64 seed)
           len
-          (AstType.I64))
+          (AstType.I64)
+          (- (opt-dom-cmp-facts-count cmp-facts) 1))
           [(OptDomCmpLookup.Some decided) decided]
           [(OptDomCmpLookup.No) false]))]
     [(CompilerIrValue.Var var)
@@ -25178,22 +25734,21 @@
                 ;; dominating access already checked.
                 [next-cmp-facts : OptDomCmpFacts
                   (if stable?
-                    (OptDomCmpFacts.Cons
+                    (opt-dom-cmp-facts-add
+                      (opt-dom-cmp-facts-add
+                        cmp-facts
+                        (OptDomCmpFact.Fact
+                          (CompilerIrBinOp.Lt)
+                          clen
+                          cidx
+                          (AstType.I64)
+                          false))
                       (OptDomCmpFact.Fact
                         (CompilerIrBinOp.Lt)
                         cidx
                         clen
                         (AstType.I64)
-                        true)
-                      (box
-                        (OptDomCmpFacts.Cons
-                          (OptDomCmpFact.Fact
-                            (CompilerIrBinOp.Lt)
-                            clen
-                            cidx
-                            (AstType.I64)
-                            false)
-                          (box cmp-facts))))
+                        true))
                     cmp-facts)]
                 (match (opt-bounds-dom-instrs-from
                   defs
@@ -25249,7 +25804,8 @@
           (opt-dom-cmp-canon-op op)
           (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-lhs op lhs rhs))
           (opt-bounds-dom-resolve copies (opt-dom-cmp-canon-rhs op lhs rhs))
-          ty)
+          ty
+          (- (opt-dom-cmp-facts-count cmp-facts) 1))
           [(OptDomCmpLookup.No) instr]
           [(OptDomCmpLookup.Some value)
             (CompilerIrInstr.Mov
@@ -25485,8 +26041,8 @@
               terms
               sources
               copies
-              (OptDomCmpFacts.Nil)
-              (OptBoundsFacts.Nil)
+              (opt-dom-cmp-facts-empty)
+              (opt-bounds-facts-empty)
               blocks
               out
               entry-id)
@@ -25508,9 +26064,22 @@
 (defenum OptDivRemFact
   (Fact i64 AstType OptDivRemFactKind))
 
-(defenum OptDivRemFacts
-  (Nil)
-  (Cons OptDivRemFact (Box OptDivRemFacts)))
+(import (vector.vector OptDivRemFact core) as opt_divrem_fact_vec)
+
+;; Div/rem operand facts, extended per dominator edge while the parent facts
+;; stay live, so `add` copies into a right-sized buffer. Its membership scan was
+;; already O(n). Storage runs oldest-first; only membership reads it.
+(defstruct OptDivRemFacts
+  (items opt_divrem_fact_vec.Vec))
+
+(define (opt-divrem-facts-empty) : OptDivRemFacts
+  (OptDivRemFacts (opt_divrem_fact_vec.new)))
+
+(define (opt-divrem-facts-count [facts : OptDivRemFacts]) : i64
+  (opt_divrem_fact_vec.len (& (struct-get facts items))))
+
+(define (opt-divrem-facts-slot [facts : OptDivRemFacts] [slot : i64]) : OptDivRemFact
+  (array-ref (opt_divrem_fact_vec.slots (& (struct-get facts items))) slot))
 
 (defenum OptDivRemCmp
   (NoCmp)
@@ -25547,40 +26116,65 @@
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
-  [kind : OptDivRemFactKind]) : bool
-  (match facts
-    [(OptDivRemFacts.Nil) false]
-    [(OptDivRemFacts.Cons fact rest)
-      (match fact
-        [(OptDivRemFact.Fact fact-var fact-ty fact-kind)
-          (if (and
-            (= fact-var var)
-            (opt-type-eq fact-ty ty)
-            (opt-divrem-fact-kind-eq? fact-kind kind))
-            true
-            (opt-divrem-facts-contains-kind? (box-get rest) var ty kind))])]))
+  [kind : OptDivRemFactKind]
+  [slot : i64]) : bool
+  (if (>= slot (opt-divrem-facts-count facts))
+    false
+    (match (opt-divrem-facts-slot facts slot)
+      [(OptDivRemFact.Fact fact-var fact-ty fact-kind)
+        (if (and
+          (= fact-var var)
+          (opt-type-eq fact-ty ty)
+          (opt-divrem-fact-kind-eq? fact-kind kind))
+          true
+          (opt-divrem-facts-contains-kind? facts var ty kind (+ slot 1)))])))
 
 (define (opt-divrem-facts-add-kind
   [facts : OptDivRemFacts]
   [var : i64]
   [ty : AstType]
   [kind : OptDivRemFactKind]) : OptDivRemFacts
-  (if (opt-divrem-facts-contains-kind? facts var ty kind)
+  (if (opt-divrem-facts-contains-kind? facts var ty kind 0)
     facts
-    (OptDivRemFacts.Cons (OptDivRemFact.Fact var ty kind) (box facts))))
+    (let
+      [count : i64 (opt-divrem-facts-count facts)]
+      [out : opt_divrem_fact_vec.Vec
+        (opt_divrem_fact_vec.with-capacity (+ count 1))]
+      [slot : i64 0]
+      (begin
+        (while (< slot count)
+          (begin
+            (opt_divrem_fact_vec.push
+              (&mut out)
+              (opt-divrem-facts-slot facts slot))
+            (set! slot (+ slot 1))))
+        (opt_divrem_fact_vec.push (&mut out) (OptDivRemFact.Fact var ty kind))
+        (OptDivRemFacts out)))))
+
+(define (opt-divrem-facts-remove-into
+  [facts : OptDivRemFacts]
+  [var : i64]
+  [slot : i64]
+  [out : opt_divrem_fact_vec.Vec]) : opt_divrem_fact_vec.Vec
+  (if (>= slot (opt-divrem-facts-count facts))
+    out
+    (begin
+      (match (opt-divrem-facts-slot facts slot)
+        [(OptDivRemFact.Fact fact-var fact-ty fact-kind)
+          (if (= fact-var var)
+            unit
+            (opt_divrem_fact_vec.push
+              (&mut out)
+              (OptDivRemFact.Fact fact-var fact-ty fact-kind)))])
+      (opt-divrem-facts-remove-into facts var (+ slot 1) out))))
 
 (define (opt-divrem-facts-remove-var [facts : OptDivRemFacts] [var : i64]) : OptDivRemFacts
-  (match facts
-    [(OptDivRemFacts.Nil) (OptDivRemFacts.Nil)]
-    [(OptDivRemFacts.Cons fact rest)
-      (match fact
-        [(OptDivRemFact.Fact fact-var _ _)
-          (let
-            [rest2 : OptDivRemFacts
-              (opt-divrem-facts-remove-var (box-get rest) var)]
-            (if (= fact-var var)
-              rest2
-              (OptDivRemFacts.Cons fact (box rest2))))])]))
+  (OptDivRemFacts
+    (opt-divrem-facts-remove-into
+      facts
+      var
+      0
+      (opt_divrem_fact_vec.with-capacity (opt-divrem-facts-count facts)))))
 
 (define (opt-divrem-add-nonzero
   [facts : OptDivRemFacts]
@@ -25903,7 +26497,7 @@
     true
     (match value
       [(CompilerIrValue.Var var)
-        (opt-divrem-facts-contains-kind? facts var ty kind)]
+        (opt-divrem-facts-contains-kind? facts var ty kind 0)]
       [_ false])))
 
 (define (opt-divrem-proven-safe?
@@ -26094,7 +26688,7 @@
   (if (>= index (array-length facts))
     unit
     (begin
-      (array-set! facts index (OptDivRemFacts.Nil))
+      (array-set! facts index (opt-divrem-facts-empty))
       (opt-divrem-facts-fill-empty! facts (+ index 1)))))
 
 (define (opt-divrem-process-rpo!
@@ -26263,13 +26857,22 @@
   (Argc)
   (Bin CompilerIrBinOp (Box OptLoopBceExpr) (Box OptLoopBceExpr) AstType))
 
-(defenum OptLoopBceExprEnv
-  (Nil)
-  (Cons i64 OptLoopBceExpr (Box OptLoopBceExprEnv)))
+;; The loop-BCE environments below are branching: a block's state is extended
+;; on the true and false arms of a branch while the parent state stays live, so
+;; every `bind` rebuilds a right-sized vector instead of appending to a shared
+;; one. `unbind` already rebuilt the whole list, so this costs no extra pass.
+;; Storage runs oldest-first, so every lookup scans back to front and the
+;; newest binding still wins.
+(defenum OptLoopBceVarExpr
+  (Bind i64 OptLoopBceExpr))
 
-(defenum OptLoopBceAliasEnv
-  (Nil)
-  (Cons i64 i64 (Box OptLoopBceAliasEnv)))
+(import (vector.vector OptLoopBceVarExpr core) as opt_loop_bce_var_expr_vec)
+
+(defstruct OptLoopBceExprEnv
+  (items opt_loop_bce_var_expr_vec.Vec))
+
+(defstruct OptLoopBceAliasEnv
+  (items opt_i64_pair_vec.Vec))
 
 (defenum OptLoopBcePtrKind
   (Unknown)
@@ -26278,27 +26881,41 @@
   (DataBuffer i64)
   (DataElement i64))
 
-(defenum OptLoopBcePtrEnv
-  (Nil)
-  (Cons i64 OptLoopBcePtrKind (Box OptLoopBcePtrEnv)))
+(defenum OptLoopBcePtrBind
+  (Bind i64 OptLoopBcePtrKind))
 
-(defenum OptLoopBceLengthEnv
-  (Nil)
-  (Cons i64 OptLoopBceExpr (Box OptLoopBceLengthEnv)))
+(import (vector.vector OptLoopBcePtrBind core) as opt_loop_bce_ptr_vec)
 
-(defenum OptLoopBceCmpEnv
-  (Nil)
-  (Cons
-    i64
-    CompilerIrBinOp
-    OptLoopBceExpr
-    OptLoopBceExpr
-    AstType
-    (Box OptLoopBceCmpEnv)))
+(defstruct OptLoopBcePtrEnv
+  (items opt_loop_bce_ptr_vec.Vec))
 
-(defenum OptLoopBceGuardEnv
-  (Nil)
-  (Cons String OptLoopBceExpr OptLoopBceExpr (Box OptLoopBceGuardEnv)))
+;; Same element shape as `OptLoopBceExprEnv`, so it reuses that instantiation.
+(defstruct OptLoopBceLengthEnv
+  (items opt_loop_bce_var_expr_vec.Vec))
+
+(defenum OptLoopBceCmp
+  (Bind i64 CompilerIrBinOp OptLoopBceExpr OptLoopBceExpr AstType))
+
+(import (vector.vector OptLoopBceCmp core) as opt_loop_bce_cmp_vec)
+
+(defstruct OptLoopBceCmpEnv
+  (items opt_loop_bce_cmp_vec.Vec))
+
+(defenum OptLoopBceCmpFound
+  (NoCmp)
+  (SomeCmp CompilerIrBinOp OptLoopBceExpr OptLoopBceExpr AstType))
+
+(defenum OptLoopBceGuard
+  (Bind String OptLoopBceExpr OptLoopBceExpr))
+
+(import (vector.vector OptLoopBceGuard core) as opt_loop_bce_guard_vec)
+
+(defstruct OptLoopBceGuardEnv
+  (items opt_loop_bce_guard_vec.Vec))
+
+(defenum OptLoopBceGuardFound
+  (NoGuard)
+  (SomeGuard OptLoopBceExpr OptLoopBceExpr))
 
 (defenum OptRangeFact
   (Nonnegative String OptLoopBceExpr)
@@ -26855,15 +27472,40 @@
         [_ nonnegative])
       nonnegative)))
 
+(define (opt-loop-bce-expr-env-empty) : OptLoopBceExprEnv
+  (OptLoopBceExprEnv (opt_loop_bce_var_expr_vec.new)))
+
+(define (opt-loop-bce-expr-env-count [env : OptLoopBceExprEnv]) : i64
+  (opt_loop_bce_var_expr_vec.len (& (struct-get env items))))
+
+(define (opt-loop-bce-expr-env-slot [env : OptLoopBceExprEnv] [slot : i64]) : OptLoopBceVarExpr
+  (array-ref (opt_loop_bce_var_expr_vec.slots (& (struct-get env items))) slot))
+
+(define (opt-loop-bce-expr-unbind-into
+  [env : OptLoopBceExprEnv]
+  [var : i64]
+  [slot : i64]
+  [out : opt_loop_bce_var_expr_vec.Vec]) : opt_loop_bce_var_expr_vec.Vec
+  (if (>= slot (opt-loop-bce-expr-env-count env))
+    out
+    (begin
+      (match (opt-loop-bce-expr-env-slot env slot)
+        [(OptLoopBceVarExpr.Bind id expr)
+          (if (= id var)
+            unit
+            (opt_loop_bce_var_expr_vec.push
+              (&mut out)
+              (OptLoopBceVarExpr.Bind id expr)))])
+      (opt-loop-bce-expr-unbind-into env var (+ slot 1) out))))
+
 (define (opt-loop-bce-expr-unbind [env : OptLoopBceExprEnv] [var : i64]) : OptLoopBceExprEnv
-  (match env
-    [(OptLoopBceExprEnv.Nil) (OptLoopBceExprEnv.Nil)]
-    [(OptLoopBceExprEnv.Cons id expr rest)
-      (let
-        [tail : OptLoopBceExprEnv (opt-loop-bce-expr-unbind (box-get rest) var)]
-        (if (= id var)
-          tail
-          (OptLoopBceExprEnv.Cons id expr (box tail))))]))
+  (OptLoopBceExprEnv
+    (opt-loop-bce-expr-unbind-into
+      env
+      var
+      0
+      (opt_loop_bce_var_expr_vec.with-capacity
+        (opt-loop-bce-expr-env-count env)))))
 
 (define (opt-loop-bce-expr-bind
   [env : OptLoopBceExprEnv]
@@ -26872,60 +27514,147 @@
   (match expr
     [(OptLoopBceExpr.Unknown) (opt-loop-bce-expr-unbind env var)]
     [_
-      (OptLoopBceExprEnv.Cons var expr (box (opt-loop-bce-expr-unbind env var)))]))
+      (let
+        [out : opt_loop_bce_var_expr_vec.Vec
+          (opt-loop-bce-expr-unbind-into
+            env
+            var
+            0
+            (opt_loop_bce_var_expr_vec.with-capacity
+              (+ (opt-loop-bce-expr-env-count env) 1)))]
+        (begin
+          (opt_loop_bce_var_expr_vec.push
+            (&mut out)
+            (OptLoopBceVarExpr.Bind var expr))
+          (OptLoopBceExprEnv out)))]))
+
+(define (opt-loop-bce-expr-lookup-from
+  [env : OptLoopBceExprEnv]
+  [var : i64]
+  [slot : i64]) : OptLoopBceExpr
+  (if (< slot 0)
+    (OptLoopBceExpr.Unknown)
+    (match (opt-loop-bce-expr-env-slot env slot)
+      [(OptLoopBceVarExpr.Bind id expr)
+        (if (= id var)
+          expr
+          (opt-loop-bce-expr-lookup-from env var (- slot 1)))])))
 
 (define (opt-loop-bce-expr-lookup [env : OptLoopBceExprEnv] [var : i64]) : OptLoopBceExpr
-  (match env
-    [(OptLoopBceExprEnv.Nil) (OptLoopBceExpr.Unknown)]
-    [(OptLoopBceExprEnv.Cons id expr rest)
-      (if (= id var)
-        expr
-        (opt-loop-bce-expr-lookup (box-get rest) var))]))
+  (opt-loop-bce-expr-lookup-from
+    env
+    var
+    (- (opt-loop-bce-expr-env-count env) 1)))
+
+(define (opt-loop-bce-alias-env-empty) : OptLoopBceAliasEnv
+  (OptLoopBceAliasEnv (opt_i64_pair_vec.new)))
+
+(define (opt-loop-bce-alias-env-count [env : OptLoopBceAliasEnv]) : i64
+  (opt_i64_pair_vec.len (& (struct-get env items))))
+
+(define (opt-loop-bce-alias-env-slot [env : OptLoopBceAliasEnv] [slot : i64]) : OptI64Pair
+  (array-ref (opt_i64_pair_vec.slots (& (struct-get env items))) slot))
+
+(define (opt-loop-bce-alias-unbind-into
+  [env : OptLoopBceAliasEnv]
+  [var : i64]
+  [slot : i64]
+  [out : opt_i64_pair_vec.Vec]) : opt_i64_pair_vec.Vec
+  (if (>= slot (opt-loop-bce-alias-env-count env))
+    out
+    (begin
+      (match (opt-loop-bce-alias-env-slot env slot)
+        [(OptI64Pair.Pair id root)
+          (if (= id var)
+            unit
+            (opt_i64_pair_vec.push (&mut out) (OptI64Pair.Pair id root)))])
+      (opt-loop-bce-alias-unbind-into env var (+ slot 1) out))))
 
 (define (opt-loop-bce-alias-unbind [env : OptLoopBceAliasEnv] [var : i64]) : OptLoopBceAliasEnv
-  (match env
-    [(OptLoopBceAliasEnv.Nil) (OptLoopBceAliasEnv.Nil)]
-    [(OptLoopBceAliasEnv.Cons id root rest)
-      (let
-        [tail : OptLoopBceAliasEnv
-          (opt-loop-bce-alias-unbind (box-get rest) var)]
-        (if (= id var)
-          tail
-          (OptLoopBceAliasEnv.Cons id root (box tail))))]))
+  (OptLoopBceAliasEnv
+    (opt-loop-bce-alias-unbind-into
+      env
+      var
+      0
+      (opt_i64_pair_vec.with-capacity (opt-loop-bce-alias-env-count env)))))
 
 (define (opt-loop-bce-alias-bind
   [env : OptLoopBceAliasEnv]
   [var : i64]
   [root : i64]) : OptLoopBceAliasEnv
-  (OptLoopBceAliasEnv.Cons var root (box (opt-loop-bce-alias-unbind env var))))
+  (let
+    [out : opt_i64_pair_vec.Vec
+      (opt-loop-bce-alias-unbind-into
+        env
+        var
+        0
+        (opt_i64_pair_vec.with-capacity
+          (+ (opt-loop-bce-alias-env-count env) 1)))]
+    (begin
+      (opt_i64_pair_vec.push (&mut out) (OptI64Pair.Pair var root))
+      (OptLoopBceAliasEnv out))))
 
 (define (opt-loop-bce-alias-resolve-depth
   [env : OptLoopBceAliasEnv]
   [var : i64]
-  [depth : i64]) : i64
+  [depth : i64]
+  [slot : i64]) : i64
   (if (> depth 32)
     var
-    (match env
-      [(OptLoopBceAliasEnv.Nil) var]
-      [(OptLoopBceAliasEnv.Cons id root rest)
-        (if (= id var)
-          (if (= root var)
-            root
-            (opt-loop-bce-alias-resolve-depth env root (+ depth 1)))
-          (opt-loop-bce-alias-resolve-depth (box-get rest) var depth))])))
+    (if (< slot 0)
+      var
+      (match (opt-loop-bce-alias-env-slot env slot)
+        [(OptI64Pair.Pair id root)
+          (if (= id var)
+            (if (= root var)
+              root
+              (opt-loop-bce-alias-resolve-depth
+                env
+                root
+                (+ depth 1)
+                (- (opt-loop-bce-alias-env-count env) 1)))
+            (opt-loop-bce-alias-resolve-depth env var depth (- slot 1)))]))))
 
 (define (opt-loop-bce-alias-resolve [env : OptLoopBceAliasEnv] [var : i64]) : i64
-  (opt-loop-bce-alias-resolve-depth env var 0))
+  (opt-loop-bce-alias-resolve-depth
+    env
+    var
+    0
+    (- (opt-loop-bce-alias-env-count env) 1)))
+
+(define (opt-loop-bce-ptr-env-empty) : OptLoopBcePtrEnv
+  (OptLoopBcePtrEnv (opt_loop_bce_ptr_vec.new)))
+
+(define (opt-loop-bce-ptr-env-count [env : OptLoopBcePtrEnv]) : i64
+  (opt_loop_bce_ptr_vec.len (& (struct-get env items))))
+
+(define (opt-loop-bce-ptr-env-slot [env : OptLoopBcePtrEnv] [slot : i64]) : OptLoopBcePtrBind
+  (array-ref (opt_loop_bce_ptr_vec.slots (& (struct-get env items))) slot))
+
+(define (opt-loop-bce-ptr-unbind-into
+  [env : OptLoopBcePtrEnv]
+  [var : i64]
+  [slot : i64]
+  [out : opt_loop_bce_ptr_vec.Vec]) : opt_loop_bce_ptr_vec.Vec
+  (if (>= slot (opt-loop-bce-ptr-env-count env))
+    out
+    (begin
+      (match (opt-loop-bce-ptr-env-slot env slot)
+        [(OptLoopBcePtrBind.Bind id kind)
+          (if (= id var)
+            unit
+            (opt_loop_bce_ptr_vec.push
+              (&mut out)
+              (OptLoopBcePtrBind.Bind id kind)))])
+      (opt-loop-bce-ptr-unbind-into env var (+ slot 1) out))))
 
 (define (opt-loop-bce-ptr-unbind [env : OptLoopBcePtrEnv] [var : i64]) : OptLoopBcePtrEnv
-  (match env
-    [(OptLoopBcePtrEnv.Nil) (OptLoopBcePtrEnv.Nil)]
-    [(OptLoopBcePtrEnv.Cons id kind rest)
-      (let
-        [tail : OptLoopBcePtrEnv (opt-loop-bce-ptr-unbind (box-get rest) var)]
-        (if (= id var)
-          tail
-          (OptLoopBcePtrEnv.Cons id kind (box tail))))]))
+  (OptLoopBcePtrEnv
+    (opt-loop-bce-ptr-unbind-into
+      env
+      var
+      0
+      (opt_loop_bce_ptr_vec.with-capacity (opt-loop-bce-ptr-env-count env)))))
 
 (define (opt-loop-bce-ptr-bind
   [env : OptLoopBcePtrEnv]
@@ -26933,26 +27662,70 @@
   [kind : OptLoopBcePtrKind]) : OptLoopBcePtrEnv
   (match kind
     [(OptLoopBcePtrKind.Unknown) (opt-loop-bce-ptr-unbind env var)]
-    [_ (OptLoopBcePtrEnv.Cons var kind (box (opt-loop-bce-ptr-unbind env var)))]))
+    [_
+      (let
+        [out : opt_loop_bce_ptr_vec.Vec
+          (opt-loop-bce-ptr-unbind-into
+            env
+            var
+            0
+            (opt_loop_bce_ptr_vec.with-capacity
+              (+ (opt-loop-bce-ptr-env-count env) 1)))]
+        (begin
+          (opt_loop_bce_ptr_vec.push
+            (&mut out)
+            (OptLoopBcePtrBind.Bind var kind))
+          (OptLoopBcePtrEnv out)))]))
+
+(define (opt-loop-bce-ptr-lookup-from
+  [env : OptLoopBcePtrEnv]
+  [var : i64]
+  [slot : i64]) : OptLoopBcePtrKind
+  (if (< slot 0)
+    (OptLoopBcePtrKind.Unknown)
+    (match (opt-loop-bce-ptr-env-slot env slot)
+      [(OptLoopBcePtrBind.Bind id kind)
+        (if (= id var)
+          kind
+          (opt-loop-bce-ptr-lookup-from env var (- slot 1)))])))
 
 (define (opt-loop-bce-ptr-lookup [env : OptLoopBcePtrEnv] [var : i64]) : OptLoopBcePtrKind
-  (match env
-    [(OptLoopBcePtrEnv.Nil) (OptLoopBcePtrKind.Unknown)]
-    [(OptLoopBcePtrEnv.Cons id kind rest)
-      (if (= id var)
-        kind
-        (opt-loop-bce-ptr-lookup (box-get rest) var))]))
+  (opt-loop-bce-ptr-lookup-from env var (- (opt-loop-bce-ptr-env-count env) 1)))
+
+(define (opt-loop-bce-length-env-empty) : OptLoopBceLengthEnv
+  (OptLoopBceLengthEnv (opt_loop_bce_var_expr_vec.new)))
+
+(define (opt-loop-bce-length-env-count [env : OptLoopBceLengthEnv]) : i64
+  (opt_loop_bce_var_expr_vec.len (& (struct-get env items))))
+
+(define (opt-loop-bce-length-env-slot [env : OptLoopBceLengthEnv] [slot : i64]) : OptLoopBceVarExpr
+  (array-ref (opt_loop_bce_var_expr_vec.slots (& (struct-get env items))) slot))
+
+(define (opt-loop-bce-length-unbind-into
+  [env : OptLoopBceLengthEnv]
+  [object : i64]
+  [slot : i64]
+  [out : opt_loop_bce_var_expr_vec.Vec]) : opt_loop_bce_var_expr_vec.Vec
+  (if (>= slot (opt-loop-bce-length-env-count env))
+    out
+    (begin
+      (match (opt-loop-bce-length-env-slot env slot)
+        [(OptLoopBceVarExpr.Bind id expr)
+          (if (= id object)
+            unit
+            (opt_loop_bce_var_expr_vec.push
+              (&mut out)
+              (OptLoopBceVarExpr.Bind id expr)))])
+      (opt-loop-bce-length-unbind-into env object (+ slot 1) out))))
 
 (define (opt-loop-bce-length-unbind [env : OptLoopBceLengthEnv] [object : i64]) : OptLoopBceLengthEnv
-  (match env
-    [(OptLoopBceLengthEnv.Nil) (OptLoopBceLengthEnv.Nil)]
-    [(OptLoopBceLengthEnv.Cons id expr rest)
-      (let
-        [tail : OptLoopBceLengthEnv
-          (opt-loop-bce-length-unbind (box-get rest) object)]
-        (if (= id object)
-          tail
-          (OptLoopBceLengthEnv.Cons id expr (box tail))))]))
+  (OptLoopBceLengthEnv
+    (opt-loop-bce-length-unbind-into
+      env
+      object
+      0
+      (opt_loop_bce_var_expr_vec.with-capacity
+        (opt-loop-bce-length-env-count env)))))
 
 (define (opt-loop-bce-length-bind
   [env : OptLoopBceLengthEnv]
@@ -26961,28 +27734,71 @@
   (match expr
     [(OptLoopBceExpr.Unknown) (opt-loop-bce-length-unbind env object)]
     [_
-      (OptLoopBceLengthEnv.Cons
-        object
-        expr
-        (box (opt-loop-bce-length-unbind env object)))]))
+      (let
+        [out : opt_loop_bce_var_expr_vec.Vec
+          (opt-loop-bce-length-unbind-into
+            env
+            object
+            0
+            (opt_loop_bce_var_expr_vec.with-capacity
+              (+ (opt-loop-bce-length-env-count env) 1)))]
+        (begin
+          (opt_loop_bce_var_expr_vec.push
+            (&mut out)
+            (OptLoopBceVarExpr.Bind object expr))
+          (OptLoopBceLengthEnv out)))]))
+
+(define (opt-loop-bce-length-lookup-from
+  [env : OptLoopBceLengthEnv]
+  [object : i64]
+  [slot : i64]) : OptLoopBceExpr
+  (if (< slot 0)
+    (OptLoopBceExpr.Unknown)
+    (match (opt-loop-bce-length-env-slot env slot)
+      [(OptLoopBceVarExpr.Bind id expr)
+        (if (= id object)
+          expr
+          (opt-loop-bce-length-lookup-from env object (- slot 1)))])))
 
 (define (opt-loop-bce-length-lookup [env : OptLoopBceLengthEnv] [object : i64]) : OptLoopBceExpr
-  (match env
-    [(OptLoopBceLengthEnv.Nil) (OptLoopBceExpr.Unknown)]
-    [(OptLoopBceLengthEnv.Cons id expr rest)
-      (if (= id object)
-        expr
-        (opt-loop-bce-length-lookup (box-get rest) object))]))
+  (opt-loop-bce-length-lookup-from
+    env
+    object
+    (- (opt-loop-bce-length-env-count env) 1)))
+
+(define (opt-loop-bce-cmp-env-empty) : OptLoopBceCmpEnv
+  (OptLoopBceCmpEnv (opt_loop_bce_cmp_vec.new)))
+
+(define (opt-loop-bce-cmp-env-count [env : OptLoopBceCmpEnv]) : i64
+  (opt_loop_bce_cmp_vec.len (& (struct-get env items))))
+
+(define (opt-loop-bce-cmp-env-slot [env : OptLoopBceCmpEnv] [slot : i64]) : OptLoopBceCmp
+  (array-ref (opt_loop_bce_cmp_vec.slots (& (struct-get env items))) slot))
+
+(define (opt-loop-bce-cmp-unbind-into
+  [env : OptLoopBceCmpEnv]
+  [var : i64]
+  [slot : i64]
+  [out : opt_loop_bce_cmp_vec.Vec]) : opt_loop_bce_cmp_vec.Vec
+  (if (>= slot (opt-loop-bce-cmp-env-count env))
+    out
+    (begin
+      (match (opt-loop-bce-cmp-env-slot env slot)
+        [(OptLoopBceCmp.Bind id op lhs rhs ty)
+          (if (= id var)
+            unit
+            (opt_loop_bce_cmp_vec.push
+              (&mut out)
+              (OptLoopBceCmp.Bind id op lhs rhs ty)))])
+      (opt-loop-bce-cmp-unbind-into env var (+ slot 1) out))))
 
 (define (opt-loop-bce-cmp-unbind [env : OptLoopBceCmpEnv] [var : i64]) : OptLoopBceCmpEnv
-  (match env
-    [(OptLoopBceCmpEnv.Nil) (OptLoopBceCmpEnv.Nil)]
-    [(OptLoopBceCmpEnv.Cons id op lhs rhs ty rest)
-      (let
-        [tail : OptLoopBceCmpEnv (opt-loop-bce-cmp-unbind (box-get rest) var)]
-        (if (= id var)
-          tail
-          (OptLoopBceCmpEnv.Cons id op lhs rhs ty (box tail))))]))
+  (OptLoopBceCmpEnv
+    (opt-loop-bce-cmp-unbind-into
+      env
+      var
+      0
+      (opt_loop_bce_cmp_vec.with-capacity (opt-loop-bce-cmp-env-count env)))))
 
 (define (opt-loop-bce-cmp-bind
   [env : OptLoopBceCmpEnv]
@@ -26991,51 +27807,105 @@
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]
   [ty : AstType]) : OptLoopBceCmpEnv
-  (OptLoopBceCmpEnv.Cons
-    var
-    op
-    lhs
-    rhs
-    ty
-    (box (opt-loop-bce-cmp-unbind env var))))
+  (let
+    [out : opt_loop_bce_cmp_vec.Vec
+      (opt-loop-bce-cmp-unbind-into
+        env
+        var
+        0
+        (opt_loop_bce_cmp_vec.with-capacity
+          (+ (opt-loop-bce-cmp-env-count env) 1)))]
+    (begin
+      (opt_loop_bce_cmp_vec.push
+        (&mut out)
+        (OptLoopBceCmp.Bind var op lhs rhs ty))
+      (OptLoopBceCmpEnv out))))
 
-(define (opt-loop-bce-cmp-lookup [env : OptLoopBceCmpEnv] [var : i64]) : OptLoopBceCmpEnv
-  (match env
-    [(OptLoopBceCmpEnv.Nil) (OptLoopBceCmpEnv.Nil)]
-    [(OptLoopBceCmpEnv.Cons id op lhs rhs ty rest)
-      (if (= id var)
-        (OptLoopBceCmpEnv.Cons id op lhs rhs ty (box OptLoopBceCmpEnv.Nil))
-        (opt-loop-bce-cmp-lookup (box-get rest) var))]))
+(define (opt-loop-bce-cmp-lookup-from
+  [env : OptLoopBceCmpEnv]
+  [var : i64]
+  [slot : i64]) : OptLoopBceCmpFound
+  (if (< slot 0)
+    (OptLoopBceCmpFound.NoCmp)
+    (match (opt-loop-bce-cmp-env-slot env slot)
+      [(OptLoopBceCmp.Bind id op lhs rhs ty)
+        (if (= id var)
+          (OptLoopBceCmpFound.SomeCmp op lhs rhs ty)
+          (opt-loop-bce-cmp-lookup-from env var (- slot 1)))])))
+
+(define (opt-loop-bce-cmp-lookup [env : OptLoopBceCmpEnv] [var : i64]) : OptLoopBceCmpFound
+  (opt-loop-bce-cmp-lookup-from env var (- (opt-loop-bce-cmp-env-count env) 1)))
+
+(define (opt-loop-bce-guard-env-empty) : OptLoopBceGuardEnv
+  (OptLoopBceGuardEnv (opt_loop_bce_guard_vec.new)))
+
+(define (opt-loop-bce-guard-env-count [env : OptLoopBceGuardEnv]) : i64
+  (opt_loop_bce_guard_vec.len (& (struct-get env items))))
+
+(define (opt-loop-bce-guard-env-slot [env : OptLoopBceGuardEnv] [slot : i64]) : OptLoopBceGuard
+  (array-ref (opt_loop_bce_guard_vec.slots (& (struct-get env items))) slot))
+
+(define (opt-loop-bce-guard-unbind-into
+  [env : OptLoopBceGuardEnv]
+  [label : String]
+  [slot : i64]
+  [out : opt_loop_bce_guard_vec.Vec]) : opt_loop_bce_guard_vec.Vec
+  (if (>= slot (opt-loop-bce-guard-env-count env))
+    out
+    (begin
+      (match (opt-loop-bce-guard-env-slot env slot)
+        [(OptLoopBceGuard.Bind id index length)
+          (if (string.eq id label)
+            unit
+            (opt_loop_bce_guard_vec.push
+              (&mut out)
+              (OptLoopBceGuard.Bind id index length)))])
+      (opt-loop-bce-guard-unbind-into env label (+ slot 1) out))))
 
 (define (opt-loop-bce-guard-unbind [env : OptLoopBceGuardEnv] [label : String]) : OptLoopBceGuardEnv
-  (match env
-    [(OptLoopBceGuardEnv.Nil) (OptLoopBceGuardEnv.Nil)]
-    [(OptLoopBceGuardEnv.Cons id index length rest)
-      (let
-        [tail : OptLoopBceGuardEnv
-          (opt-loop-bce-guard-unbind (box-get rest) label)]
-        (if (string.eq id label)
-          tail
-          (OptLoopBceGuardEnv.Cons id index length (box tail))))]))
+  (OptLoopBceGuardEnv
+    (opt-loop-bce-guard-unbind-into
+      env
+      label
+      0
+      (opt_loop_bce_guard_vec.with-capacity (opt-loop-bce-guard-env-count env)))))
 
 (define (opt-loop-bce-guard-bind
   [env : OptLoopBceGuardEnv]
   [label : String]
   [index : OptLoopBceExpr]
   [length : OptLoopBceExpr]) : OptLoopBceGuardEnv
-  (OptLoopBceGuardEnv.Cons
-    label
-    index
-    length
-    (box (opt-loop-bce-guard-unbind env label))))
+  (let
+    [out : opt_loop_bce_guard_vec.Vec
+      (opt-loop-bce-guard-unbind-into
+        env
+        label
+        0
+        (opt_loop_bce_guard_vec.with-capacity
+          (+ (opt-loop-bce-guard-env-count env) 1)))]
+    (begin
+      (opt_loop_bce_guard_vec.push
+        (&mut out)
+        (OptLoopBceGuard.Bind label index length))
+      (OptLoopBceGuardEnv out))))
 
-(define (opt-loop-bce-guard-lookup [env : OptLoopBceGuardEnv] [label : String]) : OptLoopBceGuardEnv
-  (match env
-    [(OptLoopBceGuardEnv.Nil) (OptLoopBceGuardEnv.Nil)]
-    [(OptLoopBceGuardEnv.Cons id index length rest)
-      (if (string.eq id label)
-        (OptLoopBceGuardEnv.Cons id index length (box OptLoopBceGuardEnv.Nil))
-        (opt-loop-bce-guard-lookup (box-get rest) label))]))
+(define (opt-loop-bce-guard-lookup-from
+  [env : OptLoopBceGuardEnv]
+  [label : String]
+  [slot : i64]) : OptLoopBceGuardFound
+  (if (< slot 0)
+    (OptLoopBceGuardFound.NoGuard)
+    (match (opt-loop-bce-guard-env-slot env slot)
+      [(OptLoopBceGuard.Bind id index length)
+        (if (string.eq id label)
+          (OptLoopBceGuardFound.SomeGuard index length)
+          (opt-loop-bce-guard-lookup-from env label (- slot 1)))])))
+
+(define (opt-loop-bce-guard-lookup [env : OptLoopBceGuardEnv] [label : String]) : OptLoopBceGuardFound
+  (opt-loop-bce-guard-lookup-from
+    env
+    label
+    (- (opt-loop-bce-guard-env-count env) 1)))
 
 (define (opt-loop-bce-value-expr
   [sources : opt_i64_i64_map.Map]
@@ -27075,20 +27945,35 @@
         (opt-loop-bce-expr-uses-var? (box-get lhs) var)
         (opt-loop-bce-expr-uses-var? (box-get rhs) var))]))
 
+(define (opt-loop-bce-guard-invalidate-into
+  [guards : OptLoopBceGuardEnv]
+  [var : i64]
+  [slot : i64]
+  [out : opt_loop_bce_guard_vec.Vec]) : opt_loop_bce_guard_vec.Vec
+  (if (>= slot (opt-loop-bce-guard-env-count guards))
+    out
+    (begin
+      (match (opt-loop-bce-guard-env-slot guards slot)
+        [(OptLoopBceGuard.Bind label index length)
+          (if (or
+            (opt-loop-bce-expr-uses-var? index var)
+            (opt-loop-bce-expr-uses-var? length var))
+            unit
+            (opt_loop_bce_guard_vec.push
+              (&mut out)
+              (OptLoopBceGuard.Bind label index length)))])
+      (opt-loop-bce-guard-invalidate-into guards var (+ slot 1) out))))
+
 (define (opt-loop-bce-guard-invalidate-var
   [guards : OptLoopBceGuardEnv]
   [var : i64]) : OptLoopBceGuardEnv
-  (match guards
-    [(OptLoopBceGuardEnv.Nil) (OptLoopBceGuardEnv.Nil)]
-    [(OptLoopBceGuardEnv.Cons label index length rest)
-      (let
-        [tail : OptLoopBceGuardEnv
-          (opt-loop-bce-guard-invalidate-var (box-get rest) var)]
-        (if (or
-          (opt-loop-bce-expr-uses-var? index var)
-          (opt-loop-bce-expr-uses-var? length var))
-          tail
-          (OptLoopBceGuardEnv.Cons label index length (box tail))))]))
+  (OptLoopBceGuardEnv
+    (opt-loop-bce-guard-invalidate-into
+      guards
+      var
+      0
+      (opt_loop_bce_guard_vec.with-capacity
+        (opt-loop-bce-guard-env-count guards)))))
 
 (define (opt-range-fact-uses-var? [fact : OptRangeFact] [var : i64]) : bool
   (match fact
@@ -27130,7 +28015,7 @@
     (struct-get state exprs)
     (struct-get state aliases)
     (struct-get state ptrs)
-    (OptLoopBceLengthEnv.Nil)
+    (opt-loop-bce-length-env-empty)
     (struct-get state cmps)
     (struct-get state guards)
     (struct-get state ranges)))
@@ -27330,14 +28215,20 @@
     [_ false]))
 
 (define (opt-loop-bce-i64-list-remove [items : OptI64List] [value : i64]) : OptI64List
-  (match items
-    [(OptI64List.Nil) (OptI64List.Nil)]
-    [(OptI64List.Cons head rest)
-      (let
-        [tail : OptI64List (opt-loop-bce-i64-list-remove (box-get rest) value)]
-        (if (= head value)
-          tail
-          (OptI64List.Cons head (box tail))))]))
+  (let
+    [count : i64 (opt-i64-list-count items)]
+    [out : opt_i64_vec.Vec (opt_i64_vec.with-capacity count)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [current : i64 (opt-i64-list-slot items slot)]
+          (begin
+            (if (= current value)
+              unit
+              (opt_i64_vec.push (&mut out) current))
+            (set! slot (+ slot 1)))))
+      (OptI64List out))))
 
 (define (opt-loop-bce-index-increment-step
   [current : OptLoopBceIndexDef]
@@ -27414,7 +28305,7 @@
         (struct-get instrs len)
         index-var
         (OptLoopBceIndexDef.NoDef)
-        (OptI64List.Nil))
+        (opt-i64-list-empty))
         [(OptLoopBceIndexDef.Increment) true]
         [_ false])]))
 
@@ -27760,7 +28651,7 @@
   (match cond
     [(CompilerIrValue.Var cond-var)
       (match (opt-loop-bce-cmp-lookup (struct-get state cmps) cond-var)
-        [(OptLoopBceCmpEnv.Cons _ op lhs rhs ty _)
+        [(OptLoopBceCmpFound.SomeCmp op lhs rhs ty)
           (let
             [marker : OptLoopBceExpr
               (OptLoopBceExpr.Value (CompilerIrValue.I64 (- 0 1)))]
@@ -27809,11 +28700,11 @@
                 (match (opt-loop-bce-guard-lookup
                   (struct-get state guards)
                   block-label)
-                  [(OptLoopBceGuardEnv.Cons _ found found-marker _)
+                  [(OptLoopBceGuardFound.SomeGuard found found-marker)
                     (and
                       (opt-loop-bce-expr-eq found lhs)
                       (opt-loop-bce-expr-eq found-marker marker))]
-                  [(OptLoopBceGuardEnv.Nil) false]))]
+                  [(OptLoopBceGuardFound.NoGuard) false]))]
             [loop-nonnegative : bool
               (opt-loop-bce-guard-nonnegative?
                 blocks
@@ -27869,7 +28760,7 @@
                       rhs)
                     lt-range-state))]
               [_ range-state]))]
-        [(OptLoopBceCmpEnv.Nil) state])]
+        [(OptLoopBceCmpFound.NoCmp) state])]
     [_ state]))
 
 (define (opt-loop-bce-update-gep
@@ -28195,15 +29086,25 @@
     [(CompilerIrInstr.Return _) state]
     [(CompilerIrInstr.Switch _ _ _ _) state]))
 
+(define (opt-loop-bce-length-expr-known-from?
+  [lengths : OptLoopBceLengthEnv]
+  [expr : OptLoopBceExpr]
+  [slot : i64]) : bool
+  (if (< slot 0)
+    false
+    (match (opt-loop-bce-length-env-slot lengths slot)
+      [(OptLoopBceVarExpr.Bind _ found)
+        (if (opt-loop-bce-expr-eq found expr)
+          true
+          (opt-loop-bce-length-expr-known-from? lengths expr (- slot 1)))])))
+
 (define (opt-loop-bce-length-expr-known?
   [lengths : OptLoopBceLengthEnv]
   [expr : OptLoopBceExpr]) : bool
-  (match lengths
-    [(OptLoopBceLengthEnv.Nil) false]
-    [(OptLoopBceLengthEnv.Cons _ found rest)
-      (if (opt-loop-bce-expr-eq found expr)
-        true
-        (opt-loop-bce-length-expr-known? (box-get rest) expr))]))
+  (opt-loop-bce-length-expr-known-from?
+    lengths
+    expr
+    (- (opt-loop-bce-length-env-count lengths) 1)))
 
 (define (opt-loop-bce-range-can-remove?
   [state : OptLoopBceState]
@@ -28244,13 +29145,13 @@
       (and
         (opt-loop-bce-length-expr-known? (struct-get state lengths) length-expr)
         (match (opt-loop-bce-guard-lookup (struct-get state guards) block-label)
-          [(OptLoopBceGuardEnv.Cons _ guard-index guard-length _)
+          [(OptLoopBceGuardFound.SomeGuard guard-index guard-length)
             (and
               (opt-loop-bce-expr-eq
                 guard-index
                 (opt-loop-bce-value-expr sources (struct-get state exprs) index))
               (opt-loop-bce-expr-eq guard-length length-expr))]
-          [(OptLoopBceGuardEnv.Nil) false])))))
+          [(OptLoopBceGuardFound.NoGuard) false])))))
 
 (define (opt-loop-bce-rewrite-instr-seq-from
   [state : OptLoopBceState]
@@ -28648,9 +29549,9 @@
     (or
       (and
         (opt-loop-bce-argc-call-shape-blocks summaries blocks)
-        (opt-loop-bce-length-store-shape-blocks blocks (OptI64List.Nil)))
+        (opt-loop-bce-length-store-shape-blocks blocks (opt-i64-list-empty)))
       (and
-        (opt-loop-bce-length-load-shape-blocks blocks (OptI64List.Nil))
+        (opt-loop-bce-length-load-shape-blocks blocks (opt-i64-list-empty))
         (opt-loop-bce-string-byte-shape-blocks blocks))
       (and
         (<= (compiler-ir-block-list-count blocks) 8)
@@ -28658,12 +29559,12 @@
 
 (define (opt-loop-bce-initial-state) : OptLoopBceState
   (OptLoopBceState
-    (OptLoopBceExprEnv.Nil)
-    (OptLoopBceAliasEnv.Nil)
-    (OptLoopBcePtrEnv.Nil)
-    (OptLoopBceLengthEnv.Nil)
-    (OptLoopBceCmpEnv.Nil)
-    (OptLoopBceGuardEnv.Nil)
+    (opt-loop-bce-expr-env-empty)
+    (opt-loop-bce-alias-env-empty)
+    (opt-loop-bce-ptr-env-empty)
+    (opt-loop-bce-length-env-empty)
+    (opt-loop-bce-cmp-env-empty)
+    (opt-loop-bce-guard-env-empty)
     (OptRangeFacts.Nil)))
 
 (define (opt-loop-bce-block-results-fill-empty!
@@ -28854,14 +29755,14 @@
     (match (opt-loop-bce-guard-lookup
       (struct-get range-state guards)
       child-label)
-      [(OptLoopBceGuardEnv.Cons _ _ _ _) range-state]
-      [(OptLoopBceGuardEnv.Nil)
+      [(OptLoopBceGuardFound.SomeGuard _ _) range-state]
+      [(OptLoopBceGuardFound.NoGuard)
         (match (opt-loop-bce-guard-lookup
           (struct-get range-state guards)
           parent-label)
-          [(OptLoopBceGuardEnv.Cons _ index length _)
+          [(OptLoopBceGuardFound.SomeGuard index length)
             (opt-loop-bce-state-bind-guard range-state child-label index length)]
-          [(OptLoopBceGuardEnv.Nil) range-state])])))
+          [(OptLoopBceGuardFound.NoGuard) range-state])])))
 
 ;; --- affine chain folding (codegen phase 6) ----------------------------------
 ;;
@@ -33878,20 +34779,55 @@
 ;; Underivable checks kept in the fast clone, identified by (block label,
 ;; instruction index) -- both walks visit `shape body-blocks` in order, so the
 ;; pair is a stable identity between guard derivation and cloning.
-(defenum OptBceMbKeep
-  (Nil)
-  (Cons String i64 (Box OptBceMbKeep)))
+(defenum OptBceMbKeepItem
+  (Item String i64))
+
+(import (vector.vector OptBceMbKeepItem core) as opt_bce_mb_keep_vec)
+
+;; Checks that stay in the fast clone. Only membership reads this, so the
+;; generated vector appends and the stored order is never observed.
+(defstruct OptBceMbKeep
+  (items opt_bce_mb_keep_vec.Vec))
+
+(define (opt-bce-mb-keep-empty) : OptBceMbKeep
+  (OptBceMbKeep (opt_bce_mb_keep_vec.new)))
+
+(define (opt-bce-mb-keep-count [keep : OptBceMbKeep]) : i64
+  (opt_bce_mb_keep_vec.len (& (struct-get keep items))))
+
+(define (opt-bce-mb-keep-slot [keep : OptBceMbKeep] [slot : i64]) : OptBceMbKeepItem
+  (array-ref (opt_bce_mb_keep_vec.slots (& (struct-get keep items))) slot))
+
+(define (opt-bce-mb-keep-add
+  [keep : OptBceMbKeep]
+  [label : String]
+  [index : i64]) : OptBceMbKeep
+  (let
+    [items : opt_bce_mb_keep_vec.Vec (struct-get keep items)]
+    (begin
+      (opt_bce_mb_keep_vec.push
+        (&mut items)
+        (OptBceMbKeepItem.Item label index))
+      (OptBceMbKeep items))))
+
+(define (opt-bce-mb-keep-contains-from?
+  [keep : OptBceMbKeep]
+  [label : String]
+  [index : i64]
+  [slot : i64]) : bool
+  (if (>= slot (opt-bce-mb-keep-count keep))
+    false
+    (match (opt-bce-mb-keep-slot keep slot)
+      [(OptBceMbKeepItem.Item item-label item-index)
+        (if (and (= item-index index) (string.eq item-label label))
+          true
+          (opt-bce-mb-keep-contains-from? keep label index (+ slot 1)))])))
 
 (define (opt-bce-mb-keep-contains?
   [keep : OptBceMbKeep]
   [label : String]
   [index : i64]) : bool
-  (match keep
-    [(OptBceMbKeep.Nil) false]
-    [(OptBceMbKeep.Cons item-label item-index rest)
-      (if (and (= item-index index) (string.eq item-label label))
-        true
-        (opt-bce-mb-keep-contains? (box-get rest) label index))]))
+  (opt-bce-mb-keep-contains-from? keep label index 0))
 
 ;; An index expression represented as either a literal or `base + offset`.
 ;; Opaque SSA definitions are valid bases: this recognizes both an explicit
@@ -34045,9 +34981,15 @@
 ;; At that point the exhaustive dispatch loop has its final CFG shape. Pairing
 ;; edits those blocks in place: it never invokes BCE, versions a loop, or clones
 ;; a block.
-(defenum OptLateBoundsPairPlan
-  (Nil)
-  (Cons String i64 i64 bool CompilerIrValue (Box OptLateBoundsPairPlan)))
+(defenum OptLateBoundsPairPlanItem
+  (Item String i64 i64 bool CompilerIrValue))
+
+(import (vector.vector OptLateBoundsPairPlanItem core) as opt_late_bounds_pair_plan_vec)
+
+;; Collected pair plans. `opt-late-bounds-pair-at` resolves newest-first, so the
+;; lookup below walks the generated vector back to front.
+(defstruct OptLateBoundsPairPlan
+  (items opt_late_bounds_pair_plan_vec.Vec))
 
 (defenum OptLateBoundsPairAt
   (No)
@@ -34067,9 +35009,16 @@
   (No)
   (Some CompilerIrBlock))
 
-(defenum OptLateBoundsPairSubst
-  (Nil)
-  (Cons i64 i64 i64 (Box OptLateBoundsPairSubst)))
+(defenum OptLateBoundsPairSubstItem
+  (Item i64 i64 i64))
+
+(import (vector.vector OptLateBoundsPairSubstItem core) as opt_late_bounds_pair_subst_vec)
+
+;; Substitutions recorded while rewriting one block. The env builder below
+;; keeps the newest substitution nearest the head of the copy env, so the
+;; generated vector is walked back to front.
+(defstruct OptLateBoundsPairSubst
+  (items opt_late_bounds_pair_subst_vec.Vec))
 
 (define (opt-late-bounds-pair-selected-length?
   [selected : CompilerIrMaybeValue]
@@ -34134,13 +35083,14 @@
                     defs
                     (OptLateBoundsPairCollect
                       (CompilerIrMaybeValue.Some invariant-length)
-                      (OptLateBoundsPairPlan.Cons
-                        label
-                        index
-                        second
-                        first-smaller
-                        second-value
-                        (box (struct-get state plans)))
+                      (opt-late-bounds-pair-plan-add
+                        (struct-get state plans)
+                        (OptLateBoundsPairPlanItem.Item
+                          label
+                          index
+                          second
+                          first-smaller
+                          second-value))
                       (+ (struct-get state count) 1)))]))])]
       [_
         (opt-late-bounds-pair-collect-block
@@ -34179,52 +35129,140 @@
         defs
         state)]))
 
+(define (opt-late-bounds-pair-plan-empty) : OptLateBoundsPairPlan
+  (OptLateBoundsPairPlan (opt_late_bounds_pair_plan_vec.new)))
+
+(define (opt-late-bounds-pair-plan-count [plans : OptLateBoundsPairPlan]) : i64
+  (opt_late_bounds_pair_plan_vec.len (& (struct-get plans items))))
+
+(define (opt-late-bounds-pair-plan-slot
+  [plans : OptLateBoundsPairPlan]
+  [slot : i64]) : OptLateBoundsPairPlanItem
+  (array-ref
+    (opt_late_bounds_pair_plan_vec.slots (& (struct-get plans items)))
+    slot))
+
+(define (opt-late-bounds-pair-plan-add
+  [plans : OptLateBoundsPairPlan]
+  [item : OptLateBoundsPairPlanItem]) : OptLateBoundsPairPlan
+  (let
+    [items : opt_late_bounds_pair_plan_vec.Vec (struct-get plans items)]
+    (begin
+      (opt_late_bounds_pair_plan_vec.push (&mut items) item)
+      (OptLateBoundsPairPlan items))))
+
+(define (opt-late-bounds-pair-at-slot
+  [plans : OptLateBoundsPairPlan]
+  [label : String]
+  [index : i64]
+  [slot : i64]) : OptLateBoundsPairAt
+  (if (< slot 0)
+    (OptLateBoundsPairAt.No)
+    (match (opt-late-bounds-pair-plan-slot plans slot)
+      [(OptLateBoundsPairPlanItem.Item
+          item-label
+          first
+          second
+          first-smaller
+          second-value)
+        (if (and (string.eq item-label label) (= index first))
+          (OptLateBoundsPairAt.First first-smaller second-value)
+          (if (and (string.eq item-label label) (= index second))
+            (OptLateBoundsPairAt.Second)
+            (opt-late-bounds-pair-at-slot plans label index (- slot 1))))])))
+
 (define (opt-late-bounds-pair-at
   [plans : OptLateBoundsPairPlan]
   [label : String]
   [index : i64]) : OptLateBoundsPairAt
-  (match plans
-    [(OptLateBoundsPairPlan.Nil) (OptLateBoundsPairAt.No)]
-    [(OptLateBoundsPairPlan.Cons
-        item-label
-        first
-        second
-        first-smaller
-        second-value
-        rest)
-      (if (and (string.eq item-label label) (= index first))
-        (OptLateBoundsPairAt.First first-smaller second-value)
-        (if (and (string.eq item-label label) (= index second))
-          (OptLateBoundsPairAt.Second)
-          (opt-late-bounds-pair-at (box-get rest) label index)))]))
+  (opt-late-bounds-pair-at-slot
+    plans
+    label
+    index
+    (- (opt-late-bounds-pair-plan-count plans) 1)))
+
+(define (opt-late-bounds-pair-subst-empty) : OptLateBoundsPairSubst
+  (OptLateBoundsPairSubst (opt_late_bounds_pair_subst_vec.new)))
+
+(define (opt-late-bounds-pair-subst-count [substs : OptLateBoundsPairSubst]) : i64
+  (opt_late_bounds_pair_subst_vec.len (& (struct-get substs items))))
+
+(define (opt-late-bounds-pair-subst-slot
+  [substs : OptLateBoundsPairSubst]
+  [slot : i64]) : OptLateBoundsPairSubstItem
+  (array-ref
+    (opt_late_bounds_pair_subst_vec.slots (& (struct-get substs items)))
+    slot))
+
+;; One rewrite walk owns the list it extends, but the pre-extension value stays
+;; live on the sibling arm of the enclosing `if`, so this copies into a
+;; right-sized buffer rather than appending to a shared vector.
+(define (opt-late-bounds-pair-subst-add
+  [substs : OptLateBoundsPairSubst]
+  [raw : i64]
+  [resolved : i64]
+  [replacement : i64]) : OptLateBoundsPairSubst
+  (let
+    [count : i64 (opt-late-bounds-pair-subst-count substs)]
+    [out : opt_late_bounds_pair_subst_vec.Vec
+      (opt_late_bounds_pair_subst_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (opt_late_bounds_pair_subst_vec.push
+            (&mut out)
+            (opt-late-bounds-pair-subst-slot substs slot))
+          (set! slot (+ slot 1))))
+      (opt_late_bounds_pair_subst_vec.push
+        (&mut out)
+        (OptLateBoundsPairSubstItem.Item raw resolved replacement))
+      (OptLateBoundsPairSubst out))))
+
+;; Builds the env oldest substitution first so the newest one still ends up
+;; nearest the head, exactly as the tail-first cons recursion did.
+(define (opt-late-bounds-pair-subst-env-from
+  [substs : OptLateBoundsPairSubst]
+  [slot : i64]
+  [tail : OptCopyEnv]) : OptCopyEnv
+  (if (>= slot (opt-late-bounds-pair-subst-count substs))
+    tail
+    (match (opt-late-bounds-pair-subst-slot substs slot)
+      [(OptLateBoundsPairSubstItem.Item raw resolved replacement)
+        (opt-late-bounds-pair-subst-env-from
+          substs
+          (+ slot 1)
+          (if (= raw resolved)
+            (OptCopyEnv.Cons raw (CompilerIrValue.Var replacement) (box tail))
+            (OptCopyEnv.Cons
+              raw
+              (CompilerIrValue.Var replacement)
+              (box
+                (OptCopyEnv.Cons
+                  resolved
+                  (CompilerIrValue.Var replacement)
+                  (box tail))))))])))
 
 (define (opt-late-bounds-pair-subst-env [substs : OptLateBoundsPairSubst]) : OptCopyEnv
-  (match substs
-    [(OptLateBoundsPairSubst.Nil) (OptCopyEnv.Nil)]
-    [(OptLateBoundsPairSubst.Cons raw resolved replacement rest)
-      (let
-        [tail : OptCopyEnv (opt-late-bounds-pair-subst-env (box-get rest))]
-        (if (= raw resolved)
-          (OptCopyEnv.Cons raw (CompilerIrValue.Var replacement) (box tail))
-          (OptCopyEnv.Cons
-            raw
-            (CompilerIrValue.Var replacement)
-            (box
-              (OptCopyEnv.Cons
-                resolved
-                (CompilerIrValue.Var replacement)
-                (box tail))))))]))
+  (opt-late-bounds-pair-subst-env-from substs 0 (OptCopyEnv.Nil)))
+
+(define (opt-late-bounds-pair-subst-def-from?
+  [substs : OptLateBoundsPairSubst]
+  [dst : i64]
+  [slot : i64]) : bool
+  (if (>= slot (opt-late-bounds-pair-subst-count substs))
+    false
+    (match (opt-late-bounds-pair-subst-slot substs slot)
+      [(OptLateBoundsPairSubstItem.Item raw resolved _)
+        (or
+          (= dst raw)
+          (= dst resolved)
+          (opt-late-bounds-pair-subst-def-from? substs dst (+ slot 1)))])))
 
 (define (opt-late-bounds-pair-subst-def?
   [substs : OptLateBoundsPairSubst]
   [dst : i64]) : bool
-  (match substs
-    [(OptLateBoundsPairSubst.Nil) false]
-    [(OptLateBoundsPairSubst.Cons raw resolved _ rest)
-      (or
-        (= dst raw)
-        (= dst resolved)
-        (opt-late-bounds-pair-subst-def? (box-get rest) dst))]))
+  (opt-late-bounds-pair-subst-def-from? substs dst 0))
 
 ;; Emit a single check at the first trap point. When the later operand is the
 ;; smaller one, materialize `first - 1` there, substitute it for the later
@@ -34279,11 +35317,11 @@
                       [smaller : i64 (opt-bce-version-alloc-var cell)]
                       [resolved : i64 (opt-bce-mb-resolve body-blocks raw 16)]
                       [next-substs : OptLateBoundsPairSubst
-                        (OptLateBoundsPairSubst.Cons
+                        (opt-late-bounds-pair-subst-add
+                          substs
                           raw
                           resolved
-                          smaller
-                          (box substs))]
+                          smaller)]
                       (compiler-ir-instr-cons
                         (CompilerIrInstr.BinOp
                           smaller
@@ -34460,7 +35498,7 @@
                   body-blocks
                   plans
                   short-length
-                  (OptLateBoundsPairSubst.Nil)
+                  (opt-late-bounds-pair-subst-empty)
                   cell)))
             (opt-late-bounds-pair-rewrite-blocks
               (box-get rest)
@@ -34506,7 +35544,7 @@
                 defs
                 (OptLateBoundsPairCollect
                   (CompilerIrMaybeValue.No)
-                  (OptLateBoundsPairPlan.Nil)
+                  (opt-late-bounds-pair-plan-empty)
                   0))]
             (if (= (struct-get collected count) 0)
               (OptLateBoundsPairResult.No)
@@ -34792,10 +35830,7 @@
                     ;; clone instead of rejecting the whole loop.
                     (OptBceMbDerive
                       (struct-get state guard)
-                      (OptBceMbKeep.Cons
-                        label
-                        index
-                        (box (struct-get state keep)))
+                      (opt-bce-mb-keep-add (struct-get state keep) label index)
                       (struct-get state derived))]
                   [(OptBceVersionGuardAcc.Some _ _ _)
                     (OptBceMbDerive
@@ -34805,7 +35840,7 @@
             [(CompilerIrMaybeValue.No)
               (OptBceMbDerive
                 (struct-get state guard)
-                (OptBceMbKeep.Cons label index (box (struct-get state keep)))
+                (opt-bce-mb-keep-add (struct-get state keep) label index)
                 (struct-get state derived))])]
         [_ state]))))
 
@@ -34888,7 +35923,7 @@
             (CompilerIrInstrList.Nil)
             (CompilerIrValueList.Nil)
             false)
-          (OptBceMbKeep.Nil)
+          (opt-bce-mb-keep-empty)
           0))]
     (if (= (struct-get dr derived) 0)
       ;; No removable check: cloning the loop would only duplicate it.
@@ -38194,9 +39229,34 @@
   ;; new clone uses when deciding whether another original producer can move.
   (Move String (Array i64) String CompilerIrInstrSeq (Array i64)))
 
-(defenum OptSuccessorSinkMoves
-  (Nil)
-  (Cons OptSuccessorSinkMove (Box OptSuccessorSinkMoves)))
+(import (vector.vector OptSuccessorSinkMove core) as opt_successor_sink_move_vec)
+
+;; Planned successor sinks for one block. A single planner owns the list and
+;; every reader scans it newest-first, which is the head-first cons order.
+(defstruct OptSuccessorSinkMoves
+  (items opt_successor_sink_move_vec.Vec))
+
+(define (opt-successor-sink-moves-empty) : OptSuccessorSinkMoves
+  (OptSuccessorSinkMoves (opt_successor_sink_move_vec.new)))
+
+(define (opt-successor-sink-moves-count [moves : OptSuccessorSinkMoves]) : i64
+  (opt_successor_sink_move_vec.len (& (struct-get moves items))))
+
+(define (opt-successor-sink-moves-slot
+  [moves : OptSuccessorSinkMoves]
+  [slot : i64]) : OptSuccessorSinkMove
+  (array-ref
+    (opt_successor_sink_move_vec.slots (& (struct-get moves items)))
+    slot))
+
+(define (opt-successor-sink-moves-add
+  [moves : OptSuccessorSinkMoves]
+  [move : OptSuccessorSinkMove]) : OptSuccessorSinkMoves
+  (let
+    [items : opt_successor_sink_move_vec.Vec (struct-get moves items)]
+    (begin
+      (opt_successor_sink_move_vec.push (&mut items) move)
+      (OptSuccessorSinkMoves items))))
 
 (defenum OptSuccessorSinkMaybeLabel
   (No)
@@ -39000,29 +40060,29 @@
 (define (opt-successor-sink-collect-moved-uses!
   [moves : OptSuccessorSinkMoves]
   [target : String]
-  [uses : (Array i64)]) : unit
-  (match moves
-    [(OptSuccessorSinkMoves.Nil) unit]
-    [(OptSuccessorSinkMoves.Cons move rest)
-      (begin
-        (match move
-          [(OptSuccessorSinkMove.Move _ _ move-target instrs origins)
-            (if (string.eq move-target target)
-              (let
-                [index : i64 0]
-                [count : i64 (compiler-ir-instr-seq-count instrs)]
-                (while (< index count)
-                  (begin
-                    ;; Clone uses are new and cannot stand in for an original
-                    ;; source use in the all-uses-moving test.
-                    (if (>= (array-ref origins index) 0)
-                      (opt-collect-instr-uses-array
-                        uses
-                        (compiler-ir-instr-seq-ref instrs index))
-                      unit)
-                    (set! index (+ index 1)))))
-              unit)])
-        (opt-successor-sink-collect-moved-uses! (box-get rest) target uses))]))
+  [uses : (Array i64)]
+  [slot : i64]) : unit
+  (if (< slot 0)
+    unit
+    (begin
+      (match (opt-successor-sink-moves-slot moves slot)
+        [(OptSuccessorSinkMove.Move _ _ move-target instrs origins)
+          (if (string.eq move-target target)
+            (let
+              [index : i64 0]
+              [count : i64 (compiler-ir-instr-seq-count instrs)]
+              (while (< index count)
+                (begin
+                  ;; Clone uses are new and cannot stand in for an original
+                  ;; source use in the all-uses-moving test.
+                  (if (>= (array-ref origins index) 0)
+                    (opt-collect-instr-uses-array
+                      uses
+                      (compiler-ir-instr-seq-ref instrs index))
+                    unit)
+                  (set! index (+ index 1)))))
+            unit)])
+      (opt-successor-sink-collect-moved-uses! moves target uses (- slot 1)))))
 
 (define (opt-successor-sink-single-pred?
   [cfg : OptCfgIndex]
@@ -39058,7 +40118,11 @@
             blocks
             target
             allowed-uses)
-          (opt-successor-sink-collect-moved-uses! moves target allowed-uses)
+          (opt-successor-sink-collect-moved-uses!
+            moves
+            target
+            allowed-uses
+            (- (opt-successor-sink-moves-count moves) 1))
           (= (array-ref allowed-uses dst) total))))))
 
 (define (opt-successor-sink-find-target
@@ -39524,7 +40588,11 @@
     (begin
       (opt-successor-sink-fill-defs! frame instrs defs)
       (opt-successor-sink-collect-successor-uses! blocks target base-allowed)
-      (opt-successor-sink-collect-moved-uses! moves target base-allowed)
+      (opt-successor-sink-collect-moved-uses!
+        moves
+        target
+        base-allowed
+        (- (opt-successor-sink-moves-count moves) 1))
       (opt-collect-instr-uses-array
         leaf-uses
         (compiler-ir-instr-seq-ref instrs terminator-index))
@@ -39663,14 +40731,14 @@
                                     origins)
                                   (set!
                                     moves
-                                    (OptSuccessorSinkMoves.Cons
+                                    (opt-successor-sink-moves-add
+                                      moves
                                       (OptSuccessorSinkMove.Move
                                         label
                                         removed
                                         target
                                         prepared
-                                        origins)
-                                      (box moves)))]
+                                        origins)))]
                                 [(OptSuccessorSinkPrepared.No) unit])]
                             [(OptSuccessorSinkMaybeLabel.No) unit])]
                         [(option_i64.None) unit])
@@ -39730,48 +40798,59 @@
         (compiler-ir-block-seq-to-list seq)
         tail)]))
 
+(define (opt-successor-sink-source-index-from?
+  [moves : OptSuccessorSinkMoves]
+  [source : String]
+  [index : i64]
+  [slot : i64]) : bool
+  (if (< slot 0)
+    false
+    (match (opt-successor-sink-moves-slot moves slot)
+      [(OptSuccessorSinkMove.Move move-source removed _ _ _)
+        (if (and
+          (string.eq move-source source)
+          (>= index 0)
+          (< index (array-length removed))
+          (> (array-ref removed index) 0))
+          true
+          (opt-successor-sink-source-index-from? moves source index (- slot 1)))])))
+
 (define (opt-successor-sink-source-index?
   [moves : OptSuccessorSinkMoves]
   [source : String]
   [index : i64]) : bool
-  (match moves
-    [(OptSuccessorSinkMoves.Nil) false]
-    [(OptSuccessorSinkMoves.Cons move rest)
-      (match move
-        [(OptSuccessorSinkMove.Move move-source removed _ _ _)
-          (if (and
-            (string.eq move-source source)
-            (>= index 0)
-            (< index (array-length removed))
-            (> (array-ref removed index) 0))
-            true
-            (opt-successor-sink-source-index? (box-get rest) source index))])]))
+  (opt-successor-sink-source-index-from?
+    moves
+    source
+    index
+    (- (opt-successor-sink-moves-count moves) 1)))
 
 (define (opt-successor-sink-push-target-moves!
   [moves : OptSuccessorSinkMoves]
   [target : String]
-  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
-  (match moves
-    [(OptSuccessorSinkMoves.Nil) unit]
-    [(OptSuccessorSinkMoves.Cons move rest)
-      (begin
-        (match move
-          [(OptSuccessorSinkMove.Move _ _ move-target instrs _)
-            (if (string.eq move-target target)
-              (let
-                [index : i64 0]
-                [count : i64 (compiler-ir-instr-seq-count instrs)]
-                (while (< index count)
-                  (begin
-                    (compiler-ir-instr-builder-push!
-                      (&mut builder)
-                      (compiler-ir-instr-seq-ref instrs index))
-                    (set! index (+ index 1)))))
-              unit)])
-        (opt-successor-sink-push-target-moves!
-          (box-get rest)
-          target
-          (&mut builder)))]))
+  [builder : (&mut builder CompilerIrInstrBuilder)]
+  [slot : i64]) : unit
+  (if (< slot 0)
+    unit
+    (begin
+      (match (opt-successor-sink-moves-slot moves slot)
+        [(OptSuccessorSinkMove.Move _ _ move-target instrs _)
+          (if (string.eq move-target target)
+            (let
+              [index : i64 0]
+              [count : i64 (compiler-ir-instr-seq-count instrs)]
+              (while (< index count)
+                (begin
+                  (compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (compiler-ir-instr-seq-ref instrs index))
+                  (set! index (+ index 1)))))
+            unit)])
+      (opt-successor-sink-push-target-moves!
+        moves
+        target
+        (&mut builder)
+        (- slot 1)))))
 
 (define (opt-successor-sink-rewrite-block
   [moves : OptSuccessorSinkMoves]
@@ -39791,7 +40870,8 @@
                 (opt-successor-sink-push-target-moves!
                   moves
                   label
-                  (&mut builder))
+                  (&mut builder)
+                  (- (opt-successor-sink-moves-count moves) 1))
                 unit)
               (if (not (opt-successor-sink-source-index? moves label index))
                 (compiler-ir-instr-builder-push!
@@ -39800,7 +40880,11 @@
                 unit)
               (set! index (+ index 1))))
           (if (= phi-end count)
-            (opt-successor-sink-push-target-moves! moves label (&mut builder))
+            (opt-successor-sink-push-target-moves!
+              moves
+              label
+              (&mut builder)
+              (- (opt-successor-sink-moves-count moves) 1))
             unit)
           (CompilerIrBlock.Block
             label
@@ -39960,20 +41044,18 @@
         loop-phi-leaves
         allowed-uses
         ready
-        (OptSuccessorSinkMoves.Nil))]
+        (opt-successor-sink-moves-empty))]
     ;; The no-move path returns `ready` verbatim, and `cfg-context` was built
     ;; for exactly that block list, so report it as valid for the result. This
     ;; pass runs on every function every iteration but only plans moves for a
     ;; few hundred of them, so the reuse covers the overwhelming majority of
     ;; runs and saves the caller a whole CFG context build.
-    (match moves
-      [(OptSuccessorSinkMoves.Nil)
-        (OptBlockCtxResult.Result ready cfg-context true)]
-      [_
-        (OptBlockCtxResult.Result
-          (opt-successor-sink-rewrite-blocks moves ready)
-          cfg-context
-          false)])))
+    (if (= (opt-successor-sink-moves-count moves) 0)
+      (OptBlockCtxResult.Result ready cfg-context true)
+      (OptBlockCtxResult.Result
+        (opt-successor-sink-rewrite-blocks moves ready)
+        cfg-context
+        false))))
 
 (define (opt-successor-sink-blocks
   [frame : i64]
@@ -41556,9 +42638,10 @@
   (No)
   (Some CompilerIrFunction))
 
-(defenum OptSlotList
-  (Nil)
-  (Cons i64 (Box OptSlotList)))
+;; Call-graph edge lists. Only membership, cardinality, and a minimum scan read
+;; them, so the generated vector appends and the stored order is never observed.
+(defstruct OptSlotList
+  (items opt_i64_vec.Vec))
 
 (defstruct OptFunctionNameIndex
   (ids opt_i64_i64_map.Map))
@@ -41598,12 +42681,41 @@
 ;; resolve a reference), but the index value is a plain slot, so no global intern
 ;; table is mutated -- IR names live in the transient optimize arena and interning
 ;; them would dangle a table pointer after the rewind.
-(defenum OptReachWorklist
-  (Nil)
-  (Cons i64 (Box OptReachWorklist)))
+;; Strict push/pop stack of slots still to visit: one owner threads it through
+;; the reachability walk, so `depth` is the live height and the generated vector
+;; below it is reused across pops.
+(defstruct OptReachWorklist
+  (items opt_i64_vec.Vec)
+  (depth i64))
 
 (defenum OptReachState
   (State opt_i64_i64_map.Map OptReachWorklist opt_i64_i64_map.Map i64))
+
+(define (opt-reach-worklist-empty) : OptReachWorklist
+  (OptReachWorklist (opt_i64_vec.new) 0))
+
+(define (opt-reach-worklist-depth [worklist : OptReachWorklist]) : i64
+  (struct-get worklist depth))
+
+(define (opt-reach-worklist-top [worklist : OptReachWorklist]) : i64
+  (array-ref
+    (opt_i64_vec.slots (& (struct-get worklist items)))
+    (- (struct-get worklist depth) 1)))
+
+(define (opt-reach-worklist-pop [worklist : OptReachWorklist]) : OptReachWorklist
+  (OptReachWorklist
+    (struct-get worklist items)
+    (- (struct-get worklist depth) 1)))
+
+(define (opt-reach-worklist-push [worklist : OptReachWorklist] [slot : i64]) : OptReachWorklist
+  (let
+    [items : opt_i64_vec.Vec (struct-get worklist items)]
+    [depth : i64 (struct-get worklist depth)]
+    (begin
+      (if (< depth (opt_i64_vec.len (& items)))
+        (opt_i64_vec.set (&mut items) depth slot)
+        (opt_i64_vec.push (&mut items) slot))
+      (OptReachWorklist items (+ depth 1)))))
 
 (defenum OptRuntimeStringHelper
   (No)
@@ -41717,23 +42829,36 @@
 (define (opt-function-index-at-slot [index : OptFunctionIndex] [slot : i64]) : CompilerIrFunction
   (array-ref (struct-get index values) slot))
 
+(define (opt-slot-list-empty) : OptSlotList
+  (OptSlotList (opt_i64_vec.new)))
+
+(define (opt-slot-list-count [slots : OptSlotList]) : i64
+  (opt_i64_vec.len (& (struct-get slots items))))
+
+(define (opt-slot-list-ref [slots : OptSlotList] [index : i64]) : i64
+  (array-ref (opt_i64_vec.slots (& (struct-get slots items))) index))
+
+(define (opt-slot-list-contains-at?
+  [slots : OptSlotList]
+  [slot : i64]
+  [index : i64]) : bool
+  (if (>= index (opt-slot-list-count slots))
+    false
+    (if (= (opt-slot-list-ref slots index) slot)
+      true
+      (opt-slot-list-contains-at? slots slot (+ index 1)))))
+
 (define (opt-slot-list-contains? [slots : OptSlotList] [slot : i64]) : bool
-  (match slots
-    [(OptSlotList.Nil) false]
-    [(OptSlotList.Cons item rest)
-      (if (= item slot)
-        true
-        (opt-slot-list-contains? (box-get rest) slot))]))
+  (opt-slot-list-contains-at? slots slot 0))
 
 (define (opt-slot-list-add [slots : OptSlotList] [slot : i64]) : OptSlotList
   (if (opt-slot-list-contains? slots slot)
     slots
-    (OptSlotList.Cons slot (box slots))))
-
-(define (opt-slot-list-count [slots : OptSlotList]) : i64
-  (match slots
-    [(OptSlotList.Nil) 0]
-    [(OptSlotList.Cons _ rest) (+ 1 (opt-slot-list-count (box-get rest)))]))
+    (let
+      [items : opt_i64_vec.Vec (struct-get slots items)]
+      (begin
+        (opt_i64_vec.push (&mut items) slot)
+        (OptSlotList items)))))
 
 (define (opt-callgraph-add-callee
   [index : OptFunctionIndex]
@@ -41811,7 +42936,7 @@
   [func : CompilerIrFunction]) : OptSlotList
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (opt-callgraph-blocks index OptSlotList.Nil blocks)]))
+      (opt-callgraph-blocks index (opt-slot-list-empty) blocks)]))
 
 (define (opt-callgraph-init-edges
   [edges : (Array OptSlotList)]
@@ -41820,7 +42945,7 @@
   (if (>= slot count)
     unit
     (begin
-      (array-set! edges slot OptSlotList.Nil)
+      (array-set! edges slot (opt-slot-list-empty))
       (opt-callgraph-init-edges edges (+ slot 1) count))))
 
 (define (opt-callgraph-build-slots
@@ -42376,16 +43501,19 @@
 (define (opt-scc-next-child-from
   [slots : OptSlotList]
   [after : i64]
-  [best : i64]) : i64
-  (match slots
-    [(OptSlotList.Nil) best]
-    [(OptSlotList.Cons slot rest)
+  [best : i64]
+  [index : i64]) : i64
+  (if (>= index (opt-slot-list-count slots))
+    best
+    (let
+      [slot : i64 (opt-slot-list-ref slots index)]
       (opt-scc-next-child-from
-        (box-get rest)
+        slots
         after
         (if (and (> slot after) (or (< best 0) (< slot best)))
           slot
-          best))]))
+          best)
+        (+ index 1)))))
 
 (define (opt-scc-next-child [graph : OptCallGraph] [slot : i64] [after : i64]) : i64
   (if (or (< slot 0) (>= slot (struct-get graph count)))
@@ -42393,7 +43521,8 @@
     (opt-scc-next-child-from
       (array-ref (struct-get graph edges) slot)
       after
-      (- 0 1))))
+      (- 0 1)
+      0)))
 
 (define (opt-scc-discover!
   [slot : i64]
@@ -42647,9 +43776,16 @@
 (defenum OptInlineState
   (State CompilerIrInstrList i64 i64))
 
-(defenum OptInlinePredRenameList
-  (Nil)
-  (Cons String String (Box OptInlinePredRenameList)))
+(defenum OptInlinePredRename
+  (Rename String String))
+
+(import (vector.vector OptInlinePredRename core) as opt_inline_pred_rename_vec)
+
+;; Phi-predecessor renames recorded while rewriting one caller. A single global
+;; owns the list and the repair walk replays it oldest-first, which is the order
+;; the head-first cons walk visited, so the generated vector appends in place.
+(defstruct OptInlinePredRenameList
+  (items opt_inline_pred_rename_vec.Vec))
 
 (defenum OptInlineBlocks
   (Blocks CompilerIrBlockList i64 i64))
@@ -43026,15 +44162,44 @@
         old-label
         new-label)]))
 
+(define (opt-inline-pred-rename-list-empty) : OptInlinePredRenameList
+  (OptInlinePredRenameList (opt_inline_pred_rename_vec.new)))
+
+(define (opt-inline-pred-rename-count [renames : OptInlinePredRenameList]) : i64
+  (opt_inline_pred_rename_vec.len (& (struct-get renames items))))
+
+(define (opt-inline-pred-rename-slot
+  [renames : OptInlinePredRenameList]
+  [slot : i64]) : OptInlinePredRename
+  (array-ref
+    (opt_inline_pred_rename_vec.slots (& (struct-get renames items)))
+    slot))
+
+(define (opt-inline-pred-rename-add
+  [renames : OptInlinePredRenameList]
+  [old-label : String]
+  [new-label : String]) : OptInlinePredRenameList
+  (let
+    [items : opt_inline_pred_rename_vec.Vec (struct-get renames items)]
+    (begin
+      (opt_inline_pred_rename_vec.push
+        (&mut items)
+        (OptInlinePredRename.Rename old-label new-label))
+      (OptInlinePredRenameList items))))
+
+;; Walks newest-first, the order the head-first cons walk applied the renames.
 (define (opt-inline-repair-phi-predecessors
   [blocks : CompilerIrBlockList]
-  [renames : OptInlinePredRenameList]) : CompilerIrBlockList
-  (match renames
-    [(OptInlinePredRenameList.Nil) blocks]
-    [(OptInlinePredRenameList.Cons old-label new-label rest)
-      (opt-inline-repair-phi-predecessors
-        (opt-inline-repair-successor-phis blocks old-label new-label)
-        (box-get rest))]))
+  [renames : OptInlinePredRenameList]
+  [slot : i64]) : CompilerIrBlockList
+  (if (< slot 0)
+    blocks
+    (match (opt-inline-pred-rename-slot renames slot)
+      [(OptInlinePredRename.Rename old-label new-label)
+        (opt-inline-repair-phi-predecessors
+          (opt-inline-repair-successor-phis blocks old-label new-label)
+          renames
+          (- slot 1))])))
 
 (define (opt-inline-multiblock-instr-ok? [instr : CompilerIrInstr] [_np : i64]) : bool
   (match instr
@@ -43304,7 +44469,7 @@
 (define opt-inline-caller-site-count : i64
   0)
 (define opt-inline-pred-renames : OptInlinePredRenameList
-  (OptInlinePredRenameList.Nil))
+  (opt-inline-pred-rename-list-empty))
 (define opt-inline-current-phi-predecessor? : bool
   false)
 
@@ -44998,10 +46163,10 @@
                                     (if opt-inline-current-phi-predecessor?
                                       (set!
                                         opt-inline-pred-renames
-                                        (OptInlinePredRenameList.Cons
+                                        (opt-inline-pred-rename-add
+                                          opt-inline-pred-renames
                                           block-label
-                                          cont-label
-                                          (box opt-inline-pred-renames)))
+                                          cont-label))
                                       unit)]
                                   (OptInlineMaybeBlockRewrite.SomeBlockRewrite
                                     (compiler-ir-block-cons
@@ -45634,10 +46799,10 @@
                                     (if opt-inline-current-phi-predecessor?
                                       (set!
                                         opt-inline-pred-renames
-                                        (OptInlinePredRenameList.Cons
+                                        (opt-inline-pred-rename-add
+                                          opt-inline-pred-renames
                                           block-label
-                                          cont-label
-                                          (box opt-inline-pred-renames)))
+                                          cont-label))
                                       unit)]
                                   (OptInlineMaybeSpanBlockRewrite.SomeSpanBlockRewrite
                                     (compiler-ir-block-cons
@@ -46100,7 +47265,7 @@
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
-            (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
+            (set! opt-inline-pred-renames (opt-inline-pred-rename-list-empty)))]
         (match (opt-inline-blocks
           blocks
           phi-predecessors
@@ -46119,7 +47284,8 @@
                 [repaired-blocks : CompilerIrBlockList
                   (opt-inline-repair-phi-predecessors
                     new-blocks
-                    opt-inline-pred-renames)]
+                    opt-inline-pred-renames
+                    (- (opt-inline-pred-rename-count opt-inline-pred-renames) 1))]
                 (opt-inline-repair-or-keep
                   func
                   (CompilerIrFunction.Function
@@ -46147,7 +47313,7 @@
         [_reset-sites : unit
           (begin
             (set! opt-inline-caller-site-count 0)
-            (set! opt-inline-pred-renames (OptInlinePredRenameList.Nil)))]
+            (set! opt-inline-pred-renames (opt-inline-pred-rename-list-empty)))]
         (match (opt-inline-blocks-with-spans
           blocks
           phi-predecessors
@@ -46170,7 +47336,8 @@
                 [repaired-blocks : CompilerIrBlockList
                   (opt-inline-repair-phi-predecessors
                     new-blocks
-                    opt-inline-pred-renames)]
+                    opt-inline-pred-renames
+                    (- (opt-inline-pred-rename-count opt-inline-pred-renames) 1))]
                 [next : CompilerIrFunction
                   (CompilerIrFunction.Function
                     name
@@ -47060,7 +48227,7 @@
             (opt_i64_i64_map.insert-ref! (&mut next-reachable) slot 1)
             (OptReachState.State
               next-reachable
-              (OptReachWorklist.Cons slot (box worklist))
+              (opt-reach-worklist-push worklist slot)
               globals
               runtime-helper-mask))))]))
 
@@ -47482,22 +48649,22 @@
 (define (opt-reach-process [index : OptFunctionIndex] [state : OptReachState]) : OptReachState
   (match state
     [(OptReachState.State reachable worklist globals runtime-helper-mask)
-      (match worklist
-        [(OptReachWorklist.Nil) state]
-        [(OptReachWorklist.Cons slot rest)
-          (let
-            [popped : OptReachState
-              (OptReachState.State
-                reachable
-                (box-get rest)
-                globals
-                runtime-helper-mask)]
-            (opt-reach-process
+      (if (= (opt-reach-worklist-depth worklist) 0)
+        state
+        (let
+          [slot : i64 (opt-reach-worklist-top worklist)]
+          [popped : OptReachState
+            (OptReachState.State
+              reachable
+              (opt-reach-worklist-pop worklist)
+              globals
+              runtime-helper-mask)]
+          (opt-reach-process
+            index
+            (opt-reach-function
               index
-              (opt-reach-function
-                index
-                popped
-                (opt-function-index-at-slot index slot))))])]))
+              popped
+              (opt-function-index-at-slot index slot)))))]))
 
 (define (opt-reach-global
   [index : OptFunctionIndex]
@@ -47745,7 +48912,7 @@
               index
               (OptReachState.State
                 reachable
-                (OptReachWorklist.Nil)
+                (opt-reach-worklist-empty)
                 reachable-globals
                 0)
               "main"))
@@ -47874,7 +49041,7 @@
     (match (opt-loop-bce-argc-scan-seq-from
       instrs
       0
-      (OptLoopBceArgcScan.Scan (OptLoopBceExprEnv.Nil) false true))
+      (OptLoopBceArgcScan.Scan (opt-loop-bce-expr-env-empty) false true))
       [(OptLoopBceArgcScan.Scan _ seen ok) (and seen ok)])))
 
 (define (opt-loop-bce-function-returns-argc? [func : CompilerIrFunction]) : bool
@@ -50414,9 +51581,10 @@
 ;; optimizer alias fact model, and records the first conservative blocker for a
 ;; function/block/loop scope. The result never rewrites IR; compile-profile
 ;; builds only emit deterministic detail rows to stderr.
-(defenum OptScratchRootList
-  (Nil)
-  (Cons i64 (Box OptScratchRootList)))
+;; Scratch roots are only ever tested for membership, so the generated vector
+;; appends and the stored order is never observed.
+(defstruct OptScratchRootList
+  (items opt_i64_vec.Vec))
 
 (defenum OptScratchBlockerReason
   (NoBlocker)
@@ -50473,18 +51641,38 @@
     [(AstType.Consume inner)
       (opt-scratch-alloc-type-size (ast-node-pool-reader-type-get inner))]))
 
+(define (opt-scratch-root-list-empty) : OptScratchRootList
+  (OptScratchRootList (opt_i64_vec.new)))
+
+(define (opt-scratch-root-list-count [roots : OptScratchRootList]) : i64
+  (opt_i64_vec.len (& (struct-get roots items))))
+
+(define (opt-scratch-root-list-ref [roots : OptScratchRootList] [index : i64]) : i64
+  (array-ref (opt_i64_vec.slots (& (struct-get roots items))) index))
+
+(define (opt-scratch-root-list-contains-at?
+  [roots : OptScratchRootList]
+  [root : i64]
+  [index : i64]) : bool
+  (if (>= index (opt-scratch-root-list-count roots))
+    false
+    (or
+      (= (opt-scratch-root-list-ref roots index) root)
+      (opt-scratch-root-list-contains-at? roots root (+ index 1)))))
+
 (define (opt-scratch-root-list-contains?
   [roots : OptScratchRootList]
   [root : i64]) : bool
-  (match roots
-    [(OptScratchRootList.Nil) false]
-    [(OptScratchRootList.Cons found rest)
-      (or (= found root) (opt-scratch-root-list-contains? (box-get rest) root))]))
+  (opt-scratch-root-list-contains-at? roots root 0))
 
 (define (opt-scratch-root-list-add [roots : OptScratchRootList] [root : i64]) : OptScratchRootList
   (if (opt-scratch-root-list-contains? roots root)
     roots
-    (OptScratchRootList.Cons root (box roots))))
+    (let
+      [items : opt_i64_vec.Vec (struct-get roots items)]
+      (begin
+        (opt_i64_vec.push (&mut items) root)
+        (OptScratchRootList items)))))
 
 (define (opt-scratch-direct-alloc [instr : CompilerIrInstr]) : OptScratchAlloc
   (match instr
@@ -50830,7 +52018,7 @@
   (OptScratchScopeState.State
     0
     0
-    (OptScratchRootList.Nil)
+    (opt-scratch-root-list-empty)
     (opt-alias-empty)
     (OptScratchBlockerReason.NoBlocker)))
 
@@ -54032,38 +55220,63 @@
       false)))
 
 ;; Header label -> proven loop-carry-safe.
-(defenum OptLoadGvnLoopSafeList
-  (Nil)
-  (Cons String (Box OptLoadGvnLoopSafeList)))
+;; Loop headers whose body is safe for load GVN. Only membership reads the
+;; list, so the generated vector appends and the stored order is never
+;; observed.
+(defstruct OptLoadGvnLoopSafeList
+  (items opt_string_vec.Vec))
+
+(define (opt-load-gvn-loop-safe-empty) : OptLoadGvnLoopSafeList
+  (OptLoadGvnLoopSafeList (opt_string_vec.new)))
+
+(define (opt-load-gvn-loop-safe-count [safe : OptLoadGvnLoopSafeList]) : i64
+  (opt_string_vec.len (& (struct-get safe items))))
+
+(define (opt-load-gvn-loop-safe-slot
+  [safe : OptLoadGvnLoopSafeList]
+  [slot : i64]) : String
+  (array-ref (opt_string_vec.slots (& (struct-get safe items))) slot))
 
 (define (opt-load-gvn-loop-safe-contains?
   [safe : OptLoadGvnLoopSafeList]
   [label : String]) : bool
-  (match safe
-    [(OptLoadGvnLoopSafeList.Nil) false]
-    [(OptLoadGvnLoopSafeList.Cons name rest)
-      (if (string.eq name label)
-        true
-        (opt-load-gvn-loop-safe-contains? (box-get rest) label))]))
+  (let
+    [count : i64 (opt-load-gvn-loop-safe-count safe)]
+    [slot : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< slot count))
+        (if (string.eq (opt-load-gvn-loop-safe-slot safe slot) label)
+          (set! found true)
+          (set! slot (+ slot 1))))
+      found)))
+
+(define (opt-load-gvn-loop-safe-collect-into
+  [hs : OptLoadHeaderSet]
+  [blocks : CompilerIrBlockList]
+  [loops : OptNaturalLoopList]
+  [out : opt_string_vec.Vec]) : opt_string_vec.Vec
+  (match loops
+    [(OptNaturalLoopList.Nil) out]
+    [(OptNaturalLoopList.Cons loop rest)
+      (let
+        [next : opt_string_vec.Vec
+          (opt-load-gvn-loop-safe-collect-into hs blocks (box-get rest) out)]
+        (begin
+          (if (opt-load-gvn-loop-safe-blocks?
+            hs
+            blocks
+            (opt-natural-loop-body-blocks loop))
+            (opt_string_vec.push (&mut next) (opt-natural-loop-header loop))
+            unit)
+          next))]))
 
 (define (opt-load-gvn-loop-safe-collect
   [hs : OptLoadHeaderSet]
   [blocks : CompilerIrBlockList]
   [loops : OptNaturalLoopList]) : OptLoadGvnLoopSafeList
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptLoadGvnLoopSafeList.Nil)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (let
-        [tail : OptLoadGvnLoopSafeList
-          (opt-load-gvn-loop-safe-collect hs blocks (box-get rest))]
-        (if (opt-load-gvn-loop-safe-blocks?
-          hs
-          blocks
-          (opt-natural-loop-body-blocks loop))
-          (OptLoadGvnLoopSafeList.Cons
-            (opt-natural-loop-header loop)
-            (box tail))
-          tail))]))
+  (OptLoadGvnLoopSafeList
+    (opt-load-gvn-loop-safe-collect-into hs blocks loops (opt_string_vec.new))))
 
 (define (opt-load-gvn-entry-from-preds
   [index : OptCfgIndex]

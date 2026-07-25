@@ -855,7 +855,7 @@
   (let
     [object-array : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (smoke-bounds-object-pair
           (CompilerIrValue.Var 1)
@@ -863,7 +863,7 @@
           (AstType.I64)))]
     [object-string : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (smoke-bounds-object-pair
           (CompilerIrValue.Var 1)
@@ -871,7 +871,7 @@
           (AstType.U8)))]
     [object-mismatch : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (smoke-bounds-object-pair
           (CompilerIrValue.Var 2)
@@ -879,17 +879,17 @@
           (AstType.I64)))]
     [object-call : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (smoke-bounds-object-call-barrier))]
     [object-store : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (smoke-bounds-object-store-barrier (CompilerIrValue.Var 10)))]
     [object-element-store : CompilerIrInstrList
       (opt-bounds-instrs
-        (OptBoundsFacts.Nil)
+        (opt-bounds-facts-empty)
         (OptBoundsCastEnv.Nil)
         (smoke-bounds-object-store-barrier (CompilerIrValue.Var 99)))]
     (cond

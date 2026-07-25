@@ -9819,6 +9819,19 @@
           (+ (offset-of (type HoldsWide) tail)
             (size-of (type (Array Narrow 2)))))))))"
       152)
+    ;; The lifetime-parameterized spelling reaches the `EnumArgs` arm. It
+    ;; already answered from the recorded layout, so this pins the two arms
+    ;; agreeing rather than a change: tag plus one reference-sized payload.
+    (compiler-lower-comptime-fold-ok?
+      "(defenum SharedNext
+  (:lifetimes source)
+  (Done)
+  (Item (& source i64)))
+(define (main) : i64
+  (comptime
+    (+ (size-of (type (SharedNext holder)))
+      (align-of (type (SharedNext holder))))))"
+      24)
     (compiler-lower-error-ok?
       "(define (main) : i64 (size-of (type i64)))"
       "typecheck: size-of is compile-time only; wrap it in (comptime ...)")))

@@ -147,4 +147,28 @@ if cmp -s "$IMAGE_A" "$MUTATED_IMAGE"; then
     exit 1
 fi
 
+# #5528: sustained-dispatch stress over the real mapped image. #5460 saw
+# corruption after ~13.5k catalog calls, while the loader verifier above makes
+# three dispatches -- four orders of magnitude below the failure scale. Tier 1
+# crosses the raw call bridge with no host callback; tier 3 adds real host
+# callbacks, AST commits, and a host-session open/close cycle per iteration.
+# Both run above the observed threshold and on both hosts regardless of the
+# production route gate, which Windows still disables for #5460.
+STRESS_ITERATIONS=${TYPELISP_TLCI_STRESS_ITERATIONS:-25000}
+for STRESS_TIER in 1 3; do
+    STRESS_PROGRESS="$WORKDIR/stress-tier$STRESS_TIER.txt"
+    echo "[embedded-stdlib-tlci] stress tier $STRESS_TIER"         "($STRESS_ITERATIONS iterations)"
+    set +e
+    "$COMPILER" run tools/embedded-stdlib-tlci/stress.tl         --stdlib-root stdlib --stdlib-root src --         "$STRESS_TIER" "$STRESS_ITERATIONS" "$STRESS_PROGRESS"
+    stress_status=$?
+    set -e
+    if [ "$stress_status" -ne 42 ]; then
+        echo "embedded stdlib tlci stress tier $STRESS_TIER exited"             "$stress_status, expected 42" >&2
+        echo "last durable progress record:" >&2
+        cat "$STRESS_PROGRESS" >&2 || true
+        echo "reproduce with: $COMPILER run tools/embedded-stdlib-tlci/stress.tl"             "--stdlib-root stdlib --stdlib-root src --"             "$STRESS_TIER $STRESS_ITERATIONS $STRESS_PROGRESS" >&2
+        exit 1
+    fi
+done
+
 echo "embedded stdlib tlci image is deterministic, source-bound, and loadable"

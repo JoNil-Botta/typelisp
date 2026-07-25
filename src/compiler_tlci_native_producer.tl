@@ -668,6 +668,27 @@
 ;; (`return`, `box`, `box-get`): the operand's chain followed by `op`. Returns
 ;; the opened op-let count or -1 when the operand is outside the supported
 ;; subset. Refs #5605.
+(define (embedded-native-template-binary-node-ops
+  [params : (& params AstMacroParamList)]
+  [first-node : i64]
+  [second-node : i64]
+  [op : i64]
+  [ops : (Array String)]
+  [ops-count : (Array i64)]) : i64
+  (let
+    [first-opened : i64
+      (embedded-native-template-ops params first-node ops ops-count)]
+    (if (< first-opened 0)
+      -1
+      (let
+        [second-opened : i64
+          (embedded-native-template-ops params second-node ops ops-count)]
+        (if (< second-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push! ops ops-count op "0" "0" "0")
+            (+ first-opened second-opened 1)))))))
+
 (define (embedded-native-template-unary-node-ops
   [params : (& params AstMacroParamList)]
   [inner-node : i64]
@@ -1039,6 +1060,73 @@
         231
         ops
         ops-count)]
+    ;; Raw-pointer and `unsafe` template nodes, the last shapes the
+    ;; `stdlib.text_buf_family` generators need. Refs #5605.
+    [(AstExpr.PtrRead inner-node)
+      (embedded-native-template-unary-node-ops
+        params
+        inner-node
+        237
+        ops
+        ops-count)]
+    [(AstExpr.PtrToInt inner-node)
+      (embedded-native-template-unary-node-ops
+        params
+        inner-node
+        238
+        ops
+        ops-count)]
+    [(AstExpr.StringData inner-node)
+      (embedded-native-template-unary-node-ops
+        params
+        inner-node
+        239
+        ops
+        ops-count)]
+    [(AstExpr.PtrWrite ptr-node value-node)
+      (embedded-native-template-binary-node-ops
+        params
+        ptr-node
+        value-node
+        240
+        ops
+        ops-count)]
+    [(AstExpr.PtrOffset ptr-node offset-node)
+      (embedded-native-template-binary-node-ops
+        params
+        ptr-node
+        offset-node
+        241
+        ops
+        ops-count)]
+    [(AstExpr.ArrayData inner-node)
+      (embedded-native-template-unary-node-ops
+        params
+        inner-node
+        244
+        ops
+        ops-count)]
+    [(AstExpr.StringFromBytes data-node length-node)
+      (embedded-native-template-binary-node-ops
+        params
+        data-node
+        length-node
+        243
+        ops
+        ops-count)]
+    [(AstExpr.Unsafe body-exprs)
+      (let
+        [arg-opened : i64
+          (embedded-native-template-args-ops
+            params
+            (& body-exprs)
+            ops
+            ops-count)]
+        (if (< arg-opened 0)
+          -1
+          (begin
+            (embedded-native-template-push! ops ops-count 236 "0" "0" "0")
+            (+ arg-opened 1))))]
     ;; `(set! (struct-get target field) value)`. The parser folds the place into
     ;; the node, so the field name travels as an immediate like struct-get's.
     ;; The sentinel field id marks `(set! ,place value)`, whose place shape is

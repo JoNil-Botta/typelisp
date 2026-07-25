@@ -670,9 +670,17 @@
 (defstruct TcStringList
   (items svec.Vec))
 
-(defenum TcNameIdList
-  (Nil)
-  (Cons i64 (Box TcNameIdList)))
+;; Shared `i64` element family. Every intern-id sequence in this file reuses it
+;; so the generated-vector surface stays at one instantiation for the type.
+(import (vector.vector i64 core) as tc_i64_vec)
+
+;; Scoped name-id environments (bound names, lifetime/region sets, macro name
+;; tables). Like `TcStringList` these branch: a sibling subtree extends the same
+;; live parent, so `tc-name-id-list-cons` copies into a right-sized buffer
+;; instead of appending to a vector another branch still holds. Entry 0 is the
+;; most recent binding, so lookups stay head-first and shadowing resolves to it.
+(defstruct TcNameIdList
+  (items tc_i64_vec.Vec))
 
 (defstruct TcLazyImportStub
   (module-id i64)
@@ -11784,53 +11792,103 @@
 (define (tc-string-list-add-all [items : TcStringList] [names : TcStringList]) : TcStringList
   (tc-string-list-add-all-at items names 0))
 
+(define (tc-name-id-list-nil) : TcNameIdList
+  (TcNameIdList (tc_i64_vec.new)))
+
+(define (tc-name-id-list-len [items : TcNameIdList]) : i64
+  (tc_i64_vec.len (& (struct-get items items))))
+
+(define (tc-name-id-list-empty? [items : TcNameIdList]) : bool
+  (= (tc-name-id-list-len items) 0))
+
+(define (tc-name-id-list-ref [items : TcNameIdList] [index : i64]) : i64
+  (array-ref (tc_i64_vec.slots (& (struct-get items items))) index))
+
+(define (tc-name-id-list-cons [items : TcNameIdList] [name : i64]) : TcNameIdList
+  (let
+    [count : i64 (tc-name-id-list-len items)]
+    [out : tc_i64_vec.Vec (tc_i64_vec.with-capacity (+ count 1))]
+    [at : i64 0]
+    (begin
+      (tc_i64_vec.push (&mut out) name)
+      (while (< at count)
+        (begin
+          (tc_i64_vec.push (&mut out) (tc-name-id-list-ref items at))
+          (set! at (+ at 1))))
+      (TcNameIdList out))))
+
+(define (tc-name-id-list-contains-at
+  [items : TcNameIdList]
+  [name : i64]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len items))
+    false
+    (if (= (tc-name-id-list-ref items index) name)
+      true
+      (tc-name-id-list-contains-at items name (+ index 1)))))
+
 (define (tc-name-id-list-contains [items : TcNameIdList] [name : i64]) : bool
-  (match items
-    [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons item rest)
-      (if (= item name)
-        true
-        (tc-name-id-list-contains (box-get rest) name))]))
+  (tc-name-id-list-contains-at items name 0))
 
 (define (tc-name-id-list-add [items : TcNameIdList] [name : i64]) : TcNameIdList
   (if (tc-name-id-list-contains items name)
     items
-    (TcNameIdList.Cons name (box items))))
+    (tc-name-id-list-cons items name)))
+
+(define (tc-name-id-list-add-all-at
+  [items : TcNameIdList]
+  [names : TcNameIdList]
+  [index : i64]) : TcNameIdList
+  (if (>= index (tc-name-id-list-len names))
+    items
+    (tc-name-id-list-add-all-at
+      (tc-name-id-list-add items (tc-name-id-list-ref names index))
+      names
+      (+ index 1))))
 
 (define (tc-name-id-list-add-all [items : TcNameIdList] [names : TcNameIdList]) : TcNameIdList
-  (match names
-    [(TcNameIdList.Nil) items]
-    [(TcNameIdList.Cons name rest)
-      (tc-name-id-list-add-all (tc-name-id-list-add items name) (box-get rest))]))
+  (tc-name-id-list-add-all-at items names 0))
+
+(define (tc-name-id-list-overlaps-at?
+  [a : TcNameIdList]
+  [b : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len a))
+    false
+    (if (tc-name-id-list-contains b (tc-name-id-list-ref a index))
+      true
+      (tc-name-id-list-overlaps-at? a b (+ index 1)))))
 
 (define (tc-name-id-list-overlaps? [a : TcNameIdList] [b : TcNameIdList]) : bool
-  (match a
-    [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons item rest)
-      (if (tc-name-id-list-contains b item)
-        true
-        (tc-name-id-list-overlaps? (box-get rest) b))]))
+  (tc-name-id-list-overlaps-at? a b 0))
+
+(define (tc-name-id-list-eq-at
+  [a : TcNameIdList]
+  [b : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len a))
+    (= (tc-name-id-list-len b) 0)
+    (and
+      (tc-name-id-list-contains b (tc-name-id-list-ref a index))
+      (tc-name-id-list-eq-at a b (+ index 1)))))
 
 (define (tc-name-id-list-eq [a : TcNameIdList] [b : TcNameIdList]) : bool
-  (match a
-    [(TcNameIdList.Nil)
-      (match b
-        [(TcNameIdList.Nil) true]
-        [_ false])]
-    [(TcNameIdList.Cons item rest)
-      (and
-        (tc-name-id-list-contains b item)
-        (tc-name-id-list-eq (box-get rest) b))]))
+  (tc-name-id-list-eq-at a b 0))
+
+(define (tc-name-id-list-all-in-at?
+  [items : TcNameIdList]
+  [allowed : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len items))
+    true
+    (and
+      (tc-name-id-list-contains allowed (tc-name-id-list-ref items index))
+      (tc-name-id-list-all-in-at? items allowed (+ index 1)))))
 
 (define (tc-name-id-list-all-in?
   [items : TcNameIdList]
   [allowed : TcNameIdList]) : bool
-  (match items
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons item rest)
-      (and
-        (tc-name-id-list-contains allowed item)
-        (tc-name-id-list-all-in? (box-get rest) allowed))]))
+  (tc-name-id-list-all-in-at? items allowed 0))
 
 (define (tc-bind-cleanup-owner [env : TcTypeEnv] [name-id : i64]) : TcTypeEnv
   (tc-bind-runtime-marker-id
@@ -12309,11 +12367,17 @@
         (ast-lifetime-list-get items index (ast-lifetime-fallback)))
       (+ index 1))))
 
+(define (tc-name-id-list-to-lifetime-list-at
+  [items : TcNameIdList]
+  [index : i64]) : AstLifetimeList
+  (if (>= index (tc-name-id-list-len items))
+    (ast-lifetime-list-new)
+    (ast-lifetime-cons
+      (tc-name-id-list-ref items index)
+      (tc-name-id-list-to-lifetime-list-at items (+ index 1)))))
+
 (define (tc-name-id-list-to-lifetime-list [items : TcNameIdList]) : AstLifetimeList
-  (match items
-    [(TcNameIdList.Nil) (ast-lifetime-list-new)]
-    [(TcNameIdList.Cons item rest)
-      (ast-lifetime-cons item (tc-name-id-list-to-lifetime-list (box-get rest)))]))
+  (tc-name-id-list-to-lifetime-list-at items 0))
 
 (define (tc-lifetime-subst-lookup [subst : TcLifetimeSubst] [name : i64]) : TcMaybeNameId
   (match subst
@@ -12450,15 +12514,20 @@
       (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
       (tc-lifetime-visible-persistent-id? env lifetime-id))))
 
+(define (tc-reference-lifetimes-visible-at?
+  [env : TcTypeEnv]
+  [lifetimes : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len lifetimes))
+    true
+    (and
+      (tc-lifetime-visible-id? env (tc-name-id-list-ref lifetimes index))
+      (tc-reference-lifetimes-visible-at? env lifetimes (+ index 1)))))
+
 (define (tc-reference-lifetimes-visible?
   [env : TcTypeEnv]
   [lifetimes : TcNameIdList]) : bool
-  (match lifetimes
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons lifetime rest)
-      (and
-        (tc-lifetime-visible-id? env lifetime)
-        (tc-reference-lifetimes-visible? env (box-get rest)))]))
+  (tc-reference-lifetimes-visible-at? env lifetimes 0))
 
 (define (tc-lifetime-outlives-binding-scan-inner-id
   [env : TcTypeEnv]
@@ -12529,19 +12598,29 @@
       (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
       (tc-lifetime-outlives-binding-persistent-id? env lifetime-id target-id))))
 
+(define (tc-reference-lifetimes-outlive-binding-id-at?
+  [env : TcTypeEnv]
+  [lifetimes : TcNameIdList]
+  [target-id : i64]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len lifetimes))
+    true
+    (and
+      (tc-lifetime-outlives-binding-id?
+        env
+        (tc-name-id-list-ref lifetimes index)
+        target-id)
+      (tc-reference-lifetimes-outlive-binding-id-at?
+        env
+        lifetimes
+        target-id
+        (+ index 1)))))
+
 (define (tc-reference-lifetimes-outlive-binding-id?
   [env : TcTypeEnv]
   [lifetimes : TcNameIdList]
   [target-id : i64]) : bool
-  (match lifetimes
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons lifetime rest)
-      (and
-        (tc-lifetime-outlives-binding-id? env lifetime target-id)
-        (tc-reference-lifetimes-outlive-binding-id?
-          env
-          (box-get rest)
-          target-id))]))
+  (tc-reference-lifetimes-outlive-binding-id-at? env lifetimes target-id 0))
 
 (define (tc-lifetime-outlives-lifetime-scan-inner-id
   [env : TcTypeEnv]
@@ -12629,19 +12708,33 @@
           value-lifetime-id
           target-lifetime-id)))))
 
+(define (tc-reference-lifetimes-outlive-lifetime-id-at?
+  [env : TcTypeEnv]
+  [lifetimes : TcNameIdList]
+  [target-lifetime-id : i64]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len lifetimes))
+    true
+    (and
+      (tc-lifetime-outlives-lifetime-id?
+        env
+        (tc-name-id-list-ref lifetimes index)
+        target-lifetime-id)
+      (tc-reference-lifetimes-outlive-lifetime-id-at?
+        env
+        lifetimes
+        target-lifetime-id
+        (+ index 1)))))
+
 (define (tc-reference-lifetimes-outlive-lifetime-id?
   [env : TcTypeEnv]
   [lifetimes : TcNameIdList]
   [target-lifetime-id : i64]) : bool
-  (match lifetimes
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons lifetime rest)
-      (and
-        (tc-lifetime-outlives-lifetime-id? env lifetime target-lifetime-id)
-        (tc-reference-lifetimes-outlive-lifetime-id?
-          env
-          (box-get rest)
-          target-lifetime-id))]))
+  (tc-reference-lifetimes-outlive-lifetime-id-at?
+    env
+    lifetimes
+    target-lifetime-id
+    0))
 
 (define (tc-reference-lifetimes-outlive-lifetime?
   [env : TcTypeEnv]
@@ -13021,12 +13114,12 @@
         out))))
 
 (define (tc-signature-single-input-lifetime [types : AstTypeList]) : TcMaybeNameId
-  (match (tc-signature-input-type-list-lifetimes-into types TcNameIdList.Nil)
-    [(TcNameIdList.Nil) (TcMaybeNameId.No)]
-    [(TcNameIdList.Cons lifetime rest)
-      (match (box-get rest)
-        [(TcNameIdList.Nil) (TcMaybeNameId.Some lifetime)]
-        [_ (TcMaybeNameId.No)])]))
+  (let
+    [lifetimes : TcNameIdList
+      (tc-signature-input-type-list-lifetimes-into types (tc-name-id-list-nil))]
+    (if (= (tc-name-id-list-len lifetimes) 1)
+      (TcMaybeNameId.Some (tc-name-id-list-ref lifetimes 0))
+      (TcMaybeNameId.No))))
 
 (define (tc-elide-input-type-list [types : AstTypeList] [index : i64]) : ResultTcElidedTypes
   (tc-elide-input-type-list-at (& types) 0 index (ast-type-list-new)))
@@ -13407,7 +13500,7 @@
     [_ out]))
 
 (define (tc-type-collect-reference-lifetimes [ty : AstType]) : TcNameIdList
-  (tc-type-collect-reference-lifetimes-into ty TcNameIdList.Nil))
+  (tc-type-collect-reference-lifetimes-into ty (tc-name-id-list-nil)))
 
 (define (tc-maybe-type-contains-reference? [maybe-ty : AstMaybeType]) : bool
   (match maybe-ty
@@ -13443,7 +13536,10 @@
   [ret : AstType]) : bool
   (tc-name-id-list-all-in?
     (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret))
-    (tc-param-list-reference-return-lifetimes-into ctx params TcNameIdList.Nil)))
+    (tc-param-list-reference-return-lifetimes-into
+      ctx
+      params
+      (tc-name-id-list-nil))))
 
 (define (tc-reference-return-policy-ok
   [ctx : TcContext]
@@ -13510,30 +13606,40 @@
     [_ out]))
 
 (define (tc-type-collect-regions [ty : AstType]) : TcNameIdList
-  (tc-type-collect-regions-into ty TcNameIdList.Nil))
+  (tc-type-collect-regions-into ty (tc-name-id-list-nil)))
+
+(define (tc-region-list-contains-arena-owner-at?
+  [regions : TcNameIdList]
+  [owner : i64]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len regions))
+    false
+    (or
+      (tc-arena-region-owned-by-id? owner (tc-name-id-list-ref regions index))
+      (tc-region-list-contains-arena-owner-at? regions owner (+ index 1)))))
 
 (define (tc-region-list-contains-arena-owner?
   [regions : TcNameIdList]
   [owner : i64]) : bool
-  (match regions
-    [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons region rest)
-      (or
-        (tc-arena-region-owned-by-id? owner region)
-        (tc-region-list-contains-arena-owner? (box-get rest) owner))]))
+  (tc-region-list-contains-arena-owner-at? regions owner 0))
 
 (define (tc-type-contains-arena-owner-region? [ty : AstType] [owner : i64]) : bool
   (tc-region-list-contains-arena-owner? (tc-type-collect-regions ty) owner))
 
+(define (tc-region-list-all-atomic-arena-owners-at?
+  [env : TcTypeEnv]
+  [regions : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len regions))
+    true
+    (and
+      (tc-atomic-arena-owner-active-id? env (tc-name-id-list-ref regions index))
+      (tc-region-list-all-atomic-arena-owners-at? env regions (+ index 1)))))
+
 (define (tc-region-list-all-atomic-arena-owners?
   [env : TcTypeEnv]
   [regions : TcNameIdList]) : bool
-  (match regions
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons region rest)
-      (and
-        (tc-atomic-arena-owner-active-id? env region)
-        (tc-region-list-all-atomic-arena-owners? env (box-get rest)))]))
+  (tc-region-list-all-atomic-arena-owners-at? env regions 0))
 
 (define (tc-type-regions-all-atomic-arena-owners?
   [env : TcTypeEnv]
@@ -13549,7 +13655,7 @@
   (match ty
     [(AstType.Region region inner)
       (tc-name-id-list-add (tc-type-outer-regions (ty-node-get inner)) region)]
-    [_ TcNameIdList.Nil]))
+    [_ (tc-name-id-list-nil)]))
 
 (define (tc-region-taggable-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -13576,11 +13682,18 @@
 ;; Nominal aggregate types have no lifetime-argument surface yet. Until they do,
 ;; constructor results carry stored-reference lifetimes as local region facts so
 ;; existing flow/escape checks can reject boundary escapes.
+(define (tc-tag-reference-lifetimes-at
+  [lifetimes : TcNameIdList]
+  [ty : AstType]
+  [index : i64]) : AstType
+  (if (>= index (tc-name-id-list-len lifetimes))
+    ty
+    (tc-tag-region
+      (tc-name-id-list-ref lifetimes index)
+      (tc-tag-reference-lifetimes-at lifetimes ty (+ index 1)))))
+
 (define (tc-tag-reference-lifetimes [lifetimes : TcNameIdList] [ty : AstType]) : AstType
-  (match lifetimes
-    [(TcNameIdList.Nil) ty]
-    [(TcNameIdList.Cons lifetime rest)
-      (tc-tag-region lifetime (tc-tag-reference-lifetimes (box-get rest) ty))]))
+  (tc-tag-reference-lifetimes-at lifetimes ty 0))
 
 (define (tc-constructor-target-type
   [env : TcTypeEnv]
@@ -13589,7 +13702,7 @@
   (tc-tag-active-region
     env
     (tc-tag-reference-lifetimes
-      (tc-type-list-collect-reference-lifetimes params TcNameIdList.Nil)
+      (tc-type-list-collect-reference-lifetimes params (tc-name-id-list-nil))
       ret)))
 
 (define (tc-project-from-region-container
@@ -13657,27 +13770,53 @@
           target-region)]
       [_ (tc-region-outlives-or-matches-scan env value-region target-region)])))
 
+(define (tc-region-can-flow-into-any-at
+  [env : TcTypeEnv]
+  [value-region : i64]
+  [target-regions : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len target-regions))
+    false
+    (if (tc-region-outlives-or-matches
+      env
+      value-region
+      (tc-name-id-list-ref target-regions index))
+      true
+      (tc-region-can-flow-into-any-at
+        env
+        value-region
+        target-regions
+        (+ index 1)))))
+
 (define (tc-region-can-flow-into-any
   [env : TcTypeEnv]
   [value-region : i64]
   [target-regions : TcNameIdList]) : bool
-  (match target-regions
-    [(TcNameIdList.Nil) false]
-    [(TcNameIdList.Cons target rest)
-      (if (tc-region-outlives-or-matches env value-region target)
-        true
-        (tc-region-can-flow-into-any env value-region (box-get rest)))]))
+  (tc-region-can-flow-into-any-at env value-region target-regions 0))
+
+(define (tc-region-list-can-flow-into-at
+  [env : TcTypeEnv]
+  [value-regions : TcNameIdList]
+  [target-regions : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len value-regions))
+    true
+    (and
+      (tc-region-can-flow-into-any
+        env
+        (tc-name-id-list-ref value-regions index)
+        target-regions)
+      (tc-region-list-can-flow-into-at
+        env
+        value-regions
+        target-regions
+        (+ index 1)))))
 
 (define (tc-region-list-can-flow-into
   [env : TcTypeEnv]
   [value-regions : TcNameIdList]
   [target-regions : TcNameIdList]) : bool
-  (match value-regions
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons value rest)
-      (and
-        (tc-region-can-flow-into-any env value target-regions)
-        (tc-region-list-can-flow-into env (box-get rest) target-regions))]))
+  (tc-region-list-can-flow-into-at env value-regions target-regions 0))
 
 (define (tc-ensure-region-value-can-flow-into
   [env : TcTypeEnv]
@@ -13686,19 +13825,18 @@
   [context : String]) : ResultTcUnit
   (let
     [value-regions : TcNameIdList (tc-type-collect-regions value-ty)]
-    (match value-regions
-      [(TcNameIdList.Nil) ResultTcUnit.Ok]
-      [_
-        (let
-          [target-regions : TcNameIdList (tc-type-collect-regions target-ty)]
-          (if (and
-            (tc-type-contains-any-region target-ty)
-            (tc-region-list-can-flow-into env value-regions target-regions))
-            ResultTcUnit.Ok
-            (ResultTcUnit.Err
-              (string.append
-                "typecheck: cannot store region-tagged value into "
-                (string.append context "; region value would escape")))))])))
+    (if (tc-name-id-list-empty? value-regions)
+      ResultTcUnit.Ok
+      (let
+        [target-regions : TcNameIdList (tc-type-collect-regions target-ty)]
+        (if (and
+          (tc-type-contains-any-region target-ty)
+          (tc-region-list-can-flow-into env value-regions target-regions))
+          ResultTcUnit.Ok
+          (ResultTcUnit.Err
+            (string.append
+              "typecheck: cannot store region-tagged value into "
+              (string.append context "; region value would escape"))))))))
 
 (define (tc-resolve-type-list [ctx : TcContext] [types : AstTypeList]) : AstTypeList
   (if (tc-type-list-needs-resolution? types)
@@ -17768,15 +17906,22 @@
     (string.eq (tc-env-key-name-text name) "program")
     (tc-lifetime-list-contains params name)))
 
+(define (tc-decl-lifetime-id-list-all-in-at?
+  [lifetimes : TcNameIdList]
+  [params : AstLifetimeList]
+  [index : i64]) : bool
+  (if (>= index (tc-name-id-list-len lifetimes))
+    true
+    (and
+      (tc-decl-lifetime-name-allowed?
+        params
+        (tc-name-id-list-ref lifetimes index))
+      (tc-decl-lifetime-id-list-all-in-at? lifetimes params (+ index 1)))))
+
 (define (tc-decl-lifetime-id-list-all-in?
   [lifetimes : TcNameIdList]
   [params : AstLifetimeList]) : bool
-  (match lifetimes
-    [(TcNameIdList.Nil) true]
-    [(TcNameIdList.Cons lifetime rest)
-      (and
-        (tc-decl-lifetime-name-allowed? params lifetime)
-        (tc-decl-lifetime-id-list-all-in? (box-get rest) params))]))
+  (tc-decl-lifetime-id-list-all-in-at? lifetimes params 0))
 
 (define (tc-source-type-decl-lifetimes-ok
   [ctx : TcContext]
@@ -19458,14 +19603,11 @@
       (let
         [a-regions : TcNameIdList (tc-type-collect-regions a)]
         [b-regions : TcNameIdList (tc-type-collect-regions b)]
-        (if (tc-name-id-list-eq a-regions b-regions)
-          (ResultTcType.Ok a)
-          (match a-regions
-            [(TcNameIdList.Nil) (ResultTcType.Ok b)]
-            [_
-              (match b-regions
-                [(TcNameIdList.Nil) (ResultTcType.Ok a)]
-                [_ (ResultTcType.Err "typecheck: if branches must match")])])))]
+        (cond
+          [(tc-name-id-list-eq a-regions b-regions) (ResultTcType.Ok a)]
+          [(tc-name-id-list-empty? a-regions) (ResultTcType.Ok b)]
+          [(tc-name-id-list-empty? b-regions) (ResultTcType.Ok a)]
+          [else (ResultTcType.Err "typecheck: if branches must match")]))]
     [(tc-type-compatible? a b) (ResultTcType.Ok a)]
     [(tc-type-compatible? b a) (ResultTcType.Ok b)]
     [else (ResultTcType.Err "typecheck: if branches must match")]))
@@ -22622,11 +22764,18 @@
         (ty-node-get (ast-type-list-get types index (ast-type-id-fallback))))
       (tc-tag-type-list-region-at region types (+ index 1)))))
 
+(define (tc-tag-regions-at
+  [regions : TcNameIdList]
+  [ty : AstType]
+  [index : i64]) : AstType
+  (if (>= index (tc-name-id-list-len regions))
+    ty
+    (tc-tag-region
+      (tc-name-id-list-ref regions index)
+      (tc-tag-regions-at regions ty (+ index 1)))))
+
 (define (tc-tag-regions [regions : TcNameIdList] [ty : AstType]) : AstType
-  (match regions
-    [(TcNameIdList.Nil) ty]
-    [(TcNameIdList.Cons region rest)
-      (tc-tag-region region (tc-tag-regions (box-get rest) ty))]))
+  (tc-tag-regions-at regions ty 0))
 
 (define (tc-tag-type-list-regions
   [regions : TcNameIdList]
@@ -24758,7 +24907,7 @@
                       body-ty
                       (tc-let-binding-list-add-bound-name-ids
                         bindings
-                        TcNameIdList.Nil))
+                        (tc-name-id-list-nil)))
                       [(ResultTcUnit.Ok) (ResultTcType.Ok body-ty)]
                       [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
                   [(ResultTcType.Err message) (ResultTcType.Err message)])]
@@ -26529,11 +26678,10 @@
 ;; after). tc-resolve-type resolves aliases structurally, so lifetimes hidden
 ;; behind an alias are still seen.
 (define (tc-lifetime-subst-formal-inert? [ctx : TcContext] [want : AstType]) : bool
-  (match (tc-type-collect-reference-lifetimes-into
-    (tc-resolve-type ctx want)
-    TcNameIdList.Nil)
-    [(TcNameIdList.Nil) true]
-    [_ false]))
+  (tc-name-id-list-empty?
+    (tc-type-collect-reference-lifetimes-into
+      (tc-resolve-type ctx want)
+      (tc-name-id-list-nil))))
 
 (define (tc-call-effective-arg-type
   [ctx : TcContext]
@@ -26813,7 +26961,7 @@
   (tc-name-id-list-to-lifetime-list
     (tc-type-collect-reference-lifetimes-into
       ret
-      (tc-type-list-collect-reference-lifetimes params TcNameIdList.Nil))))
+      (tc-type-list-collect-reference-lifetimes params (tc-name-id-list-nil)))))
 
 (define (tc-call-lifetime-function-type
   [ctx : TcContext]
@@ -28331,25 +28479,34 @@
   [ty : AstType]) : TcThreadTransferClass
   (tc-thread-transfer-type-class ctx env ty (tc-string-list-nil) false))
 
+(define (tc-region-list-atomic-arena-owners-at
+  [env : TcTypeEnv]
+  [regions : TcNameIdList]
+  [out : TcNameIdList]
+  [index : i64]) : TcNameIdList
+  (if (>= index (tc-name-id-list-len regions))
+    out
+    (let
+      [region : i64 (tc-name-id-list-ref regions index)]
+      (tc-region-list-atomic-arena-owners-at
+        env
+        regions
+        (if (tc-atomic-arena-owner-active-id? env region)
+          (tc-name-id-list-add out region)
+          out)
+        (+ index 1)))))
+
 (define (tc-region-list-atomic-arena-owners
   [env : TcTypeEnv]
   [regions : TcNameIdList]
   [out : TcNameIdList]) : TcNameIdList
-  (match regions
-    [(TcNameIdList.Nil) out]
-    [(TcNameIdList.Cons region rest)
-      (tc-region-list-atomic-arena-owners
-        env
-        (box-get rest)
-        (if (tc-atomic-arena-owner-active-id? env region)
-          (tc-name-id-list-add out region)
-          out))]))
+  (tc-region-list-atomic-arena-owners-at env regions out 0))
 
 (define (tc-type-atomic-arena-owner-regions [env : TcTypeEnv] [ty : AstType]) : TcNameIdList
   (tc-region-list-atomic-arena-owners
     env
     (tc-type-collect-regions ty)
-    TcNameIdList.Nil))
+    (tc-name-id-list-nil)))
 
 (define (tc-thread-safe-spawn-capture-message
   [spawn-name : String]
@@ -28529,7 +28686,7 @@
     (tc-type-env-marker-start env)
     (tc-param-bound-names params)
     body
-    TcNameIdList.Nil))
+    (tc-name-id-list-nil)))
 
 (define (tc-thread-safe-spawn-direct-lambda-owner-regions
   [env : TcTypeEnv]
@@ -28543,8 +28700,8 @@
               env
               params
               (ast-node-get body-box))
-            TcNameIdList.Nil)])]
-    [_ TcNameIdList.Nil]))
+            (tc-name-id-list-nil))])]
+    [_ (tc-name-id-list-nil)]))
 
 (define (tc-check-thread-safe-spawn-direct-lambda-arg
   [spawn-name : String]
@@ -28630,8 +28787,8 @@
                 "typecheck: "
                 source-name
                 " expects one argument")))
-          (ResultTcNameIdList.Ok TcNameIdList.Nil)))]
-    [(TcMaybeString.No) (ResultTcNameIdList.Ok TcNameIdList.Nil)]))
+          (ResultTcNameIdList.Ok (tc-name-id-list-nil))))]
+    [(TcMaybeString.No) (ResultTcNameIdList.Ok (tc-name-id-list-nil))]))
 
 (define (tc-thread-channel-send-message
   [send-name : String]
@@ -31620,7 +31777,7 @@
     ResultTcUnit.Ok))
 
 (define (tc-spmd-inline-helper-empty-stack) : TcNameIdList
-  TcNameIdList.Nil)
+  (tc-name-id-list-nil))
 
 (define tc-spmd-inline-helper-stack : TcNameIdList
   (tc-spmd-inline-helper-empty-stack))
@@ -33017,35 +33174,45 @@
         [(AstPattern.Variant _ args-box)
           (tc-pattern-list-add-bound-name-ids
             (box-get args-box)
-            TcNameIdList.Nil)]
-        [_ TcNameIdList.Nil])]
+            (tc-name-id-list-nil))]
+        [_ (tc-name-id-list-nil)])]
     [(AstType.EnumArgs _ _)
       (match pattern
         [(AstPattern.Variant _ args-box)
           (tc-pattern-list-add-bound-name-ids
             (box-get args-box)
-            TcNameIdList.Nil)]
-        [_ TcNameIdList.Nil])]
-    [_ (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
+            (tc-name-id-list-nil))]
+        [_ (tc-name-id-list-nil)])]
+    [_ (tc-pattern-add-bound-name-ids pattern (tc-name-id-list-nil))]))
+
+(define (tc-spmd-match-bind-pattern-names-at
+  [arm-env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [names : TcNameIdList]
+  [class : TcSpmdClass]
+  [index : i64]) : ResultTcSpmdEnv
+  (if (>= index (tc-name-id-list-len names))
+    (ResultTcSpmdEnv.Ok spmd-env)
+    (let
+      [name-id : i64 (tc-name-id-list-ref names index)]
+      (match (tc-lookup-id arm-env name-id)
+        [(ResultTcType.Ok ty)
+          (if (tc-spmd-match-pattern-binding-supported? class ty)
+            (tc-spmd-match-bind-pattern-names-at
+              arm-env
+              (tc-spmd-env-bind-id spmd-env name-id ty class TcSpmdScope.Local)
+              names
+              class
+              (+ index 1))
+            (ResultTcSpmdEnv.Err (tc-spmd-match-pattern-binding-diagnostic ty)))]
+        [(ResultTcType.Err message) (ResultTcSpmdEnv.Err message)]))))
 
 (define (tc-spmd-match-bind-pattern-names
   [arm-env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [names : TcNameIdList]
   [class : TcSpmdClass]) : ResultTcSpmdEnv
-  (match names
-    [(TcNameIdList.Nil) (ResultTcSpmdEnv.Ok spmd-env)]
-    [(TcNameIdList.Cons name-id rest)
-      (match (tc-lookup-id arm-env name-id)
-        [(ResultTcType.Ok ty)
-          (if (tc-spmd-match-pattern-binding-supported? class ty)
-            (tc-spmd-match-bind-pattern-names
-              arm-env
-              (tc-spmd-env-bind-id spmd-env name-id ty class TcSpmdScope.Local)
-              (box-get rest)
-              class)
-            (ResultTcSpmdEnv.Err (tc-spmd-match-pattern-binding-diagnostic ty)))]
-        [(ResultTcType.Err message) (ResultTcSpmdEnv.Err message)])]))
+  (tc-spmd-match-bind-pattern-names-at arm-env spmd-env names class 0))
 
 (define (tc-spmd-masked-if-match-arms
   [ctx : TcContext]
@@ -39587,29 +39754,28 @@
   [context : String]) : ResultTcUnit
   (let
     [lifetimes : TcNameIdList (tc-type-collect-reference-lifetimes value-ty)]
-    (match lifetimes
-      [(TcNameIdList.Nil) ResultTcUnit.Ok]
-      [_
-        (match (tc-store-place-lifetime ctx env place-expr)
-          [(ResultTcNameId.Ok target-lifetime)
-            (if (tc-reference-lifetimes-outlive-lifetime?
-              env
-              lifetimes
-              target-lifetime)
-              ResultTcUnit.Ok
-              (ResultTcUnit.Err
-                (string.append
-                  "typecheck: cannot store reference into longer-lived "
-                  (string.append
-                    context
-                    "; reference value would escape lexical scope"))))]
-          [(ResultTcNameId.Err _)
+    (if (tc-name-id-list-empty? lifetimes)
+      ResultTcUnit.Ok
+      (match (tc-store-place-lifetime ctx env place-expr)
+        [(ResultTcNameId.Ok target-lifetime)
+          (if (tc-reference-lifetimes-outlive-lifetime?
+            env
+            lifetimes
+            target-lifetime)
+            ResultTcUnit.Ok
             (ResultTcUnit.Err
               (string.append
-                "typecheck: cannot store reference into non-place "
+                "typecheck: cannot store reference into longer-lived "
                 (string.append
                   context
-                  "; reference value would escape lexical scope")))])])))
+                  "; reference value would escape lexical scope"))))]
+        [(ResultTcNameId.Err _)
+          (ResultTcUnit.Err
+            (string.append
+              "typecheck: cannot store reference into non-place "
+              (string.append
+                context
+                "; reference value would escape lexical scope")))]))))
 
 (define (tc-borrow-place-result-type
   [mutable : bool]
@@ -44051,7 +44217,7 @@
                       body-ty
                       (tc-let-binding-list-add-bound-name-ids
                         bindings
-                        TcNameIdList.Nil))
+                        (tc-name-id-list-nil)))
                       [(ResultTcUnit.Ok) (ResultTcType.Ok body-ty)]
                       [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
                   [(ResultTcType.Err message) (ResultTcType.Err message)])]
@@ -47848,11 +48014,24 @@
 ;; aggregate projections stay rejected until their path/reinitialization policy
 ;; lands; dynamic arrays have a separate diagnostic because element ownership
 ;; cannot be made sound without an index policy.
-(defenum TcMovePathSegments
-  (Nil)
-  (Field i64 (Box TcMovePathSegments))
-  (TupleIndex i64 (Box TcMovePathSegments))
-  (ArrayIndex i64 (Box TcMovePathSegments)))
+(defenum TcMovePathSegmentKind
+  (Field)
+  (TupleIndex)
+  (ArrayIndex))
+
+(defstruct TcMovePathSegment
+  (kind TcMovePathSegmentKind)
+  (id i64))
+
+(import (vector.vector TcMovePathSegment core) as tc_move_path_segment_vec)
+
+;; Ordered root-to-leaf projection path: entry 0 is the segment closest to the
+;; root and appends land at the end, so rendering, equality, prefix tests and
+;; hashing all keep the source projection order. A path is a persistent value --
+;; a base path stays live while a projection extends it -- so appends publish a
+;; fresh right-sized vector instead of pushing into a buffer another path holds.
+(defstruct TcMovePathSegments
+  (items tc_move_path_segment_vec.Vec))
 
 (defstruct TcMovePath
   (root i64)
@@ -48183,68 +48362,89 @@
 (define (tc-move-path-root-id [path : TcMovePath]) : i64
   (struct-get path root))
 
+(define (tc-move-path-segments-nil) : TcMovePathSegments
+  (TcMovePathSegments (tc_move_path_segment_vec.new)))
+
+(define (tc-move-path-segments-len [segments : TcMovePathSegments]) : i64
+  (tc_move_path_segment_vec.len (& (struct-get segments items))))
+
+(define (tc-move-path-segments-ref
+  [segments : TcMovePathSegments]
+  [index : i64]) : TcMovePathSegment
+  (array-ref
+    (tc_move_path_segment_vec.slots (& (struct-get segments items)))
+    index))
+
+;; A base path stays live while a projection extends it, so the appended path
+;; owns a fresh right-sized vector: the existing segments in order, then the new
+;; leaf segment last.
+(define (tc-move-path-segments-append
+  [segments : TcMovePathSegments]
+  [segment : TcMovePathSegment]) : TcMovePathSegments
+  (let
+    [count : i64 (tc-move-path-segments-len segments)]
+    [items : tc_move_path_segment_vec.Vec
+      (tc_move_path_segment_vec.with-capacity (+ count 1))]
+    [at : i64 0]
+    (begin
+      (while (< at count)
+        (begin
+          (tc_move_path_segment_vec.push
+            (&mut items)
+            (tc-move-path-segments-ref segments at))
+          (set! at (+ at 1))))
+      (tc_move_path_segment_vec.push (&mut items) segment)
+      (TcMovePathSegments items))))
+
+(define (tc-move-path-segment-kind-eq?
+  [a : TcMovePathSegmentKind]
+  [b : TcMovePathSegmentKind]) : bool
+  (match a
+    [(TcMovePathSegmentKind.Field)
+      (match b
+        [(TcMovePathSegmentKind.Field) true]
+        [_ false])]
+    [(TcMovePathSegmentKind.TupleIndex)
+      (match b
+        [(TcMovePathSegmentKind.TupleIndex) true]
+        [_ false])]
+    [(TcMovePathSegmentKind.ArrayIndex)
+      (match b
+        [(TcMovePathSegmentKind.ArrayIndex) true]
+        [_ false])]))
+
+(define (tc-move-path-segment-eq?
+  [a : TcMovePathSegment]
+  [b : TcMovePathSegment]) : bool
+  (and
+    (tc-move-path-segment-kind-eq? (struct-get a kind) (struct-get b kind))
+    (= (struct-get a id) (struct-get b id))))
+
+(define (tc-move-path-segments-eq-at?
+  [a : TcMovePathSegments]
+  [b : TcMovePathSegments]
+  [index : i64]) : bool
+  (if (>= index (tc-move-path-segments-len a))
+    true
+    (and
+      (tc-move-path-segment-eq?
+        (tc-move-path-segments-ref a index)
+        (tc-move-path-segments-ref b index))
+      (tc-move-path-segments-eq-at? a b (+ index 1)))))
+
 (define (tc-move-path-segments-eq?
   [a : TcMovePathSegments]
   [b : TcMovePathSegments]) : bool
-  (match a
-    [(TcMovePathSegments.Nil)
-      (match b
-        [(TcMovePathSegments.Nil) true]
-        [_ false])]
-    [(TcMovePathSegments.Field a-id a-rest)
-      (match b
-        [(TcMovePathSegments.Field b-id b-rest)
-          (and
-            (= a-id b-id)
-            (tc-move-path-segments-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]
-    [(TcMovePathSegments.TupleIndex a-index a-rest)
-      (match b
-        [(TcMovePathSegments.TupleIndex b-index b-rest)
-          (and
-            (= a-index b-index)
-            (tc-move-path-segments-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]
-    [(TcMovePathSegments.ArrayIndex a-index a-rest)
-      (match b
-        [(TcMovePathSegments.ArrayIndex b-index b-rest)
-          (and
-            (= a-index b-index)
-            (tc-move-path-segments-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]))
+  (if (= (tc-move-path-segments-len a) (tc-move-path-segments-len b))
+    (tc-move-path-segments-eq-at? a b 0)
+    false))
 
 (define (tc-move-path-segments-prefix?
   [prefix : TcMovePathSegments]
   [value : TcMovePathSegments]) : bool
-  (match prefix
-    [(TcMovePathSegments.Nil) true]
-    [(TcMovePathSegments.Field prefix-id prefix-rest)
-      (match value
-        [(TcMovePathSegments.Field value-id value-rest)
-          (and
-            (= prefix-id value-id)
-            (tc-move-path-segments-prefix?
-              (box-get prefix-rest)
-              (box-get value-rest)))]
-        [_ false])]
-    [(TcMovePathSegments.TupleIndex prefix-index prefix-rest)
-      (match value
-        [(TcMovePathSegments.TupleIndex value-index value-rest)
-          (and
-            (= prefix-index value-index)
-            (tc-move-path-segments-prefix?
-              (box-get prefix-rest)
-              (box-get value-rest)))]
-        [_ false])]
-    [(TcMovePathSegments.ArrayIndex prefix-index prefix-rest)
-      (match value
-        [(TcMovePathSegments.ArrayIndex value-index value-rest)
-          (and
-            (= prefix-index value-index)
-            (tc-move-path-segments-prefix?
-              (box-get prefix-rest)
-              (box-get value-rest)))]
-        [_ false])]))
+  (if (<= (tc-move-path-segments-len prefix) (tc-move-path-segments-len value))
+    (tc-move-path-segments-eq-at? prefix value 0)
+    false))
 
 (define (tc-move-path-eq? [a : TcMovePath] [b : TcMovePath]) : bool
   (and
@@ -48266,21 +48466,30 @@
 ;; `.field`, tuple elements as `.N`, and array elements as `[N]`, so
 ;; diagnostics read like what the user wrote rather than internal place
 ;; encodings. Refs #5149.
+(define (tc-move-path-segments-render-at
+  [segments : TcMovePathSegments]
+  [index : i64]) : String
+  (if (>= index (tc-move-path-segments-len segments))
+    ""
+    (let
+      [segment : TcMovePathSegment (tc-move-path-segments-ref segments index)]
+      [rest : String (tc-move-path-segments-render-at segments (+ index 1))]
+      (match (struct-get segment kind)
+        [(TcMovePathSegmentKind.Field)
+          (string.append
+            (string.append "." (tc-env-key-name-text (struct-get segment id)))
+            rest)]
+        [(TcMovePathSegmentKind.TupleIndex)
+          (string.append
+            (string.append "." (string.int->string (struct-get segment id)))
+            rest)]
+        [(TcMovePathSegmentKind.ArrayIndex)
+          (string.append
+            (string.append "[" (string.int->string (struct-get segment id)))
+            (string.append "]" rest))]))))
+
 (define (tc-move-path-segments-render [segments : TcMovePathSegments]) : String
-  (match segments
-    [(TcMovePathSegments.Nil) ""]
-    [(TcMovePathSegments.Field field-id rest)
-      (string.append
-        (string.append "." (tc-env-key-name-text field-id))
-        (tc-move-path-segments-render (box-get rest)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (string.append
-        (string.append "." (string.int->string index))
-        (tc-move-path-segments-render (box-get rest)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (string.append
-        (string.append "[" (string.int->string index))
-        (string.append "]" (tc-move-path-segments-render (box-get rest))))]))
+  (tc-move-path-segments-render-at segments 0))
 
 (define (tc-move-path-render [path : TcMovePath]) : String
   (string.append
@@ -48313,21 +48522,27 @@
 (define (tc-move-path-hash-combine [seed : i64] [component : i64]) : i64
   (bit-xor (* seed 2654435761) (+ component 40503)))
 
+(define (tc-move-path-segment-kind-seed [kind : TcMovePathSegmentKind]) : i64
+  (match kind
+    [(TcMovePathSegmentKind.Field) 23]
+    [(TcMovePathSegmentKind.TupleIndex) 29]
+    [(TcMovePathSegmentKind.ArrayIndex) 31]))
+
+(define (tc-move-path-segments-hash-at
+  [segments : TcMovePathSegments]
+  [index : i64]) : i64
+  (if (>= index (tc-move-path-segments-len segments))
+    17
+    (let
+      [segment : TcMovePathSegment (tc-move-path-segments-ref segments index)]
+      (tc-move-path-hash-combine
+        (tc-move-path-hash-combine
+          (tc-move-path-segment-kind-seed (struct-get segment kind))
+          (struct-get segment id))
+        (tc-move-path-segments-hash-at segments (+ index 1))))))
+
 (define (tc-move-path-segments-hash [segments : TcMovePathSegments]) : i64
-  (match segments
-    [(TcMovePathSegments.Nil) 17]
-    [(TcMovePathSegments.Field field-id rest)
-      (tc-move-path-hash-combine
-        (tc-move-path-hash-combine 23 field-id)
-        (tc-move-path-segments-hash (box-get rest)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (tc-move-path-hash-combine
-        (tc-move-path-hash-combine 29 index)
-        (tc-move-path-segments-hash (box-get rest)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (tc-move-path-hash-combine
-        (tc-move-path-hash-combine 31 index)
-        (tc-move-path-segments-hash (box-get rest)))]))
+  (tc-move-path-segments-hash-at segments 0))
 
 (define (tc-moved-path-kind-hash [kind : TcMovedPathKind]) : i64
   (match kind
@@ -49152,59 +49367,23 @@
 (define (tc-move-path-segments-append-field
   [segments : TcMovePathSegments]
   [field-id : i64]) : TcMovePathSegments
-  (match segments
-    [(TcMovePathSegments.Nil)
-      (TcMovePathSegments.Field field-id (box TcMovePathSegments.Nil))]
-    [(TcMovePathSegments.Field id rest)
-      (TcMovePathSegments.Field
-        id
-        (box (tc-move-path-segments-append-field (box-get rest) field-id)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (TcMovePathSegments.TupleIndex
-        index
-        (box (tc-move-path-segments-append-field (box-get rest) field-id)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (TcMovePathSegments.ArrayIndex
-        index
-        (box (tc-move-path-segments-append-field (box-get rest) field-id)))]))
+  (tc-move-path-segments-append
+    segments
+    (TcMovePathSegment (TcMovePathSegmentKind.Field) field-id)))
 
 (define (tc-move-path-segments-append-tuple
   [segments : TcMovePathSegments]
   [tuple-index : i64]) : TcMovePathSegments
-  (match segments
-    [(TcMovePathSegments.Nil)
-      (TcMovePathSegments.TupleIndex tuple-index (box TcMovePathSegments.Nil))]
-    [(TcMovePathSegments.Field id rest)
-      (TcMovePathSegments.Field
-        id
-        (box (tc-move-path-segments-append-tuple (box-get rest) tuple-index)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (TcMovePathSegments.TupleIndex
-        index
-        (box (tc-move-path-segments-append-tuple (box-get rest) tuple-index)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (TcMovePathSegments.ArrayIndex
-        index
-        (box (tc-move-path-segments-append-tuple (box-get rest) tuple-index)))]))
+  (tc-move-path-segments-append
+    segments
+    (TcMovePathSegment (TcMovePathSegmentKind.TupleIndex) tuple-index)))
 
 (define (tc-move-path-segments-append-array
   [segments : TcMovePathSegments]
   [array-index : i64]) : TcMovePathSegments
-  (match segments
-    [(TcMovePathSegments.Nil)
-      (TcMovePathSegments.ArrayIndex array-index (box TcMovePathSegments.Nil))]
-    [(TcMovePathSegments.Field id rest)
-      (TcMovePathSegments.Field
-        id
-        (box (tc-move-path-segments-append-array (box-get rest) array-index)))]
-    [(TcMovePathSegments.TupleIndex index rest)
-      (TcMovePathSegments.TupleIndex
-        index
-        (box (tc-move-path-segments-append-array (box-get rest) array-index)))]
-    [(TcMovePathSegments.ArrayIndex index rest)
-      (TcMovePathSegments.ArrayIndex
-        index
-        (box (tc-move-path-segments-append-array (box-get rest) array-index)))]))
+  (tc-move-path-segments-append
+    segments
+    (TcMovePathSegment (TcMovePathSegmentKind.ArrayIndex) array-index)))
 
 (define (tc-move-path-append [base : TcMovePath] [field-id : i64]) : TcMovePath
   (TcMovePath
@@ -49281,7 +49460,7 @@
               [(TcMoveMaybeIndex.No) (TcMaybeMovePath.No)])]
           [(TcMaybeMovePath.No) (TcMaybeMovePath.No)]))]
     [(AstExpr.Var name)
-      (TcMaybeMovePath.Some (TcMovePath name TcMovePathSegments.Nil))]
+      (TcMaybeMovePath.Some (TcMovePath name (tc-move-path-segments-nil)))]
     [_ (TcMaybeMovePath.No)]))
 
 (define (tc-move-struct-field-path [expr : AstExpr]) : TcMaybeMovePath
@@ -49887,7 +50066,7 @@
     loop-carried
     moved
     region
-    TcNameIdList.Nil
+    (tc-name-id-list-nil)
     (tc-moved-len locals)
     origin))
 
@@ -49979,7 +50158,7 @@
     loop-carried
     moved
     owner
-    TcNameIdList.Nil
+    (tc-name-id-list-nil)
     (tc-moved-len locals)
     origin))
 
@@ -50003,15 +50182,21 @@
     [hidden : tc_i64_i64_map.Map (tc-moved-hidden-atomic-users set)]
     (tc_i64_i64_map.contains? (& hidden) owner-id)))
 
+(define (tc-move-mark-hidden-atomic-arena-users-at
+  [moved : TcMovedSet]
+  [owners : TcNameIdList]
+  [index : i64]) : TcMovedSet
+  (if (>= index (tc-name-id-list-len owners))
+    moved
+    (tc-move-mark-hidden-atomic-arena-users-at
+      (tc-moved-add-hidden-atomic-user moved (tc-name-id-list-ref owners index))
+      owners
+      (+ index 1))))
+
 (define (tc-move-mark-hidden-atomic-arena-users
   [moved : TcMovedSet]
   [owners : TcNameIdList]) : TcMovedSet
-  (match owners
-    [(TcNameIdList.Nil) moved]
-    [(TcNameIdList.Cons owner rest)
-      (tc-move-mark-hidden-atomic-arena-users
-        (tc-moved-add-hidden-atomic-user moved owner)
-        (box-get rest))]))
+  (tc-move-mark-hidden-atomic-arena-users-at moved owners 0))
 
 (define (tc-move-atomic-arena-hidden-user-message [owner : String]) : String
   (str_cat.str-cat
@@ -50111,7 +50296,7 @@
         locals
         moved1
         owner
-        TcNameIdList.Nil
+        (tc-name-id-list-nil)
         (tc-moved-len locals))]
     [(TcMoveResult.Err message) (TcMoveResult.Err message)]))
 
@@ -51042,21 +51227,35 @@
               scope))]
         [else (tc-move-check-cleanup-owner-exit moved roots scope (+ index 1))]))))
 
+(define (tc-move-add-bound-names-at
+  [locals : TcMovedSet]
+  [names : TcNameIdList]
+  [index : i64]) : TcMovedSet
+  (if (>= index (tc-name-id-list-len names))
+    locals
+    (tc-move-add-bound-names-at
+      (tc-moved-add locals (tc-name-id-list-ref names index))
+      names
+      (+ index 1))))
+
 (define (tc-move-add-bound-names [locals : TcMovedSet] [names : TcNameIdList]) : TcMovedSet
-  (match names
-    [(TcNameIdList.Nil) locals]
-    [(TcNameIdList.Cons name-id rest)
-      (tc-move-add-bound-names (tc-moved-add locals name-id) (box-get rest))]))
+  (tc-move-add-bound-names-at locals names 0))
+
+(define (tc-move-remove-bound-root-states-at
+  [moved : TcMovedSet]
+  [names : TcNameIdList]
+  [index : i64]) : TcMovedSet
+  (if (>= index (tc-name-id-list-len names))
+    moved
+    (tc-move-remove-bound-root-states-at
+      (tc-moved-remove-root-state moved (tc-name-id-list-ref names index))
+      names
+      (+ index 1))))
 
 (define (tc-move-remove-bound-root-states
   [moved : TcMovedSet]
   [names : TcNameIdList]) : TcMovedSet
-  (match names
-    [(TcNameIdList.Nil) moved]
-    [(TcNameIdList.Cons name-id rest)
-      (tc-move-remove-bound-root-states
-        (tc-moved-remove-root-state moved name-id)
-        (box-get rest))]))
+  (tc-move-remove-bound-root-states-at moved names 0))
 
 (define (tc-move-pattern-bound-names
   [ctx : TcContext]
@@ -51069,16 +51268,16 @@
         [(AstPattern.Variant _ patterns-box)
           (let
             [patterns : AstPatternList (box-get patterns-box)]
-            (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
-        [_ TcNameIdList.Nil])]
+            (tc-pattern-list-add-bound-name-ids patterns (tc-name-id-list-nil)))]
+        [_ (tc-name-id-list-nil)])]
     [(AstType.EnumArgs _ _)
       (match pattern
         [(AstPattern.Variant _ patterns-box)
           (let
             [patterns : AstPatternList (box-get patterns-box)]
-            (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
-        [_ TcNameIdList.Nil])]
-    [_ (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
+            (tc-pattern-list-add-bound-name-ids patterns (tc-name-id-list-nil)))]
+        [_ (tc-name-id-list-nil)])]
+    [_ (tc-pattern-add-bound-name-ids pattern (tc-name-id-list-nil))]))
 
 ;; Each arm is checked from the same post-scrutinee state; results are unioned so
 ;; a place moved on any arm is considered moved after the match.
@@ -52579,18 +52778,17 @@
     (let
       [result-lifetimes : TcNameIdList
         (tc-type-collect-reference-lifetimes (tc-resolve-type ctx result-ty))]
-      (match result-lifetimes
-        [TcNameIdList.Nil outer-borrowed]
-        [_
-          (tc-borrow-check-propagate-return-borrows-at
-            ctx
-            env
-            outer-locals
-            (tc-moved-paths inner-borrowed)
-            0
-            result-lifetimes
-            (tc-borrow-check-result-direct-borrow-path outer-locals result-expr)
-            (tc-moved-clone outer-borrowed))]))))
+      (if (tc-name-id-list-empty? result-lifetimes)
+        outer-borrowed
+        (tc-borrow-check-propagate-return-borrows-at
+          ctx
+          env
+          outer-locals
+          (tc-moved-paths inner-borrowed)
+          0
+          result-lifetimes
+          (tc-borrow-check-result-direct-borrow-path outer-locals result-expr)
+          (tc-moved-clone outer-borrowed))))))
 
 (define (tc-borrow-check-mark-new-return-borrows-at
   [ctx : TcContext]
@@ -52665,20 +52863,19 @@
     (let
       [result-lifetimes : TcNameIdList
         (tc-type-collect-reference-lifetimes (tc-resolve-type ctx result-ty))]
-      (match result-lifetimes
-        [TcNameIdList.Nil borrowed]
-        [_
-          (tc-borrow-check-mark-new-return-borrows-at
-            ctx
-            env
-            locals
-            prior
-            (tc-moved-paths borrowed)
-            0
-            binding-id
-            result-lifetimes
-            origin
-            (tc-moved-clone borrowed))]))))
+      (if (tc-name-id-list-empty? result-lifetimes)
+        borrowed
+        (tc-borrow-check-mark-new-return-borrows-at
+          ctx
+          env
+          locals
+          prior
+          (tc-moved-paths borrowed)
+          0
+          binding-id
+          result-lifetimes
+          origin
+          (tc-moved-clone borrowed))))))
 
 (define (tc-borrow-check-protected-path?
   [protected : TcMovedSet]
@@ -52769,7 +52966,8 @@
       (match (tc-move-direct-root-base-path expr)
         [(TcMaybeMovePath.Some path) (TcMaybeMovePath.Some path)]
         [(TcMaybeMovePath.No)
-          (TcMaybeMovePath.Some (TcMovePath root-id TcMovePathSegments.Nil))])]
+          (TcMaybeMovePath.Some
+            (TcMovePath root-id (tc-move-path-segments-nil)))])]
     [(TcMaybeNameId.No) (TcMaybeMovePath.No)]))
 
 (define (tc-borrow-check-add-borrow-path
@@ -53020,7 +53218,7 @@
         (tc-move-var-move-only-id? env name-id))
         (match (tc-borrow-check-move-conflict
           borrowed
-          (TcMovePath name-id TcMovePathSegments.Nil)
+          (TcMovePath name-id (tc-move-path-segments-nil))
           init)
           [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
           [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
@@ -53049,7 +53247,7 @@
           (tc-move-var-move-only-id? env name-id))
           (match (tc-borrow-check-move-conflict
             borrowed
-            (TcMovePath name-id TcMovePathSegments.Nil)
+            (TcMovePath name-id (tc-move-path-segments-nil))
             init)
             [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
             [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
@@ -53078,17 +53276,28 @@
 ;; retain a symbolic lifetime for a lending call. At an annotated binding we
 ;; have the concrete caller lifetime, so attach a result-binding marker to the
 ;; direct mutable borrow for precise NLL pruning.
+(define (tc-borrow-check-first-overlapping-lifetime-at
+  [type-lifetimes : TcNameIdList]
+  [result-lifetimes : TcNameIdList]
+  [index : i64]) : TcMaybeNameId
+  (if (>= index (tc-name-id-list-len result-lifetimes))
+    TcMaybeNameId.No
+    (let
+      [lifetime : i64 (tc-name-id-list-ref result-lifetimes index)]
+      (if (tc-name-id-list-contains type-lifetimes lifetime)
+        (TcMaybeNameId.Some lifetime)
+        (tc-borrow-check-first-overlapping-lifetime-at
+          type-lifetimes
+          result-lifetimes
+          (+ index 1))))))
+
 (define (tc-borrow-check-first-overlapping-lifetime
   [type-lifetimes : TcNameIdList]
   [result-lifetimes : TcNameIdList]) : TcMaybeNameId
-  (match result-lifetimes
-    [(TcNameIdList.Nil) TcMaybeNameId.No]
-    [(TcNameIdList.Cons lifetime rest)
-      (if (tc-name-id-list-contains type-lifetimes lifetime)
-        (TcMaybeNameId.Some lifetime)
-        (tc-borrow-check-first-overlapping-lifetime
-          type-lifetimes
-          (box-get rest)))]))
+  (tc-borrow-check-first-overlapping-lifetime-at
+    type-lifetimes
+    result-lifetimes
+    0))
 
 (define (tc-borrow-check-add-bound-returned-call-arg-borrow
   [ctx : TcContext]
@@ -53232,7 +53441,7 @@
           (tc-move-var-move-only-id? env name-id))
           (match (tc-borrow-check-move-conflict
             borrowed
-            (TcMovePath name-id TcMovePathSegments.Nil)
+            (TcMovePath name-id (tc-move-path-segments-nil))
             init)
             [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
             [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
@@ -53350,7 +53559,7 @@
   [primary : AstExpr]) : ResultTcUnit
   (tc-borrow-check-assign-conflict
     borrowed
-    (TcMovePath name-id TcMovePathSegments.Nil)
+    (TcMovePath name-id (tc-move-path-segments-nil))
     primary))
 
 (define (tc-borrow-check-array-set-conflict
@@ -53367,7 +53576,7 @@
         [(TcMaybeMovePath.No)
           (tc-borrow-check-assign-conflict
             borrowed
-            (TcMovePath root-id TcMovePathSegments.Nil)
+            (TcMovePath root-id (tc-move-path-segments-nil))
             primary)])]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
@@ -53385,7 +53594,7 @@
         [(TcMaybeMovePath.No)
           (tc-borrow-check-assign-conflict
             borrowed
-            (TcMovePath root-id TcMovePathSegments.Nil)
+            (TcMovePath root-id (tc-move-path-segments-nil))
             primary)])]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
@@ -53398,7 +53607,7 @@
     [(TcMaybeNameId.Some root-id)
       (tc-borrow-check-assign-conflict
         borrowed
-        (TcMovePath root-id TcMovePathSegments.Nil)
+        (TcMovePath root-id (tc-move-path-segments-nil))
         primary)]
     [(TcMaybeNameId.No) ResultTcUnit.Ok]))
 
@@ -53451,7 +53660,7 @@
           [(tc-type-contains-region ty region)
             (match (tc-borrow-check-assign-conflict
               borrowed
-              (TcMovePath key TcMovePathSegments.Nil)
+              (TcMovePath key (tc-move-path-segments-nil))
               primary)
               [(ResultTcUnit.Ok)
                 (tc-borrow-check-region-invalidation-scan
@@ -53524,7 +53733,7 @@
           [(tc-type-contains-arena-owner-region? ty owner)
             (match (tc-borrow-check-assign-conflict
               borrowed
-              (TcMovePath key TcMovePathSegments.Nil)
+              (TcMovePath key (tc-move-path-segments-nil))
               primary)
               [(ResultTcUnit.Ok)
                 (tc-borrow-check-owner-invalidation-scan
@@ -53564,7 +53773,7 @@
       (if (>= pid 0)
         (match (tc-borrow-check-assign-conflict
           borrowed
-          (TcMovePath pid TcMovePathSegments.Nil)
+          (TcMovePath pid (tc-move-path-segments-nil))
           primary)
           [(ResultTcUnit.Ok)
             (match (tc-arena-phase-token-region-active env pid)
@@ -53575,7 +53784,7 @@
                   locals
                   borrowed
                   region
-                  TcNameIdList.Nil
+                  (tc-name-id-list-nil)
                   (tc-moved-len locals)
                   primary)]
               [(TcMaybeNameId.No) (TcBorrowCheckResult.Ok borrowed)])]
@@ -53601,7 +53810,7 @@
           (tc-atomic-arena-owner-active-id? env oid))
           (match (tc-borrow-check-assign-conflict
             borrowed
-            (TcMovePath oid TcMovePathSegments.Nil)
+            (TcMovePath oid (tc-move-path-segments-nil))
             primary)
             [(ResultTcUnit.Ok)
               (tc-borrow-check-owner-invalidation-scan
@@ -53610,7 +53819,7 @@
                 locals
                 borrowed
                 oid
-                TcNameIdList.Nil
+                (tc-name-id-list-nil)
                 (tc-moved-len locals)
                 primary)]
             [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
@@ -53760,21 +53969,37 @@
             return-lifetimes)))]
     [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
 
+(define (tc-borrow-check-add-names-at
+  [locals : TcMovedSet]
+  [names : TcNameIdList]
+  [index : i64]) : TcMovedSet
+  (if (>= index (tc-name-id-list-len names))
+    locals
+    (tc-borrow-check-add-names-at
+      (tc-moved-add locals (tc-name-id-list-ref names index))
+      names
+      (+ index 1))))
+
 (define (tc-borrow-check-add-names [locals : TcMovedSet] [names : TcNameIdList]) : TcMovedSet
-  (match names
-    [(TcNameIdList.Nil) locals]
-    [(TcNameIdList.Cons name-id rest)
-      (tc-borrow-check-add-names (tc-moved-add locals name-id) (box-get rest))]))
+  (tc-borrow-check-add-names-at locals names 0))
+
+(define (tc-borrow-check-remove-root-states-at
+  [borrowed : TcMovedSet]
+  [names : TcNameIdList]
+  [index : i64]) : TcMovedSet
+  (if (>= index (tc-name-id-list-len names))
+    borrowed
+    (tc-borrow-check-remove-root-states-at
+      (tc-borrow-check-remove-root-state
+        borrowed
+        (tc-name-id-list-ref names index))
+      names
+      (+ index 1))))
 
 (define (tc-borrow-check-remove-root-states
   [borrowed : TcMovedSet]
   [names : TcNameIdList]) : TcMovedSet
-  (match names
-    [(TcNameIdList.Nil) borrowed]
-    [(TcNameIdList.Cons name-id rest)
-      (tc-borrow-check-remove-root-states
-        (tc-borrow-check-remove-root-state borrowed name-id)
-        (box-get rest))]))
+  (tc-borrow-check-remove-root-states-at borrowed names 0))
 
 (define (tc-borrow-check-pattern-bound-names
   [ctx : TcContext]
@@ -53787,16 +54012,16 @@
         [(AstPattern.Variant _ patterns-box)
           (let
             [patterns : AstPatternList (box-get patterns-box)]
-            (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
-        [_ TcNameIdList.Nil])]
+            (tc-pattern-list-add-bound-name-ids patterns (tc-name-id-list-nil)))]
+        [_ (tc-name-id-list-nil)])]
     [(AstType.EnumArgs _ _)
       (match pattern
         [(AstPattern.Variant _ patterns-box)
           (let
             [patterns : AstPatternList (box-get patterns-box)]
-            (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
-        [_ TcNameIdList.Nil])]
-    [_ (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
+            (tc-pattern-list-add-bound-name-ids patterns (tc-name-id-list-nil)))]
+        [_ (tc-name-id-list-nil)])]
+    [_ (tc-pattern-add-bound-name-ids pattern (tc-name-id-list-nil))]))
 
 (define (tc-borrow-check-pattern-locals
   [ctx : TcContext]
@@ -55315,16 +55540,15 @@
   [borrowed : TcMovedSet]
   [args : AstExprList]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (match result-lifetimes
-    [(TcNameIdList.Nil) (TcBorrowCheckResult.Ok borrowed)]
-    [_
-      (tc-borrow-check-add-returned-call-borrows
-        ctx
-        env
-        locals
-        borrowed
-        args
-        result-lifetimes)]))
+  (if (tc-name-id-list-empty? result-lifetimes)
+    (TcBorrowCheckResult.Ok borrowed)
+    (tc-borrow-check-add-returned-call-borrows
+      ctx
+      env
+      locals
+      borrowed
+      args
+      result-lifetimes)))
 
 (define (tc-borrow-check-after-returning-call
   [ctx : TcContext]
@@ -57864,13 +58088,13 @@
 (define macro-live-prescan-has-defmacro : bool
   false)
 (define macro-live-prescan-expr-type-names : TcNameIdList
-  (TcNameIdList.Nil))
+  (tc-name-id-list-nil))
 (define macro-live-prescan-needs-expansion : bool
   false)
 (define macro-live-prescan-summary-import : bool
   false)
 (define macro-live-prescan-visible-names : TcNameIdList
-  (TcNameIdList.Nil))
+  (tc-name-id-list-nil))
 
 (define (macro-live-prescan-reset!) : unit
   (set! macro-live-prescan-ready false))
@@ -57885,7 +58109,7 @@
         macro-live-prescan-expr-type-names
         (if has-defmacro
           (macro-collect-expr-type-macro-names decls)
-          (TcNameIdList.Nil)))
+          (tc-name-id-list-nil)))
       (set! macro-live-prescan-needs-expansion needs-expansion)
       (set!
         macro-live-prescan-summary-import
@@ -58131,17 +58355,17 @@
 (define (macro-expand-scratch-clear-owned-caches!) : unit
   (begin
     (set! macro-expand-active-module "")
-    (macro-expand-set-macro-names! (TcNameIdList.Nil))
+    (macro-expand-set-macro-names! (tc-name-id-list-nil))
     (set!
       macro-expand-expr-type-macro-name-set
       (tc_i64_i64_map.with-capacity 16))
     (macro-live-symbols-clear!)
     (macro-live-prescan-reset!)
     (set! macro-live-prescan-has-defmacro false)
-    (set! macro-live-prescan-expr-type-names (TcNameIdList.Nil))
+    (set! macro-live-prescan-expr-type-names (tc-name-id-list-nil))
     (set! macro-live-prescan-needs-expansion false)
     (set! macro-live-prescan-summary-import false)
-    (set! macro-live-prescan-visible-names (TcNameIdList.Nil))
+    (set! macro-live-prescan-visible-names (tc-name-id-list-nil))
     (ctfe-module-macro-export-reset!)
     (macro-generated-module-memo-reset!)
     (tc-macro-abstract-proof-reset!)
@@ -62361,17 +62585,22 @@
 (define (macro-collect-visible-macro-names [decls : AstDeclList]) : TcNameIdList
   (macro-collect-surface-summary-macro-names
     (compiler-load-surface-summaries)
-    (macro-collect-macro-names decls (TcNameIdList.Nil))))
+    (macro-collect-macro-names decls (tc-name-id-list-nil))))
+
+(define (macro-name-set-add-all-at
+  [names : TcNameIdList]
+  [set : (&mut set tc_i64_i64_map.Map)]
+  [index : i64]) : unit
+  (unless
+    (>= index (tc-name-id-list-len names))
+    (begin
+      (tc_i64_i64_map.insert-ref! set (tc-name-id-list-ref names index) 1)
+      (macro-name-set-add-all-at names set (+ index 1)))))
 
 (define (macro-name-set-add-all
   [names : TcNameIdList]
   [set : (&mut set tc_i64_i64_map.Map)]) : unit
-  (match names
-    [(TcNameIdList.Nil) unit]
-    [(TcNameIdList.Cons name-id rest)
-      (begin
-        (tc_i64_i64_map.insert-ref! set name-id 1)
-        (macro-name-set-add-all (box-get rest) set))]))
+  (macro-name-set-add-all-at names set 0))
 
 (define (macro-name-set-from-list [names : TcNameIdList]) : tc_i64_i64_map.Map
   (let
@@ -62380,13 +62609,17 @@
       (macro-name-set-add-all names (&mut set))
       set)))
 
+(define (macro-ctfe-visible-name-set-add-all-at
+  [names : TcNameIdList]
+  [index : i64]) : unit
+  (unless
+    (>= index (tc-name-id-list-len names))
+    (begin
+      (ctfe-visible-macro-name-add! (tc-name-id-list-ref names index))
+      (macro-ctfe-visible-name-set-add-all-at names (+ index 1)))))
+
 (define (macro-ctfe-visible-name-set-add-all [names : TcNameIdList]) : unit
-  (match names
-    [(TcNameIdList.Nil) unit]
-    [(TcNameIdList.Cons name-id rest)
-      (begin
-        (ctfe-visible-macro-name-add! name-id)
-        (macro-ctfe-visible-name-set-add-all (box-get rest)))]))
+  (macro-ctfe-visible-name-set-add-all-at names 0))
 
 (define (macro-expand-set-macro-names! [names : TcNameIdList]) : unit
   (begin
@@ -62855,7 +63088,7 @@
   (macro-collect-expr-type-macro-names-in
     decls
     cbi.compiler-builtin-id-fix-empty
-    TcNameIdList.Nil))
+    (tc-name-id-list-nil)))
 
 (define (macro-hygiene-structural-base) : i64
   (ci.intern-macro-global-structural-base))
@@ -64632,10 +64865,8 @@
 ;; program's AstDecl.Module/AstDecl.Import declarations. Cache them at the same
 ;; per-program boundary so generated macro bodies do not repeatedly rescan the
 ;; whole declaration list.
-(import (vector.vector i64 core) as macro_flat_import_target_vec)
-
 (defstruct MacroFlatImportTargetList
-  (items macro_flat_import_target_vec.Vec))
+  (items tc_i64_vec.Vec))
 
 (defenum MacroFlatImportTargetCacheLookup
   (Missing)
@@ -64966,18 +65197,16 @@
         unit))))
 
 (define (macro-flat-import-target-list-empty) : MacroFlatImportTargetList
-  (MacroFlatImportTargetList (macro_flat_import_target_vec.new)))
+  (MacroFlatImportTargetList (tc_i64_vec.new)))
 
 (define (macro-flat-import-target-list-len
   [targets : MacroFlatImportTargetList]) : i64
-  (macro_flat_import_target_vec.len (& (struct-get targets items))))
+  (tc_i64_vec.len (& (struct-get targets items))))
 
 (define (macro-flat-import-target-list-ref
   [targets : MacroFlatImportTargetList]
   [index : i64]) : i64
-  (array-ref
-    (macro_flat_import_target_vec.slots (& (struct-get targets items)))
-    index))
+  (array-ref (tc_i64_vec.slots (& (struct-get targets items))) index))
 
 ;; Appends in program order, so no reversal pass is needed on store. The
 ;; per-module lists are a handful of entries, so the dedup scan and the
@@ -65001,9 +65230,7 @@
       (if found
         targets
         (begin
-          (macro_flat_import_target_vec.push
-            (&mut (struct-get targets items))
-            target-id)
+          (tc_i64_vec.push (&mut (struct-get targets items)) target-id)
           targets)))))
 
 (define (macro-flat-import-targets-from-list
@@ -73123,15 +73350,13 @@
           [expr-type-macro-names : TcNameIdList
             macro-live-prescan-expr-type-names]
           [has-expr-type-macros : bool
-            (match expr-type-macro-names
-              [(TcNameIdList.Nil) false]
-              [_ true])]
+            (not (tc-name-id-list-empty? expr-type-macro-names))]
           [program-needs-expansion : bool macro-live-prescan-needs-expansion]
           [has-summary-macro-import : bool macro-live-prescan-summary-import]
           [prescan-macro-names : TcNameIdList
             (if has-summary-macro-import
               macro-live-prescan-visible-names
-              (TcNameIdList.Nil))]
+              (tc-name-id-list-nil))]
           [has-visible-macro-call : bool
             (if has-summary-macro-import
               (begin
@@ -75910,8 +76135,8 @@
     (compiler-load-surface-summaries-reset!)
     (ctfe-build-seen-reset!)
     (set! macro-expand-active-module "")
-    (macro-expand-set-macro-names! (TcNameIdList.Nil))
-    (macro-expand-set-expr-type-macro-names! (TcNameIdList.Nil))
+    (macro-expand-set-macro-names! (tc-name-id-list-nil))
+    (macro-expand-set-expr-type-macro-names! (tc-name-id-list-nil))
     (compiler-typecheck-ctfe-env-cache-clear!)
     (macro-live-symbols-reset!)
     (macro-live-prescan-reset!)
@@ -75957,8 +76182,8 @@
     (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
     (tc-hygiene-module-env-cache-arena-reset!)
     (set! macro-expand-active-module "")
-    (macro-expand-set-macro-names! (TcNameIdList.Nil))
-    (macro-expand-set-expr-type-macro-names! (TcNameIdList.Nil))
+    (macro-expand-set-macro-names! (tc-name-id-list-nil))
+    (macro-expand-set-expr-type-macro-names! (tc-name-id-list-nil))
     (set! macro-expand-ctfe-env-ready false)
     (set! macro-expand-ctfe-env-has-metadata false)
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))

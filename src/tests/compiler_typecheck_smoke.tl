@@ -2869,7 +2869,7 @@
               [names : TcNameIdList
                 (macro-collect-surface-summary-macro-names
                   (compiler-load-surface-summaries)
-                  (TcNameIdList.Nil))]
+                  (tc-name-id-list-nil))]
               [provider-id : i64
                 (compiler-typecheck-smoke-program-parsed-id
                   (ast-program decls)

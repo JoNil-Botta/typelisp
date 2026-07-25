@@ -10077,13 +10077,14 @@
     [items0 : TcMovePath
       (TcMovePath
         items-id
-        (TcMovePathSegments.ArrayIndex 0 (box TcMovePathSegments.Nil)))]
+        (tc-move-path-segments-append-array (tc-move-path-segments-nil) 0))]
     [items1 : TcMovePath
       (TcMovePath
         items-id
-        (TcMovePathSegments.ArrayIndex 1 (box TcMovePathSegments.Nil)))]
-    [items-root : TcMovePath (TcMovePath items-id TcMovePathSegments.Nil)]
-    [shadowed-root : TcMovePath (TcMovePath shadowed-id TcMovePathSegments.Nil)]
+        (tc-move-path-segments-append-array (tc-move-path-segments-nil) 1))]
+    [items-root : TcMovePath (TcMovePath items-id (tc-move-path-segments-nil))]
+    [shadowed-root : TcMovePath
+      (TcMovePath shadowed-id (tc-move-path-segments-nil))]
     [origin-a : AstExpr (AstExpr.Var (intern "origin-a"))]
     [origin-b : AstExpr (AstExpr.Var (intern "origin-b"))]
     [empty : TcMovedSet (tc-moved-empty)]

@@ -1414,7 +1414,11 @@
                           "0")
                         (set! opened (+ opened 2))
                         (set! index (+ index 1)))))]
-                [_ (set! ok false)])]
+                [_
+                  (begin
+                    (embedded-native-fallback-reason-note!
+                      "template-splice:non-variable")
+                    (set! ok false))])]
             [_
               (let
                 [item-opened : i64
@@ -1517,7 +1521,11 @@
                             (string.int->string (string.string-length pat-name))
                             (string.int->string (struct-get (& pat-args) len)))
                           (+ pat-arg-opened 1))))]
-                  [_ -1])]
+                  [_
+                    (begin
+                      (embedded-native-fallback-reason-note!
+                        "template-match-arm:unsupported-pattern")
+                      -1)])]
               (if (< pat-opened 0)
                 (set! ok false)
                 (let
@@ -1608,7 +1616,10 @@
               (string.int->string (string.string-length name))
               (string.int->string (struct-get (& args) len)))
             (+ arg-opened 1))))]
-    [_ -1]))
+    [_
+      (begin
+        (embedded-native-fallback-reason-note! "template-pattern:unsupported")
+        -1)]))
 
 (define (embedded-native-pattern-list-ops
   [args : (& args AstPatternList)]
@@ -1688,7 +1699,9 @@
       (let
         [ordinal : i64 (embedded-native-scalar-type-ordinal ty)]
         (if (< ordinal 0)
-          -1
+          (begin
+            (embedded-native-fallback-reason-note! "template-type:non-scalar")
+            -1)
           (begin
             (embedded-native-template-push!
               ops
@@ -1743,7 +1756,11 @@
                             (string.int->string (string.string-length name))
                             "0")
                           (+ type-opened 1))))]
-                  [_ -1])]
+                  [_
+                    (begin
+                      (embedded-native-fallback-reason-note!
+                        "template-let-binding:unsupported")
+                      -1)])]
               (if (< binding-opened 0)
                 -1
                 (begin

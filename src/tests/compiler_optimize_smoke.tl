@@ -727,7 +727,7 @@
 (define (smoke-noop-int-cast-mov-self-test) : i64
   (let
     [rewritten : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (smoke-noop-int-cast-mov-instrs))]
+      (opt-fold-instrs (opt-const-env-empty) (smoke-noop-int-cast-mov-instrs))]
     (begin
       (unless (= (opt-count-cast-instrs rewritten) 3) (return 1))
       (unless
@@ -856,7 +856,7 @@
     [object-array : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (smoke-bounds-object-pair
           (CompilerIrValue.Var 1)
           (CompilerIrValue.I64 1)
@@ -864,7 +864,7 @@
     [object-string : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (smoke-bounds-object-pair
           (CompilerIrValue.Var 1)
           (CompilerIrValue.I64 8)
@@ -872,7 +872,7 @@
     [object-mismatch : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (smoke-bounds-object-pair
           (CompilerIrValue.Var 2)
           (CompilerIrValue.I64 1)
@@ -880,17 +880,17 @@
     [object-call : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (smoke-bounds-object-call-barrier))]
     [object-store : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (smoke-bounds-object-store-barrier (CompilerIrValue.Var 10)))]
     [object-element-store : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (smoke-bounds-object-store-barrier (CompilerIrValue.Var 99)))]
     (cond
       [(not (= (opt-count-bounds-instrs object-array) 1)) 1]

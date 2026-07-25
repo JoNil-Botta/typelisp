@@ -197,9 +197,40 @@
   (No)
   (Some CompilerIrValue AstType))
 
-(defenum OptAggregateFieldFacts
-  (Nil)
-  (Cons i64 i64 CompilerIrValue AstType (Box OptAggregateFieldFacts)))
+;; One known field store: base var, byte offset, stored value, stored type.
+(defenum OptAggregateFieldFact
+  (Fact i64 i64 CompilerIrValue AstType))
+
+(import (vector.vector OptAggregateFieldFact core) as opt_aggregate_field_fact_vec)
+
+;; Block-local field-store facts for aggregate SROA. Every mutator already
+;; rebuilt the whole list, so each one fills a private buffer here too.
+;; Storage is push order -- the reverse of the old cons order, since bind
+;; prepended -- and `opt-aggregate-field-facts-ref` takes the head-first index
+;; the lookup used.
+(defstruct OptAggregateFieldFacts
+  (items opt_aggregate_field_fact_vec.Vec))
+
+(define (opt-aggregate-field-facts-empty) : OptAggregateFieldFacts
+  (OptAggregateFieldFacts (opt_aggregate_field_fact_vec.new)))
+
+(define (opt-aggregate-field-facts-count [facts : OptAggregateFieldFacts]) : i64
+  (opt_aggregate_field_fact_vec.len (& (struct-get facts items))))
+
+(define (opt-aggregate-field-facts-slot
+  [facts : OptAggregateFieldFacts]
+  [slot : i64]) : OptAggregateFieldFact
+  (array-ref
+    (opt_aggregate_field_fact_vec.slots (& (struct-get facts items)))
+    slot))
+
+;; Head-first index: 0 is the newest fact, matching the old cons walk.
+(define (opt-aggregate-field-facts-ref
+  [facts : OptAggregateFieldFacts]
+  [index : i64]) : OptAggregateFieldFact
+  (opt-aggregate-field-facts-slot
+    facts
+    (- (- (opt-aggregate-field-facts-count facts) 1) index)))
 
 (defenum OptAggregateSroaResult
   (Result OptAggregateFieldFacts CompilerIrInstr))
@@ -538,41 +569,82 @@
   (SomeConst CompilerIrValue AstType))
 
 ;; The const env is threaded linearly through a single block's fold/strength
-;; passes (each block starts fresh at `OptConstEnv.Nil`); it is never forked or
+;; passes (each block starts fresh at an empty env); it is never forked or
 ;; reused across blocks. So bind/unbind only ever extend the most recent env.
 ;; We exploit that: the newest entry for a var always shadows older ones, so
-;; `bind` and `unbind` just PREPEND (O(1)) instead of rebuilding the whole list
+;; `bind` and `unbind` just APPEND (O(1)) instead of rebuilding the whole list
 ;; to remove the prior entry (the old O(n)-per-instruction copy made folding a
 ;; single large block O(n^2) in both time and allocation -- e.g. a function that
 ;; is one giant `str-cat` lowers to a long `string-append` call chain, and each
-;; call's `opt-invalidate-def` rebuilt the entire env). `OptConstEnv.Shadow` records
-;; "this var is no longer a known constant" so lookup stops at it.
-(defenum OptConstEnv
-  (Nil)
-  (Cons i64 CompilerIrValue AstType (Box OptConstEnv))
-  (Shadow i64 (Box OptConstEnv)))
+;; call's `opt-invalidate-def` rebuilt the entire env). `OptVarValueBind.Shadow`
+;; records "this var is no longer a known constant" so lookup stops at it.
+;; Shared binding element for the three block-local var environments below:
+;; the const env, the copy env, and the redundant-bounds-check cast env. One
+;; instantiation covers all three; each env only ever constructs the variants
+;; its own comment names.
+(defenum OptVarValueBind
+  ;; var -> replacement value (copy env, bounds cast env)
+  (Copy i64 CompilerIrValue)
+  ;; pack group + word index -> value (copy env)
+  (PackWord i64 i64 CompilerIrValue)
+  ;; var -> known typed constant (const env)
+  (Typed i64 CompilerIrValue AstType)
+  ;; var is no longer a known constant (const env)
+  (Shadow i64))
+
+(import (vector.vector OptVarValueBind core) as opt_var_value_bind_vec)
+
+(defstruct OptConstEnv
+  (items opt_var_value_bind_vec.Vec))
+
+(define (opt-const-env-empty) : OptConstEnv
+  (OptConstEnv (opt_var_value_bind_vec.new)))
+
+(define (opt-const-env-count [env : OptConstEnv]) : i64
+  (opt_var_value_bind_vec.len (& (struct-get env items))))
+
+;; Head-first index: 0 is the newest binding, matching the old cons walk.
+(define (opt-const-env-ref [env : OptConstEnv] [index : i64]) : OptVarValueBind
+  (array-ref
+    (opt_var_value_bind_vec.slots (& (struct-get env items)))
+    (- (- (opt-const-env-count env) 1) index)))
+
+;; O(1) append, keeping the prepend-only shape the comment above depends on:
+;; the env is threaded through one block and never forked, so the single owner
+;; may grow its buffer in place.
+(define (opt-const-env-push [env : OptConstEnv] [bind : OptVarValueBind]) : OptConstEnv
+  (let
+    [items : opt_var_value_bind_vec.Vec (struct-get env items)]
+    (begin
+      (opt_var_value_bind_vec.push (&mut items) bind)
+      (OptConstEnv items))))
 
 (define (opt-const-unbind [env : OptConstEnv] [var : i64]) : OptConstEnv
-  (OptConstEnv.Shadow var (box env)))
+  (opt-const-env-push env (OptVarValueBind.Shadow var)))
 
 (define (opt-const-bind
   [env : OptConstEnv]
   [var : i64]
   [value : CompilerIrValue]
   [ty : AstType]) : OptConstEnv
-  (OptConstEnv.Cons var value ty (box env)))
+  (opt-const-env-push env (OptVarValueBind.Typed var value ty)))
+
+(define (opt-const-lookup-from [env : OptConstEnv] [var : i64] [index : i64]) : OptKnownConst
+  (if (>= index (opt-const-env-count env))
+    (OptKnownConst.NoConst)
+    (match (opt-const-env-ref env index)
+      [(OptVarValueBind.Typed id value ty)
+        (if (= id var)
+          (OptKnownConst.SomeConst value ty)
+          (opt-const-lookup-from env var (+ index 1)))]
+      [(OptVarValueBind.Shadow id)
+        (if (= id var)
+          (OptKnownConst.NoConst)
+          (opt-const-lookup-from env var (+ index 1)))]
+      [_ (opt-const-lookup-from env var (+ index 1))])))
 
 (define (opt-const-lookup [env : OptConstEnv] [var : i64]) : OptKnownConst
-  (match env
-    [(OptConstEnv.Nil) (OptKnownConst.NoConst)]
-    [(OptConstEnv.Cons id value ty rest)
-      (if (= id var)
-        (OptKnownConst.SomeConst value ty)
-        (opt-const-lookup (box-get rest) var))]
-    [(OptConstEnv.Shadow id rest)
-      (if (= id var)
-        (OptKnownConst.NoConst)
-        (opt-const-lookup (box-get rest) var))]))
+  (opt-const-lookup-from env var 0))
 
 (define (opt-integer-type? [ty : AstType]) : bool
   (match ty
@@ -1499,9 +1571,9 @@
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
           (opt-invalidate-spmd-result env result instr)])]
     [(CompilerIrInstr.StorePtr _ _ _)
-      (OptInstrResult.Result OptConstEnv.Nil instr)]
+      (OptInstrResult.Result (opt-const-env-empty) instr)]
     [(CompilerIrInstr.CopyBytes _ _ _)
-      (OptInstrResult.Result OptConstEnv.Nil instr)]
+      (OptInstrResult.Result (opt-const-env-empty) instr)]
     [(CompilerIrInstr.TailCall _ _ _) (OptInstrResult.Result env instr)]
     [(CompilerIrInstr.Phi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult.Result env instr)]))
@@ -1617,9 +1689,9 @@
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
           (opt-invalidate-spmd-result env result instr)])]
     [(CompilerIrInstr.StorePtr _ _ _)
-      (OptInstrResult.Result OptConstEnv.Nil instr)]
+      (OptInstrResult.Result (opt-const-env-empty) instr)]
     [(CompilerIrInstr.CopyBytes _ _ _)
-      (OptInstrResult.Result OptConstEnv.Nil instr)]
+      (OptInstrResult.Result (opt-const-env-empty) instr)]
     [(CompilerIrInstr.TailCall _ _ _) (OptInstrResult.Result env instr)]
     [(CompilerIrInstr.Phi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult.Result env instr)]))
@@ -3817,42 +3889,57 @@
     [(OptAggregateLocation.Some _ _) true]
     [(OptAggregateLocation.No) false]))
 
+(define (opt-aggregate-field-facts-unbind-into
+  [facts : OptAggregateFieldFacts]
+  [base : i64]
+  [offset : i64]) : opt_aggregate_field_fact_vec.Vec
+  (let
+    [count : i64 (opt-aggregate-field-facts-count facts)]
+    [out : opt_aggregate_field_fact_vec.Vec
+      (opt_aggregate_field_fact_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [fact : OptAggregateFieldFact
+            (opt-aggregate-field-facts-slot facts slot)]
+          (begin
+            (match fact
+              [(OptAggregateFieldFact.Fact fact-base fact-offset _ _)
+                (if (and (= fact-base base) (= fact-offset offset))
+                  unit
+                  (opt_aggregate_field_fact_vec.push (&mut out) fact))])
+            (set! slot (+ slot 1)))))
+      out)))
+
 (define (opt-aggregate-field-facts-unbind
   [facts : OptAggregateFieldFacts]
   [base : i64]
   [offset : i64]) : OptAggregateFieldFacts
-  (match facts
-    [(OptAggregateFieldFacts.Nil) (OptAggregateFieldFacts.Nil)]
-    [(OptAggregateFieldFacts.Cons fact-base fact-offset value ty rest)
-      (let
-        [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-unbind (box-get rest) base offset)]
-        (if (and (= fact-base base) (= fact-offset offset))
-          rest2
-          (OptAggregateFieldFacts.Cons
-            fact-base
-            fact-offset
-            value
-            ty
-            (box rest2))))]))
+  (OptAggregateFieldFacts
+    (opt-aggregate-field-facts-unbind-into facts base offset)))
 
 (define (opt-aggregate-field-facts-unbind-base
   [facts : OptAggregateFieldFacts]
   [base : i64]) : OptAggregateFieldFacts
-  (match facts
-    [(OptAggregateFieldFacts.Nil) (OptAggregateFieldFacts.Nil)]
-    [(OptAggregateFieldFacts.Cons fact-base fact-offset value ty rest)
-      (let
-        [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-unbind-base (box-get rest) base)]
-        (if (= fact-base base)
-          rest2
-          (OptAggregateFieldFacts.Cons
-            fact-base
-            fact-offset
-            value
-            ty
-            (box rest2))))]))
+  (let
+    [count : i64 (opt-aggregate-field-facts-count facts)]
+    [out : opt_aggregate_field_fact_vec.Vec
+      (opt_aggregate_field_fact_vec.with-capacity count)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [fact : OptAggregateFieldFact
+            (opt-aggregate-field-facts-slot facts slot)]
+          (begin
+            (match fact
+              [(OptAggregateFieldFact.Fact fact-base _ _ _)
+                (if (= fact-base base)
+                  unit
+                  (opt_aggregate_field_fact_vec.push (&mut out) fact))])
+            (set! slot (+ slot 1)))))
+      (OptAggregateFieldFacts out))))
 
 (define (opt-aggregate-field-facts-bind
   [facts : OptAggregateFieldFacts]
@@ -3860,40 +3947,67 @@
   [offset : i64]
   [value : CompilerIrValue]
   [ty : AstType]) : OptAggregateFieldFacts
-  (OptAggregateFieldFacts.Cons
-    base
-    offset
-    value
-    ty
-    (box (opt-aggregate-field-facts-unbind facts base offset))))
+  (let
+    ;; The unbind already produced a private buffer, so appending the new head
+    ;; cannot disturb the caller's facts.
+    [out : opt_aggregate_field_fact_vec.Vec
+      (opt-aggregate-field-facts-unbind-into facts base offset)]
+    (begin
+      (opt_aggregate_field_fact_vec.push
+        (&mut out)
+        (OptAggregateFieldFact.Fact base offset value ty))
+      (OptAggregateFieldFacts out))))
+
+(define (opt-aggregate-field-facts-lookup-from
+  [facts : OptAggregateFieldFacts]
+  [base : i64]
+  [offset : i64]
+  [ty : AstType]
+  [index : i64]) : OptAggregateStoredValue
+  (if (>= index (opt-aggregate-field-facts-count facts))
+    (OptAggregateStoredValue.No)
+    (match (opt-aggregate-field-facts-ref facts index)
+      [(OptAggregateFieldFact.Fact fact-base fact-offset value fact-ty)
+        (if (and
+          (= fact-base base)
+          (= fact-offset offset)
+          (opt-type-eq fact-ty ty))
+          (OptAggregateStoredValue.Some value fact-ty)
+          (opt-aggregate-field-facts-lookup-from
+            facts
+            base
+            offset
+            ty
+            (+ index 1)))])))
 
 (define (opt-aggregate-field-facts-lookup
   [facts : OptAggregateFieldFacts]
   [base : i64]
   [offset : i64]
   [ty : AstType]) : OptAggregateStoredValue
-  (match facts
-    [(OptAggregateFieldFacts.Nil) (OptAggregateStoredValue.No)]
-    [(OptAggregateFieldFacts.Cons fact-base fact-offset value fact-ty rest)
-      (if (and
-        (= fact-base base)
-        (= fact-offset offset)
-        (opt-type-eq fact-ty ty))
-        (OptAggregateStoredValue.Some value fact-ty)
-        (opt-aggregate-field-facts-lookup (box-get rest) base offset ty))]))
+  (opt-aggregate-field-facts-lookup-from facts base offset ty 0))
 
 (define (opt-aggregate-field-facts-invalidate-var
   [facts : OptAggregateFieldFacts]
   [var : i64]) : OptAggregateFieldFacts
-  (match facts
-    [(OptAggregateFieldFacts.Nil) (OptAggregateFieldFacts.Nil)]
-    [(OptAggregateFieldFacts.Cons base offset value ty rest)
-      (let
-        [rest2 : OptAggregateFieldFacts
-          (opt-aggregate-field-facts-invalidate-var (box-get rest) var)]
-        (if (or (= base var) (opt-value-is-var? value var))
-          rest2
-          (OptAggregateFieldFacts.Cons base offset value ty (box rest2))))]))
+  (let
+    [count : i64 (opt-aggregate-field-facts-count facts)]
+    [out : opt_aggregate_field_fact_vec.Vec
+      (opt_aggregate_field_fact_vec.with-capacity count)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [fact : OptAggregateFieldFact
+            (opt-aggregate-field-facts-slot facts slot)]
+          (begin
+            (match fact
+              [(OptAggregateFieldFact.Fact base _ value _)
+                (if (or (= base var) (opt-value-is-var? value var))
+                  unit
+                  (opt_aggregate_field_fact_vec.push (&mut out) fact))])
+            (set! slot (+ slot 1)))))
+      (OptAggregateFieldFacts out))))
 
 (define (opt-aggregate-sroa-invalidate-def
   [facts : OptAggregateFieldFacts]
@@ -4003,7 +4117,7 @@
           (opt-aggregate-field-facts-unbind-base facts base)
           instr))]
     [(OptAggregateLocation.No)
-      (OptAggregateSroaResult.Result (OptAggregateFieldFacts.Nil) instr)]))
+      (OptAggregateSroaResult.Result (opt-aggregate-field-facts-empty) instr)]))
 
 (define (opt-aggregate-sroa-load
   [candidates : opt_aggregate_candidate_vec.Vec]
@@ -4042,7 +4156,9 @@
           (opt-aggregate-sroa-invalidate-def facts instr)]
         (if (compiler-ir-effect-invalidates-cse?
           (compiler-ir-instr-effect instr))
-          (OptAggregateSroaResult.Result (OptAggregateFieldFacts.Nil) instr)
+          (OptAggregateSroaResult.Result
+            (opt-aggregate-field-facts-empty)
+            instr)
           (OptAggregateSroaResult.Result def-facts instr)))]))
 
 (define (opt-aggregate-sroa-instr-seq-from
@@ -4070,7 +4186,7 @@
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-aggregate-sroa-instr-seq-from
     candidates
-    (OptAggregateFieldFacts.Nil)
+    (opt-aggregate-field-facts-empty)
     instrs
     0))
 
@@ -4127,9 +4243,31 @@
   (CpuIdKey CompilerIrValue CompilerIrValue i64)
   (XgetbvKey CompilerIrValue))
 
-(defenum OptExprTable
-  (Nil)
-  (Cons OptExprKey i64 (Box OptExprTable)))
+(defenum OptExprEntry
+  (Entry OptExprKey i64))
+
+(import (vector.vector OptExprEntry core) as opt_expr_entry_vec)
+
+;; Block-local CSE table. Every insert invalidates the defined var first, so it
+;; already rebuilt the whole list; the generated vector keeps that shape and
+;; appends the new head to the private invalidated buffer. Storage is push
+;; order, the reverse of the old cons order, and `opt-expr-table-ref` takes the
+;; head-first index the lookup used.
+(defstruct OptExprTable
+  (items opt_expr_entry_vec.Vec))
+
+(define (opt-expr-table-empty) : OptExprTable
+  (OptExprTable (opt_expr_entry_vec.new)))
+
+(define (opt-expr-table-count [table : OptExprTable]) : i64
+  (opt_expr_entry_vec.len (& (struct-get table items))))
+
+(define (opt-expr-table-slot [table : OptExprTable] [slot : i64]) : OptExprEntry
+  (array-ref (opt_expr_entry_vec.slots (& (struct-get table items))) slot))
+
+;; Head-first index: 0 is the newest entry, matching the old cons walk.
+(define (opt-expr-table-ref [table : OptExprTable] [index : i64]) : OptExprEntry
+  (opt-expr-table-slot table (- (- (opt-expr-table-count table) 1) index)))
 
 (define (opt-binop-tag [op : CompilerIrBinOp]) : i64
   (match op
@@ -5654,15 +5792,20 @@
         [(OptExprKey.XgetbvKey bindex) (opt-value-eq aindex bindex)]
         [_ false])]))
 
-(define (opt-expr-lookup [table : OptExprTable] [key : OptExprKey]) : CompilerIrMaybeValue
-  (match table
-    [(OptExprTable.Nil) (CompilerIrMaybeValue.No)]
-    [(OptExprTable.Cons k var rest)
-      (let
-        [rest : OptExprTable (box-get rest)]
+(define (opt-expr-lookup-from
+  [table : OptExprTable]
+  [key : OptExprKey]
+  [index : i64]) : CompilerIrMaybeValue
+  (if (>= index (opt-expr-table-count table))
+    (CompilerIrMaybeValue.No)
+    (match (opt-expr-table-ref table index)
+      [(OptExprEntry.Entry k var)
         (if (opt-expr-key-eq k key)
           (CompilerIrMaybeValue.Some (CompilerIrValue.Var var))
-          (opt-expr-lookup rest key)))]))
+          (opt-expr-lookup-from table key (+ index 1)))])))
+
+(define (opt-expr-lookup [table : OptExprTable] [key : OptExprKey]) : CompilerIrMaybeValue
+  (opt-expr-lookup-from table key 0))
 
 (define (opt-value-is-var? [value : CompilerIrValue] [var : i64]) : bool
   (match value
@@ -5680,15 +5823,38 @@
 
 ;; Drop every entry whose key references `var` (a stale operand) or whose result
 ;; is `var` (a stale definition).
+(define (opt-expr-invalidate-var-into [table : OptExprTable] [var : i64]) : opt_expr_entry_vec.Vec
+  (let
+    [count : i64 (opt-expr-table-count table)]
+    [out : opt_expr_entry_vec.Vec
+      (opt_expr_entry_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [entry : OptExprEntry (opt-expr-table-slot table slot)]
+          (begin
+            (match entry
+              [(OptExprEntry.Entry k v)
+                (if (or (opt-key-uses-var? k var) (= v var))
+                  unit
+                  (opt_expr_entry_vec.push (&mut out) entry))])
+            (set! slot (+ slot 1)))))
+      out)))
+
 (define (opt-expr-invalidate-var [table : OptExprTable] [var : i64]) : OptExprTable
-  (match table
-    [(OptExprTable.Nil) (OptExprTable.Nil)]
-    [(OptExprTable.Cons k v rest)
-      (let
-        [rest2 : OptExprTable (opt-expr-invalidate-var (box-get rest) var)]
-        (if (or (opt-key-uses-var? k var) (= v var))
-          rest2
-          (OptExprTable.Cons k v (box rest2))))]))
+  (OptExprTable (opt-expr-invalidate-var-into table var)))
+
+;; `table` must already be the private buffer the caller's invalidate produced.
+(define (opt-expr-table-push
+  [table : OptExprTable]
+  [key : OptExprKey]
+  [dst : i64]) : OptExprTable
+  (let
+    [items : opt_expr_entry_vec.Vec (struct-get table items)]
+    (begin
+      (opt_expr_entry_vec.push (&mut items) (OptExprEntry.Entry key dst))
+      (OptExprTable items))))
 
 (defenum OptCseResult
   (Result OptExprTable CompilerIrInstr))
@@ -5708,7 +5874,7 @@
                 earlier
                 (compiler-ir-binop-result-type op ty)))]
           [(CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+            (OptCseResult.Result (opt-expr-table-push t1 key dst) instr)]))]
     [(CompilerIrInstr.UnOp dst op v ty)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
@@ -5717,7 +5883,7 @@
           [(CompilerIrMaybeValue.Some earlier)
             (OptCseResult.Result t1 (CompilerIrInstr.Mov dst earlier ty))]
           [(CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+            (OptCseResult.Result (opt-expr-table-push t1 key dst) instr)]))]
     [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
@@ -5728,7 +5894,7 @@
               t1
               (CompilerIrInstr.Mov dst earlier (AstType.I64)))]
           [(CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+            (OptCseResult.Result (opt-expr-table-push t1 key dst) instr)]))]
     [(CompilerIrInstr.Xgetbv dst index)
       (let
         [t1 : OptExprTable (opt-expr-invalidate-var table dst)]
@@ -5739,7 +5905,7 @@
               t1
               (CompilerIrInstr.Mov dst earlier (AstType.I64)))]
           [(CompilerIrMaybeValue.No)
-            (OptCseResult.Result (OptExprTable.Cons key dst (box t1)) instr)]))]
+            (OptCseResult.Result (opt-expr-table-push t1 key dst) instr)]))]
     ;; Other defining instructions: invalidate their dst, keep the instruction.
     [(CompilerIrInstr.Mov dst _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
@@ -5805,50 +5971,52 @@
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     ;; Calls, stores, and control flow clear all available expressions.
     [(CompilerIrInstr.Syscall _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.Call _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.CallIndirect _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.CallIndirectC _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)])]
+          (OptCseResult.Result (opt-expr-table-empty) instr)])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)])]
+          (OptCseResult.Result (opt-expr-table-empty) instr)])]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)])]
+          (OptCseResult.Result (opt-expr-table-empty) instr)])]
     [(CompilerIrInstr.VectorShuffle _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.TailCall _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.Store _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.StorePtr _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.CopyBytes _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrVectorStorePayload.Payload _ _ _ _ _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)])]
+          (OptCseResult.Result (opt-expr-table-empty) instr)])]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedStorePayload.Payload _ _ _ _ _ _)
-          (OptCseResult.Result (OptExprTable.Nil) instr)])]
+          (OptCseResult.Result (opt-expr-table-empty) instr)])]
     [(CompilerIrInstr.BoundsCheck _ _ _) (OptCseResult.Result table instr)]
-    [(CompilerIrInstr.Jump _) (OptCseResult.Result (OptExprTable.Nil) instr)]
+    [(CompilerIrInstr.Jump _)
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.Branch _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
-    [(CompilerIrInstr.Return _) (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
+    [(CompilerIrInstr.Return _)
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     [(CompilerIrInstr.TailCallIndirect _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]
+      (OptCseResult.Result (opt-expr-table-empty) instr)]
     ;; Register-group ops are plain defining instructions -- invalidate
     ;; their dst, keep the instruction (no CSE key for them).
     [(CompilerIrInstr.Pack dst _ _)
@@ -5856,7 +6024,7 @@
     [(CompilerIrInstr.Word dst _ _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     [(CompilerIrInstr.Switch _ _ _ _)
-      (OptCseResult.Result (OptExprTable.Nil) instr)]))
+      (OptCseResult.Result (opt-expr-table-empty) instr)]))
 
 (define (opt-cse-instrs [table : OptExprTable] [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
@@ -5884,53 +6052,111 @@
 ;; alone. On any instruction that defines var `v`, both the mapping for `v` and
 ;; any mapping whose source is `CompilerIrValue.Var v` are dropped, so a reused var id in
 ;; the non-SSA IR never triggers a stale rewrite.
-(defenum OptCopyEnv
-  (Nil)
-  (Cons i64 CompilerIrValue (Box OptCopyEnv))
-  (PackWordCons i64 i64 CompilerIrValue (Box OptCopyEnv)))
+;; Block-local copy facts over the shared `OptVarValueBind` element (only the
+;; Copy and PackWord variants). Storage is push order -- the reverse of the old
+;; cons order, since binds prepended -- and `opt-copy-env-ref` takes the
+;; head-first index every lookup used. `opt-copy-env-extend` copies into a
+;; right-sized buffer so a caller's env is never appended to in place; the
+;; invalidate-then-bind paths push straight into the private buffer the
+;; invalidate just produced.
+(defstruct OptCopyEnv
+  (items opt_var_value_bind_vec.Vec))
 
-(define (opt-copy-lookup [env : OptCopyEnv] [var : i64]) : CompilerIrMaybeValue
-  (match env
-    [(OptCopyEnv.Nil) (CompilerIrMaybeValue.No)]
-    [(OptCopyEnv.Cons id value rest)
-      (let
-        [rest : OptCopyEnv (box-get rest)]
+(define (opt-copy-env-empty) : OptCopyEnv
+  (OptCopyEnv (opt_var_value_bind_vec.new)))
+
+(define (opt-copy-env-count [env : OptCopyEnv]) : i64
+  (opt_var_value_bind_vec.len (& (struct-get env items))))
+
+(define (opt-copy-env-slot [env : OptCopyEnv] [slot : i64]) : OptVarValueBind
+  (array-ref (opt_var_value_bind_vec.slots (& (struct-get env items))) slot))
+
+;; Head-first index: 0 is the newest binding, matching the old cons walk.
+(define (opt-copy-env-ref [env : OptCopyEnv] [index : i64]) : OptVarValueBind
+  (opt-copy-env-slot env (- (- (opt-copy-env-count env) 1) index)))
+
+(define (opt-copy-env-copy-into [env : OptCopyEnv]) : opt_var_value_bind_vec.Vec
+  (let
+    [count : i64 (opt-copy-env-count env)]
+    [out : opt_var_value_bind_vec.Vec
+      (opt_var_value_bind_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (opt_var_value_bind_vec.push (&mut out) (opt-copy-env-slot env slot))
+          (set! slot (+ slot 1))))
+      out)))
+
+(define (opt-copy-env-extend [env : OptCopyEnv] [bind : OptVarValueBind]) : OptCopyEnv
+  (let
+    [out : opt_var_value_bind_vec.Vec (opt-copy-env-copy-into env)]
+    (begin
+      (opt_var_value_bind_vec.push (&mut out) bind)
+      (OptCopyEnv out))))
+
+(define (opt-copy-lookup-from [env : OptCopyEnv] [var : i64] [index : i64]) : CompilerIrMaybeValue
+  (if (>= index (opt-copy-env-count env))
+    (CompilerIrMaybeValue.No)
+    (match (opt-copy-env-ref env index)
+      [(OptVarValueBind.Copy id value)
         (if (= id var)
           (CompilerIrMaybeValue.Some value)
-          (opt-copy-lookup rest var)))]
-    [(OptCopyEnv.PackWordCons _ _ _ rest) (opt-copy-lookup (box-get rest) var)]))
+          (opt-copy-lookup-from env var (+ index 1)))]
+      [_ (opt-copy-lookup-from env var (+ index 1))])))
+
+(define (opt-copy-lookup [env : OptCopyEnv] [var : i64]) : CompilerIrMaybeValue
+  (opt-copy-lookup-from env var 0))
+
+(define (opt-copy-pack-word-lookup-from
+  [env : OptCopyEnv]
+  [group : i64]
+  [index : i64]
+  [slot : i64]) : CompilerIrMaybeValue
+  (if (>= slot (opt-copy-env-count env))
+    (CompilerIrMaybeValue.No)
+    (match (opt-copy-env-ref env slot)
+      [(OptVarValueBind.PackWord found-group found-index value)
+        (if (and (= found-group group) (= found-index index))
+          (CompilerIrMaybeValue.Some value)
+          (opt-copy-pack-word-lookup-from env group index (+ slot 1)))]
+      [_ (opt-copy-pack-word-lookup-from env group index (+ slot 1))])))
 
 (define (opt-copy-pack-word-lookup
   [env : OptCopyEnv]
   [group : i64]
   [index : i64]) : CompilerIrMaybeValue
-  (match env
-    [(OptCopyEnv.Nil) (CompilerIrMaybeValue.No)]
-    [(OptCopyEnv.Cons _ _ rest)
-      (opt-copy-pack-word-lookup (box-get rest) group index)]
-    [(OptCopyEnv.PackWordCons found-group found-index value rest)
-      (if (and (= found-group group) (= found-index index))
-        (CompilerIrMaybeValue.Some value)
-        (opt-copy-pack-word-lookup (box-get rest) group index))]))
+  (opt-copy-pack-word-lookup-from env group index 0))
 
 ;; Drop the mapping for `var` and any mapping whose replacement is `CompilerIrValue.Var
 ;; var`, so redefining either a copied destination or a copied source clears the
 ;; stale copy fact.
+(define (opt-copy-invalidate-var-into [env : OptCopyEnv] [var : i64]) : opt_var_value_bind_vec.Vec
+  (let
+    [count : i64 (opt-copy-env-count env)]
+    [out : opt_var_value_bind_vec.Vec
+      (opt_var_value_bind_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [bind : OptVarValueBind (opt-copy-env-slot env slot)]
+          (begin
+            (match bind
+              [(OptVarValueBind.Copy id value)
+                (if (or (= id var) (opt-value-is-var? value var))
+                  unit
+                  (opt_var_value_bind_vec.push (&mut out) bind))]
+              [(OptVarValueBind.PackWord group _ value)
+                (if (or (= group var) (opt-value-is-var? value var))
+                  unit
+                  (opt_var_value_bind_vec.push (&mut out) bind))]
+              [_ (opt_var_value_bind_vec.push (&mut out) bind)])
+            (set! slot (+ slot 1)))))
+      out)))
+
 (define (opt-copy-invalidate-var [env : OptCopyEnv] [var : i64]) : OptCopyEnv
-  (match env
-    [(OptCopyEnv.Nil) (OptCopyEnv.Nil)]
-    [(OptCopyEnv.Cons id value rest)
-      (let
-        [rest2 : OptCopyEnv (opt-copy-invalidate-var (box-get rest) var)]
-        (if (or (= id var) (opt-value-is-var? value var))
-          rest2
-          (OptCopyEnv.Cons id value (box rest2))))]
-    [(OptCopyEnv.PackWordCons group index value rest)
-      (let
-        [rest2 : OptCopyEnv (opt-copy-invalidate-var (box-get rest) var)]
-        (if (or (= group var) (opt-value-is-var? value var))
-          rest2
-          (OptCopyEnv.PackWordCons group index value (box rest2))))]))
+  (OptCopyEnv (opt-copy-invalidate-var-into env var)))
 
 ;; Only var copies and unambiguous scalar literals are safe to propagate in this
 ;; slice; F64/String/global sources stay put until their backend paths exist.
@@ -5955,7 +6181,7 @@
   [index : i64]
   [value : CompilerIrValue]) : OptCopyEnv
   (if (and (opt-copy-safe-source? value) (not (opt-value-is-var? value group)))
-    (OptCopyEnv.PackWordCons group index value (box env))
+    (opt-copy-env-extend env (OptVarValueBind.PackWord group index value))
     env))
 
 (define (opt-copy-add-pack-words-from
@@ -6304,10 +6530,18 @@
   (match instr
     [(CompilerIrInstr.Mov dst src ty)
       (let
-        [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
-        (if (and (opt-copy-safe-source? src) (not (opt-value-is-var? src dst)))
-          (OptCopyEnv.Cons dst src (box e1))
-          e1))]
+        ;; The invalidate already produced a private buffer, so the new head is
+        ;; appended to it rather than to the caller's env.
+        [e1 : opt_var_value_bind_vec.Vec (opt-copy-invalidate-var-into env dst)]
+        (begin
+          (if (and
+            (opt-copy-safe-source? src)
+            (not (opt-value-is-var? src dst)))
+            (opt_var_value_bind_vec.push
+              (&mut e1)
+              (OptVarValueBind.Copy dst src))
+            unit)
+          (OptCopyEnv e1)))]
     [(CompilerIrInstr.Alloc dst _) (opt-copy-invalidate-var env dst)]
     [(CompilerIrInstr.AddrOf dst src)
       (opt-copy-invalidate-var (opt-copy-invalidate-var env dst) src)]
@@ -6335,10 +6569,14 @@
           (opt-copy-invalidate-var env dst)])]
     [(CompilerIrInstr.MaskBinOp dst _ lhs rhs _)
       (let
-        [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
-        (if (and (opt-value-eq lhs rhs) (opt-copy-mask-source? lhs dst))
-          (OptCopyEnv.Cons dst lhs (box e1))
-          e1))]
+        [e1 : opt_var_value_bind_vec.Vec (opt-copy-invalidate-var-into env dst)]
+        (begin
+          (if (and (opt-value-eq lhs rhs) (opt-copy-mask-source? lhs dst))
+            (opt_var_value_bind_vec.push
+              (&mut e1)
+              (OptVarValueBind.Copy dst lhs))
+            unit)
+          (OptCopyEnv e1)))]
     [(CompilerIrInstr.MaskNot dst _ _) (opt-copy-invalidate-var env dst)]
     [(CompilerIrInstr.MaskReduce dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(CompilerIrInstr.Select payload-box)
@@ -6382,8 +6620,8 @@
     [(CompilerIrInstr.Pack dst words _)
       (opt-copy-update-pack-env env dst words)]
     [(CompilerIrInstr.Word dst _ _ _) (opt-copy-invalidate-var env dst)]
-    [(CompilerIrInstr.StorePtr _ _ _) (OptCopyEnv.Nil)]
-    [(CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
+    [(CompilerIrInstr.StorePtr _ _ _) (opt-copy-env-empty)]
+    [(CompilerIrInstr.CopyBytes _ _ _) (opt-copy-env-empty)]
     [_ env]))
 
 (defenum OptCopyResult
@@ -6548,38 +6786,80 @@
 ;; dst or the source var is redefined, and the whole env is cleared wherever the
 ;; bounds facts are (calls/stores/CF/phi), so it can never outlive a redefinition
 ;; of the source.
-(defenum OptBoundsCastEnv
-  (Nil)
-  (Cons i64 CompilerIrValue (Box OptBoundsCastEnv)))
+;; Over the shared `OptVarValueBind` element (only the Copy variant). Storage
+;; is push order -- the reverse of the old cons order, since bind prepended --
+;; and `opt-bounds-cast-env-ref` takes the head-first index the canon walk
+;; used. Bind unbinds the dst first, so the new head is appended to the private
+;; buffer that produced.
+(defstruct OptBoundsCastEnv
+  (items opt_var_value_bind_vec.Vec))
+
+(define (opt-bounds-cast-env-empty) : OptBoundsCastEnv
+  (OptBoundsCastEnv (opt_var_value_bind_vec.new)))
+
+(define (opt-bounds-cast-env-count [env : OptBoundsCastEnv]) : i64
+  (opt_var_value_bind_vec.len (& (struct-get env items))))
+
+(define (opt-bounds-cast-env-slot [env : OptBoundsCastEnv] [slot : i64]) : OptVarValueBind
+  (array-ref (opt_var_value_bind_vec.slots (& (struct-get env items))) slot))
+
+;; Head-first index: 0 is the newest binding, matching the old cons walk.
+(define (opt-bounds-cast-env-ref [env : OptBoundsCastEnv] [index : i64]) : OptVarValueBind
+  (opt-bounds-cast-env-slot env (- (- (opt-bounds-cast-env-count env) 1) index)))
+
+(define (opt-bounds-cast-unbind-into [env : OptBoundsCastEnv] [var : i64]) : opt_var_value_bind_vec.Vec
+  (let
+    [count : i64 (opt-bounds-cast-env-count env)]
+    [out : opt_var_value_bind_vec.Vec
+      (opt_var_value_bind_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [bind : OptVarValueBind (opt-bounds-cast-env-slot env slot)]
+          (begin
+            (match bind
+              [(OptVarValueBind.Copy dst src)
+                (if (or (= dst var) (opt-value-is-var? src var))
+                  unit
+                  (opt_var_value_bind_vec.push (&mut out) bind))]
+              [_ (opt_var_value_bind_vec.push (&mut out) bind)])
+            (set! slot (+ slot 1)))))
+      out)))
 
 (define (opt-bounds-cast-unbind [env : OptBoundsCastEnv] [var : i64]) : OptBoundsCastEnv
-  (match env
-    [(OptBoundsCastEnv.Nil) (OptBoundsCastEnv.Nil)]
-    [(OptBoundsCastEnv.Cons dst src rest)
-      (let
-        [tail : OptBoundsCastEnv (opt-bounds-cast-unbind (box-get rest) var)]
-        (if (or (= dst var) (opt-value-is-var? src var))
-          tail
-          (OptBoundsCastEnv.Cons dst src (box tail))))]))
+  (OptBoundsCastEnv (opt-bounds-cast-unbind-into env var)))
 
 (define (opt-bounds-cast-bind
   [env : OptBoundsCastEnv]
   [dst : i64]
   [src : CompilerIrValue]) : OptBoundsCastEnv
-  (OptBoundsCastEnv.Cons dst src (box (opt-bounds-cast-unbind env dst))))
+  (let
+    [out : opt_var_value_bind_vec.Vec (opt-bounds-cast-unbind-into env dst)]
+    (begin
+      (opt_var_value_bind_vec.push (&mut out) (OptVarValueBind.Copy dst src))
+      (OptBoundsCastEnv out))))
 
 ;; Resolve `value` back through one `I64->U64` reinterpret cast, if recorded.
+(define (opt-bounds-cast-canon-from
+  [env : OptBoundsCastEnv]
+  [value : CompilerIrValue]
+  [var : i64]
+  [index : i64]) : CompilerIrValue
+  (if (>= index (opt-bounds-cast-env-count env))
+    value
+    (match (opt-bounds-cast-env-ref env index)
+      [(OptVarValueBind.Copy dst src)
+        (if (= dst var)
+          src
+          (opt-bounds-cast-canon-from env value var (+ index 1)))]
+      [_ (opt-bounds-cast-canon-from env value var (+ index 1))])))
+
 (define (opt-bounds-cast-canon
   [env : OptBoundsCastEnv]
   [value : CompilerIrValue]) : CompilerIrValue
   (match value
-    [(CompilerIrValue.Var var)
-      (match env
-        [(OptBoundsCastEnv.Nil) value]
-        [(OptBoundsCastEnv.Cons dst src rest)
-          (if (= dst var)
-            src
-            (opt-bounds-cast-canon (box-get rest) value))])]
+    [(CompilerIrValue.Var var) (opt-bounds-cast-canon-from env value var 0)]
     [_ value]))
 
 ;; Record an `I64->U64` reinterpret cast (the index/length unsigned-compare form)
@@ -7146,7 +7426,9 @@
     [write : i64 0]
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     [state : OptBoundsSeqState
-      (OptBoundsSeqState.Plain (opt-bounds-facts-empty) (OptBoundsCastEnv.Nil))]
+      (OptBoundsSeqState.Plain
+        (opt-bounds-facts-empty)
+        (opt-bounds-cast-env-empty))]
     (begin
       (while (< read count)
         (let
@@ -7392,21 +7674,36 @@
 (defenum OptDomEntry
   (Entry String OptLabelSet))
 
-(defenum OptLegacyDomTable
-  (Nil)
-  (Cons OptDomEntry (Box OptLegacyDomTable)))
+(import (vector.vector OptDomEntry core) as opt_dom_entry_vec)
+
+;; The reference (pre-bitset) dominator table, one row per reachable block in
+;; block order -- the order the old cons list was built and walked in -- so the
+;; generated vector appends forward and `opt-dom-table-ref` indexes straight
+;; into the slots. Each fixpoint step builds a fresh table, so no row is ever
+;; rewritten in place while the previous round is still being read.
+(defstruct OptLegacyDomTable
+  (items opt_dom_entry_vec.Vec))
+
+(define (opt-dom-table-count [table : OptLegacyDomTable]) : i64
+  (opt_dom_entry_vec.len (& (struct-get table items))))
+
+(define (opt-dom-table-ref [table : OptLegacyDomTable] [index : i64]) : OptDomEntry
+  (array-ref (opt_dom_entry_vec.slots (& (struct-get table items))) index))
+
+(define (opt-dom-table-lookup-from
+  [table : OptLegacyDomTable]
+  [label : String]
+  [index : i64]) : OptLabelSet
+  (if (>= index (opt-dom-table-count table))
+    (OptLabelSet.Nil)
+    (match (opt-dom-table-ref table index)
+      [(OptDomEntry.Entry entry-label labels)
+        (if (string.eq entry-label label)
+          labels
+          (opt-dom-table-lookup-from table label (+ index 1)))])))
 
 (define (opt-dom-table-lookup [table : OptLegacyDomTable] [label : String]) : OptLabelSet
-  (match table
-    [(OptLegacyDomTable.Nil) (OptLabelSet.Nil)]
-    [(OptLegacyDomTable.Cons entry rest)
-      (let
-        [rest : OptLegacyDomTable (box-get rest)]
-        (match entry
-          [(OptDomEntry.Entry entry-label labels)
-            (if (string.eq entry-label label)
-              labels
-              (opt-dom-table-lookup rest label))]))]))
+  (opt-dom-table-lookup-from table label 0))
 
 (define (opt-dom-entry-eq? [a : OptDomEntry] [b : OptDomEntry]) : bool
   (match a
@@ -7417,19 +7714,22 @@
             (string.eq a-label b-label)
             (opt-label-set-eq? a-labels b-labels))])]))
 
+(define (opt-dom-table-eq-from?
+  [a : OptLegacyDomTable]
+  [b : OptLegacyDomTable]
+  [index : i64]) : bool
+  (if (>= index (opt-dom-table-count a))
+    true
+    (and
+      (opt-dom-entry-eq?
+        (opt-dom-table-ref a index)
+        (opt-dom-table-ref b index))
+      (opt-dom-table-eq-from? a b (+ index 1)))))
+
 (define (opt-dom-table-eq? [a : OptLegacyDomTable] [b : OptLegacyDomTable]) : bool
-  (match a
-    [(OptLegacyDomTable.Nil)
-      (match b
-        [(OptLegacyDomTable.Nil) true]
-        [_ false])]
-    [(OptLegacyDomTable.Cons a-entry a-rest)
-      (match b
-        [(OptLegacyDomTable.Cons b-entry b-rest)
-          (and
-            (opt-dom-entry-eq? a-entry b-entry)
-            (opt-dom-table-eq? (box-get a-rest) (box-get b-rest)))]
-        [_ false])]))
+  (and
+    (= (opt-dom-table-count a) (opt-dom-table-count b))
+    (opt-dom-table-eq-from? a b 0)))
 
 (define (opt-dom-intersect-preds-rest
   [table : OptLegacyDomTable]
@@ -7458,36 +7758,36 @@
   [blocks : CompilerIrBlockList]
   [reachable : OptLabelSet]
   [entry-label : String]
-  [all-reachable : OptLabelSet]) : OptLegacyDomTable
+  [all-reachable : OptLabelSet]
+  [out : opt_dom_entry_vec.Vec]) : opt_dom_entry_vec.Vec
   (match blocks
-    [(CompilerIrBlockList.Nil) (OptLegacyDomTable.Nil)]
+    [(CompilerIrBlockList.Nil) out]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label _)
-          (if (opt-label-contains reachable label)
-            (OptLegacyDomTable.Cons
-              (OptDomEntry.Entry
-                label
-                (if (string.eq label entry-label)
-                  (opt-label-add (OptLabelSet.Nil) label)
-                  all-reachable))
-              (box
-                (opt-cfg-dominators-initial
-                  (box-get rest)
-                  reachable
-                  entry-label
-                  all-reachable)))
+          (begin
+            (if (opt-label-contains reachable label)
+              (opt_dom_entry_vec.push
+                (&mut out)
+                (OptDomEntry.Entry
+                  label
+                  (if (string.eq label entry-label)
+                    (opt-label-add (OptLabelSet.Nil) label)
+                    all-reachable)))
+              unit)
             (opt-cfg-dominators-initial
               (box-get rest)
               reachable
               entry-label
-              all-reachable))])]
+              all-reachable
+              out))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-dominators-initial
         (compiler-ir-block-seq-to-list seq)
         reachable
         entry-label
-        all-reachable)]))
+        all-reachable
+        out)]))
 
 ;; CFG index: integer block ids are assigned in block-list order and
 ;; reused for successor/predecessor CSR rows, reachability, RPO, and RPO slot
@@ -8170,24 +8470,30 @@
             label
             (opt-label-add (opt-dom-intersect-preds old preds) label))))]))
 
+;; A fresh table per round: the whole previous round stays readable as `old`
+;; while this one is built.
 (define (opt-cfg-dominators-step
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [entry-label : String]
-  [old : OptLegacyDomTable]
-  [remaining : OptLegacyDomTable]) : OptLegacyDomTable
-  (match remaining
-    [(OptLegacyDomTable.Nil) (OptLegacyDomTable.Nil)]
-    [(OptLegacyDomTable.Cons entry rest)
-      (OptLegacyDomTable.Cons
-        (opt-cfg-dominators-step-entry pred-map reachable entry-label old entry)
-        (box
-          (opt-cfg-dominators-step
-            pred-map
-            reachable
-            entry-label
-            old
-            (box-get rest))))]))
+  [old : OptLegacyDomTable]) : OptLegacyDomTable
+  (let
+    [count : i64 (opt-dom-table-count old)]
+    [out : opt_dom_entry_vec.Vec (opt_dom_entry_vec.with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (opt_dom_entry_vec.push
+            (&mut out)
+            (opt-cfg-dominators-step-entry
+              pred-map
+              reachable
+              entry-label
+              old
+              (opt-dom-table-ref old index)))
+          (set! index (+ index 1))))
+      (OptLegacyDomTable out))))
 
 (define (opt-cfg-dominators-fixed
   [pred-map : OptPredMap]
@@ -8199,7 +8505,7 @@
     table
     (let
       [next : OptLegacyDomTable
-        (opt-cfg-dominators-step pred-map reachable entry-label table table)]
+        (opt-cfg-dominators-step pred-map reachable entry-label table)]
       (if (opt-dom-table-eq? table next)
         next
         (opt-cfg-dominators-fixed
@@ -8216,7 +8522,13 @@
   [entry-label : String]) : OptLegacyDomTable
   (let
     [initial : OptLegacyDomTable
-      (opt-cfg-dominators-initial blocks reachable entry-label reachable)]
+      (OptLegacyDomTable
+        (opt-cfg-dominators-initial
+          blocks
+          reachable
+          entry-label
+          reachable
+          (opt_dom_entry_vec.new)))]
     (opt-cfg-dominators-fixed
       pred-map
       reachable
@@ -12301,9 +12613,40 @@
 (defenum OptGlobalExprFact
   (Fact OptGlobalExprKey i64 i64 i64))
 
-(defenum OptGlobalExprFacts
-  (Nil)
-  (Cons OptGlobalExprFact (Box OptGlobalExprFacts)))
+(import (vector.vector OptGlobalExprFact core) as opt_global_expr_fact_vec)
+
+;; Serves both the flat collection accumulator and one hash bucket of the table
+;; below. Both are built by front-consing, so the generated vector stores facts
+;; in push order -- the reverse of the old cons order -- and
+;; `opt-global-expr-facts-ref` takes the head-first index the walks used. Each
+;; bucket starts as its own empty vector, so appending to one never touches
+;; another.
+(defstruct OptGlobalExprFacts
+  (items opt_global_expr_fact_vec.Vec))
+
+(define (opt-global-expr-facts-empty) : OptGlobalExprFacts
+  (OptGlobalExprFacts (opt_global_expr_fact_vec.new)))
+
+(define (opt-global-expr-facts-count [facts : OptGlobalExprFacts]) : i64
+  (opt_global_expr_fact_vec.len (& (struct-get facts items))))
+
+(define (opt-global-expr-facts-slot [facts : OptGlobalExprFacts] [slot : i64]) : OptGlobalExprFact
+  (array-ref (opt_global_expr_fact_vec.slots (& (struct-get facts items))) slot))
+
+;; Head-first index: 0 is the newest fact, matching the old cons walk.
+(define (opt-global-expr-facts-ref [facts : OptGlobalExprFacts] [index : i64]) : OptGlobalExprFact
+  (opt-global-expr-facts-slot
+    facts
+    (- (- (opt-global-expr-facts-count facts) 1) index)))
+
+(define (opt-global-expr-facts-push
+  [facts : OptGlobalExprFacts]
+  [fact : OptGlobalExprFact]) : OptGlobalExprFacts
+  (let
+    [items : opt_global_expr_fact_vec.Vec (struct-get facts items)]
+    (begin
+      (opt_global_expr_fact_vec.push (&mut items) fact)
+      (OptGlobalExprFacts items))))
 
 (defstruct OptGlobalExprFactTable
   (buckets (Array OptGlobalExprFacts)))
@@ -12311,9 +12654,37 @@
 (defenum OptGlobalCopyFact
   (Fact i64 CompilerIrValue i64 i64))
 
-(defenum OptGlobalCopyFacts
-  (Nil)
-  (Cons OptGlobalCopyFact (Box OptGlobalCopyFacts)))
+(import (vector.vector OptGlobalCopyFact core) as opt_global_copy_fact_vec)
+
+;; Same shape as `OptGlobalExprFacts`: the flat collection accumulator and one
+;; per-dst bucket, stored in push order (the reverse of the old cons order)
+;; with a head-first `-ref`.
+(defstruct OptGlobalCopyFacts
+  (items opt_global_copy_fact_vec.Vec))
+
+(define (opt-global-copy-facts-empty) : OptGlobalCopyFacts
+  (OptGlobalCopyFacts (opt_global_copy_fact_vec.new)))
+
+(define (opt-global-copy-facts-count [facts : OptGlobalCopyFacts]) : i64
+  (opt_global_copy_fact_vec.len (& (struct-get facts items))))
+
+(define (opt-global-copy-facts-slot [facts : OptGlobalCopyFacts] [slot : i64]) : OptGlobalCopyFact
+  (array-ref (opt_global_copy_fact_vec.slots (& (struct-get facts items))) slot))
+
+;; Head-first index: 0 is the newest fact, matching the old cons walk.
+(define (opt-global-copy-facts-ref [facts : OptGlobalCopyFacts] [index : i64]) : OptGlobalCopyFact
+  (opt-global-copy-facts-slot
+    facts
+    (- (- (opt-global-copy-facts-count facts) 1) index)))
+
+(define (opt-global-copy-facts-push
+  [facts : OptGlobalCopyFacts]
+  [fact : OptGlobalCopyFact]) : OptGlobalCopyFacts
+  (let
+    [items : opt_global_copy_fact_vec.Vec (struct-get facts items)]
+    (begin
+      (opt_global_copy_fact_vec.push (&mut items) fact)
+      (OptGlobalCopyFacts items))))
 
 (defstruct OptGlobalCopyFactTable
   (buckets (Array OptGlobalCopyFacts)))
@@ -12325,9 +12696,43 @@
 (defenum OptGlobalPackWordFact
   (Fact i64 i64 CompilerIrValue i64 i64))
 
-(defenum OptGlobalPackWordFacts
-  (Nil)
-  (Cons OptGlobalPackWordFact (Box OptGlobalPackWordFacts)))
+(import (vector.vector OptGlobalPackWordFact core) as opt_global_pack_word_fact_vec)
+
+;; Same shape as `OptGlobalExprFacts`: the flat collection accumulator and one
+;; per-group bucket, stored in push order (the reverse of the old cons order)
+;; with a head-first `-ref`.
+(defstruct OptGlobalPackWordFacts
+  (items opt_global_pack_word_fact_vec.Vec))
+
+(define (opt-global-pack-word-facts-empty) : OptGlobalPackWordFacts
+  (OptGlobalPackWordFacts (opt_global_pack_word_fact_vec.new)))
+
+(define (opt-global-pack-word-facts-count [facts : OptGlobalPackWordFacts]) : i64
+  (opt_global_pack_word_fact_vec.len (& (struct-get facts items))))
+
+(define (opt-global-pack-word-facts-slot
+  [facts : OptGlobalPackWordFacts]
+  [slot : i64]) : OptGlobalPackWordFact
+  (array-ref
+    (opt_global_pack_word_fact_vec.slots (& (struct-get facts items)))
+    slot))
+
+;; Head-first index: 0 is the newest fact, matching the old cons walk.
+(define (opt-global-pack-word-facts-ref
+  [facts : OptGlobalPackWordFacts]
+  [index : i64]) : OptGlobalPackWordFact
+  (opt-global-pack-word-facts-slot
+    facts
+    (- (- (opt-global-pack-word-facts-count facts) 1) index)))
+
+(define (opt-global-pack-word-facts-push
+  [facts : OptGlobalPackWordFacts]
+  [fact : OptGlobalPackWordFact]) : OptGlobalPackWordFacts
+  (let
+    [items : opt_global_pack_word_fact_vec.Vec (struct-get facts items)]
+    (begin
+      (opt_global_pack_word_fact_vec.push (&mut items) fact)
+      (OptGlobalPackWordFacts items))))
 
 (defstruct OptGlobalPackWordFactTable
   (buckets (Array OptGlobalPackWordFacts)))
@@ -12461,15 +12866,17 @@
     (let
       [instr : CompilerIrInstr (array-ref slots index)]
       [rest-facts : OptGlobalCopyFacts tail]
+      ;; The cons form prepended at exactly this point of the descending walk,
+      ;; so pushing here stores the facts in reverse cons order.
       [next-tail : OptGlobalCopyFacts
         (match instr
           [(CompilerIrInstr.Mov dst src _)
             (if (and
               (opt-copy-safe-source? src)
               (not (opt-value-is-var? src dst)))
-              (OptGlobalCopyFacts.Cons
-                (OptGlobalCopyFact.Fact dst src block-id (+ index 1))
-                (box rest-facts))
+              (opt-global-copy-facts-push
+                rest-facts
+                (OptGlobalCopyFact.Fact dst src block-id (+ index 1)))
               rest-facts)]
           [_ rest-facts])]
       (opt-global-copy-facts-from-instr-seq-from
@@ -12510,16 +12917,20 @@
 (define (opt-global-copy-facts-max-dst
   [facts : OptGlobalCopyFacts]
   [max-dst : i64]) : i64
-  (match facts
-    [(OptGlobalCopyFacts.Nil) max-dst]
-    [(OptGlobalCopyFacts.Cons fact rest)
-      (match fact
-        [(OptGlobalCopyFact.Fact dst _ _ _)
-          (opt-global-copy-facts-max-dst
-            (box-get rest)
-            (if (> dst max-dst)
-              dst
-              max-dst))])]))
+  (let
+    [count : i64 (opt-global-copy-facts-count facts)]
+    [slot : i64 0]
+    [best : i64 max-dst]
+    (begin
+      (while (< slot count)
+        (begin
+          (match (opt-global-copy-facts-slot facts slot)
+            [(OptGlobalCopyFact.Fact dst _ _ _)
+              (if (> dst best)
+                (set! best dst)
+                unit)])
+          (set! slot (+ slot 1))))
+      best)))
 
 (define (opt-global-copy-buckets-fill-empty!
   [buckets : (Array OptGlobalCopyFacts)]
@@ -12527,7 +12938,7 @@
   (if (>= index (array-length buckets))
     unit
     (begin
-      (array-set! buckets index (OptGlobalCopyFacts.Nil))
+      (array-set! buckets index (opt-global-copy-facts-empty))
       (opt-global-copy-buckets-fill-empty! buckets (+ index 1)))))
 
 (define (opt-global-copy-table-insert!
@@ -12538,21 +12949,28 @@
       (let
         [buckets : (Array OptGlobalCopyFacts) (struct-get table buckets)]
         (if (and (>= dst 0) (< dst (array-length buckets)))
-          (array-set!
-            buckets
-            dst
-            (OptGlobalCopyFacts.Cons fact (box (array-ref buckets dst))))
+          (let
+            [head : OptGlobalCopyFacts (array-ref buckets dst)]
+            (array-set! buckets dst (opt-global-copy-facts-push head fact)))
           unit))]))
 
+;; The flat list stores facts newest-first in slot order, which is exactly the
+;; back-to-front order the old cons walk inserted in, so this is a plain
+;; forward walk.
 (define (opt-global-copy-table-insert-reversed!
   [table : OptGlobalCopyFactTable]
   [facts : OptGlobalCopyFacts]) : unit
-  (match facts
-    [(OptGlobalCopyFacts.Nil) unit]
-    [(OptGlobalCopyFacts.Cons fact rest)
-      (begin
-        (opt-global-copy-table-insert-reversed! table (box-get rest))
-        (opt-global-copy-table-insert! table fact))]))
+  (let
+    [count : i64 (opt-global-copy-facts-count facts)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (opt-global-copy-table-insert!
+            table
+            (opt-global-copy-facts-slot facts slot))
+          (set! slot (+ slot 1))))
+      unit)))
 
 (define (opt-global-copy-table-from-facts [facts : OptGlobalCopyFacts]) : OptGlobalCopyFactTable
   (let
@@ -12596,9 +13014,9 @@
         (if (and
           (opt-copy-safe-source? value)
           (not (opt-value-is-var? value group)))
-          (OptGlobalPackWordFacts.Cons
-            (OptGlobalPackWordFact.Fact group index value block-id def-pos)
-            (box tail))
+          (opt-global-pack-word-facts-push
+            tail
+            (OptGlobalPackWordFact.Fact group index value block-id def-pos))
           tail))]))
 
 (define (opt-global-pack-word-facts-from-instr-seq-from
@@ -12656,16 +13074,20 @@
 (define (opt-global-pack-word-facts-max-group
   [facts : OptGlobalPackWordFacts]
   [max-group : i64]) : i64
-  (match facts
-    [(OptGlobalPackWordFacts.Nil) max-group]
-    [(OptGlobalPackWordFacts.Cons fact rest)
-      (match fact
-        [(OptGlobalPackWordFact.Fact group _ _ _ _)
-          (opt-global-pack-word-facts-max-group
-            (box-get rest)
-            (if (> group max-group)
-              group
-              max-group))])]))
+  (let
+    [count : i64 (opt-global-pack-word-facts-count facts)]
+    [slot : i64 0]
+    [best : i64 max-group]
+    (begin
+      (while (< slot count)
+        (begin
+          (match (opt-global-pack-word-facts-slot facts slot)
+            [(OptGlobalPackWordFact.Fact group _ _ _ _)
+              (if (> group best)
+                (set! best group)
+                unit)])
+          (set! slot (+ slot 1))))
+      best)))
 
 (define (opt-global-pack-word-buckets-fill-empty!
   [buckets : (Array OptGlobalPackWordFacts)]
@@ -12673,7 +13095,7 @@
   (if (>= index (array-length buckets))
     unit
     (begin
-      (array-set! buckets index (OptGlobalPackWordFacts.Nil))
+      (array-set! buckets index (opt-global-pack-word-facts-empty))
       (opt-global-pack-word-buckets-fill-empty! buckets (+ index 1)))))
 
 (define (opt-global-pack-word-table-insert!
@@ -12684,21 +13106,31 @@
       (let
         [buckets : (Array OptGlobalPackWordFacts) (struct-get table buckets)]
         (if (and (>= group 0) (< group (array-length buckets)))
-          (array-set!
-            buckets
-            group
-            (OptGlobalPackWordFacts.Cons fact (box (array-ref buckets group))))
+          (let
+            [head : OptGlobalPackWordFacts (array-ref buckets group)]
+            (array-set!
+              buckets
+              group
+              (opt-global-pack-word-facts-push head fact)))
           unit))]))
 
+;; The flat list stores facts newest-first in slot order, which is exactly the
+;; back-to-front order the old cons walk inserted in, so this is a plain
+;; forward walk.
 (define (opt-global-pack-word-table-insert-reversed!
   [table : OptGlobalPackWordFactTable]
   [facts : OptGlobalPackWordFacts]) : unit
-  (match facts
-    [(OptGlobalPackWordFacts.Nil) unit]
-    [(OptGlobalPackWordFacts.Cons fact rest)
-      (begin
-        (opt-global-pack-word-table-insert-reversed! table (box-get rest))
-        (opt-global-pack-word-table-insert! table fact))]))
+  (let
+    [count : i64 (opt-global-pack-word-facts-count facts)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (opt-global-pack-word-table-insert!
+            table
+            (opt-global-pack-word-facts-slot facts slot))
+          (set! slot (+ slot 1))))
+      unit)))
 
 (define (opt-global-pack-word-table-from-facts [facts : OptGlobalPackWordFacts]) : OptGlobalPackWordFactTable
   (let
@@ -12715,6 +13147,42 @@
       (opt-global-pack-word-table-insert-reversed! table facts)
       table)))
 
+(define (opt-global-pack-word-lookup-list-from
+  [facts : OptGlobalPackWordFacts]
+  [group : i64]
+  [index : i64]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [slot : i64]) : CompilerIrMaybeValue
+  (if (>= slot (opt-global-pack-word-facts-count facts))
+    (CompilerIrMaybeValue.No)
+    (match (opt-global-pack-word-facts-ref facts slot)
+      [(OptGlobalPackWordFact.Fact
+          found-group
+          found-index
+          value
+          def-block-id
+          def-pos)
+        (if (and
+          (= found-group group)
+          (= found-index index)
+          (opt-global-fact-available?
+            def-block-id
+            def-pos
+            use-block-id
+            use-pos
+            doms))
+          (CompilerIrMaybeValue.Some value)
+          (opt-global-pack-word-lookup-list-from
+            facts
+            group
+            index
+            doms
+            use-block-id
+            use-pos
+            (+ slot 1)))])))
+
 (define (opt-global-pack-word-lookup-list
   [facts : OptGlobalPackWordFacts]
   [group : i64]
@@ -12722,33 +13190,14 @@
   [doms : OptDomInfo]
   [use-block-id : i64]
   [use-pos : i64]) : CompilerIrMaybeValue
-  (match facts
-    [(OptGlobalPackWordFacts.Nil) (CompilerIrMaybeValue.No)]
-    [(OptGlobalPackWordFacts.Cons fact rest)
-      (match fact
-        [(OptGlobalPackWordFact.Fact
-            found-group
-            found-index
-            value
-            def-block-id
-            def-pos)
-          (if (and
-            (= found-group group)
-            (= found-index index)
-            (opt-global-fact-available?
-              def-block-id
-              def-pos
-              use-block-id
-              use-pos
-              doms))
-            (CompilerIrMaybeValue.Some value)
-            (opt-global-pack-word-lookup-list
-              (box-get rest)
-              group
-              index
-              doms
-              use-block-id
-              use-pos))])]))
+  (opt-global-pack-word-lookup-list-from
+    facts
+    group
+    index
+    doms
+    use-block-id
+    use-pos
+    0))
 
 (define (opt-global-pack-word-lookup
   [table : OptGlobalPackWordFactTable]
@@ -12769,32 +13218,41 @@
         use-pos)
       (CompilerIrMaybeValue.No))))
 
+(define (opt-global-copy-lookup-list-from
+  [facts : OptGlobalCopyFacts]
+  [var : i64]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [slot : i64]) : CompilerIrMaybeValue
+  (if (>= slot (opt-global-copy-facts-count facts))
+    (CompilerIrMaybeValue.No)
+    (match (opt-global-copy-facts-ref facts slot)
+      [(OptGlobalCopyFact.Fact dst src def-block-id def-pos)
+        (if (and
+          (= dst var)
+          (opt-global-fact-available?
+            def-block-id
+            def-pos
+            use-block-id
+            use-pos
+            doms))
+          (CompilerIrMaybeValue.Some src)
+          (opt-global-copy-lookup-list-from
+            facts
+            var
+            doms
+            use-block-id
+            use-pos
+            (+ slot 1)))])))
+
 (define (opt-global-copy-lookup-list
   [facts : OptGlobalCopyFacts]
   [var : i64]
   [doms : OptDomInfo]
   [use-block-id : i64]
   [use-pos : i64]) : CompilerIrMaybeValue
-  (match facts
-    [(OptGlobalCopyFacts.Nil) (CompilerIrMaybeValue.No)]
-    [(OptGlobalCopyFacts.Cons fact rest)
-      (match fact
-        [(OptGlobalCopyFact.Fact dst src def-block-id def-pos)
-          (if (and
-            (= dst var)
-            (opt-global-fact-available?
-              def-block-id
-              def-pos
-              use-block-id
-              use-pos
-              doms))
-            (CompilerIrMaybeValue.Some src)
-            (opt-global-copy-lookup-list
-              (box-get rest)
-              var
-              doms
-              use-block-id
-              use-pos))])]))
+  (opt-global-copy-lookup-list-from facts var doms use-block-id use-pos 0))
 
 (define (opt-global-copy-lookup
   [table : OptGlobalCopyFactTable]
@@ -13390,14 +13848,16 @@
     (let
       [instr : CompilerIrInstr (array-ref slots index)]
       [rest-facts : OptGlobalExprFacts tail]
+      ;; The cons form prepended at exactly this point of the descending walk,
+      ;; so pushing here stores the facts in reverse cons order.
       [next-tail : OptGlobalExprFacts
         (match (opt-global-key-for-instr instr)
           [(OptMaybeGlobalExprKey.Some key)
             (match (opt-instr-def-var instr)
               [(option_i64.Some dst)
-                (OptGlobalExprFacts.Cons
-                  (OptGlobalExprFact.Fact key dst block-id (+ index 1))
-                  (box rest-facts))]
+                (opt-global-expr-facts-push
+                  rest-facts
+                  (OptGlobalExprFact.Fact key dst block-id (+ index 1)))]
               [(option_i64.None) rest-facts])]
           [(OptMaybeGlobalExprKey.No) rest-facts])]
       (opt-global-expr-facts-from-instr-seq-from
@@ -13447,19 +13907,13 @@
         (set! capacity (* capacity 2)))
       capacity)))
 
-(define (opt-global-expr-facts-count [facts : OptGlobalExprFacts]) : i64
-  (match facts
-    [(OptGlobalExprFacts.Nil) 0]
-    [(OptGlobalExprFacts.Cons _ rest)
-      (+ 1 (opt-global-expr-facts-count (box-get rest)))]))
-
 (define (opt-global-expr-buckets-fill-empty!
   [buckets : (Array OptGlobalExprFacts)]
   [index : i64]) : unit
   (if (>= index (array-length buckets))
     unit
     (begin
-      (array-set! buckets index (OptGlobalExprFacts.Nil))
+      (array-set! buckets index (opt-global-expr-facts-empty))
       (opt-global-expr-buckets-fill-empty! buckets (+ index 1)))))
 
 (define (opt-global-expr-bucket-index
@@ -13475,20 +13929,26 @@
       (let
         [buckets : (Array OptGlobalExprFacts) (struct-get table buckets)]
         [bucket : i64 (opt-global-expr-bucket-index buckets key)]
-        (array-set!
-          buckets
-          bucket
-          (OptGlobalExprFacts.Cons fact (box (array-ref buckets bucket)))))]))
+        [head : OptGlobalExprFacts (array-ref buckets bucket)]
+        (array-set! buckets bucket (opt-global-expr-facts-push head fact)))]))
 
+;; The flat list stores facts newest-first in slot order, which is exactly the
+;; back-to-front order the old cons walk inserted in, so this is a plain
+;; forward walk.
 (define (opt-global-expr-table-insert-reversed!
   [table : OptGlobalExprFactTable]
   [facts : OptGlobalExprFacts]) : unit
-  (match facts
-    [(OptGlobalExprFacts.Nil) unit]
-    [(OptGlobalExprFacts.Cons fact rest)
-      (begin
-        (opt-global-expr-table-insert-reversed! table (box-get rest))
-        (opt-global-expr-table-insert! table fact))]))
+  (let
+    [count : i64 (opt-global-expr-facts-count facts)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (opt-global-expr-table-insert!
+            table
+            (opt-global-expr-facts-slot facts slot))
+          (set! slot (+ slot 1))))
+      unit)))
 
 (define (opt-global-expr-table-from-facts [facts : OptGlobalExprFacts]) : OptGlobalExprFactTable
   (let
@@ -13502,6 +13962,37 @@
       (opt-global-expr-table-insert-reversed! table facts)
       table)))
 
+(define (opt-global-expr-lookup-list-from
+  [facts : OptGlobalExprFacts]
+  [key : OptGlobalExprKey]
+  [dst : i64]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [slot : i64]) : CompilerIrMaybeValue
+  (if (>= slot (opt-global-expr-facts-count facts))
+    (CompilerIrMaybeValue.No)
+    (match (opt-global-expr-facts-ref facts slot)
+      [(OptGlobalExprFact.Fact fact-key fact-dst def-block-id def-pos)
+        (if (and
+          (not (= fact-dst dst))
+          (opt-global-expr-key-eq fact-key key)
+          (opt-global-fact-available?
+            def-block-id
+            def-pos
+            use-block-id
+            use-pos
+            doms))
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var fact-dst))
+          (opt-global-expr-lookup-list-from
+            facts
+            key
+            dst
+            doms
+            use-block-id
+            use-pos
+            (+ slot 1)))])))
+
 (define (opt-global-expr-lookup-list
   [facts : OptGlobalExprFacts]
   [key : OptGlobalExprKey]
@@ -13509,28 +14000,7 @@
   [doms : OptDomInfo]
   [use-block-id : i64]
   [use-pos : i64]) : CompilerIrMaybeValue
-  (match facts
-    [(OptGlobalExprFacts.Nil) (CompilerIrMaybeValue.No)]
-    [(OptGlobalExprFacts.Cons fact rest)
-      (match fact
-        [(OptGlobalExprFact.Fact fact-key fact-dst def-block-id def-pos)
-          (if (and
-            (not (= fact-dst dst))
-            (opt-global-expr-key-eq fact-key key)
-            (opt-global-fact-available?
-              def-block-id
-              def-pos
-              use-block-id
-              use-pos
-              doms))
-            (CompilerIrMaybeValue.Some (CompilerIrValue.Var fact-dst))
-            (opt-global-expr-lookup-list
-              (box-get rest)
-              key
-              dst
-              doms
-              use-block-id
-              use-pos))])]))
+  (opt-global-expr-lookup-list-from facts key dst doms use-block-id use-pos 0))
 
 (define (opt-global-expr-lookup
   [table : OptGlobalExprFactTable]
@@ -13708,27 +14178,27 @@
   (let
     [doms : OptDomInfo (struct-get context doms)]
     [copy-fact-list : OptGlobalCopyFacts
-      (opt-global-copy-facts-from-blocks blocks 0 (OptGlobalCopyFacts.Nil))]
+      (opt-global-copy-facts-from-blocks blocks 0 (opt-global-copy-facts-empty))]
     [copy-facts : OptGlobalCopyFactTable
       (opt-global-copy-table-from-facts copy-fact-list)]
     [pack-word-fact-list : OptGlobalPackWordFacts
       (opt-global-pack-word-facts-from-blocks
         blocks
         0
-        (OptGlobalPackWordFacts.Nil))]
+        (opt-global-pack-word-facts-empty))]
     [pack-word-facts : OptGlobalPackWordFactTable
       (opt-global-pack-word-table-from-facts pack-word-fact-list)]
     [uses : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
     [copied : CompilerIrBlockList
       (opt-global-copy-blocks copy-facts pack-word-facts doms uses blocks 0)]
     [expr-fact-list : OptGlobalExprFacts
-      (opt-global-expr-facts-from-blocks copied 0 (OptGlobalExprFacts.Nil))]
+      (opt-global-expr-facts-from-blocks copied 0 (opt-global-expr-facts-empty))]
     [expr-facts : OptGlobalExprFactTable
       (opt-global-expr-table-from-facts expr-fact-list)]
     [cse : CompilerIrBlockList
       (opt-global-cse-blocks expr-facts doms copied copied 0)]
     [cse-copy-fact-list : OptGlobalCopyFacts
-      (opt-global-copy-facts-from-blocks cse 0 (OptGlobalCopyFacts.Nil))]
+      (opt-global-copy-facts-from-blocks cse 0 (opt-global-copy-facts-empty))]
     [cse-copy-facts : OptGlobalCopyFactTable
       (opt-global-copy-table-from-facts cse-copy-fact-list)]
     [cse-uses : (Array i64) (opt-collect-blocks-uses-array frame cse)]
@@ -14040,9 +14510,26 @@
   (No)
   (Some OptNaturalLoop))
 
-(defenum OptNaturalLoopList
-  (Nil)
-  (Cons OptNaturalLoop (Box OptNaturalLoopList)))
+(import (vector.vector OptNaturalLoop core) as opt_natural_loop_vec)
+
+;; Every natural loop of one function. Both scans below front-consed, so the
+;; generated vector stores the loops in push order -- the reverse of the old
+;; cons order -- and `opt-natural-loop-list-ref` takes the head-first index the
+;; cons walks used.
+(defstruct OptNaturalLoopList
+  (items opt_natural_loop_vec.Vec))
+
+(define (opt-natural-loop-list-empty) : OptNaturalLoopList
+  (OptNaturalLoopList (opt_natural_loop_vec.new)))
+
+(define (opt-natural-loop-list-count [loops : OptNaturalLoopList]) : i64
+  (opt_natural_loop_vec.len (& (struct-get loops items))))
+
+;; Head-first index: 0 is the loop the old cons list carried at its head.
+(define (opt-natural-loop-list-ref [loops : OptNaturalLoopList] [index : i64]) : OptNaturalLoop
+  (array-ref
+    (opt_natural_loop_vec.slots (& (struct-get loops items)))
+    (- (- (opt-natural-loop-list-count loops) 1) index)))
 
 (defenum OptNaturalLoopCollectState
   (State OptLabelSet OptLabelSet))
@@ -14177,24 +14664,26 @@
   (match loop
     [(OptNaturalLoop.Loop _ _ _ preheader) preheader]))
 
-(define (opt-natural-loop-list-count [loops : OptNaturalLoopList]) : i64
-  (match loops
-    [(OptNaturalLoopList.Nil) 0]
-    [(OptNaturalLoopList.Cons _ rest)
-      (+ 1 (opt-natural-loop-list-count (box-get rest)))]))
+(define (opt-natural-loop-find-from
+  [loops : OptNaturalLoopList]
+  [header : String]
+  [latch : String]
+  [index : i64]) : OptMaybeNaturalLoop
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptMaybeNaturalLoop.No)
+    (let
+      [loop : OptNaturalLoop (opt-natural-loop-list-ref loops index)]
+      (if (and
+        (string.eq (opt-natural-loop-header loop) header)
+        (string.eq (opt-natural-loop-latch loop) latch))
+        (OptMaybeNaturalLoop.Some loop)
+        (opt-natural-loop-find-from loops header latch (+ index 1))))))
 
 (define (opt-natural-loop-find
   [loops : OptNaturalLoopList]
   [header : String]
   [latch : String]) : OptMaybeNaturalLoop
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptMaybeNaturalLoop.No)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (if (and
-        (string.eq (opt-natural-loop-header loop) header)
-        (string.eq (opt-natural-loop-latch loop) latch))
-        (OptMaybeNaturalLoop.Some loop)
-        (opt-natural-loop-find (box-get rest) header latch))]))
+  (opt-natural-loop-find-from loops header latch 0))
 
 ;; Membership during body collection is an O(1) id-indexed marks
 ;; array (the body/worklist LISTS keep their exact construction order, so
@@ -14399,12 +14888,14 @@
   [source-id : i64]
   [source : String]
   [successors : OptLabelSet]
-  [tail : OptNaturalLoopList]) : OptNaturalLoopList
+  [tail : opt_natural_loop_vec.Vec]) : opt_natural_loop_vec.Vec
   (match successors
     [(OptLabelSet.Nil) tail]
     [(OptLabelSet.Cons header rest)
       (let
-        [next : OptNaturalLoopList
+        ;; The cons list prepended after recursing, so pushing after the
+        ;; recursive call stores the same loops in exactly reverse cons order.
+        [next : opt_natural_loop_vec.Vec
           (opt-cfg-natural-loop-successors
             blocks
             pred-map
@@ -14426,9 +14917,16 @@
                 (struct-get (struct-get doms index) reachable)
                 header-id)
               (opt-dom-info-dominates-id? doms header-id source-id))
-              (OptNaturalLoopList.Cons
-                (opt-natural-loop-build blocks pred-map reachable header source)
-                (box next))
+              (begin
+                (opt_natural_loop_vec.push
+                  (&mut next)
+                  (opt-natural-loop-build
+                    blocks
+                    pred-map
+                    reachable
+                    header
+                    source))
+                next)
               next)]
           [(option_i64.None) next]))]))
 
@@ -14442,21 +14940,23 @@
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [doms : OptDomInfo]
-  [source-id : i64]) : OptNaturalLoopList
+  [source-id : i64]
+  [tail : opt_natural_loop_vec.Vec]) : opt_natural_loop_vec.Vec
   (match remaining
-    [(CompilerIrBlockList.Nil) (OptNaturalLoopList.Nil)]
+    [(CompilerIrBlockList.Nil) tail]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label _)
           (let
-            [tail : OptNaturalLoopList
+            [next : opt_natural_loop_vec.Vec
               (opt-cfg-natural-loop-blocks
                 all-blocks
                 (box-get rest)
                 pred-map
                 reachable
                 doms
-                (+ source-id 1))]
+                (+ source-id 1)
+                tail)]
             [reachable-ids : (Array bool)
               (struct-get (struct-get doms index) reachable)]
             (if (and
@@ -14472,8 +14972,8 @@
                 (opt-cfg-block-successors-with-next
                   block
                   (opt-cfg-entry-label (box-get rest)))
-                tail)
-              tail))])]
+                next)
+              next))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-natural-loop-blocks
         all-blocks
@@ -14481,7 +14981,8 @@
         pred-map
         reachable
         doms
-        source-id)]))
+        source-id
+        tail)]))
 
 ;; Allocation-free natural-loop scan for Array block lists: walks the block
 ;; seq directly and reads each block's successor row from the context's CSR
@@ -14503,27 +15004,31 @@
   [source : String]
   [edge : i64]
   [end : i64]
-  [acc : OptNaturalLoopList]) : OptNaturalLoopList
+  [acc : opt_natural_loop_vec.Vec]) : opt_natural_loop_vec.Vec
   (if (>= edge end)
     acc
     (let
       [header-id : i64
         (array-ref (struct-get (struct-get index succs) edges) edge)]
-      [next-acc : OptNaturalLoopList
+      ;; The cons form front-consed onto `acc`, so pushing in this same
+      ;; processing order stores the loops in exactly reverse cons order.
+      [next-acc : opt_natural_loop_vec.Vec
         (if (and
           (>= header-id 0)
           (< header-id (array-length (struct-get index reachable))))
           (if (and
             (array-ref (struct-get index reachable) header-id)
             (opt-dom-info-dominates-id? doms header-id source-id))
-            (OptNaturalLoopList.Cons
-              (opt-natural-loop-build
-                all-blocks
-                pred-map
-                reachable
-                (array-ref (struct-get index labels) header-id)
-                source)
-              (box acc))
+            (begin
+              (opt_natural_loop_vec.push
+                (&mut acc)
+                (opt-natural-loop-build
+                  all-blocks
+                  pred-map
+                  reachable
+                  (array-ref (struct-get index labels) header-id)
+                  source))
+              acc)
             acc)
           acc)]
       (opt-cfg-natural-loop-edges-csr
@@ -14546,7 +15051,7 @@
   [pred-map : OptPredMap]
   [reachable : OptLabelSet]
   [doms : OptDomInfo]
-  [acc : OptNaturalLoopList]) : OptNaturalLoopList
+  [acc : opt_natural_loop_vec.Vec]) : opt_natural_loop_vec.Vec
   (if (< pos 0)
     acc
     (match (compiler-ir-block-seq-ref seq pos)
@@ -14555,7 +15060,7 @@
           [index : OptCfgIndex (struct-get context index)]
           ;; `blocks` is this seq, and the index numbers its blocks in seq
           ;; order, so the seq position is the block id.
-          [next-acc : OptNaturalLoopList
+          [next-acc : opt_natural_loop_vec.Vec
             (if (< pos (array-length (struct-get index reachable)))
               (opt-cfg-natural-loop-edges-csr
                 all-blocks
@@ -14586,23 +15091,26 @@
   [context : OptCfgContext]) : OptNaturalLoopList
   (match blocks
     [(CompilerIrBlockList.Array seq)
-      (opt-cfg-natural-loop-block-seq-csr
-        blocks
-        seq
-        (- (compiler-ir-block-seq-count seq) 1)
-        context
-        (struct-get context pred-map)
-        (struct-get context reachable)
-        (struct-get context doms)
-        (OptNaturalLoopList.Nil))]
+      (OptNaturalLoopList
+        (opt-cfg-natural-loop-block-seq-csr
+          blocks
+          seq
+          (- (compiler-ir-block-seq-count seq) 1)
+          context
+          (struct-get context pred-map)
+          (struct-get context reachable)
+          (struct-get context doms)
+          (opt_natural_loop_vec.new)))]
     [_
-      (opt-cfg-natural-loop-blocks
-        blocks
-        blocks
-        (struct-get context pred-map)
-        (struct-get context reachable)
-        (struct-get context doms)
-        0)]))
+      (OptNaturalLoopList
+        (opt-cfg-natural-loop-blocks
+          blocks
+          blocks
+          (struct-get context pred-map)
+          (struct-get context reachable)
+          (struct-get context doms)
+          0
+          (opt_natural_loop_vec.new)))]))
 
 (define (opt-cfg-natural-loops [blocks : CompilerIrBlockList]) : OptNaturalLoopList
   (opt-cfg-natural-loops-with-context blocks (opt-cfg-context-build blocks)))
@@ -15082,18 +15590,31 @@
               true))
           (OptLoopPreheadersResult.Result blocks false)))]))
 
+(define (opt-loop-preheaders-synthesize-loops-from
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [loops : OptNaturalLoopList]
+  [index : i64]) : OptLoopPreheadersResult
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptLoopPreheadersResult.Result blocks false)
+    (match (opt-loop-preheaders-synthesize-loop
+      blocks
+      context
+      (opt-natural-loop-list-ref loops index))
+      [(OptLoopPreheadersResult.Result next changed)
+        (if changed
+          (OptLoopPreheadersResult.Result next true)
+          (opt-loop-preheaders-synthesize-loops-from
+            blocks
+            context
+            loops
+            (+ index 1)))])))
+
 (define (opt-loop-preheaders-synthesize-loops
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
   [loops : OptNaturalLoopList]) : OptLoopPreheadersResult
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptLoopPreheadersResult.Result blocks false)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-loop-preheaders-synthesize-loop blocks context loop)
-        [(OptLoopPreheadersResult.Result next changed)
-          (if changed
-            (OptLoopPreheadersResult.Result next true)
-            (opt-loop-preheaders-synthesize-loops blocks context (box-get rest)))])]))
+  (opt-loop-preheaders-synthesize-loops-from blocks context loops 0))
 
 (define (opt-loop-preheaders-blocks-once [blocks : CompilerIrBlockList]) : OptLoopPreheadersResult
   (let
@@ -15212,17 +15733,24 @@
 (defenum OptLoopRotationResult
   (Result CompilerIrBlockList bool))
 
+(define (opt-loop-rotation-header-count-from
+  [loops : OptNaturalLoopList]
+  [header : String]
+  [index : i64]) : i64
+  (if (>= index (opt-natural-loop-list-count loops))
+    0
+    (+
+      (if (string.eq
+        (opt-natural-loop-header (opt-natural-loop-list-ref loops index))
+        header)
+        1
+        0)
+      (opt-loop-rotation-header-count-from loops header (+ index 1)))))
+
 (define (opt-loop-rotation-header-count
   [loops : OptNaturalLoopList]
   [header : String]) : i64
-  (match loops
-    [(OptNaturalLoopList.Nil) 0]
-    [(OptNaturalLoopList.Cons loop rest)
-      (+
-        (if (string.eq (opt-natural-loop-header loop) header)
-          1
-          0)
-        (opt-loop-rotation-header-count (box-get rest) header))]))
+  (opt-loop-rotation-header-count-from loops header 0))
 
 (define (opt-loop-rotation-guard-instr? [instr : CompilerIrInstr]) : bool
   (match instr
@@ -15435,19 +15963,28 @@
                 guard)])
           (OptLoopRotationResult.Result blocks false))])))
 
-(define (opt-loop-rotation-loops
+(define (opt-loop-rotation-loops-from
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
   [loops : OptNaturalLoopList]
-  [remaining : OptNaturalLoopList]) : OptLoopRotationResult
-  (match remaining
-    [(OptNaturalLoopList.Nil) (OptLoopRotationResult.Result blocks false)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-loop-rotation-loop blocks context loops loop)
-        [(OptLoopRotationResult.Result next changed)
-          (if changed
-            (OptLoopRotationResult.Result next true)
-            (opt-loop-rotation-loops blocks context loops (box-get rest)))])]))
+  [index : i64]) : OptLoopRotationResult
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptLoopRotationResult.Result blocks false)
+    (match (opt-loop-rotation-loop
+      blocks
+      context
+      loops
+      (opt-natural-loop-list-ref loops index))
+      [(OptLoopRotationResult.Result next changed)
+        (if changed
+          (OptLoopRotationResult.Result next true)
+          (opt-loop-rotation-loops-from blocks context loops (+ index 1)))])))
+
+(define (opt-loop-rotation-loops
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [loops : OptNaturalLoopList]) : OptLoopRotationResult
+  (opt-loop-rotation-loops-from blocks context loops 0))
 
 ;; The step already builds a CFG context for `blocks`. Carry it out so the
 ;; fixpoint below can hand the LAST step's context -- the one built for the
@@ -15461,7 +15998,7 @@
     [context : OptCfgContext (opt-cfg-context-build blocks)]
     [loops : OptNaturalLoopList
       (opt-cfg-natural-loops-with-context blocks context)]
-    (match (opt-loop-rotation-loops blocks context loops loops)
+    (match (opt-loop-rotation-loops blocks context loops)
       [(OptLoopRotationResult.Result next changed)
         (OptLoopRotationCtxResult.Result next changed context)])))
 
@@ -15538,9 +16075,26 @@
 ;; input from the landing block, while the exit phis keep the direct
 ;; preheader/latch edges. The rewrite is verifier-gated; any rejected shape or
 ;; failed verify returns the input function unchanged.
-(defenum OptRotateSsaPhiRecs
-  (Nil)
-  (Cons i64 CompilerIrValue CompilerIrValue AstType (Box OptRotateSsaPhiRecs)))
+;; Shared loop-phi record: destination, the input arriving from outside the
+;; loop, the back-edge input, and the phi type. Loop rotation's header-phi
+;; records and the unroller's other-phi list carry exactly this, so one
+;; instantiation covers both.
+(defenum OptLoopPhiRec
+  (Rec i64 CompilerIrValue CompilerIrValue AstType))
+
+(import (vector.vector OptLoopPhiRec core) as opt_loop_phi_rec_vec)
+
+;; Header-phi records in header-phi order -- the order the old cons list was
+;; built and walked in -- so the generated vector appends forward and
+;; `opt-rotate-ssa-phi-recs-ref` indexes straight into the slots.
+(defstruct OptRotateSsaPhiRecs
+  (items opt_loop_phi_rec_vec.Vec))
+
+(define (opt-rotate-ssa-phi-recs-count [recs : OptRotateSsaPhiRecs]) : i64
+  (opt_loop_phi_rec_vec.len (& (struct-get recs items))))
+
+(define (opt-rotate-ssa-phi-recs-ref [recs : OptRotateSsaPhiRecs] [index : i64]) : OptLoopPhiRec
+  (array-ref (opt_loop_phi_rec_vec.slots (& (struct-get recs items))) index))
 
 (defenum OptRotateSsaMaybePhiRecs
   (No)
@@ -15602,54 +16156,67 @@
 
 ;; Each header phi must carry exactly the two loop-edge inputs {preheader,
 ;; latch}; the record keeps (dst, preheader input, latch input, type).
+(define (opt-rotate-ssa-phi-recs-into
+  [phis : CompilerIrInstrList]
+  [preheader : String]
+  [latch : String]
+  [out : opt_loop_phi_rec_vec.Vec]) : OptRotateSsaMaybePhiRecs
+  (match phis
+    [(CompilerIrInstrList.Nil)
+      (OptRotateSsaMaybePhiRecs.Some (OptRotateSsaPhiRecs out))]
+    [(CompilerIrInstrList.Cons instr rest)
+      (match instr
+        [(CompilerIrInstr.Phi dst inputs ty)
+          (match (compiler-ir-phi-input-list-force-cons inputs)
+            [(CompilerIrPhiInputList.Cons first-value first-label rest1)
+              (match (box-get rest1)
+                [(CompilerIrPhiInputList.Cons second-value second-label rest2)
+                  (match (box-get rest2)
+                    [(CompilerIrPhiInputList.Nil)
+                      (cond
+                        [(and
+                            (string.eq first-label preheader)
+                            (string.eq second-label latch))
+                          (begin
+                            (opt_loop_phi_rec_vec.push
+                              (&mut out)
+                              (OptLoopPhiRec.Rec
+                                dst
+                                first-value
+                                second-value
+                                ty))
+                            (opt-rotate-ssa-phi-recs-into
+                              (box-get rest)
+                              preheader
+                              latch
+                              out))]
+                        [(and
+                            (string.eq first-label latch)
+                            (string.eq second-label preheader))
+                          (begin
+                            (opt_loop_phi_rec_vec.push
+                              (&mut out)
+                              (OptLoopPhiRec.Rec
+                                dst
+                                second-value
+                                first-value
+                                ty))
+                            (opt-rotate-ssa-phi-recs-into
+                              (box-get rest)
+                              preheader
+                              latch
+                              out))]
+                        [else (OptRotateSsaMaybePhiRecs.No)])]
+                    [_ (OptRotateSsaMaybePhiRecs.No)])]
+                [_ (OptRotateSsaMaybePhiRecs.No)])]
+            [_ (OptRotateSsaMaybePhiRecs.No)])]
+        [_ (OptRotateSsaMaybePhiRecs.No)])]))
+
 (define (opt-rotate-ssa-phi-recs
   [phis : CompilerIrInstrList]
   [preheader : String]
   [latch : String]) : OptRotateSsaMaybePhiRecs
-  (match phis
-    [(CompilerIrInstrList.Nil)
-      (OptRotateSsaMaybePhiRecs.Some (OptRotateSsaPhiRecs.Nil))]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-rotate-ssa-phi-recs (box-get rest) preheader latch)
-        [(OptRotateSsaMaybePhiRecs.No) (OptRotateSsaMaybePhiRecs.No)]
-        [(OptRotateSsaMaybePhiRecs.Some recs)
-          (match instr
-            [(CompilerIrInstr.Phi dst inputs ty)
-              (match (compiler-ir-phi-input-list-force-cons inputs)
-                [(CompilerIrPhiInputList.Cons first-value first-label rest1)
-                  (match (box-get rest1)
-                    [(CompilerIrPhiInputList.Cons
-                        second-value
-                        second-label
-                        rest2)
-                      (match (box-get rest2)
-                        [(CompilerIrPhiInputList.Nil)
-                          (cond
-                            [(and
-                                (string.eq first-label preheader)
-                                (string.eq second-label latch))
-                              (OptRotateSsaMaybePhiRecs.Some
-                                (OptRotateSsaPhiRecs.Cons
-                                  dst
-                                  first-value
-                                  second-value
-                                  ty
-                                  (box recs)))]
-                            [(and
-                                (string.eq first-label latch)
-                                (string.eq second-label preheader))
-                              (OptRotateSsaMaybePhiRecs.Some
-                                (OptRotateSsaPhiRecs.Cons
-                                  dst
-                                  second-value
-                                  first-value
-                                  ty
-                                  (box recs)))]
-                            [else (OptRotateSsaMaybePhiRecs.No)])]
-                        [_ (OptRotateSsaMaybePhiRecs.No)])]
-                    [_ (OptRotateSsaMaybePhiRecs.No)])]
-                [_ (OptRotateSsaMaybePhiRecs.No)])]
-            [_ (OptRotateSsaMaybePhiRecs.No)])])]))
+  (opt-rotate-ssa-phi-recs-into phis preheader latch (opt_loop_phi_rec_vec.new)))
 
 (define (opt-rotate-ssa-shape-from-branch
   [instrs : CompilerIrInstrSeq]
@@ -15850,16 +16417,33 @@
 ;; Map each header-phi destination to the input value carried by one loop
 ;; edge: the preheader input for the preheader clone, the latch input for the
 ;; latch clone.
+;; The cons form prepended after recursing, so pushing after the recursive call
+;; stores the bindings in exactly reverse cons order.
+(define (opt-rotate-ssa-edge-env-from
+  [recs : OptRotateSsaPhiRecs]
+  [use-init : bool]
+  [index : i64]
+  [out : opt_var_value_bind_vec.Vec]) : opt_var_value_bind_vec.Vec
+  (if (>= index (opt-rotate-ssa-phi-recs-count recs))
+    out
+    (match (opt-rotate-ssa-phi-recs-ref recs index)
+      [(OptLoopPhiRec.Rec dst init back _)
+        (let
+          [next : opt_var_value_bind_vec.Vec
+            (opt-rotate-ssa-edge-env-from recs use-init (+ index 1) out)]
+          (begin
+            (opt_var_value_bind_vec.push
+              (&mut next)
+              (OptVarValueBind.Copy
+                dst
+                (if use-init
+                  init
+                  back)))
+            next))])))
+
 (define (opt-rotate-ssa-edge-env [recs : OptRotateSsaPhiRecs] [use-init : bool]) : OptCopyEnv
-  (match recs
-    [(OptRotateSsaPhiRecs.Nil) (OptCopyEnv.Nil)]
-    [(OptRotateSsaPhiRecs.Cons dst init back _ rest)
-      (OptCopyEnv.Cons
-        dst
-        (if use-init
-          init
-          back)
-        (box (opt-rotate-ssa-edge-env (box-get rest) use-init)))]))
+  (OptCopyEnv
+    (opt-rotate-ssa-edge-env-from recs use-init 0 (opt_var_value_bind_vec.new))))
 
 (define (opt-rotate-ssa-clone-guard-instr
   [env : OptCopyEnv]
@@ -15911,10 +16495,11 @@
         [cloned : CompilerIrInstr
           (opt-rotate-ssa-clone-guard-instr env next-var instr)]
         [next-env : OptCopyEnv
-          (OptCopyEnv.Cons
-            (opt-rotate-ssa-instr-dst instr)
-            (CompilerIrValue.Var next-var)
-            (box env))]
+          (opt-copy-env-extend
+            env
+            (OptVarValueBind.Copy
+              (opt-rotate-ssa-instr-dst instr)
+              (CompilerIrValue.Var next-var)))]
         (match (opt-rotate-ssa-clone-guard
           next-env
           (box-get rest)
@@ -15930,68 +16515,92 @@
 ;; Rebuild the header phis for the top of the loop-body block: same
 ;; destinations, initial input relabeled to the landing block (the body's new
 ;; preheader-side predecessor), latch input unchanged.
+(define (opt-rotate-ssa-moved-phis-from
+  [recs : OptRotateSsaPhiRecs]
+  [land-label : String]
+  [latch : String]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (opt-rotate-ssa-phi-recs-count recs))
+    (CompilerIrInstrList.Nil)
+    (match (opt-rotate-ssa-phi-recs-ref recs index)
+      [(OptLoopPhiRec.Rec dst init back ty)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            dst
+            (compiler-ir-phi-input-cons
+              init
+              land-label
+              (compiler-ir-phi-input-cons
+                back
+                latch
+                (CompilerIrPhiInputList.Nil)))
+            ty)
+          (opt-rotate-ssa-moved-phis-from recs land-label latch (+ index 1)))])))
+
 (define (opt-rotate-ssa-moved-phis
   [recs : OptRotateSsaPhiRecs]
   [land-label : String]
   [latch : String]) : CompilerIrInstrList
-  (match recs
-    [(OptRotateSsaPhiRecs.Nil) (CompilerIrInstrList.Nil)]
-    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
-      (compiler-ir-instr-cons
-        (CompilerIrInstr.Phi
-          dst
-          (compiler-ir-phi-input-cons
-            init
-            land-label
-            (compiler-ir-phi-input-cons back latch (CompilerIrPhiInputList.Nil)))
-          ty)
-        (opt-rotate-ssa-moved-phis (box-get rest) land-label latch))]))
+  (opt-rotate-ssa-moved-phis-from recs land-label latch 0))
 
 ;; For each header phi whose destination is used outside the loop body, mint a
 ;; fresh exit phi merging the same edge inputs at the exit block, and record
 ;; the destination remap for the outside-use rewrite.
+(define (opt-rotate-ssa-exit-phis-from
+  [recs : OptRotateSsaPhiRecs]
+  [outside-uses : opt_i64_i64_map.Map]
+  [preheader : String]
+  [latch : String]
+  [next-var : i64]
+  [index : i64]) : OptRotateSsaExitPhis
+  (if (>= index (opt-rotate-ssa-phi-recs-count recs))
+    (OptRotateSsaExitPhis.Result
+      (CompilerIrInstrList.Nil)
+      (opt-copy-env-empty)
+      next-var)
+    (match (opt-rotate-ssa-phi-recs-ref recs index)
+      [(OptLoopPhiRec.Rec dst init back ty)
+        (if (opt-used-contains outside-uses dst)
+          (match (opt-rotate-ssa-exit-phis-from
+            recs
+            outside-uses
+            preheader
+            latch
+            (+ next-var 1)
+            (+ index 1))
+            [(OptRotateSsaExitPhis.Result phis env out-var)
+              (OptRotateSsaExitPhis.Result
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Phi
+                    next-var
+                    (compiler-ir-phi-input-cons
+                      init
+                      preheader
+                      (compiler-ir-phi-input-cons
+                        back
+                        latch
+                        (CompilerIrPhiInputList.Nil)))
+                    ty)
+                  phis)
+                (opt-copy-env-extend
+                  env
+                  (OptVarValueBind.Copy dst (CompilerIrValue.Var next-var)))
+                out-var)])
+          (opt-rotate-ssa-exit-phis-from
+            recs
+            outside-uses
+            preheader
+            latch
+            next-var
+            (+ index 1)))])))
+
 (define (opt-rotate-ssa-exit-phis
   [recs : OptRotateSsaPhiRecs]
   [outside-uses : opt_i64_i64_map.Map]
   [preheader : String]
   [latch : String]
   [next-var : i64]) : OptRotateSsaExitPhis
-  (match recs
-    [(OptRotateSsaPhiRecs.Nil)
-      (OptRotateSsaExitPhis.Result
-        (CompilerIrInstrList.Nil)
-        (OptCopyEnv.Nil)
-        next-var)]
-    [(OptRotateSsaPhiRecs.Cons dst init back ty rest)
-      (if (opt-used-contains outside-uses dst)
-        (match (opt-rotate-ssa-exit-phis
-          (box-get rest)
-          outside-uses
-          preheader
-          latch
-          (+ next-var 1))
-          [(OptRotateSsaExitPhis.Result phis env out-var)
-            (OptRotateSsaExitPhis.Result
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Phi
-                  next-var
-                  (compiler-ir-phi-input-cons
-                    init
-                    preheader
-                    (compiler-ir-phi-input-cons
-                      back
-                      latch
-                      (CompilerIrPhiInputList.Nil)))
-                  ty)
-                phis)
-              (OptCopyEnv.Cons dst (CompilerIrValue.Var next-var) (box env))
-              out-var)])
-        (opt-rotate-ssa-exit-phis
-          (box-get rest)
-          outside-uses
-          preheader
-          latch
-          next-var))]))
+  (opt-rotate-ssa-exit-phis-from recs outside-uses preheader latch next-var 0))
 
 (define (opt-rotate-ssa-subst-phi-inputs
   [env : OptCopyEnv]
@@ -16087,9 +16696,7 @@
     (string.eq label (struct-get plan exit-label))
     (and
       (not (opt-label-contains (struct-get plan body) label))
-      (match (struct-get plan exit-env)
-        [(OptCopyEnv.Nil) false]
-        [_ true]))))
+      (> (opt-copy-env-count (struct-get plan exit-env)) 0))))
 
 (define (opt-rotate-ssa-rewrite-instrs
   [plan : OptRotateSsaPlan]
@@ -16278,19 +16885,30 @@
                 shape)])
           (OptRotateSsaRewrite.No)))]))
 
+(define (opt-rotate-ssa-loops-from
+  [blocks : CompilerIrBlockList]
+  [context : OptCfgContext]
+  [frame : i64]
+  [loops : OptNaturalLoopList]
+  [index : i64]) : OptRotateSsaRewrite
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptRotateSsaRewrite.No)
+    (match (opt-rotate-ssa-loop
+      blocks
+      context
+      frame
+      (opt-natural-loop-list-ref loops index))
+      [(OptRotateSsaRewrite.Some next-blocks next-frame)
+        (OptRotateSsaRewrite.Some next-blocks next-frame)]
+      [(OptRotateSsaRewrite.No)
+        (opt-rotate-ssa-loops-from blocks context frame loops (+ index 1))])))
+
 (define (opt-rotate-ssa-loops
   [blocks : CompilerIrBlockList]
   [context : OptCfgContext]
   [frame : i64]
   [loops : OptNaturalLoopList]) : OptRotateSsaRewrite
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptRotateSsaRewrite.No)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-rotate-ssa-loop blocks context frame loop)
-        [(OptRotateSsaRewrite.Some next-blocks next-frame)
-          (OptRotateSsaRewrite.Some next-blocks next-frame)]
-        [(OptRotateSsaRewrite.No)
-          (opt-rotate-ssa-loops blocks context frame (box-get rest))])]))
+  (opt-rotate-ssa-loops-from blocks context frame loops 0))
 
 (define (opt-rotate-ssa-function-with-context-result
   [context : OptCfgContext]
@@ -16366,9 +16984,31 @@
   (DataBuffer i64)
   (DataElement i64))
 
-(defenum OptLicmPtrEnv
-  (Nil)
-  (Cons i64 OptLicmPtrKind (Box OptLicmPtrEnv)))
+(defenum OptLicmPtrBind
+  (Bind i64 OptLicmPtrKind))
+
+(import (vector.vector OptLicmPtrBind core) as opt_licm_ptr_bind_vec)
+
+;; Var -> pointer-provenance kind. Block states fork (each successor extends
+;; the same predecessor state), so every bind rebuilds into a fresh buffer --
+;; which `unbind` already did, since a bind unbinds the var first. Storage is
+;; push order, the reverse of the old cons order, and `opt-licm-ptr-env-ref`
+;; takes the head-first index the lookup used.
+(defstruct OptLicmPtrEnv
+  (items opt_licm_ptr_bind_vec.Vec))
+
+(define (opt-licm-ptr-env-empty) : OptLicmPtrEnv
+  (OptLicmPtrEnv (opt_licm_ptr_bind_vec.new)))
+
+(define (opt-licm-ptr-env-count [env : OptLicmPtrEnv]) : i64
+  (opt_licm_ptr_bind_vec.len (& (struct-get env items))))
+
+(define (opt-licm-ptr-env-slot [env : OptLicmPtrEnv] [slot : i64]) : OptLicmPtrBind
+  (array-ref (opt_licm_ptr_bind_vec.slots (& (struct-get env items))) slot))
+
+;; Head-first index: 0 is the newest binding, matching the old cons walk.
+(define (opt-licm-ptr-env-ref [env : OptLicmPtrEnv] [index : i64]) : OptLicmPtrBind
+  (opt-licm-ptr-env-slot env (- (- (opt-licm-ptr-env-count env) 1) index)))
 
 (defenum OptLicmRoot
   (NoRoot)
@@ -16637,15 +17277,27 @@
         (opt-licm-store-summary-header-or-unknown-store)]
       [_ (opt-licm-store-summary-call-or-unknown)])))
 
+(define (opt-licm-ptr-unbind-into [env : OptLicmPtrEnv] [var : i64]) : opt_licm_ptr_bind_vec.Vec
+  (let
+    [count : i64 (opt-licm-ptr-env-count env)]
+    [out : opt_licm_ptr_bind_vec.Vec
+      (opt_licm_ptr_bind_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [bind : OptLicmPtrBind (opt-licm-ptr-env-slot env slot)]
+          (begin
+            (match bind
+              [(OptLicmPtrBind.Bind id _)
+                (if (= id var)
+                  unit
+                  (opt_licm_ptr_bind_vec.push (&mut out) bind))])
+            (set! slot (+ slot 1)))))
+      out)))
+
 (define (opt-licm-ptr-unbind [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrEnv
-  (match env
-    [(OptLicmPtrEnv.Nil) (OptLicmPtrEnv.Nil)]
-    [(OptLicmPtrEnv.Cons id kind rest)
-      (let
-        [tail : OptLicmPtrEnv (opt-licm-ptr-unbind (box-get rest) var)]
-        (if (= id var)
-          tail
-          (OptLicmPtrEnv.Cons id kind (box tail))))]))
+  (OptLicmPtrEnv (opt-licm-ptr-unbind-into env var)))
 
 (define (opt-licm-ptr-bind
   [env : OptLicmPtrEnv]
@@ -16653,15 +17305,29 @@
   [kind : OptLicmPtrKind]) : OptLicmPtrEnv
   (match kind
     [(OptLicmPtrKind.Unknown) (opt-licm-ptr-unbind env var)]
-    [_ (OptLicmPtrEnv.Cons var kind (box (opt-licm-ptr-unbind env var)))]))
+    [_
+      (let
+        ;; The unbind above already produced a private buffer, so the new head
+        ;; is appended to it rather than to any live sibling state.
+        [out : opt_licm_ptr_bind_vec.Vec (opt-licm-ptr-unbind-into env var)]
+        (begin
+          (opt_licm_ptr_bind_vec.push (&mut out) (OptLicmPtrBind.Bind var kind))
+          (OptLicmPtrEnv out)))]))
+
+(define (opt-licm-ptr-lookup-from
+  [env : OptLicmPtrEnv]
+  [var : i64]
+  [index : i64]) : OptLicmPtrKind
+  (if (>= index (opt-licm-ptr-env-count env))
+    (OptLicmPtrKind.Unknown)
+    (match (opt-licm-ptr-env-ref env index)
+      [(OptLicmPtrBind.Bind id kind)
+        (if (= id var)
+          kind
+          (opt-licm-ptr-lookup-from env var (+ index 1)))])))
 
 (define (opt-licm-ptr-lookup [env : OptLicmPtrEnv] [var : i64]) : OptLicmPtrKind
-  (match env
-    [(OptLicmPtrEnv.Nil) (OptLicmPtrKind.Unknown)]
-    [(OptLicmPtrEnv.Cons id kind rest)
-      (if (= id var)
-        kind
-        (opt-licm-ptr-lookup (box-get rest) var))]))
+  (opt-licm-ptr-lookup-from env var 0))
 
 (define (opt-licm-type-env-bind
   [types : OptSsaVarTypes]
@@ -16912,7 +17578,7 @@
   (OptLicmStoreState
     (opt-licm-store-summary-empty)
     (opt-licm-store-summary-empty)
-    (OptLicmPtrEnv.Nil)
+    (opt-licm-ptr-env-empty)
     (opt-licm-root-env-with-capacity 17)
     (opt-licm-store-root-list-empty)
     false))
@@ -17246,7 +17912,7 @@
     [roots : OptLicmRootEnv (opt-licm-root-env-with-capacity 17)]
     [_params : unit (opt-licm-root-env-seed-params! roots params)]
     [initial : OptLicmStoreState
-      (opt-licm-store-state-with-provenance (OptLicmPtrEnv.Nil) roots)]
+      (opt-licm-store-state-with-provenance (opt-licm-ptr-env-empty) roots)]
     [first : OptLicmStoreState
       (opt-licm-provenance-state-blocks types blocks initial)]
     (opt-licm-provenance-state-blocks types blocks first)))
@@ -17264,7 +17930,7 @@
         (OptLicmStoreState
           summary
           (opt-licm-store-summary-empty)
-          (OptLicmPtrEnv.Nil)
+          (opt-licm-ptr-env-empty)
           (opt-licm-root-env-with-capacity 17)
           (opt-licm-store-root-list-empty)
           false))]
@@ -17685,7 +18351,9 @@
                 (opt-licm-dedup-env
                   (box-get rest)
                   selected
-                  (OptCopyEnv.Cons dst (CompilerIrValue.Var canon) (box env)))]
+                  (opt-copy-env-extend
+                    env
+                    (OptVarValueBind.Copy dst (CompilerIrValue.Var canon))))]
               [(option_i64.None)
                 (opt-licm-dedup-env (box-get rest) selected env)])]
           [(OptLicmDupNone)
@@ -18043,26 +18711,55 @@
                   (opt-licm-dedup-env
                     hoisted
                     (CompilerIrInstrList.Nil)
-                    (OptCopyEnv.Nil))]
-                (match dedup-env
-                  [(OptCopyEnv.Nil)
-                    (OptLicmLoopApplyResult.Result
-                      (opt-licm-insert-preheader-blocks
-                        preheader
-                        hoisted
-                        (opt-licm-replace-body-blocks blocks filtered-body))
-                      true)]
-                  [_
-                    (OptLicmLoopApplyResult.Result
-                      (opt-licm-insert-preheader-blocks
-                        preheader
-                        (opt-licm-subst-instr-list dedup-env hoisted)
-                        (opt-licm-replace-body-blocks
-                          blocks
-                          (opt-licm-subst-body-blocks dedup-env filtered-body)))
-                      true)]))
+                    (opt-copy-env-empty))]
+                (if (= (opt-copy-env-count dedup-env) 0)
+                  (OptLicmLoopApplyResult.Result
+                    (opt-licm-insert-preheader-blocks
+                      preheader
+                      hoisted
+                      (opt-licm-replace-body-blocks blocks filtered-body))
+                    true)
+                  (OptLicmLoopApplyResult.Result
+                    (opt-licm-insert-preheader-blocks
+                      preheader
+                      (opt-licm-subst-instr-list dedup-env hoisted)
+                      (opt-licm-replace-body-blocks
+                        blocks
+                        (opt-licm-subst-body-blocks dedup-env filtered-body)))
+                    true)))
               (OptLicmLoopApplyResult.Result blocks false))]))]
     [(OptLoopPreheader.No) (OptLicmLoopApplyResult.Result blocks false)]))
+
+(define (opt-licm-apply-loops-from
+  [sources : opt_i64_i64_map.Map]
+  [types : OptSsaVarTypes]
+  [provenance : OptLicmStoreState]
+  [direct-call-clean : opt_i64_i64_map.Map]
+  [loops : OptNaturalLoopList]
+  [blocks : CompilerIrBlockList]
+  [index : i64]) : OptLicmLoopApplyResult
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptLicmLoopApplyResult.Result blocks false)
+    (match (opt-licm-apply-loop
+      sources
+      types
+      provenance
+      direct-call-clean
+      blocks
+      (opt-natural-loop-list-ref loops index))
+      [(OptLicmLoopApplyResult.Result loop-blocks loop-changed)
+        (match (opt-licm-apply-loops-from
+          sources
+          types
+          provenance
+          direct-call-clean
+          loops
+          loop-blocks
+          (+ index 1))
+          [(OptLicmLoopApplyResult.Result rest-blocks rest-changed)
+            (OptLicmLoopApplyResult.Result
+              rest-blocks
+              (or loop-changed rest-changed))])])))
 
 (define (opt-licm-apply-loops
   [sources : opt_i64_i64_map.Map]
@@ -18071,28 +18768,14 @@
   [direct-call-clean : opt_i64_i64_map.Map]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]) : OptLicmLoopApplyResult
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptLicmLoopApplyResult.Result blocks false)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-licm-apply-loop
-        sources
-        types
-        provenance
-        direct-call-clean
-        blocks
-        loop)
-        [(OptLicmLoopApplyResult.Result loop-blocks loop-changed)
-          (match (opt-licm-apply-loops
-            sources
-            types
-            provenance
-            direct-call-clean
-            (box-get rest)
-            loop-blocks)
-            [(OptLicmLoopApplyResult.Result rest-blocks rest-changed)
-              (OptLicmLoopApplyResult.Result
-                rest-blocks
-                (or loop-changed rest-changed))])])]))
+  (opt-licm-apply-loops-from
+    sources
+    types
+    provenance
+    direct-call-clean
+    loops
+    blocks
+    0))
 
 (define (opt-licm-blocks-with-context-and-direct-call-clean
   [sources : opt_i64_i64_map.Map]
@@ -18124,53 +18807,46 @@
               (opt-licm-type-env-from-function params blocks)]
             [loops : OptNaturalLoopList
               (opt-cfg-natural-loops-with-context blocks context)]
-            (match loops
-              [(OptNaturalLoopList.Nil)
-                (OptFunctionCtxResult.Result func context)]
-              [_
-                (let
-                  [provenance : OptLicmStoreState
-                    (opt-licm-provenance-state-from-function
-                      params
-                      types
-                      blocks)]
-                  (match (opt-licm-blocks-with-context-and-direct-call-clean
-                    sources
-                    types
-                    provenance
-                    direct-call-clean
-                    loops
-                    blocks)
-                    [(OptLicmLoopApplyResult.Result
-                        hoisted-blocks
-                        licm-changed?)
-                      (if (not licm-changed?)
-                        ;; Nothing hoisted: the input context still describes the
-                        ;; unchanged CFG, so skip the context rebuild and the
-                        ;; post-pass verify entirely.
-                        (OptFunctionCtxResult.Result func context)
-                        (let
-                          [hoisted : CompilerIrFunction
-                            (CompilerIrFunction.Function
-                              name
-                              params
-                              ret-ty
-                              frame
-                              hoisted-blocks)]
-                          ;; LICM may hoist into a synthesized preheader edge, so build
-                          ;; one fresh context for the rewritten CFG, reuse it for the
-                          ;; post-pass verify, and hand it back for the next pass.
-                          [hoisted-context : OptCfgContext
-                            (opt-cfg-context-build hoisted-blocks)]
-                          (match (opt-verify-function-with-context
-                            hoisted
-                            hoisted-context)
-                            [(ResultCompilerOptimizeVerify.Ok)
-                              (OptFunctionCtxResult.Result
-                                hoisted
-                                hoisted-context)]
-                            [(ResultCompilerOptimizeVerify.Err _)
-                              (OptFunctionCtxResult.Result func context)])))]))]))])]
+            (if (= (opt-natural-loop-list-count loops) 0)
+              (OptFunctionCtxResult.Result func context)
+              (let
+                [provenance : OptLicmStoreState
+                  (opt-licm-provenance-state-from-function params types blocks)]
+                (match (opt-licm-blocks-with-context-and-direct-call-clean
+                  sources
+                  types
+                  provenance
+                  direct-call-clean
+                  loops
+                  blocks)
+                  [(OptLicmLoopApplyResult.Result hoisted-blocks licm-changed?)
+                    (if (not licm-changed?)
+                      ;; Nothing hoisted: the input context still describes the
+                      ;; unchanged CFG, so skip the context rebuild and the
+                      ;; post-pass verify entirely.
+                      (OptFunctionCtxResult.Result func context)
+                      (let
+                        [hoisted : CompilerIrFunction
+                          (CompilerIrFunction.Function
+                            name
+                            params
+                            ret-ty
+                            frame
+                            hoisted-blocks)]
+                        ;; LICM may hoist into a synthesized preheader edge, so build
+                        ;; one fresh context for the rewritten CFG, reuse it for the
+                        ;; post-pass verify, and hand it back for the next pass.
+                        [hoisted-context : OptCfgContext
+                          (opt-cfg-context-build hoisted-blocks)]
+                        (match (opt-verify-function-with-context
+                          hoisted
+                          hoisted-context)
+                          [(ResultCompilerOptimizeVerify.Ok)
+                            (OptFunctionCtxResult.Result
+                              hoisted
+                              hoisted-context)]
+                          [(ResultCompilerOptimizeVerify.Err _)
+                            (OptFunctionCtxResult.Result func context)])))]))))])]
     [(ResultCompilerOptimizeVerify.Err _)
       (OptFunctionCtxResult.Result func context)]))
 
@@ -18241,9 +18917,28 @@
   ;; iteration, which folds the fetch into the load's addressing mode.
   (GepScaled CompilerIrValue i64 AstType))
 
-(defenum OptInductionDerivedList
-  (Nil)
-  (Cons OptInductionDerived (Box OptInductionDerivedList)))
+(import (vector.vector OptInductionDerived core) as opt_induction_derived_vec)
+
+;; The derived recurrences of one induction fact, in discovery order. The old
+;; cons list APPENDED at the tail, so push order already matches it and
+;; `opt-induction-derived-list-ref` indexes straight into the slots. One
+;; accumulator is threaded through the whole collection walk and then only
+;; read, so the unique-append pushes in place.
+(defstruct OptInductionDerivedList
+  (items opt_induction_derived_vec.Vec))
+
+(define (opt-induction-derived-list-empty) : OptInductionDerivedList
+  (OptInductionDerivedList (opt_induction_derived_vec.new)))
+
+(define (opt-induction-derived-list-count [deriveds : OptInductionDerivedList]) : i64
+  (opt_induction_derived_vec.len (& (struct-get deriveds items))))
+
+(define (opt-induction-derived-list-ref
+  [deriveds : OptInductionDerivedList]
+  [index : i64]) : OptInductionDerived
+  (array-ref
+    (opt_induction_derived_vec.slots (& (struct-get deriveds items)))
+    index))
 
 (defenum OptMaybeInductionDerived
   (No)
@@ -19096,48 +19791,47 @@
             (opt-type-eq left-ty right-ty))]
         [_ false])]))
 
+(define (opt-induction-derived-list-contains-from?
+  [deriveds : OptInductionDerivedList]
+  [derived : OptInductionDerived]
+  [index : i64]) : bool
+  (if (>= index (opt-induction-derived-list-count deriveds))
+    false
+    (if (opt-induction-derived-eq?
+      (opt-induction-derived-list-ref deriveds index)
+      derived)
+      true
+      (opt-induction-derived-list-contains-from? deriveds derived (+ index 1)))))
+
 (define (opt-induction-derived-list-contains?
   [deriveds : OptInductionDerivedList]
   [derived : OptInductionDerived]) : bool
-  (match deriveds
-    [(OptInductionDerivedList.Nil) false]
-    [(OptInductionDerivedList.Cons head rest)
-      (if (opt-induction-derived-eq? head derived)
-        true
-        (opt-induction-derived-list-contains? (box-get rest) derived))]))
-
-(define (opt-induction-derived-list-append
-  [deriveds : OptInductionDerivedList]
-  [derived : OptInductionDerived]) : OptInductionDerivedList
-  (match deriveds
-    [(OptInductionDerivedList.Nil)
-      (OptInductionDerivedList.Cons derived (box (OptInductionDerivedList.Nil)))]
-    [(OptInductionDerivedList.Cons head rest)
-      (OptInductionDerivedList.Cons
-        head
-        (box (opt-induction-derived-list-append (box-get rest) derived)))]))
+  (opt-induction-derived-list-contains-from? deriveds derived 0))
 
 (define (opt-induction-derived-list-append-unique
   [deriveds : OptInductionDerivedList]
   [derived : OptInductionDerived]) : OptInductionDerivedList
   (if (opt-induction-derived-list-contains? deriveds derived)
     deriveds
-    (opt-induction-derived-list-append deriveds derived)))
+    (let
+      [items : opt_induction_derived_vec.Vec (struct-get deriveds items)]
+      (begin
+        (opt_induction_derived_vec.push (&mut items) derived)
+        (OptInductionDerivedList items)))))
 
-(define (opt-induction-derived-list-count [deriveds : OptInductionDerivedList]) : i64
-  (match deriveds
-    [(OptInductionDerivedList.Nil) 0]
-    [(OptInductionDerivedList.Cons _ rest)
-      (+ 1 (opt-induction-derived-list-count (box-get rest)))]))
+(define (opt-induction-derived-list-slot-count-from
+  [deriveds : OptInductionDerivedList]
+  [index : i64]) : i64
+  (if (>= index (opt-induction-derived-list-count deriveds))
+    0
+    (+
+      (opt-induction-derived-slot-count
+        (opt-induction-derived-list-ref deriveds index))
+      (opt-induction-derived-list-slot-count-from deriveds (+ index 1)))))
 
 (define (opt-induction-derived-list-slot-count
   [deriveds : OptInductionDerivedList]) : i64
-  (match deriveds
-    [(OptInductionDerivedList.Nil) 0]
-    [(OptInductionDerivedList.Cons derived rest)
-      (+
-        (opt-induction-derived-slot-count derived)
-        (opt-induction-derived-list-slot-count (box-get rest)))]))
+  (opt-induction-derived-list-slot-count-from deriveds 0))
 
 (define (opt-induction-collect-derived-instr-seq-from
   [fact : OptInductionFact]
@@ -19474,7 +20168,7 @@
         all-blocks
         (compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-induction-rewrite-derived-list-blocks
+(define (opt-induction-rewrite-derived-list-blocks-from
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [fact : OptInductionFact]
@@ -19482,17 +20176,20 @@
   [scaled : opt_i64_i64_map.Map]
   [deriveds : OptInductionDerivedList]
   [frame : i64]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (match deriveds
-    [(OptInductionDerivedList.Nil) blocks]
-    [(OptInductionDerivedList.Cons derived rest)
-      (opt-induction-rewrite-derived-list-blocks
+  [blocks : CompilerIrBlockList]
+  [slot : i64]) : CompilerIrBlockList
+  (if (>= slot (opt-induction-derived-list-count deriveds))
+    blocks
+    (let
+      [derived : OptInductionDerived
+        (opt-induction-derived-list-ref deriveds slot)]
+      (opt-induction-rewrite-derived-list-blocks-from
         body
         index
         fact
         offsets
         scaled
-        (box-get rest)
+        deriveds
         (+ frame (opt-induction-derived-slot-count derived))
         (opt-induction-rewrite-blocks
           body
@@ -19503,7 +20200,28 @@
           derived
           (opt-induction-derived-phi-var derived frame)
           blocks
-          blocks))]))
+          blocks)
+        (+ slot 1)))))
+
+(define (opt-induction-rewrite-derived-list-blocks
+  [body : OptLoopBody]
+  [index : OptCfgIndex]
+  [fact : OptInductionFact]
+  [offsets : opt_i64_i64_map.Map]
+  [scaled : opt_i64_i64_map.Map]
+  [deriveds : OptInductionDerivedList]
+  [frame : i64]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (opt-induction-rewrite-derived-list-blocks-from
+    body
+    index
+    fact
+    offsets
+    scaled
+    deriveds
+    frame
+    blocks
+    0))
 
 ;; GepScaled has no affine offset; it reports a nonzero value so it takes the
 ;; 4-slot layout (mul tmp, seed, phi, next) its two-instruction seed needs.
@@ -19662,28 +20380,41 @@
         (CompilerIrPhiInputList.Nil)))
     (opt-induction-derived-phi-type derived)))
 
+(define (opt-induction-seed-instrs-from
+  [fact : OptInductionFact]
+  [deriveds : OptInductionDerivedList]
+  [frame : i64]
+  [slot : i64]) : CompilerIrInstrList
+  (if (>= slot (opt-induction-derived-list-count deriveds))
+    CompilerIrInstrList.Nil
+    (let
+      [derived : OptInductionDerived
+        (opt-induction-derived-list-ref deriveds slot)]
+      (opt-aggregate-instr-list-append
+        (opt-induction-seed-instrs-for-derived fact derived frame)
+        (opt-induction-seed-instrs-from
+          fact
+          deriveds
+          (+ frame (opt-induction-derived-slot-count derived))
+          (+ slot 1))))))
+
 (define (opt-induction-seed-instrs
   [fact : OptInductionFact]
   [deriveds : OptInductionDerivedList]
   [frame : i64]) : CompilerIrInstrList
-  (match deriveds
-    [(OptInductionDerivedList.Nil) CompilerIrInstrList.Nil]
-    [(OptInductionDerivedList.Cons derived rest)
-      (opt-aggregate-instr-list-append
-        (opt-induction-seed-instrs-for-derived fact derived frame)
-        (opt-induction-seed-instrs
-          fact
-          (box-get rest)
-          (+ frame (opt-induction-derived-slot-count derived))))]))
+  (opt-induction-seed-instrs-from fact deriveds frame 0))
 
-(define (opt-induction-phi-instrs
+(define (opt-induction-phi-instrs-from
   [deriveds : OptInductionDerivedList]
   [preheader : String]
   [latch : String]
-  [frame : i64]) : CompilerIrInstrList
-  (match deriveds
-    [(OptInductionDerivedList.Nil) CompilerIrInstrList.Nil]
-    [(OptInductionDerivedList.Cons derived rest)
+  [frame : i64]
+  [slot : i64]) : CompilerIrInstrList
+  (if (>= slot (opt-induction-derived-list-count deriveds))
+    CompilerIrInstrList.Nil
+    (let
+      [derived : OptInductionDerived
+        (opt-induction-derived-list-ref deriveds slot)]
       (compiler-ir-instr-cons
         (opt-induction-phi-instr
           derived
@@ -19692,29 +20423,47 @@
           (opt-induction-derived-seed-var derived frame)
           (opt-induction-derived-phi-var derived frame)
           (opt-induction-derived-next-var derived frame))
-        (opt-induction-phi-instrs
-          (box-get rest)
+        (opt-induction-phi-instrs-from
+          deriveds
           preheader
           latch
-          (+ frame (opt-induction-derived-slot-count derived))))]))
+          (+ frame (opt-induction-derived-slot-count derived))
+          (+ slot 1))))))
 
-(define (opt-induction-next-instrs
+(define (opt-induction-phi-instrs
+  [deriveds : OptInductionDerivedList]
+  [preheader : String]
+  [latch : String]
+  [frame : i64]) : CompilerIrInstrList
+  (opt-induction-phi-instrs-from deriveds preheader latch frame 0))
+
+(define (opt-induction-next-instrs-from
   [fact : OptInductionFact]
   [deriveds : OptInductionDerivedList]
-  [frame : i64]) : CompilerIrInstrList
-  (match deriveds
-    [(OptInductionDerivedList.Nil) CompilerIrInstrList.Nil]
-    [(OptInductionDerivedList.Cons derived rest)
+  [frame : i64]
+  [slot : i64]) : CompilerIrInstrList
+  (if (>= slot (opt-induction-derived-list-count deriveds))
+    CompilerIrInstrList.Nil
+    (let
+      [derived : OptInductionDerived
+        (opt-induction-derived-list-ref deriveds slot)]
       (compiler-ir-instr-cons
         (opt-induction-next-instr
           fact
           derived
           (opt-induction-derived-phi-var derived frame)
           (opt-induction-derived-next-var derived frame))
-        (opt-induction-next-instrs
+        (opt-induction-next-instrs-from
           fact
-          (box-get rest)
-          (+ frame (opt-induction-derived-slot-count derived))))]))
+          deriveds
+          (+ frame (opt-induction-derived-slot-count derived))
+          (+ slot 1))))))
+
+(define (opt-induction-next-instrs
+  [fact : OptInductionFact]
+  [deriveds : OptInductionDerivedList]
+  [frame : i64]) : CompilerIrInstrList
+  (opt-induction-next-instrs-from fact deriveds frame 0))
 
 (define (opt-induction-insert-support-blocks
   [header : String]
@@ -19801,7 +20550,7 @@
                     loop-defs
                     blocks
                     body-blocks
-                    (OptInductionDerivedList.Nil))]
+                    (opt-induction-derived-list-empty))]
                 [derived-count : i64
                   (opt-induction-derived-list-count deriveds)]
                 (if (= derived-count 0)
@@ -19842,24 +20591,36 @@
               (OptInductionApplyResult.Result blocks frame false)])))]
     [(OptLoopPreheader.No) (OptInductionApplyResult.Result blocks frame false)]))
 
+(define (opt-induction-apply-loops-from
+  [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [changed : bool]
+  [slot : i64]) : OptInductionApplyResult
+  (if (>= slot (opt-natural-loop-list-count loops))
+    (OptInductionApplyResult.Result blocks frame changed)
+    (match (opt-induction-apply-loop
+      index
+      blocks
+      frame
+      (opt-natural-loop-list-ref loops slot))
+      [(OptInductionApplyResult.Result next-blocks next-frame loop-changed)
+        (opt-induction-apply-loops-from
+          index
+          loops
+          next-blocks
+          next-frame
+          (or changed loop-changed)
+          (+ slot 1))])))
+
 (define (opt-induction-apply-loops
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
   [blocks : CompilerIrBlockList]
   [frame : i64]
   [changed : bool]) : OptInductionApplyResult
-  (match loops
-    [(OptNaturalLoopList.Nil)
-      (OptInductionApplyResult.Result blocks frame changed)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-induction-apply-loop index blocks frame loop)
-        [(OptInductionApplyResult.Result next-blocks next-frame loop-changed)
-          (opt-induction-apply-loops
-            index
-            (box-get rest)
-            next-blocks
-            next-frame
-            (or changed loop-changed))])]))
+  (opt-induction-apply-loops-from index loops blocks frame changed 0))
 
 (define (opt-induction-function-with-context-result
   [context : OptCfgContext]
@@ -22998,9 +23759,41 @@
   (No)
   (Some i64 i64 i64 String String))
 
-(defenum OptSwitchCandidateList
-  (Nil)
-  (Cons String i64 i64 String String (Box OptSwitchCandidateList)))
+;; One compare-and-branch link of a candidate switch chain: block label, tag,
+;; compare var, arm label, next-chain label.
+(defenum OptSwitchCandidate
+  (Candidate String i64 i64 String String))
+
+(import (vector.vector OptSwitchCandidate core) as opt_switch_candidate_vec)
+
+;; The chain's links. Collection front-consed each new link, so the generated
+;; vector stores them in push order -- the reverse of the old cons order -- and
+;; `opt-switch-candidate-ref` takes the head-first index every walk below used.
+(defstruct OptSwitchCandidateList
+  (items opt_switch_candidate_vec.Vec))
+
+(define (opt-switch-candidate-list-empty) : OptSwitchCandidateList
+  (OptSwitchCandidateList (opt_switch_candidate_vec.new)))
+
+(define (opt-switch-candidate-count [items : OptSwitchCandidateList]) : i64
+  (opt_switch_candidate_vec.len (& (struct-get items items))))
+
+;; Head-first index: 0 is the link the old cons list carried at its head.
+(define (opt-switch-candidate-ref
+  [items : OptSwitchCandidateList]
+  [index : i64]) : OptSwitchCandidate
+  (array-ref
+    (opt_switch_candidate_vec.slots (& (struct-get items items)))
+    (- (- (opt-switch-candidate-count items) 1) index)))
+
+(define (opt-switch-candidate-push
+  [items : OptSwitchCandidateList]
+  [candidate : OptSwitchCandidate]) : OptSwitchCandidateList
+  (let
+    [slots : opt_switch_candidate_vec.Vec (struct-get items items)]
+    (begin
+      (opt_switch_candidate_vec.push (&mut slots) candidate)
+      (OptSwitchCandidateList slots))))
 
 (defenum OptSwitchMaybeLabel
   (NoLabel)
@@ -23238,81 +24031,102 @@
       (opt-switch-copy-env-note env (compiler-ir-instr-seq-ref instrs index)))))
 
 (define (opt-switch-candidate-empty? [items : OptSwitchCandidateList]) : bool
-  (match items
-    [(OptSwitchCandidateList.Nil) true]
-    [_ false]))
+  (= (opt-switch-candidate-count items) 0))
 
-(define (opt-switch-candidate-count [items : OptSwitchCandidateList]) : i64
-  (match items
-    [(OptSwitchCandidateList.Nil) 0]
-    [(OptSwitchCandidateList.Cons _ _ _ _ _ rest)
-      (+ 1 (opt-switch-candidate-count (box-get rest)))]))
+(define (opt-switch-candidate-has-tag-from?
+  [items : OptSwitchCandidateList]
+  [tag : i64]
+  [index : i64]) : bool
+  (if (>= index (opt-switch-candidate-count items))
+    false
+    (match (opt-switch-candidate-ref items index)
+      [(OptSwitchCandidate.Candidate _ item-tag _ _ _)
+        (if (= item-tag tag)
+          true
+          (opt-switch-candidate-has-tag-from? items tag (+ index 1)))])))
 
 (define (opt-switch-candidate-has-tag?
   [items : OptSwitchCandidateList]
   [tag : i64]) : bool
-  (match items
-    [(OptSwitchCandidateList.Nil) false]
-    [(OptSwitchCandidateList.Cons _ item-tag _ _ _ rest)
-      (if (= item-tag tag)
-        true
-        (opt-switch-candidate-has-tag? (box-get rest) tag))]))
+  (opt-switch-candidate-has-tag-from? items tag 0))
+
+(define (opt-switch-candidate-has-label-from?
+  [items : OptSwitchCandidateList]
+  [label : String]
+  [index : i64]) : bool
+  (if (>= index (opt-switch-candidate-count items))
+    false
+    (match (opt-switch-candidate-ref items index)
+      [(OptSwitchCandidate.Candidate item-label _ _ _ _)
+        (if (string.eq item-label label)
+          true
+          (opt-switch-candidate-has-label-from? items label (+ index 1)))])))
 
 (define (opt-switch-candidate-has-label?
   [items : OptSwitchCandidateList]
   [label : String]) : bool
-  (match items
-    [(OptSwitchCandidateList.Nil) false]
-    [(OptSwitchCandidateList.Cons item-label _ _ _ _ rest)
-      (if (string.eq item-label label)
-        true
-        (opt-switch-candidate-has-label? (box-get rest) label))]))
+  (opt-switch-candidate-has-label-from? items label 0))
 
 (define (opt-switch-candidate-min-from
   [items : OptSwitchCandidateList]
-  [current : i64]) : i64
-  (match items
-    [(OptSwitchCandidateList.Nil) current]
-    [(OptSwitchCandidateList.Cons _ tag _ _ _ rest)
-      (opt-switch-candidate-min-from
-        (box-get rest)
-        (if (< tag current)
-          tag
-          current))]))
+  [current : i64]
+  [index : i64]) : i64
+  (if (>= index (opt-switch-candidate-count items))
+    current
+    (match (opt-switch-candidate-ref items index)
+      [(OptSwitchCandidate.Candidate _ tag _ _ _)
+        (opt-switch-candidate-min-from
+          items
+          (if (< tag current)
+            tag
+            current)
+          (+ index 1))])))
 
 (define (opt-switch-candidate-max-from
   [items : OptSwitchCandidateList]
-  [current : i64]) : i64
-  (match items
-    [(OptSwitchCandidateList.Nil) current]
-    [(OptSwitchCandidateList.Cons _ tag _ _ _ rest)
-      (opt-switch-candidate-max-from
-        (box-get rest)
-        (if (> tag current)
-          tag
-          current))]))
+  [current : i64]
+  [index : i64]) : i64
+  (if (>= index (opt-switch-candidate-count items))
+    current
+    (match (opt-switch-candidate-ref items index)
+      [(OptSwitchCandidate.Candidate _ tag _ _ _)
+        (opt-switch-candidate-max-from
+          items
+          (if (> tag current)
+            tag
+            current)
+          (+ index 1))])))
 
 (define (opt-switch-candidate-min [items : OptSwitchCandidateList]) : i64
-  (match items
-    [(OptSwitchCandidateList.Cons _ tag _ _ _ rest)
-      (opt-switch-candidate-min-from (box-get rest) tag)]
-    [(OptSwitchCandidateList.Nil) 0]))
+  (if (= (opt-switch-candidate-count items) 0)
+    0
+    (match (opt-switch-candidate-ref items 0)
+      [(OptSwitchCandidate.Candidate _ tag _ _ _)
+        (opt-switch-candidate-min-from items tag 1)])))
 
 (define (opt-switch-candidate-max [items : OptSwitchCandidateList]) : i64
-  (match items
-    [(OptSwitchCandidateList.Cons _ tag _ _ _ rest)
-      (opt-switch-candidate-max-from (box-get rest) tag)]
-    [(OptSwitchCandidateList.Nil) 0]))
+  (if (= (opt-switch-candidate-count items) 0)
+    0
+    (match (opt-switch-candidate-ref items 0)
+      [(OptSwitchCandidate.Candidate _ tag _ _ _)
+        (opt-switch-candidate-max-from items tag 1)])))
+
+(define (opt-switch-candidate-label-for-tag-from
+  [items : OptSwitchCandidateList]
+  [tag : i64]
+  [index : i64]) : OptSwitchMaybeLabel
+  (if (>= index (opt-switch-candidate-count items))
+    (OptSwitchMaybeLabel.NoLabel)
+    (match (opt-switch-candidate-ref items index)
+      [(OptSwitchCandidate.Candidate _ item-tag _ arm-label _)
+        (if (= item-tag tag)
+          (OptSwitchMaybeLabel.SomeLabel arm-label)
+          (opt-switch-candidate-label-for-tag-from items tag (+ index 1)))])))
 
 (define (opt-switch-candidate-label-for-tag
   [items : OptSwitchCandidateList]
   [tag : i64]) : OptSwitchMaybeLabel
-  (match items
-    [(OptSwitchCandidateList.Nil) (OptSwitchMaybeLabel.NoLabel)]
-    [(OptSwitchCandidateList.Cons _ item-tag _ arm-label _ rest)
-      (if (= item-tag tag)
-        (OptSwitchMaybeLabel.SomeLabel arm-label)
-        (opt-switch-candidate-label-for-tag (box-get rest) tag))]))
+  (opt-switch-candidate-label-for-tag-from items tag 0))
 
 (define (opt-switch-build-cases-desc
   [items : OptSwitchCandidateList]
@@ -23593,29 +24407,30 @@
 (define (opt-switch-targets-safe-from?
   [blocks : CompilerIrBlockList]
   [all-items : OptSwitchCandidateList]
-  [items : OptSwitchCandidateList]
-  [default-label : String]) : bool
+  [default-label : String]
+  [index : i64]) : bool
   (if (or
     (opt-switch-candidate-has-label? all-items default-label)
     (opt-switch-block-starts-with-phi? blocks default-label))
     false
-    (match items
-      [(OptSwitchCandidateList.Nil) true]
-      [(OptSwitchCandidateList.Cons _ _ _ arm-label _ rest)
-        (and
-          (not (opt-switch-candidate-has-label? all-items arm-label))
-          (not (opt-switch-block-starts-with-phi? blocks arm-label))
-          (opt-switch-targets-safe-from?
-            blocks
-            all-items
-            (box-get rest)
-            default-label))])))
+    (if (>= index (opt-switch-candidate-count all-items))
+      true
+      (match (opt-switch-candidate-ref all-items index)
+        [(OptSwitchCandidate.Candidate _ _ _ arm-label _)
+          (and
+            (not (opt-switch-candidate-has-label? all-items arm-label))
+            (not (opt-switch-block-starts-with-phi? blocks arm-label))
+            (opt-switch-targets-safe-from?
+              blocks
+              all-items
+              default-label
+              (+ index 1)))]))))
 
 (define (opt-switch-targets-safe?
   [blocks : CompilerIrBlockList]
   [items : OptSwitchCandidateList]
   [default-label : String]) : bool
-  (opt-switch-targets-safe-from? blocks items items default-label))
+  (opt-switch-targets-safe-from? blocks items default-label 0))
 
 (define (opt-switch-single-pred-from?
   [index : OptCfgIndex]
@@ -23693,13 +24508,14 @@
             chain-index
             label
             (opt-label-add seen label)
-            (OptSwitchCandidateList.Cons
-              label
-              tag
-              eq-var
-              arm-label
-              next-label
-              (box items))
+            (opt-switch-candidate-push
+              items
+              (OptSwitchCandidate.Candidate
+                label
+                tag
+                eq-var
+                arm-label
+                next-label))
             head-prefix
             copies))))))
 
@@ -23787,19 +24603,28 @@
               head-prefix
               copies)])])))
 
+(define (opt-switch-skip-candidate-labels-from
+  [items : OptSwitchCandidateList]
+  [first-label : String]
+  [skip : OptLabelSet]
+  [index : i64]) : OptLabelSet
+  (if (>= index (opt-switch-candidate-count items))
+    skip
+    (match (opt-switch-candidate-ref items index)
+      [(OptSwitchCandidate.Candidate label _ _ _ _)
+        (opt-switch-skip-candidate-labels-from
+          items
+          first-label
+          (if (string.eq label first-label)
+            skip
+            (opt-label-add skip label))
+          (+ index 1))])))
+
 (define (opt-switch-skip-candidate-labels
   [items : OptSwitchCandidateList]
   [first-label : String]
   [skip : OptLabelSet]) : OptLabelSet
-  (match items
-    [(OptSwitchCandidateList.Nil) skip]
-    [(OptSwitchCandidateList.Cons label _ _ _ _ rest)
-      (opt-switch-skip-candidate-labels
-        (box-get rest)
-        first-label
-        (if (string.eq label first-label)
-          skip
-          (opt-label-add skip label)))]))
+  (opt-switch-skip-candidate-labels-from items first-label skip 0))
 
 ;; Rebuilt head block body: the kept unconditional prefix instructions
 ;; (usually none) followed by the Switch terminator.
@@ -23869,7 +24694,7 @@
               (- 0 1)
               ""
               (OptLabelSet.Nil)
-              (OptSwitchCandidateList.Nil)
+              (opt-switch-candidate-list-empty)
               0
               (opt-switch-copy-env-empty))
               [(OptMaybeSwitchChain.Some
@@ -26922,9 +27747,48 @@
   (LessThan String OptLoopBceExpr OptLoopBceExpr)
   (LessThanOrEq String OptLoopBceExpr OptLoopBceExpr))
 
-(defenum OptRangeFacts
-  (Nil)
-  (Cons OptRangeFact (Box OptRangeFacts)))
+(import (vector.vector OptRangeFact core) as opt_range_fact_vec)
+
+;; Dominator-edge range facts. One block's facts are extended along both
+;; branch edges while the parent set stays live, so `add` copies into a
+;; right-sized buffer instead of sharing one. Its membership scan was already
+;; O(n), so this costs no extra pass. Storage is push order -- the reverse of
+;; the old cons order, since every add prepended -- and
+;; `opt-range-facts-ref` takes the head-first index the walks used.
+(defstruct OptRangeFacts
+  (items opt_range_fact_vec.Vec))
+
+(define (opt-range-facts-empty) : OptRangeFacts
+  (OptRangeFacts (opt_range_fact_vec.new)))
+
+(define (opt-range-facts-count [facts : OptRangeFacts]) : i64
+  (opt_range_fact_vec.len (& (struct-get facts items))))
+
+;; Head-first index: 0 is the newest fact, matching the old cons walk.
+(define (opt-range-facts-ref [facts : OptRangeFacts] [index : i64]) : OptRangeFact
+  (array-ref
+    (opt_range_fact_vec.slots (& (struct-get facts items)))
+    (- (- (opt-range-facts-count facts) 1) index)))
+
+;; A fresh right-sized buffer per extend: sibling edges of the same block must
+;; not observe each other's facts.
+(define (opt-range-facts-add [facts : OptRangeFacts] [fact : OptRangeFact]) : OptRangeFacts
+  (let
+    [count : i64 (opt-range-facts-count facts)]
+    [out : opt_range_fact_vec.Vec
+      (opt_range_fact_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (opt_range_fact_vec.push
+            (&mut out)
+            (array-ref
+              (opt_range_fact_vec.slots (& (struct-get facts items)))
+              slot))
+          (set! slot (+ slot 1))))
+      (opt_range_fact_vec.push (&mut out) fact)
+      (OptRangeFacts out))))
 
 (defstruct OptLoopBceSummaries
   (enabled bool)
@@ -27043,57 +27907,88 @@
                 (opt-loop-bce-expr-eq (box-get ar) (box-get bl)))))]
         [_ false])]))
 
+(define (opt-range-nonnegative-contains-from?
+  [facts : OptRangeFacts]
+  [label : String]
+  [expr : OptLoopBceExpr]
+  [index : i64]) : bool
+  (if (>= index (opt-range-facts-count facts))
+    false
+    (match (opt-range-facts-ref facts index)
+      [(OptRangeFact.Nonnegative fact-label fact-expr)
+        (if (and
+          (string.eq fact-label label)
+          (opt-loop-bce-expr-eq fact-expr expr))
+          true
+          (opt-range-nonnegative-contains-from? facts label expr (+ index 1)))]
+      [_ (opt-range-nonnegative-contains-from? facts label expr (+ index 1))])))
+
 (define (opt-range-nonnegative-contains?
   [facts : OptRangeFacts]
   [label : String]
   [expr : OptLoopBceExpr]) : bool
-  (match facts
-    [(OptRangeFacts.Nil) false]
-    [(OptRangeFacts.Cons fact rest)
-      (match fact
-        [(OptRangeFact.Nonnegative fact-label fact-expr)
-          (if (and
-            (string.eq fact-label label)
-            (opt-loop-bce-expr-eq fact-expr expr))
-            true
-            (opt-range-nonnegative-contains? (box-get rest) label expr))]
-        [_ (opt-range-nonnegative-contains? (box-get rest) label expr)])]))
+  (opt-range-nonnegative-contains-from? facts label expr 0))
+
+(define (opt-range-less-than-contains-from?
+  [facts : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]
+  [index : i64]) : bool
+  (if (>= index (opt-range-facts-count facts))
+    false
+    (match (opt-range-facts-ref facts index)
+      [(OptRangeFact.LessThan fact-label fact-lhs fact-rhs)
+        (if (and
+          (string.eq fact-label label)
+          (opt-loop-bce-expr-eq fact-lhs lhs)
+          (opt-loop-bce-expr-eq fact-rhs rhs))
+          true
+          (opt-range-less-than-contains-from? facts label lhs rhs (+ index 1)))]
+      [_ (opt-range-less-than-contains-from? facts label lhs rhs (+ index 1))])))
 
 (define (opt-range-less-than-contains?
   [facts : OptRangeFacts]
   [label : String]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
-  (match facts
-    [(OptRangeFacts.Nil) false]
-    [(OptRangeFacts.Cons fact rest)
-      (match fact
-        [(OptRangeFact.LessThan fact-label fact-lhs fact-rhs)
-          (if (and
-            (string.eq fact-label label)
-            (opt-loop-bce-expr-eq fact-lhs lhs)
-            (opt-loop-bce-expr-eq fact-rhs rhs))
-            true
-            (opt-range-less-than-contains? (box-get rest) label lhs rhs))]
-        [_ (opt-range-less-than-contains? (box-get rest) label lhs rhs)])]))
+  (opt-range-less-than-contains-from? facts label lhs rhs 0))
+
+(define (opt-range-less-than-or-eq-contains-from?
+  [facts : OptRangeFacts]
+  [label : String]
+  [lhs : OptLoopBceExpr]
+  [rhs : OptLoopBceExpr]
+  [index : i64]) : bool
+  (if (>= index (opt-range-facts-count facts))
+    false
+    (match (opt-range-facts-ref facts index)
+      [(OptRangeFact.LessThanOrEq fact-label fact-lhs fact-rhs)
+        (if (and
+          (string.eq fact-label label)
+          (opt-loop-bce-expr-eq fact-lhs lhs)
+          (opt-loop-bce-expr-eq fact-rhs rhs))
+          true
+          (opt-range-less-than-or-eq-contains-from?
+            facts
+            label
+            lhs
+            rhs
+            (+ index 1)))]
+      [_
+        (opt-range-less-than-or-eq-contains-from?
+          facts
+          label
+          lhs
+          rhs
+          (+ index 1))])))
 
 (define (opt-range-less-than-or-eq-contains?
   [facts : OptRangeFacts]
   [label : String]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
-  (match facts
-    [(OptRangeFacts.Nil) false]
-    [(OptRangeFacts.Cons fact rest)
-      (match fact
-        [(OptRangeFact.LessThanOrEq fact-label fact-lhs fact-rhs)
-          (if (and
-            (string.eq fact-label label)
-            (opt-loop-bce-expr-eq fact-lhs lhs)
-            (opt-loop-bce-expr-eq fact-rhs rhs))
-            true
-            (opt-range-less-than-or-eq-contains? (box-get rest) label lhs rhs))]
-        [_ (opt-range-less-than-or-eq-contains? (box-get rest) label lhs rhs)])]))
+  (opt-range-less-than-or-eq-contains-from? facts label lhs rhs 0))
 
 (define (opt-range-proves-less-than-or-eq?
   [facts : OptRangeFacts]
@@ -27107,40 +28002,39 @@
 
 (define (opt-range-proves-less-than-through-one-bound-from?
   [all-facts : OptRangeFacts]
-  [scan : OptRangeFacts]
   [label : String]
   [lhs : OptLoopBceExpr]
-  [rhs : OptLoopBceExpr]) : bool
-  (match scan
-    [(OptRangeFacts.Nil) false]
-    [(OptRangeFacts.Cons fact rest)
-      (match fact
-        [(OptRangeFact.LessThan fact-label fact-lhs fact-mid)
-          (if (and
-            (string.eq fact-label label)
-            (opt-loop-bce-expr-eq fact-lhs lhs)
-            (opt-range-proves-less-than-or-eq? all-facts label fact-mid rhs))
-            true
-            (opt-range-proves-less-than-through-one-bound-from?
-              all-facts
-              (box-get rest)
-              label
-              lhs
-              rhs))]
-        [_
+  [rhs : OptLoopBceExpr]
+  [index : i64]) : bool
+  (if (>= index (opt-range-facts-count all-facts))
+    false
+    (match (opt-range-facts-ref all-facts index)
+      [(OptRangeFact.LessThan fact-label fact-lhs fact-mid)
+        (if (and
+          (string.eq fact-label label)
+          (opt-loop-bce-expr-eq fact-lhs lhs)
+          (opt-range-proves-less-than-or-eq? all-facts label fact-mid rhs))
+          true
           (opt-range-proves-less-than-through-one-bound-from?
             all-facts
-            (box-get rest)
             label
             lhs
-            rhs)])]))
+            rhs
+            (+ index 1)))]
+      [_
+        (opt-range-proves-less-than-through-one-bound-from?
+          all-facts
+          label
+          lhs
+          rhs
+          (+ index 1))])))
 
 (define (opt-range-proves-less-than-through-one-bound?
   [facts : OptRangeFacts]
   [label : String]
   [lhs : OptLoopBceExpr]
   [rhs : OptLoopBceExpr]) : bool
-  (opt-range-proves-less-than-through-one-bound-from? facts facts label lhs rhs))
+  (opt-range-proves-less-than-through-one-bound-from? facts label lhs rhs 0))
 
 (define (opt-range-proves-less-than?
   [facts : OptRangeFacts]
@@ -27163,7 +28057,7 @@
   [expr : OptLoopBceExpr]) : OptRangeFacts
   (if (opt-range-nonnegative-contains? facts label expr)
     facts
-    (OptRangeFacts.Cons (OptRangeFact.Nonnegative label expr) (box facts))))
+    (opt-range-facts-add facts (OptRangeFact.Nonnegative label expr))))
 
 (define (opt-range-facts-add-less-than
   [facts : OptRangeFacts]
@@ -27172,7 +28066,7 @@
   [rhs : OptLoopBceExpr]) : OptRangeFacts
   (if (opt-range-less-than-contains? facts label lhs rhs)
     facts
-    (OptRangeFacts.Cons (OptRangeFact.LessThan label lhs rhs) (box facts))))
+    (opt-range-facts-add facts (OptRangeFact.LessThan label lhs rhs))))
 
 (define (opt-range-facts-add-less-than-or-eq
   [facts : OptRangeFacts]
@@ -27181,44 +28075,44 @@
   [rhs : OptLoopBceExpr]) : OptRangeFacts
   (if (opt-range-less-than-or-eq-contains? facts label lhs rhs)
     facts
-    (OptRangeFacts.Cons (OptRangeFact.LessThanOrEq label lhs rhs) (box facts))))
+    (opt-range-facts-add facts (OptRangeFact.LessThanOrEq label lhs rhs))))
 
+;; `source` is the ORIGINAL fact set; `out` grows as the parent's facts are
+;; re-keyed onto the child edge, so the scan bound is the source's own count.
 (define (opt-range-facts-propagate-label-from
   [source : OptRangeFacts]
   [out : OptRangeFacts]
   [parent-label : String]
-  [child-label : String]) : OptRangeFacts
+  [child-label : String]
+  [index : i64]) : OptRangeFacts
   (if (string.eq parent-label child-label)
     out
-    (match source
-      [(OptRangeFacts.Nil) out]
-      [(OptRangeFacts.Cons fact rest)
-        (let
-          [next : OptRangeFacts
-            (match fact
-              [(OptRangeFact.Nonnegative label expr)
-                (if (string.eq label parent-label)
-                  (opt-range-facts-add-nonnegative out child-label expr)
-                  out)]
-              [(OptRangeFact.LessThan label lhs rhs)
-                (if (string.eq label parent-label)
-                  (opt-range-facts-add-less-than out child-label lhs rhs)
-                  out)]
-              [(OptRangeFact.LessThanOrEq label lhs rhs)
-                (if (string.eq label parent-label)
-                  (opt-range-facts-add-less-than-or-eq out child-label lhs rhs)
-                  out)])]
-          (opt-range-facts-propagate-label-from
-            (box-get rest)
-            next
-            parent-label
-            child-label))])))
+    (if (>= index (opt-range-facts-count source))
+      out
+      (opt-range-facts-propagate-label-from
+        source
+        (match (opt-range-facts-ref source index)
+          [(OptRangeFact.Nonnegative label expr)
+            (if (string.eq label parent-label)
+              (opt-range-facts-add-nonnegative out child-label expr)
+              out)]
+          [(OptRangeFact.LessThan label lhs rhs)
+            (if (string.eq label parent-label)
+              (opt-range-facts-add-less-than out child-label lhs rhs)
+              out)]
+          [(OptRangeFact.LessThanOrEq label lhs rhs)
+            (if (string.eq label parent-label)
+              (opt-range-facts-add-less-than-or-eq out child-label lhs rhs)
+              out)])
+        parent-label
+        child-label
+        (+ index 1)))))
 
 (define (opt-range-facts-propagate-label
   [facts : OptRangeFacts]
   [parent-label : String]
   [child-label : String]) : OptRangeFacts
-  (opt-range-facts-propagate-label-from facts facts parent-label child-label))
+  (opt-range-facts-propagate-label-from facts facts parent-label child-label 0))
 
 (define (opt-range-expr-stable?
   [sources : opt_i64_i64_map.Map]
@@ -27988,15 +28882,23 @@
         (opt-loop-bce-expr-uses-var? rhs var))]))
 
 (define (opt-range-facts-invalidate-var [facts : OptRangeFacts] [var : i64]) : OptRangeFacts
-  (match facts
-    [(OptRangeFacts.Nil) (OptRangeFacts.Nil)]
-    [(OptRangeFacts.Cons fact rest)
-      (let
-        [tail : OptRangeFacts
-          (opt-range-facts-invalidate-var (box-get rest) var)]
-        (if (opt-range-fact-uses-var? fact var)
-          tail
-          (OptRangeFacts.Cons fact (box tail))))]))
+  (let
+    [count : i64 (opt-range-facts-count facts)]
+    [out : opt_range_fact_vec.Vec (opt_range_fact_vec.with-capacity count)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [fact : OptRangeFact
+            (array-ref
+              (opt_range_fact_vec.slots (& (struct-get facts items)))
+              slot)]
+          (begin
+            (if (opt-range-fact-uses-var? fact var)
+              unit
+              (opt_range_fact_vec.push (&mut out) fact))
+            (set! slot (+ slot 1)))))
+      (OptRangeFacts out))))
 
 (define (opt-loop-bce-state-invalidate-def
   [state : OptLoopBceState]
@@ -28488,24 +29390,34 @@
               var)])]
       [(OptMaybeBlock.No) (OptMaybeInductionFact.No)])))
 
-(define (opt-loop-bce-canonical-iv-loop
+(define (opt-loop-bce-canonical-iv-loop-from
   [doms : OptDomInfo]
   [loops : OptNaturalLoopList]
   [header-label : String]
-  [body-label : String]) : OptMaybeNaturalLoop
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptMaybeNaturalLoop.No)]
-    [(OptNaturalLoopList.Cons loop rest)
+  [body-label : String]
+  [index : i64]) : OptMaybeNaturalLoop
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptMaybeNaturalLoop.No)
+    (let
+      [loop : OptNaturalLoop (opt-natural-loop-list-ref loops index)]
       (if (and
         (string.eq (opt-natural-loop-header loop) header-label)
         (opt-label-contains (opt-natural-loop-body loop) body-label)
         (opt-dom-dominates? doms header-label body-label))
         (OptMaybeNaturalLoop.Some loop)
-        (opt-loop-bce-canonical-iv-loop
+        (opt-loop-bce-canonical-iv-loop-from
           doms
-          (box-get rest)
+          loops
           header-label
-          body-label))]))
+          body-label
+          (+ index 1))))))
+
+(define (opt-loop-bce-canonical-iv-loop
+  [doms : OptDomInfo]
+  [loops : OptNaturalLoopList]
+  [header-label : String]
+  [body-label : String]) : OptMaybeNaturalLoop
+  (opt-loop-bce-canonical-iv-loop-from doms loops header-label body-label 0))
 
 (define (opt-loop-bce-canonical-iv-proof?
   [blocks : CompilerIrBlockList]
@@ -29565,7 +30477,7 @@
     (opt-loop-bce-length-env-empty)
     (opt-loop-bce-cmp-env-empty)
     (opt-loop-bce-guard-env-empty)
-    (OptRangeFacts.Nil)))
+    (opt-range-facts-empty)))
 
 (define (opt-loop-bce-block-results-fill-empty!
   [out : (Array OptLoopBceBlockResult)]
@@ -29804,9 +30716,31 @@
   ;; var == base * c, defined at instruction index idx of the current block
   (MulC i64 i64 i64))
 
-(defenum OptAffineEnv
-  (Nil)
-  (Cons i64 OptAffineRec (Box OptAffineEnv)))
+(defenum OptAffineBind
+  (Bind i64 OptAffineRec))
+
+(import (vector.vector OptAffineBind core) as opt_affine_bind_vec)
+
+;; Var -> affine record. Every bind purges first, so it already rebuilt the
+;; whole list; the generated vector keeps that shape and appends the new head
+;; to the private purged buffer. Storage is push order, the reverse of the old
+;; cons order, and `opt-affine-env-ref` takes the head-first index the lookup
+;; used.
+(defstruct OptAffineEnv
+  (items opt_affine_bind_vec.Vec))
+
+(define (opt-affine-env-empty) : OptAffineEnv
+  (OptAffineEnv (opt_affine_bind_vec.new)))
+
+(define (opt-affine-env-count [env : OptAffineEnv]) : i64
+  (opt_affine_bind_vec.len (& (struct-get env items))))
+
+(define (opt-affine-env-slot [env : OptAffineEnv] [slot : i64]) : OptAffineBind
+  (array-ref (opt_affine_bind_vec.slots (& (struct-get env items))) slot))
+
+;; Head-first index: 0 is the newest binding, matching the old cons walk.
+(define (opt-affine-env-ref [env : OptAffineEnv] [index : i64]) : OptAffineBind
+  (opt-affine-env-slot env (- (- (opt-affine-env-count env) 1) index)))
 
 (defenum OptAffineStep
   (Result OptAffineEnv i64))
@@ -29839,13 +30773,20 @@
         [_ (OptAffineOperands.No)])]
     [_ (OptAffineOperands.No)]))
 
+(define (opt-affine-env-lookup-from
+  [env : OptAffineEnv]
+  [var : i64]
+  [index : i64]) : OptAffineRec
+  (if (>= index (opt-affine-env-count env))
+    (OptAffineRec.No)
+    (match (opt-affine-env-ref env index)
+      [(OptAffineBind.Bind key rec)
+        (if (= key var)
+          rec
+          (opt-affine-env-lookup-from env var (+ index 1)))])))
+
 (define (opt-affine-env-lookup [env : OptAffineEnv] [var : i64]) : OptAffineRec
-  (match env
-    [(OptAffineEnv.Nil) (OptAffineRec.No)]
-    [(OptAffineEnv.Cons key rec rest)
-      (if (= key var)
-        rec
-        (opt-affine-env-lookup (box-get rest) var))]))
+  (opt-affine-env-lookup-from env var 0))
 
 (define (opt-affine-rec-mentions? [rec : OptAffineRec] [var : i64]) : bool
   (match rec
@@ -29855,15 +30796,27 @@
 
 ;; Drop every record keyed by `var` or derived from it (its base): both
 ;; describe the var's PREVIOUS value once it is redefined.
+(define (opt-affine-env-purge-into [env : OptAffineEnv] [var : i64]) : opt_affine_bind_vec.Vec
+  (let
+    [count : i64 (opt-affine-env-count env)]
+    [out : opt_affine_bind_vec.Vec
+      (opt_affine_bind_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [bind : OptAffineBind (opt-affine-env-slot env slot)]
+          (begin
+            (match bind
+              [(OptAffineBind.Bind key rec)
+                (if (or (= key var) (opt-affine-rec-mentions? rec var))
+                  unit
+                  (opt_affine_bind_vec.push (&mut out) bind))])
+            (set! slot (+ slot 1)))))
+      out)))
+
 (define (opt-affine-env-purge [env : OptAffineEnv] [var : i64]) : OptAffineEnv
-  (match env
-    [(OptAffineEnv.Nil) (OptAffineEnv.Nil)]
-    [(OptAffineEnv.Cons key rec rest)
-      (let
-        [tail : OptAffineEnv (opt-affine-env-purge (box-get rest) var)]
-        (if (or (= key var) (opt-affine-rec-mentions? rec var))
-          tail
-          (OptAffineEnv.Cons key rec (box tail))))]))
+  (OptAffineEnv (opt-affine-env-purge-into env var)))
 
 ;; Bind after the dst's def: purge stale records first, skip self-referential
 ;; records, and reset the env past the cap so blocks stay linear.
@@ -29873,17 +30826,19 @@
   [dst : i64]
   [rec : OptAffineRec]) : OptAffineStep
   (let
-    [purged : OptAffineEnv (opt-affine-env-purge env dst)]
+    [purged : opt_affine_bind_vec.Vec (opt-affine-env-purge-into env dst)]
     (match rec
-      [(OptAffineRec.No) (OptAffineStep.Result purged binds)]
+      [(OptAffineRec.No) (OptAffineStep.Result (OptAffineEnv purged) binds)]
       [_
         (if (opt-affine-rec-mentions? rec dst)
-          (OptAffineStep.Result purged binds)
+          (OptAffineStep.Result (OptAffineEnv purged) binds)
           (if (>= binds (opt-affine-env-cap))
-            (OptAffineStep.Result (OptAffineEnv.Nil) 0)
-            (OptAffineStep.Result
-              (OptAffineEnv.Cons dst rec (box purged))
-              (+ binds 1))))])))
+            (OptAffineStep.Result (opt-affine-env-empty) 0)
+            (begin
+              (opt_affine_bind_vec.push
+                (&mut purged)
+                (OptAffineBind.Bind dst rec))
+              (OptAffineStep.Result (OptAffineEnv purged) (+ binds 1)))))])))
 
 (define (opt-affine-use-count [uses : (Array i64)] [var : i64]) : i64
   (if (and (>= var 0) (< var (array-length uses)))
@@ -30186,7 +31141,7 @@
               0
               (compiler-ir-instr-seq-count instrs)
               0)
-              (opt-affine-fold-step! instrs uses 0 (OptAffineEnv.Nil) 0)
+              (opt-affine-fold-step! instrs uses 0 (opt-affine-env-empty) 0)
               unit)])
         (opt-affine-fold-blocks-walk! uses (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
@@ -30207,9 +31162,9 @@
   (let
     [index : i64 0]
     [store-count : i64 0]
-    [fold-state : OptConstEnv (OptConstEnv.Nil)]
-    [strength-state : OptConstEnv (OptConstEnv.Nil)]
-    [cse-state : OptExprTable (OptExprTable.Nil)]
+    [fold-state : OptConstEnv (opt-const-env-empty)]
+    [strength-state : OptConstEnv (opt-const-env-empty)]
+    [cse-state : OptExprTable (opt-expr-table-empty)]
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     (begin
       (while (< index count)
@@ -30244,7 +31199,7 @@
     [sources : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     [call-memory : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
     [load-state : OptLoadCseState state]
-    [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
+    [copy-state : OptCopyEnv (opt-copy-env-empty)]
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     (while (< index count)
       (match (opt-load-cse-dispatch
@@ -31567,14 +32522,17 @@
 ;; type. The x16 group depth lets the affine pass fold long constant-step
 ;; chains (LCG-style `acc = acc*A + K`) into one composed mul+add per group,
 ;; which is what closes the arith_loop/array_sum instruction gap to clang.
-;; A loop-carried phi other than the counter: dst, init value (from the outside
-;; pred), back-edge value (from B), phi type.
-(defenum OptUnrollPhi
-  (Phi i64 CompilerIrValue CompilerIrValue AstType))
+;; The loop-carried phis other than the counter, as `OptLoopPhiRec` records
+;; (dst, init value from the outside pred, back-edge value from B, phi type) --
+;; the same shape loop rotation records, so both share one instantiation. The
+;; records stay in header-phi order, the order the old cons list walked, so the
+;; generated vector appends forward and `opt-unroll-phi-list-ref` indexes
+;; straight into the slots.
+(defstruct OptUnrollPhiList
+  (items opt_loop_phi_rec_vec.Vec))
 
-(defenum OptUnrollPhiList
-  (Nil)
-  (Cons OptUnrollPhi (Box OptUnrollPhiList)))
+(define (opt-unroll-phi-list-ref [phis : OptUnrollPhiList] [index : i64]) : OptLoopPhiRec
+  (array-ref (opt_loop_phi_rec_vec.slots (& (struct-get phis items))) index))
 
 ;; init value (from the outside pred), back-edge value, outside pred label.
 (defenum OptUnrollPhiSplit
@@ -31751,6 +32709,46 @@
         [_ (OptUnrollPhiSplit.No)])]
     [_ (OptUnrollPhiSplit.No)]))
 
+(define (opt-unroll-collect-other-phis-into
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [phi-count : i64]
+  [loop-label : String]
+  [pred-label : String]
+  [iphi : i64]
+  [out : opt_loop_phi_rec_vec.Vec]) : OptUnrollMaybePhis
+  (if (>= index phi-count)
+    (OptUnrollMaybePhis.Some (OptUnrollPhiList out))
+    (match (compiler-ir-instr-seq-ref instrs index)
+      [(CompilerIrInstr.Phi dst inputs ty)
+        (if (= dst iphi)
+          (opt-unroll-collect-other-phis-into
+            instrs
+            (+ index 1)
+            phi-count
+            loop-label
+            pred-label
+            iphi
+            out)
+          (match (opt-unroll-split-phi-inputs inputs loop-label)
+            [(OptUnrollPhiSplit.Split init back split-pred)
+              (if (string.eq split-pred pred-label)
+                (begin
+                  (opt_loop_phi_rec_vec.push
+                    (&mut out)
+                    (OptLoopPhiRec.Rec dst init back ty))
+                  (opt-unroll-collect-other-phis-into
+                    instrs
+                    (+ index 1)
+                    phi-count
+                    loop-label
+                    pred-label
+                    iphi
+                    out))
+                (OptUnrollMaybePhis.No))]
+            [(OptUnrollPhiSplit.No) (OptUnrollMaybePhis.No)]))]
+      [_ (OptUnrollMaybePhis.No)])))
+
 (define (opt-unroll-collect-other-phis
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -31758,37 +32756,14 @@
   [loop-label : String]
   [pred-label : String]
   [iphi : i64]) : OptUnrollMaybePhis
-  (if (>= index phi-count)
-    (OptUnrollMaybePhis.Some (OptUnrollPhiList.Nil))
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.Phi dst inputs ty)
-        (if (= dst iphi)
-          (opt-unroll-collect-other-phis
-            instrs
-            (+ index 1)
-            phi-count
-            loop-label
-            pred-label
-            iphi)
-          (match (opt-unroll-split-phi-inputs inputs loop-label)
-            [(OptUnrollPhiSplit.Split init back split-pred)
-              (if (string.eq split-pred pred-label)
-                (match (opt-unroll-collect-other-phis
-                  instrs
-                  (+ index 1)
-                  phi-count
-                  loop-label
-                  pred-label
-                  iphi)
-                  [(OptUnrollMaybePhis.Some rest)
-                    (OptUnrollMaybePhis.Some
-                      (OptUnrollPhiList.Cons
-                        (OptUnrollPhi.Phi dst init back ty)
-                        (box rest)))]
-                  [(OptUnrollMaybePhis.No) (OptUnrollMaybePhis.No)])
-                (OptUnrollMaybePhis.No))]
-            [(OptUnrollPhiSplit.No) (OptUnrollMaybePhis.No)]))]
-      [_ (OptUnrollMaybePhis.No)])))
+  (opt-unroll-collect-other-phis-into
+    instrs
+    index
+    phi-count
+    loop-label
+    pred-label
+    iphi
+    (opt_loop_phi_rec_vec.new)))
 
 (define (opt-unroll-invariant-bound?
   [defs : opt_i64_i64_map.Map]
@@ -32204,10 +33179,7 @@
     [_ instr]))
 
 (define (opt-unroll-phi-list-count [phis : OptUnrollPhiList]) : i64
-  (match phis
-    [(OptUnrollPhiList.Nil) 0]
-    [(OptUnrollPhiList.Cons _ rest)
-      (+ 1 (opt-unroll-phi-list-count (box-get rest)))]))
+  (opt_loop_phi_rec_vec.len (& (struct-get phis items))))
 
 (define (opt-unroll-alloc-ku-ids
   [ku-ids : (Array i64)]
@@ -32234,41 +33206,54 @@
 ;; (the values the NEXT copy's phi vars should read). Computed for every phi
 ;; before any phi var is re-seeded so phi-to-phi back edges (value rotations)
 ;; read the previous copy's state.
+(define (opt-unroll-phi-chain-values-from
+  [remap : (Array CompilerIrValue)]
+  [others : OptUnrollPhiList]
+  [index : i64]) : CompilerIrValueList
+  (if (>= index (opt-unroll-phi-list-count others))
+    (CompilerIrValueList.Nil)
+    (match (opt-unroll-phi-list-ref others index)
+      [(OptLoopPhiRec.Rec _ _ back _)
+        (compiler-ir-value-cons
+          (opt-unroll-subst-value remap back)
+          (opt-unroll-phi-chain-values-from remap others (+ index 1)))])))
+
 (define (opt-unroll-phi-chain-values
   [remap : (Array CompilerIrValue)]
   [others : OptUnrollPhiList]) : CompilerIrValueList
-  (match others
-    [(OptUnrollPhiList.Nil) (CompilerIrValueList.Nil)]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
-        [(OptUnrollPhi.Phi _ _ back _)
-          (compiler-ir-value-cons
-            (opt-unroll-subst-value remap back)
-            (opt-unroll-phi-chain-values remap (box-get rest)))])]))
+  (opt-unroll-phi-chain-values-from remap others 0))
+
+(define (opt-unroll-write-phi-seeds-from
+  [remap : (Array CompilerIrValue)]
+  [others : OptUnrollPhiList]
+  [values : CompilerIrValueList]
+  [index : i64]) : unit
+  (if (>= index (opt-unroll-phi-list-count others))
+    unit
+    (match (opt-unroll-phi-list-ref others index)
+      [(OptLoopPhiRec.Rec dst _ _ _)
+        (match values
+          [(CompilerIrValueList.Cons value value-rest)
+            (begin
+              (opt-unroll-remap-set remap dst value)
+              (opt-unroll-write-phi-seeds-from
+                remap
+                others
+                (box-get value-rest)
+                (+ index 1)))]
+          [(CompilerIrValueList.Array seq)
+            (opt-unroll-write-phi-seeds-from
+              remap
+              others
+              (compiler-ir-value-seq-to-list seq)
+              index)]
+          [(CompilerIrValueList.Nil) unit])])))
 
 (define (opt-unroll-write-phi-seeds
   [remap : (Array CompilerIrValue)]
   [others : OptUnrollPhiList]
   [values : CompilerIrValueList]) : unit
-  (match others
-    [(OptUnrollPhiList.Nil) unit]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
-        [(OptUnrollPhi.Phi dst _ _ _)
-          (match values
-            [(CompilerIrValueList.Cons value value-rest)
-              (begin
-                (opt-unroll-remap-set remap dst value)
-                (opt-unroll-write-phi-seeds
-                  remap
-                  (box-get rest)
-                  (box-get value-rest)))]
-            [(CompilerIrValueList.Array seq)
-              (opt-unroll-write-phi-seeds
-                remap
-                others
-                (compiler-ir-value-seq-to-list seq))]
-            [(CompilerIrValueList.Nil) unit])])]))
+  (opt-unroll-write-phi-seeds-from remap others values 0))
 
 ;; One clone of B's body (the non-phi instructions minus the c-def and the
 ;; final branch), in original order. The let forces the clone (and its remap
@@ -32354,47 +33339,46 @@
   [guard-label : String]
   [unrolled-label : String]
   [tail : CompilerIrInstrList]) : CompilerIrInstrList
-  (match others
-    [(OptUnrollPhiList.Nil) tail]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
-        [(OptUnrollPhi.Phi _ init _ ty)
-          (match chains
-            [(CompilerIrValueList.Cons chain chain-rest)
-              (compiler-ir-instr-cons
-                (CompilerIrInstr.Phi
-                  (array-ref ku-ids index)
-                  (compiler-ir-phi-input-cons
-                    init
-                    guard-label
-                    (compiler-ir-phi-input-cons
-                      chain
-                      unrolled-label
-                      (CompilerIrPhiInputList.Nil)))
-                  ty)
-                (opt-unroll-unrolled-phis
-                  (box-get rest)
-                  ku-ids
-                  (+ index 1)
-                  (box-get chain-rest)
+  (if (>= index (opt-unroll-phi-list-count others))
+    tail
+    (match (opt-unroll-phi-list-ref others index)
+      [(OptLoopPhiRec.Rec _ init _ ty)
+        (match chains
+          [(CompilerIrValueList.Cons chain chain-rest)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Phi
+                (array-ref ku-ids index)
+                (compiler-ir-phi-input-cons
+                  init
                   guard-label
-                  unrolled-label
-                  tail))]
-            [(CompilerIrValueList.Array seq)
+                  (compiler-ir-phi-input-cons
+                    chain
+                    unrolled-label
+                    (CompilerIrPhiInputList.Nil)))
+                ty)
               (opt-unroll-unrolled-phis
                 others
                 ku-ids
-                index
-                (compiler-ir-value-seq-to-list seq)
+                (+ index 1)
+                (box-get chain-rest)
                 guard-label
                 unrolled-label
-                tail)]
-            [(CompilerIrValueList.Nil) tail])])]))
+                tail))]
+          [(CompilerIrValueList.Array seq)
+            (opt-unroll-unrolled-phis
+              others
+              ku-ids
+              index
+              (compiler-ir-value-seq-to-list seq)
+              guard-label
+              unrolled-label
+              tail)]
+          [(CompilerIrValueList.Nil) tail])])))
 
 ;; B stays in place as the remainder loop: each phi keeps its back-edge input,
 ;; its outside input is relabeled from P to the guard, and a third input from
 ;; the unrolled body is appended. Everything else is unchanged.
-(define (opt-unroll-tail-instrs
+(define (opt-unroll-tail-instrs-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [count : i64]
@@ -32404,6 +33388,7 @@
   [inext : i64]
   [inext3 : CompilerIrValue]
   [others : OptUnrollPhiList]
+  [other-index : i64]
   [chains : CompilerIrValueList]
   [guard-label : String]
   [unrolled-label : String]) : CompilerIrInstrList
@@ -32426,7 +33411,7 @@
                     unrolled-label
                     (CompilerIrPhiInputList.Nil))))
               ty)
-            (opt-unroll-tail-instrs
+            (opt-unroll-tail-instrs-from
               instrs
               (+ index 1)
               count
@@ -32436,46 +33421,33 @@
               inext
               inext3
               others
+              other-index
               chains
               guard-label
               unrolled-label))
-          (match others
-            [(OptUnrollPhiList.Cons phi other-rest)
-              (match phi
-                [(OptUnrollPhi.Phi _ init back _)
-                  (match chains
-                    [(CompilerIrValueList.Cons chain chain-rest)
-                      (compiler-ir-instr-cons
-                        (CompilerIrInstr.Phi
-                          dst
-                          (compiler-ir-phi-input-cons
-                            init
-                            guard-label
-                            (compiler-ir-phi-input-cons
-                              back
-                              loop-label
-                              (compiler-ir-phi-input-cons
-                                chain
-                                unrolled-label
-                                (CompilerIrPhiInputList.Nil))))
-                          ty)
-                        (opt-unroll-tail-instrs
-                          instrs
-                          (+ index 1)
-                          count
-                          loop-label
-                          iphi
-                          seed
-                          inext
-                          inext3
-                          (box-get other-rest)
-                          (box-get chain-rest)
+          (if (>= other-index (opt-unroll-phi-list-count others))
+            (CompilerIrInstrList.Nil)
+            (match (opt-unroll-phi-list-ref others other-index)
+              [(OptLoopPhiRec.Rec _ init back _)
+                (match chains
+                  [(CompilerIrValueList.Cons chain chain-rest)
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.Phi
+                        dst
+                        (compiler-ir-phi-input-cons
+                          init
                           guard-label
-                          unrolled-label))]
-                    [(CompilerIrValueList.Array seq)
-                      (opt-unroll-tail-instrs
+                          (compiler-ir-phi-input-cons
+                            back
+                            loop-label
+                            (compiler-ir-phi-input-cons
+                              chain
+                              unrolled-label
+                              (CompilerIrPhiInputList.Nil))))
+                        ty)
+                      (opt-unroll-tail-instrs-from
                         instrs
-                        index
+                        (+ index 1)
                         count
                         loop-label
                         iphi
@@ -32483,15 +33455,30 @@
                         inext
                         inext3
                         others
-                        (compiler-ir-value-seq-to-list seq)
+                        (+ other-index 1)
+                        (box-get chain-rest)
                         guard-label
-                        unrolled-label)]
-                    [(CompilerIrValueList.Nil) (CompilerIrInstrList.Nil)])])]
-            [(OptUnrollPhiList.Nil) (CompilerIrInstrList.Nil)]))]
+                        unrolled-label))]
+                  [(CompilerIrValueList.Array seq)
+                    (opt-unroll-tail-instrs-from
+                      instrs
+                      index
+                      count
+                      loop-label
+                      iphi
+                      seed
+                      inext
+                      inext3
+                      others
+                      other-index
+                      (compiler-ir-value-seq-to-list seq)
+                      guard-label
+                      unrolled-label)]
+                  [(CompilerIrValueList.Nil) (CompilerIrInstrList.Nil)])])))]
       [_
         (compiler-ir-instr-cons
           (compiler-ir-instr-seq-ref instrs index)
-          (opt-unroll-tail-instrs
+          (opt-unroll-tail-instrs-from
             instrs
             (+ index 1)
             count
@@ -32501,9 +33488,38 @@
             inext
             inext3
             others
+            other-index
             chains
             guard-label
             unrolled-label))])))
+
+(define (opt-unroll-tail-instrs
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]
+  [loop-label : String]
+  [iphi : i64]
+  [seed : CompilerIrValue]
+  [inext : i64]
+  [inext3 : CompilerIrValue]
+  [others : OptUnrollPhiList]
+  [chains : CompilerIrValueList]
+  [guard-label : String]
+  [unrolled-label : String]) : CompilerIrInstrList
+  (opt-unroll-tail-instrs-from
+    instrs
+    index
+    count
+    loop-label
+    iphi
+    seed
+    inext
+    inext3
+    others
+    0
+    chains
+    guard-label
+    unrolled-label))
 
 (define (opt-unroll-retarget-instr
   [instr : CompilerIrInstr]
@@ -33631,36 +34647,45 @@
 
 ;; The fast clone's leading phis: the counter and every loop-carried value,
 ;; seeded from the guard and chained through the clone's remapped back edges.
+(define (opt-bce-version-fast-phis-from
+  [others : OptUnrollPhiList]
+  [remap : (Array CompilerIrValue)]
+  [guard-label : String]
+  [fast-label : String]
+  [tail : CompilerIrInstrList]
+  [index : i64]) : CompilerIrInstrList
+  (if (>= index (opt-unroll-phi-list-count others))
+    tail
+    (match (opt-unroll-phi-list-ref others index)
+      [(OptLoopPhiRec.Rec dst init back ty)
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            (match (opt-unroll-subst-value remap (CompilerIrValue.Var dst))
+              [(CompilerIrValue.Var fresh-id) fresh-id]
+              [_ dst])
+            (compiler-ir-phi-input-cons
+              init
+              guard-label
+              (compiler-ir-phi-input-cons
+                (opt-unroll-subst-value remap back)
+                fast-label
+                (CompilerIrPhiInputList.Nil)))
+            ty)
+          (opt-bce-version-fast-phis-from
+            others
+            remap
+            guard-label
+            fast-label
+            tail
+            (+ index 1)))])))
+
 (define (opt-bce-version-fast-phis
   [others : OptUnrollPhiList]
   [remap : (Array CompilerIrValue)]
   [guard-label : String]
   [fast-label : String]
   [tail : CompilerIrInstrList]) : CompilerIrInstrList
-  (match others
-    [(OptUnrollPhiList.Nil) tail]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
-        [(OptUnrollPhi.Phi dst init back ty)
-          (compiler-ir-instr-cons
-            (CompilerIrInstr.Phi
-              (match (opt-unroll-subst-value remap (CompilerIrValue.Var dst))
-                [(CompilerIrValue.Var fresh-id) fresh-id]
-                [_ dst])
-              (compiler-ir-phi-input-cons
-                init
-                guard-label
-                (compiler-ir-phi-input-cons
-                  (opt-unroll-subst-value remap back)
-                  fast-label
-                  (CompilerIrPhiInputList.Nil)))
-              ty)
-            (opt-bce-version-fast-phis
-              (box-get rest)
-              remap
-              guard-label
-              fast-label
-              tail))])]))
+  (opt-bce-version-fast-phis-from others remap guard-label fast-label tail 0))
 
 (define (opt-bce-version-clone-body
   [instrs : CompilerIrInstrSeq]
@@ -33987,18 +35012,24 @@
                     (array-ref cell 0)
                     true))]))))]))
 
+(define (opt-bce-version-alloc-other-phis-from
+  [remap : (Array CompilerIrValue)]
+  [cell : (Array i64)]
+  [others : OptUnrollPhiList]
+  [index : i64]) : unit
+  (if (>= index (opt-unroll-phi-list-count others))
+    unit
+    (match (opt-unroll-phi-list-ref others index)
+      [(OptLoopPhiRec.Rec dst _ _ _)
+        (begin
+          (opt-unroll-clone-dst remap cell dst)
+          (opt-bce-version-alloc-other-phis-from remap cell others (+ index 1)))])))
+
 (define (opt-bce-version-alloc-other-phis
   [remap : (Array CompilerIrValue)]
   [cell : (Array i64)]
   [others : OptUnrollPhiList]) : unit
-  (match others
-    [(OptUnrollPhiList.Nil) unit]
-    [(OptUnrollPhiList.Cons phi rest)
-      (match phi
-        [(OptUnrollPhi.Phi dst _ _ _)
-          (begin
-            (opt-unroll-clone-dst remap cell dst)
-            (opt-bce-version-alloc-other-phis remap cell (box-get rest)))])]))
+  (opt-bce-version-alloc-other-phis-from remap cell others 0))
 
 ;; Apply at most one versioning per invocation, like the unroller.
 (define (opt-bce-version-blocks-scan
@@ -34504,20 +35535,30 @@
 ;; loop's work) while the guard and fast-region prologue cost is paid at
 ;; every outer entry -- a measured net loss (array_sum's outer loop). Flat
 ;; loops keep the full win.
+(define (opt-bce-mb-has-nested-loop-from?
+  [loops : OptNaturalLoopList]
+  [header : String]
+  [body-labels : OptLabelSet]
+  [index : i64]) : bool
+  (if (>= index (opt-natural-loop-list-count loops))
+    false
+    (match (opt-natural-loop-list-ref loops index)
+      [(OptNaturalLoop.Loop other-header _ _ _)
+        (if (and
+          (not (string.eq other-header header))
+          (opt-label-contains body-labels other-header))
+          true
+          (opt-bce-mb-has-nested-loop-from?
+            loops
+            header
+            body-labels
+            (+ index 1)))])))
+
 (define (opt-bce-mb-has-nested-loop?
   [loops : OptNaturalLoopList]
   [header : String]
   [body-labels : OptLabelSet]) : bool
-  (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match loop
-        [(OptNaturalLoop.Loop other-header _ _ _)
-          (if (and
-            (not (string.eq other-header header))
-            (opt-label-contains body-labels other-header))
-            true
-            (opt-bce-mb-has-nested-loop? (box-get rest) header body-labels))])]))
+  (opt-bce-mb-has-nested-loop-from? loops header body-labels 0))
 
 (define (opt-bce-mb-loop-shape-with-preheader
   [blocks : CompilerIrBlockList]
@@ -35233,18 +36274,19 @@
           substs
           (+ slot 1)
           (if (= raw resolved)
-            (OptCopyEnv.Cons raw (CompilerIrValue.Var replacement) (box tail))
-            (OptCopyEnv.Cons
-              raw
-              (CompilerIrValue.Var replacement)
-              (box
-                (OptCopyEnv.Cons
+            (opt-copy-env-extend
+              tail
+              (OptVarValueBind.Copy raw (CompilerIrValue.Var replacement)))
+            (opt-copy-env-extend
+              (opt-copy-env-extend
+                tail
+                (OptVarValueBind.Copy
                   resolved
-                  (CompilerIrValue.Var replacement)
-                  (box tail))))))])))
+                  (CompilerIrValue.Var replacement)))
+              (OptVarValueBind.Copy raw (CompilerIrValue.Var replacement)))))])))
 
 (define (opt-late-bounds-pair-subst-env [substs : OptLateBoundsPairSubst]) : OptCopyEnv
-  (opt-late-bounds-pair-subst-env-from substs 0 (OptCopyEnv.Nil)))
+  (opt-late-bounds-pair-subst-env-from substs 0 (opt-copy-env-empty)))
 
 (define (opt-late-bounds-pair-subst-def-from?
   [substs : OptLateBoundsPairSubst]
@@ -35613,18 +36655,27 @@
             count)))]
     [_ (CompilerIrMaybeValue.No)]))
 
+(define (opt-late-bounds-pair-scan-loops-from
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loops : OptNaturalLoopList]
+  [index : i64]) : OptLateBoundsPairResult
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptLateBoundsPairResult.No)
+    (match (opt-late-bounds-pair-try-loop
+      blocks
+      frame
+      (opt-natural-loop-list-ref loops index))
+      [(OptLateBoundsPairResult.Some next-blocks next-frame)
+        (OptLateBoundsPairResult.Some next-blocks next-frame)]
+      [(OptLateBoundsPairResult.No)
+        (opt-late-bounds-pair-scan-loops-from blocks frame loops (+ index 1))])))
+
 (define (opt-late-bounds-pair-scan-loops
   [blocks : CompilerIrBlockList]
   [frame : i64]
   [loops : OptNaturalLoopList]) : OptLateBoundsPairResult
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptLateBoundsPairResult.No)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-late-bounds-pair-try-loop blocks frame loop)
-        [(OptLateBoundsPairResult.Some next-blocks next-frame)
-          (OptLateBoundsPairResult.Some next-blocks next-frame)]
-        [(OptLateBoundsPairResult.No)
-          (opt-late-bounds-pair-scan-loops blocks frame (box-get rest))])]))
+  (opt-late-bounds-pair-scan-loops-from blocks frame loops 0))
 
 (define (opt-late-bounds-pair-function [func : CompilerIrFunction]) : CompilerIrFunction
   ;; Late pass outside the verified fixpoint: scan first, and only when a
@@ -37351,34 +38402,48 @@
 
 ;; Apply at most one multi-block versioning per invocation, like the
 ;; single-block pass.
+(define (opt-bce-mb-loops-scan-from
+  [blocks : CompilerIrBlockList]
+  [all-loops : OptNaturalLoopList]
+  [loops : OptNaturalLoopList]
+  [entry-label : String]
+  [frame : i64]
+  [index : i64]) : OptUnrollResult
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptUnrollResult.Result blocks frame false)
+    (match (opt-bce-mb-loop-shape
+      blocks
+      all-loops
+      entry-label
+      (opt-natural-loop-list-ref loops index))
+      [(OptBceMbMaybeShape.Some shape)
+        (match (opt-bce-mb-apply blocks shape frame)
+          [(OptUnrollResult.Result next-blocks next-frame changed)
+            (if changed
+              (OptUnrollResult.Result next-blocks next-frame true)
+              (opt-bce-mb-loops-scan-from
+                blocks
+                all-loops
+                loops
+                entry-label
+                frame
+                (+ index 1)))])]
+      [(OptBceMbMaybeShape.No)
+        (opt-bce-mb-loops-scan-from
+          blocks
+          all-loops
+          loops
+          entry-label
+          frame
+          (+ index 1))])))
+
 (define (opt-bce-mb-loops-scan
   [blocks : CompilerIrBlockList]
   [all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
   [entry-label : String]
   [frame : i64]) : OptUnrollResult
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-bce-mb-loop-shape blocks all-loops entry-label loop)
-        [(OptBceMbMaybeShape.Some shape)
-          (match (opt-bce-mb-apply blocks shape frame)
-            [(OptUnrollResult.Result next-blocks next-frame changed)
-              (if changed
-                (OptUnrollResult.Result next-blocks next-frame true)
-                (opt-bce-mb-loops-scan
-                  blocks
-                  all-loops
-                  (box-get rest)
-                  entry-label
-                  frame))])]
-        [(OptBceMbMaybeShape.No)
-          (opt-bce-mb-loops-scan
-            blocks
-            all-loops
-            (box-get rest)
-            entry-label
-            frame)])]))
+  (opt-bce-mb-loops-scan-from blocks all-loops loops entry-label frame 0))
 
 ;; --- prescan ---------------------------------------------------------------------
 (define (opt-bce-mb-blocks-have-check? [blocks : CompilerIrBlockList]) : bool
@@ -38481,34 +39546,44 @@
           (array-ref cell 0)
           true)))))
 
+(define (opt-unroll-mb-loops-scan-from
+  [blocks : CompilerIrBlockList]
+  [loops : OptNaturalLoopList]
+  [entry-label : String]
+  [frame : i64]
+  [index : i64]) : OptUnrollResult
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptUnrollResult.Result blocks frame false)
+    (match (opt-unroll-mb-loop-shape
+      blocks
+      entry-label
+      (opt-natural-loop-list-ref loops index))
+      [(OptUnrollMbMaybeShape.Some shape)
+        (match (opt-unroll-mb-apply blocks shape frame)
+          [(OptUnrollResult.Result next-blocks next-frame changed)
+            (if changed
+              (OptUnrollResult.Result next-blocks next-frame true)
+              (opt-unroll-mb-loops-scan-from
+                blocks
+                loops
+                entry-label
+                frame
+                (+ index 1)))])]
+      [(OptUnrollMbMaybeShape.No)
+        (opt-unroll-mb-loops-scan-from
+          blocks
+          loops
+          entry-label
+          frame
+          (+ index 1))])))
+
 (define (opt-unroll-mb-loops-scan
   [blocks : CompilerIrBlockList]
   [_all-loops : OptNaturalLoopList]
   [loops : OptNaturalLoopList]
   [entry-label : String]
   [frame : i64]) : OptUnrollResult
-  (match loops
-    [(OptNaturalLoopList.Nil) (OptUnrollResult.Result blocks frame false)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (match (opt-unroll-mb-loop-shape blocks entry-label loop)
-        [(OptUnrollMbMaybeShape.Some shape)
-          (match (opt-unroll-mb-apply blocks shape frame)
-            [(OptUnrollResult.Result next-blocks next-frame changed)
-              (if changed
-                (OptUnrollResult.Result next-blocks next-frame true)
-                (opt-unroll-mb-loops-scan
-                  blocks
-                  _all-loops
-                  (box-get rest)
-                  entry-label
-                  frame))])]
-        [(OptUnrollMbMaybeShape.No)
-          (opt-unroll-mb-loops-scan
-            blocks
-            _all-loops
-            (box-get rest)
-            entry-label
-            frame)])]))
+  (opt-unroll-mb-loops-scan-from blocks loops entry-label frame 0))
 
 (define (opt-unroll-mb-blocks-have-fast-phi? [blocks : CompilerIrBlockList]) : bool
   (match blocks
@@ -40228,14 +41303,16 @@
         (compiler-ir-block-seq-to-list seq)
         defs)]))
 
-(define (opt-successor-sink-loop-target?
+(define (opt-successor-sink-loop-target-from?
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
   [source : String]
-  [target : String]) : bool
-  (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
+  [target : String]
+  [slot : i64]) : bool
+  (if (>= slot (opt-natural-loop-list-count loops))
+    false
+    (let
+      [loop : OptNaturalLoop (opt-natural-loop-list-ref loops slot)]
       (if (and
         (string.eq (opt-natural-loop-header loop) source)
         (opt-loop-body-label-member?
@@ -40243,7 +41320,19 @@
           index
           target))
         true
-        (opt-successor-sink-loop-target? index (box-get rest) source target))]))
+        (opt-successor-sink-loop-target-from?
+          index
+          loops
+          source
+          target
+          (+ slot 1))))))
+
+(define (opt-successor-sink-loop-target?
+  [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
+  [source : String]
+  [target : String]) : bool
+  (opt-successor-sink-loop-target-from? index loops source target 0))
 
 (define (opt-successor-sink-append-prepared!
   [context : OptSuccessorSinkPrepareContext]
@@ -40974,22 +42063,36 @@
             (+ index 1)))]
       [_ unit])))
 
+(define (opt-successor-sink-mark-loop-phis-from!
+  [frame : i64]
+  [blocks : CompilerIrBlockList]
+  [loops : OptNaturalLoopList]
+  [leaves : (Array i64)]
+  [index : i64]) : unit
+  (if (>= index (opt-natural-loop-list-count loops))
+    unit
+    (begin
+      (match (opt-cfg-find-block
+        blocks
+        (opt-natural-loop-header (opt-natural-loop-list-ref loops index)))
+        [(OptMaybeBlock.Some block)
+          (match block
+            [(CompilerIrBlock.Block _ instrs)
+              (opt-successor-sink-mark-leading-phis! frame instrs leaves 0)])]
+        [(OptMaybeBlock.No) unit])
+      (opt-successor-sink-mark-loop-phis-from!
+        frame
+        blocks
+        loops
+        leaves
+        (+ index 1)))))
+
 (define (opt-successor-sink-mark-loop-phis!
   [frame : i64]
   [blocks : CompilerIrBlockList]
   [loops : OptNaturalLoopList]
   [leaves : (Array i64)]) : unit
-  (match loops
-    [(OptNaturalLoopList.Nil) unit]
-    [(OptNaturalLoopList.Cons loop rest)
-      (begin
-        (match (opt-cfg-find-block blocks (opt-natural-loop-header loop))
-          [(OptMaybeBlock.Some block)
-            (match block
-              [(CompilerIrBlock.Block _ instrs)
-                (opt-successor-sink-mark-leading-phis! frame instrs leaves 0)])]
-          [(OptMaybeBlock.No) unit])
-        (opt-successor-sink-mark-loop-phis! frame blocks (box-get rest) leaves))]))
+  (opt-successor-sink-mark-loop-phis-from! frame blocks loops leaves 0))
 
 (define (opt-successor-sink-mark-phis!
   [frame : i64]
@@ -52204,12 +53307,14 @@
 
 (cfg
   compile-profile
-  (define (compiler-opt-scratch-region-report-loops
+  (define (compiler-opt-scratch-region-report-loops-from
     [function : String]
-    [loops : OptNaturalLoopList]) : unit
-    (match loops
-      [(OptNaturalLoopList.Nil) unit]
-      [(OptNaturalLoopList.Cons loop rest)
+    [loops : OptNaturalLoopList]
+    [index : i64]) : unit
+    (if (>= index (opt-natural-loop-list-count loops))
+      unit
+      (let
+        [loop : OptNaturalLoop (opt-natural-loop-list-ref loops index)]
         (begin
           (compiler-opt-scratch-region-report-one
             "loop"
@@ -52218,7 +53323,17 @@
             (opt-natural-loop-latch loop)
             (opt-scratch-scope-report-blocks
               (opt-natural-loop-body-blocks loop)))
-          (compiler-opt-scratch-region-report-loops function (box-get rest)))])))
+          (compiler-opt-scratch-region-report-loops-from
+            function
+            loops
+            (+ index 1)))))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-scratch-region-report-loops
+    [function : String]
+    [loops : OptNaturalLoopList]) : unit
+    (compiler-opt-scratch-region-report-loops-from function loops 0)))
 
 (cfg
   compile-profile
@@ -52671,18 +53786,31 @@
         (+ frame 2)
         true)]))
 
+(define (opt-scratch-reset-apply-loops-from
+  [context : OptCfgContext]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]
+  [loops : OptNaturalLoopList]
+  [index : i64]) : OptScratchResetApplyResult
+  (if (>= index (opt-natural-loop-list-count loops))
+    (OptScratchResetApplyResult.Result blocks frame false)
+    (let
+      [loop : OptNaturalLoop (opt-natural-loop-list-ref loops index)]
+      (if (opt-scratch-loop-eligible? context blocks loop)
+        (opt-scratch-reset-apply-loop context blocks frame loop)
+        (opt-scratch-reset-apply-loops-from
+          context
+          blocks
+          frame
+          loops
+          (+ index 1))))))
+
 (define (opt-scratch-reset-apply-loops
   [context : OptCfgContext]
   [blocks : CompilerIrBlockList]
   [frame : i64]
   [loops : OptNaturalLoopList]) : OptScratchResetApplyResult
-  (match loops
-    [(OptNaturalLoopList.Nil)
-      (OptScratchResetApplyResult.Result blocks frame false)]
-    [(OptNaturalLoopList.Cons loop rest)
-      (if (opt-scratch-loop-eligible? context blocks loop)
-        (opt-scratch-reset-apply-loop context blocks frame loop)
-        (opt-scratch-reset-apply-loops context blocks frame (box-get rest)))]))
+  (opt-scratch-reset-apply-loops-from context blocks frame loops 0))
 
 (define (opt-scratch-reset-function-unchecked-with-context-result
   [context : OptCfgContext]
@@ -53891,9 +55019,43 @@
 (defenum OptLoadEntry
   (Entry OptLoadKey CompilerIrValue))
 
-(defenum OptLoadTable
-  (Nil)
-  (Cons OptLoadEntry (Box OptLoadTable)))
+(import (vector.vector OptLoadEntry core) as opt_load_entry_vec)
+
+;; Block-local load-CSE table. Block states fork -- one exit table feeds every
+;; successor's entry table and is intersected against the others -- so every
+;; mutator fills a fresh right-sized buffer and no table is ever appended to in
+;; place. Storage is push order, the reverse of the old cons order since bind
+;; prepended, and `opt-load-table-ref` takes the head-first index the lookups
+;; used.
+(defstruct OptLoadTable
+  (items opt_load_entry_vec.Vec))
+
+(define (opt-load-table-empty) : OptLoadTable
+  (OptLoadTable (opt_load_entry_vec.new)))
+
+(define (opt-load-table-len [table : OptLoadTable]) : i64
+  (opt_load_entry_vec.len (& (struct-get table items))))
+
+(define (opt-load-table-slot [table : OptLoadTable] [slot : i64]) : OptLoadEntry
+  (array-ref (opt_load_entry_vec.slots (& (struct-get table items))) slot))
+
+;; Head-first index: 0 is the newest entry, matching the old cons walk.
+(define (opt-load-table-ref [table : OptLoadTable] [index : i64]) : OptLoadEntry
+  (opt-load-table-slot table (- (- (opt-load-table-len table) 1) index)))
+
+;; Every entry, in storage order, into a buffer sized for one more push.
+(define (opt-load-table-copy-into [table : OptLoadTable]) : opt_load_entry_vec.Vec
+  (let
+    [count : i64 (opt-load-table-len table)]
+    [out : opt_load_entry_vec.Vec
+      (opt_load_entry_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (begin
+          (opt_load_entry_vec.push (&mut out) (opt-load-table-slot table slot))
+          (set! slot (+ slot 1))))
+      out)))
 
 (defenum OptLoadCseState
   (State OptAliasFacts OptLoadTable OptLoadPtrKinds i64))
@@ -53990,46 +55152,60 @@
   (match entry
     [(OptLoadEntry.Entry _ value) value]))
 
-(define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : CompilerIrMaybeValue
-  (match table
-    [(OptLoadTable.Nil) (CompilerIrMaybeValue.No)]
-    [(OptLoadTable.Cons entry rest)
+(define (opt-load-table-lookup-from
+  [table : OptLoadTable]
+  [key : OptLoadKey]
+  [index : i64]) : CompilerIrMaybeValue
+  (if (>= index (opt-load-table-len table))
+    (CompilerIrMaybeValue.No)
+    (let
+      [entry : OptLoadEntry (opt-load-table-ref table index)]
       (if (opt-load-key-eq (opt-load-entry-key entry) key)
         (CompilerIrMaybeValue.Some (opt-load-entry-value entry))
-        (opt-load-table-lookup (box-get rest) key))]))
+        (opt-load-table-lookup-from table key (+ index 1))))))
+
+(define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : CompilerIrMaybeValue
+  (opt-load-table-lookup-from table key 0))
+
+(define (opt-load-table-has-value-with-type-from?
+  [table : OptLoadTable]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [index : i64]) : bool
+  (if (>= index (opt-load-table-len table))
+    false
+    (let
+      [entry : OptLoadEntry (opt-load-table-ref table index)]
+      (if (and
+        (opt-value-eq (opt-load-entry-value entry) value)
+        (opt-type-eq (opt-load-key-type (opt-load-entry-key entry)) ty))
+        true
+        (opt-load-table-has-value-with-type-from? table value ty (+ index 1))))))
 
 (define (opt-load-table-has-value-with-type?
   [table : OptLoadTable]
   [value : CompilerIrValue]
   [ty : AstType]) : bool
-  (match table
-    [(OptLoadTable.Nil) false]
-    [(OptLoadTable.Cons entry rest)
-      (if (and
-        (opt-value-eq (opt-load-entry-value entry) value)
-        (opt-type-eq (opt-load-key-type (opt-load-entry-key entry)) ty))
-        true
-        (opt-load-table-has-value-with-type? (box-get rest) value ty))]))
+  (opt-load-table-has-value-with-type-from? table value ty 0))
 
-(define (opt-load-table-remove-key-scan
+(define (opt-load-table-remove-key-into
   [table : OptLoadTable]
-  [key : OptLoadKey]) : OptLoadTable
-  (match table
-    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
-    [(OptLoadTable.Cons entry rest)
-      (let
-        [tail : OptLoadTable
-          (opt-load-table-remove-key-scan (box-get rest) key)]
-        (if (opt-load-key-eq (opt-load-entry-key entry) key)
-          tail
-          (OptLoadTable.Cons entry (box tail))))]))
-
-;; Removal of an absent key returns the table unchanged instead of re-boxing
-;; the whole spine (see opt-alias-remove-var).
-(define (opt-load-table-len [table : OptLoadTable]) : i64
-  (match table
-    [(OptLoadTable.Nil) 0]
-    [(OptLoadTable.Cons _ rest) (+ 1 (opt-load-table-len (box-get rest)))]))
+  [key : OptLoadKey]) : opt_load_entry_vec.Vec
+  (let
+    [count : i64 (opt-load-table-len table)]
+    [out : opt_load_entry_vec.Vec
+      (opt_load_entry_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [entry : OptLoadEntry (opt-load-table-slot table slot)]
+          (begin
+            (if (opt-load-key-eq (opt-load-entry-key entry) key)
+              unit
+              (opt_load_entry_vec.push (&mut out) entry))
+            (set! slot (+ slot 1)))))
+      out)))
 
 ;; Bind key -> value. Since granular invalidation lets tables survive stores,
 ;; cap growth: a fresh key is skipped once the table reaches the state cap.
@@ -54040,9 +55216,12 @@
   [value : CompilerIrValue]) : OptLoadTable
   (match (opt-load-table-lookup table key)
     [(CompilerIrMaybeValue.Some _)
-      (OptLoadTable.Cons
-        (OptLoadEntry.Entry key value)
-        (box (opt-load-table-remove-key-scan table key)))]
+      (let
+        [out : opt_load_entry_vec.Vec
+          (opt-load-table-remove-key-into table key)]
+        (begin
+          (opt_load_entry_vec.push (&mut out) (OptLoadEntry.Entry key value))
+          (OptLoadTable out)))]
     [(CompilerIrMaybeValue.No)
       (let
         [current-len : i64 (opt-load-table-len table)]
@@ -54059,12 +55238,17 @@
                 compile-profile
                 (compiler-opt-load-cse-profile-note-table-cap-hit))
               table)
-            (begin
-              (cfg
-                compile-profile
-                (compiler-opt-load-cse-profile-note-table-size
-                  (+ current-len 1)))
-              (OptLoadTable.Cons (OptLoadEntry.Entry key value) (box table))))))]))
+            (let
+              [out : opt_load_entry_vec.Vec (opt-load-table-copy-into table)]
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-opt-load-cse-profile-note-table-size
+                    (+ current-len 1)))
+                (opt_load_entry_vec.push
+                  (&mut out)
+                  (OptLoadEntry.Entry key value))
+                (OptLoadTable out))))))]))
 
 (define (opt-load-copy-entry-within?
   [entry : OptLoadEntry]
@@ -54117,6 +55301,48 @@
       [_ table])
     table))
 
+;; `source` is the ORIGINAL table; `out` grows as its entries are re-keyed onto
+;; the copy's destination, so the scan bound is the source's own count.
+(define (opt-load-table-transfer-copy-fields-from
+  [source : OptLoadTable]
+  [out : OptLoadTable]
+  [cap : i64]
+  [gated? : bool]
+  [sources : opt_i64_i64_map.Map]
+  [src-base : i64]
+  [src-off : i64]
+  [dst-base : i64]
+  [dst-off : i64]
+  [size : i64]
+  [dst-header? : bool]
+  [index : i64]) : OptLoadTable
+  (if (>= index (opt-load-table-len source))
+    out
+    (opt-load-table-transfer-copy-fields-from
+      source
+      (opt-load-copy-transfer-entry
+        out
+        cap
+        (opt-load-table-ref source index)
+        gated?
+        sources
+        src-base
+        src-off
+        dst-base
+        dst-off
+        size
+        dst-header?)
+      cap
+      gated?
+      sources
+      src-base
+      src-off
+      dst-base
+      dst-off
+      size
+      dst-header?
+      (+ index 1))))
+
 (define (opt-load-table-transfer-copy-fields
   [source : OptLoadTable]
   [out : OptLoadTable]
@@ -54129,56 +55355,53 @@
   [dst-off : i64]
   [size : i64]
   [dst-header? : bool]) : OptLoadTable
-  (match source
-    [(OptLoadTable.Nil) out]
-    [(OptLoadTable.Cons entry rest)
-      (opt-load-table-transfer-copy-fields
-        (box-get rest)
-        (opt-load-copy-transfer-entry
-          out
-          cap
-          entry
-          gated?
-          sources
-          src-base
-          src-off
-          dst-base
-          dst-off
-          size
-          dst-header?)
-        cap
-        gated?
-        sources
-        src-base
-        src-off
-        dst-base
-        dst-off
-        size
-        dst-header?)]))
+  (opt-load-table-transfer-copy-fields-from
+    source
+    out
+    cap
+    gated?
+    sources
+    src-base
+    src-off
+    dst-base
+    dst-off
+    size
+    dst-header?
+    0))
 
 (define (opt-load-entry-mentions-var? [entry : OptLoadEntry] [var : i64]) : bool
   (or
     (opt-value-is-var? (opt-load-entry-value entry) var)
     (opt-load-key-uses-var? (opt-load-entry-key entry) var)))
 
+(define (opt-load-table-mentions-var-from?
+  [table : OptLoadTable]
+  [var : i64]
+  [slot : i64]) : bool
+  (if (>= slot (opt-load-table-len table))
+    false
+    (if (opt-load-entry-mentions-var? (opt-load-table-slot table slot) var)
+      true
+      (opt-load-table-mentions-var-from? table var (+ slot 1)))))
+
 (define (opt-load-table-mentions-var? [table : OptLoadTable] [var : i64]) : bool
-  (match table
-    [(OptLoadTable.Nil) false]
-    [(OptLoadTable.Cons entry rest)
-      (if (opt-load-entry-mentions-var? entry var)
-        true
-        (opt-load-table-mentions-var? (box-get rest) var))]))
+  (opt-load-table-mentions-var-from? table var 0))
 
 (define (opt-load-table-invalidate-var-scan [table : OptLoadTable] [var : i64]) : OptLoadTable
-  (match table
-    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
-    [(OptLoadTable.Cons entry rest)
-      (let
-        [rest2 : OptLoadTable
-          (opt-load-table-invalidate-var-scan (box-get rest) var)]
-        (if (opt-load-entry-mentions-var? entry var)
-          rest2
-          (OptLoadTable.Cons entry (box rest2))))]))
+  (let
+    [count : i64 (opt-load-table-len table)]
+    [out : opt_load_entry_vec.Vec (opt_load_entry_vec.with-capacity count)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [entry : OptLoadEntry (opt-load-table-slot table slot)]
+          (begin
+            (if (opt-load-entry-mentions-var? entry var)
+              unit
+              (opt_load_entry_vec.push (&mut out) entry))
+            (set! slot (+ slot 1)))))
+      (OptLoadTable out))))
 
 ;; Drop entries whose key references `var` (raw address value or canonical
 ;; base var), or whose cached value is `var`. The IR is not globally SSA, so
@@ -54257,15 +55480,21 @@
   [facts : OptAliasFacts]
   [store-root : OptAliasRoot]
   [class : OptLoadStoreClass]) : OptLoadTable
-  (match table
-    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
-    [(OptLoadTable.Cons entry rest)
-      (let
-        [tail : OptLoadTable
-          (opt-load-table-filter-store (box-get rest) facts store-root class)]
-        (if (opt-load-entry-survives-store? facts store-root class entry)
-          (OptLoadTable.Cons entry (box tail))
-          tail))]))
+  (let
+    [count : i64 (opt-load-table-len table)]
+    [out : opt_load_entry_vec.Vec
+      (opt_load_entry_vec.with-capacity (+ count 1))]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [entry : OptLoadEntry (opt-load-table-slot table slot)]
+          (begin
+            (if (opt-load-entry-survives-store? facts store-root class entry)
+              (opt_load_entry_vec.push (&mut out) entry)
+              unit)
+            (set! slot (+ slot 1)))))
+      (OptLoadTable out))))
 
 ;; Classify a store's target from the pointer kinds; `width` is the byte size
 ;; actually written (StorePtr type width / CopyBytes size).
@@ -54645,7 +55874,7 @@
     [(OptLoadCseState.State facts _ kinds table-cap)
       (OptLoadCseState.State
         (opt-load-alias-update-facts facts kinds instr)
-        (OptLoadTable.Nil)
+        (opt-load-table-empty)
         (opt-load-kinds-step kinds hs instr)
         table-cap)]))
 
@@ -54664,7 +55893,7 @@
     (if (not (opt-call-memory-summary-param-write? summary index))
       (opt-load-table-filter-call-writes table facts args summary (+ index 1))
       (match (opt-call-memory-arg-at args index)
-        [(CompilerIrMaybeValue.No) (OptLoadTable.Nil)]
+        [(CompilerIrMaybeValue.No) (opt-load-table-empty)]
         [(CompilerIrMaybeValue.Some value)
           (opt-load-table-filter-call-writes
             (opt-load-table-filter-store
@@ -54696,12 +55925,12 @@
               (if (or
                 (opt-call-memory-summary-global? summary)
                 (opt-call-memory-summary-unknown? summary))
-                (OptLoadTable.Nil)
+                (opt-load-table-empty)
                 (opt-load-table-filter-call-writes table facts args summary 0))]
             [(opt_i64_i64_map.LookupMissing)
               (match (compiler-ir-direct-call-effect-id name)
                 [(CompilerIrEffect.MemoryRead) table]
-                [_ (OptLoadTable.Nil)])])]
+                [_ (opt-load-table-empty)])])]
         (OptLoadCseState.State
           (opt-load-alias-update-facts facts kinds instr)
           (opt-load-table-invalidate-var filtered dst)
@@ -54963,7 +56192,7 @@
       (compiler-opt-load-cse-profile-note-table-cap table-cap))
     (OptLoadCseState.State
       facts
-      (OptLoadTable.Nil)
+      (opt-load-table-empty)
       (opt-load-kinds-empty-with-cap kinds-cap)
       table-cap)))
 
@@ -54987,7 +56216,7 @@
         (compiler-opt-load-cse-profile-note-table-cap table-cap))
       (OptLoadCseState.State
         facts
-        (OptLoadTable.Nil)
+        (opt-load-table-empty)
         (opt-load-kinds-set-cap
           kinds
           (opt-load-cse-kinds-cap-for-size instr-count))
@@ -55015,14 +56244,20 @@
         [(CompilerIrMaybeValue.No) false])]))
 
 (define (opt-load-table-intersect [a : OptLoadTable] [b : OptLoadTable]) : OptLoadTable
-  (match a
-    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
-    [(OptLoadTable.Cons entry rest)
-      (let
-        [tail : OptLoadTable (opt-load-table-intersect (box-get rest) b)]
-        (if (opt-load-table-contains-entry? b entry)
-          (OptLoadTable.Cons entry (box tail))
-          tail))]))
+  (let
+    [count : i64 (opt-load-table-len a)]
+    [out : opt_load_entry_vec.Vec (opt_load_entry_vec.with-capacity count)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [entry : OptLoadEntry (opt-load-table-slot a slot)]
+          (begin
+            (if (opt-load-table-contains-entry? b entry)
+              (opt_load_entry_vec.push (&mut out) entry)
+              unit)
+            (set! slot (+ slot 1)))))
+      (OptLoadTable out))))
 
 (define (opt-load-cse-state-intersect
   [a : OptLoadCseState]
@@ -55064,18 +56299,23 @@
 (define (opt-load-table-filter-descriptor-stable
   [table : OptLoadTable]
   [sources : opt_i64_i64_map.Map]) : OptLoadTable
-  (match table
-    [(OptLoadTable.Nil) (OptLoadTable.Nil)]
-    [(OptLoadTable.Cons entry rest)
-      (let
-        [tail : OptLoadTable
-          (opt-load-table-filter-descriptor-stable (box-get rest) sources)]
-        (match (opt-load-entry-key entry)
-          [(OptLoadKey.Field base _ _ header?)
-            (if (and header? (opt-gvn-stable-var? sources base))
-              (OptLoadTable.Cons entry (box tail))
-              tail)]
-          [_ tail]))]))
+  (let
+    [count : i64 (opt-load-table-len table)]
+    [out : opt_load_entry_vec.Vec (opt_load_entry_vec.with-capacity count)]
+    [slot : i64 0]
+    (begin
+      (while (< slot count)
+        (let
+          [entry : OptLoadEntry (opt-load-table-slot table slot)]
+          (begin
+            (match (opt-load-entry-key entry)
+              [(OptLoadKey.Field base _ _ header?)
+                (if (and header? (opt-gvn-stable-var? sources base))
+                  (opt_load_entry_vec.push (&mut out) entry)
+                  unit)]
+              [_ unit])
+            (set! slot (+ slot 1)))))
+      (OptLoadTable out))))
 
 ;; Find the (single, SSA) instruction defining `var` anywhere in the function.
 (define (opt-load-gvn-find-def-instrs
@@ -55255,28 +56495,29 @@
   [hs : OptLoadHeaderSet]
   [blocks : CompilerIrBlockList]
   [loops : OptNaturalLoopList]
+  [index : i64]
   [out : opt_string_vec.Vec]) : opt_string_vec.Vec
-  (match loops
-    [(OptNaturalLoopList.Nil) out]
-    [(OptNaturalLoopList.Cons loop rest)
-      (let
-        [next : opt_string_vec.Vec
-          (opt-load-gvn-loop-safe-collect-into hs blocks (box-get rest) out)]
-        (begin
-          (if (opt-load-gvn-loop-safe-blocks?
-            hs
-            blocks
-            (opt-natural-loop-body-blocks loop))
-            (opt_string_vec.push (&mut next) (opt-natural-loop-header loop))
-            unit)
-          next))]))
+  (if (>= index (opt-natural-loop-list-count loops))
+    out
+    (let
+      [loop : OptNaturalLoop (opt-natural-loop-list-ref loops index)]
+      [next : opt_string_vec.Vec
+        (opt-load-gvn-loop-safe-collect-into hs blocks loops (+ index 1) out)]
+      (begin
+        (if (opt-load-gvn-loop-safe-blocks?
+          hs
+          blocks
+          (opt-natural-loop-body-blocks loop))
+          (opt_string_vec.push (&mut next) (opt-natural-loop-header loop))
+          unit)
+        next))))
 
 (define (opt-load-gvn-loop-safe-collect
   [hs : OptLoadHeaderSet]
   [blocks : CompilerIrBlockList]
   [loops : OptNaturalLoopList]) : OptLoadGvnLoopSafeList
   (OptLoadGvnLoopSafeList
-    (opt-load-gvn-loop-safe-collect-into hs blocks loops (opt_string_vec.new))))
+    (opt-load-gvn-loop-safe-collect-into hs blocks loops 0 (opt_string_vec.new))))
 
 (define (opt-load-gvn-entry-from-preds
   [index : OptCfgIndex]

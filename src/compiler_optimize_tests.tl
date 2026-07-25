@@ -2171,31 +2171,37 @@
 (define (compiler-optimize-vector-mask-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-vector-mask-test-instrs)]
-    [folded : CompilerIrInstrList (opt-fold-instrs (OptConstEnv.Nil) instrs)]
+    [folded : CompilerIrInstrList
+      (opt-fold-instrs (opt-const-env-empty) instrs)]
     [dce : CompilerIrInstrList
       (opt-dce-instrs
         (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)
         instrs)]
     [bounds : CompilerIrInstrList
-      (opt-bounds-instrs (opt-bounds-facts-empty) (OptBoundsCastEnv.Nil) instrs)]
+      (opt-bounds-instrs
+        (opt-bounds-facts-empty)
+        (opt-bounds-cast-env-empty)
+        instrs)]
     [vector-cse : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-vector-cse-instrs))]
+      (opt-cse-instrs (opt-expr-table-empty) (opt-vector-cse-instrs))]
     [vector-reduce-cse : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-vector-reduce-cse-instrs))]
+      (opt-cse-instrs (opt-expr-table-empty) (opt-vector-reduce-cse-instrs))]
     [vector-stale : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-vector-reduce-stale-instrs))]
+      (opt-fold-instrs (opt-const-env-empty) (opt-vector-reduce-stale-instrs))]
     [vector-copy : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-vector-copy-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-vector-copy-instrs))]
     [mask-copy : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-mask-copy-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-mask-copy-instrs))]
     [mask-reduce-copy : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-mask-reduce-copy-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-mask-reduce-copy-instrs))]
     [mask-not-copy : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-mask-not-copy-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-mask-not-copy-instrs))]
     [mask-idempotent-copy : CompilerIrInstrList
       (opt-copy-instrs
-        (OptCopyEnv.Nil)
-        (opt-fold-instrs (OptConstEnv.Nil) (opt-mask-idempotent-copy-instrs)))]
+        (opt-copy-env-empty)
+        (opt-fold-instrs
+          (opt-const-env-empty)
+          (opt-mask-idempotent-copy-instrs)))]
     [mask-idempotent-dce : CompilerIrInstrList
       (opt-dce-instrs
         (opt-collect-instrs-uses
@@ -2257,7 +2263,8 @@
 (define (compiler-optimize-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-self-test-instrs)]
-    [optimized : CompilerIrInstrList (opt-fold-instrs (OptConstEnv.Nil) instrs)]
+    [optimized : CompilerIrInstrList
+      (opt-fold-instrs (opt-const-env-empty) instrs)]
     (begin
       (compiler-optimize-self-test-require-i64!
         "constant-fold input arithmetic count"
@@ -2274,7 +2281,7 @@
       (let
         [stale-instrs : CompilerIrInstrList (opt-stale-load-test-instrs)]
         [stale-optimized : CompilerIrInstrList
-          (opt-fold-instrs (OptConstEnv.Nil) stale-instrs)]
+          (opt-fold-instrs (opt-const-env-empty) stale-instrs)]
         (begin
           (compiler-optimize-self-test-require-i64!
             "stale load invalidates constant fact"
@@ -2604,13 +2611,13 @@
 (define (compiler-optimize-float-fold-ok?) : bool
   (let
     [pos : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-float-fold-instrs))]
+      (opt-fold-instrs (opt-const-env-empty) (opt-float-fold-instrs))]
     [neg : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-float-fold-invalid-instrs))]
+      (opt-fold-instrs (opt-const-env-empty) (opt-float-fold-invalid-instrs))]
     [finite-casts : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-finite-cast-fold-instrs))]
+      (opt-fold-instrs (opt-const-env-empty) (opt-finite-cast-fold-instrs))]
     [deferred-casts : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-finite-cast-no-fold-instrs))]
+      (opt-fold-instrs (opt-const-env-empty) (opt-finite-cast-no-fold-instrs))]
     (and
       (= (opt-count-arith-instrs pos) 0)
       (= (opt-count-cast-instrs pos) 0)
@@ -2643,9 +2650,9 @@
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let
     [pos : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-typed-fold-instrs))]
+      (opt-fold-instrs (opt-const-env-empty) (opt-typed-fold-instrs))]
     [neg : CompilerIrInstrList
-      (opt-fold-instrs (OptConstEnv.Nil) (opt-typed-fold-invalid-instrs))]
+      (opt-fold-instrs (opt-const-env-empty) (opt-typed-fold-invalid-instrs))]
     (begin
       (unless (= (opt-count-arith-instrs pos) 0) (return 1))
       (unless (= (opt-count-cast-instrs pos) 0) (return 3))
@@ -2841,9 +2848,11 @@
 (define (compiler-optimize-strength-self-test) : i64
   (let
     [pos : CompilerIrInstrList
-      (opt-strength-instrs (OptConstEnv.Nil) (opt-strength-self-test-instrs))]
+      (opt-strength-instrs
+        (opt-const-env-empty)
+        (opt-strength-self-test-instrs))]
     [neg : CompilerIrInstrList
-      (opt-strength-instrs (OptConstEnv.Nil) (opt-strength-negative-instrs))]
+      (opt-strength-instrs (opt-const-env-empty) (opt-strength-negative-instrs))]
     (cond
       [(not (= (opt-count-arith-instrs pos) 0)) 1]
       [(not (= (opt-sum-mov-var-src pos) 49)) 2]
@@ -3820,17 +3829,17 @@
 (define (compiler-optimize-cse-self-test) : i64
   (let
     [cse : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-self-test-instrs))]
+      (opt-cse-instrs (opt-expr-table-empty) (opt-cse-self-test-instrs))]
     [sqrt : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-sqrt-instrs))]
+      (opt-cse-instrs (opt-expr-table-empty) (opt-cse-sqrt-instrs))]
     [store : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-store-clears-instrs))]
+      (opt-cse-instrs (opt-expr-table-empty) (opt-cse-store-clears-instrs))]
     [redef : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-operand-redef-instrs))]
+      (opt-cse-instrs (opt-expr-table-empty) (opt-cse-operand-redef-instrs))]
     [probe : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-probe-instrs))]
+      (opt-cse-instrs (opt-expr-table-empty) (opt-cse-probe-instrs))]
     [probe-different : CompilerIrInstrList
-      (opt-cse-instrs (OptExprTable.Nil) (opt-cse-probe-different-instrs))]
+      (opt-cse-instrs (opt-expr-table-empty) (opt-cse-probe-different-instrs))]
     (begin
       (unless (= (opt-count-arith-instrs cse) 1) (return 1))
       (unless (= (opt-mov-src-var sqrt 3 (- 0 1)) 2) (return 10))
@@ -5401,29 +5410,29 @@
 (define (compiler-optimize-copy-self-test) : i64
   (let
     [pos : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-copy-pos-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-copy-pos-instrs))]
     [src-redef : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-copy-src-redef-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-copy-src-redef-instrs))]
     [dst-redef : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-copy-dst-redef-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-copy-dst-redef-instrs))]
     [cse : CompilerIrInstrList
       (opt-copy-instrs
-        (OptCopyEnv.Nil)
-        (opt-cse-instrs (OptExprTable.Nil) (opt-copy-cse-instrs)))]
+        (opt-copy-env-empty)
+        (opt-cse-instrs (opt-expr-table-empty) (opt-copy-cse-instrs)))]
     [cse-dce : CompilerIrInstrList
       (opt-dce-instrs
         (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) cse)
         cse)]
     [f64 : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-copy-f64-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-copy-f64-instrs))]
     [phi : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-copy-phi-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-copy-phi-instrs))]
     [pack-word : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-copy-pack-word-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-copy-pack-word-instrs))]
     [pack-source-redef : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-copy-pack-source-redef-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-copy-pack-source-redef-instrs))]
     [pack-dst-redef : CompilerIrInstrList
-      (opt-copy-instrs (OptCopyEnv.Nil) (opt-copy-pack-dst-redef-instrs))]
+      (opt-copy-instrs (opt-copy-env-empty) (opt-copy-pack-dst-redef-instrs))]
     (cond
       [(not (= (opt-copy-binop-lhs-var pos 2) 0)) 1]
       [(not (= (opt-copy-binop-lhs-var src-redef 2) 1)) 2]
@@ -6665,33 +6674,33 @@
     [duplicate : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (opt-bounds-duplicate-instrs))]
     [different : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (opt-bounds-different-instrs))]
     [redef : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (opt-bounds-redef-instrs))]
     [call : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (opt-bounds-call-instrs))]
     [branch : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (opt-bounds-branch-instrs))]
     [copy : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
-        (opt-copy-instrs (OptCopyEnv.Nil) (opt-bounds-copy-instrs)))]
+        (opt-bounds-cast-env-empty)
+        (opt-copy-instrs (opt-copy-env-empty) (opt-bounds-copy-instrs)))]
     [dce : CompilerIrInstrList
       (opt-dce-instrs
         (opt-collect-instrs-uses
@@ -6833,12 +6842,12 @@
     [index-cast : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (opt-bounds-index-cast-instrs))]
     [index-cast-redef : CompilerIrInstrList
       (opt-bounds-instrs
         (opt-bounds-facts-empty)
-        (OptBoundsCastEnv.Nil)
+        (opt-bounds-cast-env-empty)
         (opt-bounds-index-cast-redef-instrs))]
     (cond
       [(not (= (opt-count-bounds-instrs duplicate) 1)) 1]
@@ -11555,9 +11564,9 @@
       (array-set!
         buckets
         0
-        (OptGlobalExprFacts.Cons
-          (OptGlobalExprFact.Fact key 7 0 1)
-          (box (OptGlobalExprFacts.Nil))))
+        (opt-global-expr-facts-push
+          (opt-global-expr-facts-empty)
+          (OptGlobalExprFact.Fact key 7 0 1)))
       (and
         (match (opt-global-expr-lookup table key 8 doms 0 2)
           [(CompilerIrMaybeValue.Some value)
@@ -19980,16 +19989,21 @@
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
+(define (opt-scratch-loop-list-has-candidate-from?
+  [loops : OptNaturalLoopList]
+  [index : i64]) : bool
+  (if (>= index (opt-natural-loop-list-count loops))
+    false
+    (or
+      (opt-scratch-report-candidate?
+        (opt-scratch-scope-report-blocks
+          (opt-natural-loop-body-blocks (opt-natural-loop-list-ref loops index)))
+        1
+        32)
+      (opt-scratch-loop-list-has-candidate-from? loops (+ index 1)))))
+
 (define (opt-scratch-loop-list-has-candidate? [loops : OptNaturalLoopList]) : bool
-  (match loops
-    [(OptNaturalLoopList.Nil) false]
-    [(OptNaturalLoopList.Cons loop rest)
-      (or
-        (opt-scratch-report-candidate?
-          (opt-scratch-scope-report-blocks (opt-natural-loop-body-blocks loop))
-          1
-          32)
-        (opt-scratch-loop-list-has-candidate? (box-get rest)))]))
+  (opt-scratch-loop-list-has-candidate-from? loops 0))
 
 (define (opt-scratch-reset-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -21469,7 +21483,11 @@
     [key1 : OptLoadKey
       (OptLoadKey.Raw (CompilerIrValue.Var 1) (AstType.I64) false)]
     [table1 : OptLoadTable
-      (opt-load-table-bind (OptLoadTable.Nil) 1 key0 (CompilerIrValue.Var 10))]
+      (opt-load-table-bind
+        (opt-load-table-empty)
+        1
+        key0
+        (CompilerIrValue.Var 10))]
     [table2 : OptLoadTable
       (opt-load-table-bind table1 1 key1 (CompilerIrValue.Var 11))]
     [table-updated : OptLoadTable
